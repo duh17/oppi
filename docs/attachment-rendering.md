@@ -1,77 +1,106 @@
 # Attachment rendering
 
-This document explains how Oppi renders files attached to messages and tool results.
+How Oppi shows files attached to messages and tool results: screenshots, generated images, voice clips, browser recordings, PDFs, and other files. For extension authors and prompt authors.
 
-It is for extension authors, prompt authors, and Oppi client/server developers. Use it when a tool or message needs to show a screenshot, generated image, voice clip, browser recording, PDF, or other file.
+## Choose a path
 
-## Status
+| You want to show | Use |
+| --- | --- |
+| A screenshot or generated image | Stored attachment in `details.image` or `details.media[]` |
+| A voice or TTS clip | `kind: "audio_presentation"` with `details.audio` |
+| A recording or generated video | Stored attachment in `details.media[]`, H.264 MP4 |
+| A PDF or generic file | A workspace or session path or link in `content` or `details.expandedText`; `details.media[]` does not render them |
+| An existing project file, in assistant Markdown | A [Markdown embed](#markdown-embeds) or file link |
 
-Oppi already has three attachment paths:
+Attachments are structured metadata plus server-owned bytes, not Markdown URLs. Tools return the metadata in `details`, and clients render it with native image, audio, or video views. A stored attachment is fetched by session ID and attachment ID, so it does not depend on workspace file authorization once the server has copied the bytes. Markdown `![]()` and `![[]]` embed existing Oppi-backed files; they never address stored attachments.
 
-- user message attachments, uploaded before a prompt is sent
-- tool-produced image attachments through `details.image`
-- tool-produced audio through `kind: "audio_presentation"` and `details.audio`
+## Store a file
 
-User message images and tool media share one store: the per-session attachment directory.
-Chat history refers to a stored user image instead of carrying its bytes.
-
-Expanded tool rows understand `details.media[]` for stored image and video attachment metadata. Video attachments use `details.media[]` rather than a markdown URL scheme.
-
-## Core rule
-
-Attachments combine structured metadata with server-owned bytes. They are not markdown URLs.
-
-Tools return attachment metadata in `details`. Clients render that metadata with native image, audio, or video views. Stored attachment retrieval is scoped by session ID and attachment ID; it does not depend on workspace file-path authorization after the server has copied the bytes. Markdown `![]()` and `![[]]` both embed an existing Oppi-backed file when the file type is image, audio, video, or USDZ. They do not address stored attachments. File `[label](path)` and `[[path]]` stay ordinary resource links. PDFs and generic files use workspace/session file paths or document links, not `details.media[]`.
-
-## Deployment model and trust boundary
-
-Oppi is self-hosted. A paired iPhone or iPad talks to an owner-run server, usually over LAN, Tailscale, or TLS with certificate pinning.
-
-The trust boundary is:
-
-- bearer-token authentication for HTTP and WebSocket requests
-- workspace/session ownership checks on server routes
-- server-controlled attachment storage
-
-Network membership is insufficient. Tailscale or LAN limits exposure, but bearer authentication remains required.
-
-## Attachment metadata
-
-Renderable tool attachments use this shape.
+Use the helper when `ctx.attachments` exists. It is an Oppi context addition, not a portable Pi API, so portable extensions need a fallback such as writing the output path into `content`.
 
 ```ts
-type ToolMediaAttachment = {
-  kind: "image" | "audio" | "video";
-  id: string;
-  mimeType: string;
-  fileName?: string;
-  sizeBytes?: number;
-  width?: number;
-  height?: number;
-  durationSeconds?: number;
+const video = await ctx.attachments.addFile({
+  path: mp4Path,
+  kind: "video",
+  mimeType: "video/mp4",
+  fileName: "browser-run.mp4",
+  deleteSource: true,
+});
+
+return {
+  content: [{ type: "text", text: "Recorded browser run." }],
+  details: { media: [video] },
 };
 ```
 
-The server-side attachment record can also include storage fields such as `storageKey`, `sha256`, `createdAt`, `toolCallId`, and optional text/transcript metadata. Clients do not construct file paths from those fields.
+`addFile()` copies the bytes into server-owned session storage before returning, then removes the source when `deleteSource` is true. Rendering later reads from storage, not the original path. Tools must not write `manifest.json`, inline large base64 payloads, or put generated media in the workspace just to make it render. The server also accepts image bytes in tool details before replay, but final results should carry stored metadata.
 
-Required fields:
+## Attachment metadata
 
-| Field      | Requirement                                                         |
-| ---------- | ------------------------------------------------------------------- |
-| `kind`     | Rendering category: `image`, `audio`, or `video`.                   |
-| `id`       | Stable session-local attachment ID.                                 |
-| `mimeType` | Normalized MIME type such as `image/png`, `audio/wav`, `video/mp4`. |
+```ts
+type ToolMediaAttachment = {
+  kind: "image" | "audio" | "video";   // required: rendering category
+  id: string;                          // required: stable session-local ID
+  mimeType: string;                    // required: normalized, e.g. image/png, audio/wav, video/mp4
+  fileName?: string;                   // title and extension hint
+  sizeBytes?: number;                  // size label and local limits
+  width?: number;                      // reserve image and video layout
+  height?: number;
+  durationSeconds?: number;            // label audio and video before playback
+};
+```
 
-Optional fields improve rendering:
+The stored record can also carry `storageKey`, `sha256`, and similar fields; clients never build file paths from them.
 
-- `fileName` gives users a readable title and a file extension hint.
-- `sizeBytes` lets clients show size and enforce local limits.
-- `width` and `height` let clients reserve image/video layout before loading bytes.
-- `durationSeconds` lets clients label audio/video before playback.
+### Image
+
+```ts
+return {
+  content: [{ type: "text", text: "Created image." }],
+  details: {
+    image: { kind: "image", id: "att_image_png", mimeType: "image/png", fileName: "result.png",
+             sizeBytes: 180_000, width: 1280, height: 720 },
+  },
+};
+```
+
+### Audio
+
+Clients replay `audio/wav` in this card; other audio types render as unavailable.
+
+```ts
+return {
+  content: [{ type: "text", text: "Voice message" }],
+  details: {
+    kind: "audio_presentation",
+    text: "Here is the recorded answer.",
+    playbackBehavior: "tapToPlay",
+    audio: { kind: "audio", id: "att_voice_wav", mimeType: "audio/wav", fileName: "voice.wav",
+             sizeBytes: 96_000, durationSeconds: 3.2 },
+  },
+};
+```
+
+### Video and generic media rows
+
+Video uses `details.media[]` with `kind: "video"`. Use H.264 MP4 for Apple compatibility. The expanded tool row shows a video card and streams playback through authenticated range requests. `pi-extensions/browser-automation-video` records WebM with `agent-browser`, converts it to H.264 MP4, stores it with `ctx.attachments.addFile()`, and returns it in `details.media[]`.
+
+```ts
+return {
+  content: [{ type: "text", text: "Created media." }],
+  details: {
+    expandedText: "Generated screenshot and recording.",
+    presentationFormat: "markdown",
+    media: [imageAttachment, videoAttachment],
+  },
+};
+```
+
+`media[]` renders image entries as inline previews and video entries as video cards. Audio uses `audio_presentation`, not `media[]`. Unsupported entries show fallback text or are omitted.
 
 ## User message uploads
 
-User files uploaded before a prompt use `ChatAttachmentRef`, not tool-result `details.media[]`. Uploads can be PDFs or archives because they render as attachment badges and prompt context rather than expanded tool media rows.
+Files uploaded before a prompt use `ChatAttachmentRef`, not `details.media[]`, and render as attachment badges and image previews. Uploads can be PDFs or archives.
 
 ```ts
 type ChatAttachmentRef = {
@@ -87,324 +116,83 @@ type ChatAttachmentRef = {
 };
 ```
 
-Message rendering treats uploaded files primarily as message attachment badges and image previews. The client also keeps an `ImageAttachment` path for base64 image blobs used by pending/optimistic UI and archived traces.
-
-Message attachments and tool-result attachments share the same product idea: files associated with a chat entry. Their wire shapes differ because user uploads and tool results enter the system at different points.
-
 ### Stored images in chat history
 
-The images on a user message live in the session attachment store, next to tool media, and chat history sends a reference rather than the bytes. A history reload therefore costs the record, not the photo.
+Images on a user message are stored once in the session attachment store, next to tool media. History sends a reference instead of the bytes, so reloading a chat with screenshots does not download megabytes of image data. The model still receives the same content.
 
-- The stored session log and the durable entry keep the image's base64. Nothing the model receives changes.
-- A trace user event carries `media[]` with the attachment record (`kind`, `id`, `mimeType`, `fileName`, `sizeBytes`, `width`, `height`, `sha256`), the same shape as a tool `details.media[]` entry, and its `text` no longer contains that image's data URI. A durable conversation entry sends the image block as `{ "type": "image", "mimeType", "attachment": { …record } }` with no `data`.
-- The server materializes at projection time, so sessions recorded before this, and images pasted in a terminal session, are covered too. Ids are content-addressed and deterministic (`att_user_<digest>`), and a record the manifest already holds is reused without a write. The file and the manifest are written through a temp file and renamed into place, so an interrupted write never leaves a truncated attachment or manifest behind.
-- Each reference also names the session that owns the bytes (`sessionId`): one conversation can be bound to more than one session, and only that session's store holds the image.
-- An image the server cannot store (over the 50 MB attachment cap, undecodable base64, or a write failure) stays a `data:image/...;base64,...` line in the text, the same fallback tool results use. A message that mixes stored and inline images lists every image in content order, with a placeholder (`{ kind, mimeType, inline: true }`) where the inline one sits, so the client keeps the order the blocks were sent in.
-- An app that does not declare `user-image-refs` in `X-Oppi-Capabilities` (Build 55 and older) is sent the earlier shape on its history routes: the data URIs stay in the event's `text`, there is no `media`, and nothing is stored for it. Its history is as large as before this change. See [App capabilities and older builds](../protocol/README.md#app-capabilities-and-older-builds).
-- The Apple client fetches stored bytes from `GET /sessions/{sessionId}/attachments/{attachmentId}`, reserves each thumbnail's slot from `width` and `height` before the bytes arrive, and opens the full-screen viewer on tap. A decoded thumbnail stays in the shared image cache, so scrolling a chat back over the same photo does not download it again. Optimistic rows for a just-sent photo keep their in-memory bytes until the committed row replaces them.
+- A history entry carries `media[]` with the attachment record, the same shape as a tool `details.media[]` entry, instead of the image's data URI.
+- The Apple client fetches the bytes by reference, reserves each thumbnail's slot from `width` and `height`, opens the full-screen viewer on tap, and keeps decoded thumbnails in a shared cache so scrolling back does not download them again.
+- An image the server cannot store (over the 50 MB attachment cap, undecodable, or a write failure) stays an inline `data:image/...;base64,...` line, and the message keeps every image in order.
+- Older app builds that do not declare `user-image-refs` get the earlier inline shape ([App capabilities and older builds](../protocol/README.md#app-capabilities-and-older-builds)).
 
-## Tool image output
+## Direct file paths
 
-Image-producing tools can return `details.image`.
+Use workspace or session file routes for current project files, PDFs, reports, and generic files: a source-controlled media file, a path relative to the session workspace or worktree, or an explicit real host path. Reads need owner authentication. On a host workspace they serve an explicit real path that exists, including in-tree symlink targets and absolute or `~` paths. Sandbox reads stay confined to the sandbox mount. Audio and video stream with single byte ranges.
 
-```ts
-return {
-  content: [{ type: "text", text: "Created image." }],
-  details: {
-    image: {
-      kind: "image",
-      id: "att_image_png",
-      mimeType: "image/png",
-      fileName: "result.png",
-      sizeBytes: 180_000,
-      width: 1280,
-      height: 720,
-    },
-  },
-};
-```
+Direct previews change when the file changes. Stored attachments keep the bytes tied to the tool result, so use them for screenshots, generated images, TTS audio, and browser recordings.
 
-Server materialization also accepts image bytes from tool details before replay. Final results should carry the stored attachment metadata, not large base64 payloads.
+## Markdown embeds
 
-## Tool audio output
+In assistant Markdown and the full-screen Markdown reader, `![[file]]` and `![label](file)` embed an existing workspace, worktree, session-reported, or exact owner-host file when it is an image, audio, video, or USDZ file. `[[file]]` and `[label](file)` stay ordinary file links. PDFs and other files are always links, with no leftover `!`.
 
-Voice/audio tools use `kind: "audio_presentation"` with `details.audio`.
+Targets that are not files Oppi serves never become an embed and start no fetch: remote video or audio URLs, HTML `<video>` or `<audio>`, `data:`, `attachment:` IDs, `javascript:`, `.blend`, and `.glb`. Export uses a static card and keeps the source Markdown unchanged.
 
-```ts
-return {
-  content: [{ type: "text", text: "Voice message" }],
-  details: {
-    kind: "audio_presentation",
-    text: "Here is the recorded answer.",
-    playbackBehavior: "tapToPlay",
-    audio: {
-      kind: "audio",
-      id: "att_voice_wav",
-      mimeType: "audio/wav",
-      fileName: "voice.wav",
-      sizeBytes: 96_000,
-      durationSeconds: 3.2,
-    },
-  },
-};
-```
+### Markdown image resolution
 
-The Apple client treats `audio/wav` as the replayable audio format for this card. Other audio MIME types render as unavailable unless a client adds support for them.
+Embedded images use the same origin-first decision as video and audio. Public HTTPS images stay tap-to-load. Owner-host files use an authenticated full-byte request. Sandbox sessions map guest POSIX paths and never read host paths for guest paths.
 
-## Tool video output
+| Markdown source | Behavior |
+| --- | --- |
+| `![x](images/a.png)` | Workspace-relative file when the renderer has workspace context |
+| `![[docs/a.png]]` | Same native image view for an Oppi-backed image |
+| `![x](../images/a.png)` | Relative to the Markdown file's directory when the source path is known |
+| `![x](/abs/path.png)`, `![x](~/a.png)`, `![x](file:///abs/path.png)` | Owner-host image, fetched with authentication on render |
+| `![x](https://example.com/a.png)` | Tap-to-load prompt before fetching |
+| `![x](http://...)`, localhost, LAN IPs | Blocked by the remote image policy |
+| `![x](data:...)` | Skipped |
+| `![x](doc.pdf)`, `![[readme.md]]` | File link |
+| `![x](https://example.com/a.usdz)` | Fails closed: not a remote image and not a USDZ embed |
 
-Video should use `details.media[]` with `kind: "video"`.
+Image-only paragraphs become standalone image views, and mixed paragraphs split into text, image, and text segments. Raster images are downsampled. SVG uses the client's SVG path. Markdown image syntax never resolves stored tool attachments.
 
-```ts
-return {
-  content: [{ type: "text", text: "Captured browser run." }],
-  details: {
-    media: [
-      {
-        kind: "video",
-        id: "att_browser_mp4",
-        mimeType: "video/mp4",
-        fileName: "browser-run.mp4",
-        sizeBytes: 1_842_112,
-        width: 1280,
-        height: 720,
-        durationSeconds: 9.4,
-      },
-    ],
-  },
-};
-```
+### Markdown inline video
 
-The expanded tool row renders stored video attachments as video cards and streams playback through authenticated range-capable media sources.
+`![[video-file]]` and `![label](video-file)` show a still frame with a play button. No player exists until you tap play, so scrolling past many videos stays cheap. If the frame cannot be fetched, the row shows a placeholder with the same play button. Tapping builds the authenticated range-streaming player with native controls, full screen, and Picture in Picture; scrolling the row off screen pauses it. A failure shows an open-file fallback, and a missing file shows a not-found message. Bare paths in the fallback are workspace-root-relative; use `./` or `../` to be relative to the Markdown file.
 
-For Apple compatibility, use H.264 MP4 for generated video. The `pi-extensions/browser-automation-video` example is an Oppi-compatible Pi package: it records a WebM with `agent-browser`, converts it to H.264 MP4, stores it through Oppi's documented `ctx.attachments.addFile()` helper when available, and returns the stored record in `details.media[]`.
+The player always reserves 16:9, because wiki-file syntax has no dimensions, and portrait clips letterbox inside that slot. Same-directory sidecar captions (`stem(.lang)?.(vtt|srt|ass|ssa)`) overlay playback inline and full screen. Auto-pick uses the bare stem, then the device locale, then the first match, and a language control appears only with more than one match. A missing, oversized, or unparseable sidecar never blocks playback. Host files ask the server for a bounded same-stem lookup, which never lists a directory.
 
-## Generic expanded media rows
+### Markdown inline audio
 
-Generic extension tools can return `details.media[]` for stored media rows.
+`![[audio-file]]` and `![label](audio-file)` show a compact 64 pt player strip with the file name and the clip's length (blank when the server cannot read it). Playback never starts automatically. Expanding the strip, or a plain `[[audio-file]]` link, opens the lyrics-first full-screen player. Eligible extensions are `wav`, `mp3`, `m4a`, `m4b`, `aac`, `flac`, `ogg`, `opus`, and `caf`. A failure keeps the strip with "Audio unavailable" and an open-file fallback. Voice `audio_presentation` rows keep their transcript and fetch no sidecar.
 
-```ts
-return {
-  content: [{ type: "text", text: "Created media." }],
-  details: {
-    expandedText: "Generated screenshot and recording.",
-    presentationFormat: "markdown",
-    media: [imageAttachment, videoAttachment],
-  },
-};
-```
+The full-screen player:
 
-Current client behavior:
-
-- image entries render as inline image previews
-- video entries render as video cards
-- audio playback uses the `audio_presentation` shape, not generic `media[]`
-- unknown or unsupported entries render fallback text or are omitted from media preview rows
-
-## Markdown image resolution
-
-Markdown `![]()` and `![[]]` embed Oppi-backed images through the same origin-first decision as video and audio. Public HTTPS images stay tap-to-load. Owner-host files use an authenticated full-byte GET (not range) on the host-origin current-file route, `/files/current?origin=host`. Sandbox sessions remap guest POSIX paths the same way inline AV does and never use a host-origin read for guest paths.
-
-| Markdown source                        | Current behavior                                                                                            |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `![x](images/a.png)`                   | Resolves as a workspace-relative file when the renderer has workspace context.                              |
-| `![[docs/a.png]]`                      | Same native image view as `![]()` for an Oppi-backed image.                                                 |
-| `![x](../images/a.png)`                | Resolves relative to the markdown file directory when the source file path is known.                        |
-| `![x](/abs/path.png)`                  | Owner-host image. Authenticated host-origin current-file GET on render.                                                 |
-| `![x](~/a.png)`                        | Owner-host image. Authenticated host-origin current-file GET on render.                                                 |
-| `![x](file:///abs/path.png)`           | Local `file://` owner-host image. Authenticated host-origin current-file GET on render.                                 |
-| `![x](https://example.com/a.png)`      | Shows a tap-to-load remote image prompt before fetching.                                                    |
-| `![x](http://...)`, localhost, LAN IPs | Blocked by the remote image policy.                                                                         |
-| `![x](data:...)`                       | Skipped by the markdown image resolver.                                                                     |
-| `![x](doc.pdf)`, `![[readme.md]]`      | File link. No leftover visible `!`.                                                                         |
-| `![x](https://example.com/a.usdz)`     | Fail closed. Not a remote image and not a USDZ embed.                                                       |
-
-Image-only paragraphs become standalone image views. Mixed paragraphs split into text/image/text segments. Raster images are downsampled. SVG uses the existing SVG image path on clients that implement it.
-
-Markdown image syntax does not resolve stored tool attachments. A tool that returns a stored video or stored image must put that metadata in `details.image`, `details.audio`, or `details.media[]`.
-
-## Markdown inline video
-
-Use `![[video-file]]` or `![label](video-file)` to embed a current workspace, worktree, session-reported, or exact owner host video file in assistant Markdown and the full-screen Markdown reader. Use `[[video-file]]` or `[label](video-file)` when the file must remain an ordinary navigable link.
-
-Before you tap play, an inline video row is a still frame from the video with a play button; no player exists yet, so scrolling past videos stays cheap. If the frame cannot be fetched, the row shows a plain placeholder with the same play button. Tapping play builds Oppi's authenticated range-streaming player and starts playback. Scrolling the row off screen pauses the player; the row returns to the still frame when its cell is reused or the chat closes. The player keeps native controls, full-screen presentation, Picture in Picture, and an open-file fallback when playback fails. Oppi does not embed remote video sites, arbitrary URLs, HTML `<video>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become a video segment and do not start a fetch. Export still classifies Oppi-backed video without live workspace context so the static card appears; source export keeps the original Markdown.
-
-A missing media file shows a not-found message (HTTP 404), rather than a generic playback error. The open-file fallback uses the same wiki target: bare paths stay workspace-root-relative; use `./` or `../` for paths relative to the Markdown document. File-resolution messages appear in a neutral Notice sheet.
-
-The player always reserves 16:9 geometry because wiki-file syntax has no dimensions. Playback metadata never resizes an embed, including later remounts. Portrait and landscape clips letterbox inside that slot. Image and PDF export always use the deterministic fallback card; source export keeps the original Markdown.
-
-Workspace, host, and session video can overlay same-directory sidecar captions (`stem(.lang)?.(vtt|srt|ass|ssa)`). Auto-pick uses a bare stem, then the device locale, then the first match. A language control appears only when more than one sidecar matches. Session and sandbox files probe exact `stem.ext` names and never list the directory. Host files ask the server for bounded same-stem discovery beside the existing video (`/files/current/sidecars`), which returns only matching regular-file names, never a directory listing. A missing, oversized, unreadable, or unparseable sidecar never blocks playback. Captions follow the player's clock in an overlay, inline and in native fullscreen; Oppi does not inject AVPlayer closed captions.
-
-## Markdown inline audio
-
-Use `![[audio-file]]` or `![label](audio-file)` to embed a current workspace, worktree, session-reported, or exact owner host audio file as a compact native player strip. Use `[[audio-file]]` or `[label](audio-file)` when the file must remain an ordinary navigable link that opens the lyrics-first full-screen player.
-
-Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `m4b`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is one 64 pt row and never uses 16:9 video geometry. Before playback it shows the file name (shortened in the middle) and the clip's length from the server's `/files/current/media-info`, without downloading audio; when the server cannot read a length, the time stays blank. The elapsed time and progress line appear only while that clip is playing or paused. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. The full-screen player shares the original audio file through the iOS share sheet and keeps its filename. Wiki audio without a transcript or sidecar shows "No lyrics". Workspace and session audio can load same-directory sidecar lyrics (`stem(.lang)?.(lrc|vtt|srt|ass|ssa)`) on expand, not on the compact strip. Host files use the same bounded same-stem discovery as host video. Voice `audio_presentation` rows keep the message transcript and do not fetch a sidecar. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become an audio segment and do not start a fetch. Failure keeps the strip up with "Audio unavailable" and an open-file fallback.
-
-When a lyrics sidecar names speakers, the full-screen player reads it as a script (audiobooks, audio dramas). Speakers come from WebVTT voice spans (`<v Narrator>Night fell.</v>`; a cue that mixes voices has no single speaker) or the ASS/SSA `Name` field. The script reader lists the cast as chips in order of first line and lights up the current speaker. Each new speaker's turn starts with a colored name, and the current paragraph is highlighted. Tapping a paragraph jumps to it. A WebVTT `STYLE` block can set each speaker's color:
+- **Lyrics:** same-directory sidecars (`stem(.lang)?.(lrc|vtt|srt|ass|ssa)`) load on expand, not on the compact strip. Without one, the player shows "No lyrics". The current line lights up word by word, spreading a cue's words evenly across its time; a line without its own end runs to the next line's start. Auto-scroll follows playback until you drag; **Current Line** resumes it. Long-press a line for **Play from Here** or **Copy**. The player shares the original file through the share sheet.
+- **Scripts:** when a sidecar names speakers (WebVTT voice spans like `<v Narrator>Night fell.</v>`, or the ASS/SSA `Name` field; a cue mixing voices has no single speaker), the player reads it as a script for audiobooks and audio dramas. It lists the cast as chips in order of first line, lights up the current speaker, colors each new turn's name, and highlights the current paragraph. Tapping a paragraph jumps to it. A WebVTT `STYLE` block can set speaker colors; only `#RRGGBB` on `v[voice="…"]` selectors is read, and other speakers take the theme's accent colors.
+- **Stage directions:** bracketed text such as `[laughs]` (1 to 40 characters on one line) shows as a small tag in the speaker's color.
+- **Controls:** speed 0.75× to 2× (a saved preference that the lock screen shows and can change; live voice streams stay at normal speed); chapters from M4B/MP4 metadata, with previous and next buttons and a **Chapters** list (Previous restarts the chapter unless you are in its first three seconds); resume for recordings of five minutes or more (positions within 30 seconds of either end start over, and finishing forgets the position); and a sleep timer of 15, 30, 45, or 60 minutes of listening (pausing does not count) or the end of the chapter.
 
 ```text
 STYLE
 ::cue(v[voice="Narrator"]) { color: #c9c9cf; }
 ```
 
-Only `#RRGGBB` colors on `v[voice="…"]` selectors are read. Speakers without one take the theme's accent colors. In both the script reader and timed lyrics, auto-scroll follows playback until the text is dragged; **Current Line** resumes it. Long-press a line for **Play from Here** (timed lines) or **Copy**.
+### Markdown inline USDZ
 
-Short stage directions in square brackets, such as `[laughs]` or `[whispering]` (1 to 40 characters on one line), show as small tags in the speaker's color, or the theme's orange in lyrics without speakers. The current line lights up word by word as it plays. A cue only has a start and an end, so the sweep spreads its words evenly across that time (longer words take longer); a line without its own end runs to the next line's start, and the last such line stays fully lit.
+`![[scene.usdz]]` and `![label](scene.usdz)` reserve a 1:1 slot. Chat scroll wins until you tap **Interact**; **Done** restores scroll. Drag orbits, pinch zooms, and two-finger pan moves the model; there is no auto-spin, and Reduce Motion adds no decorative motion. Expand opens a separate RealityKit scene from the same downloaded file, which is interactive at once and can reset the camera to a framed default. Loading, error, retry, and open-file fallback stay in the slot. Downloads use the 50 MB cap and load asynchronously. A plain `[[scene.usdz]]` link opens the document viewer.
 
-The full-screen player has long-form listening controls:
+## Rules for authors
 
-- **Speed:** 0.75× to 2×, kept as a preference and shown on the lock screen, which can change it too. Live voice streams always play at normal speed.
-- **Chapters:** read from the file's own chapter metadata (M4B/MP4). The current chapter's title shows above the seek bar; previous/next chapter buttons sit beside the skip buttons, and **Chapters** lists them all with the current one checked. Previous restarts the chapter unless you are in its first three seconds.
-- **Resume:** recordings of five minutes or more reopen where you left off. Positions within 30 seconds of either end start over, and finishing a recording forgets its position.
-- **Sleep timer:** 15, 30, 45, or 60 minutes of listening (pausing does not count down), or the end of the current chapter.
+- Keep base64 video and audio, and other large binary data, out of Markdown and `details` JSON.
+- Treat Markdown, file names, alt text, metadata, and transcripts as untrusted text. Keep bearer tokens, local paths, and secrets out of Markdown and display metadata.
+- Do not auto-fetch remote media as a substitute for stored attachments. Remote images follow the tap-to-load policy.
+- Media loads when its row is visible or the user taps play, and audio and video playback is user-initiated.
+- Layout reserves space from `width`, `height`, and `durationSeconds`, so provide them when you can.
+- Stored attachments are scoped to one session and deleted with it. The server validates IDs, MIME types, and sizes, and does not trust file extensions alone.
+- Workspace listings and fuzzy search are not secret-file access controls. Do not cite or dump secrets or private runtime state.
 
-## Markdown inline USDZ
+## Related
 
-Use `![[scene.usdz]]` or `![label](scene.usdz)` to embed a current workspace, worktree, session-reported, or exact owner host USDZ file. Use `[[scene.usdz]]` or `[label](scene.usdz)` when the file must remain an ordinary navigable link that opens the document viewer.
-
-The inline slot is reserved 1:1. Chat scroll wins until the user taps Interact; Done restores scroll. Drag orbits, pinch zooms, and two-finger pans the model. There is no auto-spin. Reduce Motion adds no decorative motion. Expand presents a separate RealityKit scene from the same downloaded file; that full-screen viewer is immediately interactive and may reset the camera to a framed default. Oppi does not embed remote USDZ URLs, `data:`, attachment IDs, `.blend`, or `.glb` through this syntax. Those targets never become a USDZ segment and do not start a fetch. Loading, error, retry, and open-file fallback stay on the slot. Export uses a static card with no fetch or GPU mount. Authenticated workspace, worktree, session, and host current-file GET requests use the 50 MB image/PDF cap, write a bounded local `.usdz` file, then load asynchronously in RealityKit.
-
-## Extension authoring API
-
-For Oppi-rendered stored attachments, use the server-provided helper. The helper is an Oppi context addition, not a portable Pi API. Portable Pi extensions need a fallback such as a user-provided output path when the helper is absent.
-
-Tools do not write `manifest.json`, inline large base64 payloads, or put generated media in the workspace just to make it render.
-
-Minimal API:
-
-```ts
-const video = await ctx.attachments.addFile({
-  path: mp4Path,
-  kind: "video",
-  mimeType: "video/mp4",
-  fileName: "browser-run.mp4",
-  deleteSource: true,
-});
-
-return {
-  content: [{ type: "text", text: "Recorded browser run." }],
-  details: {
-    media: [video],
-  },
-};
-```
-
-Returned helper shape:
-
-```ts
-type StoredToolAttachment = ToolMediaAttachment & {
-  storageKey?: string;
-  sha256?: string;
-};
-```
-
-`addFile()` copies bytes into server-owned session attachment storage before returning. If `deleteSource` is true, the helper removes the source file after a successful copy. Later rendering reads from attachment storage, not from the original path.
-
-## Direct file paths
-
-Workspace file rendering and attachment rendering serve different purposes.
-
-Use workspace/session file routes for current project files, PDFs, reports, and generic files:
-
-- `docs/example.png`
-- `reports/run-summary.pdf`
-- a source-controlled media file
-- a file addressed relative to the session workspace or worktree
-- an explicit real path on a host workspace, including in-tree symlink targets and absolute/~ host paths
-
-Session-origin current-file reads require owner authentication and session ownership. On a host workspace they serve an explicit real path that exists, including in-tree symlink targets and absolute/~ host paths; pairing/auth is the gate. Sandbox session-origin reads stay confined and 403s outside or guest-escape paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/files/current`, with single-range byte responses.
-
-Use stored tool attachments for media associated with a message or tool result:
-
-- screenshots captured by a tool
-- generated images
-- voice or TTS audio
-- browser automation recordings
-
-Direct file previews can change when the file changes. Stored tool attachments preserve the bytes associated with the tool result.
-
-## Server requirements
-
-The server owns attachment materialization and serving.
-
-- Store tool attachments under server-controlled session attachment storage.
-- Keep attachment records scoped to one session.
-- Validate attachment IDs, MIME types, extensions, and byte sizes.
-- Sniff image/audio/video headers where practical; do not trust only file extensions.
-- Copy bytes from helper-approved paths, generated temp files, or authenticated uploads.
-- Do not expose an HTTP API that attaches arbitrary server paths by name.
-- Keep workspace `contents` lexically inside the workspace, then follow in-tree symlink names even when the target is outside. Host-workspace workspace-origin and session-origin current-file reads may follow an explicit real path, including symlink targets; sandbox workspace-origin and session-origin reads 403 outside and guest-escape paths.
-- Serve stored media through authenticated `GET` and `HEAD` requests to `/sessions/{sessionId}/attachments/{attachmentId}`.
-- Serve current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/files/current`. Host-origin reads (`/files/current?origin=host`) and host-workspace `/files/current?origin=session|workspace` reads may follow an unreported absolute, outside, or symlink-target file.
-- Use workspace-scoped attachment routes only for upload creation and upload content.
-- Support byte ranges for audio and video.
-- Delete attachments when the owning session is deleted.
-
-## Client requirements
-
-Clients render attachments from metadata and authenticated byte sources.
-
-- Choose the renderer from `kind` and `mimeType`.
-- Show fallback text for unknown IDs, unsupported MIME types, missing bytes, or failed decodes.
-- Keep audio/video playback user-initiated except for explicit trusted voice-message behavior.
-- Use authenticated range-capable media sources for audio and video.
-- Reuse existing full-screen viewers and media players where possible.
-- Make fallback labels accessible with VoiceOver.
-
-## Performance rules
-
-- Do not embed base64 video or audio in markdown.
-- Do not put large binary data in `details` JSON.
-- Lazy-load media when the row is visible or when the user taps play.
-- Use range streaming for audio and video.
-- Downsample large images before display.
-- Reserve layout from `width`, `height`, and `durationSeconds` when available.
-- Cap automatically rendered attachments in one message or tool row; show a “more attachments” row after the cap.
-- Cache decoded thumbnails or small images, not large video files in memory.
-- Cancel media fetches when rows leave the screen.
-
-## Security and privacy rules
-
-- Treat markdown, attachment metadata, file names, alt text, and transcripts as untrusted text.
-- Keep bearer tokens, local paths, and user secrets out of markdown and display metadata.
-- Do not render tool media through arbitrary HTML tags.
-- Do not auto-fetch remote media as a substitute for stored tool attachments.
-- Route remote URLs through the existing tap-to-load remote image policy.
-- Keep attachment endpoints authenticated and session-scoped.
-- Build timeline attachment and session-file providers even when API-client or workspace metadata is still loading; resolve that context when the fetch starts so cached rows can recover.
-- Do not rely on workspace lexical containment for byte reads. It covers workspace listings (in-tree symlinks may resolve outside), not authenticated host-origin reads (`/files/current?origin=host`) or host-workspace workspace-origin and session-origin current-file reads. Fuzzy `/paths` is not a secret-file ACL.
-- Avoid logging full file paths or attachment text when it can contain private data.
-- Treat stored attachments as durable session history until the session or attachment is deleted.
-
-## Apple review posture
-
-This contract uses app-owned views to render user and session media. Apple clients do not download or execute extension code.
-
-Review-friendly behavior:
-
-- Playback is explicit and user-initiated for audio/video.
-- Media bytes come from the user's paired server through authenticated requests.
-- The app does not expose arbitrary WebKit video HTML for extension content.
-- Extensions cannot access native device APIs through attachments.
-
-## Acceptance criteria
-
-A complete implementation satisfies these checks:
-
-- Existing `details.image` results still render image previews.
-- Existing `kind: "audio_presentation"` results still render voice/audio cards.
-- A generic extension result with `details.media[]` can render image and video attachment rows.
-- A tool-generated video can be stored outside the workspace and rendered from `details.media[]`.
-- Markdown `![]()` keeps resolving workspace-relative and remote images through the existing image resolver.
-- Unknown attachment IDs render fallback text and do not trigger network fetches.
-- Video and audio playback use authenticated range-capable media sources.
-- Large binary data stays out of message text and tool `details` JSON.
-- A user message's photo is delivered once, as a stored attachment reference, so history reloads do not carry its bytes.
-- Session deletion removes attachment bytes and manifest entries.
-
-## Related docs
-
-- [`extensions.md`](extensions.md) — Oppi extension loading and generic mobile output behavior
-- [`extension-native-ui.md`](extension-native-ui.md) — native extension UI blocks and Apple presentation mapping
-- [`document-viewers.md`](document-viewers.md) — file and document viewer behavior
+- [Oppi extension behavior](extensions.md): tool output fields and mobile rules
+- [Extension native UI](extension-native-ui.md): prompts, widgets, and native blocks
+- [Document viewers](document-viewers.md): file and document viewers

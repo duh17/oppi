@@ -1,8 +1,6 @@
 # Using Oppi
 
-Daily phone and tablet use after you have paired a server. Pairing is in [Onboarding](onboarding.md).
-
-Pi slash commands, skills, compaction, and the TUI stay in [Pi's usage guide](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/usage.md).
+Daily phone and tablet use after you have paired a server. Pairing is in [Onboarding](onboarding.md). Pi slash commands, skills, compaction, and the TUI stay in [Pi's usage guide](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/usage.md).
 
 ![Session and search](demo/session-combined.png)
 
@@ -12,54 +10,50 @@ Pi slash commands, skills, compaction, and the TUI stay in [Pi's usage guide](ht
 
 The Workspaces tab opens **All Sessions** for the active server.
 
-- **Your Turn** — sessions waiting on you: a question, an approval, a sign-in, or a result you have not looked at yet. Sessions that are blocked come first.
-- **Working** — sessions that are busy.
-- Stopped sessions sit below, grouped by day. Each row shows the workspace name.
+- **Your Turn**: sessions waiting on you (a question, an approval, a sign-in, or a result you have not seen). Blocked sessions come first.
+- **Working**: sessions that are busy.
+- Stopped sessions sit below, grouped by day, each with its workspace name.
 
-Every row and thread shows the same status, and a server's Live Activity (Server Settings, Notifications) counts its running and waiting sessions. **Working** is blue. **Needs approval**, **Question**, and **Sign-in** are orange. **Error** is red and **Done** is green until you open the session or its thread on this phone; then they read **Idle** (grey). **Stopped** is a stopped session you have seen or that ended without a result. Seen is kept per device and resets when the app restarts, so a result from before the app started reads Idle.
+Every row and thread shows the same status. **Working** is blue. **Needs approval**, **Question**, and **Sign-in** are orange. **Error** is red. **Done** is green until you open the session on this phone, then it reads **Idle** (grey). **Stopped** is a stopped session you have seen or that ended without a result. Seen state is kept per device and resets when the app restarts.
 
-All Sessions lists every session as its own row. **Session Threads** is an opt-in experiment: turn it on under Settings → **Experiments** → **Session Threads** (off by default, saved on this device) and sessions that other sessions launched sit under the session that launched them. A thread row is two targets: tap the session row to open that session's chat, or tap the Thread strip beneath it to open the thread. The strip shows a child that needs you or is working, a small lane graph, the saved Agents in the thread, and totals; the Agents and cost count the root session too, while the state counts (for example "1 needs approval · 2 working · 1 failed · 3 done") cover the child sessions. Thread detail adds the root's own chip ("Root: Idle"). Opening a thread marks all of its sessions seen, and the thread keeps showing what finished since your last visit until you leave it. The lane graph has one lane per session from its launch to its last recorded activity, ordered by events rather than clock time. It summarizes the thread; it is not an exact record of when sessions ran. A thread with work in progress stays in **Working** even while its root waits, and a thread with a blocked session sits in **Your Turn**. Turn the experiment off again to return to one row per session. The rest of this section, and Session Rows' Thread options, apply only while it is on.
+A workspace's session list has the same sections, rows, and swipe actions. It adds the worktree picker, host Pi sessions you can import, and older stopped history grouped by month.
 
-A workspace's session list works the same way: the same sections, rows, swipe actions, and (with Session Threads on) Thread strips. It adds the worktree picker, host Pi sessions you can import, and older stopped history grouped by month. A thread is listed in the workspace of the session that launched it, and its strip adds **N workspaces** when its sessions run in more than one. A session launched from another workspace or worktree stays a row in its own list, with an **In thread** link to that thread that names the other workspace when there is one. In thread detail, Outline names the workspace of any session outside the root's workspace. Oppi only connects sessions it has loaded, so a session whose launcher is older than the loaded history shows as a plain row.
+The sidebar or drawer holds saved Agents and schedules, the workspace list, App Settings, and each workspace's sessions, files, and settings.
 
-Open a thread and use its pill for three views. Oppi remembers the view you last used on this device:
+Open a session to see the chat timeline. Tap a tool row to inspect its command, output, diff, or file content. If an extension shows a card or sheet, answer it in the app.
 
-- **Outline** — the launch tree. Finished children fold into one row under their parent. Each row shows its model, cache hit rate, and an estimated prompt-cache state: **in use**, **kept warm** (Pi is refreshing it), **warm** with minutes left, or **cold**. Providers can drop a cache early, so treat warm as likely, not certain. Tap a cross-thread row to open that session. Swipe a row left, or long-press it, to stop it or resume it.
-- **Waterfall** — one row per session in tree order, labelled with its Agent icon and name, with a bar from launch to last recorded activity on clock time (a summary, not exact execution time). Arrows mark messages between sessions. Pinch to zoom; tap a row or bar to open it.
-- **Timeline** — one lane per session, with launches, stops, and messages or control commands sent between sessions with `oppi session`. Filter chips hide or show each kind. Messages to sessions in other threads appear as cross-thread rows.
+### Session Threads (experiment)
 
-The **New session in thread** bar at the bottom of a thread opens Quick Session in the root's workspace and checkout. The session you start joins the thread as a child of the root. A pill above the composer names the thread; tap it, or choose a workspace on another server, to start a standalone session instead.
+Turn on **Settings → Experiments → Session Threads** (off by default, saved on this device) to group sessions that other sessions launched under the session that launched them. Tap a session row to open its chat, or the Thread strip under it to open the thread. The strip shows children that need you or are working, a lane graph, the saved Agents in the thread, and totals. A thread with work in progress stays in **Working**, and one with a blocked session sits in **Your Turn**. Turn the experiment off to return to one row per session.
+
+A thread has three views, chosen with its pill (Oppi remembers your last choice):
+
+- **Outline**: the launch tree, with each session's model, cache hit rate, and estimated prompt-cache state (**in use**, **kept warm**, **warm** with minutes left, or **cold**; treat warm as likely, not certain). Swipe a row, or long-press it, to stop or resume it.
+- **Waterfall**: one row per session with a bar from launch to last activity on clock time (a summary, not exact execution time). Pinch to zoom; tap a row to open it.
+- **Timeline**: one lane per session, with launches, stops, and messages sent between sessions with `oppi session`. Filter chips hide each kind.
+
+The **New session in thread** bar opens Quick Session in the root's workspace; the new session joins the thread as a child of the root.
 
 ### Session rows
 
-Settings → Sessions → **Session Rows** opens the row editor. Choose **Standard** (the full row) or **Compact** (tighter spacing, with details joined on one line only when they all fit; otherwise the same two lines as Standard, and it never hides or shortens a detail you turned on), then turn optional details on or off: model, time, context usage, cost, files touched, and compactions. With Session Threads on, **Agent Summary** and **Lane Graph** turn off the matching parts of a Thread strip; with it off those options are hidden. Turning off **Cost** also removes the cost total from the strip. The preview above the controls uses sample data, or a snapshot of one of your already-loaded sessions, and never opens or fetches anything. Every change saves for this device as you make it and applies to Oppi session rows in every session list; **Restore Defaults** resets all of them. The title, status, questions, Incognito, workspace context, search matches, and the Thread control always show.
-
-The sidebar or drawer manages saved Agents and schedules, collapses the workspace list, opens App Settings, or browses a workspace's sessions, files, and settings.
-
-Open a session to see the chat timeline. Tap a tool row to inspect command, output, diff, or file content. **Git** in the top bar's menu opens the session's changes ([Git panel](#git-panel)). If an extension shows a card or sheet, answer it in the app; you do not need to go back to a Mac.
+**Settings → Sessions → Session Rows** sets **Standard** or **Compact** rows and turns optional details on or off: model, time, context usage, cost, files touched, and compactions. With Session Threads on, **Agent Summary** and **Lane Graph** control the Thread strip. Changes save for this device. **Restore Defaults** resets them. The title, status, questions, Incognito, workspace context, search matches, and Thread control always show.
 
 ## Prompt, steer, follow-up, and stop
 
-When the session is idle, the composer says **Message…**. Send starts a new turn.
-
-While the agent is working, choose how to send:
+When the session is idle, the composer says **Message…** and Send starts a new turn. While the agent works, toggle how to send:
 
 | Mode | Composer | What it does |
 | --- | --- | --- |
 | **Steering** | Steer agent… | Guides the current turn. |
 | **Follow-up** | Queue follow-up… | Queues the next instruction after this turn. |
 
-Toggle **Steering** / **Follow-up** on the composer. If an Ask card is visible, the composer answers that prompt instead of creating a steer or follow-up.
-
-When the composer is empty during a busy turn, the primary action is **Stop**.
+If an Ask card is visible, the composer answers that prompt instead. With an empty composer during a busy turn, the primary action is **Stop**.
 
 ## Siri, Quick Session, and the share sheet
 
-**Siri** starts a session with a prompt and opens that live chat. Say "Start a session in Oppi", "Open a session in Oppi", or "New session in Oppi", and optionally "in <workspace>". If you don't give a prompt, Siri asks "What should Pi do?". Before anything is sent, Siri and Shortcuts ask you to confirm the exact prompt and the workspace (plus the server when you have more than one paired). Invisible formatting characters are removed from the prompt first, so what you confirm is what is sent. Cancel creates no session and sends nothing. The same confirmation applies when the prompt comes from another Shortcut action. Prompts over 280 characters or 12 lines are too long to confirm this way; Siri asks you to open Oppi and send them from the app.
+**Siri** starts a session with a prompt and opens that chat. Say "Start a session in Oppi", "Open a session in Oppi", or "New session in Oppi", optionally followed by "in <workspace>". Without a prompt, Siri asks "What should Pi do?". Siri and Shortcuts show the exact prompt, the workspace, and (with more than one server) the server for you to confirm before anything is sent. Cancel sends nothing. Prompts over 280 characters or 12 lines are too long to confirm; open Oppi and send them from the app.
 
 **Quick Session** opens the composer without creating a session yet. Launch it from Oppi, Control Center, the Action Button, or the Shortcuts **New Session** action.
-
-**Live Voice from the Action Button.** Live Voice is an experiment, off by default: turn it on under **Settings → Experiments → Live Voice** (saved on this device; it needs a server with a voice backend). With it off, the composer's mic menu and Quick Session offer no Live Voice, and the Live Voice control and the Siri phrases below open Quick Session, which says to turn the experiment on and keeps your draft. A call already running keeps going when you turn it off; the setting only governs new calls. Oppi has two controls for Control Center, the Lock Screen, and the Action Button: **New Session** opens the composer, and **Live Voice** starts a new session straight into a Live Voice call in the workspace and Agent Quick Session last used. Say "Talk to Oppi" or "Call Oppi" for the same call from Siri. The call keeps going with the screen locked or in another app. A draft left in Quick Session stays saved and is not sent into the call. The call starts on its own only in the workspace and Agent it asked for, or the ones Quick Session remembers; otherwise (the workspace or Agent is gone, the server's voice backend is down) Quick Session stays open, says why, and brings the draft back.
 
 **The Shortcuts New Session action** reads "Open *Agent* in *Mode* mode". Every field is optional, and an empty one follows Quick Session's own choice:
 
@@ -70,117 +64,117 @@ When the composer is empty during a busy turn, the primary action is **Stop**.
 | Workspace | Any workspace on a paired server | The workspace Quick Session last used on the Agent's server |
 | Text, Image | Composer text and one image | None |
 
-Live Voice mode needs the Live Voice experiment on (Settings → Experiments). In Live Voice mode, text and an image are the call's first message, and an Agent starts without one: what you say first is its first message. The Agent and the workspace must be on the same server. Set the Action Button to **Shortcut** and pick this action to put a voice assistant Agent, with its own model, tools, and extensions, one press away.
+In Live Voice mode (needs the Live Voice experiment below), text and an image are the call's first message, and an Agent starts without one: what you say first is its first message. The Agent and workspace must be on the same server. Set the Action Button to **Shortcut** and pick this action to put a voice-assistant Agent, with its own model, tools, and extensions, one press away.
 
-**Incognito:** tap the eye-slash pill beside the workspace in Quick Session to start that one session Incognito. The Pi session lives in server memory only, with no transcript, search entry, or restart resume, and leaving its chat ends it: the server stops and deletes it, so it shows in no list afterwards. Opening Files, a reader, or a fork from the chat, switching tabs, or App Lock locking the app does not end it. The pill is not offered with a saved Agent selected.
+**Live Voice** is an experiment, off by default. Turn it on under **Settings → Experiments → Live Voice** (saved on this device; needs a server with a voice backend). Control Center, the Lock Screen, and the Action Button then offer **Live Voice**, which starts a session straight into a call in the workspace and Agent Quick Session last used. Siri: "Talk to Oppi" or "Call Oppi". The call keeps going with the screen locked or in another app. A draft left in Quick Session is saved, not sent into the call. If the workspace, Agent, or voice backend is unavailable, Quick Session opens, says why, and brings the draft back. With the experiment off, Live Voice entries open Quick Session instead.
 
-The iOS share extension accepts text, URLs, images, and files. Choose a paired-server workspace in its Quick Session composer, then start the session from the share sheet.
+**Incognito:** tap the eye-slash pill beside the workspace in Quick Session to start one session Incognito. The Pi session lives in server memory only, with no transcript, search entry, or restart resume. Leaving its chat ends it: the server stops and deletes it. Opening Files, a reader, or a fork, switching tabs, or App Lock locking the app does not end it. The pill is not offered with a saved Agent selected.
+
+The iOS share extension accepts text, URLs, images, and files. Choose a workspace in its Quick Session composer, then start the session from the share sheet.
 
 ## Files and photos
 
-Attach files from the Files picker, photos and videos from the library, or a camera capture. A selected photo, video, or file uploads with the session turn; canceling before send does not upload. Videos are uploaded as files, not as model image input. The Share extension stages shared files until the Quick Session handoff succeeds or is cancelled.
+Attach files from the Files picker, photos and videos from the library, or a camera capture. An attachment uploads with the session turn; canceling before send uploads nothing. Videos upload as files, not as model image input.
 
-Assistant output can open markdown, code, diffs, and other documents in full-screen viewers. See [Document viewers](document-viewers.md).
+Assistant output opens markdown, code, diffs, and other documents in full-screen viewers. See [Document viewers](document-viewers.md).
 
 ### Git panel
 
-In a chat whose workspace is a Git repository, **Git** in the top bar's menu (or its button, if you pin it under Settings, Chat, Top Bar) shows how many files the session changed, and opens a panel with the branch, the changed files, and the commit graph (a sheet on iPhone, a column beside the chat on iPad). The graph shows the session's checkout and every local branch, with lanes for branches and merges and chips for branches, tags, remote branches, and branches another worktree has checked out (a folder icon); a ring marks the session's commit. Older commits load as you scroll toward the end. Tap a file for its review or a commit for its detail; **Select** picks files to start a session or a prompt template with. Which files it lists depends on where the session runs:
+In a chat whose workspace is a Git repository, **Git** in the top bar's menu (or its button, if you pin it) shows how many files the session changed and opens a panel with the branch, the changed files, and the commit graph (a sheet on iPhone, a column beside the chat on iPad). The graph shows the session's checkout and every local branch, and a ring marks the session's commit. Tap a file for its review or a commit for its detail. **Select** picks files to start a session or a prompt template with.
 
-- A session in its own worktree lists every change in that worktree, including ones its shell commands or scripts made.
-- A session in the main checkout lists the files it edited (**This session**). **All changes** lists every change in the checkout, including other sessions' and your own. The panel opens on This session each time.
+- A session in its own worktree lists every change in that worktree, including ones its shell commands made.
+- A session in the main checkout lists the files it edited (**This session**). **All changes** lists every change in the checkout. The panel opens on This session.
 
-A workspace's session list has the same **Git** button in its top bar, before Terminal and Config, with the selected worktree's changed-file count. It opens the same panel as a sheet, listing every change in that worktree.
+A workspace's session list has the same **Git** button in its top bar, listing every change in the selected worktree.
 
 ## Voice
 
-**Settings → Voice & Dictation → Dictation Engine** is **On-device** or **Server**. **On-device** is the default; choose **Server** to send dictation audio to your server. If you never picked an engine, you are on **On-device**; a choice you made is kept.
+**Settings → Voice & Dictation → Dictation Engine** is **On-device** (the default) or **Server**.
 
-- **On-device** uses Apple's speech APIs on the phone. Audio stays on the device. Submitting the transcript still sends the prompt to the paired server.
-- **Server** streams audio to the paired server, which forwards it to the configured speech-to-text backend.
+- **On-device** uses Apple's speech APIs. Audio stays on the phone; submitting the transcript still sends the prompt to the server.
+- **Server** streams audio to the paired server, which forwards it to its configured speech-to-text backend. See [Server configuration](server-configuration.md#dictation-asr--stt).
 
-Long-press or double-tap a message to select text. When the server has read aloud configured, a finished assistant reply has a speaker that reads the reply aloud with the server's voice (tap again to stop). See [Read aloud](server-configuration.md#read-aloud).
+With the server's read aloud configured, a finished assistant reply has a speaker that reads it aloud (tap again to stop). See [Read aloud](server-configuration.md#read-aloud). Selecting text in a message shows a microphone first in the edit menu, then **Comment**; the microphone starts dictating into the comment draft.
 
-Selecting text shows a microphone first in the edit menu, followed by **Comment**. The microphone opens the same comment draft (the chat input bar, or the inline comment box in full-screen viewers) and starts dictating into it.
+**Settings → Voice & Dictation → Dictation Animation** picks the listening control: **Composing** and **Breathing** (voice-reactive Metal orbs) or **Ring** (the default for new installs). **Settings → Chat → Busy Animation** picks the busy-row animation: **Orbiting** (the default for new installs), **Searching**, **Solving**, **Pi**, or **GoL**. The orbs adapt Thinking Orbs geometry: Jakub Antalik created the original [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs), Haplo LLC made the Swift [ThinkingOrbs](https://github.com/haplollc/ThinkingOrbs) port, and Oppi adds Metal rasterization and voice-reactive motion. The MIT notice is in `clients/apple/Shared/Renderers/Orbs/LICENSE`.
 
-**Settings → Voice & Dictation → Dictation Animation** chooses the listening control: **Composing** and **Breathing** are voice-reactive Metal orbs, and **Ring** is the older stroke. New installs default to Ring; a saved choice stays. The button size does not change.
+## Chat display
 
-**Settings → Chat → Busy Animation** chooses the busy-row animation: **Orbiting**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Orbiting; saved Pi or GoL choices stay.
+**Settings → Chat → Style** sets how every chat looks, unless the chat's Agent sets its own (see [Agents and schedules](#agents-and-schedules)):
 
-**Settings → Chat → Style** picks how every chat looks, classic and durable, on any screen width, unless the chat's Agent has its own [Chat Style](#agents-and-schedules). **Full** (the default) shows every tool call and thinking block. **Compact** folds each turn's tool calls and thinking into one strip you tap to expand, showing **Icons** or **Words**. **Chat** uses a messaging layout: your messages are trailing bubbles, replies are cards, each turn's work is a **Worked 9s · 2 steps** pill, and the title shows the model and thinking level.
+- **Full** (default): every tool call and thinking block.
+- **Compact**: each turn's tool calls and thinking fold into one strip you tap to expand, showing **Icons** or **Words**.
+- **Chat**: a messaging layout with trailing bubbles for your messages, cards for replies, and a **Worked 9s · 2 steps** pill per turn.
 
-**Settings → Chat → Top Bar** chooses which buttons a chat's top bar shows, and their order: **Files**, **Git**, **Outline**, **Context** (the usage ring), and **Terminal**, each on or off. The default shows only Context; Files, Git, Outline, and Terminal are in the **…** menu at the right end of the bar, and a chat on the default bar says so once, under the bar, until you open that menu. Each menu item keeps its button's summary on its line: Context its usage, Git the lines its changes added and removed and the commits ahead of and behind the upstream. A top bar you customized keeps exactly its buttons, and one customized before Git was added offers Git in the **…** menu. A button turned off moves into the **…** menu, and **Customize Top Bar…** there opens the same page. Nothing can be turned off entirely: the **…** menu always stays. **Terminal** is one of those buttons, and it opens a login shell in the session's folder ([Open Terminal here](ssh-terminal.md#open-terminal-here)). A workspace with no host folder to open in (a sandbox workspace, or a relative folder) offers no Terminal. A chat with no workspace offers no Files, Git, or Terminal, a workspace that is not a Git repository (or has Git status turned off) offers no Git, and a session with an empty timeline offers no Outline, so the bar is shorter rather than showing a button that could only fail.
+**Settings → Chat → Top Bar** chooses which buttons a chat's top bar shows and their order: **Files**, **Git**, **Outline**, **Context** (the usage ring), and **Terminal**. The default shows only Context; the rest sit in the **…** menu, which always stays and has **Customize Top Bar…**. A button the chat cannot use is not shown: no Files, Git, or Terminal without a workspace folder, no Git outside a Git repository (or with Git status off), no Outline for an empty timeline, and no Terminal for a sandbox or relative-folder workspace. **Terminal** opens a login shell in the session's folder ([Open Terminal here](ssh-terminal.md#open-terminal-here)).
 
 ## Appearance
 
-**Settings → Appearance** picks a built-in theme (Dark, OLED, Light, Night) or an imported custom theme, either by hand or matching Light/Dark to iOS Display & Brightness.
-
-Custom themes are JSON files on the server. **Custom Themes** lists files in the Oppi data-dir `themes` folder and converted Pi TUI themes from `~/.pi/agent/themes`. Describe a new theme in its composer, or swipe a theme and choose **Edit with Oppi**, and an Oppi session writes the file for you. Token list, contrast rules, and a minimal file are in [Custom themes](themes.md).
-
-Those indicators adapt Thinking Orbs geometry; they are not original Oppi artwork. Jakub Antalik created the original [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) designs and engine. Haplo LLC made the Swift [ThinkingOrbs](https://github.com/haplollc/ThinkingOrbs) port. Oppi adds Metal rasterization and voice-reactive motion. The full MIT notice lives with the orb source in `clients/apple/Shared/Renderers/Orbs/LICENSE`.
-
-Voice replies are produced by the paired server and its configured voice extension. See [Server configuration](server-configuration.md) for ASR and TTS setup.
+**Settings → Appearance** picks a built-in theme (Dark, OLED, Light, Night) or an imported custom theme, by hand or matching Light and Dark to iOS Display & Brightness. Custom themes are JSON files on the server; see [Custom themes](themes.md).
 
 ## Agents and schedules
 
 The sidebar holds saved **Agents** and **Schedules**.
 
 - Agents store reusable definitions and can use one Unicode emoji or SF Symbol as an icon.
-- **Edit Agent → Chat Style** picks how that Agent's sessions look on this device: **Full**, **Compact**, or **Chat**, or **Settings** to follow **Settings → Chat → Style**. The choice stays on the device, so another phone or iPad keeps its own, and a change restyles the Agent's open sessions too.
-- Schedules support `at`, `every`, and `cron` triggers. A one-time `at` schedule moves to Archived once its run succeeds; a failed run keeps it active. Each schedule can target a workspace, saved Agent, or existing session. Oppi keeps run history for manual and approved automatic runs.
+- **Edit Agent → Chat Style** picks how that Agent's sessions look on this device: **Full**, **Compact**, **Chat**, or **Settings** to follow **Settings → Chat → Style**. The choice is per device and restyles the Agent's open sessions too.
+- Schedules support `at`, `every`, and `cron` triggers. A one-time `at` schedule moves to Archived after its run succeeds; a failed run keeps it active. A schedule targets a workspace, a saved Agent, or an existing session. Oppi keeps run history for manual and approved automatic runs.
 
-Create and edit sheets can open a **Pi Control** session (ordinary Pi with global settings, tools, Skills, Extensions, `SYSTEM.md`, and `APPEND_SYSTEM.md`) or use the native forms.
+## Edit with Oppi
 
-## Sandbox and Mirror
+Describe a change in a composer. Oppi opens one setup session that inspects the current setup, asks if the outcome is unclear, shows the change, and applies it. Changes made through `oppi` commands change the live server, so the session waits for your approval before each server write. Before it edits a file, it says what will change. At the end it tells you where to see the change and whether a running session must reload.
 
-- [Sandbox workspaces](sandbox.md) run agent file tools in a Gondolin VM.
+The setup session uses Oppi's own short prompt, not your global Pi prompt ([Pi Control sessions](extensions.md#pi-control-sessions)).
+
+| Surface | Create | Change |
+| --- | --- | --- |
+| Agents | Composer in the Agents list | **Edit with Oppi** on an Agent; comments on its definition become the request |
+| Schedules | Composer in the Schedules list | **Edit with Oppi** on a schedule; comments on its prompt become the request |
+| Pi's system prompt (`SYSTEM.md`) | | **Edit with Oppi** on the Pi entry under Agents; comments on the file |
+| Skill files | | **Edit → Edit with Oppi** on an editable Skill's file, with your staged comments |
+| Extensions | | **Edit with Oppi** in the chat's context panel, or on the **Extensions** page |
+| Custom themes | Composer in **Settings → Appearance → Custom Themes** | Swipe a theme, or touch and hold, then **Edit with Oppi** |
+| Workspaces | The create sheet | **Edit with Oppi** in Workspace Settings |
+
+## Sandbox, Mirror, and SSH Terminal
+
+- [Sandbox workspaces](sandbox.md) run agent file tools and shell commands in a Gondolin VM.
 - [Oppi Mirror](oppi-mirror.md) shows a live terminal Pi session in Oppi.
-
-## SSH Terminal
-
-Save SSH hosts on this device, with password or per-device key sign-in. **Settings → SSH Hosts**, and **Terminal** below **MCP Servers**, open that list. A workspace's **Terminal** button and a chat's **Terminal** button open a login shell in that workspace's or session's folder on the saved host for that server. Saved passwords and trusted host keys stay in this device’s Keychain; saved-password reads and Secure Enclave signing require user presence. See [SSH Terminal](ssh-terminal.md) for setup, host trust, reconnect behavior, and supported algorithms.
+- [SSH Terminal](ssh-terminal.md) opens a shell on a host saved on this device (**Settings → SSH Hosts**, or **Terminal** below **MCP Servers**). A workspace's or chat's **Terminal** button opens that folder on the saved host.
 
 ## Durable Sessions experiment
 
-Durable sessions run on the server's durable engine instead of the classic Pi session. A server offers them only after `oppi config set experimental.serverDurable true` and a restart; the setting never turns existing or new classic sessions durable.
+Durable sessions run on the server's durable engine instead of the classic Pi session. A server offers them only after `oppi config set experimental.serverDurable true` and a restart. They are a development playground and do not match terminal coding agents feature for feature.
 
-Durable sessions are a development playground. They don't run your Pi extensions yet, and they don't match terminal coding agents feature for feature.
+Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the server offers durable sessions, Quick Session shows a **Classic** pill beside the workspace; tap it to start that one session **∞ Durable**. **Start Sessions as Durable** makes durable the default and the pill switches one session to Classic. A saved Agent follows the same default. Incognito sessions are always Classic.
 
-Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the server you start a session on offers durable sessions, the Quick Session composer shows a **Classic** pill beside the workspace; tap it to start that one session **∞ Durable** (tap again to switch back). New sessions start Classic unless you also turn on **Start Sessions as Durable** below the experiment toggle; then they start durable and the pill switches one session to Classic. A saved Agent follows the same default and pill; a durable Agent session starts without the Agent's Extensions that have no durable version and names them in a session warning. Incognito sessions are always Classic, so turning on Incognito hides the engine pill. With the experiment off, or on a server that doesn't offer durable sessions, every session is Classic and the composer shows no pill.
+Durable sessions appear in All Sessions with a small **∞** after the title and follow **Settings → Chat → Style**. A durable session has no tree, so Outline lists the timeline and you fork from a message to branch.
 
-Durable sessions appear in All Sessions like any other session, with a small **∞** after the title. Durable chats follow **Settings → Chat → Style** like any other chat; the title shows a small **Durable** label. Session Outline lists the timeline only: a durable session has no tree, so fork from a message to branch. The composer is the normal chat input bar.
+A durable session runs only extensions that ship a durable entry ([Durable extensions](extensions.md#durable-extensions)), plus MCP when the Agent selects it. It starts without the rest, including codemode, and shows a session warning that names them. MCP tools load through `tool_search`, the durable stand-in for codemode.
 
-From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Add `--agent <name>` to start it as a saved Agent, or use `oppi schedule create --engine durable` for a schedule. A durable session runs the Agent's Extensions that have a durable version, plus MCP when the Agent selects it. It starts without the rest, including codemode, and shows a warning that names them. MCP tools load through `tool_search`, the durable stand-in for codemode, even when the Agent's tool list names only `codemode` or `tool_search`.
+From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session (it fails while the server flag is off). Add `--agent <name>` for a saved Agent, or use `oppi schedule create --engine durable`.
 
-A durable session can start helper sessions of its own with its `subagent` tool. Each one is a child session you can open from the tool row or the Subagents pill above the composer, listed in All Sessions. The pill shows each child as Working, Needs attention, Done, or Error, with its model and context use as of its last answer; expand it to see what each working child is writing or running right now. When the session waits on a child (it spawned it and waits for the answer), that live view shows under the tool row instead, and tapping it opens the child. A child that ended its turn waiting on background work of its own, such as a background job, stays Working ("Waiting on background work") until that work finishes and the child answers again. When the session waits on such a child and only the child's own background jobs are left, for example a dev server, it does not wait for them to end: it gets the child's latest answer with a note naming the jobs still running. It reports each answer back to the session that started it: the answer to its task, the answer to each later message, and an answer it gives on its own after background work, such as a background job it waited on. A message from a child arrives in the parent's chat as a card that names the sender and says whether it is a report, a task, or a message, folded to its first few lines so a long report does not bury the conversation; tap the card to read all of it, or the sender's name to open that child. A short message shows whole, with nothing to fold. A child can start its own children only when its parent allows it. A child can also work in a git worktree of its own, on a branch named after it or one its parent picks, so an editing child never touches its parent's checkout; its answer and the `list` rows name that branch, how many commits it is ahead, and whether it is dirty. The worktree stays while the child works, so a follow-up message still reaches it in the same checkout; it goes when you land it, or later, once a cleanup finds it clean and landed.
+A durable session can start helper sessions with its `subagent` tool. Each child opens from the tool row or the **Subagents** pill above the composer and is listed in All Sessions. The pill shows each child as Working, Needs attention, Done, or Error, with its model and context use; expand it to see what each child is doing now. A child reports each answer back to its parent as a card that names the sender and kind (report, task, or message), folded to its first lines; tap the card to read it all, or the sender's name to open the child. A child can start its own children only when its parent allows it, and can work in a git worktree of its own on a branch named after it, so an editing child never touches its parent's checkout.
 
 ## Models and quota
 
-Pick models from the in-app picker. Remaining provider quota and pace live on **Server Settings** → **Model Providers**. The CLI also has `oppi quota` and `oppi models`. See [Provider quotas](provider-quotas.md).
+Pick models from the in-app picker. Remaining provider quota and pace are under **Server Settings → Model Providers**, in `oppi quota`, and in `oppi models`. See [Provider quotas](provider-quotas.md).
 
 ## Workspace settings
 
-**Workspace Settings** (a workspace's slider button, or Server Settings → Workspaces) opens with the workspace's icon, name, and folder; tap it for **Details**: name, description, icon, and **Workspace Folder**. A new folder is checked on the server first, and Oppi offers to create one missing directory. Details has its own **Save**; going back discards edits.
+**Workspace Settings** (a workspace's slider button, or Server Settings → Workspaces) opens with the workspace's icon, name, and folder. Tap it for **Details**: name, description, icon, and **Workspace Folder**. A new folder is checked on the server first, and Oppi offers to create one missing directory. Details has its own **Save**; going back discards edits.
 
-Below it: **Instructions** (its own editor with **Save**), **Skills** and **Extensions** (each row shows how many are enabled, such as "5 of 8"), **MCP Servers**, and **Dictionary**. A sandbox workspace also has **Network Access** for Allowed Hosts, with its own **Save**; its **MCP Servers** page turns on the global servers that sandbox may load. **Project Trust** is read-only. Every toggle (Skills, Extensions, sandbox MCP servers, **Show Changes in Chat**) applies as soon as you flip it, and flips back with the error if the server refuses it. **Delete Workspace** is last and asks first.
+Below it: **Instructions** (its own editor and **Save**), **Skills** and **Extensions** (each row counts how many are enabled, such as "5 of 8"), **MCP Servers**, and **Dictionary**. A sandbox workspace also has **Network Access** (Allowed Hosts, with its own **Save**). **Project Trust** is read-only. Toggles (Skills, Extensions, sandbox MCP servers, **Show Changes in Chat**) apply as you flip them and flip back with the error if the server refuses. **Delete Workspace** is last and asks first.
 
 ## Server settings
 
-**Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then a list: **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. Below the list on the same screen: **Mobile Output Guide**, **Server Metrics** (sampling is off by default; see [Server Metrics](server-configuration.md#server-metrics)), **Notifications** (push and Live Activities, per server), **Lock Server**, and **Remove Server**. Add another server from Settings.
+**Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. On the same screen: **Mobile Output Guide** ([what it does](extensions.md#mobile-output-guide)), **Server Metrics** (off by default; see [Server Metrics](server-configuration.md#server-metrics)), **Notifications** (push and Live Activities, per server), **Lock Server**, and **Remove Server**. Add another server from Settings.
 
-**About This Server** shows connection, uptime, Pi SDK and Pi TUI versions, and the server version. Its row reads **Update Available** when a newer `oppi-server` is on npm.
+**About This Server** shows connection, uptime, the Pi SDK, Pi TUI, and server versions, and the **Voice** backend states. Its row reads **Update Available** when a newer `oppi-server` is on npm.
 
-When a newer `oppi-server` is on npm and this host is a global npm install, About This Server shows **Update available** and an **Update** button. Confirming names the version and warns that running sessions will be interrupted. Oppi installs that exact version, restarts the server, and reconnects. Interrupted sessions resume after the restart; see [Running sessions across a restart](server-configuration.md#running-sessions-across-a-restart).
+- **Global npm install:** an **Update** button names the version and warns that running sessions will be interrupted. Oppi installs that exact version, restarts the server, and reconnects. Interrupted sessions resume ([Running sessions across a restart](server-configuration.md#running-sessions-across-a-restart)). `oppi update` on the host uses the same check.
+- **Checkout `npm link`ed as the global `oppi`** (what `setup.sh --install` sets up): the server never installs from npm. When the checkout has changes the running build lacks, **Rebuild & Restart** runs `npm run build:in-place` there and restarts. A failed compile keeps the running build and shows the error.
+- **Other installs** (other git checkouts, Docker images): a copyable `npm install -g oppi-server@…` command instead of a button.
+- If the server is older than this app needs and nothing newer is available, the row reads **Server Outdated** and names the needed and available versions. All Sessions also shows a notice that opens Server Settings until you update and reconnect.
 
-A server running from a checkout that is `npm link`ed as the global `oppi` (what `setup.sh --install` sets up) never installs from npm. Once the checkout has changes the running build lacks, About This Server shows **Rebuild & Restart**: Oppi runs `npm run build:in-place` in that checkout and restarts. A failed compile keeps the running build and shows the error. The confirmation names any sessions that will be interrupted.
-
-When the server is older than this app needs and there is nothing newer to install yet, About This Server says which version the app needs and which is available, and its row reads **Server Outdated**.
-
-Other git checkouts, Docker images, and other non-npm installs show a copyable `npm install -g oppi-server@…` command instead of a button. `oppi update` on the host uses the same install check.
-
-If this app build needs a newer server than the one you are connected to, All Sessions shows a single notice that opens Server Settings. That notice goes away after you update and reconnect.
-
-**Paired Devices** lists the devices paired with this server. Your device is marked **This device** and has no Revoke button. Other devices show when they were last used; **Revoke** asks for confirmation, then signs that device out immediately. See [Onboarding](onboarding.md#paired-devices).
-
-## What stays Pi
-
-Oppi does not replace Pi's coding-agent manual. Use [Pi's usage guide](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/usage.md) for slash commands, skills, compaction, the TUI, and the extensions API. Oppi documents only mobile daily use and the [extension overlay](extensions.md).
+**Paired Devices** lists devices paired with this server. Your device is marked **This device** and has no Revoke button. For others, **Revoke** asks first, then signs that device out at once. See [Onboarding](onboarding.md#paired-devices).

@@ -16,106 +16,75 @@ Use `oppi ...` for normal installs. Source checkouts can use `node dist/src/cli.
    oppi serve
    ```
 
-   On first run, Oppi prints a pairing QR code and invite link. If this machine is on Tailscale and `tailscale cert` can issue it a certificate (HTTPS enabled for the tailnet), Oppi uses Tailscale TLS and the invite points at the machine's `*.ts.net` name. Otherwise it uses a self-signed certificate. A `tls.mode` other than `disabled` that you already set is kept.
+   On first run, Oppi prints a pairing QR code and invite link. If the machine is on Tailscale and `tailscale cert` can issue it a certificate (HTTPS enabled for the tailnet), Oppi uses Tailscale TLS and the invite points at the machine's `*.ts.net` name. Otherwise it uses a self-signed certificate. A `tls.mode` other than `disabled` that you already set is kept.
 
-2. Open Oppi on iPhone, then choose **Scan QR Code**, **Connect through Tailscale**, or **Enter manually / Connect to Server**. Opening an `oppi://connect` invite also starts pairing.
+2. Open Oppi on iPhone and choose **Scan QR Code**, **Connect through Tailscale**, or **Enter manually / Connect to Server** (Host, Port, Token, and Name; it does not paste an invite). Opening an `oppi://connect` invite link also starts pairing.
 
-   **Connect through Tailscale** opens Oppi's in-app Tailscale connection. After you sign in, Oppi lists Mac and Linux machines on the same tailnet and can pair with one that is already running Oppi over Tailscale HTTPS. It does not install the Tailscale VPN. QR and manual pairing stay available.
+   **Connect through Tailscale** opens Oppi's in-app Tailscale connection. After you sign in, Oppi lists Mac and Linux machines on your tailnet and can pair with one already running Oppi over Tailscale HTTPS. It does not install the Tailscale VPN.
 
 3. Confirm server trust. If local authentication is enabled, iOS asks for it before accepting the server identity.
 
-4. Oppi opens **Workspaces** at **All Sessions**. If the server has no workspaces, it opens guided **Create Workspace** setup.
+4. Oppi opens **Workspaces** at **All Sessions**. If the server has no workspaces, it opens guided **Create Workspace** setup; Oppi creates no starter workspaces.
 
-From here, [Using Oppi](usage.md) covers the session list, prompting, steer vs follow-up, Quick Session, files, and voice.
-
-Oppi does not create starter workspaces. Camera-free pairing opens the signed `oppi://connect` invite link. The manual sheet is still Host, Port, Token, and Name; it does not paste that invite.
+Next: [Using Oppi](usage.md).
 
 ## Reach the server
 
-After pairing, Oppi uses authenticated HTTPS/WSS. The phone must reach the server over LAN, Tailscale, or a public HTTPS hostname. Tailscale HTTPS is supported. A reverse proxy is supported: set `publicUrl` to the phone-facing HTTPS origin and `proxy.trustedPeers` to the proxy's socket address as Oppi sees it (rate-limit identity on TLS origins; also required to authorize private HTTP). The local CLI stays on an owner-only Unix socket.
+After pairing, Oppi uses authenticated HTTPS and WSS. The phone must reach the server over LAN, Tailscale, or a public HTTPS hostname. The local CLI stays on an owner-only Unix socket.
 
-For remote pairing, include the host in the invite:
+For remote pairing, include the host in the invite. `--host` takes a host or IP only, with no scheme or port; the port comes from `oppi config get port`.
 
 ```bash
 oppi pair --host <hostname-or-ip>
 ```
 
-`--host` accepts a host or IP only: no scheme and no port. A `*.ts.net` host requires Tailscale TLS, because iOS does not accept a self-signed certificate on a Tailscale name. Enable HTTPS certificates for your tailnet, then include the Tailscale host in the first QR code from `serve`:
+- **Tailscale name (`*.ts.net`):** needs Tailscale TLS, because iOS rejects a self-signed certificate on a Tailscale name. Enable HTTPS certificates for your tailnet, then put the host in the first QR code:
 
-```bash
-oppi config set tls.mode tailscale
-oppi serve --host <your-host>.ts.net
-```
+  ```bash
+  oppi config set tls.mode tailscale
+  oppi serve --host <your-host>.ts.net
+  ```
 
-With `self-signed` or `manual` TLS, pair through a LAN host or the server's Tailscale IP instead. `oppi pair` refuses a `*.ts.net` host in those modes.
+  With `self-signed` or `manual` TLS, pair through a LAN host or the server's Tailscale IP; `oppi pair` refuses a `*.ts.net` host in those modes.
+- **Reverse proxy:** set `publicUrl` to the phone-facing HTTPS origin and `proxy.trustedPeers` to the proxy's address as Oppi sees it. Invites then advertise that origin and omit the origin TLS pin, and `--host` must not conflict with `publicUrl`. See [Reverse proxy](reverse-proxy.md).
+- **Changed listener port:** run `oppi config set port <public-port>`, restart, and create a new invite.
 
 Before pairing, the app probes HTTPS health and then sends exactly one pair request. If a connection error occurs after pairing starts, pairing might have succeeded; request a fresh invite instead of retrying the old one.
 
-You can also pair by signing in over SSH from **Tailscale → Check a Machine for Oppi**. That works for a Mac (Remote Login) or a Linux machine (`sshd`). Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://127.0.0.1:<port>/health` answers on that machine. A stopped server does not mint an invite. A `*.ts.net` name uses Oppi's Tailscale connection and is not dialed on the system network while that connection is off. Any other host, including a public name, uses the current network. An unknown or changed SSH host key sends no password. This does not install or start the server.
+You can also pair by signing in over SSH from **Tailscale → Check a Machine for Oppi**, for a Mac (Remote Login) or a Linux machine (`sshd`). Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://127.0.0.1:<port>/health` answers there, so a stopped server mints no invite. A `*.ts.net` name uses Oppi's Tailscale connection; any other host uses the current network. An unknown or changed SSH host key sends no password. This does not install or start the server.
 
 ## Pair another device
 
-Generate a new invite:
-
 ```bash
-oppi pair
+oppi pair                          # same network
+oppi pair --host <hostname-or-ip>  # remote
 ```
 
 Then pair through QR scan, manual entry, or the invite link.
 
-For remote HTTPS pairing, generate an invite with an explicit host:
-
-```bash
-oppi pair --host <hostname-or-ip>
-```
-
-`--host` accepts a host or IP only: no scheme and no port. The invite port comes from the server configuration:
-
-```bash
-oppi config get port
-```
-
-If the public origin is a reverse-proxied HTTPS hostname, set `publicUrl` instead of changing the listener port. Invites then advertise that origin and omit the origin TLS leaf pin (the phone uses the system CA):
-
-```bash
-oppi config set publicUrl https://oppi.example.com
-oppi config set proxy.trustedPeers '["127.0.0.1/32","::1/128"]'
-oppi pair
-```
-
-`--host` must not conflict with `publicUrl`. Direct self-signed and Tailscale pairing are unchanged when `publicUrl` is unset.
-
-If the listener port changes for a direct deployment, set it, restart the server, and create a new invite:
-
-```bash
-oppi config set port <public-port>
-```
-
 ## Invite rules
 
-- Each invite is single-use.
-- Invites expire after 90 seconds by default. `oppi pair --ttl <duration>` sets another lifetime, from 1 second to 30 days (for example `--ttl 10m`).
-- Once another device is paired, an invite with a lifetime over 90 seconds needs approval on a paired device (see below).
-- Invites contain signed server identity and HTTPS authorization.
-- Deep-link details are in [Deep links](deeplinks.md).
+- Each invite is single-use and carries signed server identity and HTTPS authorization. Details are in [Deep links](deeplinks.md#pairing-invites).
+- Invites expire after 90 seconds by default. `oppi pair --ttl <duration>` sets 1 second to 30 days (for example `--ttl 10m`).
+- Once another device is paired, an invite with a lifetime over 90 seconds needs approval on a paired device.
 
 ## Approving a new device
 
 When at least one device is already paired, these pairings wait for approval on a paired device:
 
-- an invite issued with a lifetime over 90 seconds (`oppi pair --ttl 10m`, App Review hand-offs);
+- an invite with a lifetime over 90 seconds (`oppi pair --ttl 10m`, App Review hand-offs);
 - a same-user Tailscale pairing (**Connect through Tailscale**), whatever its lifetime;
 - a pairing approved by a custom `auth.module`.
 
-A default 90-second invite needs no approval, and the first device on an empty server never does. The invite is used up as soon as the new device presents it, unless 8 requests are already waiting: then the server answers `429` and the invite stays valid. The request is cancelled if the device that approved it is revoked before the new device finishes.
+A default 90-second invite needs no approval, and the first device on an empty server never does.
 
-The new device shows that it is waiting for approval, with a countdown. Every paired device with notifications on gets **Approve New Device?** with the device name, how it is pairing (`invite`, `tailscale`, or `custom`), and where from (client IP or Tailscale login). Paired devices also see the request in the app. Approving asks for Face ID, Touch ID, or the passcode, then signs the approval with that device's key. The host (the Unix socket and `oppi` CLI) cannot approve, so an agent running on the host cannot let a device in on its own.
+The new device shows a countdown. Every paired device with notifications on gets **Approve New Device?** with the device name, how it is pairing (`invite`, `tailscale`, or `custom`), and where from (client IP or Tailscale login), and paired devices also see the request in the app. Approving asks for Face ID, Touch ID, or the passcode. The host (the Unix socket and `oppi` CLI) cannot approve, so an agent on the host cannot let a device in on its own.
 
-The request lasts 2 minutes. Deny, or no answer, fails closed: the new device reports it and needs a fresh invite. After approval the new device must finish within 60 seconds. Pending requests live in server memory; a restart drops them.
+The request lasts 2 minutes. Deny or no answer fails closed: the new device reports it and needs a fresh invite. After approval it must finish within 60 seconds. Pending requests live in server memory, so a restart drops them. At most 8 can wait; past that the server answers `429` and the invite stays valid. The request is cancelled if the approving device is revoked first.
 
 ## New device alerts
 
-Every new device, approved or not, sends **New Device Paired** to the other paired devices with notifications on: its name, pairing method, source, and time. The server logs `auth.device_enrolled` with the same facts. If you did not pair it, revoke it (see [Paired devices](#paired-devices)) If you suspect the host itself, `oppi token rotate` revokes every paired device at once.
+Every new device, approved or not, sends **New Device Paired** to the other paired devices with notifications on: its name, pairing method, source, and time. The server logs `auth.device_enrolled` with the same facts. If you did not pair it, revoke it ([Paired devices](#paired-devices)). If you suspect the host itself, `oppi token rotate` revokes every paired device at once.
 
 ## Turn off Tailscale pairing
 
@@ -126,48 +95,22 @@ oppi config set auth.tailscalePairing false
 oppi server restart
 ```
 
-`POST /pair/tailscale` then answers `404`, and the app reports Tailscale pairing as unavailable for that server. QR and invite-link pairing keep working.
+The app then reports Tailscale pairing as unavailable for that server. QR and invite-link pairing keep working.
 
 ## Paired devices
 
-Each paired device has a name. Oppi sends the device name in the `deviceName` field of `POST /pair` (trimmed, at most 64 characters). iOS 16 and later report only the generic model name ("iPhone") unless the app holds Apple's restricted device-name entitlement, so Oppi appends a short per-device suffix, for example `iPhone (A3F9)`. The server keeps the name on one line (control characters become spaces), cuts it to 64 characters, and stores a missing or blank name as `Device`.
+Oppi names each device with the model plus a short per-device suffix, for example `iPhone (A3F9)`, because iOS reports only the generic model name. The server keeps the name to one line of at most 64 characters, and a blank name becomes `Device`.
 
-List and revoke devices from the host with `oppi devices` and `oppi devices revoke <id>`, or from a paired device with the same endpoints:
-
-- `GET /auth/devices` returns `{"devices":[{"id","name","scope","createdAt","lastUsedAt","revokedAt","keyEnrolled","pairingMethod","pairingSource","approvedByDeviceId"}]}`. `createdAt` is when the device paired. `pairingMethod` (`invite`, `tailscale`, or `custom`), `pairingSource` (client IP or Tailscale login), and `approvedByDeviceId` are present only for devices paired by this release or later. Revoked devices stay in the list with `revokedAt` set. Times are Unix milliseconds.
-- `DELETE /auth/devices/:id` revokes a device, invalidates its access tokens, and closes its open sockets. It returns `{"ok":true}`, or `404` for an unknown or already-revoked id.
-
-Any paired device can list and revoke any other; there is no per-device permission. `GET /auth/devices` does not mark the caller, so a client compares the list with the device id in its own stored credential to find itself.
+List and revoke devices from the host with `oppi devices` and `oppi devices revoke <id>`, or from a paired device in **Server Settings → Paired Devices**. Revoking signs the device out at once and closes its open connections. Revoked devices stay in the list with a revoked time. Any paired device can list and revoke any other; there is no per-device permission. Your own device is marked **This device** in the app and has no Revoke button.
 
 ## Troubleshooting
 
-### Invite expired, used, or pairing result unknown
+**Invite expired, used, or pairing result unknown.** Generate a fresh invite with `oppi pair` and pair again. Do not retry a pair request after a lost response.
 
-Generate a fresh invite and pair again:
+**Could not reach the server.**
 
-```bash
-oppi pair
-```
+1. On the host, run `oppi status` and `oppi doctor`.
+2. Confirm the phone reaches the server the way you paired: a LAN invite does not work from outside that network. For Tailscale or a public hostname, regenerate an invite with `oppi pair --host <hostname-or-ip>`.
+3. Retry with a fresh invite.
 
-Do not retry a `/pair` mutation after a lost response.
-
-### Could not reach the server
-
-1. Check server state on the host:
-
-   ```bash
-   oppi status
-   oppi doctor
-   ```
-
-2. Confirm the phone can reach the server the same way you paired: LAN, Tailscale, or public DNS. A LAN invite does not work from outside that network. For Tailscale or a public hostname, regenerate an explicit-host invite:
-
-   ```bash
-   oppi pair --host <hostname-or-ip>
-   ```
-
-3. Retry with a fresh invite. Invites expire after 90 seconds by default and are single-use.
-
-### Secure connection failed
-
-Generate a fresh invite from the same server, retry, and do not edit invite content manually.
+**Secure connection failed.** Generate a fresh invite from the same server and retry. Do not edit invite content by hand.

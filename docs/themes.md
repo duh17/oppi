@@ -2,6 +2,11 @@
 
 An Oppi theme is one JSON file of color tokens. The iOS chat, settings, and code surfaces read those tokens. Built-in themes (Dark, OLED, Light, Night) ship in the app. Custom themes live on your server; you import and apply them in **Settings → Appearance**.
 
+## Create or change a theme
+
+- **With Oppi:** in **Settings → Appearance → Custom Themes**, describe a theme in the composer. Oppi starts a setup session that reads this page and writes the JSON file to the themes folder. To change a theme, swipe it (or touch and hold) and choose **Edit with Oppi**. For a bundled or Pi TUI theme, the session writes an override with the same filename. See [Edit with Oppi](usage.md#edit-with-oppi).
+- **By hand:** write the file in the themes folder (below), pull to refresh **Custom Themes**, tap the theme to import it, then pick it in the theme picker.
+
 ## Where files live
 
 | Location | What Oppi does |
@@ -10,9 +15,7 @@ An Oppi theme is one JSON file of color tokens. The iOS chat, settings, and code
 | `~/.pi/agent/themes/` | Converts Pi TUI themes automatically |
 | `server/themes/` in the Oppi repo | Bundled examples shipped with the server |
 
-Filename: letters, numbers, underscore, hyphen, ending in `.json`. No server restart after you add or edit a file. The HTTP API is read-only (`GET /themes`, `GET /themes/:name`); create, update, or delete themes by changing files.
-
-Apply a theme: **Settings → Appearance**, then pick it in the theme picker after you import it from **Custom Themes**.
+The filename uses letters, numbers, underscore, and hyphen, and ends in `.json`. Adding or editing a file needs no server restart. The server only reads theme files; you create, change, and delete themes by changing files.
 
 ## Minimal example
 
@@ -74,9 +77,9 @@ Apply a theme: **Settings → Appearance**, then pick it in the theme picker aft
 }
 ```
 
-`colorScheme` is `"dark"` or `"light"` and drives status bar and system chrome. Each color is `#RRGGBB`. Use `""` on a required token to take the app default for that key.
+`colorScheme` is `"dark"` or `"light"` and drives the status bar and system chrome. Each color is `#RRGGBB`. Set `""` on a required token to take the app default for that key.
 
-Your prompts are a card filled with `userMessageBg` and written in `userMessageText`. Assistant replies always span the full width. Two optional tokens change that look:
+Two optional tokens change how chat rows look. Omit either, or set `""`, for the built-in look.
 
 ```json
 {
@@ -85,111 +88,60 @@ Your prompts are a card filled with `userMessageBg` and written in `userMessageT
 }
 ```
 
-`assistantMessageBg` fills assistant replies. `userMessageAccent` adds a 3 pt strip on the leading edge of your prompt card. Omit either, or set `""`, to keep the built-in look: no assistant fill and no strip.
-
 ## Contrast
 
-- Text on a fill (user text on `userMessageBg`, assistant text on `assistantMessageBg` or on `bg` when that fill is empty) must be at least **4.5:1**.
-- Keep `userMessageBg` visibly apart from `bg` (and from `assistantMessageBg` when you set it) so your prompts stand out.
-- If you set `userMessageAccent`, keep it at least **3:1** against `bg`.
-- Assistant rows recede. Leave `assistantMessageBg` unset or empty unless you want a wash, and keep that wash close to `bg`.
+Built-in themes set their contrast automatically, like Pi's system theme ([Earendil](https://earendil.com/posts/system-theme/)). Custom themes are used exactly as written, so check these rules yourself:
 
-Built-in themes check contrast automatically, like Pi's system theme ([Earendil](https://earendil.com/posts/system-theme/)): each color keeps its hue and chroma, and Oppi picks its lightness so text clears 4.5:1 on every surface it appears on, your prompt bubble clears 1.6:1 against both the background and the reply card, and inline code backgrounds still show on the card. Custom themes are used exactly as written, so check the rules above yourself.
+- Text on a fill must reach **4.5:1**. That covers user text on `userMessageBg`, and assistant text on `assistantMessageBg` (or on `bg` when that fill is empty).
+- Keep `userMessageBg` visibly apart from `bg`, and from `assistantMessageBg` when you set it, so your prompts stand out.
+- Keep `userMessageAccent` at least **3:1** against `bg`.
+- Assistant rows recede. Leave `assistantMessageBg` unset unless you want a wash, and keep it close to `bg`.
 
-iOS **Increase Contrast** uses a stronger built-in user fill plus a 1.5 pt border in `userMessageAccent`, or `userMessageText` when the theme has no accent. **Differentiate Without Color** adds a "You" caption on user rows. Custom themes get the border and caption; they do not get the built-in stronger fills.
+iOS **Increase Contrast** adds a 1.5 pt border in `userMessageAccent` (or `userMessageText` without an accent). **Differentiate Without Color** adds a "You" caption on user rows. Custom themes get the border and caption, not the built-in stronger fills.
 
-## Token list
+## Tokens
 
-### Base (13) plus thinking text (1)
+Your prompts are a card filled with `userMessageBg`. Assistant replies always span the full width.
 
-| Key | Paints |
-| --- | --- |
-| `bg` | Chat and main surfaces |
-| `bgDark` | Code blocks, inset wells |
-| `bgHighlight` | Elevated chrome, selections |
-| `fg` | Primary text, including assistant body |
-| `fgDim` | Secondary text |
-| `comment` | Muted labels, timestamps |
-| `blue` | Accent |
-| `cyan` | Types, inline code, teal chrome |
-| `green` | Strings, success |
-| `orange` | Numbers, warnings |
-| `purple` | Keywords |
-| `red` | Errors, removals |
-| `yellow` | Decorators |
-| `thinkingText` | Thinking-block body |
+| Group | Key | Paints |
+| --- | --- | --- |
+| Base | `bg` | Chat and main surfaces |
+| | `bgDark` | Code blocks, inset wells |
+| | `bgHighlight` | Elevated chrome, selections |
+| | `fg` | Primary text, including assistant body |
+| | `fgDim` | Secondary text |
+| | `comment` | Muted labels, timestamps |
+| | `blue` | Accent |
+| | `cyan` | Types, inline code, teal chrome |
+| | `green` | Strings, success |
+| | `orange` | Numbers, warnings |
+| | `purple` | Keywords |
+| | `red` | Errors, removals |
+| | `yellow` | Decorators |
+| | `thinkingText` | Thinking-block body |
+| User and assistant | `userMessageBg` | User card fill (the only elevated chat card) |
+| | `userMessageText` | User card text |
+| | `assistantMessageBg` | Optional assistant fill. Omit or empty: no fill |
+| | `userMessageAccent` | Optional 3 pt strip on the leading edge of the user card. Omit or empty: no strip |
+| Tool state | `toolPendingBg` / `toolSuccessBg` / `toolErrorBg` | Tool row while running, after success, after failure |
+| | `toolTitle` | Tool name |
+| | `toolOutput` | Tool body |
+| Markdown | `mdHeading` | Headings |
+| | `mdLink` / `mdLinkUrl` | Link label / link URL |
+| | `mdCode` | Inline code |
+| | `mdCodeBlock` / `mdCodeBlockBorder` | Fenced code text / its border |
+| | `mdQuote` / `mdQuoteBorder` | Blockquote text / its bar |
+| | `mdHr` | Horizontal rule |
+| | `mdListBullet` | List markers |
+| Diffs | `toolDiffAdded` / `toolDiffRemoved` / `toolDiffContext` | Added, removed, and context lines |
+| Syntax | `syntaxComment` / `syntaxKeyword` / `syntaxFunction` | Comments, keywords, functions |
+| | `syntaxVariable` / `syntaxString` / `syntaxNumber` | Variables, strings, numbers |
+| | `syntaxType` / `syntaxOperator` / `syntaxPunctuation` | Types, operators, punctuation |
+| Thinking levels | `thinkingOff` / `thinkingMinimal` / `thinkingLow` / `thinkingMedium` / `thinkingHigh` | The level's indicator |
+| | `thinkingXhigh` | Extra-high and max |
 
-### User and assistant (2 required, 2 optional)
-
-| Key | Paints |
-| --- | --- |
-| `userMessageBg` | User card fill (the only elevated chat card) |
-| `userMessageText` | User card text |
-| `assistantMessageBg` | Optional assistant fill. Omit or empty: no fill |
-| `userMessageAccent` | Optional 3 pt leading strip on the user card. Omit or empty: no strip |
-
-### Tool state (5)
-
-| Key | Paints |
-| --- | --- |
-| `toolPendingBg` | Tool row while running |
-| `toolSuccessBg` | Tool row after success |
-| `toolErrorBg` | Tool row after failure |
-| `toolTitle` | Tool name |
-| `toolOutput` | Tool body |
-
-### Markdown (10)
-
-| Key | Paints |
-| --- | --- |
-| `mdHeading` | Headings |
-| `mdLink` | Link label |
-| `mdLinkUrl` | Link URL |
-| `mdCode` | Inline code |
-| `mdCodeBlock` | Fenced code text |
-| `mdCodeBlockBorder` | Code block border |
-| `mdQuote` | Blockquote text |
-| `mdQuoteBorder` | Blockquote bar |
-| `mdHr` | Horizontal rule |
-| `mdListBullet` | List markers |
-
-### Diffs (3)
-
-| Key | Paints |
-| --- | --- |
-| `toolDiffAdded` | Added line |
-| `toolDiffRemoved` | Removed line |
-| `toolDiffContext` | Context line |
-
-### Syntax (9)
-
-| Key | Paints |
-| --- | --- |
-| `syntaxComment` | Comments |
-| `syntaxKeyword` | Keywords |
-| `syntaxFunction` | Functions |
-| `syntaxVariable` | Variables |
-| `syntaxString` | Strings |
-| `syntaxNumber` | Numbers |
-| `syntaxType` | Types |
-| `syntaxOperator` | Operators |
-| `syntaxPunctuation` | Punctuation |
-
-### Thinking levels (6)
-
-| Key | Paints |
-| --- | --- |
-| `thinkingOff` | Thinking off |
-| `thinkingMinimal` | Minimal |
-| `thinkingLow` | Low |
-| `thinkingMedium` | Medium |
-| `thinkingHigh` | High |
-| `thinkingXhigh` | Extra-high and max |
+All keys except `assistantMessageBg` and `userMessageAccent` are required.
 
 ## Pi TUI conversion
 
-Pi TUI themes in `~/.pi/agent/themes/` use 51 tokens plus variables. Oppi maps the shared Markdown, syntax, diff, tool, and thinking tokens, derives `bg` / `fg` / accent colors from Pi vars, and copies `assistantMessageBg` and `userMessageAccent` when the TUI file already has them. TUI-only tokens (`border`, `selectedBg`, `customMessage*`, `bashMode`, and similar) are dropped.
-
-## Ask your agent
-
-In **Settings → Appearance → Custom Themes**, describe a theme in the composer at the bottom. Oppi starts a session that reads this doc and writes the JSON file to your server's themes folder. To change an existing theme, swipe it (or touch and hold) and choose **Edit with Oppi**; a bundled or Pi TUI theme gets an override with the same filename in the themes folder. Pull to refresh the list, then tap the theme to import it.
+Pi TUI themes in `~/.pi/agent/themes/` use 51 tokens plus variables. Oppi maps the shared Markdown, syntax, diff, tool, and thinking tokens, and derives `bg`, `fg`, and accent colors from the Pi variables. It copies `assistantMessageBg` and `userMessageAccent` when the TUI file has them. TUI-only tokens (`border`, `selectedBg`, `customMessage*`, `bashMode`, and similar) are dropped.

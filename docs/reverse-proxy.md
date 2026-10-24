@@ -1,10 +1,10 @@
 # Reverse proxy
 
-Run Oppi on a private listener and put an existing HTTPS domain in front of it. The phone uses the public origin; it does not need to know whether you chose Caddy, nginx, or Cloudflare Tunnel.
+Run Oppi on a private listener and put an existing HTTPS domain in front of it. The phone uses the public origin and does not need to know whether you chose Caddy, nginx, or Cloudflare Tunnel.
 
 ## Configure Oppi
 
-`host` / `port` / `tls` still describe the **listener**. `publicUrl` describes what the phone uses.
+`host`, `port`, and `tls` describe the **listener**. `publicUrl` describes what the phone uses.
 
 ```bash
 oppi config set host 127.0.0.1
@@ -13,34 +13,29 @@ oppi config set tls.mode disabled
 oppi config set publicUrl https://oppi.example.com
 oppi config set proxy.trustedPeers '["127.0.0.1/32","::1/128"]'
 oppi config validate
-```
-
-Restart the server, then:
-
-```bash
+oppi server restart
 oppi pair
 ```
 
-The signed invite advertises `https://oppi.example.com:443` and omits the origin TLS leaf pin. The phone validates the public certificate with the system CA and still verifies Oppi's signed server identity.
+The signed invite advertises `https://oppi.example.com:443` and omits the origin TLS pin. The phone validates the public certificate with the system CA and still verifies Oppi's signed server identity.
 
 Rules:
 
-- `publicUrl` is HTTPS only. Optional port defaults to 443. Userinfo, query, fragment, and non-root paths are rejected. A trailing `/` is normalized away.
-- `proxy.trustedPeers` are the **immediate socket peers as Oppi sees them**, usually the proxy's private IP or loopback. They are not the phone IP or the public domain's IP.
-- Set `proxy.trustedPeers` for both private HTTP and verified-HTTPS origins. On a TLS origin this does not authorize plaintext and is not skip-verify; it only lets Oppi take a single overwritten `X-Forwarded-For` for pairing/challenge rate-limit identity.
-- `publicUrl` alone never authorizes plaintext credentials. Private HTTP requires a trusted peer **and** a single `X-Forwarded-Proto: https` value that the proxy overwrites.
-- The proxy must overwrite `X-Forwarded-For`. Oppi uses a single overwritten client IP for pairing/challenge rate limits. ALB-style append chains are not a trustworthy client identity; Oppi falls back to the proxy socket peer. Do not append untrusted incoming forwarded addresses.
-- Do not publish the backend port. Do not proxy the owner Unix socket. Owner `sk_` tokens and `/mirror/v1/bridge` stay local.
-- `tls.mode=cloudflare` is not a supported mode. Terminate TLS at the proxy and use `publicUrl` + `proxy.trustedPeers`.
+- `publicUrl` is HTTPS only. The port defaults to 443. Userinfo, query, fragment, and non-root paths are rejected, and a trailing `/` is dropped.
+- `proxy.trustedPeers` are the **immediate socket peers as Oppi sees them**, usually the proxy's private IP or loopback, not the phone's IP or the public domain's IP. Set it for both private HTTP and verified-HTTPS origins. On a TLS origin it does not authorize plaintext and is not skip-verify; it only lets Oppi read a single overwritten `X-Forwarded-For` for pairing and challenge rate limits.
+- `publicUrl` alone never authorizes plaintext credentials. Private HTTP needs a trusted peer **and** a single `X-Forwarded-Proto: https` value that the proxy overwrites.
+- The proxy must overwrite `X-Forwarded-For`, not append to it. Append chains (ALB style) are not a trustworthy client identity, and Oppi falls back to the proxy's socket peer.
+- Do not publish the backend port, and do not proxy the owner Unix socket. Owner `sk_` tokens and `/mirror/v1/bridge` stay local.
+- `tls.mode=cloudflare` is not supported. Terminate TLS at the proxy.
 - Do not disable upstream certificate verification (`noTLSVerify`, `tls_insecure_skip_verify`, or nginx `proxy_ssl_verify off`).
 
-Direct self-signed LAN pairing stays available when `publicUrl` is unset. Same-user `/pair/tailscale` is unavailable whenever `publicUrl` is set; without it, the endpoint rejects forwarding headers and the server's own Tailscale node. A same-login, untagged node that forwards raw TCP without forwarding headers and is not the server's node can still mint an invite: these checks do not authenticate the ultimate caller behind that relay. Contributor notes: [Networking](../dev/networking.md).
+Direct self-signed LAN pairing stays available when `publicUrl` is unset. Same-user `/pair/tailscale` is unavailable whenever `publicUrl` is set. Without it, the endpoint rejects forwarding headers and the server's own Tailscale node, but a same-login, untagged node that forwards raw TCP without forwarding headers can still mint an invite, because these checks do not authenticate the caller behind that relay. Contributor notes: [Networking](../dev/networking.md).
 
 ## Caddy
 
-Caddy issues the public certificate and upgrades WebSockets. Automatic HTTPS redirects HTTP to HTTPS so credential routes are not reachable in plaintext.
+Caddy issues the public certificate, upgrades WebSockets, and redirects HTTP to HTTPS so credential routes are never reachable in plaintext. Its default proxy behavior sets forwarded headers and ignores untrusted incoming values.
 
-Same-host private HTTP origin (with the Oppi config above):
+Same-host private HTTP origin, with the Oppi config above:
 
 ```caddyfile
 oppi.example.com {
@@ -48,9 +43,7 @@ oppi.example.com {
 }
 ```
 
-Caddy's default proxy behavior sets forwarded headers and ignores untrusted incoming values.
-
-Verified-HTTPS origin: set Oppi to `tls.mode=self-signed` or `manual`, still set `proxy.trustedPeers` (client-identity/rate-limit, not skip-verify), and tell Caddy which CA and name to verify. Do not skip upstream TLS verification.
+Verified-HTTPS origin: set Oppi to `tls.mode=self-signed` or `manual`, keep `proxy.trustedPeers`, and tell Caddy which CA and name to verify.
 
 ```caddyfile
 oppi.example.com {
@@ -64,11 +57,11 @@ oppi.example.com {
 }
 ```
 
-`header_up Host {hostport}` keeps the public Host distinct from the upstream TLS server name. `localhost` is valid only if it is in the backend certificate.
+`header_up Host {hostport}` keeps the public Host distinct from the upstream TLS server name. `localhost` works only if it is in the backend certificate.
 
 ## nginx
 
-Same-host private HTTP origin. Include the TLS server, HTTP→HTTPS redirect, upload limit, and WebSocket upgrade. Overwrite forwarded headers; do not append client-supplied `X-Forwarded-For`.
+Same-host private HTTP origin. The config needs the TLS server, HTTP-to-HTTPS redirect, upload limit, and WebSocket upgrade, and it overwrites forwarded headers.
 
 ```nginx
 map $http_upgrade $connection_upgrade {
@@ -105,7 +98,7 @@ server {
 
 Renew public certificates with your usual tooling (for example certbot). The snippet assumes nginx faces the client.
 
-Verified-HTTPS origin: keep the server/redirect/WebSocket block, keep `proxy.trustedPeers` (client-identity/rate-limit, not skip-verify), replace `proxy_pass`, and enable verification. nginx defaults `proxy_ssl_verify` to `off`; changing only `http://` to `https://` does **not** verify the backend.
+Verified-HTTPS origin: keep the server, redirect, and WebSocket block and `proxy.trustedPeers`, and replace `proxy_pass` with the lines below. nginx defaults `proxy_ssl_verify` to `off`, so changing only `http://` to `https://` does **not** verify the backend.
 
 ```nginx
         proxy_pass https://127.0.0.1:7750;
@@ -117,9 +110,9 @@ Verified-HTTPS origin: keep the server/redirect/WebSocket block, keep `proxy.tru
 
 ## Cloudflare Tunnel
 
-A dedicated `cloudflared` connector routes the public hostname to the private listener. No public inbound origin port is needed. Tunnel identity/credentials and hostname routing are prerequisites.
+A dedicated `cloudflared` connector routes the public hostname to the private listener, so no inbound origin port is needed. Tunnel credentials and hostname routing are prerequisites. Set `proxy.trustedPeers` to the connector's actual local peer, often loopback; in separate containers, use the backend service address and the connector's network identity instead.
 
-Private HTTP origin (with `proxy.trustedPeers` set to the connector's actual local peer, often loopback):
+Private HTTP origin:
 
 ```yaml
 ingress:
@@ -128,7 +121,7 @@ ingress:
   - service: http_status:404
 ```
 
-Verified-HTTPS origin: keep `proxy.trustedPeers` set to the connector's actual local peer (client-identity/rate-limit, not skip-verify) and verify the backend CA and name.
+Verified-HTTPS origin:
 
 ```yaml
 ingress:
@@ -140,4 +133,4 @@ ingress:
   - service: http_status:404
 ```
 
-Oppi trusts the connector's socket peer, not arbitrary Cloudflare headers sent by a client. Enforce HTTPS at the public edge. Cloudflare Tunnel is not Cloudflare Access; a browser login/JavaScript challenge in front of Oppi's native API is not supported. In separate containers, use the backend service address and the connector's explicit network identity instead of loopback.
+Oppi trusts the connector's socket peer, not Cloudflare headers a client sends. Enforce HTTPS at the public edge. Cloudflare Tunnel is not Cloudflare Access: a browser login or JavaScript challenge in front of Oppi's native API is not supported.
