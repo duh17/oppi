@@ -6,7 +6,7 @@ This is the reduced core: one CLI, one XCTest executor, one simple paired succes
 
 ## Owner
 
-`clients/apple/scripts/qa-verify.ts` is the execution owner. It fingerprints tested app, server, harness, and build-input bytes (tracked plus relevant new/untracked source), records external wrapper identity, allocates a fresh run directory and nonce, sets `OPPI_SIM_POOL_HANG_RETRIES=0`, reuses sim-pool / the documented paired E2E wrapper, binds each lane's owned sim-pool summary and built app/test-bundle identity, and prints one JSON object on `--json` stdout. Build chatter stays in the run log directory.
+`clients/apple/scripts/qa-verify.ts` is the execution owner. It fingerprints tested app, server, harness, and build-input bytes (tracked plus relevant new/untracked source), allocates a fresh run directory and nonce, sets `OPPI_SIM_POOL_HANG_RETRIES=0`, reuses sim-pool and the repo's paired E2E runner (`clients/apple/scripts/e2e.sh`), binds each lane's owned sim-pool summary and built app/test-bundle identity, and prints one JSON object on `--json` stdout. Build chatter stays in the run log directory.
 
 ## Journeys
 
@@ -33,7 +33,7 @@ bun clients/apple/scripts/qa-verify.ts run --lane negatives --json
 bun clients/apple/scripts/qa-verify.ts run --lane e2e --native --json
 ```
 
-Always inherit `OPPI_ROOT` for the worktree. The shared `apple/e2e.sh` is not in this worktree; the CLI reuses `~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test` and does not invent a second server lifecycle. `--lane all` does not start the paired lane after timeout, cancel, or a non-quiescent stop.
+Always inherit `OPPI_ROOT` for the worktree. The CLI runs the checkout's `clients/apple/scripts/e2e.sh` (part of the fingerprinted source) and does not invent a second server lifecycle. `--lane all` does not start the paired lane after timeout, cancel, or a non-quiescent stop.
 
 ## What it refuses
 

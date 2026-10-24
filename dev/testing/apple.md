@@ -113,7 +113,7 @@ cd clients/apple
 
 #### Xcode toolchain
 
-Every Oppi dev build lane builds with Xcode 27.1 (iOS 27.1 SDK, `/Applications/Xcode-27.1.app`) through `DEVELOPER_DIR`, never `xcode-select`. The default lives in `clients/apple/scripts/xcode-toolchain.txt` and is applied by `scripts/xcode-toolchain.sh` (shell lanes) and `scripts/xcode-toolchain.ts` (`sim-pool.sh`): an explicit `DEVELOPER_DIR` wins, otherwise the pinned app is used, and a missing app fails with a message instead of falling back to another Xcode. This covers `sim-pool.sh`, `ci-simulator.sh` (a runner image that keeps Xcode elsewhere exports `DEVELOPER_DIR`), `check-coverage.sh`, `ipad-shell-diagnostic.sh`, the TailscaleKit/GhosttyVt/asset-pack builders, and the oppi-dev skill's `install.sh`, `sim-lab.sh`, `ui-validate.sh`, and coverage script. A bare `xcodebuild` in your shell still uses whatever `DEVELOPER_DIR` you have; export `DEVELOPER_DIR=/Applications/Xcode-27.1.app/Contents/Developer` first. `plutil -p <Oppi.app>/Info.plist` should show `DTSDKName` `iphonesimulator27.1` (simulator) or `iphoneos27.1` (device).
+Every Oppi dev build lane builds with Xcode 27.1 (iOS 27.1 SDK, `/Applications/Xcode-27.1.app`) through `DEVELOPER_DIR`, never `xcode-select`. The default lives in `clients/apple/scripts/xcode-toolchain.txt` and is applied by `scripts/xcode-toolchain.sh` (shell lanes) and `scripts/xcode-toolchain.ts` (`sim-pool.sh`): an explicit `DEVELOPER_DIR` wins, otherwise the pinned app is used, and a missing app fails with a message instead of falling back to another Xcode. This covers `sim-pool.sh`, `ci-simulator.sh` (a runner image that keeps Xcode elsewhere exports `DEVELOPER_DIR`), `check-coverage.sh`, and the TailscaleKit/GhosttyVt/asset-pack builders. A bare `xcodebuild` in your shell still uses whatever `DEVELOPER_DIR` you have; export `DEVELOPER_DIR=/Applications/Xcode-27.1.app/Contents/Developer` first. `plutil -p <Oppi.app>/Info.plist` should show `DTSDKName` `iphonesimulator27.1` (simulator) or `iphoneos27.1` (device).
 
 iOS TestFlight archives (`scripts/release/apple/testflight.ts`) use that same pin for `xcodegen` and `xcodebuild`, and the command logs `xcodebuild -version` before it archives. Xcode Cloud images do not have `/Applications/Xcode-27.1.app`. `clients/apple/ci_scripts/ci_post_clone.sh` checks Apple's `CI_XCODE_CLOUD` variable (documented value `TRUE`; there is no `CI_WORKSPACE` variable) and exports `DEVELOPER_DIR` from `xcode-select -p`. The clone script fails unless `xcodebuild -version` reports Xcode 27.1. Set the workflow's Xcode version to 27.1 in App Store Connect (workflow Environment) before the next Xcode Cloud build. `clients/apple/scripts/release-mac.sh` is unchanged.
 
@@ -181,7 +181,7 @@ The whole suite in parallel from one build (what the pre-push gate runs):
 bun clients/apple/scripts/unit-shards.ts            # OPPI_UNIT_SHARDS or 3 shards
 ```
 
-It builds once without a slot, clones the products, and runs `test-without-building` in N pool slots at once. Shards 1..N-1 take `-only-testing` lists of top-level test types balanced by `clients/apple/scripts/unit-shard-seconds.json`; the last shard runs `-skip-testing` of everything the others run, so a type the source scan misses still runs. A shard that runs zero tests fails the whole run. A shard with failures reruns just its failed tests (at most 20, read from its xcresult) once on the same products: a test that passes on that rerun is reported `FLAKY` and does not block, and `$(git rev-parse --git-common-dir)/oppi/test-flakes.jsonl` counts the gates it flaked in; once it has flaked in two, quarantine it. `dev/testing/quarantine.json` lists quarantined tests (`[{"id": "OppiTests/Suite/test()", "owner": "...", "reason": "...", "addedAt": "YYYY-MM-DD", "expires": "YYYY-MM-DD"}]`): the shards skip them and a separate non-blocking run reports them; an entry past `expires` fails the run until its owner fixes the test, extends the entry, or deletes it. `--strict` (what `oppi-workflow.sh` release lanes run for `ios-unit`) ignores the quarantine and the rerun: every failure blocks. After suites move a lot, refresh the timings from a full single-slot run's log: `bun clients/apple/scripts/unit-shards.ts --record <pool log>`.
+It builds once without a slot, clones the products, and runs `test-without-building` in N pool slots at once. Shards 1..N-1 take `-only-testing` lists of top-level test types balanced by `clients/apple/scripts/unit-shard-seconds.json`; the last shard runs `-skip-testing` of everything the others run, so a type the source scan misses still runs. A shard that runs zero tests fails the whole run. A shard with failures reruns just its failed tests (at most 20, read from its xcresult) once on the same products: a test that passes on that rerun is reported `FLAKY` and does not block, and `$(git rev-parse --git-common-dir)/oppi/test-flakes.jsonl` counts the gates it flaked in; once it has flaked in two, quarantine it. `dev/testing/quarantine.json` lists quarantined tests (`[{"id": "OppiTests/Suite/test()", "owner": "...", "reason": "...", "addedAt": "YYYY-MM-DD", "expires": "YYYY-MM-DD"}]`): the shards skip them and a separate non-blocking run reports them; an entry past `expires` fails the run until its owner fixes the test, extends the entry, or deletes it. `--strict` (for release gates) ignores the quarantine and the rerun: every failure blocks. After suites move a lot, refresh the timings from a full single-slot run's log: `bun clients/apple/scripts/unit-shards.ts --record <pool log>`.
 
 Public fallback:
 
@@ -223,7 +223,7 @@ Do not run this command concurrently. It deliberately has no local lock and uses
 
 `check-coverage.sh` returns `2` only when collected coverage is below an enforced logic-layer threshold. Invalid or unavailable simulator-runner configuration returns `8`. Test, simulator, result-bundle, `xccov`, and report-analysis failures use other nonzero statuses. Swift package resolution returns `7` after both the restored-cache attempt and an empty-cache retry fail. A failed collection is not a coverage shortfall. The script prints package-resolution, build/test, report, and analysis wall times.
 
-The local pool gives a simulator boot two 120-second readiness waits by default. For a new simulator, the second wait continues the same first-boot data migration instead of erasing and restarting it. Set `OPPI_SIM_POOL_BOOT_TIMEOUT` to change each wait or `OPPI_SIM_POOL_BOOT_RETRIES` to change the number of additional waits. An already-booted pool simulator is reused instead of shutdown/boot, unless its last run was interrupted (canceled, stopped as hung, or its holder died without releasing the slot: the slot is released with an `interrupted` note, and the next run or claim boots it clean, because a killed test run can leave it broken, for example with dead audio), or its device environment carries E2E variables (`PI_E2E_*`, `OPPI_E2E_*`, `E2E_*`, `SECOND_E2E_*`): `simctl boot` turns the caller's `SIMCTL_CHILD_*` variables into device-level environment that survives until shutdown, so an E2E lane that boots a slot would otherwise leave every later run on it, unit tests included, starting the app in E2E mode (UIView animations off). The pool never passes the caller's `SIMCTL_CHILD_*` to its own `simctl` processes, and it probes a reused slot with `simctl spawn <udid> /usr/bin/env` and recycles (shutdown, clean boot) a contaminated one before the run, logging the variable names but not their values. If the probe itself fails, the slot is recycled. Raw `xcodebuild` on a pool device bypasses this; check `xcrun simctl getenv <udid> PI_E2E_INVITE_URL` first. After boot, `sim-pool.sh`, `ci-simulator.sh`, and `sim-lab.sh` disable unused background daemons (Siri extras, Spotlight, iCloud, PosterBoard, and similar) unless `OPPI_SIM_SLIM=0`. Those overrides persist across reboot and are reapplied after hang-recovery erase. Live Activities, speech, Photos, push, and universal links stay enabled. Maps navigation (`com.apple.navd`) also stays enabled: a missing navigationService can make the Maps widget retry and flood live diagnostics on iOS 27.2. Older slim devices with navd disabled are migrated by restoring that override and rebooting only the supplied device before tests; enabling the service in an already-spinning widget session is not sufficient. The already-slim fast path requires navd not be disabled, so the migration runs once per affected device. CI never creates or erases a simulator; it still slims the existing runner device. Pool simulators stay booted after a run until the idle reaper (see [Idle reaping and the booted ceiling](#idle-reaping-and-the-booted-ceiling)) shuts them down; set `OPPI_SIM_POOL_KEEP_BOOTED=0` to shut them down right away, `OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1` to recycle before xcodebuild, or `./scripts/sim-pool.sh shutdown-idle` to stop every unused pool device now. Slot exclusion is Darwin `flock(2)` on a stable `$OPPI_SIM_POOL_LOCK_DIR/slot-N.lock` inode (never unlinked by the runner). Creation is not ownership. Persist `in-flight` / `uncertain` / `reusable` under flock before mutation. A dead wrapper PID does not authorize reuse by itself. Leased commands start behind a stdin gate and do not exec until the child is registered and its PGID is persisted (`flock-v2` / `gated-v1`). Parent-pipe EOF or publication failure prevents execution. Next acquire may reclaim a gated `in-flight` or `uncertain` lease when recorded groups exist and are idle, or when the ledger is proven empty (`publishedCount` 0 and not `publishing`). Legacy `flock-v1` `in-flight` records stay fail-closed, including idle pgids. Empty `flock-v1` pgids stay fail-closed. `uncertain` `flock-v1` reclaims only when recorded groups exist and are idle. Summary/`xcresulttool` failures do not quarantine a slot. Legacy `$LOCK_DIR/slot-N/` directories are skipped, not reaped. `shutdown-idle` and `prune-cache` follow the same prevent-first lease as `run`: they persist `in-flight` under flock, record child process groups, and do not leave a gated slot permanently quarantined after a proven-empty ledger. `shutdown-idle` rechecks `Booted` as device state and holds the lease through `simctl shutdown`. Killing `xcrun` does not mean CoreSimulator finished. Failed list/recheck/shutdown is reported. Hang detection (`OPPI_SIM_POOL_SILENCE_TIMEOUT`, default 180 seconds) counts log growth, DerivedData directory mtime, and CPU use of xcodebuild's process tree as progress. Long Swift compiles and module emits can print nothing for minutes, and the compilers run as xcodebuild's descendants in their own process groups, so only the tree CPU (at least a quarter of a core) keeps them alive. CPU alone extends a run for at most five silence windows without log or DerivedData progress, and heartbeats show `alive-on-cpu-only=<seconds>` meanwhile. A run idle on all three signals is killed and retried after a simulator recovery, unless its log shows a Swift runtime crash (`Fatal error: ...`): the host would crash the same way, so the run fails at once and the summary prints the crash line. If the log never reaches `Resolve Package Graph`, sim-pool samples xcodebuild once (`sample <pid> 3`, stored in the attempt JSON and summary), prints that xcodebuild stalled before opening the project, and fails without erasing or retrying (likely another process such as Xcode.app holding the project). A finished test run stops waiting for xcodebuild after `OPPI_SIM_POOL_COMPLETION_TIMEOUT` (30 seconds) and keeps its result without a retry: the Swift Testing unit lane after `✔/✘ Test run with N tests`, and a single-bundle XCTest run of the `Oppi` or `OppiUnitTests` scheme (UI and E2E lanes) after its one `Test Suite 'Selected tests'|'All tests' passed|failed` result. Pool `xcodebuild` injects `COMPILER_INDEX_STORE_ENABLE=NO` unless the command already sets that setting or `OPPI_SIM_POOL_INDEX_STORE=1`. A matching `Oppi-Pool-N` must use the configured runtime and device type. `run` builds outside the simulator slots: every build goes to one DerivedData per checkout (`clients/apple/.build/dd`) for a generic arm64 simulator, under an exclusive checkout lock (`.build/dd.lock`) and one of the machine-wide `scripts/heavy.sh` `xcode-build` slots (`OPPI_HEAVY_XCODE_BUILD`, default 2). `build` and `build-for-testing` never take a simulator. A `test` run builds (no slot), clones the products into `.build/runs/<run>/Build/Products` (an APFS clone, instant and free until the checkout rebuilds), and leases a slot only for `test-without-building -xctestrun` on that clone with the caller's `-only-testing`/`-skip-testing`/`-resultBundlePath` and other test flags; the summary's `derived_data_path` is that run directory and its `build_phase` names the build log. So every slot and device profile (iPhone, iPad, Duo) reuses one build, and another run in the same checkout can rebuild while these tests run. A caller's own `test-without-building` runs against `.build/dd` under a shared checkout lock, or against its `-xctestrun`. Pool builds share one compilation cache per Xcode across every checkout (`~/Library/Caches/oppi-xcode/<Xcode>/`: a CAS capped at 40 GB, a module cache, and SwiftPM checkouts per `Package.resolved` hash, resolved once under a lock), with prefix mapping, so a fresh worktree at a commit any checkout already built compiles mostly from cache; a change inside the `Oppi` module still recompiles that module. Prefix mapping compiles `#filePath` to `/^src/...`, so tests load files from their bundle (architecture rule `ios-test-no-source-paths`), and test phases get `TEST_RUNNER_OPPI_SOURCE_ROOT` (the checkout) for checkout-only artifacts. Xcode.app and other non-pool builds are unchanged. `OPPI_SIM_POOL_COMPILATION_CACHE=0` turns the cache off; `OPPI_XCODE_CACHE_DIR` moves it. `run` tries slots with a matching simulator first, then the rest; the slot lock decides which slot it gets. If `run` leases a mismatched `Oppi-Pool-N`, it deletes that simulator under the slot lock and recreates it. The default pool is six iPhone slots (`OPPI_SIM_POOL_COUNT`, slots 0-5). Dedicated iPad lanes should start at slot 8 or higher (`OPPI_SIM_POOL_SLOT_START`).
+The local pool gives a simulator boot two 120-second readiness waits by default. For a new simulator, the second wait continues the same first-boot data migration instead of erasing and restarting it. Set `OPPI_SIM_POOL_BOOT_TIMEOUT` to change each wait or `OPPI_SIM_POOL_BOOT_RETRIES` to change the number of additional waits. An already-booted pool simulator is reused instead of shutdown/boot, unless its last run was interrupted (canceled, stopped as hung, or its holder died without releasing the slot: the slot is released with an `interrupted` note, and the next run or claim boots it clean, because a killed test run can leave it broken, for example with dead audio), or its device environment carries E2E variables (`PI_E2E_*`, `OPPI_E2E_*`, `E2E_*`, `SECOND_E2E_*`): `simctl boot` turns the caller's `SIMCTL_CHILD_*` variables into device-level environment that survives until shutdown, so an E2E lane that boots a slot would otherwise leave every later run on it, unit tests included, starting the app in E2E mode (UIView animations off). The pool never passes the caller's `SIMCTL_CHILD_*` to its own `simctl` processes, and it probes a reused slot with `simctl spawn <udid> /usr/bin/env` and recycles (shutdown, clean boot) a contaminated one before the run, logging the variable names but not their values. If the probe itself fails, the slot is recycled. Raw `xcodebuild` on a pool device bypasses this; check `xcrun simctl getenv <udid> PI_E2E_INVITE_URL` first. After boot, `sim-pool.sh` and `ci-simulator.sh` disable unused background daemons (Siri extras, Spotlight, iCloud, PosterBoard, and similar) unless `OPPI_SIM_SLIM=0`. Those overrides persist across reboot and are reapplied after hang-recovery erase. Live Activities, speech, Photos, push, and universal links stay enabled. Maps navigation (`com.apple.navd`) also stays enabled: a missing navigationService can make the Maps widget retry and flood live diagnostics on iOS 27.2. Older slim devices with navd disabled are migrated by restoring that override and rebooting only the supplied device before tests; enabling the service in an already-spinning widget session is not sufficient. The already-slim fast path requires navd not be disabled, so the migration runs once per affected device. CI never creates or erases a simulator; it still slims the existing runner device. Pool simulators stay booted after a run until the idle reaper (see [Idle reaping and the booted ceiling](#idle-reaping-and-the-booted-ceiling)) shuts them down; set `OPPI_SIM_POOL_KEEP_BOOTED=0` to shut them down right away, `OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1` to recycle before xcodebuild, or `./scripts/sim-pool.sh shutdown-idle` to stop every unused pool device now. Slot exclusion is Darwin `flock(2)` on a stable `$OPPI_SIM_POOL_LOCK_DIR/slot-N.lock` inode (never unlinked by the runner). Creation is not ownership. Persist `in-flight` / `uncertain` / `reusable` under flock before mutation. A dead wrapper PID does not authorize reuse by itself. Leased commands start behind a stdin gate and do not exec until the child is registered and its PGID is persisted (`flock-v2` / `gated-v1`). Parent-pipe EOF or publication failure prevents execution. Next acquire may reclaim a gated `in-flight` or `uncertain` lease when recorded groups exist and are idle, or when the ledger is proven empty (`publishedCount` 0 and not `publishing`). Legacy `flock-v1` `in-flight` records stay fail-closed, including idle pgids. Empty `flock-v1` pgids stay fail-closed. `uncertain` `flock-v1` reclaims only when recorded groups exist and are idle. Summary/`xcresulttool` failures do not quarantine a slot. Legacy `$LOCK_DIR/slot-N/` directories are skipped, not reaped. `shutdown-idle` and `prune-cache` follow the same prevent-first lease as `run`: they persist `in-flight` under flock, record child process groups, and do not leave a gated slot permanently quarantined after a proven-empty ledger. `shutdown-idle` rechecks `Booted` as device state and holds the lease through `simctl shutdown`. Killing `xcrun` does not mean CoreSimulator finished. Failed list/recheck/shutdown is reported. Hang detection (`OPPI_SIM_POOL_SILENCE_TIMEOUT`, default 180 seconds) counts log growth, DerivedData directory mtime, and CPU use of xcodebuild's process tree as progress. Long Swift compiles and module emits can print nothing for minutes, and the compilers run as xcodebuild's descendants in their own process groups, so only the tree CPU (at least a quarter of a core) keeps them alive. CPU alone extends a run for at most five silence windows without log or DerivedData progress, and heartbeats show `alive-on-cpu-only=<seconds>` meanwhile. A run idle on all three signals is killed and retried after a simulator recovery, unless its log shows a Swift runtime crash (`Fatal error: ...`): the host would crash the same way, so the run fails at once and the summary prints the crash line. If the log never reaches `Resolve Package Graph`, sim-pool samples xcodebuild once (`sample <pid> 3`, stored in the attempt JSON and summary), prints that xcodebuild stalled before opening the project, and fails without erasing or retrying (likely another process such as Xcode.app holding the project). A finished test run stops waiting for xcodebuild after `OPPI_SIM_POOL_COMPLETION_TIMEOUT` (30 seconds) and keeps its result without a retry: the Swift Testing unit lane after `✔/✘ Test run with N tests`, and a single-bundle XCTest run of the `Oppi` or `OppiUnitTests` scheme (UI and E2E lanes) after its one `Test Suite 'Selected tests'|'All tests' passed|failed` result. Pool `xcodebuild` injects `COMPILER_INDEX_STORE_ENABLE=NO` unless the command already sets that setting or `OPPI_SIM_POOL_INDEX_STORE=1`. A matching `Oppi-Pool-N` must use the configured runtime and device type. `run` builds outside the simulator slots: every build goes to one DerivedData per checkout (`clients/apple/.build/dd`) for a generic arm64 simulator, under an exclusive checkout lock (`.build/dd.lock`) and one of the machine-wide `scripts/heavy.sh` `xcode-build` slots (`OPPI_HEAVY_XCODE_BUILD`, default 2). `build` and `build-for-testing` never take a simulator. A `test` run builds (no slot), clones the products into `.build/runs/<run>/Build/Products` (an APFS clone, instant and free until the checkout rebuilds), and leases a slot only for `test-without-building -xctestrun` on that clone with the caller's `-only-testing`/`-skip-testing`/`-resultBundlePath` and other test flags; the summary's `derived_data_path` is that run directory and its `build_phase` names the build log. So every slot and device profile (iPhone, iPad, Duo) reuses one build, and another run in the same checkout can rebuild while these tests run. A caller's own `test-without-building` runs against `.build/dd` under a shared checkout lock, or against its `-xctestrun`. Pool builds share one compilation cache per Xcode across every checkout (`~/Library/Caches/oppi-xcode/<Xcode>/`: a CAS capped at 40 GB, a module cache, and SwiftPM checkouts per `Package.resolved` hash, resolved once under a lock), with prefix mapping, so a fresh worktree at a commit any checkout already built compiles mostly from cache; a change inside the `Oppi` module still recompiles that module. Prefix mapping compiles `#filePath` to `/^src/...`, so tests load files from their bundle (architecture rule `ios-test-no-source-paths`), and test phases get `TEST_RUNNER_OPPI_SOURCE_ROOT` (the checkout) for checkout-only artifacts. Xcode.app and other non-pool builds are unchanged. `OPPI_SIM_POOL_COMPILATION_CACHE=0` turns the cache off; `OPPI_XCODE_CACHE_DIR` moves it. `run` tries slots with a matching simulator first, then the rest; the slot lock decides which slot it gets. If `run` leases a mismatched `Oppi-Pool-N`, it deletes that simulator under the slot lock and recreates it. The default pool is six iPhone slots (`OPPI_SIM_POOL_COUNT`, slots 0-5). Dedicated iPad lanes should start at slot 8 or higher (`OPPI_SIM_POOL_SLOT_START`).
 
 A completed test run is not retried when xcodebuild stalls during finalization. The pool recognizes either one nonempty Swift Testing terminal result after XCTest completion (`OppiUnitTests` / `OppiTests`), or one nonempty top-level XCTest suite result, skipped tests allowed, for a single XCTest bundle of the `Oppi` or `OppiUnitTests` scheme (UI and E2E lanes). It waits up to 30 seconds (`OPPI_SIM_POOL_COMPLETION_TIMEOUT`, positive seconds), then stops only its owned xcodebuild process group. After proven cleanup it returns the test result (0 for pass, 65 for test failure), while preserving any real nonzero xcodebuild exit. Attempt and final JSON include `completion_hang_detected`, `test_completion` (counts, issues, summary), and the raw `xcodebuild_exit_code` / `xcodebuild_signal`. `hang_detected` remains true. Result bundles and coverage can be incomplete; consumers that require those artifacts must still validate them. Partial/zero-test, mixed-bundle, parallel, repeated, or cancelled runs do not use this recovery. A pre-test or unfinished hang that reached `Resolve Package Graph` keeps the ordinary hang/retry path, and uncertain process cleanup never passes.
 
@@ -236,7 +236,7 @@ Parked worktrees keep Apple DerivedData in `clients/apple/.build/dd` until the t
 ./clients/apple/scripts/sim-pool.sh prune-cache --apply --keep-slots 0-5
 ```
 
-Dry-run is the default. Classification still lists numeric `pool-*` directories, `derived-data-*`, and one-off `mac-*` experiment dirs. It keeps `logs`, `videos`, `mac-tests`, `mac-debug`, `pre-push-mac`, `ci`, `privacy`, and `oppi-dev`. `--apply` deletes `pool-*` only after acquiring that slot's flock lease. `derived-data-*` and `mac-*` are skipped on apply (no exclusive lease shared with raw `xcodebuild`). Busy, live, and legacy slot locks are skipped. Gated `in-flight` and `uncertain` reclaim when recorded groups are idle or the ledger is proven empty; flock-v1 `in-flight` stays fail-closed. A failed pool-dir delete does not permanently quarantine the slot. `--keep-slots 0-5` retains the default warm iPhone pool caches. The next simulator build in a deleted cache recompiles from scratch (typically minutes per slot, about 2 GB/slot). This does not remove the worktree. Run it in a parked tree to reclaim that tree only.
+Dry-run is the default. Classification still lists numeric `pool-*` directories, `derived-data-*`, and one-off `mac-*` experiment dirs. It keeps `logs`, `videos`, `mac-tests`, `mac-debug`, `pre-push-mac`, `ci`, and `privacy`. `--apply` deletes `pool-*` only after acquiring that slot's flock lease. `derived-data-*` and `mac-*` are skipped on apply (no exclusive lease shared with raw `xcodebuild`). Busy, live, and legacy slot locks are skipped. Gated `in-flight` and `uncertain` reclaim when recorded groups are idle or the ledger is proven empty; flock-v1 `in-flight` stays fail-closed. A failed pool-dir delete does not permanently quarantine the slot. `--keep-slots 0-5` retains the default warm iPhone pool caches. The next simulator build in a deleted cache recompiles from scratch (typically minutes per slot, about 2 GB/slot). This does not remove the worktree. Run it in a parked tree to reclaim that tree only.
 
 The tracked pre-push hook is `.githooks/pre-push`. It does not collect coverage; it runs the faster local checks described above. Install it into a clone's configured hook directory after reviewing any existing local hook:
 
@@ -267,53 +267,53 @@ install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
 
 ### iOS E2E tests
 
-Use the Oppi workflow wrapper. It starts a paired E2E server, writes invite/device-token files under `/tmp`, launches XCUITests, and cleans up the server.
+Use `clients/apple/scripts/e2e.sh`. It starts a paired E2E server (Docker by default, a native local process with `--native`), writes invite/device-token files under `/tmp`, launches XCUITests, and cleans up the server.
 
-The wrapper pairs a bootstrap device for the lab API before the app, and the app's invite outlives the 90-second short-invite window so it survives a cold build. The server therefore holds the app's pairing for an approval. `server/scripts/e2e-pairing-approver.mjs` runs beside the tests as the bootstrap device and approves through `/auth/pairing-approvals`, so the approval policy stays as shipped. Its log is `pairing-approver.log` in the run artifact directory.
+The script pairs a bootstrap device for the lab API before the app, and the app's invite outlives the 90-second short-invite window so it survives a cold build. The server therefore holds the app's pairing for an approval. `server/scripts/e2e-pairing-approver.mjs` runs beside the tests as the bootstrap device and approves through `/auth/pairing-approvals`, so the approval policy stays as shipped. Its log is `pairing-approver.log` in the run artifact directory.
 
 Parent-facing strict UI verification with source-bound receipts is `bun clients/apple/scripts/qa-verify.ts`. See [qa-verification.md](qa-verification.md). That CLI always sets `OPPI_SIM_POOL_HANG_RETRIES=0` and does not claim Jev, speed, or terminal-mirror coverage.
 
 ```bash
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test
+clients/apple/scripts/e2e.sh
 
 # Faster local iteration, no Docker
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native
+clients/apple/scripts/e2e.sh --native
 
 # Focus one E2E test
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native \
+clients/apple/scripts/e2e.sh --native \
   --only-testing OppiE2ETests/WebSocketLifecycleE2ETests/testNavigationKeepsWorkspaceListOnHTTPAndUsesBoundSessionStreams
 
 # Preferred release gate: focused chat/composer/ask/attachment/session coverage
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group gate
+clients/apple/scripts/e2e.sh --group gate
 
 # Slower extended coverage batch for pre-release or nightly coverage
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group extended
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group recovery
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group history
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group quick-session
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group extension-attention
+clients/apple/scripts/e2e.sh --group extended
+clients/apple/scripts/e2e.sh --group recovery
+clients/apple/scripts/e2e.sh --group history
+clients/apple/scripts/e2e.sh --group quick-session
+clients/apple/scripts/e2e.sh --group extension-attention
 
 # Broader/lab follow-up groups
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group regression
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group media --record-video=always
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group screenshot
+clients/apple/scripts/e2e.sh --group regression
+clients/apple/scripts/e2e.sh --group media --record-video=always
+clients/apple/scripts/e2e.sh --group screenshot
 ```
 
-`sim-test` writes E2E run artifacts under `.internal/reports/e2e-runs/<timestamp>/` by default. Set `E2E_ARTIFACT_DIR` or `E2E_DOCKER_LOG_DIR` to an absolute or repo-relative path when a release lane needs repeatable artifact collection. `OPPI_E2E_GROUP` and the release wrapper's `OPPI_RELEASE_E2E_GROUP` select the same groups. `gate`/`release-gate`/`smoke` run `ReleaseGateE2ETests` as the preferred blocking lane. `extended` runs the gate plus recovery, history, quick-session, and extension-attention batches for deeper pre-release coverage. `all` still means the historical broad `OppiE2ETests` suite, and `full-regression` keeps broad coverage for explicit slower checks.
+`e2e.sh` writes E2E run artifacts under `.internal/reports/e2e-runs/<timestamp>/` by default. Set `E2E_ARTIFACT_DIR` or `E2E_DOCKER_LOG_DIR` to an absolute or repo-relative path when a release lane needs repeatable artifact collection. `OPPI_E2E_GROUP` selects the same groups as `--group`. `gate`/`release-gate`/`smoke` run `ReleaseGateE2ETests` as the preferred blocking lane. `extended` runs the gate plus recovery, history, quick-session, and extension-attention batches for deeper pre-release coverage. `all` still means the historical broad `OppiE2ETests` suite, and `full-regression` keeps broad coverage for explicit slower checks.
 
 Focused checks for the sessions-first root and direct share-extension send:
 
 ```bash
 # All Sessions root, workspace drawer, workspace deep-link intake, scoped controls, and back navigation
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native \
+clients/apple/scripts/e2e.sh --native \
   --only-testing OppiE2ETests/IPhoneSessionsFirstScreenshotE2ETests
 
 # Safari share sheet → in-extension workspace selection and direct session send
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native \
+clients/apple/scripts/e2e.sh --native \
   --only-testing OppiE2ETests/ShareSheetQuickSessionE2ETests
 
 # Main-app Quick Session workspace/model/send flow
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --group quick-session
+clients/apple/scripts/e2e.sh --group quick-session
 ```
 
 Focused unit coverage for navigation routing, Shortcuts text/image intake, direct share sending, credential migration, MetricKit previous-process context, and the main-thread watchdog:
@@ -352,7 +352,7 @@ The case owns the rest:
 
 #### Durable sessions and the faux model
 
-Two opt-in `sim-test` switches, both native-only. Without them every E2E keeps classic sessions on Haiku.
+Two opt-in `e2e.sh` switches, both native-only. Without them every E2E keeps classic sessions on Haiku.
 
 | Switch | Effect |
 | --- | --- |
@@ -363,7 +363,7 @@ The faux model is pi-ai's faux provider with a fixed script (`server/src/e2e-fau
 
 ```bash
 # Durable reply streams through the conversation stream replica, lands once, and survives reconnects
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native --durable --faux-model \
+clients/apple/scripts/e2e.sh --native --durable --faux-model \
   --only-testing OppiE2ETests/DurableSessionE2ETests
 ```
 
@@ -375,40 +375,21 @@ The second test queues a follow-up and a steer (`chat.busyMode` picker) while th
 
 Use paired-server simulator labs when the UI depends on pairing, server toolbar state, workspace catalog refresh, session counts, auth, model-backed sessions, or any real server state. Use `IPhoneSessionsFirstScreenshotE2ETests` for the All Sessions root and workspace drawer. The existing `workspace-home/*` lab scenarios open one workspace's scoped detail. Use `--screenshot-preview` only for isolated mock component visuals.
 
-The lab wrapper can run one-shot XCUITest scenarios, record simulator video, or boot a persistent simulator/server pair for manual driving:
-
-```bash
-# List scenarios
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-lab list
-
-# One-shot scenario with screenshots + video + manifest
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-lab run \
-  --scenario workspace-home/wrapping --native --record-video
-
-# Persistent manual lab, hooked to local model/server; stop with sim-lab teardown
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-lab boot \
-  --scenario workspace-home/dense-counts --record-video --replace
-
-# Manual capture while persistent lab is running
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-lab screenshot --name after-row-tweak
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-lab teardown
-```
+Run a lab scenario as an ordinary E2E filter with `clients/apple/scripts/e2e.sh --native --only-testing OppiE2ETests/<Suite>/<test>`; `--record-video=always` keeps simulator video.
 
 Workspace-scoped lab files:
 
-- Lab wrapper: `~/.pi/agent/skills/oppi-dev/scripts/apple/sim-lab.sh`
 - Shared lab fixture/API/screenshot helpers: `clients/apple/OppiE2ETests/E2ELabFixtures.swift`
 - Workspace-home scenarios: `clients/apple/OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests.swift`
-- One-shot run artifacts: `.pi/e2e-lab/runs/<timestamp>-<scenario>/manifest.json`
 - XCTest screenshots: `/tmp/oppi-screenshots/*.png`
 
-Run the current workspace-home scenarios directly through XCUITest when you do not need manifest/video collection:
+Run the current workspace-home scenarios:
 
 ```bash
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native \
+clients/apple/scripts/e2e.sh --native \
   --only-testing OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests/testWorkspaceHomeWrappingScreenshotLab
 
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native \
+clients/apple/scripts/e2e.sh --native \
   --only-testing OppiE2ETests/WorkspaceHomeScreenshotLabE2ETests/testWorkspaceHomeDenseCountsScreenshotLab
 ```
 
@@ -422,17 +403,9 @@ To add a scenario:
 
 ### Screenshot preview UI tests
 
-Mock screenshot-preview surfaces launch the app with `--screenshot-preview` for isolated visual capture (`ui-validate` and manual QA), not for paired-server workspace behavior.
+Mock screenshot-preview surfaces launch the app with `--screenshot-preview` for isolated visual capture and manual QA, not for paired-server workspace behavior.
 
-Post-run UI checks belong here or on a `sim-lab` scenario, not in a new XCUITest. Agent procedure lives in `.pi/skills/oppi-dev/references/local-build.md`. This file owns the launch command and artifact paths.
-
-```bash
-# Isolated surface dump: accessibility tree + audit + one PNG
-~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh ui-validate \
-  --screen mermaid-rendering
-```
-
-Artifacts: `.pi/ui-validate/<timestamp>-<screen>/{tree.md,audit.md,screen.png,manifest.json}` from `XCUIElement.snapshot()` and `performAccessibilityAudit`. Review those files. Do not add another preview test method just to look at a screen; add a fixture to an existing named preview instead.
+Post-run UI checks belong on an existing preview or paired-server lab scenario, not in a new XCUITest. Do not add another preview test method just to look at a screen; add a fixture to an existing named preview instead.
 
 The workspace code editor has `workspace-file-editor` (Swift), `workspace-file-editor-markdown`, and `workspace-file-editor-vim`: the production editor over an offline session, focused so the key bar and status line show. `TEST_RUNNER_SCREENSHOT_EDITOR_KEYS=wVj` (xcodebuild strips the prefix) types keys through the keyboard's `insertText` path first, so the Vim screen can show Visual Line or any other state.
 

@@ -1,6 +1,6 @@
 # Tracked release operations
 
-These scripts contain release-critical logic that must remain reviewable from a fresh Oppi checkout. Chen's personal `oppi-dev` skill can provide shorter wrappers, but those wrappers must delegate to these files rather than duplicate their behavior.
+These scripts contain release-critical logic that must remain reviewable from a fresh Oppi checkout. Any wrapper around them must delegate to these files rather than duplicate their behavior.
 
 - `preflight.ts` — verifies component versions, Apple build numbers, What's New, release-note readiness, and tracked release paths.
 - `release-notes.ts` — creates and updates the internal changelog. TestFlight What to Test remains a separate brief summary.
@@ -13,7 +13,8 @@ For an internal candidate, run these commands in order:
 
 ```bash
 bun scripts/release/preflight.ts --build-number 45 --whats-new-from-build 43 --server-version 0.46.0 --mirror-version 0.46.0
-# Run the reviewed release-candidate gates through the personal wrapper.
+# Run the release-candidate gates: server `npm run test:gate:ci-coverage`,
+# `clients/apple/scripts/check-coverage.sh`, and the E2E groups in dev/testing/apple.md.
 # After explicit upload approval:
 bun scripts/release/apple/testflight.ts --build-number 45
 bun scripts/release/apple/testflight.ts sync-internal 45

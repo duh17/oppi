@@ -2,7 +2,7 @@
 # Fast pre-push gate. Local work proves compilation/static correctness and runs
 # change-related server tests. No CI runs full coverage: run
 # `cd server && npm run test:gate:ci-coverage` and
-# `clients/apple/scripts/check-coverage.sh`, or `oppi-workflow.sh release-all`.
+# `clients/apple/scripts/check-coverage.sh`.
 #
 # Bypass: git push --no-verify
 

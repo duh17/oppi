@@ -4,7 +4,7 @@ Part of [Testing Guide](README.md). Mac app checks, only when the work names Mac
 
 ## Mac
 
-Mac is an Apple client target (`OppiMac` / `OppiMacTests`). Use this section for repository-owned Mac build, test, architecture, and visual-evidence commands. The local debug-app product loop lives in the `oppi-dev` skill; do not copy that command catalog here.
+Mac is an Apple client target (`OppiMac` / `OppiMacTests`). Use this section for repository-owned Mac build, test, architecture, and visual-evidence commands.
 
 Do not use `sim-pool.sh` for Mac. Reuse `.build/mac-tests` for unit tests and `.build/mac-debug` for the debug app. Do not create a new `mac-*` or `derived-data-*` path per experiment. Local unsigned Debug builds set `CODE_SIGNING_ALLOWED=NO`.
 
