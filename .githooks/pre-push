@@ -518,20 +518,29 @@ fi
 # together, overlapping the server lane. A failed iOS build skips both.
 # Keep run_cached out of || / && / if-tests here: they disable set -e inside its nested
 # shell (see run_cached). The background subshell inherits set -e, so a failed Apple build
-# ends this function with that status before Mac or the unit tests start; a failed unit
-# lane still waits for the Mac compile (EXIT trap) and a failed Mac compile fails `wait`.
+# ends this function with that status before Mac or the unit tests start. A failed unit lane
+# is captured with set +e / status=$? (like run_cached does), then waits for the Mac compile
+# and returns the unit status. An EXIT trap cannot do that wait: it runs after the function
+# frame is gone, so a `local` PID is already unbound under set -u. A failed Mac compile
+# after passing unit tests fails `wait`.
 apple_then_mac() {
   run_cached apple run_apple_gate
-  local mac_pid=""
+  local mac_pid="" unit_status=0
   if [[ "$MAC_CHANGED" -eq 1 ]]; then
     run_cached mac run_mac_gate & mac_pid="$!"
-    trap '[[ -z "$mac_pid" ]] || wait "$mac_pid" 2>/dev/null' EXIT
   fi
+  set +e
   run_cached ios-unit run_ios_unit_gate
+  unit_status=$?
+  set -e
+  if [[ "$unit_status" -ne 0 ]]; then
+    # The unit failure is the lane's status; Mac's own result is reported by its log.
+    [[ -z "$mac_pid" ]] || wait "$mac_pid" || true
+    return "$unit_status"
+  fi
   # An if-body, not an || list: set -e must see a failed wait.
   if [[ -n "$mac_pid" ]]; then
     wait "$mac_pid"
-    mac_pid=""
   fi
 }
 
