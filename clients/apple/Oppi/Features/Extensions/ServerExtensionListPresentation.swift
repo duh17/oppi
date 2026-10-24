@@ -69,6 +69,22 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
         }
     }
 
+    /// The host file Edit with Oppi changes, or nil when the extension has none.
+    /// Only a single file the user owns qualifies: the server resolves a Pi
+    /// extension's entry file, so a package (installed under the package
+    /// manager, rewritten on update), a built-in, a directory, and an unknown
+    /// kind have no file to revise. The path must be absolute and one line, as
+    /// the Context panel requires of a host extension file.
+    static func editablePath(for resource: ServerExtensionSummary) -> String? {
+        guard resource.kind == .file,
+              resource.provenance.kind != .package,
+              resource.provenance.kind != .builtIn,
+              let path = resource.path,
+              path.hasPrefix("/"),
+              !path.contains(where: \.isNewline) else { return nil }
+        return path
+    }
+
     static func accessibilityLabel(for resource: ServerExtensionSummary) -> String {
         var components = [resource.name]
         if let packageName = resource.packageName {

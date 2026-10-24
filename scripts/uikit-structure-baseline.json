@@ -256,9 +256,6 @@
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolCallDocumentPreview.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Extensions/ServerExtensionDetailView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Extensions/ServerExtensionsView.swift": {
       "import SwiftUI": 1
     },

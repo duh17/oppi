@@ -6,8 +6,10 @@ import SwiftUI
 // sidebar, a workspace's sessions, a session's chat
 // (`ChatRouteViewController`), Files (`FileBrowserViewController`), a linked
 // file (`WorkspaceLinkedFileViewController`), a Skill file
-// (`ServerSkillFileViewController`), SSH Terminal's host list, Schedules,
-// Agents, and App Settings (`SettingsRootViewController`) are UIKit screens.
+// (`ServerSkillFileViewController`), an Extension's detail
+// (`ServerExtensionDetailViewController`), SSH Terminal's host list,
+// Schedules, Agents, and App Settings (`SettingsRootViewController`) are UIKit
+// screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -65,6 +67,9 @@ enum ShellRouteScreens {
         if case .serverSkillFile(let target) = route {
             return ServerSkillFileViewController(target: target, root: root)
         }
+        if case .serverResourceDetail(let target) = route, target.kind == .extension {
+            return ServerExtensionDetailViewController(target: target, root: root)
+        }
         return HostFactory.screen(root: root, bars: route.bars) {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
         }
@@ -108,6 +113,8 @@ enum ShellRouteScreens {
         }
         // The sidebar reads its own state.
         if screen is WorkspaceSidebarViewController { return }
+        // An Extension's detail reads its own state.
+        if screen is ServerExtensionDetailViewController { return }
         if let detail = screen as? WorkspaceDetailViewController {
             if case .workspace(let target) = route {
                 detail.update(workspace: target.workspace)
@@ -197,7 +204,10 @@ struct ShellRouteView: View {
         case .modelProviders(let target):
             ModelProvidersScopedDestinationView(target: target)
         case .serverResourceDetail(let target):
-            ServerResourceDetailDestinationView(target: target)
+            switch target.kind {
+            case .skill: ServerSkillDetailScopedDestinationView(target: target)
+            case .extension: mountedByUIKitScreen
+            }
         case .serverSkillBrowser(let target):
             ServerSkillBrowserScopedDestinationView(target: target)
         case .sessionThread(let target):

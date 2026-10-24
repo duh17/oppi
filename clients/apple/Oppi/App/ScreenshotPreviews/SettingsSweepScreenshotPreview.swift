@@ -58,7 +58,8 @@ struct SettingsSweepScreenshotPreview: View {
         ),
         ServerExtensionSummary(
             id: "workflow", name: "workflow", description: "Coordinates local automation.",
-            kind: .file, provenance: .init(kind: .piAgent, label: "~/.pi/agent/extensions"), path: nil,
+            kind: .file, provenance: .init(kind: .piAgent, label: "~/.pi/agent/extensions"),
+            path: "/Users/preview/.pi/agent/extensions/workflow.ts",
             state: .on, loadError: nil, warnings: [], isRemovable: true
         ),
         ServerExtensionSummary(
@@ -233,6 +234,15 @@ struct SettingsSweepScreenshotPreview: View {
         case "agents-pi", "agents-pi-file":
             RouterPreviewControllerStack(root: root) { PiAgentDetailViewController(root: root) }
                 .ignoresSafeArea()
+        case "extension-detail":
+            RouterPreviewControllerStack(root: root) { [server, root, connection] in
+                ServerExtensionDetailViewController(
+                    target: .init(serverId: server.id, kind: .extension, resourceId: "workflow"),
+                    root: root,
+                    connection: connection
+                )
+            }
+            .ignoresSafeArea()
         case "skill-file-review":
             skillFilePage
         case "skill-file-edit":
@@ -289,8 +299,6 @@ struct SettingsSweepScreenshotPreview: View {
         case "dictionary-workspace": DictationDictionaryView(workspaceId: "preview-ws")
         case "skill-detail":
             ServerSkillDetailView(target: .init(serverId: server.id, kind: .skill, resourceId: "release"))
-        case "extension-detail":
-            ServerExtensionDetailView(target: .init(serverId: server.id, kind: .extension, resourceId: "workflow"))
         default: TailnetSettingsView(previewProbes: Self.tailnetProbes)
         }
     }

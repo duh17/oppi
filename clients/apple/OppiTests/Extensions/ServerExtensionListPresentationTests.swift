@@ -152,14 +152,42 @@ struct ServerExtensionListPresentationTests {
         #expect(rendered?.state == .on)
     }
 
+    @Test func editWithOppiNeedsAUserOwnedEntryFile() {
+        let path = "/Users/chen/.pi/agent/extensions/workflow.ts"
+
+        #expect(ServerExtensionListPresentation.editablePath(
+            for: extensionRow(id: "workflow", name: "workflow", state: .on, path: path)
+        ) == path)
+        // A disabled or broken extension is still a file the user can revise.
+        #expect(ServerExtensionListPresentation.editablePath(
+            for: extensionRow(id: "broken", name: "broken", state: .error, path: path)
+        ) == path)
+
+        let hidden: [(String, ServerExtensionSummary)] = [
+            ("package", extensionRow(id: "p", name: "p", kind: .package, state: .on, path: "/opt/node_modules/p/index.js")),
+            ("package provenance", extensionRow(id: "q", name: "q", provenanceKind: .package, state: .on, path: path)),
+            ("built-in", extensionRow(id: "b", name: "b", kind: .builtIn, state: .on, path: "builtin:b")),
+            ("directory", extensionRow(id: "d", name: "d", kind: .directory, state: .on, path: "/Users/chen/.pi/agent/extensions/d")),
+            ("unknown kind", extensionRow(id: "u", name: "u", kind: .unknown, state: .on, path: path)),
+            ("no path", extensionRow(id: "n", name: "n", state: .on, path: nil)),
+            ("relative path", extensionRow(id: "r", name: "r", state: .on, path: "extensions/r.ts")),
+            ("multi-line path", extensionRow(id: "m", name: "m", state: .on, path: "/a.ts\n/b.ts")),
+        ]
+        for (reason, row) in hidden {
+            #expect(ServerExtensionListPresentation.editablePath(for: row) == nil, "\(reason)")
+        }
+    }
+
     private func extensionRow(
         id: String,
         name: String,
         description: String? = nil,
         kind: ServerExtensionKind = .file,
         provenance: String? = nil,
+        provenanceKind: ServerResourceProvenanceKind? = nil,
         state: ServerExtensionState,
-        loadError: String? = nil
+        loadError: String? = nil,
+        path: String? = nil
     ) -> ServerExtensionSummary {
         ServerExtensionSummary(
             id: id,
@@ -167,10 +195,10 @@ struct ServerExtensionListPresentationTests {
             description: description,
             kind: kind,
             provenance: ServerResourceProvenance(
-                kind: kind == .builtIn ? .builtIn : (kind == .package ? .package : .userSettings),
+                kind: provenanceKind ?? (kind == .builtIn ? .builtIn : (kind == .package ? .package : .userSettings)),
                 label: provenance ?? (kind == .builtIn ? "Built-in extension" : "Pi user settings")
             ),
-            path: nil,
+            path: path,
             state: state,
             loadError: loadError,
             warnings: [],

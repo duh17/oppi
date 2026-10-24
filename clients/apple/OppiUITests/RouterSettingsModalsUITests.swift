@@ -279,6 +279,15 @@ final class RouterSettingsModalsUITests: XCTestCase {
         assertGuidedSheet(opener: { edit.tap() }, title: "Revise release")
     }
 
+    /// An extension that is a user-owned file: its page offers Edit with Oppi,
+    /// which opens the guided composer for that extension.
+    func testExtensionDetailEditWithOppiOpensGuidedSheet() {
+        launch(page: "extension-detail")
+        let edit = app.buttons["server.extension.editWithOppi"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10), "Extension detail did not offer Edit with Oppi")
+        assertGuidedSheet(opener: { edit.tap() }, title: "Revise workflow")
+    }
+
     /// A server that edits Skill files: the one pencil offers the editor and
     /// Edit with Oppi. Typing saves through the Skill, and Done returns to the
     /// reader with the same menu.
