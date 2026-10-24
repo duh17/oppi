@@ -16,11 +16,12 @@
 //   OppiUITests/<Suite>[/<test>]    UI test filter; one `-scheme Oppi` run per --profile
 //                                   (iphone, ipad, duo; default iphone), profiles in parallel
 //   OppiE2ETests/<Suite>[/<test>]   paired-server E2E filter (clients/apple/scripts/e2e.sh --native)
-//   <Suite>[/<test>]                a bare iOS selector: runs as <Target>/<Suite>[/<test>] for the one
-//                                   test target (OppiTests, OppiUITests, OppiE2ETests) that declares
-//                                   <Suite>; the gate logs the resolution. Declared in no target, or
-//                                   in several (QAVerificationSupport is in both UI and E2E), is an
-//                                   error that lists the prefixed forms to choose from.
+//   <Suite>Tests[/<test>]           a bare iOS selector (suite name ending in Tests): runs as
+//                                   <Target>/<Suite>Tests[/<test>] for the one test target
+//                                   (OppiTests, OppiUITests, OppiE2ETests) that declares it; the gate
+//                                   logs the resolution. Declared in no target, or in several
+//                                   (QAVerificationSupport is in both UI and E2E), is an error that
+//                                   lists the prefixed forms to choose from. Other bare names are unknown.
 //   e2e-group:<name>                an E2E group (clients/apple/scripts/e2e.sh --group <name>)
 //   server/tests/<file>.test.ts     a server Vitest file (the `server/` prefix is optional)
 // Anything else fails the gate: a typo must not pass as "nothing to run". So does a suite
@@ -44,11 +45,16 @@ export type Plan = { lanes: Lane[]; errors: string[]; resolutions: string[] };
 /** `functionsOf`: functions declared in the files that declare or extend each type. */
 export type Declarations = { types: Set<string>; functionsOf: Map<string, Set<string>> };
 
+/** Swift string literals (kept) and comments (dropped), so prose in a comment is not a declaration. */
+const STRINGS_AND_COMMENTS = /"""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|(\/\*[\s\S]*?\*\/|\/\/[^\n]*)/g;
+const stripComments = (text: string) => text.replace(STRINGS_AND_COMMENTS, (all, comment) => (comment === undefined ? all : " "));
+
 /** Type and function names declared in a test target's Swift sources, for checking filters. */
 export function declarations(sources: string[]): Declarations {
   const types = new Set<string>();
   const functionsOf = new Map<string, Set<string>>();
-  for (const text of sources) {
+  for (const source of sources) {
+    const text = stripComments(source);
     const functions = [...text.matchAll(/\bfunc\s+(\w+)/g)].map((match) => match[1]);
     for (const match of text.matchAll(/\b(struct|class|enum|actor|extension)\s+(\w+)/g)) {
       if (match[1] !== "extension") types.add(match[2]);
@@ -67,9 +73,9 @@ const TARGET_SOURCES: Record<string, string[]> = {
   OppiE2ETests: ["OppiE2ETests", "QAVerificationSupport"],
 };
 
-/** A `<Suite>[/<test>]` selector with no target prefix; server paths and target names are not suites. */
-const BARE_IOS_SELECTOR = /^[A-Za-z_]\w*(?:\/[\w.()-]+)*$/;
-const NOT_BARE = new Set(["server", "tests", ...Object.keys(TARGET_SOURCES)]);
+/** A `<Suite>Tests[/<test>]` selector with no target prefix; the Tests suffix is the suite naming convention, so helper types never match. */
+const BARE_IOS_SELECTOR = /^[A-Za-z_]\w*Tests(?:\/[\w.()-]+)*$/;
+const NOT_BARE = new Set(Object.keys(TARGET_SOURCES));
 
 /**
  * Why a `Target/Suite[/Nested...][/test]` filter names nothing the target declares, or null.
@@ -109,7 +115,7 @@ export function planGate(
   const e2e: string[] = [];
   const groups: string[] = [];
   const server: string[] = [];
-  const resolutions: string[] = [];
+  const resolved: { filter: string; line: string }[] = [];
   const known = new Map<string, Declarations>();
   const declared = (target: string) => {
     if (!known.has(target)) known.set(target, declaredIn(target));
@@ -129,7 +135,7 @@ export function planGate(
       else if (owners.length > 1) errors.push(`ambiguous --test '${test}': declared in ${owners.length} test targets; use ${owners.map((target) => `'${target}/${test}'`).join(" or ")}`);
       else {
         const filter = `${owners[0]}/${test}`;
-        resolutions.push(`--test '${test}' resolved to ${filter}`);
+        resolved.push({ filter, line: `--test '${test}' resolved to ${filter}` });
         (owners[0] === "OppiTests" ? unit : owners[0] === "OppiUITests" ? ui : e2e).push(filter);
       }
     } else errors.push(`unknown --test '${test}'`);
@@ -137,10 +143,15 @@ export function planGate(
   for (const profile of profiles) {
     if (!PROFILES.has(profile)) errors.push(`unknown --profile '${profile}' (iphone, ipad, duo)`);
   }
+  const failed = new Set<string>();
   for (const filter of [...unit, ...ui, ...e2e]) {
     const problem = undeclaredFilter(filter, declared(filter.split("/")[0]));
-    if (problem) errors.push(`--test '${filter}': ${problem}`);
+    if (problem) {
+      errors.push(`--test '${filter}': ${problem}`);
+      failed.add(filter);
+    }
   }
+  const resolutions = resolved.filter(({ filter }) => !failed.has(filter)).map(({ line }) => line);
   const apple = join(worktree, "clients", "apple");
   const simPool = join(apple, "scripts", "sim-pool.sh");
   const e2eScript = join(apple, "scripts", "e2e.sh");

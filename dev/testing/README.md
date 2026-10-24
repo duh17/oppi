@@ -39,7 +39,7 @@ A merge queue or CI that lands batches of commits can gate a batch with two repo
    - `OppiTests/<Suite>[/<test>]`: one OppiUnitTests run on the iPhone pool.
    - `OppiUITests/<Suite>[/<test>]`: UI tests per `--profile`.
    - `OppiE2ETests/<Suite>[/<test>]`: paired-server E2E through `clients/apple/scripts/e2e.sh --native`.
-   - `<Suite>[/<test>]` (bare, no target prefix): runs as the prefixed form for the one test target that declares `<Suite>`, and the gate logs `--test '<Suite>' resolved to <Target>/<Suite>`. A suite no target declares is an error; a suite several targets declare (types in `QAVerificationSupport` are compiled into both UI and E2E) is an ambiguity error listing the prefixed forms to pick from.
+   - `<Suite>Tests[/<test>]` (bare, no target prefix; the suite name ends in `Tests`): runs as the prefixed form for the one test target that declares `<Suite>Tests`, and the gate logs `--test '<Suite>Tests' resolved to <Target>/<Suite>Tests`. A suite no target declares is an error; a suite several targets declare (types in `QAVerificationSupport` are compiled into both UI and E2E) is an ambiguity error listing the prefixed forms to pick from.
    - `e2e-group:<name>`: an E2E group through `clients/apple/scripts/e2e.sh --group <name>`.
    - `server/tests/<file>.test.ts`: a server Vitest file (the `server/` prefix is optional).
 

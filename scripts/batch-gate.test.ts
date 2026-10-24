@@ -5,10 +5,16 @@ import { join } from "node:path";
 import { declarations, executedTests, planGate } from "./batch-gate";
 
 const sources: Record<string, string[]> = {
-  OppiTests: ["struct FooTests { @Test func a() {} }\n", "struct BarTests { @Test func baz() {} }\n"],
-  // SharedSupport stands in for QAVerificationSupport, which both UI and E2E targets compile.
-  OppiUITests: ["final class ChatRoutesUITests: XCTestCase { func testOpen() {} }\n", "struct SharedSupport {}\n"],
-  OppiE2ETests: ["final class ChatE2ETests: E2ETestCase {}\n", "extension ChatE2ETests { func testSend() {} }\n", "struct SharedSupport {}\n"],
+  OppiTests: [
+    "struct FooTests { @Test func a() {} }\n",
+    "struct BarTests { @Test func baz() {} }\n",
+    // A comment is not a declaration: APIClient is only mocked here; the suite is APIClientTests.
+    "// mock the actor APIClient\n// struct GhostTests {}\n/* and the class Legacy */\nstruct APIClientTests { @Test func a() {} }\nlet url = \"https://x.test\"; struct AfterUrlTests { @Test func b() {} }\n",
+    "struct Alice { func helper() {} }\n",
+  ],
+  // SharedSupportTests stands in for QAVerificationSupport, which both UI and E2E targets compile.
+  OppiUITests: ["final class ChatRoutesUITests: XCTestCase { func testOpen() {} }\n", "struct SharedSupportTests {}\n"],
+  OppiE2ETests: ["final class ChatE2ETests: E2ETestCase {}\n", "extension ChatE2ETests { func testSend() {} }\n", "struct SharedSupportTests {}\n"],
 };
 const types = (target: string) => declarations(sources[target] ?? []);
 
@@ -55,14 +61,25 @@ describe("batch gate plan", () => {
   });
 
   test("a bare suite no target declares, or two targets declare, or with an undeclared test, is an error", () => {
-    const plan = planGate("/wt", ["NoSuchTests", "NoSuchTests/a", "SharedSupport", "FooTests/baz()", "server", "OppiTests"], [], types);
+    const plan = planGate("/wt", ["NoSuchTests", "NoSuchTests/a", "SharedSupportTests", "FooTests/baz()", "server", "OppiTests", "APIClient", "OppiTests/APIClient", "Legacy", "Alice", "GhostTests", "OppiTests/Alice/helper", "AfterUrlTests", "APIClientTests", "FooTests/zzz"], [], types);
     expect(plan.errors).toEqual([
       "unknown --test 'NoSuchTests': no test target declares NoSuchTests",
       "unknown --test 'NoSuchTests/a': no test target declares NoSuchTests",
-      "ambiguous --test 'SharedSupport': declared in 2 test targets; use 'OppiUITests/SharedSupport' or 'OppiE2ETests/SharedSupport'",
+      "ambiguous --test 'SharedSupportTests': declared in 2 test targets; use 'OppiUITests/SharedSupportTests' or 'OppiE2ETests/SharedSupportTests'",
       "unknown --test 'server'",
       "unknown --test 'OppiTests'",
+      "unknown --test 'APIClient'",
+      "unknown --test 'Legacy'",
+      "unknown --test 'Alice'",
+      "unknown --test 'GhostTests': no test target declares GhostTests",
       "--test 'OppiTests/FooTests/baz()': FooTests declares no test baz()",
+      "--test 'OppiTests/APIClient': OppiTests declares no type APIClient",
+      "--test 'OppiTests/FooTests/zzz': FooTests declares no test zzz",
+    ]);
+    // A bare selector whose resolved filter is rejected is not reported as resolved.
+    expect(plan.resolutions).toEqual([
+      "--test 'AfterUrlTests' resolved to OppiTests/AfterUrlTests",
+      "--test 'APIClientTests' resolved to OppiTests/APIClientTests",
     ]);
   });
 
@@ -82,7 +99,7 @@ describe("batch gate plan", () => {
       types,
     );
     expect(plan.errors).toEqual([
-      "unknown --test 'ChatRoutesUITest': no test target declares ChatRoutesUITest",
+      "unknown --test 'ChatRoutesUITest'",
       "unknown --test 'server/tests/../../etc.test.ts'",
       "unknown --profile 'watch' (iphone, ipad, duo)",
       "--test 'OppiTests/FooTest': OppiTests declares no type FooTest",
