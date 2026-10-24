@@ -34,7 +34,8 @@ enum AgentHostedScreens {
         targetId: String,
         targetName: String,
         sourceLabel: String,
-        sourcePath: String
+        sourcePath: String,
+        targetPath: String? = nil
     ) -> RouterScreen {
         .controller({
             ReviewableControlMarkdownViewController(
@@ -43,7 +44,8 @@ enum AgentHostedScreens {
                 targetId: targetId,
                 targetName: targetName,
                 sourceLabel: sourceLabel,
-                sourcePath: sourcePath
+                sourcePath: sourcePath,
+                targetPath: targetPath
             )
         })
     }

@@ -650,7 +650,7 @@ struct AgentScheduleAPIClientTests {
             #expect(body.targetName == "Reviewer")
             #expect(body.model == "anthropic/claude-opus-4-8")
             #expect(body.thinking == .high)
-            #expect(body.prompt?.contains("--definition-json") == true)
+            #expect(body.prompt?.contains("Canonical target ID: agent-1") == true)
             #expect(body.launchIdempotencyKey == "control-revision-request-1")
             return mockResponse(status: 201, json: """
             {"session":{"id":"control-1","name":"Pi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1","targetName":"Reviewer"}},"prompted":true}
@@ -1471,84 +1471,63 @@ struct NativeScheduleEditingTests {
 
 @Suite("Control session starter prompts")
 struct ControlSessionStarterPromptTests {
-    @Test func scheduleCreationPromptCarriesRequestWorkspaceAndClarificationContract() {
+    @Test func createPromptCarriesWorkspaceAndRequestWithoutTargetLines() {
         let prompt = ControlSessionStarterPrompt.make(
             domain: .schedules,
             intent: .create,
+            targetId: "ignored",
+            targetName: "ignored",
             workspaceId: "ws-7",
             workspaceName: "Dream",
-            userRequest: "Brief me on coaching trends every Monday morning."
+            userRequest: "  Brief me on coaching trends every Monday morning.\n"
         )
 
-        #expect(prompt.contains("User request:\nBrief me on coaching trends every Monday morning."))
-        #expect(prompt.contains("Canonical workspace ID: ws-7"))
-        #expect(prompt.contains("Canonical workspace name: Dream"))
-        #expect(prompt.contains("`oppi schedule`"))
-        #expect(prompt.contains("schedule behavior or timing is ambiguous"))
+        #expect(prompt == """
+        Help the user create an Oppi Schedule.
+        Canonical workspace ID: ws-7
+        Canonical workspace name: Dream
+
+        User request:
+        Brief me on coaching trends every Monday morning.
+        """)
     }
 
-    @Test func agentCreationPromptTeachesTheAgentCommandAndBehaviorClarification() {
+    @Test func revisePromptNamesTheCanonicalTargetAndOmitsEmptyContext() {
         let prompt = ControlSessionStarterPrompt.make(
             domain: .agents,
-            intent: .create,
-            workspaceId: "ws-2",
-            workspaceName: "Oppi",
-            userRequest: "Create a careful release reviewer."
+            intent: .revise,
+            targetId: "agent-1",
+            targetName: "Reviewer",
+            userRequest: "  \n"
         )
 
-        #expect(prompt.contains("`oppi agent`"))
-        #expect(prompt.contains("Agent behavior is ambiguous"))
-        #expect(prompt.contains("Canonical workspace ID: ws-2"))
-        #expect(prompt.contains("User request:\nCreate a careful release reviewer."))
+        #expect(prompt == """
+        Help the user revise an Oppi saved Agent.
+        Canonical target ID: agent-1
+        Canonical target name: Reviewer
+        """)
     }
 
-    @Test func skillRevisionStarterPromptUsesStockReadEditAndAbsoluteHostPath() {
-        let prompt = ControlSessionStarterPrompt.make(
-            domain: .skills,
+    @Test(arguments: [
+        ControlSessionDomain.agents, .extensions, .schedules, .skills, .themes, .workspaces,
+    ])
+    func hostFileLineAppearsForEveryDomainWhenAPathIsGiven(domain: ControlSessionDomain) {
+        let path = "/Users/chen/.pi/agent/thing/FILE.md"
+        let withPath = ControlSessionStarterPrompt.make(
+            domain: domain,
             intent: .revise,
-            targetId: "skill_abc",
-            targetName: "review",
-            targetPath: "/Users/chen/.pi/agent/skills/review/SKILL.md",
-            userRequest: "Apply my staged comments."
+            targetId: "id-1",
+            targetName: "Thing",
+            targetPath: path
+        )
+        let withoutPath = ControlSessionStarterPrompt.make(
+            domain: domain,
+            intent: .revise,
+            targetId: "id-1",
+            targetName: "Thing"
         )
 
-        #expect(prompt.contains("Canonical target ID: skill_abc"))
-        #expect(prompt.contains("Selected existing host file: /Users/chen/.pi/agent/skills/review/SKILL.md"))
-        #expect(prompt.contains("selected launch file"))
-        #expect(prompt.contains("Staged review comments carry absolute source paths"))
-        #expect(prompt.contains("use each comment’s path when it refers to another file"))
-        #expect(prompt.contains("selected launch file or the absolute paths carried by staged review comments"))
-        #expect(prompt.contains("stock `read`"))
-        #expect(prompt.contains("stock `edit`"))
-        #expect(prompt.contains("Do not use `write`, `bash`, or temporary files"))
-        #expect(!prompt.contains("`oppi skill`"))
-        #expect(!prompt.contains("base-revision"))
-        #expect(!prompt.contains("a different path"))
-        #expect(!prompt.contains("Do not use filesystem tools or temporary files"))
-    }
-
-    @Test func revisionPromptIsDeterministicAndUsesCanonicalDefinitionInput() {
-        let first = ControlSessionStarterPrompt.make(
-            domain: .schedules,
-            intent: .revise,
-            targetId: "schedule-7",
-            targetName: "Nightly review"
-        )
-        let second = ControlSessionStarterPrompt.make(
-            domain: .schedules,
-            intent: .revise,
-            targetId: "schedule-7",
-            targetName: "Nightly review"
-        )
-
-        #expect(first == second)
-        #expect(first.contains("Canonical target ID: schedule-7"))
-        #expect(first.contains("Canonical target name: Nightly review"))
-        #expect(first.contains("--definition-json"))
-        #expect(first.contains("--model <provider/model>"))
-        #expect(first.contains("canonical `provider/model`"))
-        #expect(first.contains("ask one focused provider question"))
-        #expect(first.contains("do not guess"))
-        #expect(first.contains("Do not use filesystem tools or temporary files for this task"))
+        #expect(withPath.contains("Selected existing host file: \(path)"))
+        #expect(!withoutPath.contains("Selected existing host file"))
     }
 }

@@ -242,6 +242,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     // MARK: - Modals
 
     private func updateModals() {
+        let systemPromptPath = prompt?.resolvedPath ?? AgentManagementPresentation.globalSystemPromptPath
         guidedSheet.update(
             id: showsSystemPromptSession ? "system-prompt-session" : nil,
             presentation: .sheet.inNavigation(),
@@ -254,7 +255,8 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
                             domain: .agents,
                             intent: .revise,
                             targetName: "Pi global configuration",
-                            initialRequest: "Inspect ~/.pi/agent/SYSTEM.md and help me create or edit Pi's global system prompt. Explain that SYSTEM.md replaces Pi's default system prompt and APPEND_SYSTEM.md appends to it before making changes.",
+                            targetPath: systemPromptPath,
+                            initialRequest: "Help me create or edit Pi's global system prompt.",
                             allowsEmptyRequest: false,
                             placeholder: "Describe how Pi's global system prompt should change…"
                         ),
@@ -275,7 +277,8 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
                     targetId: "pi",
                     targetName: "Pi",
                     sourceLabel: "SYSTEM.md",
-                    sourcePath: prompt?.resolvedPath ?? ""
+                    sourcePath: prompt?.resolvedPath ?? "",
+                    targetPath: prompt?.resolvedPath
                 )
             }
         )

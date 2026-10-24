@@ -248,7 +248,6 @@ final class ServerSkillFileViewController: UIViewController {
                 targetId: target.resourceId,
                 targetName: summary.name,
                 sourceLabel: "\(summary.name) / \(target.path)",
-                editFlow: .guidedRevision,
                 connection: connection
             ))
         case .file(.readOnly(let hostPath)):

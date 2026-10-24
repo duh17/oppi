@@ -278,6 +278,8 @@ enum SessionRouteScope: Sendable, Hashable {
     }
 }
 
+/// The first message of a control session: context only. The server's system
+/// prompt for the session owns the workflow, approval, and tool rules.
 enum ControlSessionStarterPrompt {
     static func make(
         domain: ControlSessionDomain,
@@ -297,74 +299,25 @@ enum ControlSessionStarterPrompt {
         case .themes: "iOS theme"
         case .workspaces: "Workspace"
         }
-        let target = intent == .revise
-            ? "\nCanonical target ID: \(targetId ?? "unknown")\nCanonical target name: \(targetName ?? "unknown")"
-            : ""
-        let workspace = workspaceId.map {
-            "\nCanonical workspace ID: \($0)\nCanonical workspace name: \(workspaceName ?? "unknown")"
-        } ?? ""
-        let selectedHostFile = switch (domain, intent) {
-        case (.skills, _), (.extensions, _): "\nSelected existing host file: \(targetPath ?? "unknown")"
-        case (.themes, .revise): "\nSelected theme file Oppi serves: \(targetPath ?? "unknown")"
-        default: ""
+        var lines = ["Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject)."]
+        if intent == .revise {
+            lines.append("Canonical target ID: \(targetId ?? "unknown")")
+            lines.append("Canonical target name: \(targetName ?? "unknown")")
         }
-        let workflow = switch domain {
-        case .agents:
-            "Use the `oppi agent` command family to list and inspect existing definitions, then create or update the proposed definition. If Agent behavior is ambiguous, ask focused questions about responsibilities, boundaries, resources, defaults, and success criteria."
-        case .schedules:
-            "Use the `oppi schedule` command family to list and inspect existing schedules, then create or update the proposed schedule. If schedule behavior or timing is ambiguous, ask focused questions about the task, target workspace or session, cadence, time zone, safety constraints, and expected output. Every model change must use a canonical `provider/model` ID. If the user omits the provider and inspected server state does not identify it, ask one focused provider question before proposing the change; do not guess. Once the provider is known, name the canonical ID and use `oppi schedule update <id> --model <provider/model>` for a model-only update instead of embedding the model in definition JSON."
-        case .extensions:
-            "Use stock `read` to inspect the selected extension file and the modules it imports by relative path from inside its own directory, and stock `edit` for precise replacements in those existing files. When an extension API is unclear, read Pi's extension documentation in the installed Pi package. Sessions load extensions when they start, so tell the user to reload a session to apply the change."
-        case .skills:
-            "Use stock `read` to inspect the selected launch file. Staged review comments carry absolute source paths; use each comment’s path when it refers to another file, and use stock `edit` for precise replacements in those existing files. Do not use `oppi` to read or update Skill files."
-        case .themes:
-            "Read `themes.md` in the Oppi documentation directory named in your system prompt (or `docs/themes.md` in the Oppi repository when none is named) for the file format, every color token, and the contrast rules: a theme needs `name`, `colorScheme` (`dark` or `light`), and every required color token, and text on fills needs at least 4.5:1 contrast. Filenames use letters, numbers, underscores, or hyphens and end in `.json`. Oppi serves theme JSON from `$OPPI_DATA_DIR/themes/`, or `~/.config/oppi/themes/` when that is unset; that user themes directory overrides Pi TUI themes in `~/.pi/agent/themes/` and the bundled server themes with the same filename. Use stock `read` to inspect existing themes, including the selected theme file, and stock `write` or `edit` to save one Oppi theme JSON file in the user themes directory. A target ID is the theme's filename without `.json`. When the selected file is outside the user themes directory (a bundled or Pi TUI theme), write an Oppi JSON file with the same filename to the user themes directory instead of editing the original; convert Pi TUI tokens as `themes.md` describes. If the look is ambiguous, ask focused questions about mood, light or dark scheme, and accent colors."
-        case .workspaces:
-            "Use the `oppi workspace` command family to inspect existing workspaces, then create or update the proposed workspace. Ask focused questions about paths, runtime, and access when they are ambiguous."
+        if let workspaceId {
+            lines.append("Canonical workspace ID: \(workspaceId)")
+            lines.append("Canonical workspace name: \(workspaceName ?? "unknown")")
         }
-        let definitionRequirement = switch (domain, intent) {
-        case (.agents, _):
-            " Pass definition changes directly with `--definition-json`; do not use a definition file."
-        case (.schedules, .revise):
-            " Pass non-model definition changes directly with `--definition-json`; do not use a definition file."
-        default:
-            ""
+        if let targetPath {
+            lines.append("Selected existing host file: \(targetPath)")
         }
-
-        // Skills and themes are host files edited with stock file tools; the
-        // other domains are server definitions changed only through `oppi`.
-        let inspection = switch domain {
-        case .extensions, .skills, .themes: ""
-        case .agents, .schedules, .workspaces:
-            "First inspect the current server state using only approved `oppi` commands. "
-        }
-        let approval = switch domain {
-        case .extensions, .skills: " Summarize the exact proposed changes before editing."
-        case .themes: " Summarize the proposed colors and file path before writing."
-        case .agents, .schedules, .workspaces:
-            " Summarize the exact proposed changes and wait for the user's explicit approval before invoking the appropriate `oppi` command."
-        }
-        let constraints = switch domain {
-        case .extensions:
-            "Do not use `write`, `bash`, the `oppi` CLI, or temporary files for this task. Edit only the selected extension file and existing files inside its directory that it imports by relative path; never a file outside that directory, even one it imports."
-        case .skills:
-            "Do not use `write`, `bash`, or temporary files for this task. Do not edit paths other than the selected launch file or the absolute paths carried by staged review comments."
-        case .themes:
-            "Do not use the `oppi` CLI or temporary files for this task, and do not change files outside the user themes directory. After writing, tell the user the theme name so they can import it from Settings → Appearance → Custom Themes."
-        case .agents, .schedules, .workspaces:
-            "Do not use filesystem tools or temporary files for this task."
-        }
-
         let request = userRequest?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let requestBlock = request.flatMap { $0.isEmpty ? nil : "\n\nUser request:\n\($0)" } ?? ""
-
-        return """
-        Help the user \(intent == .create ? "create" : "revise") an Oppi \(subject).\(target)\(workspace)\(selectedHostFile)
-
-        Act as Oppi. \(inspection)\(workflow)\(approval)\(definitionRequirement)
-
-        \(constraints)\(requestBlock)
-        """
+        if let request, !request.isEmpty {
+            lines.append("")
+            lines.append("User request:")
+            lines.append(request)
+        }
+        return lines.joined(separator: "\n")
     }
 }
 

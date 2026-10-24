@@ -1,8 +1,9 @@
 import UIKit
 
 /// The guided composer feeds the chat's composer owner the way the chat does:
-/// its draft, launch state, and the workspace, model, and thinking pills (in
-/// the action row unless the accessibility-size panel holds them). It has no
+/// its draft, launch state, and the workspace (Agents and Schedules only),
+/// model, and thinking pills (in the action row unless the accessibility-size
+/// panel holds them). It has no
 /// turn to stop, no Ask to answer, no attachments, and no expanded composer.
 extension GuidedControlComposerController: ChatComposerSource {
     var composerContent: ComposerBarContent {
@@ -63,6 +64,9 @@ extension GuidedControlComposerController: ChatComposerSource {
             onThinkingSelect: { [weak self] in self?.model.selectThinkingLevel($0) },
             onSaveThinkingAsDefault: nil
         )
+        guard model.showsWorkspacePicker else {
+            return ComposerActionRow(trailing: toolbar.trailing)
+        }
         let workspace = ComposerAction.workspace(
             title: model.selectedWorkspace?.name ?? "Workspace",
             icon: workspaceIcon(colors: colors),

@@ -14,8 +14,8 @@ enum GuidedControlSessionInitialPrompt {
         targetId: String?,
         targetName: String?,
         targetPath: String?,
-        workspaceId: String,
-        workspaceName: String,
+        workspaceId: String?,
+        workspaceName: String?,
         userRequest: String,
         comments: ChatReviewCommentsController?
     ) -> PreparedPrompt {
@@ -51,8 +51,8 @@ struct GuidedControlSessionAtomicLaunch {
         targetId: String?,
         targetName: String?,
         targetPath: String?,
-        workspaceId: String,
-        workspaceName: String,
+        workspaceId: String?,
+        workspaceName: String?,
         sourceDraftText: String,
         cleanRequest: String,
         sessionName: String,

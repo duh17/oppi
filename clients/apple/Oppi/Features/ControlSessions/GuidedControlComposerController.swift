@@ -2,7 +2,8 @@ import UIKit
 
 /// The guided control-session composer: the launch error, the staged
 /// review-comment pill, and the chat's composer (`ChatComposerOwner`), with the
-/// workspace, model, and thinking pills in its action row. At accessibility
+/// workspace (Agents and Schedules only), model, and thinking pills in its
+/// action row. At accessibility
 /// text sizes those pills do not fit the row and sit in a panel below it.
 ///
 /// A screen embeds it as a child pinned above the keyboard (Agents, Schedules,
@@ -27,6 +28,7 @@ final class GuidedControlComposerController: UIViewController {
     private let reviewPill = ReviewCommentStripPillView()
     private let reviewDrawer = ReviewCommentStashDrawerView()
     private let stackedPanel = UIStackView()
+    private let stackedWorkspaceRow = UIStackView()
     private let stackedWorkspacePill = ComposerToolbarPillButton()
     private let stackedModelPill = ComposerToolbarPillButton()
     private let stackedThinkingPill = ComposerToolbarPillButton()
@@ -170,7 +172,6 @@ final class GuidedControlComposerController: UIViewController {
         }
         model.reconcileReviewCommentDrawer()
         updateReviewStrip()
-        // The workspace pill stays usable while the composer waits for one.
         composer.view.isUserInteractionEnabled = model.acceptsInput
         updateStackedPanel(colors: colors)
         updatePresenters()
@@ -320,13 +321,14 @@ final class GuidedControlComposerController: UIViewController {
         stackedThinkingPill.accessibilityLabel = "Thinking level"
         stackedThinkingPill.addAction(UIAction { [weak self] _ in self?.presentStackedThinkingPicker() }, for: .primaryActionTriggered)
 
-        let workspaceRow = UIStackView(arrangedSubviews: [stackedWorkspacePill, UIView()])
-        workspaceRow.axis = .horizontal
+        stackedWorkspaceRow.addArrangedSubview(stackedWorkspacePill)
+        stackedWorkspaceRow.addArrangedSubview(UIView())
+        stackedWorkspaceRow.axis = .horizontal
         let toolbar = UIStackView(arrangedSubviews: [stackedModelPill, stackedThinkingPill, UIView()])
         toolbar.axis = .horizontal
         toolbar.alignment = .center
         toolbar.spacing = 6
-        stackedPanel.addArrangedSubview(workspaceRow)
+        stackedPanel.addArrangedSubview(stackedWorkspaceRow)
         stackedPanel.addArrangedSubview(toolbar)
         stackedPanel.axis = .vertical
         stackedPanel.alignment = .fill
@@ -345,6 +347,7 @@ final class GuidedControlComposerController: UIViewController {
         stackedPanel.isHidden = !stacks
         guard stacks else { return }
         let workspace = model.selectedWorkspace
+        stackedWorkspaceRow.isHidden = !model.showsWorkspacePicker
         stackedWorkspacePill.apply(
             title: workspace?.name ?? "Workspace",
             icon: workspaceIcon(colors: colors) ?? UIImage(systemName: "folder"),

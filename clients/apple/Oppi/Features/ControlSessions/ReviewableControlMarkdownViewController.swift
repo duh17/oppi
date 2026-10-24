@@ -12,11 +12,6 @@ enum ReviewableControlMarkdownDraftKey {
     }
 }
 
-enum ReviewableControlMarkdownEditFlow: Equatable {
-    case directSession
-    case guidedRevision
-}
-
 struct ControlRevisionSheetHandoff {
     private var pendingTarget: WorkspaceSessionNavTarget?
 
@@ -27,33 +22,6 @@ struct ControlRevisionSheetHandoff {
     mutating func completeAfterDismissal() -> WorkspaceSessionNavTarget? {
         defer { pendingTarget = nil }
         return pendingTarget
-    }
-}
-
-@MainActor
-enum ControlRevisionCommentTransfer {
-    @discardableResult
-    static func moveStagedComments(
-        serverId: String?,
-        fallbackServerId: String?,
-        domain: ControlSessionDomain,
-        targetId: String?,
-        toSessionId: String,
-        comments: ChatReviewCommentsController = ChatReviewCommentsController()
-    ) throws -> Int {
-        guard let targetId else { return 0 }
-        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
-            serverId: serverId,
-            fallbackServerId: fallbackServerId,
-            domain: domain,
-            targetId: targetId
-        )
-        return try comments.moveStagedComments(
-            fromLocalScopeId: ReviewCommentLocalScope.controlDraft,
-            fromSessionId: draftSessionId,
-            toLocalScopeId: SessionRouteScope.control.composerDraftScopeID,
-            toSessionId: toSessionId
-        )
     }
 }
 
@@ -72,59 +40,6 @@ extension ControlRevisionCommentNavigationError: LocalizedError {
 
 @MainActor
 enum ControlRevisionCommentNavigation {
-    struct Handoff {
-        let serverId: String
-        let movedCount: Int
-    }
-
-    static func moveStagedComments(
-        serverId: String?,
-        fallbackServerId: String?,
-        domain: ControlSessionDomain,
-        targetId: String?,
-        toSessionId: String,
-        comments: ChatReviewCommentsController = ChatReviewCommentsController()
-    ) throws -> Handoff {
-        guard let resolvedServerId = serverId ?? fallbackServerId else {
-            throw ControlRevisionCommentNavigationError.serverUnavailable
-        }
-        let movedCount = try ControlRevisionCommentTransfer.moveStagedComments(
-            serverId: serverId,
-            fallbackServerId: fallbackServerId,
-            domain: domain,
-            targetId: targetId,
-            toSessionId: toSessionId,
-            comments: comments
-        )
-        return Handoff(serverId: resolvedServerId, movedCount: movedCount)
-    }
-
-    /// Build the ordinary control-chat route after the durable comment move.
-    /// A zero-comment draft is still a valid handoff; navigation must not be
-    /// conditional on having review comments to transfer.
-    static func makeSessionTarget(
-        serverId: String?,
-        fallbackServerId: String?,
-        domain: ControlSessionDomain,
-        targetId: String?,
-        toSessionId: String,
-        comments: ChatReviewCommentsController = ChatReviewCommentsController()
-    ) throws -> WorkspaceSessionNavTarget {
-        let handoff = try moveStagedComments(
-            serverId: serverId,
-            fallbackServerId: fallbackServerId,
-            domain: domain,
-            targetId: targetId,
-            toSessionId: toSessionId,
-            comments: comments
-        )
-        return WorkspaceSessionNavTarget(
-            serverId: handoff.serverId,
-            sessionId: toSessionId,
-            routeScope: .control
-        )
-    }
-
     /// Build a route after an atomic launch has already carried the comments in
     /// its initial prompt. Nothing moves into the ordinary composer stash.
     static func makeAtomicLaunchSessionTarget(
@@ -141,7 +56,6 @@ enum ControlRevisionCommentNavigation {
             routeScope: .control
         )
     }
-
 }
 
 @MainActor
@@ -219,8 +133,8 @@ enum ControlRevisionSessionLaunchCoordinator {
 /// Text the caller already holds shows in the full-screen reader, presented
 /// as a sheet whose reader bar has the dismiss control and Edit (Edit with
 /// Oppi). A file on the server's host shows in the file viewer with the
-/// stack's bar; a Skill's own file also opens in the editor there. Edit runs
-/// a revision session directly, or through the guided revision sheet.
+/// stack's bar; a Skill's own file also opens in the editor there. Edit opens
+/// the guided revision sheet with the staged comments as the request.
 @MainActor
 final class ReviewableControlMarkdownViewController: UIViewController, RouterModalContainer {
     private enum Viewer {
@@ -238,19 +152,15 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     let targetName: String
     let sourceLabel: String
     let sourcePath: String
-    let editFlow: ReviewableControlMarkdownEditFlow
+    /// The real host file the revision names (`Selected existing host file`),
+    /// nil when `sourcePath` is only a label for text the app holds.
+    let targetPath: String?
     private let viewer: Viewer
     private let languageHint: String?
 
     private let comments = ChatReviewCommentsController()
     private var guidedSessionHandoff = ControlRevisionSheetHandoff()
     private weak var guidedSheet: GuidedControlSessionViewController?
-    private var isCreatingSession = false {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var createdSession: Session?
-    private var starterPromptDelivered = false
-    private let starterPromptRequestId = UUID().uuidString
     private var loadedDraftSessionId: String?
 
     private var reader: FullScreenCodeViewController?
@@ -264,7 +174,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         targetName: String,
         sourceLabel: String,
         sourcePath: String,
-        editFlow: ReviewableControlMarkdownEditFlow = .directSession
+        targetPath: String? = nil
     ) {
         viewer = .fullScreen(.markdown(content: content, filePath: sourcePath))
         languageHint = "markdown"
@@ -273,7 +183,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         self.targetName = targetName
         self.sourceLabel = sourceLabel
         self.sourcePath = sourcePath
-        self.editFlow = editFlow
+        self.targetPath = targetPath
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -290,7 +200,6 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         targetId: String,
         targetName: String,
         sourceLabel: String,
-        editFlow: ReviewableControlMarkdownEditFlow = .directSession,
         connection: ServerConnection
     ) {
         viewer = .hostFile(serverId: serverId, title: title, skillFile: skillFile, connection: connection)
@@ -300,7 +209,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         self.targetName = targetName
         self.sourceLabel = sourceLabel
         self.sourcePath = hostFilePath
-        self.editFlow = editFlow
+        self.targetPath = hostFilePath
         super.init(nibName: nil, bundle: nil)
         navigationItem.largeTitleDisplayMode = .never
     }
@@ -351,17 +260,17 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         [
             FullScreenViewerNavigationAction(
                 id: "edit-in-session",
-                title: isCreatingSession ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
+                title: DocumentEditLabels.edit,
                 systemImage: DocumentEditLabels.systemImage,
                 accessibilityLabel: DocumentEditLabels.editWithOppi,
-                isEnabled: !isCreatingSession,
-                handler: { [weak self] in self?.startEdit() }
+                isEnabled: true,
+                handler: { [weak self] in self?.presentGuidedRevision() }
             ),
         ]
     }
 
     private var agentEdit: DocumentAgentEditAction {
-        DocumentAgentEditAction(isStarting: isCreatingSession) { [weak self] in self?.startEdit() }
+        DocumentAgentEditAction { [weak self] in self?.presentGuidedRevision() }
     }
 
     // MARK: Lifecycle
@@ -430,7 +339,6 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
 
     override func updateProperties() {
         super.updateProperties()
-        reader?.setNavigationActions(navigationActions)
         if let fileViewer {
             fileViewer.agentEdit = agentEdit
             fileViewer.bar.apply(to: navigationItem)
@@ -447,26 +355,6 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
 
     // MARK: Edit
 
-    private func startEdit() {
-        switch editFlow {
-        case .directSession:
-            Task { await createOrOpenRevisionSession() }
-        case .guidedRevision:
-            presentGuidedRevision()
-        }
-    }
-
-    private var starterPrompt: String {
-        ControlSessionStarterPrompt.make(
-            domain: domain,
-            intent: .revise,
-            targetId: targetId,
-            targetName: targetName,
-            targetPath: domain == .skills ? sourcePath : nil,
-            userRequest: "Inspect the current definition and wait for my staged review comments before proposing changes."
-        )
-    }
-
     private func presentGuidedRevision() {
         guard guidedSheet == nil, let connection, let root else { return }
         let configuration = GuidedControlComposerConfiguration(
@@ -474,7 +362,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
             intent: .revise,
             targetId: targetId,
             targetName: targetName,
-            targetPath: domain == .skills ? sourcePath : nil,
+            targetPath: targetPath,
             // Staged comments are the request: they send with no text.
             allowsEmptyRequest: true,
             placeholder: "Describe how this \(domain.title) should change…",
@@ -546,75 +434,5 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         )
         alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
         present(alert, animated: true)
-    }
-
-    private func createOrOpenRevisionSession() async {
-        guard !isCreatingSession else { return }
-        isCreatingSession = true
-        defer { isCreatingSession = false }
-
-        do {
-            guard let connection, let apiClient = connection.apiClient, let navigation = root?.navigation else {
-                presentError("Server is offline")
-                return
-            }
-            let sessionStore = connection.sessionStore
-            let domain = domain
-            let targetId = targetId
-            let targetName = targetName
-            let starterPrompt = starterPrompt
-            let requestId = starterPromptRequestId
-
-            let prepared = try await ControlRevisionSessionLaunchCoordinator.prepare(
-                existingSession: createdSession,
-                starterPromptDelivered: starterPromptDelivered,
-                create: {
-                    let response = try await apiClient.createControlSession(.init(
-                        domain: domain,
-                        intent: .revise,
-                        targetId: targetId,
-                        targetName: targetName,
-                        name: "Revise \(targetName)",
-                        prompt: starterPrompt,
-                        launchIdempotencyKey: requestId
-                    ))
-                    return (
-                        response.session,
-                        response.prompted ?? (response.session.firstMessage != nil)
-                    )
-                },
-                onSessionCreated: { [weak self] session, delivered in
-                    self?.createdSession = session
-                    self?.starterPromptDelivered = delivered
-                    _ = sessionStore.cacheSessionForNavigation(session)
-                }
-            )
-            let session = prepared.session
-            starterPromptDelivered = prepared.starterPromptDelivered
-
-            let sessionTarget = try ControlRevisionCommentNavigation.makeSessionTarget(
-                serverId: connection.currentServerId,
-                fallbackServerId: sessionStore.activeServerId,
-                domain: domain,
-                targetId: targetId,
-                toSessionId: session.id,
-                comments: comments
-            )
-
-            close()
-            await Task.yield()
-            navigation.openWorkspaceSession(sessionTarget)
-        } catch {
-            presentError("\(error.localizedDescription) Your staged comments are still saved.")
-        }
-    }
-
-    /// Closes the screen this review is: the presented sheet, or the pushed page.
-    private func close() {
-        var screen: UIViewController = self
-        while let parent = screen.parent, !(parent is UINavigationController) {
-            screen = parent
-        }
-        Router.finish(screen)
     }
 }

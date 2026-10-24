@@ -19,9 +19,11 @@ struct GuidedControlComposerConfiguration {
 /// Workspace control sessions. `GuidedControlComposerController` draws it on
 /// the chat's composer owner.
 ///
-/// The selected workspace is prompt context only. Control sessions stay
-/// workspace-less so Pi can inspect and change server-owned definitions with
-/// ordinary host tools, including `bash` and the installed `oppi` CLI.
+/// A workspace is optional prompt context, offered only for Agents and
+/// Schedules (see `offersWorkspaceContext`). It never blocks input or Send.
+/// Control sessions stay workspace-less so Pi can inspect and change
+/// server-owned definitions with ordinary host tools, including `bash` and the
+/// installed `oppi` CLI.
 @MainActor @Observable
 final class GuidedControlComposerModel {
     let configuration: GuidedControlComposerConfiguration
@@ -89,16 +91,36 @@ final class GuidedControlComposerModel {
         ThinkingLevelMenuSource.levels(for: effectiveModelId, in: connection.chatState.cachedModels)
     }
 
-    /// The composer takes input once it is set up and has a server and a workspace.
+    /// Agents and Schedules can run in a workspace, so it is real context for
+    /// them; every other domain sends none.
+    static func offersWorkspaceContext(for domain: ControlSessionDomain) -> Bool {
+        switch domain {
+        case .agents, .schedules: true
+        case .extensions, .skills, .themes, .workspaces: false
+        }
+    }
+
+    /// The workspace pill shows when the domain takes workspace context and
+    /// the server has a workspace to pick.
+    var showsWorkspacePicker: Bool {
+        Self.offersWorkspaceContext(for: configuration.domain) && !workspaces.isEmpty
+    }
+
+    /// The workspace the starter message names: nil for domains without
+    /// workspace context.
+    var workspaceContext: Workspace? {
+        Self.offersWorkspaceContext(for: configuration.domain) ? selectedWorkspace : nil
+    }
+
+    /// The composer takes input once it is set up and has a server.
     var acceptsInput: Bool {
-        isInitialized && connection.apiClient != nil && selectedWorkspace != nil
+        isInitialized && connection.apiClient != nil
     }
 
     var placeholder: String {
         guard connection.apiClient != nil else {
             return "Connect to use guided \(configuration.domain.title.lowercased()) setup"
         }
-        guard selectedWorkspace != nil else { return "Choose a workspace first" }
         return configuration.placeholder
     }
 
@@ -182,14 +204,16 @@ final class GuidedControlComposerModel {
     private func initialize() async {
         request = configuration.initialRequest
 
-        let workspaces = workspaces
-        if let preferred = AppPreferences.QuickSession.preferredWorkspaceSelection(
-            in: workspaces.map { (id: $0.id, name: $0.name) }
-        ) {
-            selectedWorkspace = workspaces.first(where: { $0.id == preferred.id })
-        }
-        if selectedWorkspace == nil {
-            selectedWorkspace = workspaces.first
+        if Self.offersWorkspaceContext(for: configuration.domain) {
+            let workspaces = workspaces
+            if let preferred = AppPreferences.QuickSession.preferredWorkspaceSelection(
+                in: workspaces.map { (id: $0.id, name: $0.name) }
+            ) {
+                selectedWorkspace = workspaces.first(where: { $0.id == preferred.id })
+            }
+            if selectedWorkspace == nil {
+                selectedWorkspace = workspaces.first
+            }
         }
 
         let manager = VoiceInputManager.shared
@@ -227,7 +251,7 @@ final class GuidedControlComposerModel {
 
     private func createControlSession() async {
         let connection = connection
-        guard let apiClient = connection.apiClient, let selectedWorkspace, !isCreating else { return }
+        guard let apiClient = connection.apiClient, !isCreating else { return }
         let cleanRequest = request.trimmingCharacters(in: .whitespacesAndNewlines)
         guard configuration.allowsEmptyRequest || !cleanRequest.isEmpty else { return }
 
@@ -243,8 +267,8 @@ final class GuidedControlComposerModel {
                 targetId: configuration.targetId,
                 targetName: configuration.targetName,
                 targetPath: configuration.targetPath,
-                workspaceId: selectedWorkspace.id,
-                workspaceName: selectedWorkspace.name,
+                workspaceId: workspaceContext?.id,
+                workspaceName: workspaceContext?.name,
                 sourceDraftText: request,
                 cleanRequest: cleanRequest,
                 sessionName: sessionName(request: cleanRequest),

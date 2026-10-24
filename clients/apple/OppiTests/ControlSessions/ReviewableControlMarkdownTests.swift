@@ -6,10 +6,6 @@ import Testing
 @Suite("Reviewable control Markdown")
 @MainActor
 struct ReviewableControlMarkdownTests {
-    private enum RetryFailure: Error {
-        case simulatedNetworkFailure
-    }
-
     private struct SkillPathCase {
         let resourcePath: String
         let selectedPath: String
@@ -151,69 +147,15 @@ struct ReviewableControlMarkdownTests {
         )
     }
 
-    @Test func agentDetailHandoffMovesTargetDraftIntoNewControlSessionStash() throws {
+    @Test func skillReviewCommentsKeepAbsolutePathsVerbatimInTheSentBlock() throws {
         let suiteName = "ReviewableControlMarkdownTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        let store = ReviewCommentStore(defaults: defaults, keyPrefix: "test.agentHandoff")
-        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
-            serverId: "server-1",
-            fallbackServerId: nil,
-            domain: .agents,
-            targetId: "agent-1"
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.skillPaths")
         )
-        store.load(workspaceId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
-        let saved = try store.create(
-            workspaceId: ReviewCommentLocalScope.controlDraft,
-            sessionId: draftSessionId,
-            body: "Keep the prompt concise.",
-            reference: ReviewCommentReference(
-                source: .timelineText,
-                label: "Agent definition",
-                path: nil,
-                side: nil,
-                startLine: nil,
-                endLine: nil,
-                selectedText: "Long prompt",
-                languageHint: nil,
-                toolCallId: nil,
-                timelineItemId: nil,
-                url: nil
-            )
-        )
-
-        let moved = try ControlRevisionCommentTransfer.moveStagedComments(
-            serverId: "server-1",
-            fallbackServerId: nil,
-            domain: .agents,
-            targetId: "agent-1",
-            toSessionId: "control-session-1",
-            comments: ChatReviewCommentsController(store: store)
-        )
-
-        #expect(moved == 1)
-        let source = ReviewCommentStore(defaults: defaults, keyPrefix: "test.agentHandoff")
-        source.load(workspaceId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
-        #expect(source.stagedComments.isEmpty)
-
-        let destination = ReviewCommentStore(defaults: defaults, keyPrefix: "test.agentHandoff")
-        destination.load(
-            workspaceId: SessionRouteScope.control.composerDraftScopeID,
-            sessionId: "control-session-1"
-        )
-        #expect(destination.stagedComments.map(\.id) == [saved.id])
-    }
-
-    @Test func skillCommentHandoffPreservesAbsolutePathsAndFormatsEveryFileVerbatim() throws {
-        let suiteName = "ReviewableControlMarkdownTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        let prefix = "test.skillHandoff"
-        let store = ReviewCommentStore(defaults: defaults, keyPrefix: prefix)
         let draftSessionId = ReviewableControlMarkdownDraftKey.make(
             serverId: "server-1",
             fallbackServerId: nil,
@@ -222,55 +164,33 @@ struct ReviewableControlMarkdownTests {
         )
         let launchPath = "/Users/example/workspace/oppi/.pi/skills/review/SKILL.md"
         let checklistPath = "/Users/example/workspace/oppi/.pi/skills/review/references/checklist.md"
-        store.load(workspaceId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
+        comments.load(localScopeId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
         for (path, body) in [
             (launchPath, "Clarify the entry point."),
             (checklistPath, "Tighten this checklist."),
         ] {
-            _ = try store.create(
-                workspaceId: ReviewCommentLocalScope.controlDraft,
-                sessionId: draftSessionId,
+            #expect(comments.save(
                 body: body,
-                reference: ReviewCommentReference(
-                    source: .file,
-                    label: nil,
-                    path: path,
-                    side: nil,
-                    startLine: 1,
-                    endLine: 1,
+                request: ReviewCommentSelectionRequest(
                     selectedText: "Selected text",
-                    languageHint: "markdown",
-                    toolCallId: nil,
-                    timelineItemId: nil,
-                    url: nil
-                )
-            )
+                    source: ReviewCommentSourceContext(
+                        sessionId: draftSessionId,
+                        surface: .fullScreenMarkdown,
+                        sourceLabel: "review",
+                        filePath: path,
+                        lineRange: 1...1,
+                        languageHint: "markdown"
+                    )
+                ),
+                localScopeId: ReviewCommentLocalScope.controlDraft,
+                sessionId: draftSessionId
+            ) == nil)
         }
 
-        let moved = try ControlRevisionCommentTransfer.moveStagedComments(
-            serverId: "server-1",
-            fallbackServerId: nil,
-            domain: .skills,
-            targetId: "skill-review",
-            toSessionId: "control-session-1",
-            comments: ChatReviewCommentsController(store: store)
-        )
+        let block = comments.appendReviewBlock(to: "", pathFormatting: .verbatim)
 
-        let destinationStore = ReviewCommentStore(defaults: defaults, keyPrefix: prefix)
-        let destination = ChatReviewCommentsController(store: destinationStore)
-        destination.load(
-            localScopeId: SessionRouteScope.control.composerDraftScopeID,
-            sessionId: "control-session-1"
-        )
-        let block = destination.appendReviewBlock(to: "", pathFormatting: .verbatim)
-
-        #expect(moved == 2)
-        #expect(Set(destination.stagedComments.compactMap(\.reference.path)) == Set([
-            launchPath,
-            checklistPath,
-        ]))
-        #expect(block.contains("`\(launchPath)`:1 (file)"))
-        #expect(block.contains("`\(checklistPath)`:1 (file)"))
+        #expect(block.contains("`\(launchPath)`:1"))
+        #expect(block.contains("`\(checklistPath)`:1"))
         #expect(ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: .skills) == .verbatim)
         for domain in [ControlSessionDomain.agents, .schedules, .workspaces] {
             #expect(ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: domain) == .normalizedDisplay)
@@ -278,53 +198,23 @@ struct ReviewableControlMarkdownTests {
         #expect(ChatViewController.reviewCommentPathFormattingPolicy(controlDomain: nil) == .normalizedDisplay)
     }
 
-    @Test func missingServerNavigationKeepsTargetDraftComments() throws {
-        let suiteName = "ReviewableControlMarkdownTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        let store = ReviewCommentStore(defaults: defaults, keyPrefix: "test.navigationPrecondition")
-        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
-            serverId: nil,
-            fallbackServerId: nil,
-            domain: .agents,
-            targetId: "agent-1"
-        )
-        store.load(workspaceId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
-        _ = try store.create(
-            workspaceId: ReviewCommentLocalScope.controlDraft,
-            sessionId: draftSessionId,
-            body: "Keep this comment staged.",
-            reference: ReviewCommentReference(
-                source: .timelineText,
-                label: "Agent definition",
-                path: nil,
-                side: nil,
-                startLine: nil,
-                endLine: nil,
-                selectedText: "Prompt",
-                languageHint: nil,
-                toolCallId: nil,
-                timelineItemId: nil,
-                url: nil
-            )
-        )
-
+    @Test func atomicLaunchTargetNeedsAServerAndOpensTheControlChat() throws {
         #expect(throws: ControlRevisionCommentNavigationError.serverUnavailable) {
-            try ControlRevisionCommentNavigation.moveStagedComments(
+            try ControlRevisionCommentNavigation.makeAtomicLaunchSessionTarget(
                 serverId: nil,
                 fallbackServerId: nil,
-                domain: .agents,
-                targetId: "agent-1",
-                toSessionId: "control-session-1",
-                comments: ChatReviewCommentsController(store: store)
+                toSessionId: "control-session-1"
             )
         }
 
-        let source = ReviewCommentStore(defaults: defaults, keyPrefix: "test.navigationPrecondition")
-        source.load(workspaceId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
-        #expect(source.stagedComments.count == 1)
+        let target = try ControlRevisionCommentNavigation.makeAtomicLaunchSessionTarget(
+            serverId: nil,
+            fallbackServerId: "server-1",
+            toSessionId: "control-session-1"
+        )
+        #expect(target.serverId == "server-1")
+        #expect(target.sessionId == "control-session-1")
+        #expect(target.routeScope == .control)
     }
 
     @Test func successfulGuidedLaunchResetDoesNotReusePreviousSession() {
@@ -481,126 +371,6 @@ struct ReviewableControlMarkdownTests {
         #expect(navigationTarget == nil)
     }
 
-    @Test func promptedSessionRetryAfterCommentTransferFailureReusesCreatedSession() async throws {
-        let session = makeTestSession(id: "control-session-transfer-retry")
-        var createCalls = 0
-        var retainedSession: Session?
-        var delivered = false
-        var transferCalls = 0
-
-        let first = try await ControlRevisionSessionLaunchCoordinator.prepare(
-            existingSession: retainedSession,
-            starterPromptDelivered: delivered,
-            create: {
-                createCalls += 1
-                return (session, true)
-            },
-            onSessionCreated: { created, promptDelivered in
-                retainedSession = created
-                delivered = promptDelivered
-            }
-        )
-
-        do {
-            transferCalls += 1
-            throw RetryFailure.simulatedNetworkFailure
-        } catch RetryFailure.simulatedNetworkFailure {
-            // The staged comments remain local when the transfer fails.
-        }
-
-        let retry = try await ControlRevisionSessionLaunchCoordinator.prepare(
-            existingSession: retainedSession,
-            starterPromptDelivered: delivered,
-            create: {
-                createCalls += 1
-                return (session, true)
-            },
-            onSessionCreated: { _, _ in
-                Issue.record("A comment-transfer retry must reuse the created session")
-            }
-        )
-
-        #expect(first.session.id == session.id)
-        #expect(retry.session.id == session.id)
-        #expect(createCalls == 1)
-        #expect(transferCalls == 1)
-    }
-
-    @Test func zeroStagedCommentsStillBuildsAnOrdinaryControlSessionTarget() throws {
-        let suiteName = "ReviewableControlMarkdownTests.zeroComments.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let comments = ChatReviewCommentsController(
-            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.zeroComments")
-        )
-
-        let target = try ControlRevisionCommentNavigation.makeSessionTarget(
-            serverId: "server-1",
-            fallbackServerId: nil,
-            domain: .skills,
-            targetId: "skill-1",
-            toSessionId: "control-session-1",
-            comments: comments
-        )
-
-        #expect(target.serverId == "server-1")
-        #expect(target.sessionId == "control-session-1")
-        #expect(target.routeScope == .control)
-    }
-
-    @Test func guidedSkillHandoffUpdatesTheReaderOwnedCommentController() throws {
-        let suiteName = "ReviewableControlMarkdownTests.guidedReaderState.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defaults.removePersistentDomain(forName: suiteName)
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        let comments = ChatReviewCommentsController(
-            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.guidedReaderState")
-        )
-        let draftSessionId = ReviewableControlMarkdownDraftKey.make(
-            serverId: "server-1",
-            fallbackServerId: nil,
-            domain: .skills,
-            targetId: "skill-1"
-        )
-        comments.load(
-            localScopeId: ReviewCommentLocalScope.controlDraft,
-            sessionId: draftSessionId
-        )
-        let request = ReviewCommentSelectionRequest(
-            selectedText: "Current guidance",
-            source: ReviewCommentSourceContext(
-                sessionId: draftSessionId,
-                surface: .fullScreenMarkdown,
-                sourceLabel: "Skill file",
-                filePath: "/Users/chen/.pi/agent/skills/review/SKILL.md",
-                lineRange: 4...4,
-                languageHint: "markdown",
-                timelineItemId: "skill-reader"
-            )
-        )
-        #expect(comments.save(
-            body: "Tighten this guidance.",
-            request: request,
-            localScopeId: ReviewCommentLocalScope.controlDraft,
-            sessionId: draftSessionId
-        ) == nil)
-        #expect(comments.stagedCount == 1)
-
-        _ = try ControlRevisionCommentNavigation.makeSessionTarget(
-            serverId: "server-1",
-            fallbackServerId: nil,
-            domain: .skills,
-            targetId: "skill-1",
-            toSessionId: "control-session-1",
-            comments: comments
-        )
-
-        #expect(comments.stagedCount == 0)
-        #expect(comments.stagedComments.isEmpty)
-    }
-
     @Test func guidedSkillHandoffNavigatesOnlyAfterSheetDismissalCompletes() throws {
         let navigation = AppNavigation()
         navigation.launchPhase = .ready
@@ -614,11 +384,9 @@ struct ReviewableControlMarkdownTests {
         ))
         let readerDepth = navigation.workspaceStackRouteElements.count
 
-        let target = try ControlRevisionCommentNavigation.makeSessionTarget(
+        let target = try ControlRevisionCommentNavigation.makeAtomicLaunchSessionTarget(
             serverId: "server-1",
             fallbackServerId: nil,
-            domain: .skills,
-            targetId: "skill-1",
             toSessionId: "control-session-1"
         )
         var handoff = ControlRevisionSheetHandoff()
@@ -637,23 +405,58 @@ struct ReviewableControlMarkdownTests {
         #expect(handoff.completeAfterDismissal() == nil)
     }
 
-    @Test func skillGuidedComposerPromptKeepsTheSelectedHostFile() {
-        let prompt = ControlSessionStarterPrompt.make(
+    @Test func guidedRevisionLaunchSendsContextOnlyPromptWithHostFileAndStagedComments() throws {
+        let suiteName = "ReviewableControlMarkdownTests.guidedPrompt.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let comments = ChatReviewCommentsController(
+            store: ReviewCommentStore(defaults: defaults, keyPrefix: "test.guidedPrompt")
+        )
+        let draftSessionId = "server-1:skills:skill-1"
+        comments.load(localScopeId: ReviewCommentLocalScope.controlDraft, sessionId: draftSessionId)
+        #expect(comments.save(
+            body: "Tighten this.",
+            request: ReviewCommentSelectionRequest(
+                selectedText: "Loose text",
+                source: ReviewCommentSourceContext(
+                    sessionId: draftSessionId,
+                    surface: .fullScreenMarkdown,
+                    sourceLabel: "codex / SKILL.md"
+                )
+            ),
+            localScopeId: ReviewCommentLocalScope.controlDraft,
+            sessionId: draftSessionId
+        ) == nil)
+
+        let launch = GuidedControlSessionAtomicLaunch.make(
             domain: .skills,
             intent: .revise,
             targetId: "skill-1",
             targetName: "codex",
             targetPath: "/Users/example/workspace/agent-skills/skills/codex/SKILL.md",
-            workspaceId: "workspace-1",
-            workspaceName: "Oppi",
-            userRequest: "Tighten the instructions."
+            workspaceId: nil,
+            workspaceName: nil,
+            sourceDraftText: "",
+            cleanRequest: "",
+            sessionName: "Revise codex",
+            model: nil,
+            thinking: .high,
+            requestId: "request-1",
+            comments: comments
         )
 
-        #expect(prompt.contains("Selected existing host file: /Users/example/workspace/agent-skills/skills/codex/SKILL.md"))
-        #expect(prompt.contains("Canonical workspace ID: workspace-1"))
-        #expect(prompt.contains("User request:\nTighten the instructions."))
-        #expect(prompt.contains("stock `read`"))
-        #expect(prompt.contains("stock `edit`"))
+        let prompt = launch.request.prompt ?? ""
+        let header = [
+            "Help the user revise an Oppi Skill.",
+            "Canonical target ID: skill-1",
+            "Canonical target name: codex",
+            "Selected existing host file: /Users/example/workspace/agent-skills/skills/codex/SKILL.md",
+        ].joined(separator: "\n")
+        #expect(prompt.hasPrefix(header))
+        #expect(!prompt.contains("Canonical workspace"))
+        #expect(prompt.contains("User request:"))
+        #expect(prompt.contains("Tighten this."))
     }
 
     @Test func guidedComposerReusesTheChatReviewCommentStashWhenCommentsAreStaged() {

@@ -69,21 +69,6 @@ final class ChatReviewCommentsController: ReviewCommentStashHandling {
         store.clearSent(ids: ids)
     }
 
-    @discardableResult
-    func moveStagedComments(
-        fromLocalScopeId: String,
-        fromSessionId: String,
-        toLocalScopeId: String,
-        toSessionId: String
-    ) throws -> Int {
-        try store.moveStagedComments(
-            fromWorkspaceId: fromLocalScopeId,
-            fromSessionId: fromSessionId,
-            toWorkspaceId: toLocalScopeId,
-            toSessionId: toSessionId
-        )
-    }
-
     private static func reviewReference(for request: ReviewCommentSelectionRequest) -> ReviewCommentReference {
         ReviewCommentReference(
             source: request.source.reviewCommentReferenceSource,

@@ -188,7 +188,6 @@ struct MacCatalogPresentationTests {
                 userRequest: "A research scout"
             )
         )
-        #expect(draft.prompt.contains("oppi agent"))
         #expect(draft.prompt.contains("User request:"))
     }
 
@@ -374,7 +373,7 @@ struct MacCatalogClientTests {
             #expect(body.intent == .create)
             #expect(body.targetId == nil)
             #expect(body.name == "Create Agent")
-            #expect(body.prompt?.contains("oppi agent") == true)
+            #expect(body.prompt?.contains("Help the user create an Oppi saved Agent.") == true)
             #expect(body.launchIdempotencyKey != nil)
             return jsonResponse(#"""
             {"session":{"id":"control-1","name":"Create Agent","status":"busy","createdAt":1000,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"create"}},"prompted":true}
