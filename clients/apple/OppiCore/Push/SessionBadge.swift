@@ -5,8 +5,8 @@ import Foundation
 /// A session counts while its status is blocked (`SessionStatusKind.isBlocked`): it waits on
 /// an approval, a question, or a sign-in, lead or subagent alike. A finished run counts
 /// nothing, whether it succeeded or failed, and neither does anything else the user has not
-/// seen yet; the badge is the same number as the Needs you alert and the Live Activity's
-/// needs-you count, so it drops the moment a session stops waiting, not when it is opened.
+/// seen yet. It drops when a session stops waiting, not when it is opened. The Live
+/// Activity counts threads instead, so a lead and its waiting subagent are one on the card.
 /// Each session counts once, however many notifications it raised.
 ///
 /// The app recounts from its session stores and stores the set in the App Group. While the
