@@ -19,6 +19,7 @@ import {
   run,
   runUntilOutput,
   stripAnsi,
+  TERMINAL_STDOUT_ENV,
   useCliDataDir,
 } from "./harness/cli-test-env.js";
 
@@ -56,10 +57,10 @@ function pairedFromStatus(env: Record<string, string>): boolean {
 describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not available"))(
   "serve on a host with an owner token",
   () => {
-    it("keeps offering an invite until a device has enrolled", async () => {
+    it("in a terminal, offers an invite until a device has enrolled", async () => {
       const dir = mkdtempSync(join(tmpdir(), "oppi-cli-first-run-token-"));
       try {
-        const env = await prepareHost(dir);
+        const env = { ...(await prepareHost(dir)), ...TERMINAL_STDOUT_ENV };
         new Storage(dir).ensurePaired();
         expect(pairedFromStatus(env)).toBe(false);
 
@@ -69,6 +70,42 @@ describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not avai
         expect(out).toContain("Keep this terminal open while you pair");
         expect(out).toContain("oppi pair");
         expect(out).not.toContain("then Ctrl+C when done");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 90_000);
+
+    it("in a terminal, keeps an invite that is still pending", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "oppi-cli-first-run-pending-"));
+      try {
+        const env = { ...(await prepareHost(dir)), ...TERMINAL_STDOUT_ENV };
+        const storage = new Storage(dir);
+        storage.ensurePaired();
+        const pending = storage.issuePairingToken(14 * 86_400_000);
+
+        const out = stripAnsi(
+          await runUntilOutput(["serve"], "Run 'oppi pair' for a new code", env, 60_000),
+        );
+        expect(out).toContain("still pending");
+        expect(out).not.toContain("oppi://connect?");
+        expect(new Storage(dir).getConfig().pairingToken).toBe(pending);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 90_000);
+
+    it("without a terminal, such as a service log, prints no invite and keeps the pending one", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "oppi-cli-first-run-service-"));
+      try {
+        const env = await prepareHost(dir);
+        const storage = new Storage(dir);
+        storage.ensurePaired();
+        const pending = storage.issuePairingToken(14 * 86_400_000);
+
+        const out = stripAnsi(await runUntilOutput(["serve"], "for a pairing code", env, 60_000));
+        expect(out).toContain("No device is paired yet");
+        expect(out).not.toContain("oppi://connect?");
+        expect(new Storage(dir).getConfig().pairingToken).toBe(pending);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -126,7 +163,7 @@ describe("doctor model providers", () => {
 
   it("tells the user how to connect a provider when none has credentials", () => {
     const out = doctor({});
-    expect(out).toContain("no model provider has credentials");
+    expect(out).toContain("no built-in model provider credentials found");
     expect(out).toContain("Model Providers");
     expect(out).not.toContain("pi auth");
   });
@@ -135,6 +172,6 @@ describe("doctor model providers", () => {
     const out = doctor({ ANTHROPIC_API_KEY: "sk-ant-doctor-test" });
     expect(out).toContain("model providers with credentials:");
     expect(out).toContain("anthropic");
-    expect(out).not.toContain("no model provider has credentials");
+    expect(out).not.toContain("no built-in model provider credentials found");
   });
 });

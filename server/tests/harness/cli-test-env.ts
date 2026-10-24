@@ -94,6 +94,15 @@ export function runBin(
   }
 }
 
+/**
+ * Makes the spawned CLI see a terminal on stdout. `oppi serve` prints a pairing invite
+ * only in a terminal, and the test pipes stdout.
+ */
+export const TERMINAL_STDOUT_ENV: Record<string, string> = {
+  NODE_OPTIONS:
+    "--import=data:text/javascript,Object.defineProperty(process.stdout,'isTTY',{value:true})",
+};
+
 export function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;]*m/g, "");
 }

@@ -141,8 +141,8 @@ const HELP_TOPICS: HelpTopic[] = [
     ],
     notes: [
       "On first run, serve creates owner credentials, enables TLS, and prints a pairing QR. It uses Tailscale TLS when `tailscale cert` can issue a certificate for this machine, otherwise self-signed TLS. It keeps any tls.mode other than disabled, and keeps disabled when publicUrl + proxy.trustedPeers configure a trusted HTTP reverse proxy.",
-      "Until a device has enrolled, every start prints a fresh pairing QR. Run 'oppi pair' in another terminal for a new code if it expires.",
-      "Ctrl+C stops the foreground server and every phone paired with it. 'oppi server install' keeps it running in the background.",
+      "Until a device has enrolled, a start in a terminal prints a fresh pairing QR unless an invite is still pending. Without a terminal (a background service, a log) it prints none. Run 'oppi pair' for a new code; it replaces any pending invite.",
+      "Ctrl+C stops the foreground server and every device paired with it. 'oppi server install' keeps it running in the background.",
     ],
     examples: [{ command: "oppi serve" }, { command: "oppi serve --host mac-studio.local" }],
   },
@@ -236,7 +236,7 @@ const HELP_TOPICS: HelpTopic[] = [
     notes: [
       "Doctor exits non-zero for critical failures.",
       "It inspects TLS files but does not generate missing certificate material.",
-      "It warns when no model provider has credentials; connect one in the app's Model Providers screen or set the provider's API key environment variable.",
+      "It warns when no built-in model provider has credentials. Connect one in the app's Model Providers screen. A foreground 'oppi serve' also reads provider API key environment variables; an installed background service does not, so doctor counts only what the service can see.",
     ],
     examples: [{ command: "oppi doctor" }],
   },

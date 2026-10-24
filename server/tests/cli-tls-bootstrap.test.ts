@@ -18,6 +18,7 @@ import {
   runAsync,
   runUntilOutput,
   stripAnsi,
+  TERMINAL_STDOUT_ENV,
   useCliDataDir,
 } from "./harness/cli-test-env.js";
 
@@ -65,7 +66,11 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
     serveDir: string,
     tailscaleEnv: Record<string, string>,
   ): Record<string, string> {
-    return { OPPI_DATA_DIR: serveDir, OPPI_TAILSCALE_BIN: tailscaleEnv.OPPI_TAILSCALE_BIN! };
+    return {
+      OPPI_DATA_DIR: serveDir,
+      OPPI_TAILSCALE_BIN: tailscaleEnv.OPPI_TAILSCALE_BIN!,
+      ...TERMINAL_STDOUT_ENV,
+    };
   }
 
   /**
@@ -492,7 +497,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
       const serveStdout = await runUntilOutput(
         ["serve"],
         "oppi://connect?",
-        { OPPI_DATA_DIR: serveDir },
+        { OPPI_DATA_DIR: serveDir, ...TERMINAL_STDOUT_ENV },
         60_000,
       );
 

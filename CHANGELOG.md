@@ -73,8 +73,8 @@ Example:
 - **Server:** Push needs no server setup: the server offers push through Oppi's relay by default, so **Server Settings → Notifications** shows **Push Notifications** after you update and restart the server. Nothing is sent until you turn it on for that server on the phone. `oppi config set push.mode off` turns it off; `push.relays` is needed only for an app you sign yourself. See [Push notifications](docs/server-configuration.md#push-notifications).
 - **Server:** A one-time (`at`) schedule moves to Archived after its run succeeds, so finished one-time schedules leave the Active list. A failed run keeps it active so you can see the failure and run it again.
 - **Server:** A durable session's streaming tool call reaches the app once: the server resolves its arguments and sends them a single time instead of also sending the provider's raw streaming text, and the answer in flight carries only the fields the app shows. A long call such as writing a large file sends roughly 30% fewer bytes while it streams.
-- **Server:** `oppi serve` after the first invite expired unused prints a fresh pairing QR and the `oppi pair` hint instead of "Paired". `oppi status --json` reports `paired` only when a non-revoked device is enrolled, not when an owner token exists. After the QR it says to keep the terminal open (Ctrl+C stops the server) and points to `oppi server install` for a background service.
-- **Server:** `oppi doctor` warns when no model provider has credentials and says to connect one in the app's **Model Providers** screen or set a provider API key variable. It no longer warns when the `pi` command is missing from `PATH`; the server does not need it.
+- **Server:** `oppi serve` no longer says "Paired" until a device has enrolled, and `oppi status --json` reports `paired` only when a non-revoked device is enrolled, not when an owner token exists. In a terminal, `oppi serve` prints a fresh pairing QR when no device has enrolled and no invite is pending, then says to keep the terminal open (Ctrl+C stops the server) and points to `oppi server install` for a background service. With no terminal, such as a service or a log, or while an invite is still pending, it prints no code and says to run `oppi pair`, so a restart never replaces a pending invite or writes one into a log.
+- **Server:** `oppi doctor` warns when no model provider has credentials and says to connect one in the app's **Model Providers** screen. With a background service installed it counts only what the service can see, so a key exported in your shell does not count; for a foreground `oppi serve` a provider API key variable counts. It no longer warns when the `pi` command is missing from `PATH`; the server does not need it.
 
 ### Fixed
 
@@ -89,7 +89,7 @@ Example:
 
 ### Removed
 
-- **Server:** `oppi pair --show-token` is gone. It printed the owner token, which the server rejects over the network, so it never helped pair a phone.
+- **Server:** `oppi pair --show-token` is gone. It printed the owner token, which the server rejects over the network, so it never helped pair a device.
 
 ## [0.53.0] - 2026-10-22
 

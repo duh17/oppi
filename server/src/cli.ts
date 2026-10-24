@@ -45,7 +45,7 @@ import { generateInvite, type GeneratedInvite } from "./invite.js";
 import { activePushRelays, releasePushPermissions } from "./push/push-sender.js";
 import { allowsTrustedPrivateHttpBind, parsePublicUrl } from "./proxy-config.js";
 import { getPackageInfo } from "./version.js";
-import { ModelRuntime, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { listAuthenticatedModelProviders } from "./cli/model-providers.js";
 import { requestServerStop } from "./server-stop-marker.js";
 import {
   getServiceStatus,
@@ -365,14 +365,28 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     console.log(c.dim("  Run 'oppi pair' to re-pair or add devices."));
     console.log("");
   } else {
-    // No device has enrolled yet (first run, or an earlier invite expired unused):
-    // show a fresh pairing QR inline so the user doesn't need a separate command.
+    // No device has enrolled yet (first run, or an earlier invite expired unused).
+    // Invites have one slot, so a start must not replace one that is still pending (a
+    // `oppi pair --ttl 14d` hand-off, or a QR someone is about to scan), and a service
+    // restart must not write a usable invite into its log. Only a terminal gets a new one.
+    const latest = storage.getConfig();
+    const invitePending =
+      latest.pairingToken !== undefined && (latest.pairingTokenExpiresAt ?? 0) > Date.now();
     console.log("");
-    showPairingQR(storage, undefined, pairHost);
-    console.log(c.green("  Server is running. Keep this terminal open while you pair."));
-    console.log(c.dim("  Code expired? Run 'oppi pair' in another terminal for a new one."));
-    console.log(c.dim("  Ctrl+C stops this server, including for the phone you just paired."));
-    console.log(c.dim("  To keep it running in the background, run 'oppi server install'."));
+    if (!process.stdout.isTTY) {
+      console.log(c.yellow("  No device is paired yet."));
+      console.log(c.dim("  Run 'oppi pair' in a terminal for a pairing code."));
+    } else if (invitePending) {
+      const expires = new Date(latest.pairingTokenExpiresAt ?? 0).toLocaleString();
+      console.log(c.yellow(`  A pairing invite is still pending (expires ${expires}).`));
+      console.log(c.dim("  Run 'oppi pair' for a new code; it replaces the pending one."));
+    } else {
+      showPairingQR(storage, undefined, pairHost);
+      console.log(c.green("  Server is running. Keep this terminal open while you pair."));
+      console.log(c.dim("  Code expired? Run 'oppi pair' in another terminal for a new one."));
+      console.log(c.dim("  Ctrl+C stops this server, including for the device you just paired."));
+      console.log(c.dim("  To keep it running in the background, run 'oppi server install'."));
+    }
     console.log("");
   }
 }
@@ -524,27 +538,6 @@ function isLoopbackHost(host: string): boolean {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
 }
 
-/**
- * Providers with usable credentials, resolved the way the server resolves them
- * (Pi's `auth.json`, `models.json`, and provider API-key environment variables).
- * `runtimeEnv` entries are applied first because the server applies them to its own
- * environment. Extension-registered providers are not loaded here.
- */
-async function listAuthenticatedModelProviders(config: ServerConfig): Promise<string[]> {
-  const runtimeEnv = resolveHostEnv(config).env;
-  for (const key of Object.keys(config.runtimeEnv ?? {})) {
-    const value = runtimeEnv[key];
-    if (value !== undefined) process.env[key] = value;
-  }
-  const agentDir = getAgentDir();
-  const runtime = await ModelRuntime.create({
-    authPath: join(agentDir, "auth.json"),
-    modelsPath: join(agentDir, "models.json"),
-  });
-  const models = await runtime.getAvailable();
-  return [...new Set(models.map((model) => model.provider))].sort();
-}
-
 async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
   type CheckLevel = "pass" | "warn" | "fail";
   type Check = { level: CheckLevel; message: string };
@@ -610,17 +603,33 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
     checks.push({ level: "pass", message: `pi executable found (${piPath})` });
   }
 
+  // launchd is macOS-only; elsewhere `launchctl` does not exist and probing it would abort
+  // doctor. Off macOS, `oppi serve` runs under the host's own supervisor, so skip the check.
+  // Extend this to the other platforms' services where `oppi server install` manages one.
+  const svcStatus = process.platform === "darwin" ? getServiceStatus() : undefined;
+  const serviceInstalled = svcStatus?.installed === true;
+
   try {
-    const providers = await listAuthenticatedModelProviders(config);
-    checks.push(
-      providers.length > 0
-        ? { level: "pass", message: `model providers with credentials: ${providers.join(", ")}` }
-        : {
-            level: "warn",
-            message:
-              "no model provider has credentials, so sessions cannot start a model. Connect one in the Oppi app (server menu \u2192 Model Providers), or set a provider API key such as ANTHROPIC_API_KEY in the server's environment.",
-          },
-    );
+    const providers = await listAuthenticatedModelProviders(config, serviceInstalled);
+    const unchecked = "extension-registered providers are not checked";
+    if (providers.length > 0) {
+      checks.push({
+        level: "pass",
+        message: serviceInstalled
+          ? `model providers the background service can use: ${providers.join(", ")}`
+          : `model providers with credentials: ${providers.join(", ")}`,
+      });
+    } else if (serviceInstalled) {
+      checks.push({
+        level: "warn",
+        message: `the background service sees no built-in model provider credentials (${unchecked}). Environment variables from your shell do not reach the service. Connect a provider in the Oppi app (server menu \u2192 Model Providers).`,
+      });
+    } else {
+      checks.push({
+        level: "warn",
+        message: `no built-in model provider credentials found (${unchecked}). Connect one in the Oppi app (server menu \u2192 Model Providers), or set a provider API key such as ANTHROPIC_API_KEY in the environment of a foreground \`oppi serve\`.`,
+      });
+    }
   } catch (err: unknown) {
     checks.push({
       level: "warn",
@@ -779,9 +788,6 @@ async function cmdDoctor(storage: CliConnectionConfig): Promise<void> {
 
   // ── LaunchAgent checks ──
 
-  // launchd is macOS-only; elsewhere `launchctl` does not exist and probing it would abort
-  // doctor. Off macOS, `oppi serve` runs under the host's own supervisor, so skip the check.
-  const svcStatus = process.platform === "darwin" ? getServiceStatus() : undefined;
   if (svcStatus?.installed) {
     checks.push({ level: "pass", message: "LaunchAgent installed" });
     if (svcStatus.running) {
