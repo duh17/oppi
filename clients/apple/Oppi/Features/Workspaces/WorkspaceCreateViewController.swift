@@ -243,7 +243,8 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         case .intro: AnyHashable(model.step == .pickProject)
         case .sandbox: AnyHashable(model.sandboxMode)
         case .scanError: AnyHashable(model.directoriesError)
-        case .name: AnyHashable(model.name)
+        // The folder mode picks Name's Return target (next field or done).
+        case .name: AnyHashable([AnyHashable(model.name), AnyHashable(model.isHostMountFromProjectPicker)])
         case .folderFixed, .folderField: AnyHashable(model.hostMount)
         case .folderCheck:
             AnyHashable([
@@ -750,7 +751,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
 
     /// Closes this sheet with the guided sheet above it, then opens the session
     /// once the dismissal has started.
-    func guidedSessionPrepared(_ target: WorkspaceSessionNavTarget) {
+    private func guidedSessionPrepared(_ target: WorkspaceSessionNavTarget) {
         let navigation = root.navigation
         Router.finish(self)
         Task { @MainActor in
