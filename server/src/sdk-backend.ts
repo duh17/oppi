@@ -100,6 +100,8 @@ import { hostMountValidationError } from "./host.js";
 import { resolveSessionWorkRoot } from "./session-work-root.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
+import { buildControlSystemPrompt, CONTROL_SESSION_TOOLS } from "./control-prompt.js";
+import { isDeclaredControlSession } from "./control-session.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { GondolinManager } from "./gondolin-manager.js";
 import {
@@ -1197,6 +1199,10 @@ export class SdkBackend implements AgentBackend {
 
     const agentDefinition = config.agentDefinition;
     const managedSession = (session.runtime ?? "oppi") !== "pi-tui";
+    // A declared Pi Control session ("Edit with Oppi") runs a focused setup assistant, not
+    // the owner's coding setup: its own system prompt, no global prompt files, context
+    // files, or Skills, and a minimal tool set. Extensions still load.
+    const controlMetadata = isDeclaredControlSession(session) ? session.control : undefined;
     const getMobileOutputGuideSettings =
       config.getMobileOutputGuideSettings ?? (() => DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS);
     const mobileOutputGuideSettingsHolder: MobileOutputGuideSettingsHolder = {
@@ -1317,12 +1323,26 @@ export class SdkBackend implements AgentBackend {
       // happened to exist when this loader was constructed.
       const staticAppendSystemPrompt = buildSdkAppendSystemPrompt(workspace, {
         includeOppiDocsHint:
-          !sandboxMode && managedSession && isOppiDocsPromptEnabled(config.serverConfig),
+          !controlMetadata &&
+          !sandboxMode &&
+          managedSession &&
+          isOppiDocsPromptEnabled(config.serverConfig),
         includeOppiCliHint:
-          !sandboxMode && managedSession && isOppiCliPromptEnabled(config.serverConfig),
+          !controlMetadata &&
+          !sandboxMode &&
+          managedSession &&
+          isOppiCliPromptEnabled(config.serverConfig),
         includeMobileOutputGuide: false,
       });
       const buildCurrentAppendSystemPrompt = (base: string[]): string[] => {
+        // The control prompt already names the docs and the `oppi` CLI. Ignore Pi's
+        // discovered APPEND_SYSTEM.md; keep only the live Mobile Output Guide setting.
+        if (controlMetadata) {
+          return managedSession && mobileOutputGuideSettingsHolder.snapshot.enabled
+            ? [buildMobileOutputGuide()]
+            : [];
+        }
+
         // A saved-Agent replacement remains authoritative over this optional
         // capability guide. Preserve the append resources Pi/Oppi already
         // supplied before this feature, but never add the guide after replace.
@@ -1411,7 +1431,14 @@ export class SdkBackend implements AgentBackend {
           ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp),
           ...(sandboxSkillCommand ? [sandboxSkillCommand] : []),
         ],
-        ...(sandboxMode
+        ...(controlMetadata
+          ? {
+              noContextFiles: true,
+              noSkills: true,
+              systemPromptOverride: () => buildControlSystemPrompt(controlMetadata),
+            }
+          : {}),
+        ...(sandboxMode || controlMetadata
           ? {}
           : selectedAgentSkillPaths !== undefined
             ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
@@ -1613,10 +1640,12 @@ export class SdkBackend implements AgentBackend {
           "This sandbox's Tools list hides its MCP servers. Clear the workspace Tools list to use them.";
         session.warnings = [...new Set([...(session.warnings ?? []), warning])];
       }
-      const effectiveToolPolicy = {
-        ...configuredToolPolicy,
-        ...(sandboxAllowlist.allowed ? { allowed: sandboxAllowlist.allowed } : {}),
-      };
+      const effectiveToolPolicy = controlMetadata
+        ? { allowed: [...CONTROL_SESSION_TOOLS], excluded: undefined, noTools: undefined }
+        : {
+            ...configuredToolPolicy,
+            ...(sandboxAllowlist.allowed ? { allowed: sandboxAllowlist.allowed } : {}),
+          };
       const scoped = await resolveEnabledScopedModels(
         settingsManager.getEnabledModels(),
         (patterns) => resolveModelScopeWithDiagnostics(patterns, modelRuntime),
