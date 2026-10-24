@@ -1,2560 +1,3467 @@
 {
-  "sourceLanguage": "en",
-  "version": "1.0",
-  "strings": {
-    "%@ #%lld": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$@ #%2$lld"
+  "sourceLanguage" : "en",
+  "strings" : {
+    "  " : {
+
+    },
+    " −%@" : {
+
+    },
+    "... and %lld more" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "… 及其他 %lld 个"
+          }
+        }
+      }
+    },
+    "·" : {
+
+    },
+    "· 7s" : {
+
+    },
+    "[%@] Approval needed in %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "[%1$@] %2$@ 中需要审批"
+          }
+        }
+      }
+    },
+    "%@" : {
+
+    },
+    "%@ · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@"
+          }
+        }
+      }
+    },
+    "%@ · %@ tools · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@ tools · %3$@"
           }
         }
       }
     },
-    "%@ session status": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@会话状态"
+    "%@ (%@)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ (%2$@)"
           }
         }
       }
     },
-    "%lld active": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个活跃"
+    "%@ #%lld" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ #%2$lld"
           }
         }
       }
     },
-    "%lld approvals": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个待审批"
+    "%@ chars" : {
+
+    },
+    "%@ finished" : {
+
+    },
+    "%@ Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes." : {
+
+    },
+    "%@ session status" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@会话状态"
           }
         }
       }
+    },
+    "%@ Session-specific changes still happen in chat." : {
+
     },
-    "%lld changed": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个已更改"
+    "%@ sessions — %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ sessions — %2$@"
           }
         }
       }
     },
-    "%lld changes": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个变更"
+    "%@ will lose access immediately. Pair it again to restore access." : {
+
+    },
+    "%@%%" : {
+
+    },
+    "%@%% left" : {
+
+    },
+    "%lld active" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个活跃"
           }
         }
       }
     },
-    "%lld files touched": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个文件被修改"
+    "%lld approvals" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个待审批"
           }
         }
       }
     },
-    "%lld items": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 项"
+    "%lld changed" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个已更改"
           }
         }
       }
     },
-    "%lld lines": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 行"
+    "%lld changes" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个变更"
           }
         }
       }
     },
-    "%lld msgs": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 条消息"
+    "%lld files touched" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个文件被修改"
           }
         }
       }
     },
-    "%lld pending approvals": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个待审批"
+    "%lld items" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 项"
           }
         }
       }
     },
-    "%lld skills": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个技能"
+    "%lld lines" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 行"
           }
         }
       }
     },
-    "%lld stash": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个暂存"
+    "%lld msgs" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 条消息"
           }
         }
       }
     },
-    "%lld stopped": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld 个已停止"
+    "%lld pending approvals" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个待审批"
           }
         }
       }
     },
-    "... and %lld more": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "… 及其他 %lld 个"
+    "%lld skills" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个技能"
           }
         }
       }
     },
-    "1 file touched": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "1 个文件被修改"
+    "%lld stash" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个暂存"
           }
         }
       }
     },
-    "About": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "关于"
+    "%lld stopped" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个已停止"
           }
         }
       }
+    },
+    "+%@" : {
+
+    },
+    "+%@ more" : {
+
+    },
+    "×%@" : {
+
+    },
+    "~/workspace/project (must exist)" : {
+
     },
-    "Add Policy Rule": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "添加策略规则"
+    "−%@" : {
+
+    },
+    "1 file touched" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 个文件被修改"
           }
         }
       }
+    },
+    "A new directory will be created at ~/sandbox/%@/" : {
+
+    },
+    "A tailnet admin must approve %@ in the Tailscale admin console." : {
+
     },
-    "Add Remembered Rule": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "添加记忆规则"
+    "A Tailscale name needs Oppi's Tailscale connection." : {
+
+    },
+    "A voice feature shows in chats only while its backend is ready." : {
+
+    },
+    "A workspace tells Oppi which folder to work in. Pick a project on %@, enter a folder path manually, or leave the folder empty and Oppi creates one if you just want to explore the app." : {
+
+    },
+    "About" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关于"
           }
         }
       }
+    },
+    "Add a workspace that matches the required runtime, or choose Any runtime." : {
+
     },
-    "Add Rule": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "添加规则"
+    "Add Policy Rule" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加策略规则"
           }
         }
       }
     },
-    "Add Server": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "添加服务器"
+    "Add Remembered Rule" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加记忆规则"
           }
         }
       }
     },
-    "Agents and schedules are easier to set up": {},
-    "All skills enabled": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已启用所有技能"
+    "Add Rule" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加规则"
           }
         }
       }
     },
-    "Allow": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "允许"
+    "Add Server" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加服务器"
           }
         }
       }
     },
-    "Allow always": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "始终允许"
+    "Added after Pi’s base prompt for every session in this workspace." : {
+
+    },
+    "Adding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled." : {
+
+    },
+    "Adds short taps for optional in-app interactions like toolbar expansion, copy, selection, and long-press thresholds. Oppi also respects iOS System Haptics." : {
+
+    },
+    "After approval, the browser may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host." : {
+
+    },
+    "Agent or server default" : {
+
+    },
+    "All providers are currently connected" : {
+
+    },
+    "All skills enabled" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已启用所有技能"
           }
         }
       }
+    },
+    "All Workspaces" : {
+
     },
-    "Allow this session": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本次会话允许"
+    "Allow" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许"
           }
         }
       }
     },
-    "Appearance": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "外观"
+    "Allow always" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "始终允许"
           }
         }
       }
     },
-    "Appended to the base agent prompt": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "追加到基础智能体提示词"
+    "Allow this session" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次会话允许"
           }
         }
       }
     },
-    "Approval": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "待审批"
+    "Allowed Hosts" : {
+
+    },
+    "Almost there" : {
+
+    },
+    "Appearance" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外观"
           }
         }
       }
     },
-    "Approval needed in %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 中需要审批"
+    "Appended to the base agent prompt" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "追加到基础智能体提示词"
           }
         }
       }
+    },
+    "Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged." : {
+
     },
-    "Approve": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "批准"
+    "Approval" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "待审批"
           }
         }
       }
     },
-    "Approve Automatically": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动批准"
+    "Approval needed in %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 中需要审批"
           }
         }
       }
     },
-    "Ask": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "询问"
+    "Approve" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准"
           }
         }
       }
     },
-    "Ask an agent to cite workspace files as `[[wiki links]]`, then tap a link to open the file in Oppi.": {},
-    "Ask Before Running": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "运行前询问"
+    "Approve Automatically" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动批准"
           }
         }
       }
     },
-    "Attention": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "需要注意"
+    "Ask" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "询问"
           }
         }
       }
     },
-    "Attention needed": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "需要注意"
+    "Ask Before Running" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行前询问"
           }
         }
       }
     },
-    "Audio file (binary content not displayable)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "音频文件（二进制内容无法显示）"
+    "Assistant and user chat messages. Monospaced Messages sets them in your code font." : {
+
+    },
+    "Assistant message" : {
+
+    },
+    "Attention" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要注意"
           }
         }
       }
     },
-    "Auth": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "认证"
+    "Attention needed" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要注意"
           }
         }
       }
     },
-    "Available": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "可用"
+    "Audio file (binary content not displayable)" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "音频文件（二进制内容无法显示）"
           }
         }
       }
     },
-    "Back to current server": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "返回当前服务器"
+    "Auth" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "认证"
           }
         }
       }
+    },
+    "Auto-Name" : {
+
+    },
+    "Automatic" : {
+
     },
-    "Biometric Approval": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "生物识别审批"
+    "Available" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可用"
           }
         }
       }
     },
-    "Version %@": {},
-    "What’s new in this version": {},
-    "Cache": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "缓存"
+    "Back to current server" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "返回当前服务器"
           }
         }
       }
     },
-    "Camera": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "相机"
+    "Badge color reflects connection status: green connected, blue connecting, red disconnected." : {
+
+    },
+    "Bars run from launch to last activity on clock time. Arrows are messages between sessions. Pinch to zoom." : {
+
+    },
+    "Biometric Approval" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "生物识别审批"
           }
         }
       }
     },
-    "Cancel": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "取消"
+    "Cache" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缓存"
           }
         }
       }
     },
-    "Change": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "变更"
+    "cache %@%%" : {
+
+    },
+    "Camera" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相机"
           }
         }
       }
     },
-    "Change Detail": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "变更详情"
+    "Cancel" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消"
           }
         }
       }
+    },
+    "Cancel Sign-In" : {
+
     },
-    "Changed Files": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已更改文件"
+    "Cancelling…" : {
+
+    },
+    "Change" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "变更"
           }
         }
       }
     },
-    "Chat scrolls behind translucent bars with soft edge effects.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "聊天内容在半透明栏后滚动，带有柔和边缘效果。"
+    "Change Detail" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "变更详情"
           }
         }
       }
     },
-    "Chat controls are more reliable": {},
-    "Clear Local Cache": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "清除本地缓存"
+    "Changed Files" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已更改文件"
           }
         }
       }
     },
-    "Compact": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "压缩"
+    "Chat scrolls behind translucent bars with soft edge effects." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天内容在半透明栏后滚动，带有柔和边缘效果。"
           }
         }
       }
+    },
+    "Checked: ~/workspace, ~/projects, ~/src, ~/code, ~/Developer" : {
+
+    },
+    "Checking…" : {
+
+    },
+    "Choose Emoji or Genmoji" : {
+
     },
-    "Compact Context": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "压缩上下文"
+    "Choose the details shown on session rows in every session list." : {
+
+    },
+    "Choose where the sign-in page opens. On server opens a browser on the server's own desktop." : {
+
+    },
+    "Clear Local Cache" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除本地缓存"
           }
         }
       }
+    },
+    "Code and tool output" : {
+
     },
-    "Compacting context...": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在压缩上下文…"
+    "Code blocks, diffs, terminals, and tool output." : {
+
+    },
+    "Compact" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "压缩"
           }
         }
       }
     },
-    "Compaction": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "压缩"
+    "Compact Context" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "压缩上下文"
           }
         }
       }
     },
-    "Compaction cancelled": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "压缩已取消"
+    "Compacting context..." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在压缩上下文…"
           }
         }
       }
     },
-    "Compose": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "编写"
+    "Compaction" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "压缩"
           }
         }
       }
     },
-    "Computing diff…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在计算差异…"
+    "Compaction cancelled" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "压缩已取消"
           }
         }
       }
     },
-    "Connect": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "连接"
+    "Compose" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编写"
           }
         }
       }
     },
-    "Connect Manually": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "手动连接"
+    "Computing diff…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在计算差异…"
           }
         }
       }
+    },
+    "Configuration" : {
+
     },
-    "Connect through Tailscale": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "通过 Tailscale 连接"
+    "Configure Pi extensions in ~/.pi/agent/extensions or Pi user settings." : {
+
+    },
+    "Connect" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接"
           }
         }
       }
     },
-    "Connect to Server": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "连接到服务器"
+    "Connect Manually" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手动连接"
           }
         }
       }
     },
-    "Connected": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已连接"
+    "Connect through Tailscale" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过 Tailscale 连接"
           }
         }
       }
+    },
+    "Connect to a paired server to manage MCP." : {
+
     },
-    "Connected!": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已连接！"
+    "Connect to Server" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接到服务器"
           }
         }
       }
     },
-    "Connecting…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "连接中…"
+    "Connected" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接"
           }
         }
       }
     },
-    "Connection failed": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "连接失败"
+    "Connected!" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接！"
           }
         }
       }
     },
-    "Connections are pinned to your server's TLS certificate.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "连接已绑定到服务器的 TLS 证书。"
+    "Connecting…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接中…"
           }
         }
       }
     },
-    "Content": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "内容"
+    "Connection failed" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接失败"
           }
         }
       }
     },
-    "Context shows more Pi usage details, slash commands wait while the agent is busy, `/compact` works like a normal slash command, and extension prompts preserve your draft.": {},
-    "Context compacted — retrying...": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上下文已压缩 — 正在重试…"
+    "Connections are pinned to your server's TLS certificate." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接已绑定到服务器的 TLS 证书。"
           }
         }
       }
     },
-    "Context overflow — compacting...": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上下文溢出 — 正在压缩…"
+    "Content" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内容"
           }
         }
       }
     },
-    "Continue": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "继续"
+    "Context compacted — retrying..." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文已压缩 — 正在重试…"
           }
         }
       }
     },
-    "Control your pi agents\nfrom your phone.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在手机上控制你的\npi 智能体。"
+    "Context overflow — compacting..." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上下文溢出 — 正在压缩…"
           }
         }
       }
     },
-    "Copied": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已复制"
+    "Continue" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "继续"
           }
         }
       }
     },
-    "Copy": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制"
+    "Control your pi agents\nfrom your phone." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在手机上控制你的\npi 智能体。"
           }
         }
       }
     },
-    "Copy Command": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制命令"
+    "Copied" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已复制"
           }
         }
       }
     },
-    "Copy Image": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制图片"
+    "Copy" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制"
           }
         }
       }
     },
-    "Copy Old Text": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制旧文本"
+    "Copy as Diff" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制为 Diff"
           }
         }
       }
     },
-    "Copy Output": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制输出"
+    "Copy as Markdown" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制为 Markdown"
           }
         }
       }
     },
-    "Copy Session ID": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制会话 ID"
+    "Copy Command" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制命令"
           }
         }
       }
     },
-    "Copy as Diff": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制为 Diff"
+    "Copy Image" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制图片"
           }
         }
       }
     },
-    "Copy as Markdown": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "复制为 Markdown"
+    "Copy Old Text" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制旧文本"
           }
         }
       }
     },
-    "Create": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "创建"
+    "Copy Output" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制输出"
           }
         }
       }
     },
-    "Create workspace on %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在 %@ 上创建工作区"
+    "Copy Session ID" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制会话 ID"
           }
         }
       }
     },
-    "Creating session...": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在创建会话…"
+    "Couldn't let this server update the Live Activity while Oppi is closed. Oppi tries again when it reconnects." : {
+
+    },
+    "Create" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "创建"
           }
         }
       }
+    },
+    "Create this one folder on %@? The parent folder must already exist." : {
+
+    },
+    "Create Workspace" : {
+
     },
-    "Danger Zone": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "危险区域"
+    "Create workspace on %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 %@ 上创建工作区"
           }
         }
       }
     },
-    "Default Fallback": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "默认兜底策略"
+    "Create your first workspace" : {
+
+    },
+    "Creating folder…" : {
+
+    },
+    "Creating session..." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在创建会话…"
           }
         }
       }
     },
-    "Delete": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "删除"
+    "Cron Expression" : {
+
+    },
+    "current" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前"
           }
         }
       }
+    },
+    "Current saved Agent" : {
+
     },
-    "Deny": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "拒绝"
+    "Current session" : {
+
+    },
+    "Current workspace" : {
+
+    },
+    "Custom Themes" : {
+
+    },
+    "Danger Zone" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "危险区域"
           }
         }
       }
     },
-    "Deny All (%lld)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全部拒绝 (%lld)"
+    "Default Fallback" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认兜底策略"
           }
         }
       }
     },
-    "Deny Automatically": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "自动拒绝"
+    "Delete" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除"
           }
         }
       }
     },
-    "Deny always": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "始终拒绝"
+    "Deny" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拒绝"
           }
         }
       }
     },
-    "Diff": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "差异"
+    "Deny All (%lld)" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部拒绝 (%lld)"
           }
         }
       }
     },
-    "Diff unavailable for this change.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此变更的差异不可用。"
+    "Deny always" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "始终拒绝"
           }
         }
       }
     },
-    "Disabled Skills": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已禁用技能"
+    "Deny Automatically" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "自动拒绝"
           }
         }
       }
     },
-    "Done": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完成"
+    "Deselect these identifiers before saving, or restore them on the server." : {
+
+    },
+    "Deselect these paths before saving, or restore them on the server." : {
+
+    },
+    "Dictionary" : {
+
+    },
+    "Diff" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "差异"
           }
         }
       }
     },
-    "Edit Remembered Rule": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "编辑记忆规则"
+    "Diff unavailable for this change." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此变更的差异不可用。"
           }
         }
       }
     },
-    "Edit Workspace": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "编辑工作区"
+    "Disabled Skills" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已禁用技能"
           }
         }
       }
     },
-    "Edit and write tool calls will appear here.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "编辑和写入工具调用将显示在此处。"
+    "Done" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
           }
         }
       }
+    },
+    "edit " : {
+
     },
-    "Empty file": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "空文件"
+    "edit %lld" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑 %lld"
           }
         }
       }
     },
-    "Enabled (%lld)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已启用 (%lld)"
+    "Edit and write tool calls will appear here." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑和写入工具调用将显示在此处。"
           }
         }
       }
     },
-    "Enabled Skills": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已启用技能"
+    "Edit Remembered Rule" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑记忆规则"
           }
         }
       }
     },
-    "Enter manually": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "手动输入"
+    "Edit Workspace" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑工作区"
           }
         }
       }
     },
-    "Err": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "错误"
+    "Empty file" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空文件"
           }
         }
       }
     },
-    "Error": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "错误"
+    "Enabled (%lld)" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已启用 (%lld)"
           }
         }
       }
     },
-    "Experiments": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "实验功能"
+    "Enabled Skills" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已启用技能"
           }
         }
       }
     },
-    "Expires %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 后过期"
+    "Enter manually" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手动输入"
           }
         }
       }
     },
-    "Extensions": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "扩展"
+    "Err" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "错误"
           }
         }
       }
     },
-    "Extensions API: %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "扩展 API: %@"
+    "Error" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "错误"
           }
         }
       }
     },
-    "Files": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "文件"
+    "Every %@" : {
+
+    },
+    "Every paired device can see this list. Revoking disconnects that device immediately." : {
+
+    },
+    "Excluded from xAI Server dictation (over 50 characters)" : {
+
+    },
+    "Existing selections are preserved, and unavailable selections can still be removed." : {
+
+    },
+    "Existing selections are preserved. Retry before choosing new Extensions." : {
+
+    },
+    "Existing selections are preserved. Retry before choosing new Skills." : {
+
+    },
+    "Experiments" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实验功能"
           }
         }
       }
     },
-    "Force Stop Session": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "强制停止会话"
+    "Expires %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 后过期"
           }
         }
       }
+    },
+    "Exporting" : {
+
     },
-    "Fork from here": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "从此处分叉"
+    "Extensions" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "扩展"
           }
         }
       }
     },
-    "Full action": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完整操作"
+    "Extensions API: %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "扩展 API: %@"
           }
         }
       }
     },
-    "Git Status": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Git 状态"
+    "Files" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件"
           }
         }
       }
     },
-    "Glass Chat Interface": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "毛玻璃聊天界面"
+    "Files are read-only and come from %@." : {
+
+    },
+    "Finish setup by signing in or adding an API key. This unlocks model selection for sessions on this server." : {
+
+    },
+    "Force Stop Session" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "强制停止会话"
           }
         }
       }
     },
-    "Host (e.g. my-mac.local)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "主机（例如 my-mac.local）"
+    "Fork from here" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从此处分叉"
           }
         }
       }
+    },
+    "From Global" : {
+
     },
-    "Host Working Directory": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "主机工作目录"
+    "Full action" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完整操作"
           }
         }
       }
     },
-    "Host process current directory": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "主机进程当前目录"
+    "Git Status" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git 状态"
           }
         }
       }
     },
-    "Identity": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "标识"
+    "Glass Chat Interface" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "毛玻璃聊天界面"
           }
         }
       }
     },
-    "Idle": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "空闲"
+    "Global servers that also load in this workspace. Change them from MCP Servers in the sidebar." : {
+
+    },
+    "Haplo LLC — Swift ThinkingOrbs port" : {
+
+    },
+    "Host (e.g. my-mac.local)" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主机（例如 my-mac.local）"
           }
         }
       }
     },
-    "Image file (binary content not displayable)": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "图片文件（二进制内容无法显示）"
+    "Host process current directory" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主机进程当前目录"
           }
         }
       }
     },
-    "Image preview unavailable": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "图片预览不可用"
+    "Host Working Directory" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "主机工作目录"
           }
         }
       }
+    },
+    "How to set up the server" : {
+
+    },
+    "HTTP" : {
+
     },
-    "Import Theme": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "导入主题"
+    "I found the settings path and kept the global preference device-local." : {
+
+    },
+    "Icon" : {
+
+    },
+    "Identity" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标识"
           }
         }
       }
     },
-    "Loading available extensions…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在加载可用扩展…"
+    "Idle" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "空闲"
           }
         }
       }
     },
-    "Loading diff…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在加载差异…"
+    "Image file (binary content not displayable)" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图片文件（二进制内容无法显示）"
           }
         }
       }
     },
-    "Loading skills…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在加载技能…"
+    "Image preview unavailable" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "图片预览不可用"
           }
         }
       }
     },
-    "Local session environment": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本地会话环境"
+    "Import Theme" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导入主题"
           }
         }
       }
+    },
+    "Import themes from your server, or describe a new one and Oppi writes it. Themes are JSON files in the Oppi data directory (usually ~/.config/oppi/themes); Pi TUI themes in ~/.pi/agent/themes are converted automatically." : {
+
     },
-    "Manage Workspaces": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "管理工作区"
+    "in Oppi" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi 更新"
           }
         }
       }
+    },
+    "Independently verify why the host key changed before forgetting it." : {
+
+    },
+    "Inserted into the comment composer when you tap the quick comment." : {
+
+    },
+    "Inserted Text" : {
+
+    },
+    "Isolated micro-VM. Pick a project to mount." : {
+
     },
-    "Manual: %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "手动: %@"
+    "Jakub Antalik — original thinking-orbs designs and engine" : {
+
+    },
+    "Launch = created, stop = last activity. Messages and control come from the interaction log." : {
+
+    },
+    "Leave empty to let Oppi create a folder. If the folder doesn’t exist, use Create This Folder; Oppi asks before creating one directory." : {
+
+    },
+    "let files = try await workspace.changedFiles()\nprint(files.count)" : {
+
+    },
+    "Live Activities are off for Oppi in the Settings app." : {
+
+    },
+    "Loading available extensions…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载可用扩展…"
           }
         }
       }
     },
-    "Markdown": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Markdown"
+    "Loading diff…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载差异…"
           }
         }
       }
     },
-    "Match": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "匹配"
+    "Loading extensions…" : {
+
+    },
+    "Loading skills…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载技能…"
           }
         }
       }
     },
-    "Math formula source: %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "数学公式源码：%@"
+    "Local session environment" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地会话环境"
           }
         }
       }
+    },
+    "Locked" : {
+
     },
-    "Math formula: %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "数学公式：%@"
+    "Machine" : {
+
+    },
+    "Manage Workspaces" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "管理工作区"
           }
         }
       }
     },
-    "Memory": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "记忆"
+    "Manual: %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手动: %@"
           }
         }
       }
     },
-    "Message…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "消息…"
+    "Markdown" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Markdown"
           }
         }
       }
     },
-    "Model changed": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "模型已切换"
+    "Match" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "匹配"
           }
         }
       }
     },
-    "Model providers are easier to manage": {},
-    "Models": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "模型"
+    "Math formula source: %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "数学公式源码：%@"
           }
         }
       }
     },
-    "More predictable server connections": {},
-    "More options": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "更多选项"
+    "Math formula: %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "数学公式：%@"
           }
         }
       }
     },
-    "Name": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "名称"
+    "Memory" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "记忆"
           }
         }
       }
     },
-    "Named extensions from ~/.pi/agent/extensions.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "来自 ~/.pi/agent/extensions 的具名扩展。"
+    "Message…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消息…"
           }
         }
       }
+    },
+    "Mobile Output Guide" : {
+
     },
-    "New Workspace on %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 上的新工作区"
+    "Model" : {
+
+    },
+    "Model changed" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型已切换"
           }
         }
       }
     },
-    "No discoverable extensions found.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未发现可用扩展。"
+    "Models" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型"
           }
         }
       }
     },
-    "No expiry": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无时限"
+    "modified" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已修改"
           }
         }
       }
     },
-    "No recent policy decisions.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "暂无最近的策略决策。"
+    "More options" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更多选项"
           }
         }
       }
     },
-    "No remembered rules for this workspace.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此工作区暂无已记忆规则。"
+    "Name" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "名称"
           }
         }
       }
     },
-    "No sessions": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "暂无会话"
+    "Named extensions from ~/.pi/agent/extensions." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来自 ~/.pi/agent/extensions 的具名扩展。"
           }
         }
       }
+    },
+    "Names and terms that help dictation recognize what you say. Kept on your server." : {
+
     },
-    "No skills enabled": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未启用任何技能"
+    "Nerd Font icons add prompt and file icons in the terminal and tool output, with any code font." : {
+
+    },
+    "New sessions load skills, extensions, prompts, and themes from Pi user and project settings for this folder." : {
+
+    },
+    "New sessions use this setting. Reload an active session to apply it now." : {
+
+    },
+    "New Workspace on %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 上的新工作区"
           }
         }
       }
+    },
+    "No compatible models" : {
+
     },
-    "No themes found on server.\nAsk the agent to create one!": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "服务器上未找到主题。\n让智能体创建一个吧！"
+    "No data for this range" : {
+
+    },
+    "No discoverable extensions found." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未发现可用扩展。"
           }
         }
       }
     },
-    "No workspaces": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "暂无工作区"
+    "No expiry" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无时限"
           }
         }
       }
+    },
+    "No extensions match “%@”." : {
+
+    },
+    "No global MCP servers. Add them from MCP Servers in the sidebar." : {
+
     },
-    "OK": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "好"
+    "No MCP servers configured" : {
+
+    },
+    "no net change" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无净变更"
           }
         }
       }
+    },
+    "No other machines are online." : {
+
+    },
+    "No paired devices" : {
+
+    },
+    "No Pi extensions found." : {
+
     },
-    "Offline": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "离线"
+    "No Pi skills discovered for this folder yet." : {
+
+    },
+    "No projects found in default locations." : {
+
+    },
+    "No recent policy decisions." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无最近的策略决策。"
           }
         }
       }
     },
-    "On-device speech-to-text. Tap the mic to dictate prompts.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "设备端语音转文字。点击麦克风口述提示词。"
+    "No remembered rules for this workspace." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此工作区暂无已记忆规则。"
           }
         }
       }
+    },
+    "No saved Agent" : {
+
     },
-    "Open workspace files with wiki links": {},
-    "Open Full Screen": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全屏查看"
+    "No sessions" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无会话"
           }
         }
       }
     },
-    "Opens formula full screen": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全屏打开公式"
+    "No skills enabled" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未启用任何技能"
           }
         }
       }
     },
-    "Open Oppi to review": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "打开 Oppi 查看"
+    "No skills match “%@”." : {
+
+    },
+    "No themes found on server.\nAsk the agent to create one!" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器上未找到主题。\n让智能体创建一个吧！"
           }
         }
       }
+    },
+    "No tools available" : {
+
     },
-    "Oppi": {},
-    "Overall Diff": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "总体差异"
+    "No workspace data" : {
+
+    },
+    "No workspaces" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无工作区"
           }
         }
       }
+    },
+    "Not checked yet. Pull to refresh." : {
+
     },
-    "Overview": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "概览"
+    "Notifications" : {
+
+    },
+    "Off" : {
+
+    },
+    "Off by default. When on, samples this server's CPU, memory, and disk every 30 seconds for Server Metrics and Grafana, kept 30 days on the server." : {
+
+    },
+    "Offline" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "离线"
           }
         }
       }
     },
-    "Pair with a server to get started.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "配对服务器以开始使用。"
+    "OK" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "好"
           }
         }
       }
     },
-    "Photo Library": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "相册"
+    "On the machine, `ssh-keygen -lf /etc/ssh/ssh_host_%@_key.pub` prints the same value." : {
+
+    },
+    "On-device" : {
+
+    },
+    "On-device speech-to-text. Tap the mic to dictate prompts." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设备端语音转文字。点击麦克风口述提示词。"
           }
         }
       }
+    },
+    "Online Machines" : {
+
+    },
+    "Only enabled servers load here. Web servers are called from your server, only to Allowed Hosts, and their sign-in stays there. Command servers run inside the VM, where the agent can read their settings; ones that use host secrets are blocked. A workspace Tools list hides MCP servers." : {
+
     },
-    "Policy Error": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "策略错误"
+    "Open a file to select text, stage comments, and revise it in an Oppi session." : {
+
+    },
+    "Open Full Screen" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全屏查看"
           }
         }
       }
     },
-    "Policy Rule Not Added": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未添加策略规则"
+    "Open Oppi to review" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开 Oppi 查看"
           }
         }
       }
     },
-    "Port": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "端口"
+    "Opens formula full screen" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全屏打开公式"
           }
         }
       }
+    },
+    "Oppi" : {
+
+    },
+    "Oppi downloads it from your servers again when needed." : {
+
+    },
+    "Oppi pairs with an Oppi server you run yourself on a Mac or Linux machine. Install the server, then pair this phone." : {
+
+    },
+    "Oppi sends your password only to a machine whose SSH key you trusted, and does not save it." : {
+
+    },
+    "Optional" : {
+
+    },
+    "Optional Pi Tools" : {
+
     },
-    "Provider settings are easier to find, xAI shows quota and reset details, and extensions can supply custom model providers more reliably.": {},
-    "Preview": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "预览"
+    "Other…" : {
+
+    },
+    "Overall Diff" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "总体差异"
           }
         }
       }
     },
-    "Reader": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "阅读模式"
+    "Overview" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "概览"
           }
         }
       }
+    },
+    "Pair a server to view its metrics." : {
+
+    },
+    "Pair a server to view usage." : {
+
     },
-    "Recent": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最近使用"
+    "Pair with a Mac or Linux machine that runs Oppi and is signed into the same Tailscale account." : {
+
+    },
+    "Pair with a server to get started." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对服务器以开始使用。"
           }
         }
       }
+    },
+    "Paired *.ts.net servers stop connecting until you connect again." : {
+
     },
-    "Recent Decisions": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最近决策"
+    "Pairing…" : {
+
+    },
+    "Photo Library" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "相册"
           }
         }
       }
+    },
+    "Pi did not resolve any skills on %@." : {
+
     },
-    "Reconnecting…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重新连接中…"
+    "Pi Extensions" : {
+
+    },
+    "Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the installed pi CLI on this host." : {
+
+    },
+    "Pi Skills" : {
+
+    },
+    "Policy Error" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "策略错误"
           }
         }
       }
     },
-    "Reject": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "拒绝"
+    "Policy Rule Not Added" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未添加策略规则"
           }
         }
       }
     },
-    "Remembered Rules": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已记忆规则"
+    "Port" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "端口"
           }
         }
       }
     },
-    "Remove": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "移除"
+    "Preview" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预览"
           }
         }
       }
+    },
+    "Preview only — not microphone capture." : {
+
+    },
+    "Projects on %@" : {
+
+    },
+    "Quick comments appear after selecting text and choosing Comment." : {
+
+    },
+    "R: %@" : {
+
     },
-    "Remove Last Server": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "移除最后一台服务器"
+    "Reader" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "阅读模式"
           }
         }
       }
     },
-    "Remove Paired Server": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "移除已配对服务器"
+    "Reader controls" : {
+
+    },
+    "Recent" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近使用"
           }
         }
       }
     },
-    "Remove Server": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "移除服务器"
+    "Recent Decisions" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近决策"
           }
         }
       }
+    },
+    "Reconnect or retry before choosing a new exact selection." : {
+
+    },
+    "Reconnect to a current server before creating a new exact selection." : {
+
     },
-    "Remove remembered rule %@?": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "确定撤销记忆规则 %@ 吗？"
+    "Reconnecting…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新连接中…"
           }
         }
       }
     },
-    "Rename": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重命名"
+    "Refresh probes Pi's configured servers, not running sessions. Configuration changes apply to new sessions or /reload." : {
+
+    },
+    "Reject" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拒绝"
           }
         }
       }
     },
-    "Rename Server": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重命名服务器"
+    "Remembered Rules" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已记忆规则"
           }
         }
       }
     },
-    "Rename Session": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重命名会话"
+    "Remove" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除"
           }
         }
       }
     },
-    "Rename session": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重命名会话"
+    "Remove Last Server" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除最后一台服务器"
           }
         }
       }
     },
-    "Reply": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "回复"
+    "Remove Paired Server" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除已配对服务器"
           }
         }
       }
     },
-    "Resume": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "恢复"
+    "Remove remembered rule %@?" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "确定撤销记忆规则 %@ 吗？"
           }
         }
       }
     },
-    "Resume Session": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "恢复会话"
+    "Remove Server" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除服务器"
           }
         }
       }
     },
-    "Resuming session...": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在恢复会话…"
+    "Rename" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重命名"
           }
         }
       }
     },
-    "Resuming…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "恢复中…"
+    "Rename Server" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重命名服务器"
           }
         }
       }
     },
-    "Revision 1 → Revision %lld": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "版本 1 → 版本 %lld"
+    "Rename session" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重命名会话"
           }
         }
       }
     },
-    "Revisions": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "修订历史"
+    "Rename Session" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重命名会话"
           }
         }
       }
     },
-    "Revoke": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "撤销"
+    "Reply" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "回复"
           }
         }
       }
+    },
+    "Required" : {
+
     },
-    "Rule": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "规则"
+    "Resume" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复"
           }
         }
       }
     },
-    "Run": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "运行"
+    "Resume Session" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复会话"
           }
         }
       }
     },
-    "Safety Rules": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "安全规则"
+    "Resuming session..." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在恢复会话…"
           }
         }
       }
     },
-    "Same namespace across workspaces shares memory": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "跨工作区相同命名空间共享记忆"
+    "Resuming…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复中…"
           }
         }
       }
     },
-    "Save": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存"
+    "Review the workspace settings, then create it. Oppi will open the workspace next so you can start your first session." : {
+
+    },
+    "Revision 1 → Revision %lld" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版本 1 → 版本 %lld"
           }
         }
       }
     },
-    "Save to Photos": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存到相册"
+    "Revisions" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "修订历史"
           }
         }
       }
     },
-    "Scan QR Code": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "扫描二维码"
+    "Revoke" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "撤销"
           }
         }
       }
     },
-    "Scrollable live preview while the model thinks. Tap to read the full trace.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "模型思考时可滚动实时预览。点击查看完整轨迹。"
+    "Rule" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "规则"
           }
         }
       }
     },
-    "Search changed files…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜索已更改文件…"
+    "Run" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行"
           }
         }
       }
+    },
+    "Runs in an isolated micro-VM. Secrets and network are controlled by the host." : {
+
     },
-    "Search models…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜索模型…"
+    "Safety Rules" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "安全规则"
           }
         }
       }
     },
-    "Search session name": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜索会话名称"
+    "Same namespace across workspaces shares memory" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跨工作区相同命名空间共享记忆"
           }
         }
       }
     },
-    "Search session timeline…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜索会话时间线…"
+    "Save" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存"
           }
         }
       }
     },
-    "Send": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "发送"
+    "Save to Photos" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存到相册"
           }
         }
       }
     },
-    "Server": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "服务器"
+    "Saved phrases are hints, not guaranteed transcriptions. Entries marked excluded will not be selected for the next take." : {
+
+    },
+    "Saved to this workspace’s .pi/mcp.json. Project trust: %@." : {
+
+    },
+    "Saving icon…" : {
+
+    },
+    "Scan QR Code" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "扫描二维码"
           }
         }
       }
+    },
+    "Scanning projects on server…" : {
+
     },
-    "Server returned no models.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "服务器未返回任何模型。"
+    "Scrollable live preview while the model thinks. Tap to read the full trace." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型思考时可滚动实时预览。点击查看完整轨迹。"
           }
         }
       }
     },
-    "Server settings for %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 的服务器设置"
+    "Search changed files…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索已更改文件…"
           }
         }
       }
     },
-    "Servers": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "服务器"
+    "Search models…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索模型…"
           }
         }
       }
     },
-    "Session ended": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "会话已结束"
+    "Search session name" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索会话名称"
           }
         }
       }
     },
-    "Session timer": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "会话计时器"
+    "Search session timeline…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索会话时间线…"
           }
         }
       }
     },
-    "Sessions": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "会话"
+    "Send" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送"
           }
         }
       }
     },
-    "Settings": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "设置"
+    "Server" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器"
           }
         }
       }
     },
-    "Showing %lld of %lld lines": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "显示 %2$lld 行中的 %1$lld 行"
+    "Server Default" : {
+
+    },
+    "Server returned no models." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器未返回任何模型。"
           }
         }
       }
     },
-    "Showing 25 of %lld rules": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "显示 %lld 条规则中的 25 条"
+    "Server settings for %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 的服务器设置"
           }
         }
       }
     },
-    "Showing 30 of %lld entries": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "显示 %lld 条记录中的 30 条"
+    "Servers" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务器"
           }
         }
       }
     },
-    "Shows branch, dirty files, and change stats in chat view": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在聊天视图中显示分支、未提交文件和变更统计"
+    "Session ended" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话已结束"
           }
         }
       }
+    },
+    "Session history, server details, and file lists Oppi keeps on this device so screens open quickly." : {
+
     },
-    "Skills": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "技能"
+    "Session Rows" : {
+
+    },
+    "Session timer" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话计时器"
           }
         }
       }
     },
-    "Skills haven't loaded yet.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "技能尚未加载。"
+    "Sessions" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会话"
           }
         }
       }
     },
-    "Source": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "源码"
+    "Settings" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设置"
           }
         }
       }
+    },
+    "Show %@ more" : {
+
     },
-    "Start voice input": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开始语音输入"
+    "Show less" : {
+
+    },
+    "Showing %lld of %lld lines" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示 %2$lld 行中的 %1$lld 行"
           }
         }
       }
     },
-    "Steer Agent": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "引导智能体"
+    "Showing 25 of %lld rules" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示 %lld 条规则中的 25 条"
           }
         }
       }
     },
-    "Steer agent…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "引导智能体…"
+    "Showing 30 of %lld entries" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示 %lld 条记录中的 30 条"
           }
         }
       }
     },
-    "Stop": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "停止"
+    "Shows branch, changed files, and line stats above the chat." : {
+
+    },
+    "Shows branch, dirty files, and change stats in chat view" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在聊天视图中显示分支、未提交文件和变更统计"
           }
         }
       }
+    },
+    "Sign In" : {
+
     },
-    "Stop recording": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "停止录制"
+    "Sign in to %@" : {
+
+    },
+    "Signs in over SSH to see what Oppi needs. If Oppi is already serving HTTPS, you can pair from that screen. Nothing is installed." : {
+
+    },
+    "Skills" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能"
           }
         }
       }
     },
-    "Stopping…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在停止…"
+    "Skills haven't loaded yet." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "技能尚未加载。"
           }
         }
       }
     },
-    "Submit": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "提交"
+    "Source" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "源码"
           }
         }
       }
     },
-    "Summary": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "摘要"
+    "Standard Input / Output" : {
+
+    },
+    "Start voice input" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始语音输入"
           }
         }
       }
+    },
+    "Starting…" : {
+
     },
-    "System Prompt": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "系统提示词"
+    "Status" : {
+
+    },
+    "stdio" : {
+
+    },
+    "Steer Agent" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "引导智能体"
           }
         }
       }
     },
-    "TLS": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "TLS"
+    "Steer agent…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "引导智能体…"
           }
         }
       }
     },
-    "Tap + to create a workspace.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "点击 + 创建工作区。"
+    "Stop" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止"
           }
         }
       }
     },
-    "Tap + to create one.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "点击 + 创建一个。"
+    "Stop recording" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止录制"
           }
         }
       }
     },
-    "Tap + to start a new session in this workspace.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "点击 + 在此工作区开始新会话。"
+    "Stopping…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在停止…"
           }
         }
       }
+    },
+    "Streamable HTTP" : {
+
     },
-    "Terminal": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "终端"
+    "Submit" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提交"
           }
         }
       }
     },
-    "Terminal output": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "终端输出"
+    "Suggestions" : {
+
+    },
+    "Summary" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "摘要"
           }
         }
       }
     },
-    "Testing connection…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在测试连接…"
+    "System Prompt" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统提示词"
           }
         }
       }
     },
-    "Thinking": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "思考"
+    "Tap + to create a workspace." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点击 + 创建工作区。"
           }
         }
       }
     },
-    "Thinking Trace": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "思考轨迹"
+    "Tap + to create one." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点击 + 创建一个。"
           }
         }
       }
     },
-    "Thinking level changed": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "思考级别已更改"
+    "Tap + to start a new session in this workspace." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "点击 + 在此工作区开始新会话。"
           }
         }
       }
+    },
+    "Templates" : {
+
     },
-    "This only removes pairing from this iPhone. It does not delete the server or its data.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此操作仅从此 iPhone 移除配对，不会删除服务器或其数据。"
+    "Terminal" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "终端"
           }
         }
       }
     },
-    "This will summarize the conversation to free up context window space. The summary replaces earlier messages.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "这将总结对话以释放上下文窗口空间。摘要将替换之前的消息。"
+    "Terminal output" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "终端输出"
           }
         }
       }
     },
-    "Token": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "令牌"
+    "Testing connection…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在测试连接…"
           }
         }
       }
+    },
+    "Text Size" : {
+
+    },
+    "That’s okay. Enter an existing folder path or leave the folder empty and Oppi creates one." : {
+
     },
-    "Try Again": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重试"
+    "The configuration entry will be removed. Stored OAuth credentials are not deleted; sign out first if needed." : {
+
+    },
+    "The file could not be downloaded. Please try again." : {
+
+    },
+    "The host no longer has this flow. Start a new sign-in." : {
+
+    },
+    "The key is sent directly to your server over the existing Oppi connection and saved there." : {
+
+    },
+    "The loaded Skills catalog has no selectable paths." : {
+
+    },
+    "The selected server has no cached Extensions catalog." : {
+
+    },
+    "The selected server has no cached Skills catalog." : {
+
+    },
+    "The server no longer has this sign-in attempt. It may have expired or the server restarted." : {
+
+    },
+    "These pages explain where Oppi data goes and how to report a problem. Links open using your Open Links setting." : {
+
+    },
+    "These saved names are preserved. Launch succeeds only in a workspace that supplies them; deselect a name to remove it." : {
+
+    },
+    "Thinking" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "思考"
           }
         }
       }
     },
-    "Try a different session name.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "尝试不同的会话名称。"
+    "Thinking level changed" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "思考级别已更改"
           }
         }
       }
     },
-    "Unable to reach server": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法连接到服务器"
+    "Thinking Trace" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "思考轨迹"
           }
         }
       }
+    },
+    "ThinkingOrbs commit %@" : {
+
     },
-    "Unreachable": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法连接"
+    "This Agent uses %@. Choose another mode to replace it." : {
+
+    },
+    "This deletes this workspace's phrases on the server. Phrases for All Workspaces stay." : {
+
+    },
+    "This extension asked for \"%@\". Cancel and try the task another way." : {
+
+    },
+    "This only removes pairing from this iPhone. It does not delete the server or its data." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此操作仅从此 iPhone 移除配对，不会删除服务器或其数据。"
           }
         }
       }
+    },
+    "This paired server is no longer available." : {
+
     },
-    "Upload Client Logs": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上传客户端日志"
+    "This reader is no longer available." : {
+
+    },
+    "This removes stored OAuth credentials on the host. You will need to sign in again to use this server." : {
+
+    },
+    "This removes the server's saved key or sign-in for %@. You will need to sign in again to use it." : {
+
+    },
+    "This server has no selectable Extensions." : {
+
+    },
+    "This server has no selectable Skills." : {
+
+    },
+    "This sign-in link cannot be opened on iPhone." : {
+
+    },
+    "This skill did not expose any browsable files." : {
+
+    },
+    "This will summarize the conversation to free up context window space. The summary replaces earlier messages." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这将总结对话以释放上下文窗口空间。摘要将替换之前的消息。"
           }
         }
       }
     },
-    "Uploading Client Logs…": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在上传客户端日志…"
+    "This Workspace" : {
+
+    },
+    "This workspace runs in a sandboxed micro-VM. One host pattern per line. Leave empty to deny all network. Use * to allow all, matching Gondolin’s default." : {
+
+    },
+    "Title Generation" : {
+
+    },
+    "TLS" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "TLS"
           }
         }
       }
     },
-    "View %@ details": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "查看 %@ 详情"
+    "Token" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "令牌"
           }
         }
       }
     },
-    "View Full Screen": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全屏查看"
+    "total" : {
+
+    },
+    "Try a different session name." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尝试不同的会话名称。"
           }
         }
       }
     },
-    "Voice Input": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "语音输入"
+    "Try Again" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重试"
           }
         }
       }
+    },
+    "Turn on SSH. On a Mac, that is Remote Login in System Settings → General → Sharing. On Linux, start sshd." : {
+
     },
-    "We cleaned up Agent creation and editing, and made schedules simpler to configure.": {},
-    "What’s New in Oppi": {},
-    "What's New": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新功能"
+    "Unable to load usage" : {
+
+    },
+    "Unable to reach server" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法连接到服务器"
           }
         }
       }
+    },
+    "Unavailable" : {
+
     },
-    "Working": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "运行中"
+    "Unavailable Selections" : {
+
+    },
+    "Unreachable" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法连接"
           }
         }
       }
     },
-    "Workspaces": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工作区"
+    "Update" : {
+
+    },
+    "Upload Client Logs" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上传客户端日志"
           }
         }
       }
     },
-    "Write Detail": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写入详情"
+    "Uploading Client Logs…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在上传客户端日志…"
           }
         }
       }
+    },
+    "Use Oppi Session" : {
+
     },
-    "Write content unavailable for this change.": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "此变更的写入内容不可用。"
+    "Use the Globe key to switch to the Emoji keyboard if needed." : {
+
+    },
+    "Uses your iOS Display & Brightness setting, including Apple's automatic schedule." : {
+
+    },
+    "View %@ details" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看 %@ 详情"
           }
         }
       }
     },
-    "Your turn": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "轮到你了"
+    "View Full Screen" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全屏查看"
           }
         }
       }
+    },
+    "Viewing Options" : {
+
+    },
+    "Voice" : {
+
     },
-    "[%@] Approval needed in %@": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "[%1$@] %2$@ 中需要审批"
+    "Voice Input" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "语音输入"
           }
         }
       }
     },
-    "current": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "当前"
+    "Waiting for approval on your other device" : {
+
+    },
+    "Waiting for sign-in link…" : {
+
+    },
+    "wants to pair with %@" : {
+
+    },
+    "What's New" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新功能"
           }
         }
       }
     },
-    "edit %lld": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "编辑 %lld"
+    "Working" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行中"
           }
         }
       }
+    },
+    "Workspace Folder" : {
+
     },
-    "in Oppi": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi 更新"
+    "Workspaces" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作区"
           }
         }
       }
     },
-    "modified": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已修改"
+    "write %lld" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写入 %lld"
           }
         }
       }
     },
-    "no net change": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无净变更"
+    "Write content unavailable for this change." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此变更的写入内容不可用。"
           }
         }
       }
     },
-    "write %lld": {
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "写入 %lld"
+    "Write Detail" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "写入详情"
           }
         }
       }
     },
-    "π": {}
-  }
+    "You can still enter an existing folder path or leave the folder empty and Oppi creates one." : {
+
+    },
+    "Your turn" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轮到你了"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
 }

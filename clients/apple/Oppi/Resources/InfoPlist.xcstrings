@@ -1,134 +1,154 @@
 {
-  "sourceLanguage": "en",
-  "version": "1.0",
-  "strings": {
-    "CFBundleDisplayName": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi"
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi"
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi"
           }
         }
       }
     },
-    "NSCameraUsageDescription": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi uses the camera to scan pairing QR codes and take photos for agent conversations."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi 使用相机扫描配对二维码，并为智能体对话拍摄照片。"
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Oppi"
           }
         }
       }
     },
-    "NSFaceIDUsageDescription": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi uses Face ID to confirm server trust and to approve high-risk agent actions like sudo, force push, and recursive deletes."
+    "NSCameraUsageDescription" : {
+      "comment" : "Privacy - Camera Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi uses the camera to scan pairing QR codes and take photos for agent conversations."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi 使用面容 ID 确认服务器信任，并批准高风险智能体操作，例如 sudo、强制推送和递归删除。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi 使用相机扫描配对二维码，并为智能体对话拍摄照片。"
           }
         }
       }
     },
-    "NSLocalNetworkUsageDescription": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi needs local network access to connect to your paired self-hosted server."
+    "NSFaceIDUsageDescription" : {
+      "comment" : "Privacy - Face ID Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi uses Face ID to confirm server trust and to approve high-risk agent actions like sudo, force push, and recursive deletes."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi 需要本地网络访问权限以连接到你配对的自托管服务器。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi 使用面容 ID 确认服务器信任，并批准高风险智能体操作，例如 sudo、强制推送和递归删除。"
           }
         }
       }
     },
-    "NSMicrophoneUsageDescription": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi uses the microphone for dictation and Live Voice calls with your agent."
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Privacy - Local Network Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi needs local network access to connect to your paired self-hosted server."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi 使用麦克风进行听写，以及与你的智能体进行 Live Voice 通话。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi 需要本地网络访问权限以连接到你配对的自托管服务器。"
           }
         }
       }
     },
-    "NSPhotoLibraryAddUsageDescription": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi saves images from agent conversations to your photo library."
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Privacy - Microphone Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi uses the microphone for dictation and Live Voice calls with your agent."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi 将智能体对话中的图片保存到你的相册。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi 使用麦克风进行听写，以及与你的智能体进行 Live Voice 通话。"
           }
         }
       }
     },
-    "NSPhotoLibraryUsageDescription": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi accesses your photo library to attach photos and videos to agent conversations."
+    "NSPhotoLibraryAddUsageDescription" : {
+      "comment" : "Privacy - Photo Library Additions Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi saves images from agent conversations to your photo library."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi 访问你的相册以将照片和视频附加到智能体对话中。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi 将智能体对话中的图片保存到你的相册。"
           }
         }
       }
     },
-    "NSSpeechRecognitionUsageDescription": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi uses on-device speech recognition to convert your voice into text."
+    "NSPhotoLibraryUsageDescription" : {
+      "comment" : "Privacy - Photo Library Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi accesses your photo library to attach photos and videos to agent conversations."
           }
         },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Oppi 使用设备端语音识别将你的语音转换为文本。"
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi 访问你的相册以将照片和视频附加到智能体对话中。"
+          }
+        }
+      }
+    },
+    "NSSpeechRecognitionUsageDescription" : {
+      "comment" : "Privacy - Speech Recognition Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi uses on-device speech recognition to convert your voice into text."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Oppi 使用设备端语音识别将你的语音转换为文本。"
           }
         }
       }
     }
-  }
+  },
+  "version" : "1.0"
 }
