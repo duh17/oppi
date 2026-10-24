@@ -13,9 +13,9 @@ You need:
 The installer runs as your user and never asks for `sudo`. It:
 
 1. Uses `node` 22.19 or newer (with `npm`) from your login shell's `PATH`. If there is none, it downloads the official Node.js 22 build from nodejs.org, checks it against the published SHA-256 checksums, and puts it in `~/.oppi/runtime/node`.
-2. Installs the `oppi-server` npm package in `~/.oppi/install`, links `oppi` into `~/.local/bin`, and adds that directory to `PATH` in your shell profile if it is missing. An `oppi` you installed with `npm install -g` stays where it is.
+2. Installs the `oppi-server` npm package in `~/.oppi/install`, links `oppi` into `~/.local/bin`, and adds that directory to `PATH` in your shell profile if it is missing. An `oppi` you installed with `npm install -g` stays where it is. The Node.js directory is appended to the server's `runtimePathEntries`, so sessions find `node` and `npm`.
 3. Installs a background service: a LaunchAgent on macOS, a systemd user service on Linux.
-4. Waits until the server answers over HTTPS on `127.0.0.1`.
+4. Waits until the server it just started answers over HTTPS on `127.0.0.1`. If another program already holds the server port, it stops with `port_in_use` instead.
 
 Server data (config, TLS, paired devices) lives in `~/.config/oppi`.
 
@@ -25,7 +25,7 @@ Server data (config, TLS, paired devices) lives in `~/.config/oppi`.
 curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh
 ```
 
-Run the same command again to upgrade or repair; it ends in the same state. Options go after `sh -s --`:
+Run the same command again to upgrade or repair; it ends in the same state and keeps the replaced version in `~/.oppi/install/releases` for a manual rollback. `oppi update` and the app's **About This Server** show this command for installer installs instead of updating them. Options go after `sh -s --`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh -s -- --version 0.53.0
@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh -s 
 
 | Option | Effect |
 |---|---|
-| `--version <x.y.z>` | Install that `oppi-server` version instead of the latest. |
+| `--version <spec>` | Install that `oppi-server` version, tag, or range instead of the latest. Versions older than the installer supports stop with `server_too_old`. |
 | `--no-service` | Skip the LaunchAgent or systemd unit and start `oppi serve` in the background. It does not start again after a reboot. |
 | `--non-interactive` | Never prompt. Without it, the installer asks before it edits your shell profile. |
 
@@ -179,7 +179,7 @@ List and revoke devices from the host with `oppi devices` and `oppi devices revo
 
 ## Troubleshooting
 
-**Installer stopped with an error.** The last `oppi-install: error` line names the failing step. `npm` failures leave a log in `~/.oppi/install/npm.log`; a `start_timeout` names where the server log is. Fix the cause and run the installer again.
+**Installer stopped with an error.** The last `oppi-install: error` line names the failing step. `npm` failures leave a log in `~/.oppi/install/npm.log`; a `start_timeout` names where the server log is. `port_in_use` names the process holding the port: stop it (for example a hand-run `oppi serve`) or move Oppi with `oppi config set port <n>`. Fix the cause and run the installer again.
 
 **Invite expired, used, or pairing result unknown.** Generate a fresh invite with `oppi pair` and pair again. Do not retry a pair request after a lost response.
 

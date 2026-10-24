@@ -52,9 +52,15 @@ The iOS share extension accepts text, URLs, images, and files. Choose a paired-s
 
 ## Quick start
 
-You need Node.js 22.19+ and at least one Pi provider configured through `pi auth` or an API key such as `ANTHROPIC_API_KEY`. Sandbox workspaces also need QEMU. Self-signed TLS on Linux also requires `openssl` on PATH.
+On a Mac or Linux machine, install the server, start it as a background service, and show a pairing code. The installer needs no `sudo` and downloads Node.js 22 if the machine has no Node.js 22.19+:
 
-Install and start:
+```bash
+curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh
+```
+
+Run it again to upgrade. [Onboarding](docs/onboarding.md) lists what it changes and how to do the same from the iPhone over SSH. Sessions need at least one model provider: add one in the app under **Server Settings → Model Providers**, or see [Connect a model provider](docs/onboarding.md#connect-a-model-provider). Sandbox workspaces also need QEMU. Self-signed TLS on Linux also requires `openssl` on PATH.
+
+To manage Node.js 22.19+ yourself, install with npm instead:
 
 ```bash
 npm install -g oppi-server
@@ -63,14 +69,14 @@ oppi serve
 
 On first run, `oppi serve` creates `~/.config/oppi/`, generates owner credentials, starts local HTTPS/WSS, and prints a pairing QR code and invite link. In the iOS TestFlight app, choose **Scan QR Code**, **Connect through Tailscale**, or **Enter manually**. Tailscale opens the in-app connection; it does not sign in by itself. You can also open the printed `oppi://connect` link on your phone.
 
-To run Oppi as a background service on macOS:
+To run an npm install as a background service (macOS LaunchAgent or Linux systemd user service; the installer does this for you):
 
 ```bash
 oppi server install
 oppi server status
 ```
 
-Upgrade or uninstall with npm:
+Upgrade an installer install by running the installer again. Upgrade or uninstall an npm install with npm:
 
 ```bash
 oppi update                 # same check the iPhone Server screen uses
@@ -78,7 +84,7 @@ npm install -g oppi-server@latest
 npm uninstall -g oppi-server
 ```
 
-On iPhone, **Server Settings** can update a globally installed `oppi-server` with one tap and reconnect after the process restarts. Other install kinds show the host command to copy. See [Using Oppi](docs/usage.md#server-settings).
+On iPhone, **Server Settings** can update a globally installed `oppi-server` with one tap and reconnect after the process restarts. Other install kinds show the host command to copy; for an installer install that is the installer command. See [Using Oppi](docs/usage.md#server-settings).
 
 With the default HTTP/TLS transport, the phone must reach the server over LAN, Tailscale, or a public hostname. For remote HTTP pairing, include the host in the invite:
 
@@ -112,11 +118,11 @@ bash setup.sh
 
 The root `install.sh` is the managed installer from [Onboarding](docs/onboarding.md#install); it installs the published package, not the checkout.
 
-For regular use, install from npm. Then update with `npm install -g oppi-server@latest`.
+For regular use, use the installer from [Quick start](#quick-start), or npm.
 
-### Background service (macOS)
+### Background service
 
-If you used `oppi server install`, a LaunchAgent starts the server at login and restarts it after a crash. Manage it with:
+The installer and `oppi server install` set up a background service that restarts the server after a crash: a LaunchAgent on macOS (starts at login), a systemd user service on Linux (starts at boot when lingering is on; see [Keep it running](docs/onboarding.md#keep-it-running)). Manage it with:
 
 ```bash
 oppi server status     # check if running
