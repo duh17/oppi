@@ -48,10 +48,9 @@ clients/apple/scripts/*
 !clients/apple/scripts/check-coverage.sh
 !clients/apple/scripts/check-privacy-manifests.sh
 !clients/apple/scripts/ci-simulator.sh
+!clients/apple/scripts/e2e.sh
 !clients/apple/scripts/sim-pool.sh
 !clients/apple/scripts/sim-pool.ts
-!clients/apple/scripts/sim-pool-cutover.test.ts
-!clients/apple/scripts/sim-pool-personal-forward.sh
 !clients/apple/scripts/sim-pool-ffi.d.ts
 !clients/apple/scripts/sim-pool-lock.ts
 !clients/apple/scripts/sim-pool-lock.fixture.ts
@@ -90,7 +89,6 @@ clients/apple/scripts/*
 !clients/apple/scripts/qa-verify.ts
 !clients/apple/scripts/qa-verify-lib.ts
 !clients/apple/scripts/qa-verify.test.ts
-!clients/apple/scripts/ipad-shell-diagnostic.sh
 server/scripts/manual/*
 !server/scripts/manual/telemetry-import-sqlite.mjs
 

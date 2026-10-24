@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /** Isolated native two-server iOS journey. Run from the checkout with:
  * bun server/scripts/e2e-two-server.ts
- * The ordinary sim-test owns the first server; this wrapper owns only the second.
+ * The ordinary clients/apple/scripts/e2e.sh run owns the first server; this wrapper owns only the second.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 
 const root = resolve(import.meta.dir, "../..");
 const serverDir = join(root, "server");
-const workflow = join(process.env.HOME ?? "", ".pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh");
+const e2eScript = join(root, "clients/apple/scripts/e2e.sh");
 const dataDir = await mkdtemp(join(tmpdir(), "oppi-e2e-second-"));
 const name = "Offline E2E";
 let second: ChildProcess | undefined;
@@ -131,7 +131,7 @@ try {
   await writeFile(fixturePath, JSON.stringify({ invite, stopURL: controlURL, firstPort: String(firstPort) }), { mode: 0o600, flag: "wx" });
   ownsFixture = true;
   console.log(`[two-server] isolated first port=${firstPort} second port=${secondPort} second PID=${second.pid} data=${dataDir}`);
-  first = spawn(workflow, ["sim-test", "--native", "--record-video=always", "--only-testing", "OppiE2ETests/OfflinePairedServerE2ETests"], {
+  first = spawn(e2eScript, ["--native", "--record-video=always", "--only-testing", "OppiE2ETests/OfflinePairedServerE2ETests"], {
     cwd: root, stdio: "inherit",
     env: {
       ...process.env, OPPI_ROOT: root, E2E_PORT: String(firstPort),
@@ -143,7 +143,7 @@ try {
   const exit = await new Promise<number>((ok, fail) => { first?.once("error", fail); first?.once("exit", (code) => ok(code ?? 1)); });
   failed = exit !== 0 || !stoppedForTest;
   if (!stoppedForTest) console.error("[two-server] test did not request offline transition");
-  if (exit !== 0) console.error(`[two-server] sim-test exited ${exit}`);
+  if (exit !== 0) console.error(`[two-server] e2e.sh exited ${exit}`);
 } catch (error) {
   console.error("[two-server]", error);
 } finally {

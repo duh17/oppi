@@ -38,7 +38,6 @@ function source(overrides: Partial<SourceFingerprint> = {}): SourceFingerprint {
     contentHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     fileCount: 0,
     files: [],
-    wrappers: [],
     ...overrides,
   };
 }
@@ -478,7 +477,7 @@ describe("qa-verify source bytes", () => {
     }
   });
 
-  test("embedded extension, xcconfig, server tsconfig, e2e and wrapper helper mutations change the hash", () => {
+  test("embedded extension, xcconfig, server tsconfig, e2e runner and helper mutations change the hash", () => {
     const root = join(import.meta.dir, "..", "..", "..");
     const fixture = mkdtempSync(join(tmpdir(), "oppi-qa-fingerprint-build-inputs-"));
     symlinkSync(join(root, ".git"), join(fixture, ".git"));
@@ -630,16 +629,6 @@ describe("qa-verify CLI", () => {
     const payload = JSON.parse(result.stdout);
     expect(payload.error).toBe("qa_verify_error");
     expect(payload.message.length).toBeGreaterThan(0);
-    expect(result.stdout.trim().startsWith("{")).toBe(true);
-  });
-
-  test("missing workflow is a json error and does not start e2e", () => {
-    const home = mkdtempSync(join(tmpdir(), "qa-verify-home-"));
-    const result = runCli(["run", "--lane", "e2e", "--json"], { ...process.env, HOME: home });
-    expect(result.status).toBe(8);
-    const payload = JSON.parse(result.stdout);
-    expect(payload.error).toBe("qa_verify_error");
-    expect(payload.message).toContain("oppi-workflow.sh");
     expect(result.stdout.trim().startsWith("{")).toBe(true);
   });
 });

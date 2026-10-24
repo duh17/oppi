@@ -8,7 +8,6 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -179,7 +178,7 @@ export const SOURCE_EXTRA_FILES = [
   "server/package.json",
   "server/package-lock.json",
   "server/tsconfig.json",
-  // The only server/scripts the paired E2E wrapper (apple/e2e.sh) invokes.
+  // The only server/scripts the paired E2E runner (clients/apple/scripts/e2e.sh) invokes.
   "server/scripts/e2e-clean.mjs",
   "server/scripts/e2e-gen-invite.mjs",
   "server/scripts/e2e-pairing-approver.mjs",
@@ -192,6 +191,7 @@ export const REQUIRED_SOURCE_FILES = [
   "clients/apple/QAVerificationSupport/QAVerificationReceipt.swift",
   "clients/apple/scripts/qa-verify.ts",
   "clients/apple/scripts/qa-verify-lib.ts",
+  "clients/apple/scripts/e2e.sh",
   "clients/apple/project.yml",
   "clients/apple/Base.xcconfig",
   "server/tsconfig.json",
@@ -229,20 +229,12 @@ const SKIP_DIR_NAMES = new Set([
 
 const SKIP_FILE_NAMES = new Set([".DS_Store", ".env", ".env.local", ".env.rc"]);
 
-export type WrapperIdentity = {
-  path: string;
-  sha256: string;
-  bytes: number;
-  missing: boolean;
-};
-
 export type SourceFingerprint = {
   sha: string;
   branch: string;
   contentHash: string;
   fileCount: number;
   files: Array<{ path: string; sha256: string; bytes: number }>;
-  wrappers: WrapperIdentity[];
 };
 
 export type AdmitReason = {
@@ -300,12 +292,9 @@ export function isoNow(): string {
   return new Date().toISOString();
 }
 
-export function workflowScript(): string {
-  return join(homedir(), ".pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh");
-}
-
-export function e2eWrapperScript(): string {
-  return join(homedir(), ".pi/agent/skills/oppi-dev/scripts/apple/e2e.sh");
+/** The repo-owned paired-server E2E runner; it is inside the fingerprinted source tree. */
+export function e2eScript(): string {
+  return join(scriptDir(), "e2e.sh");
 }
 
 export function ensureDir(path: string): string {
@@ -450,19 +439,6 @@ function requireSource(root: string): void {
   }
 }
 
-function hashWrapper(path: string): WrapperIdentity {
-  if (!existsSync(path) || !lstatSync(path).isFile()) {
-    return { path, sha256: "", bytes: 0, missing: true };
-  }
-  const contents = readFileSync(path);
-  return {
-    path,
-    sha256: hashFileBytes(contents),
-    bytes: contents.byteLength,
-    missing: false,
-  };
-}
-
 export function fingerprintSource(root = repoRoot()): SourceFingerprint {
   requireSource(root);
   const paths = collectSourcePaths(root);
@@ -488,7 +464,6 @@ export function fingerprintSource(root = repoRoot()): SourceFingerprint {
     contentHash: hasher.digest("hex"),
     fileCount: files.length,
     files,
-    wrappers: [hashWrapper(workflowScript()), hashWrapper(e2eWrapperScript())],
   };
 }
 
@@ -970,7 +945,6 @@ export function admitLane(params: {
   source: SourceFingerprint;
   sourceUnchanged: boolean;
   ownedRuns?: OwnedLaneRun[];
-  wrappers?: WrapperIdentity[];
 }): {
   status: QAStatus;
   admissions: Array<{ journeyId: string; file?: string; result: AdmitResult }>;
@@ -1020,17 +994,6 @@ export function admitLane(params: {
     }
     if (!run.built.appSha256 || !run.built.testBundleSha256) {
       reasons.push({ code: "stale-compiled", message: `${lane}: missing built app/test-bundle identity` });
-    }
-  }
-  if (needed.includes("e2e")) {
-    const wrappers = params.wrappers ?? params.source.wrappers;
-    for (const wrapper of wrappers) {
-      if (wrapper.missing || !wrapper.sha256) {
-        reasons.push({
-          code: "missing-wrapper",
-          message: `External wrapper missing: ${wrapper.path}`,
-        });
-      }
     }
   }
   const ownedByLane = new Map(owned.map((run) => [run.lane, run]));
@@ -1111,7 +1074,6 @@ export function admitLane(params: {
         "zero-execution",
         "skipped-execution",
         "stale-compiled",
-        "missing-wrapper",
       ].includes(reason.code),
     );
   const status = mergeStatus([

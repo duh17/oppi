@@ -16,7 +16,7 @@ import {
   assertionViews,
   canStartNextLane,
   createRunDirectory,
-  e2eWrapperScript,
+  e2eScript,
   ensureDir,
   executedStepViews,
   fingerprintSource,
@@ -26,7 +26,6 @@ import {
   ownedRunFromCommandLogs,
   publicErrorPayload,
   repoRoot,
-  workflowScript,
   writeJson,
   type OwnedLaneRun,
   type QAStatus,
@@ -168,7 +167,6 @@ function compactSource(source: SourceFingerprint) {
     branch: source.branch,
     contentHash: source.contentHash,
     fileCount: source.fileCount,
-    wrappers: source.wrappers,
   };
 }
 
@@ -200,11 +198,10 @@ async function runLane(
   out?: string,
 ): Promise<void> {
   if (lane === "e2e" || lane === "all") {
-    const workflow = workflowScript();
-    if (!existsSync(workflow) || !existsSync(e2eWrapperScript())) {
+    if (!existsSync(e2eScript())) {
       throw new QAVerifyError(
-        `Missing ${workflow} or ${e2eWrapperScript()}`,
-        "Shared apple/e2e.sh is not in this worktree; reuse the skill wrapper with OPPI_ROOT. Do not invent a second server lifecycle.",
+        `Missing ${e2eScript()}`,
+        "The paired E2E runner is part of the checkout; restore it. Do not invent a second server lifecycle.",
         8,
       );
     }
@@ -299,18 +296,18 @@ async function runLane(
     }
 
     if (continueLanes && (lane === "e2e" || lane === "all")) {
-      const workflow = workflowScript();
-      const args = ["sim-test"];
+      const runner = e2eScript();
+      const args: string[] = [];
       if (native) args.push("--native");
       args.push(
         "--only-testing",
         "OppiE2ETests/QAVerificationJourneysE2ETests",
         "--record-video=off",
       );
-      commands.push([workflow, ...args]);
+      commands.push([runner, ...args]);
       const e2eStdout = join(logDir, "e2e.stdout.log");
       const e2eStderr = join(logDir, "e2e.stderr.log");
-      const result = await runOwned(session, workflow, args, {
+      const result = await runOwned(session, runner, args, {
         cwd: repoRoot(),
         env: {
           ...env,
@@ -346,7 +343,6 @@ async function runLane(
     source,
     sourceUnchanged,
     ownedRuns,
-    wrappers: source.wrappers,
   });
   let status: QAStatus = admitted.status;
   if (bindErrors.length > 0 && status === "pass") status = "fail";

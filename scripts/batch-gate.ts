@@ -1,15 +1,22 @@
 #!/usr/bin/env bun
-// Repository gate for agent-workflow's land-queue: runs after `.githooks/pre-push` passes on
-// the batch, with the named suites every queued branch asked for.
+// Repository gate for a batch of commits: a merge queue or CI runs it after `.githooks/pre-push`
+// passes on the batch, with the named suites every commit in the batch asked for.
 //
-//   bun scripts/batch-gate.ts --worktree <path> --target <branch> [--test <s>]... [--profile <p>]...
+//   bun scripts/batch-gate.ts --worktree <path> [--target <branch>] [--test <s>]... [--profile <p>]...
 //
-// --test values (land-queue add --tests):
+// --worktree defaults to the current directory. --target is accepted and ignored: callers
+// pass the branch the batch will land on, and this gate does not need it.
+//
+// Exit codes: 0 every lane passed (or no suites were named); 1 a lane failed; 2 a bad
+// argument, test selector, or not an Oppi checkout; 143 stopped by SIGTERM/SIGINT; the
+// failing exit code of the server-deps sync, which runs before any lane.
+//
+// --test values:
 //   OppiTests/<Suite>[/<test>]      iOS unit filter; one OppiUnitTests run on the iPhone pool
 //   OppiUITests/<Suite>[/<test>]    UI test filter; one `-scheme Oppi` run per --profile
 //                                   (iphone, ipad, duo; default iphone), profiles in parallel
-//   OppiE2ETests/<Suite>[/<test>]   paired-server E2E filter (oppi-workflow.sh sim-test --native)
-//   e2e-group:<name>                an E2E group (oppi-workflow.sh sim-test --group <name>)
+//   OppiE2ETests/<Suite>[/<test>]   paired-server E2E filter (clients/apple/scripts/e2e.sh --native)
+//   e2e-group:<name>                an E2E group (clients/apple/scripts/e2e.sh --group <name>)
 //   server/tests/<file>.test.ts     a server Vitest file (the `server/` prefix is optional)
 // Anything else fails the gate: a typo must not pass as "nothing to run". So does a suite
 // that the test target does not declare, and an iOS run that executed zero tests.
@@ -17,7 +24,6 @@
 // Lane output is prefixed with the lane name; SIGTERM/SIGINT stop every lane's process group.
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** `requireTests`: a sim-pool run whose log must show at least one executed test. */
@@ -113,7 +119,7 @@ export function planGate(
   }
   const apple = join(worktree, "clients", "apple");
   const simPool = join(apple, "scripts", "sim-pool.sh");
-  const workflow = join(process.env.HOME ?? homedir(), ".pi", "agent", "skills", "oppi-dev", "scripts", "oppi-workflow.sh");
+  const e2eScript = join(apple, "scripts", "e2e.sh");
   const lanes: Lane[] = [];
   if (server.length > 0) {
     lanes.push({ name: "server", steps: [{ cwd: join(worktree, "server"), command: "npm", args: ["exec", "--offline", "--", "vitest", "run", ...server] }] });
@@ -144,14 +150,14 @@ export function planGate(
   }
   // E2E runs start a paired server each; keep them one after another in a single lane.
   const e2eArgs = [
-    ...e2e.map((filter) => ["sim-test", "--native", "--only-testing", filter]),
-    ...groups.map((group) => ["sim-test", "--group", group]),
+    ...e2e.map((filter) => ["--native", "--only-testing", filter]),
+    ...groups.map((group) => ["--group", group]),
   ];
   if (e2eArgs.length > 0) {
     lanes.push({
       name: "e2e",
       // One filter or group per step, so a step that ran zero tests is caught exactly.
-      steps: e2eArgs.map((args) => ({ cwd: worktree, command: workflow, args, env: { OPPI_ROOT: worktree }, requireTests: true })),
+      steps: e2eArgs.map((args) => ({ cwd: worktree, command: e2eScript, args, requireTests: true })),
     });
   }
   return { lanes, errors };

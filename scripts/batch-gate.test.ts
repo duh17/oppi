@@ -29,8 +29,8 @@ describe("batch gate plan", () => {
     expect(byName["ios-unit"][0].slice(-2)).toEqual(["-only-testing:OppiTests/FooTests", "-only-testing:OppiTests/BarTests/baz()"]);
     expect(byName["ui-ipad"][0].slice(0, 3)).toEqual(["run", "--device-profile", "ipad"]);
     expect(byName.e2e).toEqual([
-      ["sim-test", "--native", "--only-testing", "OppiE2ETests/ChatE2ETests/testSend"],
-      ["sim-test", "--group", "gate"],
+      ["--native", "--only-testing", "OppiE2ETests/ChatE2ETests/testSend"],
+      ["--group", "gate"],
     ]);
   });
 
