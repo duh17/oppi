@@ -142,39 +142,6 @@ struct ServerDetailsScopedDestinationView: View {
     }
 }
 
-struct ModelProvidersScopedDestinationView: View {
-    @Environment(ServerStore.self) private var serverStore
-    @Environment(ConnectionCoordinator.self) private var coordinator
-
-    let target: ModelProvidersNavTarget
-
-    private var server: PairedServer? {
-        ServerSelection.resolveVisible(
-            activeId: coordinator.activeServerId,
-            frozenId: target.serverId,
-            from: serverStore.servers
-        )
-    }
-
-    var body: some View {
-        if let server {
-            // Keyed by the navigation target, not the visible host: a host-pill
-            // switch must not destroy the view and drop a live provider sign-in.
-            // ModelProvidersManagementView resets host-local state when the host changes.
-            ModelProvidersManagementView(server: server)
-                .id(target.serverId)
-        } else {
-            ContentUnavailableView(
-                "Server Unavailable",
-                systemImage: "server.rack",
-                description: Text("This paired server is no longer available.")
-            )
-            .navigationTitle(HostSwitcherDestination.modelProviders.title)
-            .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-}
-
 /// "This server is older than this app" with Open Server Settings, as an All
 /// Sessions cell inset from the row edges. The list gives the cell a clear
 /// background and no separator.

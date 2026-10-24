@@ -133,7 +133,7 @@ struct ScreenshotPreviewView: View {
         case "ask-card-tall-scroll":
             AskCardTallScrollPreview()
         case "model-providers-quota-inline":
-            ModelProvidersQuotaPreview()
+            ModelProvidersScreenshotPreview()
         case "tool-call-document":
             ToolCallDocumentPreview(direct: false)
         case "tool-call-document-mcp":
@@ -887,6 +887,123 @@ private struct SettingsPageScreenshotPreview: View {
         .ignoresSafeArea()
         .accessibilityIdentifier("screenshot.ready")
     }
+}
+
+/// `SCREENSHOT_SCREEN=model-providers-quota-inline`: Model Providers over
+/// fixture providers and usage (no server load), with usage windows ahead of,
+/// on, and behind an even pace, a plan, and a prepaid balance.
+private struct ModelProvidersScreenshotPreview: View {
+    @State private var root: AppRootEnvironment
+
+    init() {
+        // Pin the theme before `ThemeStore()` reads it, as the settings previews do.
+        switch ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] {
+        case "dark": ScreenshotVolatileDefaults.applyTheme(.dark)
+        case "light": ScreenshotVolatileDefaults.applyTheme(.light)
+        default: break
+        }
+        _root = State(initialValue: AppRootEnvironment(
+            coordinator: RouterModalSitesFixtures.makeCoordinator(playing: false),
+            navigation: AppNavigation(),
+            themeStore: ThemeStore(),
+            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
+        ))
+    }
+
+    var body: some View {
+        RouterPreviewControllerStack(root: root) {
+            ModelProvidersViewController(
+                target: ModelProvidersNavTarget(serverId: RouterModalSitesFixtures.serverId),
+                root: root,
+                statuses: Self.statuses,
+                quotas: Self.quotas
+            )
+        }
+        .ignoresSafeArea()
+        .publishesAppRootToWindow(root)
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private static let oauth = ProviderAuthOAuthCapabilities(
+        flowType: .oauthCallback,
+        supportsServerBrowserLaunch: true,
+        supportsPhoneBrowserLaunch: true,
+        supportsManualCodeInput: true,
+        mayPromptForInput: false
+    )
+
+    private static let statuses: [ProviderAuthProviderStatus] = [
+        .init(id: "anthropic", name: "Anthropic", supportsApiKey: true, oauth: oauth, authenticated: true, credentialType: .oauth, expiresAt: nil, maskedKey: nil),
+        .init(id: "meta", name: "Meta", supportsApiKey: false, oauth: oauth, authenticated: true, credentialType: .oauth, expiresAt: nil, maskedKey: nil),
+        .init(id: "opencode-go", name: "OpenCode Go", supportsApiKey: true, oauth: nil, authenticated: true, credentialType: .apiKey, expiresAt: nil, maskedKey: nil),
+        .init(id: "xai", name: "xAI", supportsApiKey: true, oauth: oauth, authenticated: true, credentialType: .oauth, expiresAt: nil, maskedKey: nil),
+        .init(id: "openai-codex", name: "OpenAI Codex", supportsApiKey: false, oauth: oauth, authenticated: false, credentialType: nil, expiresAt: nil, maskedKey: nil),
+        .init(id: "google", name: "Google Gemini", supportsApiKey: true, oauth: oauth, authenticated: false, credentialType: nil, expiresAt: nil, maskedKey: nil),
+        .init(id: "deepseek", name: "DeepSeek", supportsApiKey: true, oauth: nil, authenticated: false, credentialType: nil, expiresAt: nil, maskedKey: nil),
+    ]
+
+    /// A window `hoursLeft` from reset with `remaining` percent left, paced as
+    /// the server would (supply = remaining share / time share).
+    private static func window(
+        _ key: String,
+        _ title: String,
+        seconds: Int,
+        hoursLeft: Double,
+        remaining: Double
+    ) -> ProviderQuota.Window {
+        let secondsLeft = hoursLeft * 3600
+        let supply = (remaining / 100) / (secondsLeft / Double(seconds))
+        let status = supply > 1.2 ? "plenty" : supply >= 0.8 ? "on_pace" : "conserve"
+        return ProviderQuota.Window(
+            key: key,
+            shortLabel: key,
+            title: title,
+            usedPercent: 100 - remaining,
+            remainingPercent: remaining,
+            limitWindowSeconds: seconds,
+            resetAt: Int(Date().addingTimeInterval(secondsLeft).timeIntervalSince1970),
+            includeWeekdayInReset: seconds > 86_400,
+            pacing: .init(
+                source: "snapshot",
+                status: status,
+                timeRemainingSeconds: secondsLeft,
+                supplyRatio: supply,
+                targetBurnPercentPerHour: remaining / hoursLeft,
+                recentBurnPercentPerHour: nil,
+                paceRatio: nil,
+                projectedExhaustionAt: nil,
+                projectedRemainingPercent: nil
+            )
+        )
+    }
+
+    private static let quotas: ProviderQuotasInfo = {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        func quota(_ id: String, _ name: String, plan: String?, prepaidCents: Int? = nil, _ windows: [ProviderQuota.Window]) -> ProviderQuota {
+            ProviderQuota(
+                providerId: id, displayName: name, authenticated: true, planType: plan, windows: windows,
+                credits: nil, prepaidBalanceCents: prepaidCents, fetchedAt: now, error: nil
+            )
+        }
+        return ProviderQuotasInfo(providers: [
+            quota("anthropic", "Anthropic", plan: nil, [
+                window("five_hour", "5-hour", seconds: 18_000, hoursLeft: 1.1, remaining: 86),
+                window("seven_day", "7-day", seconds: 604_800, hoursLeft: 111, remaining: 59),
+                window("seven_day_opus", "Fable 7-day", seconds: 604_800, hoursLeft: 111, remaining: 100),
+            ]),
+            quota("opencode-go", "OpenCode Go", plan: "Go", [
+                window("five_hour", "5-hour", seconds: 18_000, hoursLeft: 5, remaining: 100),
+                window("weekly", "Weekly", seconds: 604_800, hoursLeft: 40.7, remaining: 44),
+                window("monthly", "Monthly", seconds: 2_678_400, hoursLeft: 660, remaining: 72),
+            ]),
+            quota("xai", "xAI", plan: "supergrok", prepaidCents: 0, [
+                window("monthly", "Monthly", seconds: 2_592_000, hoursLeft: 400, remaining: 18),
+            ]),
+        ], fetchedAt: now)
+    }()
 }
 
 // MARK: - Router modal sites

@@ -45,32 +45,14 @@ struct ProviderIcon: View {
         providerLogoAssetName(provider)
     }
 
-    /// Provider color mapped onto the active theme palette.
+    /// Provider color mapped onto the active theme palette. `ProviderColor`
+    /// owns the provider aliases (`openai-codex` reads as OpenAI).
     static func brandColor(for provider: String) -> Color {
-        let canonical = canonicalProviderColorKey(for: provider)
-        return ProviderColor.color(
-            forProvider: canonical,
-            palette: ThemeRuntimeState.currentPalette()
-        )
+        ProviderColor.color(forProvider: provider, palette: ThemeRuntimeState.currentPalette())
     }
 
     /// Single-character monogram mark for compact rendering.
     static func mark(for provider: String) -> String {
         providerMonogram(provider)
-    }
-
-    private static func canonicalProviderColorKey(for provider: String) -> String {
-        switch provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "openai-codex":
-            return "openai"
-        case "google-gemini-cli", "google-antigravity":
-            return "google"
-        case "minimax-cn":
-            return "minimax"
-        case "opencode-go":
-            return "opencode"
-        default:
-            return provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        }
     }
 }

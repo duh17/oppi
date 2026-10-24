@@ -226,6 +226,11 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
             let projectedExhaustionAt: Double?
             let projectedRemainingPercent: Double?
 
+            /// The server judged this window's pace (plenty, on pace, or conserve).
+            var hasVerdict: Bool {
+                ["plenty", "on_pace", "conserve"].contains(status)
+            }
+
             var statusLabel: String {
                 switch status {
                 case "plenty": return "Plenty"
@@ -285,6 +290,17 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
         var resetDate: Date? {
             guard let resetAt else { return nil }
             return Date(timeIntervalSince1970: TimeInterval(resetAt))
+        }
+
+        /// The share of the window still ahead at `now`, 0...1: where
+        /// `remainingPercent / 100` would sit if usage were spread evenly over
+        /// the window. Nil without a reset time and window length, or once the
+        /// reset has passed.
+        func evenPaceRemainingFraction(at now: Date) -> Double? {
+            guard let resetDate, let limitWindowSeconds, limitWindowSeconds > 0 else { return nil }
+            let secondsLeft = resetDate.timeIntervalSince(now)
+            guard secondsLeft > 0 else { return nil }
+            return min(1, secondsLeft / Double(limitWindowSeconds))
         }
     }
 

@@ -289,6 +289,22 @@ struct ServerInfoTests {
         #expect(window.pacing?.accessibilityLabel == "Conserve, supply ratio 0.54")
     }
 
+    @Test func evenPaceTickSitsAtTheShareOfTheWindowStillAhead() {
+        let reset = Date(timeIntervalSince1970: 1_700_000_000)
+        let window = makeQuotaWindow(remainingPercent: 86)
+
+        // 5-hour window, 66 minutes to reset: an even spend would leave 22%.
+        #expect(window.evenPaceRemainingFraction(at: reset.addingTimeInterval(-66 * 60)) == 0.22)
+        // A reset farther out than one window (a provider's grace period) pins to the end.
+        #expect(window.evenPaceRemainingFraction(at: reset.addingTimeInterval(-6 * 3600)) == 1)
+        // At or past the reset, and without a window length or reset, there is no tick.
+        #expect(window.evenPaceRemainingFraction(at: reset) == nil)
+        #expect(makeQuotaWindow(limitWindowSeconds: nil, remainingPercent: 86).evenPaceRemainingFraction(at: reset) == nil)
+        #expect(makeQuotaWindow(limitWindowSeconds: 0, remainingPercent: 86)
+            .evenPaceRemainingFraction(at: reset.addingTimeInterval(-60)) == nil)
+        #expect(makeQuotaWindow(remainingPercent: 86, resetAt: nil).evenPaceRemainingFraction(at: reset) == nil)
+    }
+
     @Test func providerQuotaPacingDecodesSnapshotFields() throws {
         let json = Data("""
         {

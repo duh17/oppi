@@ -316,9 +316,6 @@
     "clients/apple/Oppi/Features/Servers/BadgePickerViews.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Servers/ModelProvidersManagementView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Servers/ModelProvidersView.swift": {
       "import SwiftUI": 1
     },

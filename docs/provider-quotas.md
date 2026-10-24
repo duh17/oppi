@@ -1,6 +1,6 @@
 # Provider quotas and pace
 
-Oppi reports how much model-provider quota remains in each usage window, and whether that remainder is ahead of the time left until reset. The provider supplies the remaining percent and reset time. The server derives pace from that snapshot, and the app shows the server's result without calculating anything itself.
+Oppi reports how much model-provider quota remains in each usage window, and whether that remainder is ahead of the time left until reset. The provider supplies the remaining percent and reset time. The server derives pace from that snapshot. The app shows the server's verdict and draws one mark of its own from the same fields: the even-pace tick.
 
 ## Where to look
 
@@ -14,8 +14,13 @@ Windows are listed shortest period first. A globally enabled Pi extension can ad
 
 | Signal | Meaning | Display |
 | --- | --- | --- |
-| Remaining | How much of the window is left | `% left` and the bar: green above 50%, orange above 20% through 50%, red at 20% or below |
-| Pace | Remaining quota vs remaining time | `Plenty · 1.30× supply` |
+| Remaining | How much of the window is left | `% left` and the bar's fill |
+| Even pace | How much would be left at a steady spend | A tick on the bar at the share of the window still ahead (\(t / W\)) |
+| Pace | Remaining quota vs remaining time | `Plenty · 1.30× supply`, and the bar's color |
+
+Fill past the tick means more quota remains than time: you can spend faster. Fill short of it means quota runs out before the reset at your average rate so far. In **Model Providers** the bar and `% left` take the pace verdict's color: green for Plenty, blue for On pace, orange for Conserve (red when 20% or less is left). A window without a verdict is colored by its share left: green above 50%, orange above 20% through 50%, red at 20% or below. The model picker's compact badge is colored by share left.
+
+The app places the tick from the device clock when it draws the bar, so each reload moves it even if usage did not change. Model Providers reloads usage when it appears, when you pull to refresh, and when you return to the app; its footer says when the usage was read.
 
 | Pace label | Supply ratio |
 | --- | --- |
@@ -44,7 +49,7 @@ The server also stores a target burn rate that the UI does not show, the spend r
 
 Example: a 5-hour window (\(W = 18{,}000\)) with 2.5 hours left. At 50% left, \(\mathrm{supply} = 0.50 / (9{,}000 / 18{,}000) = 1.00\), so **On pace**. With the same time left, 65% left is \(1.30\times\) (Plenty), 40% is \(0.80\times\) (On pace), and 30% is \(0.60\times\) (Conserve).
 
-**Not enough data to calculate** appears when the reset time is missing or already past, the window length is missing or not above 0, or remaining percent is not a finite number. The app also shows it when the server omits `pacing`, which happens with a server built before that field; rebuild and restart the server.
+**Not enough data to calculate** appears in the CLI when the reset time is missing or already past, the window length is missing or not above 0, or remaining percent is not a finite number. The app omits the pace label then, and omits the tick when the reset time or window length is missing. A server built before the `pacing` field sends no verdict; rebuild and restart the server.
 
 Pace uses only the current snapshot. It does not use spend history, so recent burn, pace ratio, and projected exhaustion stay empty.
 

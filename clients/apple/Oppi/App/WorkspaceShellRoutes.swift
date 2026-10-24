@@ -8,8 +8,9 @@ import SwiftUI
 // file (`WorkspaceLinkedFileViewController`), a Skill file
 // (`ServerSkillFileViewController`), an Extension's detail
 // (`ServerExtensionDetailViewController`), SSH Terminal's host list,
-// Schedules, Agents, App Settings (`SettingsRootViewController`), and
-// Workspace Settings (`WorkspaceSettingsViewController`) are UIKit screens.
+// Schedules, Agents, App Settings (`SettingsRootViewController`), Workspace
+// Settings (`WorkspaceSettingsViewController`), and Model Providers
+// (`ModelProvidersViewController`) are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -70,6 +71,11 @@ enum ShellRouteScreens {
         if case .serverResourceDetail(let target) = route, target.kind == .extension {
             return ServerExtensionDetailViewController(target: target, root: root)
         }
+        if case .modelProviders(let target) = route {
+            // Keyed by the route, not the visible host: a host-pill switch
+            // reloads in place and keeps a live provider sign-in.
+            return ModelProvidersViewController(target: target, root: root)
+        }
         if case .workspaceConfiguration(let target) = route {
             let screen = WorkspaceSettingsViewController(
                 serverId: target.serverId,
@@ -122,8 +128,8 @@ enum ShellRouteScreens {
         }
         // The sidebar reads its own state.
         if screen is WorkspaceSidebarViewController { return }
-        // An Extension's detail reads its own state.
-        if screen is ServerExtensionDetailViewController { return }
+        // An Extension's detail and Model Providers read their own state.
+        if screen is ServerExtensionDetailViewController || screen is ModelProvidersViewController { return }
         if let detail = screen as? WorkspaceDetailViewController {
             if case .workspace(let target) = route {
                 detail.update(workspace: target.workspace)
@@ -212,12 +218,12 @@ struct ShellRouteView: View {
     private var content: some View {
         switch route {
         case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile, .serverSkillFile,
-             .workspaceConfiguration:
+             .workspaceConfiguration, .modelProviders:
             // UIKit screens (SessionInboxViewController,
             // WorkspaceSidebarViewController, WorkspaceDetailViewController,
             // ChatRouteViewController, FileBrowserViewController,
             // WorkspaceLinkedFileViewController, ServerSkillFileViewController,
-            // WorkspaceSettingsViewController).
+            // WorkspaceSettingsViewController, ModelProvidersViewController).
             mountedByUIKitScreen
         case .chatReader(let target):
             if let chatReaderPayloadStore {
@@ -227,8 +233,6 @@ struct ShellRouteView: View {
             WorkspaceUtilityDestinationView(target: target)
         case .serverDetails(let target):
             ServerDetailsScopedDestinationView(target: target)
-        case .modelProviders(let target):
-            ModelProvidersScopedDestinationView(target: target)
         case .serverResourceDetail(let target):
             switch target.kind {
             case .skill: ServerSkillDetailScopedDestinationView(target: target)
