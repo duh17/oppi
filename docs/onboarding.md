@@ -13,7 +13,7 @@ You need:
 The installer runs as your user and never asks for `sudo`. It:
 
 1. Uses `node` 22.19 or newer (with `npm`) from your login shell's `PATH`. If there is none, it downloads the official Node.js 22 build from nodejs.org, checks it against the published SHA-256 checksums, and puts it in `~/.oppi/runtime/node`.
-2. Installs the `oppi-server` npm package in `~/.oppi/install`, links `oppi` into `~/.local/bin`, and adds that directory to `PATH` in your shell profile if it is missing. An `oppi` you installed with `npm install -g` stays where it is. The Node.js directory is appended to the server's `runtimePathEntries`, so sessions find `node` and `npm`.
+2. Installs the `oppi-server` npm package in `~/.oppi/install`, links `oppi` into `~/.local/bin`, and adds that directory to `PATH` in your shell profile if it is missing. An `oppi` you installed with `npm install -g` stays where it is. The server adds the directory of the Node.js it runs to the end of session `PATH`, so sessions find `node` and `npm` even when that is the only Node.js on the machine. Your `runtimePathEntries` config is not changed.
 3. Installs a background service: a LaunchAgent on macOS, a systemd user service on Linux.
 4. Waits until the server it just started answers over HTTPS on `127.0.0.1`. If another program already holds the server port, it stops with `port_in_use` instead.
 
@@ -41,7 +41,7 @@ If you already manage Node.js and prefer npm, `npm install -g oppi-server` follo
 
 ## Set up from the app over SSH
 
-The app can do the install for you. In Oppi, open **Tailscale → Check a Machine for Oppi** and sign in over SSH to a Mac (Remote Login) or a Linux machine (`sshd`). If Oppi is missing or stopped, **Install & Start** sends the same installer over SSH with `--non-interactive`, then pairs your iPhone.
+The app can do the install for you. In Oppi, choose **Set Up a Computer** in onboarding, or open **Tailscale → Check a Machine for Oppi** later, pick the machine, and sign in over SSH to a Mac (Remote Login) or a Linux machine (`sshd`). If Oppi is missing or stopped, **Install & Start** sends the same installer over SSH with `--non-interactive`, then pairs your iPhone.
 
 Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://127.0.0.1:<port>/health` answers, so a stopped server mints no invite. A `*.ts.net` name uses Oppi's Tailscale connection; any other host uses the current network. An unknown or changed SSH host key sends no password.
 
@@ -85,9 +85,13 @@ Oppi runs sessions with [Pi](https://github.com/badlogic/pi-mono), so it needs P
 
    It prints a pairing QR code and invite link. On its first start, the server picks TLS: if the machine is on Tailscale and `tailscale cert` can issue it a certificate (HTTPS enabled for the tailnet), Oppi uses Tailscale TLS and the invite points at the machine's `*.ts.net` name. Otherwise it uses a self-signed certificate. A `tls.mode` other than `disabled` that you already set is kept.
 
-2. Open Oppi on iPhone and choose **Scan QR Code**, **Connect through Tailscale**, or **Enter manually / Connect to Server** (Host, Port, Token, and Name; it does not paste an invite). Opening an `oppi://connect` invite link also starts pairing.
+2. Open Oppi on iPhone and choose one:
 
-   **Connect through Tailscale** opens Oppi's in-app Tailscale connection. After you sign in, Oppi lists Mac and Linux machines on your tailnet and can pair with one already running Oppi over Tailscale HTTPS. It does not install the Tailscale VPN.
+   - **Set Up a Computer** signs in to Oppi's in-app Tailscale connection and lists the Mac and Linux machines on your tailnet. Pick one to install and pair over SSH ([Set up from the app over SSH](#set-up-from-the-app-over-ssh)). It does not install the Tailscale VPN app.
+   - **Scan QR Code** (devices with a camera) reads the code `oppi pair` shows.
+   - **Enter manually** takes a pasted pairing link, an `oppi://connect` link, or the output of `oppi pair --json`. Its advanced option, **Use Host and Pairing Token**, takes a host, port, and pairing token instead. The host must be a Tailscale `*.ts.net` name or a public HTTPS hostname: a server with a self-signed certificate pairs only through an invite link or QR code.
+
+   Opening an `oppi://connect` invite link also starts pairing.
 
 3. Confirm server trust. If local authentication is enabled, iOS asks for it before accepting the server identity.
 
@@ -102,7 +106,7 @@ After pairing, Oppi uses authenticated HTTPS and WSS. The local CLI stays on an 
 | Network | Works when | Pair with |
 |---|---|---|
 | Same Wi-Fi | The phone is on the server's local network. | `oppi pair` |
-| Tailscale | The phone and the server are on the same tailnet (Oppi's in-app connection or the Tailscale app), from anywhere. | **Connect through Tailscale**, or `oppi pair --host <name>.ts.net` with Tailscale TLS |
+| Tailscale | The phone and the server are on the same tailnet (Oppi's in-app connection or the Tailscale app), from anywhere. | **Set Up a Computer**, or `oppi pair --host <name>.ts.net` with Tailscale TLS |
 | Public HTTPS URL | A reverse proxy you run serves Oppi at a public hostname. | `oppi pair` after setting `publicUrl` ([Reverse proxy](reverse-proxy.md)) |
 
 **macOS firewall:** when the macOS firewall is on, the first start can ask whether `node` may accept incoming network connections. Choose **Allow**, or phones on Wi-Fi and Tailscale cannot connect.
@@ -147,7 +151,7 @@ Then pair through QR scan, manual entry, or the invite link.
 When at least one device is already paired, these pairings wait for approval on a paired device:
 
 - an invite with a lifetime over 90 seconds (`oppi pair --ttl 10m`, App Review hand-offs);
-- a same-user Tailscale pairing (**Connect through Tailscale**), whatever its lifetime;
+- a same-user Tailscale pairing ([Turn off Tailscale pairing](#turn-off-tailscale-pairing)), whatever its lifetime;
 - a pairing approved by a custom `auth.module`.
 
 A default 90-second invite needs no approval, and the first device on an empty server never does.

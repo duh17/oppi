@@ -22,19 +22,21 @@
 #            against SHASUMS256.txt, and install it under ~/.oppi/runtime/node.
 #   oppi     Refuse oppi-server older than OPPI_MIN_SERVER_VERSION (the first
 #            release with Linux service support and this installer's checks).
-#            `npm install --global --prefix ~/.oppi/install/releases/<version>
-#            --ignore-scripts --omit=dev oppi-server@<version>`, smoke-test
-#            `oppi --version`, then atomically point ~/.oppi/install/current at it.
-#            The release it replaced stays for a manual rollback.
-#            Launcher: ~/.oppi/bin/oppi, symlinked into ~/.local/bin when writable.
-#            Another oppi (an npm global install) is left alone and reported.
-#            The chosen Node's directory joins the server's runtimePathEntries,
-#            so sessions and the server's npm update check find node and npm.
+#            `npm install --global --prefix` a staging directory under
+#            ~/.oppi/install/releases with `--ignore-scripts --omit=dev`, and
+#            smoke-test `oppi --version`. Launcher: ~/.oppi/bin/oppi (it sets
+#            OPPI_NODE, which the service keeps and the server appends to session
+#            PATH), symlinked into ~/.local/bin when writable. Another oppi (an
+#            npm global install) is left alone and reported.
 #   service  Refuse to start when another program holds the server port. Then
-#            `oppi server install`: macOS LaunchAgent, Linux systemd user unit.
-#   start    Wait (90 s) until `oppi status --json` reports HTTPS and
-#            https://127.0.0.1:<port>/health?identity=1 answers from the
-#            installed version, in the process the service (or this script) runs.
+#            move the release into place and atomically point
+#            ~/.oppi/install/current at it (a later failure points it back),
+#            and run `oppi server install`: macOS LaunchAgent, Linux systemd
+#            user unit. The replaced release stays for a manual rollback.
+#   start    Wait (90 s) until `oppi status --json` reports HTTPS, the server
+#            on the owner Unix socket is the installed version in the process
+#            the service (or this script) runs with its listener on the port,
+#            and https://127.0.0.1:<port>/health answers.
 # Rerunning upgrades or repairs and ends in the same state.
 #
 # Progress protocol. This is a contract with the iOS app (SSH setup); keep the
@@ -57,7 +59,8 @@ OPPI_MIN_NODE_MAJOR=22
 OPPI_MIN_NODE_MINOR=19
 OPPI_NODE_DIST=https://nodejs.org/dist/latest-v22.x
 OPPI_PACKAGE_NAME=oppi-server
-# Older releases lack the Linux service, OPPI_NODE, and /health?identity=1.
+# Older releases lack the Linux service, OPPI_NODE, and the owner-socket
+# process facts in `oppi server status --json`.
 OPPI_MIN_SERVER_VERSION=0.54.0
 OPPI_START_TIMEOUT=90
 
@@ -81,6 +84,11 @@ fail() {
     say "oppi-install: step=$current_step status=fail detail=$(one_line "$2")"
   fi
   say "oppi-install: error code=$1 detail=$(one_line "$2")"
+  rollback_release
+  # A staged release that was never activated is not kept.
+  if [ -z "${switched:-}" ] && [ -n "${staged:-}" ] && [ "$staged" != "${release:-}" ]; then
+    rm -rf "$staged"
+  fi
   release_lock
   exit 1
 }
@@ -200,7 +208,18 @@ acquire_lock() {
     if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
       fail busy "another Oppi install is running (pid $lock_pid)"
     fi
-    rm -f "$lock"
+    # Take over a dead holder's lock only through a rename to a name of our own:
+    # of two runs racing here, one rename wins. The loser may have renamed the
+    # winner's fresh lock instead of the dead one; it sees a different pid,
+    # puts the lock back, and reports busy.
+    stale=$lock.stale.$$
+    if mv "$lock" "$stale" 2>/dev/null; then
+      if [ "$(readlink "$stale" 2>/dev/null)" != "$lock_pid" ]; then
+        mv "$stale" "$lock" 2>/dev/null
+        fail busy "another Oppi install took the lock"
+      fi
+      rm -f "$stale"
+    fi
     ln -s "$$" "$lock" 2>/dev/null || fail busy "another Oppi install took the lock"
   fi
   have_lock=1
@@ -216,7 +235,8 @@ release_lock() {
 # Remove staging directories that an interrupted run left behind. Only the lock
 # holder calls this, so none of them belong to a live install.
 remove_stale_staging() {
-  for stale in "$OPPI_HOME"/install/releases/.*.tmp.* "$OPPI_HOME"/runtime/.download.*; do
+  for stale in "$OPPI_HOME"/install/releases/.*.tmp.* "$OPPI_HOME"/install/releases/.*.old.* \
+    "$OPPI_HOME"/install/install.lock.stale.* "$OPPI_HOME"/runtime/.download.*; do
     [ -e "$stale" ] && rm -rf "$stale"
   done
 }
@@ -342,15 +362,23 @@ package_version() {
   fi
 }
 
-# version_older <a> <b>: a is older than b, comparing major.minor.patch.
+# version_older <a> <b>: a sorts before b. Same major.minor.patch: a prerelease
+# (0.54.0-beta.1) is older than the release; two prereleases compare as text.
 version_older() {
   "$oppi_node" -e '
-    const parts = (v) => v.split(/[-+]/)[0].split(".").map((n) => Number(n) || 0);
-    const [a, b] = [parts(process.argv[1]), parts(process.argv[2])];
+    const split = (v) => {
+      const [core, pre = ""] = v.split("+")[0].split(/-(.*)/s);
+      return { nums: core.split(".").map((n) => Number(n) || 0), pre };
+    };
+    const [a, b] = [split(process.argv[1]), split(process.argv[2])];
     for (let i = 0; i < 3; i++) {
-      if ((a[i] ?? 0) !== (b[i] ?? 0)) process.exit((a[i] ?? 0) < (b[i] ?? 0) ? 0 : 1);
+      const [x, y] = [a.nums[i] ?? 0, b.nums[i] ?? 0];
+      if (x !== y) process.exit(x < y ? 0 : 1);
     }
-    process.exit(1);
+    if (a.pre === b.pre) process.exit(1);
+    if (!a.pre) process.exit(1);
+    if (!b.pre) process.exit(0);
+    process.exit(a.pre < b.pre ? 0 : 1);
   ' "$1" "$2" </dev/null
 }
 
@@ -387,14 +415,11 @@ install_oppi() {
   releases=$OPPI_HOME/install/releases
   release=$releases/$version
   mkdir -p "$releases"
-  # Remember the release being replaced for a manual rollback. A rerun of the
-  # same version keeps the one remembered earlier.
-  current_target=$(readlink "$OPPI_HOME/install/current" 2>/dev/null || true)
-  if [ -n "$current_target" ] && [ "${current_target#releases/}" != "$version" ]; then
-    printf '%s\n' "${current_target#releases/}" >"$OPPI_HOME/install/previous"
-  fi
 
+  # Install into a staging prefix. Nothing the running server or the next
+  # service restart uses changes until activate_release, after the port check.
   if [ -z "$package_file" ] && [ "$(installed_version "$release" || true)" = "$version" ]; then
+    staged=$release
     oppi_status=skip
     oppi_result="$OPPI_PACKAGE_NAME $version already installed"
   else
@@ -414,27 +439,16 @@ install_oppi() {
       rm -rf "$stage"
       fail npm "installed $OPPI_PACKAGE_NAME did not run: oppi --version printed '${got}', expected $version"
     fi
-    rm -rf "$release"
-    mv "$stage" "$release" || fail npm "could not move the release into $release"
+    staged=$stage
     oppi_status=ok
     oppi_result="installed $OPPI_PACKAGE_NAME $version"
   fi
+  cli_js=$staged/lib/node_modules/$OPPI_PACKAGE_NAME/dist/src/cli.js
 
-  swap_symlink "releases/$version" "$OPPI_HOME/install/current" ||
-    fail npm "could not point $OPPI_HOME/install/current at $version"
-  previous_version=$(cat "$OPPI_HOME/install/previous" 2>/dev/null || true)
-  for old in "$releases"/*; do
-    [ -d "$old" ] || continue
-    case "$old" in
-      "$release") ;;
-      "$releases/$previous_version") [ -n "$previous_version" ] || rm -rf "$old" ;;
-      *) rm -rf "$old" ;;
-    esac
-  done
-
+  # The launcher runs whatever `current` points at, so writing it now changes
+  # nothing until the switch.
   write_launcher
   link_launcher
-  add_node_to_runtime_path
   [ -n "$other_oppi" ] && oppi_result="$oppi_result; left another oppi at $other_oppi in place"
   [ -n "$link_note" ] && oppi_result="$oppi_result; $link_note"
   progress oppi "$oppi_status" "$oppi_result"
@@ -466,26 +480,65 @@ EOF
   fi
 }
 
-# The server builds session PATH from config `runtimePathEntries` only. Append
-# the chosen Node's directory there (once) so sessions and the server's npm
-# update check find node and npm. It goes last: a Node the user configured wins.
-add_node_to_runtime_path() {
-  node_dir=${oppi_node%/*}
-  entries=$("$launcher" config get runtimePathEntries --json </dev/null 2>/dev/null)
-  updated=$("$oppi_node" -e '
-    try {
-      const value = JSON.parse(process.argv[1]).data.value;
-      if (Array.isArray(value) && !value.includes(process.argv[2])) {
-        process.stdout.write(JSON.stringify([...value, process.argv[2]]));
-      }
-    } catch {}
-  ' "$entries" "$node_dir" </dev/null)
-  [ -n "$updated" ] || return 0
-  if "$launcher" config set runtimePathEntries "$updated" </dev/null >/dev/null 2>&1; then
-    say "  Added $node_dir to the server's runtimePathEntries"
-  else
-    say "  Could not add $node_dir to runtimePathEntries; sessions may not find node"
+# The staged (later: active) release's CLI, for the installer's own queries.
+oppi_cli() {
+  OPPI_NODE=$oppi_node "$oppi_node" "$cli_js" "$@" </dev/null 2>/dev/null
+}
+
+# Point `current` at the staged release. A same-version replacement moves the
+# old directory aside instead of deleting it, so a server still running from it
+# keeps its files and a failure can put it back. rollback_release undoes this.
+activate_release() {
+  current_target=$(readlink "$OPPI_HOME/install/current" 2>/dev/null || true)
+  saved_previous=$(cat "$OPPI_HOME/install/previous" 2>/dev/null || true)
+  aside=
+  if [ "$staged" != "$release" ]; then
+    if [ -e "$release" ]; then
+      aside=$releases/.$version.old.$$
+      mv "$release" "$aside" || fail npm "could not move the old $version aside"
+    fi
+    mv "$staged" "$release" || fail npm "could not move the release into $release"
+    cli_js=$release/lib/node_modules/$OPPI_PACKAGE_NAME/dist/src/cli.js
   fi
+  # Remember the release being replaced for a manual rollback. A rerun of the
+  # same version keeps the one remembered earlier.
+  if [ -n "$current_target" ] && [ "${current_target#releases/}" != "$version" ]; then
+    printf '%s\n' "${current_target#releases/}" >"$OPPI_HOME/install/previous"
+  fi
+  swap_symlink "releases/$version" "$OPPI_HOME/install/current" ||
+    fail npm "could not point $OPPI_HOME/install/current at $version"
+  switched=1
+}
+
+# After a failure past the switch: the next service restart must run what ran before.
+rollback_release() {
+  [ "${switched:-}" = 1 ] || return 0
+  switched=
+  if [ -n "$aside" ] && [ -d "$aside" ]; then
+    rm -rf "$release" && mv "$aside" "$release"
+  fi
+  if [ -n "$current_target" ]; then
+    swap_symlink "$current_target" "$OPPI_HOME/install/current"
+    if [ -n "$saved_previous" ]; then
+      printf '%s\n' "$saved_previous" >"$OPPI_HOME/install/previous"
+    else
+      rm -f "$OPPI_HOME/install/previous"
+    fi
+    say "  Rolled $OPPI_HOME/install/current back to ${current_target#releases/}"
+  fi
+}
+
+# Once the new server answers: drop releases other than current and the one
+# remembered for rollback, and the directory moved aside.
+prune_releases() {
+  [ -n "$aside" ] && rm -rf "$aside"
+  previous_version=$(cat "$OPPI_HOME/install/previous" 2>/dev/null || true)
+  for old in "$releases"/*; do
+    [ -d "$old" ] || continue
+    [ "$old" = "$release" ] && continue
+    [ -n "$previous_version" ] && [ "$old" = "$releases/$previous_version" ] && continue
+    rm -rf "$old"
+  done
 }
 
 path_has() {
@@ -618,52 +671,25 @@ start_background() {
   log_hint=$serve_log
 }
 
-# The pid of the LaunchAgent or systemd service, or nothing.
-service_pid() {
+# json_field <json> <dot.path>: the value there, or nothing.
+json_field() {
   "$oppi_node" -e '
     try {
-      const pid = JSON.parse(process.argv[1]).data.service.pid;
-      if (Number.isInteger(pid) && pid > 0) process.stdout.write(String(pid));
+      let v = JSON.parse(process.argv[1]);
+      for (const k of process.argv[2].split(".")) v = v?.[k];
+      if (v !== undefined && v !== null) process.stdout.write(String(v));
     } catch {}
-  ' "$("$launcher" server status --json </dev/null 2>/dev/null)" </dev/null
+  ' "$1" "$2" </dev/null
 }
 
-configured_port() {
+# `free` when nothing accepts TCP on 127.0.0.1:<port>, else `open`.
+port_state() {
   "$oppi_node" -e '
-    try {
-      process.stdout.write(String(JSON.parse(process.argv[1]).data.status.server.port));
-    } catch {}
-  ' "$("$launcher" status --json </dev/null 2>/dev/null)" </dev/null
-}
-
-# port_holder <port>: `free`, `oppi <pid|-> <version|->` (Oppi older than
-# /health?identity=1 gives -), or `other` (something that is not Oppi HTTPS).
-port_holder() {
-  "$oppi_node" -e '
-    const port = Number(process.argv[1]);
+    const sock = require("node:net").connect({ host: "127.0.0.1", port: Number(process.argv[1]) });
     const say = (s) => { process.stdout.write(s); process.exit(0); };
-    const sock = require("node:net").connect({ host: "127.0.0.1", port });
-    sock.setTimeout(3000, () => say("other"));
-    sock.on("error", (e) => say(e.code === "ECONNREFUSED" ? "free" : "other"));
-    sock.on("connect", () => {
-      sock.destroy();
-      const req = require("node:https").get(
-        { host: "127.0.0.1", port, path: "/health?identity=1", rejectUnauthorized: false, timeout: 3000 },
-        (res) => {
-          let body = "";
-          res.on("data", (c) => (body += c));
-          res.on("end", () => {
-            try {
-              const h = JSON.parse(body);
-              if (h.ok === true && h.protocol === 2) say(`oppi ${h.pid ?? "-"} ${h.version ?? "-"}`);
-            } catch {}
-            say("other");
-          });
-        },
-      );
-      req.on("timeout", () => req.destroy());
-      req.on("error", () => say("other"));
-    });
+    sock.setTimeout(3000, () => say("open"));
+    sock.on("error", (e) => say(e.code === "ECONNREFUSED" ? "free" : "open"));
+    sock.on("connect", () => say("open"));
   ' "$1" </dev/null
 }
 
@@ -680,16 +706,22 @@ listener_pid() {
 # replaces: a hand-run `oppi serve`, another app's server, or (with
 # --no-service, which leaves the service alone) the service itself. Otherwise
 # the new server would crash-loop while the old one kept answering /health.
+#
+# Who holds the port: lsof or ss when installed; otherwise the server on this
+# data directory, asked over its owner-only Unix socket (`oppi server status
+# --json`), when it reports its HTTPS listener bound to that port.
 check_port() {
-  port=$(configured_port)
+  port=$(json_field "$(oppi_cli status --json)" data.status.server.port)
   case "$port" in '' | *[!0-9]*) return 0 ;; esac
-  holder=$(port_holder "$port")
-  [ "$holder" = free ] && return 0
-  holder_pid=
-  case "$holder" in oppi\ *) holder_pid=$(printf '%s' "$holder" | cut -d' ' -f2) ;; esac
-  [ "$holder_pid" = - ] || [ -z "$holder_pid" ] && holder_pid=$(listener_pid "$port")
+  [ "$(port_state "$port")" = free ] && return 0
+  server_json=$(oppi_cli server status --json)
+  service_holder=$(json_field "$server_json" data.service.pid)
+  holder_pid=$(listener_pid "$port")
+  if [ -z "$holder_pid" ] && [ "$(json_field "$server_json" data.server.listening)" = true ] &&
+    [ "$(json_field "$server_json" data.server.port)" = "$port" ]; then
+    holder_pid=$(json_field "$server_json" data.server.pid)
+  fi
   replaceable_pid=
-  service_holder=$(service_pid)
   [ "$1" = service ] && replaceable_pid=$service_holder
   if [ -n "$holder_pid" ]; then
     [ -n "$replaceable_pid" ] && [ "$holder_pid" = "$replaceable_pid" ] && return 0
@@ -698,8 +730,9 @@ check_port() {
     fi
     what="pid $holder_pid ($(pid_command "$holder_pid" | cut -c1-120))"
   elif [ -n "$replaceable_pid" ]; then
-    # An Oppi too old to report its pid, and no lsof or ss: the running service
-    # is the likely holder, and its restart frees the port.
+    # No lsof or ss, and no server on this data directory that reports the
+    # port (an older Oppi): the running service is the likely holder, and its
+    # restart frees the port.
     say "  Port $port answers; assuming it is the Oppi service being replaced (pid $replaceable_pid)"
     return 0
   else
@@ -708,26 +741,31 @@ check_port() {
   fail port_in_use "port $port is in use by $what; stop it (or change the port with 'oppi config set port <n>') and rerun"
 }
 
+# Order matters: stop this installer's own background server, check the port,
+# and only then switch `current` (activate_release). A failure after the switch
+# rolls it back (fail -> rollback_release).
 install_service() {
   service_log=$OPPI_HOME/install/service.log
-  stop_background
+  background_reason=
   if [ "$no_service" = 1 ]; then
-    progress service begin "checking the server port"
-    check_port background
-    progress service skip "--no-service: starting oppi serve in the background (does not survive a reboot)"
-    start_background
-    return 0
+    background_reason="--no-service"
+  elif [ "$node_os" = linux ] && ! systemd_user_available; then
+    background_reason="no systemd user manager here"
   fi
-  if [ "$node_os" = linux ] && ! systemd_user_available; then
+  if [ -n "$background_reason" ]; then
     progress service begin "checking the server port"
+    stop_background
     check_port background
-    progress service skip "no systemd user manager here; starting oppi serve in the background (does not survive a reboot)"
+    activate_release
+    progress service skip "$background_reason: starting oppi serve in the background (does not survive a reboot)"
     start_background
     return 0
   fi
 
   progress service begin "oppi server install"
+  stop_background
   check_port service
+  activate_release
   if ! "$launcher" server install </dev/null >"$service_log" 2>&1; then
     cat "$service_log" >&2
     fail service "oppi server install failed: $(grep -F '✗' "$service_log" | head -n 1 | sed 's/^[[:space:]]*✗[[:space:]]*//')"
@@ -748,57 +786,61 @@ install_service() {
 
 # ---------------------------------------------------------------- start
 
-# Prints `ready <port>` once status says HTTPS and loopback
-# /health?identity=1 answers from <expected-pid> running <version>; otherwise
-# `wait <why>`.
+# Prints `ready <port> <pid>` once `oppi status` says HTTPS, the server on this
+# data directory (asked over its owner socket) is the expected process running
+# <version> with its HTTPS listener bound to that port, and loopback /health
+# answers; otherwise `wait <why>`. The expected process is the service's pid,
+# or the background server's from serve.pid.
 probe_ready() {
   "$oppi_node" -e '
-    const [statusJson, expectedPid, version] = process.argv.slice(1);
+    const [statusJson, serverJson, mode, backgroundPid, version] = process.argv.slice(1);
     const say = (s) => { process.stdout.write(s); process.exit(0); };
-    let port;
+    let port, data;
     try {
       const server = JSON.parse(statusJson).data.status.server;
       if (server.transport !== "https") say("wait oppi status does not report HTTPS yet");
       port = server.port;
+      data = JSON.parse(serverJson).data;
     } catch {
-      say("wait oppi status --json is not readable yet");
+      say("wait oppi status is not readable yet");
     }
+    const expected = mode === "background" ? Number(backgroundPid) : data.service?.pid;
+    if (!expected) say("wait the service has no pid yet");
+    const s = data.server;
+    if (!s) say("wait no server answers on the owner socket yet");
+    if (s.pid !== expected || s.version !== version) {
+      say(`wait the owner socket is held by pid ${s.pid} (oppi-server ${s.version}), not the new server (pid ${expected}, ${version})`);
+    }
+    if (!s.listening || s.port !== port) say(`wait pid ${s.pid} has not bound port ${port} yet`);
     const req = require("node:https").get(
-      { host: "127.0.0.1", port, path: "/health?identity=1", rejectUnauthorized: false, timeout: 3000 },
+      { host: "127.0.0.1", port, path: "/health", rejectUnauthorized: false, timeout: 3000 },
       (res) => {
         let body = "";
         res.on("data", (c) => (body += c));
         res.on("end", () => {
           let h;
           try { h = JSON.parse(body); } catch {}
-          if (!h || h.ok !== true || h.protocol !== 2) say(`wait port ${port} does not answer as Oppi`);
-          if (!expectedPid) say("wait the service has no pid yet");
-          if (String(h.pid) !== expectedPid || h.version !== version) {
-            say(`wait port ${port} answers from pid ${h.pid ?? "?"} (oppi-server ${h.version ?? "?"}), not the new server (pid ${expectedPid}, ${version})`);
-          }
-          say(`ready ${port}`);
+          if (h?.ok === true && h.protocol === 2) say(`ready ${port} ${expected}`);
+          say(`wait port ${port} does not answer as Oppi`);
         });
       },
     );
     req.on("timeout", () => req.destroy());
     req.on("error", () => say(`wait no HTTPS answer on port ${port}`));
-  ' "$("$launcher" status --json </dev/null 2>/dev/null)" "$1" "$version" </dev/null
+  ' "$(oppi_cli status --json)" "$(oppi_cli server status --json)" "$serve_mode" \
+    "$(cat "$OPPI_HOME/serve.pid" 2>/dev/null)" "$version" </dev/null
 }
 
 wait_for_server() {
   progress start begin "waiting for https://127.0.0.1/health (up to ${OPPI_START_TIMEOUT}s)"
   started=$(date +%s)
   while :; do
-    if [ "$serve_mode" = background ]; then
-      expected_pid=$(cat "$OPPI_HOME/serve.pid" 2>/dev/null)
-    else
-      expected_pid=$(service_pid)
-    fi
-    probe=$(probe_ready "$expected_pid")
+    probe=$(probe_ready)
     case "$probe" in
       ready\ *)
-        port=${probe#ready }
-        progress start ok "Oppi $version answers https://127.0.0.1:$port/health (pid $expected_pid)"
+        ready=${probe#ready }
+        port=${ready%% *}
+        progress start ok "Oppi $version answers https://127.0.0.1:$port/health (pid ${ready#* })"
         return 0
         ;;
     esac
@@ -863,6 +905,8 @@ main() {
   install_oppi
   install_service
   wait_for_server
+  switched=
+  prune_releases
   release_lock
 
   say "oppi-install: done version=$version port=$port"
