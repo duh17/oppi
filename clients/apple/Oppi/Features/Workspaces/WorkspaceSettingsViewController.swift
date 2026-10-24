@@ -22,7 +22,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     private let serverId: String
     private let workspace: Workspace
     private let model: WorkspaceSettingsModel
-    private let locks = ScopedLockService.shared
+    private let locks: ScopedLockService
 
     /// Closes this screen after Delete Workspace or Edit with Oppi when it was
     /// pushed onto another screen. As a shell route it leaves through the
@@ -44,12 +44,15 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     private var connectTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var isOnScreen = false
-    /// Set on each appearance and by a lock; the unlocked screen spends it on
-    /// one server switch.
+    /// Whether this screen makes its server the active one (not the fixture).
+    private let switchesServer: Bool
+    /// Set on each appearance and by a lock, as the hosted screen's
+    /// `.task(id:)` re-ran; the unlocked screen spends it on one server switch.
     private var needsConnect: Bool
     private var shown: Shown?
     private var lockCover: ScopedLockCoverViewController?
     private weak var editSheet: UIViewController?
+    private weak var deleteAlert: UIAlertController?
     private var sidebarToggle: UIBarButtonItem?
     private var doneItem: UIBarButtonItem?
 
@@ -81,8 +84,10 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
 
     /// `serverId`: the workspace's server, made the active one before the
     /// list shows.
-    init(serverId: String, workspace: Workspace, root: AppRootEnvironment) {
+    init(serverId: String, workspace: Workspace, root: AppRootEnvironment, locks: ScopedLockService = .shared) {
         self.serverId = serverId
+        self.locks = locks
+        switchesServer = true
         self.workspace = workspace
         self.root = root
         model = WorkspaceSettingsModel(seed: workspace)
@@ -95,7 +100,15 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     #if DEBUG
     /// Screenshot harness entry: a fixture model on a ready connection, with
     /// no server switch.
-    init(workspace: Workspace, model: WorkspaceSettingsModel, connection: ServerConnection, root: AppRootEnvironment) {
+    init(
+        workspace: Workspace,
+        model: WorkspaceSettingsModel,
+        connection: ServerConnection,
+        root: AppRootEnvironment,
+        locks: ScopedLockService = .shared
+    ) {
+        self.locks = locks
+        switchesServer = false
         serverId = connection.currentServerId ?? ""
         self.workspace = workspace
         self.root = root
@@ -168,7 +181,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
         isOnScreen = true
-        needsConnect = connection == nil || needsConnect
+        needsConnect = switchesServer
         setNeedsUpdateProperties()
         updatePropertiesIfNeeded()
     }
@@ -192,7 +205,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
         if locks.isLocked(lockTarget) {
-            needsConnect = true
+            needsConnect = switchesServer
             show(.locked)
         } else {
             if needsConnect, isOnScreen {
@@ -247,6 +260,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         case .locked:
             connectTask?.cancel()
             connectTask = nil
+            dismissPresentedModals()
             let cover = ScopedLockCoverViewController(target: lockTarget, title: workspace.name)
             addChild(cover)
             cover.view.translatesAutoresizingMaskIntoConstraints = false
@@ -270,6 +284,15 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         }
     }
 
+    /// Nothing of a locked workspace stays on screen: the guided sheet and the
+    /// Delete confirmation, which sit above this screen's cover, go with it.
+    private func dismissPresentedModals() {
+        if let editSheet { Router.finish(editSheet) }
+        editSheet = nil
+        deleteAlert?.dismiss(animated: false)
+        deleteAlert = nil
+    }
+
     private func updateBar() {
         var leading: [UIBarButtonItem] = []
         if showsSidebarToggle {
@@ -278,7 +301,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             WorkspaceSplitSidebarToggle.sync(toggle, root: root)
             leading.append(toggle)
         }
-        if let onDone {
+        if shown == .list, let onDone {
             let item = doneItem ?? UIBarButtonItem(systemItem: .done)
             item.title = String(localized: "Done")
             item.primaryAction = UIAction(title: String(localized: "Done")) { _ in onDone() }
@@ -556,7 +579,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                 identifier: "workspace.edit.delete",
                 color: UIColor(palette.red),
                 // A queued write could otherwise land after the delete.
-                enabled: !model.isDeleting && model.isWriteQueueIdle,
+                enabled: canDelete,
                 image: "trash"
             ) { [weak self] in self?.perform(.delete) }
         }
@@ -674,7 +697,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     /// The guided composer: describe the change, then Send creates one session
     /// on this screen's server and opens it.
     private func presentEditWithOppi() {
-        guard let connection, editSheet == nil else { return }
+        guard let connection, editSheet == nil, !locks.isLocked(lockTarget) else { return }
         let sheet = GuidedControlSessionViewController(
             configuration: GuidedControlComposerConfiguration(
                 domain: .workspaces,
@@ -694,8 +717,10 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
 
     /// Closes the sheet, leaves Workspace Settings the way Delete does, and
     /// opens the prepared session.
-    private func openEditSession(_ target: WorkspaceSessionNavTarget) {
+    func openEditSession(_ target: WorkspaceSessionNavTarget) {
         if let editSheet { Router.finish(editSheet) }
+        // A lock that engaged while the sheet was open refuses the session.
+        guard !locks.isLocked(lockTarget) else { return }
         onLeave?()
         let navigation = root.navigation
         Task { @MainActor in
@@ -704,7 +729,14 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         }
     }
 
+    /// Delete runs only on an unlocked workspace with no write queued or delete
+    /// in flight (a queued write could otherwise land after the delete).
+    private var canDelete: Bool {
+        !locks.isLocked(lockTarget) && !model.isDeleting && model.isWriteQueueIdle
+    }
+
     private func confirmDelete() {
+        guard canDelete, deleteAlert == nil else { return }
         let sheet = UIAlertController(
             title: String(localized: "Delete Workspace?"),
             message: WorkspaceDeleteConfirmationPolicy.deleteMessage(for: current),
@@ -720,17 +752,21 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             popover.sourceView = row
             popover.sourceRect = row.bounds
         }
+        deleteAlert = sheet
         Router.topPresenter(from: self).present(sheet, animated: true)
     }
 
-    private func deleteWorkspace() async {
-        guard let connection else { return }
+    /// Checked again after the authorization prompt: a lock may engage while
+    /// it is up.
+    func deleteWorkspace() async {
+        guard let connection, canDelete else { return }
         let name = current.name
         guard await AppLockService.shared.authorizeProtectedAction(
             reason: String(localized: "Delete \(name)")
         ) else { return }
+        guard canDelete else { return }
         guard let deleted = await model.deleteWorkspace() else { return }
-        ScopedLockService.shared.forgetWorkspace(
+        locks.forgetWorkspace(
             serverId: deleted.serverId,
             workspaceId: deleted.workspaceId,
             sessionIds: connection.sessionStore.listProjectionSessions(workspaceId: deleted.workspaceId).map(\.id)
@@ -744,6 +780,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
         switch dataSource?.itemIdentifier(for: indexPath) {
         case .gitStatus, .lock, .projectTrust, .error, nil: false
+        case .delete: canDelete
         default: true
         }
     }
