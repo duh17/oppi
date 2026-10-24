@@ -657,10 +657,13 @@ main() {
   release_lock
 
   say "oppi-install: done version=$version port=$port"
+  # A terminal install shows an invite here, because the service prints none.
+  # The app (--non-interactive) mints its own invite over SSH.
   if [ "$interactive" = 1 ]; then
     say ""
-    say "Oppi $version is running. Pair your iPhone: run 'oppi pair' and scan the QR code"
-    say "in the Oppi app (open a new terminal first if 'oppi' is not found)."
+    say "Oppi $version is running. Scan this code in the Oppi app on your iPhone:"
+    "$launcher" pair </dev/null || say "Run 'oppi pair' to show a pairing code."
+    say "Later, 'oppi pair' shows a fresh code (open a new terminal first if 'oppi' is not found)."
   fi
   return 0
 }

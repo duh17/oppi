@@ -77,13 +77,13 @@ Oppi runs sessions with [Pi](https://github.com/badlogic/pi-mono), so it needs P
 
 ## Pair a first device
 
-1. With the server running, show an invite:
+1. Show an invite. The terminal installer prints one when it finishes. Later, with the server running, run:
 
    ```bash
    oppi pair
    ```
 
-   It prints a pairing QR code and invite link. On its first start, the server picks TLS: if the machine is on Tailscale and `tailscale cert` can issue it a certificate (HTTPS enabled for the tailnet), Oppi uses Tailscale TLS and the invite points at the machine's `*.ts.net` name. Otherwise it uses a self-signed certificate. A `tls.mode` other than `disabled` that you already set is kept. Running `oppi serve` in a terminal instead of the service also prints the QR code on first run.
+   It prints a pairing QR code and invite link. On its first start, the server picks TLS: if the machine is on Tailscale and `tailscale cert` can issue it a certificate (HTTPS enabled for the tailnet), Oppi uses Tailscale TLS and the invite points at the machine's `*.ts.net` name. Otherwise it uses a self-signed certificate. A `tls.mode` other than `disabled` that you already set is kept.
 
 2. Open Oppi on iPhone and choose **Scan QR Code**, **Connect through Tailscale**, or **Enter manually / Connect to Server** (Host, Port, Token, and Name; it does not paste an invite). Opening an `oppi://connect` invite link also starts pairing.
 
