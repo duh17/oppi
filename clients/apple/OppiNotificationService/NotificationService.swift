@@ -10,8 +10,9 @@ import UserNotifications
 /// timeout, shows the fixed fallback: never a field from the failed push. Each fallback logs
 /// its rejection reason, and nothing from the push.
 ///
-/// A decrypted session push also adds its session to the ones owing the user a look and badges
-/// the app icon with their count (`SessionBadge`); the fallback leaves the badge as it is.
+/// A decrypted blocked push also adds its session to the ones waiting on the user and badges
+/// the app icon with their count (`SessionBadge`); an error or agent-message push, and the
+/// fallback, leave the badge as it is.
 final class NotificationService: UNNotificationServiceExtension {
     private var contentHandler: ((UNNotificationContent) -> Void)?
 

@@ -45,19 +45,10 @@ enum SessionStatusKind: Equatable, Hashable, Sendable, CaseIterable {
         }
     }
 
-    /// The person owes this session a look: it is blocked, or its outcome is unseen.
+    /// Whether a session row draws its attention dot: it is blocked, or its outcome is unseen.
+    /// Not the app icon badge, which counts only blocked sessions (`SessionBadge`).
     var needsAttention: Bool {
         isBlocked || self == .done || self == .error
-    }
-
-    /// Whether a session with this status counts toward the app icon badge (`SessionBadge`):
-    /// blocked anywhere, or an unseen outcome of a top-level run.
-    func owesLook(isTopLevel: Bool) -> Bool {
-        SessionBadge.owesLook(
-            isBlocked: isBlocked,
-            hasUnseenOutcome: self == .done || self == .error,
-            isTopLevel: isTopLevel
-        )
     }
 }
 

@@ -21,10 +21,12 @@ enum PushNotificationOpening {
         }
     }
 
-    /// The app icon badge for this push: its session joins the stored sessions owing a look
-    /// (`SessionBadge`), and the badge is their count. Nil leaves the badge as it is: a push
-    /// that failed a check, a pairing push, or stored state that could not be updated.
-    /// `updateBadge` applies the change to the stored set and returns the result.
+    /// The app icon badge for this push: a blocked push's session joins the stored sessions
+    /// waiting on the user (`SessionBadge`), and the badge is their count. Nil leaves the badge
+    /// as it is: a push that failed a check, a pairing push, a failed run or an agent message
+    /// (neither of which waits on the user, so neither may raise the number), or stored state
+    /// that could not be updated. `updateBadge` applies the change to the stored set and
+    /// returns the result.
     static func badge(
         for result: Result<OpenedPushEnvelope, PushEnvelopeRejection>,
         updateBadge: ((inout SessionBadge) -> Void) -> SessionBadge?

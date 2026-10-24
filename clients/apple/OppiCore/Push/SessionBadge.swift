@@ -1,15 +1,18 @@
 import Foundation
 
-/// The app icon badge: how many sessions owe the user a look, across every paired server.
+/// The app icon badge: how many sessions are waiting on the user, across every paired server.
 ///
-/// A session owes a look while it waits on the user (approval, question, sign-in), lead or
-/// subagent alike, and while a top-level run's done or error outcome is unseen on this
-/// device. A subagent that merely finished, and a run the user cancelled, owe nothing. Each
-/// session counts once, however many notifications it raised.
+/// A session counts while its status is blocked (`SessionStatusKind.isBlocked`): it waits on
+/// an approval, a question, or a sign-in, lead or subagent alike. A finished run counts
+/// nothing, whether it succeeded or failed, and neither does anything else the user has not
+/// seen yet; the badge is the same number as the Needs you alert and the Live Activity's
+/// needs-you count, so it drops the moment a session stops waiting, not when it is opened.
+/// Each session counts once, however many notifications it raised.
 ///
 /// The app recounts from its session stores and stores the set in the App Group. While the
-/// app is not running, the Notification Service Extension adds each decrypted push's session
-/// to that set and badges the push with its size.
+/// app is not running, the Notification Service Extension adds each decrypted blocked push's
+/// session to that set and badges the push with its size; an error or agent-message push
+/// leaves the badge as it is.
 struct SessionBadge: Codable, Equatable, Sendable {
     struct Key: Codable, Hashable, Sendable {
         let serverId: String
@@ -20,21 +23,11 @@ struct SessionBadge: Codable, Equatable, Sendable {
 
     var count: Int { sessions.count }
 
-    /// The counting rule, for the app's session stores and the extension's pushes alike.
-    static func owesLook(isBlocked: Bool, hasUnseenOutcome: Bool, isTopLevel: Bool) -> Bool {
-        isBlocked || (hasUnseenOutcome && isTopLevel)
-    }
-
-    /// The session a decrypted push says owes a look, or nil for a pairing push. Blocked
-    /// pushes come for any session; the server sends a failed run and an agent's message only
-    /// for top-level sessions, and each is something the user has not seen yet.
+    /// The session a decrypted push says waits on the user, or nil for a pairing push and for
+    /// any push that is not a blockage: the server sends a failed run and an agent's message
+    /// for a session that is not waiting on anything, so neither adds to the count.
     static func key(serverId: String, plaintext: PushPlaintext) -> Key? {
-        guard let sessionId = plaintext.sessionId,
-              owesLook(
-                isBlocked: plaintext.event == .blocked,
-                hasUnseenOutcome: plaintext.event == .error || plaintext.event == .notify,
-                isTopLevel: true
-              ) else { return nil }
+        guard plaintext.event == .blocked, let sessionId = plaintext.sessionId else { return nil }
         return Key(serverId: serverId, sessionId: sessionId)
     }
 
@@ -43,12 +36,12 @@ struct SessionBadge: Codable, Equatable, Sendable {
         sessions.insert(key)
     }
 
-    /// The app's recount. `owed` replaces what each server in `loadedServerIds` owes; a
-    /// paired server the app has not loaded yet keeps what pushes recorded for it; a server
-    /// that is no longer paired drops out.
-    mutating func reconcile(owed: Set<Key>, loadedServerIds: Set<String>, pairedServerIds: Set<String>) {
+    /// The app's recount. `needingYou` replaces what each server in `loadedServerIds` needs; a
+    /// paired server the app has not loaded yet keeps what pushes recorded for it, so those
+    /// entries settle once it loads; a server that is no longer paired drops out.
+    mutating func reconcile(needingYou: Set<Key>, loadedServerIds: Set<String>, pairedServerIds: Set<String>) {
         sessions = sessions
             .filter { pairedServerIds.contains($0.serverId) && !loadedServerIds.contains($0.serverId) }
-            .union(owed)
+            .union(needingYou)
     }
 }

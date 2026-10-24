@@ -307,20 +307,38 @@ struct PushEnvelopeTests {
         ["e": try #require(try vectors().valid.first { $0.name == name }).envelope]
     }
 
-    @Test func aSessionPushJoinsTheStoredSessionsOnce() throws {
+    /// The count a stored badge file holds now, without changing it.
+    private static func storedCount(at url: URL) -> Int? {
+        PushSharedStore.updateSessionBadge(at: url) { _ in }?.count
+    }
+
+    @Test func aBlockedPushJoinsTheStoredSessionsOnce() throws {
         let directory = try Self.temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("badge.json")
-        // The app left one session owing a look on another server.
+        // The app left one waiting session on another server.
         let seeded = PushSharedStore.updateSessionBadge(at: url) {
             $0.insert(.init(serverId: "sha256:other", sessionId: "s_vector"))
         }
         #expect(seeded?.count == 1)
 
         #expect(try Self.badge(Self.envelope("blocked-permission"), storedAt: url) == 2)
-        // Every vector names the same session: a second push and an agent message add nothing.
+        // Every vector names the same session: a second blocked push adds nothing.
         #expect(try Self.badge(Self.envelope("blocked-auth"), storedAt: url) == 2)
-        #expect(try Self.badge(Self.envelope("notify-no-workspace"), storedAt: url) == 2)
+    }
+
+    /// A failed run and an agent's message carry no waiting session, so the badge they show is
+    /// nil (leave the icon as it is) and the stored count does not move.
+    @Test func aFinishedRunOrAnAgentMessageLeavesTheBadgeAsItIs() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("badge.json")
+        _ = PushSharedStore.updateSessionBadge(at: url) {
+            $0.insert(.init(serverId: "sha256:other", sessionId: "s_vector"))
+        }
+
+        #expect(try Self.badge(Self.envelope("notify-no-workspace"), storedAt: url) == nil)
+        #expect(Self.storedCount(at: url) == 1)
     }
 
     @Test func aFallbackOrPairingPushLeavesTheBadgeAsItIs() throws {

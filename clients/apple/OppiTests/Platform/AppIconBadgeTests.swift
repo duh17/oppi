@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Oppi
 
-/// The app icon badge counts sessions that owe the user a look, once each, across servers.
+/// The app icon badge counts sessions waiting on the user, once each, across servers.
 @Suite("App icon badge")
 @MainActor
 struct AppIconBadgeTests {
@@ -41,62 +41,82 @@ struct AppIconBadgeTests {
         let recount = AppIconBadgeService.recount(stores: stores)
         var badge = stored
         badge.reconcile(
-            owed: recount.owed,
+            needingYou: recount.needingYou,
             loadedServerIds: recount.loadedServerIds,
             pairedServerIds: paired ?? Set(stores.keys)
         )
         return badge.count
     }
 
-    @Test func countsWaitingSessionsAndUnseenTopLevelOutcomes() {
+    @Test func countsOnlySessionsWaitingOnTheUser() {
         let store = loadedStore("a", [
+            session("lead-blocked", .blocked, kind: .permission),
+            session("child-blocked", .blocked, kind: .question, parent: "lead-blocked"),
             session("lead-done", .done),
             session("lead-error", .error),
-            session("lead-blocked", .blocked, kind: .permission),
-            session("child-blocked", .blocked, kind: .question, parent: "lead-done"),
-            session("child-done", .done, parent: "lead-done"),
-            session("child-error", .error, parent: "lead-done"),
-            session("cancelled", .idle),
+            session("child-done", .done, parent: "lead-blocked"),
+            session("child-error", .error, parent: "lead-blocked"),
             session("working", .working),
-            session("seen-done", .done, since: Date(timeIntervalSince1970: 1)),
+            session("cancelled", .idle),
         ])
 
-        #expect(store.sessionIdsOwingALook == ["lead-done", "lead-error", "lead-blocked", "child-blocked"])
+        #expect(store.sessionIdsNeedingYou == ["lead-blocked", "child-blocked"])
     }
 
-    @Test func markingASessionSeenCountsItDown() {
-        let store = loadedStore("a", [session("done", .done), session("blocked", .blocked, kind: .auth)])
-        #expect(badge(stores: ["a": store]) == 2)
-
-        store.markSeen(sessionId: "done")
+    /// Opening a waiting session does not answer it; the badge holds until the session stops
+    /// waiting.
+    @Test func aWaitingSessionCountsDownWhenItStopsWaitingNotWhenItIsOpened() {
+        let store = loadedStore("a", [session("ask", .blocked, kind: .question)])
         #expect(badge(stores: ["a": store]) == 1)
 
-        // A waiting session still waits after the user looks at it.
-        store.markSeen(sessionId: "blocked")
+        store.markSeen(sessionId: "ask")
         #expect(badge(stores: ["a": store]) == 1)
+
+        // The user answered: the server reports the session working again.
+        store.sessions = [session("ask", .working)]
+        #expect(badge(stores: ["a": store]) == 0)
     }
 
     @Test func serversAddUpAndASessionCountsOnce() {
-        let a = loadedStore("a", [session("s1", .done), session("s2", .blocked, kind: .question)])
+        let a = loadedStore("a", [session("s1", .blocked, kind: .question), session("s2", .blocked, kind: .auth)])
         // The same session id on another server is another session.
         let b = loadedStore("b", [session("s1", .blocked, kind: .permission)])
         var stored = SessionBadge()
-        // A push already recorded s2 on a; the recount does not count it twice.
-        stored.insert(.init(serverId: "a", sessionId: "s2"))
+        // A push already recorded s1 on a; the recount does not count it twice.
+        stored.insert(.init(serverId: "a", sessionId: "s1"))
 
         #expect(badge(stores: ["a": a, "b": b], stored: stored) == 3)
     }
 
-    @Test func aServerNotLoadedYetKeepsItsPushedSessions() {
-        let a = loadedStore("a", [session("s1", .done)])
+    /// A stored badge from the old rule names finished runs too; the first recount of a loaded
+    /// server drops them. A paired server that has not loaded keeps its pushed entries until it
+    /// does.
+    @Test func aRecountDropsPushedEntriesForLoadedServersOnly() {
+        let a = loadedStore("a", [session("now-blocked", .blocked, kind: .permission)])
         let notLoaded = SessionStore()
         notLoaded.switchServer(to: "b")
         var stored = SessionBadge()
-        stored.insert(.init(serverId: "a", sessionId: "answered-elsewhere"))
+        stored.insert(.init(serverId: "a", sessionId: "finished-run"))
         stored.insert(.init(serverId: "b", sessionId: "pushed"))
         stored.insert(.init(serverId: "unpaired", sessionId: "pushed"))
 
         // a's recount replaces what pushes recorded for it; b keeps its push; an unpaired server drops.
         #expect(badge(stores: ["a": a, "b": notLoaded], stored: stored, paired: ["a", "b"]) == 2)
+    }
+
+    @Test func aPushCountsOnlyWhenItsSessionIsBlocked() {
+        func key(_ event: PushPlaintext.Event) -> SessionBadge.Key? {
+            SessionBadge.key(
+                serverId: "a",
+                plaintext: PushPlaintext(v: 1, ts: 0, event: event, sessionId: "s", title: "T", body: "B")
+            )
+        }
+
+        #expect(key(.blocked) == .init(serverId: "a", sessionId: "s"))
+        // A failed run and an agent's message do not wait on the user.
+        #expect(key(.error) == nil)
+        #expect(key(.notify) == nil)
+        #expect(key(.pairingApproval) == nil)
+        #expect(key(.deviceEnrolled) == nil)
     }
 }

@@ -226,7 +226,7 @@ enum PushSharedStore {
 
     // MARK: Session badge
 
-    /// Apply `change` to the stored sessions owing a look (`SessionBadge`) under the
+    /// Apply `change` to the stored sessions waiting on the user (`SessionBadge`) under the
     /// cross-process lock the app and the extension share. Nil when the set cannot be
     /// locked or saved.
     static func updateSessionBadge(_ change: (inout SessionBadge) -> Void) -> SessionBadge? {

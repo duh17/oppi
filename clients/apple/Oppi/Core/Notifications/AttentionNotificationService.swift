@@ -381,7 +381,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             .map(\.identifier)
     }
 
-    /// Local banners carry the same app icon badge as pushes: the sessions owing a look.
+    /// Local banners carry the same app icon badge as pushes: the sessions waiting on the user.
     private func schedule(identifier: String, content: @escaping @MainActor () -> UNMutableNotificationContent) {
         guard !_skipSchedulingForTesting else {
             return

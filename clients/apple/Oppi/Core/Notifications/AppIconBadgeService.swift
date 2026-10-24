@@ -2,21 +2,22 @@ import Foundation
 import Observation
 import UserNotifications
 
-/// Keeps the app icon badge on the sessions that owe the user a look, across every paired
-/// server (`SessionBadge`).
+/// Keeps the app icon badge on the sessions waiting on the user, across every paired server
+/// (`SessionBadge`).
 ///
-/// While the app runs it recounts on every session store change, including each session the
-/// user sees, so opening a session counts down at once. Each recount is written back to the
-/// App Group, where the Notification Service Extension adds the sessions of pushes that
-/// arrive while the app is not running. A paired server whose session list has not loaded
-/// yet keeps the sessions those pushes recorded.
+/// While the app runs it recounts on every session store change, so a session leaves the badge
+/// as soon as its status stops being blocked (the user answers, approves, or cancels). Each
+/// recount is written back to the App Group, where the Notification Service Extension adds the
+/// sessions of blocked pushes that arrive while the app is not running. A paired server whose
+/// session list has not loaded yet keeps the sessions those pushes recorded, and drops them at
+/// its first recount once it loads.
 @MainActor
 final class AppIconBadgeService {
     static let shared = AppIconBadgeService()
 
     /// What one recount found; the stored set changes only when this does.
     struct Recount: Equatable {
-        var owed: Set<SessionBadge.Key> = []
+        var needingYou: Set<SessionBadge.Key> = []
         var loadedServerIds: Set<String> = []
         var pairedServerIds: Set<String> = []
     }
@@ -53,7 +54,7 @@ final class AppIconBadgeService {
             lastRecount = recount
             let reconcile = { (badge: inout SessionBadge) in
                 badge.reconcile(
-                    owed: recount.owed,
+                    needingYou: recount.needingYou,
                     loadedServerIds: recount.loadedServerIds,
                     pairedServerIds: recount.pairedServerIds
                 )
@@ -72,13 +73,13 @@ final class AppIconBadgeService {
         return count
     }
 
-    /// Sessions owing a look on each server whose session list has loaded from the server.
+    /// Sessions needing the user on each server whose session list has loaded from the server.
     static func recount(stores: [String: SessionStore]) -> Recount {
         var recount = Recount()
         for (serverId, store) in stores where store.lastSuccessfulSyncAt != nil {
             recount.loadedServerIds.insert(serverId)
-            for sessionId in store.sessionIdsOwingALook {
-                recount.owed.insert(SessionBadge.Key(serverId: serverId, sessionId: sessionId))
+            for sessionId in store.sessionIdsNeedingYou {
+                recount.needingYou.insert(SessionBadge.Key(serverId: serverId, sessionId: sessionId))
             }
         }
         return recount

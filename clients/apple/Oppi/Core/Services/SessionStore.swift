@@ -282,15 +282,16 @@ final class SessionStore {
 
     // ── App icon badge ──
 
-    /// Sessions on this server that owe the user a look (`SessionBadge`), by the same status
-    /// every session row shows.
-    var sessionIdsOwingALook: Set<String> {
+    /// Sessions on this server that need the user (`SessionBadge`), by the same status every
+    /// session row shows. A session counts while it is blocked; answering, approving, or
+    /// cancelling is what clears it, not opening or reading it.
+    var sessionIdsNeedingYou: Set<String> {
         Set(sessions.lazy.filter { session in
             SessionStatusKind.resolve(
                 session: session,
                 pendingAskCount: self.listPendingAskCount(for: session.id),
                 seenAt: self.seenAt(for: session.id)
-            ).owesLook(isTopLevel: session.parentSessionId == nil)
+            ).isBlocked
         }.map(\.id))
     }
 

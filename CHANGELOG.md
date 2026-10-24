@@ -58,6 +58,7 @@ Example:
 
 ### Changed
 
+- **Client:** The app icon badge counts only sessions waiting on you — an approval, a question, or a sign-in, lead or subagent, on every paired server, each once — and drops when one stops waiting (you answer, approve, or cancel), not when you open it. A failed run or an agent message no longer adds to it, so a day of scheduled runs and finished workers no longer piles up a number you cannot clear. See [Push notifications](docs/server-configuration.md#push-notifications).
 - **Client:** A message another session sent, such as a subagent's report, is a card that names the sender and what it is (a report, a task, or a message) and folds a long message to its first few lines; tap the card to read all of it, or the sender's name to open that session. Its header shows the sending session's own icon — the Agent it was launched from, with that Agent's emoji, symbol, or Genmoji — or the same Pi mark a session without an Agent shows everywhere else. A short message still shows whole. See [Durable Sessions](docs/usage.md#durable-sessions-experiment).
 - **Client:** A workspace's Git status moves from the strip over its session list to a **Git** button in the top bar, beside Terminal, with the changed-file count like a chat's. It opens the Git panel as a sheet. See [Git panel](docs/usage.md#git-panel).
 - **Client:** The chat Files panel's All tab puts folder Back and Forward together on the trailing side, away from Done. Forward goes back down the folders you backed out of.
