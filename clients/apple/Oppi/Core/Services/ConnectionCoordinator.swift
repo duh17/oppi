@@ -1131,6 +1131,7 @@ final class ConnectionCoordinator {
         // Push keys and the relay permission for this server. The transport is gone, so the
         // server forgets this device's registration when its relay permission 410s.
         await PushRegistration.shared.disable(serverId: id, api: nil, relay: removedConnection?.pushRelay)
+        PushDiscovery.forget(serverId: id)
         await purgeLocalData(for: id, connection: removedConnection)
 
         // If we removed the active server, switch to the first remaining

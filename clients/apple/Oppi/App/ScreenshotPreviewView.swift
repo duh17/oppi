@@ -245,6 +245,8 @@ struct ScreenshotPreviewView: View {
             WorkspaceTopBarScreenshotPreview()
         case "settings-root", "settings-chat", "settings-editor", "settings-chat-top-bar":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
+        case "push-discovery-card":
+            PushDiscoveryCardScreenshotPreview()
         case "workspace-file-editor", "workspace-file-editor-markdown", "workspace-file-editor-vim":
             WorkspaceFileEditorScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
                 .ignoresSafeArea()
@@ -1489,4 +1491,84 @@ private final class RouterModalSitesURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+// MARK: - Push discovery
+
+/// `SCREENSHOT_SCREEN=push-discovery-card`: All Sessions over fixture sessions, on a
+/// server that offers push, after its first session finished: the one-time card
+/// is due. Tap `workspace.pushDiscovery.turnOn` to see the relay disclosure.
+struct PushDiscoveryCardScreenshotPreview: View {
+    @State private var root: AppRootEnvironment
+
+    private static let serverId = "sha256:push-discovery-preview"
+
+    init() {
+        PushDiscoveryPreviewTheme.pin()
+        // The card's stage in the argument domain, never the simulator's saved defaults.
+        ScreenshotVolatileDefaults.apply(["\(AppIdentifiers.subsystem).push.discovery.\(Self.serverId)": "ready"])
+        _root = State(initialValue: .preview(coordinator: Self.makeCoordinator()))
+    }
+
+    var body: some View {
+        WorkspaceShellPreview(root: root)
+            .ignoresSafeArea()
+            .preferredColorScheme(root.themeStore.preferredColorScheme)
+    }
+
+    private static func makeCoordinator() -> ConnectionCoordinator {
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+        guard let server = PairedServer(from: ServerCredentials(
+            host: "mac-studio.local",
+            port: 7749,
+            token: "sk_preview",
+            name: "mac-studio",
+            scheme: .https,
+            serverFingerprint: serverId,
+            tlsCertFingerprint: "sha256:push-discovery-preview-leaf"
+        )) else { return coordinator }
+        coordinator.serverStore.replaceServersForPreview([server])
+        guard coordinator.switchToServer(server),
+              let connection = coordinator.connection(for: server.id) else { return coordinator }
+        let workspace = Workspace(
+            id: "oppi",
+            name: "oppi",
+            description: nil,
+            icon: .symbol("iphone.and.arrow.forward"),
+            systemPrompt: nil,
+            hostMount: "~/workspace/oppi",
+            gitStatusEnabled: false,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        connection.workspaceStore.upsert(workspace, serverId: server.id)
+        connection.setSplitStreamCapabilitiesForTesting(pushRelay: URL(string: "https://push.oppi.chaosdonkey.dev"))
+        connection.sessionStore.switchServer(to: server.id)
+        let finished = Date().addingTimeInterval(-90)
+        connection.sessionStore.sessions = [
+            Session(
+                id: "first",
+                workspaceId: workspace.id,
+                workspaceName: workspace.name,
+                name: "Fix the flaky upload test",
+                status: .ready,
+                createdAt: finished.addingTimeInterval(-600),
+                lastActivity: finished,
+                model: "anthropic/claude-opus-5-5",
+                messageCount: 4,
+                tokens: TokenUsage(input: 8_000, output: 1_200),
+                cost: 0.18
+            ),
+        ]
+        return coordinator
+    }
+}
+
+private enum PushDiscoveryPreviewTheme {
+    /// Before `ThemeStore()` reads it: the pool simulator's own appearance is dark.
+    static func pin() {
+        switch ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] {
+        case "light": ScreenshotVolatileDefaults.applyTheme(.light)
+        default: ScreenshotVolatileDefaults.applyTheme(.dark)
+        }
+    }
+}
 #endif

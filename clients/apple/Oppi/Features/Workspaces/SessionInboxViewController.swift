@@ -51,6 +51,11 @@ final class SessionInboxViewController: UIViewController {
     private var providerSetupState: ProviderSetupState = .unknown {
         didSet { setNeedsUpdateProperties() }
     }
+    /// The push discovery card's own progress: the relay disclosure was accepted and
+    /// registration is running, or it failed.
+    private var pushDiscoveryStatus: PushDiscoveryCardConfiguration.Status = .idle {
+        didSet { setNeedsUpdateProperties() }
+    }
     private var hasAutoOpenedE2EWorkspace = false
     private var hasAutoOpenedE2ESession = false
     private var pendingError: String?
@@ -132,6 +137,7 @@ final class SessionInboxViewController: UIViewController {
 
     deinit {
         serverTask?.cancel()
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: Lifecycle
@@ -165,6 +171,18 @@ final class SessionInboxViewController: UIViewController {
             set: { [weak self] in self?.navigation.inboxSessionSearch = $0 }
         )
         SessionListBarItems.updatesWithVerticalBarEdge(self)
+        // The card's stage lives in UserDefaults: a first finished session, a dismissal, or
+        // turning push on elsewhere changes whether it shows.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(pushDiscoveryDidChange),
+            name: PushDiscovery.didChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func pushDiscoveryDidChange() {
+        setNeedsUpdateProperties()
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -239,6 +257,17 @@ final class SessionInboxViewController: UIViewController {
         let showsProviderPrompt = ProviderSetupPromptPolicy.shouldShow(for: providerSetupState)
             && selectedServer != nil
             && !showsVersionNotice
+        // One setup card at a time: the push card waits behind the version and provider prompts.
+        // A turn-on in progress keeps its card, though push is already marked on, so the
+        // progress and a failure stay visible.
+        let showsPushDiscovery = !showsVersionNotice && !showsProviderPrompt
+            && activeServerId.map { serverId in
+                pushDiscoveryStatus != .idle || PushDiscovery.shouldShow(
+                    stage: PushDiscovery.stage(serverId: serverId),
+                    pushAvailable: PushDiscovery.isPushAvailable(relay: connection?.pushRelay),
+                    pushEnabled: PushRegistration.isEnabled(serverId: serverId)
+                )
+            } == true
         return InboxState(
             activeServerId: activeServerId,
             connection: connection,
@@ -252,6 +281,7 @@ final class SessionInboxViewController: UIViewController {
             ),
             showsVersionNotice: showsVersionNotice,
             showsProviderPrompt: showsProviderPrompt,
+            showsPushDiscovery: showsPushDiscovery,
             refreshFailed: connection.map { $0.workspaceStore.lastSyncFailed || $0.sessionStore.lastSyncFailed } ?? false,
             transportUnavailable: activeServerId.flatMap { id in
                 connection.map { connection in
@@ -583,6 +613,14 @@ final class SessionInboxViewController: UIViewController {
             next.appendSection(.prompt, item: .prompt, row: .providerSetup(serverId: server.id, serverName: server.name))
         }
 
+        if state.showsPushDiscovery, let serverId = state.activeServerId {
+            next.appendSection(
+                .pushDiscovery,
+                item: .pushDiscovery,
+                row: .pushDiscovery(serverId: serverId, status: pushDiscoveryStatus)
+            )
+        }
+
         if state.refreshFailed, !data.isEmpty, let server = state.selectedServer {
             next.appendSection(.cachedWarning, item: .cachedWarning, row: .cachedWarning(serverName: server.name))
         }
@@ -658,6 +696,14 @@ final class SessionInboxViewController: UIViewController {
             ) { [weak self] in
                 self?.navigation.openModelProviders(ModelProvidersNavTarget(serverId: serverId))
             }
+        case .pushDiscovery(let serverId, let status):
+            cell.backgroundConfiguration = .clear()
+            cell.contentConfiguration = PushDiscoveryCardConfiguration(
+                themeID: root.themeStore.activeThemeID,
+                status: status,
+                onTurnOn: { [weak self] in self?.turnOnPush(serverId: serverId) },
+                onDismiss: { [weak self] in self?.dismissPushDiscovery(serverId: serverId) }
+            )
         case .cachedWarning(let serverName):
             var content = UIListContentConfiguration.cell()
             content.image = UIImage(systemName: "exclamationmark.arrow.triangle.2.circlepath")
@@ -710,6 +756,32 @@ final class SessionInboxViewController: UIViewController {
     }
 
     // MARK: Actions
+
+    /// Server Settings' turn-on path: the relay disclosure, then registration, which asks
+    /// iOS for notification permission. The card leaves when push is on (`PushDiscovery`
+    /// closes as the opt-in is saved) and says why when it could not turn on.
+    private func turnOnPush(serverId: String) {
+        guard let connection = coordinator.connection(for: serverId) else { return }
+        PushEnableFlow.start(
+            connection: connection,
+            presenter: self,
+            openPrivacyPolicy: { [weak self] in
+                self?.root.opener.open(.webLink(AppSupportLinks.privacyPolicyURL))
+            },
+            progress: { [weak self] outcome in
+                switch outcome {
+                case .cancelled, .enabled: self?.pushDiscoveryStatus = .idle
+                case .working: self?.pushDiscoveryStatus = .working
+                case .failed(let message): self?.pushDiscoveryStatus = .failed(message)
+                }
+            }
+        )
+    }
+
+    private func dismissPushDiscovery(serverId: String) {
+        pushDiscoveryStatus = .idle
+        PushDiscovery.close(serverId: serverId)
+    }
 
     private func open(_ item: InboxItem) {
         var normalized = item.session
@@ -1018,6 +1090,7 @@ private extension SessionInboxViewController {
         let toolbar: InAppNowPlayingChrome.SessionListToolbar
         let showsVersionNotice: Bool
         let showsProviderPrompt: Bool
+        let showsPushDiscovery: Bool
         let refreshFailed: Bool
         let transportUnavailable: Bool
         let isSyncing: Bool
@@ -1034,6 +1107,7 @@ private extension SessionInboxViewController {
 
     enum Section: Hashable {
         case prompt
+        case pushDiscovery
         case cachedWarning
         case status
         case results
@@ -1048,6 +1122,7 @@ private extension SessionInboxViewController {
     /// its day group instead of moving between them.
     enum Item: Hashable {
         case prompt
+        case pushDiscovery
         case cachedWarning
         case searching
         case noMatches
@@ -1060,6 +1135,7 @@ private extension SessionInboxViewController {
     enum Row: Equatable {
         case serverVersion(serverId: String)
         case providerSetup(serverId: String, serverName: String)
+        case pushDiscovery(serverId: String, status: PushDiscoveryCardConfiguration.Status)
         case cachedWarning(serverName: String)
         case searching
         case noMatches(query: String)

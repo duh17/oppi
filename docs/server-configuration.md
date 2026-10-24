@@ -142,7 +142,7 @@ oppi server restart
 
 The server sends end-to-end-encrypted lock-screen alerts to paired iPhones and iPads through a push relay and Apple Push Notification service (APNs), once a phone turns push on. The server holds no Apple key and never talks to APNs. It encrypts each alert to a key only the phone holds, so the relay and Apple see ciphertext, never titles, session names, or questions. Design and threat model: [protocol/push/spec.md](../protocol/push/spec.md).
 
-Push needs no server setup. The server offers it through Oppi's relay by default and sends nothing until a phone opts in (**Server Settings → Notifications → Push Notifications**, off by default).
+Push needs no server setup. The server offers it through Oppi's relay by default and sends nothing until a phone opts in (**Server Settings → Notifications → Push Notifications**, off by default). The first time a session on the server finishes or needs an answer, All Sessions on the phone offers a one-time card that runs the same turn-on. With `push.mode` set to `off`, the switch and the card are both hidden.
 
 | Key | Value |
 | --- | --- |

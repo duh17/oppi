@@ -13,6 +13,7 @@ extension ServerConnection {
             syncWorkspaceSummary(workspaceId: workspaceId)
         }
         if inserted {
+            notePushDiscoveryMoment()
             AttentionNotificationService.shared.notifyAskIfNeeded(
                 ask,
                 serverId: currentServerId,
@@ -182,6 +183,7 @@ extension ServerConnection {
         isFocusedSession: Bool
     ) {
         appendExtensionDialog(request, for: sessionId)
+        notePushDiscoveryMoment()
         syncExtensionDialogWorkspaceSummary(sessionId: sessionId, explicitWorkspaceId: request.workspaceId)
         if isFocusedSession {
             // Blocking extension dialogs wait for user input, so silence is expected.

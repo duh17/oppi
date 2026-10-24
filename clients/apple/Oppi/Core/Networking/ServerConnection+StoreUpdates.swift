@@ -91,6 +91,7 @@ extension ServerConnection {
                 if let workspaceId = current.workspaceId {
                     syncWorkspaceSummary(workspaceId: workspaceId)
                 }
+                notePushDiscoveryMoment()
             }
             screenAwakeController.setSessionActivity(false, sessionId: sessionId)
             syncLiveActivityState()
@@ -208,6 +209,7 @@ extension ServerConnection {
             screenAwakeController.setSessionActivity(true, sessionId: currentSession.id)
         } else if stateContext.didTransitionOutOfRunning {
             screenAwakeController.setSessionActivity(false, sessionId: currentSession.id)
+            notePushDiscoveryMoment()
         }
 
         syncLiveActivityState()
@@ -365,6 +367,16 @@ extension ServerConnection {
 
         syncWorkspaceSummary(workspaceId: workspaceId)
         syncLiveActivityState()
+    }
+
+    /// The first time a session on this server finishes or needs input, make the push
+    /// discovery card due (`PushDiscovery`). Later calls change nothing.
+    func notePushDiscoveryMoment() {
+        guard let currentServerId else { return }
+        PushDiscovery.noteAttention(
+            serverId: currentServerId,
+            pushEnabled: PushRegistration.isEnabled(serverId: currentServerId)
+        )
     }
 
     /// Apply a session snapshot fetched outside the live WS stream.

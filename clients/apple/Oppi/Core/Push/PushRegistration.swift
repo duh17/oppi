@@ -105,6 +105,24 @@ final class PushRegistration {
         }
     }
 
+    /// Turns push on for a server, after the person agreed to the relay disclosure: marks the
+    /// opt-in, registers, and on a failure leaves nothing behind (the send token, and a relay
+    /// registration no other server uses; `disable` turns the opt-in off too). Nil once the
+    /// server has this device's push key and send token. Registering asks iOS for notification
+    /// permission when it has not been asked.
+    ///
+    /// The discovery card's Turn On runs this. Server Settings' switch runs the same three
+    /// steps in `ServerNotificationsSection.turnPushOn`; switch it to this when Server Settings
+    /// moves to UIKit.
+    func enable(api: APIClient, serverId: String, deviceId: String, relay: URL) async -> Failure? {
+        Self.setEnabled(true, serverId: serverId)
+        let failure = await register(api: api, serverId: serverId, deviceId: deviceId, relay: relay)
+        if failure != nil {
+            await disable(serverId: serverId, api: api, relay: relay)
+        }
+        return failure
+    }
+
     /// Nil once the server has this device's push key and send token.
     @discardableResult
     func register(api: APIClient, serverId: String, deviceId: String, relay: URL) async -> Failure? {
@@ -129,6 +147,8 @@ final class PushRegistration {
                 client: PushRelayClient(relay: relay)
             )
             logger.info("Push registered with server \(server, privacy: .public) (\(environment.rawValue, privacy: .public))")
+            // Push works for this server, however it was turned on: the discovery card is done.
+            PushDiscovery.close(serverId: serverId)
             return nil
         } catch {
             logger.error("Push registration failed for server \(server, privacy: .public): \(String(describing: error), privacy: .public)")
