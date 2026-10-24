@@ -487,8 +487,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             cell.accessories = [.settingsToggle(
                 model.gitStatusEnabled,
                 identifier: "workspace.edit.gitStatus",
-                isEnabled: !(model.isSavingGitStatus || model.isDeleting),
-                label: content.text
+                label: content.text,
+                isEnabled: !(model.isSavingGitStatus || model.isDeleting)
             ) { [weak self] isOn in
                 guard let self else { return }
                 let model = model
@@ -503,8 +503,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             cell.accessories = [.settingsToggle(
                 locks.isFlagged(scope),
                 identifier: "workspace.edit.lock",
-                isEnabled: !locks.isAuthenticating,
-                label: content.text
+                label: content.text,
+                isEnabled: !locks.isAuthenticating
             ) { [weak self] isOn in
                 guard let self else { return }
                 // Turning the lock on never asks and keeps this screen open

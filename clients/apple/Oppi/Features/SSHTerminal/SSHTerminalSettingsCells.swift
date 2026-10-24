@@ -315,7 +315,6 @@ extension UICellAccessory {
         identifier: String? = nil,
         label: String? = nil,
         isEnabled: Bool = true,
-        label: String? = nil,
         onChange: @escaping (Bool) -> Void
     ) -> UICellAccessory {
         let toggle = UISwitch()
