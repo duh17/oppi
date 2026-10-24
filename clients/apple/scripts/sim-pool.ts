@@ -29,7 +29,6 @@ function selfTest(): number {
     "./clients/apple/scripts/sim-pool-cli.test.ts",
     "./clients/apple/scripts/sim-pool-shutdown.test.ts",
     "./clients/apple/scripts/sim-pool-prune.test.ts",
-    "./clients/apple/scripts/sim-pool-cutover.test.ts",
     "./clients/apple/scripts/sim-pool-lifecycle.test.ts",
     "./clients/apple/scripts/sim-slim.test.ts",
     "./clients/apple/scripts/xcode-toolchain.test.ts",

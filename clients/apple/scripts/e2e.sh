@@ -20,6 +20,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # This script lives in the checkout it tests: clients/apple/scripts.
 IOS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$IOS_DIR/../.." && pwd)"
+# sim-pool prefers an inherited OPPI_ROOT over the cwd: pin it so the app is built and
+# tested from the same checkout whose server this script starts.
+export OPPI_ROOT="$REPO_ROOT"
 COMPOSE_FILE="$REPO_ROOT/server/e2e/docker-compose.e2e.yml"
 
 # ── Flag parsing ──
@@ -390,6 +393,9 @@ else
         exit 1
     }
     echo "[e2e] Model: $E2E_MODEL"
+    if $NATIVE_MODE && [ -z "${E2E_ANTHROPIC_EXTENSION:-}" ]; then
+        echo "[e2e] WARNING: E2E_ANTHROPIC_EXTENSION is not set. A Pi subscription login sent through Pi's built-in Anthropic provider bills as extra usage. Set E2E_ANTHROPIC_EXTENSION to the Pi extension that owns subscription requests (see server/e2e/README.md), or use --durable --faux-model for no model calls." >&2
+    fi
 fi
 
 # Remove stale E2E listeners/containers so health checks cannot accidentally

@@ -120,6 +120,9 @@ export function planGate(
   const apple = join(worktree, "clients", "apple");
   const simPool = join(apple, "scripts", "sim-pool.sh");
   const e2eScript = join(apple, "scripts", "e2e.sh");
+  // sim-pool prefers an inherited OPPI_ROOT over the cwd; a caller's own checkout must not
+  // win over the worktree under test, or the gate would build and test different code.
+  const pinned = { OPPI_ROOT: worktree };
   const lanes: Lane[] = [];
   if (server.length > 0) {
     lanes.push({ name: "server", steps: [{ cwd: join(worktree, "server"), command: "npm", args: ["exec", "--offline", "--", "vitest", "run", ...server] }] });
@@ -131,6 +134,7 @@ export function planGate(
         cwd: apple,
         command: simPool,
         args: ["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "OppiUnitTests", "test", ...unit.map((f) => `-only-testing:${f}`)],
+        env: pinned,
         requireTests: true,
       }],
     });
@@ -143,6 +147,7 @@ export function planGate(
           cwd: apple,
           command: simPool,
           args: ["run", "--device-profile", profile, "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test", ...ui.map((f) => `-only-testing:${f}`)],
+          env: pinned,
           requireTests: true,
         }],
       });
@@ -157,7 +162,7 @@ export function planGate(
     lanes.push({
       name: "e2e",
       // One filter or group per step, so a step that ran zero tests is caught exactly.
-      steps: e2eArgs.map((args) => ({ cwd: worktree, command: e2eScript, args, requireTests: true })),
+      steps: e2eArgs.map((args) => ({ cwd: worktree, command: e2eScript, args, env: pinned, requireTests: true })),
     });
   }
   return { lanes, errors };
