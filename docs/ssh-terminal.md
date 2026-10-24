@@ -13,7 +13,7 @@ SSH Terminal opens an interactive shell on a host saved on this iPhone or iPad. 
 
 For a Mac with an Ed25519 host key, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` prints the fingerprint.
 
-The host list leads with **Add Host** when none is saved. A row shows `user@host`, the port when it is not 22, the Run on Connect command or **Login shell**, and each folder a terminal is open in. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that host and its saved passwords only. **Edit Host** in a live terminal opens the form for the connected host. **Tailscale → Check a Machine for Oppi** is a separate check.
+The host list leads with **Add Host** when none is saved. A row shows `user@host`, the port when it is not 22, the Run on Connect command or **Login shell**, and each folder a terminal is open in. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that host and its saved passwords only. **Edit Host** in a live terminal opens the form for the connected host. **Tailscale → Set Up a Mac or Linux Computer** is a separate screen.
 
 ## Run on Connect
 
@@ -203,7 +203,7 @@ A program can notify the terminal with OSC 9 (`ESC ] 9 ; text ST`, iTerm2) or OS
 - **Unsaved password:** used for one connection attempt; Reconnect asks again.
 - **Saved and sudo passwords** live in the app's private, this-device-only Keychain, never synced or migrated, behind Face ID, Touch ID, or the passcode (a device passcode is required to save one). Each is bound to its host's id, so copying one host's secret onto another host's item does not sign in. The form never shows a saved sudo password: type a new one to replace it, or tap **Remove Saved Sudo Password**. Reading at connect needs approval that Oppi [reuses for 5 minutes](#approval-reuse).
 - **Device key:** on a physical device the per-device P-256 SSH key lives in the Secure Enclave, and signing needs user presence (reused 5 minutes). The simulator uses a labelled software key, which is not evidence of hardware protection. Password sign-in creates no key.
-- **Trusted host keys** are stored in the same Keychain, shared by SSH Terminal and Check a Machine. A changed host key blocks sign-in. **Forget Trusted Key** asks for confirmation; verify independently why the key changed before trusting its replacement.
+- **Trusted host keys** are stored in the same Keychain, shared by SSH Terminal and **Set Up a Computer**. A changed host key blocks sign-in. **Forget Trusted Key** asks for confirmation; verify independently why the key changed before trusting its replacement.
 - **Delete Host** deletes that host and its saved passwords, not the device key or trusted host keys, which stay keyed by host and port. If the host list cannot be read, saving is blocked until **Reset Host List** removes it; add hosts again afterward. Reset does not search the Keychain.
 
 ## Keeping a terminal open

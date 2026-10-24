@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh
 Run the same command again to upgrade or repair; it ends in the same state and keeps the replaced version in `~/.oppi/install/releases` for a manual rollback. `oppi update` and the app's **About This Server** show this command for installer installs instead of updating them. Options go after `sh -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh -s -- --version 0.53.0
+curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh -s -- --version 0.54.0
 ```
 
 | Option | Effect |
@@ -41,7 +41,7 @@ If you already manage Node.js and prefer npm, `npm install -g oppi-server` follo
 
 ## Set up from the app over SSH
 
-The app can do the install for you. In Oppi, choose **Set Up a Computer** in onboarding, or open **Tailscale → Check a Machine for Oppi** later, pick the machine, and sign in over SSH to a Mac (Remote Login) or a Linux machine (`sshd`). If Oppi is missing or stopped, **Install & Start** sends the same installer over SSH with `--non-interactive`, then pairs your iPhone.
+The app can do the install for you. In Oppi, choose **Set Up a Computer** in onboarding, or open the Tailscale screen later. Choose **Set Up a Mac or Linux Computer**, pick the machine on the **Set Up a Computer** screen, and sign in over SSH to a Mac (Remote Login) or a Linux machine (`sshd`). If Oppi is missing or stopped, **Install & Start Oppi** sends the same installer over SSH with `--non-interactive`, then pairs your iPhone.
 
 Oppi runs `oppi pair --json` only after `oppi status` says HTTPS and `https://127.0.0.1:<port>/health` answers, so a stopped server mints no invite. A `*.ts.net` name uses Oppi's Tailscale connection; any other host uses the current network. An unknown or changed SSH host key sends no password.
 
@@ -77,7 +77,7 @@ Oppi runs sessions with [Pi](https://github.com/badlogic/pi-mono), so it needs P
 
 ## Pair a first device
 
-1. Show an invite. The terminal installer prints one when it finishes. Later, with the server running, run:
+1. Show an invite. The installer prints one when it finishes in a terminal, if no device has paired and no invite is already pending. Over SSH, in CI, or into a pipe or log it prints the `oppi pair` hint instead, so no log holds a usable invite. Later, with the server running, run:
 
    ```bash
    oppi pair
@@ -87,7 +87,7 @@ Oppi runs sessions with [Pi](https://github.com/badlogic/pi-mono), so it needs P
 
 2. Open Oppi on iPhone and choose one:
 
-   - **Set Up a Computer** signs in to Oppi's in-app Tailscale connection and lists the Mac and Linux machines on your tailnet. Pick one to install and pair over SSH ([Set up from the app over SSH](#set-up-from-the-app-over-ssh)). It does not install the Tailscale VPN app.
+   - **Set Up a Computer** opens Oppi's in-app Tailscale connection. Sign in to Tailscale there, then choose **Set Up a Mac or Linux Computer** to install and pair over SSH ([Set up from the app over SSH](#set-up-from-the-app-over-ssh)). It does not install the Tailscale VPN app.
    - **Scan QR Code** (devices with a camera) reads the code `oppi pair` shows.
    - **Enter manually** has one field: run `oppi pair` on the host and paste what it prints. It accepts a pairing link, an `oppi://connect` link, the QR code's contents, or the output of `oppi pair --json`. Oppi rejects anything without the server's signature.
 

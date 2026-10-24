@@ -108,8 +108,9 @@ Quick start:
 ```bash
 cd server
 
-# Optional: tailnet host for the first-run TLS choice (pass --host to `oppi pair` to
-# pair; a container has no terminal, so `oppi serve` prints no invite)
+# Optional: host for the first-run TLS choice. A <machine>.<tailnet>.ts.net name allows
+# Tailscale TLS; a LAN host or IP keeps self-signed TLS. A container has no terminal, so
+# `oppi serve` prints no invite: pair with `docker compose exec oppi-server oppi pair --host <host>`.
 export OPPI_PAIR_HOST=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
 # export OPPI_PAIR_HOST=<machine>.<tailnet>.ts.net
 
