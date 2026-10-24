@@ -55,6 +55,7 @@ import {
   stopService,
   uninstallService,
 } from "./launchd.js";
+import * as systemd from "./systemd.js";
 import { parseCliArgs } from "./cli/args.js";
 import {
   createCliConfigStorage,
@@ -1036,20 +1037,27 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
 
 function cmdServer(action: string | undefined, flags: Record<string, string>): void {
   const mode = action || "status";
-  if (process.platform !== "darwin") {
+  // macOS: per-user LaunchAgent. Linux: systemd user service. Same verbs on both.
+  const linux = process.platform === "linux";
+  if (process.platform !== "darwin" && !linux) {
     console.error(
-      "  oppi server manages the macOS LaunchAgent. On this platform, run `oppi serve` under your service manager (systemd, Docker).",
+      "  oppi server manages a macOS LaunchAgent or a Linux systemd user service. On this platform, run `oppi serve` under your own service manager.",
     );
     process.exitCode = 1;
     return;
   }
+  const lifecycle = linux
+    ? systemd
+    : { installService, uninstallService, restartService, stopService };
 
   if (mode === "install") {
     const dataDir = flags["data-dir"] || undefined;
-    console.log(c.bold("  Installing LaunchAgent..."));
+    console.log(
+      c.bold(linux ? "  Installing systemd user service..." : "  Installing LaunchAgent..."),
+    );
     console.log("");
 
-    const result = installService(dataDir);
+    const result = lifecycle.installService(dataDir);
     if (!result.ok) {
       console.log(c.red(`  \u2717 ${result.message}`));
       console.log("");
@@ -1064,15 +1072,25 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
       console.log(c.dim(`    CLI:     ${result.cliPath}`));
     }
     console.log("");
-    console.log(c.dim("  The server will start automatically on login."));
-    console.log(c.dim("  It will restart if it crashes."));
-    console.log(c.dim("  The Mac app will detect and attach to it."));
+    if (linux) {
+      const lingerNote = "lingerNote" in result ? result.lingerNote : undefined;
+      if (lingerNote) {
+        console.log(c.yellow(`  ! ${lingerNote}`));
+      } else {
+        console.log(c.dim("  The server starts at boot and keeps running after you log out."));
+      }
+      console.log(c.dim("  It will restart if it crashes. Logs: journalctl --user -u oppi"));
+    } else {
+      console.log(c.dim("  The server will start automatically on login."));
+      console.log(c.dim("  It will restart if it crashes."));
+      console.log(c.dim("  The Mac app will detect and attach to it."));
+    }
     console.log("");
     return;
   }
 
   if (mode === "uninstall") {
-    const result = uninstallService();
+    const result = lifecycle.uninstallService();
     if (!result.ok) {
       console.log(c.red(`  \u2717 ${result.message}`));
       console.log("");
@@ -1085,7 +1103,7 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
   }
 
   if (mode === "restart") {
-    const result = restartService();
+    const result = lifecycle.restartService();
     if (!result.ok) {
       console.log(c.red(`  \u2717 ${result.message}`));
       console.log("");
@@ -1098,7 +1116,7 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
   }
 
   if (mode === "stop") {
-    const result = stopService();
+    const result = lifecycle.stopService();
     if (!result.ok) {
       console.log(c.red(`  \u2717 ${result.message}`));
       console.log("");
@@ -1106,6 +1124,34 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
     }
 
     console.log(c.green(`  \u2713 ${result.message}`));
+    console.log("");
+    return;
+  }
+
+  if (mode === "status" && linux) {
+    const status = systemd.getServiceStatus();
+    console.log("  " + c.bold("systemd User Service"));
+    console.log("");
+    console.log(`  Unit:      ${c.dim(status.unitPath)}`);
+    console.log(`  Installed: ${status.installed ? c.green("yes") : c.dim("no")}`);
+    console.log(
+      `  Running:   ${status.running ? c.green(`yes (PID ${status.pid ?? "unknown"})`) : c.dim("no")}`,
+    );
+    if (status.linger !== null) {
+      console.log(
+        `  Linger:    ${status.linger ? c.green("yes") : c.yellow("no (stops when you log out)")}`,
+      );
+    }
+    const paths = status.installed ? systemd.readInstalledUnit() : null;
+    if (paths) {
+      console.log("");
+      console.log(`  Runtime:   ${c.dim(paths.runtimePath)}`);
+      console.log(`  CLI:       ${c.dim(paths.cliPath)}`);
+      console.log(`  Data dir:  ${c.dim(paths.dataDir)}`);
+    } else if (!status.installed) {
+      console.log("");
+      console.log(c.dim("  Run 'oppi server install' to set up the background service."));
+    }
     console.log("");
     return;
   }

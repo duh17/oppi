@@ -51,7 +51,7 @@ const HELP_TOPICS: HelpTopic[] = [
       },
       {
         command: "oppi server install → oppi server status",
-        summary: "run the server in the background with launchd",
+        summary: "run the server in the background (launchd or systemd)",
       },
       {
         command: "oppi schedule help",
@@ -70,7 +70,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "quota", summary: "show plan and remaining quota for configured model providers" },
       { name: "models", summary: "list enabled models grouped by provider, with quota" },
       { name: "doctor", summary: "run security and environment diagnostics" },
-      { name: "server", summary: "install, restart, stop, or inspect the launchd service" },
+      { name: "server", summary: "install, restart, stop, or inspect the background service" },
       { name: "config", summary: "show, get, set, or validate server config" },
       { name: "workspace", summary: "list, inspect, create, update, and delete workspaces" },
       {
@@ -407,16 +407,20 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["server"],
     title: "Background server",
-    summary: "Manage the macOS LaunchAgent background server.",
+    summary:
+      "Manage the background server: a LaunchAgent on macOS, a systemd user service on Linux.",
     usage: "oppi server <subcommand> [flags]",
     subcommands: [
-      { name: "install", summary: "install the LaunchAgent" },
-      { name: "uninstall", summary: "remove the LaunchAgent" },
-      { name: "status", summary: "show LaunchAgent status" },
+      { name: "install", summary: "install and start the background service" },
+      { name: "uninstall", summary: "stop and remove the background service" },
+      { name: "status", summary: "show background service status" },
       { name: "restart", summary: "restart the background server" },
       { name: "stop", summary: "stop the background server" },
     ],
-    notes: ["The LaunchAgent starts Oppi automatically on login and restarts it after crashes."],
+    notes: [
+      "The service starts Oppi automatically (macOS: at login; Linux: at boot with lingering, else at login) and restarts it after crashes.",
+      "Linux uses ~/.config/systemd/user/oppi.service; logs: journalctl --user -u oppi.",
+    ],
     examples: [
       { command: "oppi server install" },
       { command: "oppi server status" },
@@ -426,10 +430,15 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["server", "install"],
     title: "Install background server",
-    summary: "Install the LaunchAgent that starts Oppi on login.",
+    summary:
+      "Install the LaunchAgent (macOS) or systemd user service (Linux) that keeps Oppi running.",
     usage: "oppi server install [--data-dir <path>]",
     flags: [
       { name: "--data-dir", value: "<path>", summary: "data directory for the installed service" },
+    ],
+    notes: [
+      "The service runs Node by absolute path: OPPI_NODE when set (the install.sh launcher sets it), else Homebrew or system Node, else the Node running this command.",
+      "Linux: also tries loginctl enable-linger so Oppi keeps running after logout, and reports when that needs an admin.",
     ],
     examples: [
       { command: "oppi server install" },
@@ -439,29 +448,29 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["server", "uninstall"],
     title: "Uninstall background server",
-    summary: "Remove the Oppi LaunchAgent.",
+    summary: "Stop and remove the Oppi background service.",
     usage: "oppi server uninstall",
     examples: [{ command: "oppi server uninstall" }],
   },
   {
     path: ["server", "status"],
     title: "Background server status",
-    summary: "Show LaunchAgent installation, PID, runtime path, CLI path, and data dir.",
+    summary: "Show service installation, PID, runtime path, CLI path, and data dir.",
     usage: "oppi server status",
     examples: [{ command: "oppi server status" }],
   },
   {
     path: ["server", "restart"],
     title: "Restart background server",
-    summary: "Restart the background server through launchd.",
+    summary: "Restart the background server through launchd or systemd.",
     usage: "oppi server restart",
-    notes: ["Use this after config or runtime changes when Oppi is running as a LaunchAgent."],
+    notes: ["Use this after config or runtime changes when Oppi runs as a background service."],
     examples: [{ command: "oppi server restart" }],
   },
   {
     path: ["server", "stop"],
     title: "Stop background server",
-    summary: "Stop the background server through launchd.",
+    summary: "Stop the background server through launchd or systemd.",
     usage: "oppi server stop",
     examples: [{ command: "oppi server stop" }],
   },

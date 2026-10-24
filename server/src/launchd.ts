@@ -15,7 +15,12 @@
  * - Runtime selection depends on who started the install. The Mac app runs the
  *   CLI on its bundled Mach-O at Contents/Resources/Helpers/node (signed as
  *   dev.chenda.OppiMac.server); that install is bundled-only and never falls back
- *   to Homebrew/system Node. A terminal install keeps using Homebrew/system Node.
+ *   to Homebrew/system Node. A terminal install keeps using Homebrew/system Node,
+ *   except that `OPPI_NODE` (set by the `~/.oppi/bin/oppi` launcher that
+ *   install.sh writes) names the Node the installer chose.
+ *
+ * Runtime and CLI resolution here is shared with the Linux systemd user service
+ * (systemd.ts) through `resolveServiceProgram`.
  */
 
 import {
@@ -29,7 +34,7 @@ import {
 } from "node:fs";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { clearServerStopRequest, requestServerStop } from "./server-stop-marker.js";
 
@@ -308,38 +313,70 @@ function bundledHelperIssue(helperPath: string): string | null {
   return null;
 }
 
+type RuntimeOptions = {
+  execPath?: string;
+  /** Node the installer chose; defaults to `OPPI_NODE`. Empty means unset. */
+  installerNode?: string;
+};
+
+function installerNode(options: RuntimeOptions): string | undefined {
+  const value = options.installerNode ?? process.env.OPPI_NODE;
+  return value ? value : undefined;
+}
+
+function installerNodeIssue(path: string, cliPath?: string | null): string | null {
+  if (!isAbsolute(path) || !existsSync(path)) {
+    return `OPPI_NODE=${path} is not an absolute path to an existing Node.js`;
+  }
+  return runtimeCompatibilityIssue(path, cliPath);
+}
+
 /**
- * Resolve the absolute path to the Node.js runtime for the LaunchAgent.
+ * Resolve the absolute path to the Node.js runtime for the background service.
  *
  * - Started by the Mac app (`execPath` is inside Contents/Resources/Helpers):
  *   only Helpers/node, and only when it is a regular file in the app's Helpers
  *   directory. Homebrew/system Node is never selected on this path.
+ * - `OPPI_NODE` set (the install.sh launcher): exactly that Node, or nothing.
+ *   It is the path the installer chose, kept unresolved so the service follows
+ *   `~/.oppi/runtime/node` or `/opt/homebrew/bin/node` across upgrades.
  * - Otherwise (terminal or headless install), in order:
  *   1. Homebrew Node.js
  *   2. /usr/local Node.js
  *   3. System Node.js
+ *   4. The Node running this CLI (nvm, fnm, and similar version managers)
  */
 export function resolveRuntimeAbsolute(
   cliPath?: string | null,
-  options: { execPath?: string } = {},
+  options: RuntimeOptions = {},
 ): string | null {
   const execPath = options.execPath ?? process.execPath;
   if (isMacAppHelperPath(execPath)) {
     if (!existsSync(execPath) || bundledHelperIssue(execPath)) return null;
     return runtimeCompatibilityIssue(execPath, cliPath) ? null : execPath;
   }
+  const chosen = installerNode(options);
+  if (chosen) {
+    return installerNodeIssue(chosen, cliPath) ? null : chosen;
+  }
   for (const p of SYSTEM_NODE_CANDIDATES) {
     if (existsSync(p) && !runtimeCompatibilityIssue(p, cliPath)) return p;
   }
+  if (existsSync(execPath) && !runtimeCompatibilityIssue(execPath, cliPath)) return execPath;
   return null;
 }
 
 function runtimeResolutionFailureMessage(
   cliPath?: string | null,
-  options: { execPath?: string } = {},
+  options: RuntimeOptions = {},
 ): string {
   const execPath = options.execPath ?? process.execPath;
   const minimum = minimumRequiredNodeVersion(cliPath);
+
+  const chosen = isMacAppHelperPath(execPath) ? undefined : installerNode(options);
+  if (chosen) {
+    return installerNodeIssue(chosen, cliPath) || "Node.js runtime unavailable";
+  }
 
   if (isMacAppHelperPath(execPath)) {
     if (existsSync(execPath)) {
@@ -355,6 +392,9 @@ function runtimeResolutionFailureMessage(
   for (const path of SYSTEM_NODE_CANDIDATES) {
     if (!existsSync(path)) continue;
     return runtimeCompatibilityIssue(path, cliPath) || "Node.js runtime unavailable";
+  }
+  if (existsSync(execPath)) {
+    return runtimeCompatibilityIssue(execPath, cliPath) || "Node.js runtime unavailable";
   }
 
   if (minimum) {
@@ -480,6 +520,23 @@ function buildPlistXML(runtimePath: string, cliPath: string, dataDir: string): s
 </plist>`;
 }
 
+/** The Node runtime and CLI entry point a background service runs, by absolute path. */
+export function resolveServiceProgram():
+  { ok: true; runtimePath: string; cliPath: string } | { ok: false; message: string } {
+  const cliPath = resolveCLIAbsolute();
+  const runtimePath = resolveRuntimeAbsolute(cliPath);
+  if (!runtimePath) {
+    return { ok: false, message: runtimeResolutionFailureMessage(cliPath) };
+  }
+  if (!cliPath) {
+    return {
+      ok: false,
+      message: "Oppi CLI not found. Run 'npm install -g oppi-server' and try again.",
+    };
+  }
+  return { ok: true, runtimePath, cliPath };
+}
+
 /**
  * Install the LaunchAgent plist and load it.
  *
@@ -491,21 +548,9 @@ export function installService(dataDir?: string): {
   runtimePath?: string;
   cliPath?: string;
 } {
-  const cliPath = resolveCLIAbsolute();
-  const runtimePath = resolveRuntimeAbsolute(cliPath);
-  if (!runtimePath) {
-    return {
-      ok: false,
-      message: runtimeResolutionFailureMessage(cliPath),
-    };
-  }
-
-  if (!cliPath) {
-    return {
-      ok: false,
-      message: "Oppi CLI not found. Run 'npm install -g oppi-server' and try again.",
-    };
-  }
+  const program = resolveServiceProgram();
+  if (!program.ok) return { ok: false, message: program.message };
+  const { runtimePath, cliPath } = program;
 
   const resolvedDataDir = dataDir || join(homedir(), ".config", "oppi");
   const plist = plistPath();

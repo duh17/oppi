@@ -47,6 +47,8 @@ function setExecPath(path: string): void {
 beforeEach(() => {
   // Terminal/headless install by default; bundled-helper tests override this.
   setExecPath("/opt/homebrew/bin/node");
+  // A shell started under the install.sh launcher inherits OPPI_NODE; tests set it explicitly.
+  vi.stubEnv("OPPI_NODE", "");
   process.getuid = () => 501;
   mockHomedir.mockImplementation(() => "/Users/testuser");
   mockUnlinkSync.mockImplementation(() => undefined);
@@ -66,6 +68,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   process.getuid = originalGetuid;
   setExecPath(originalExecPath);
+  vi.unstubAllEnvs();
 });
 
 // Import after mocks are in place
@@ -282,6 +285,45 @@ describe("runtime resolution", () => {
     expect(result.message).toContain("22.19.0 or newer");
   });
 
+  it("uses the installer's OPPI_NODE over Homebrew, unresolved", () => {
+    const managed = "/Users/testuser/.oppi/runtime/node/bin/node";
+    vi.stubEnv("OPPI_NODE", managed);
+    mockExistsSync.mockImplementation(
+      (p: string) => p === managed || p === "/opt/homebrew/bin/node" || p === NPM_CLI,
+    );
+
+    expect(resolveRuntimeAbsolute(NPM_CLI)).toBe(managed);
+  });
+
+  it("fails instead of falling back when OPPI_NODE is missing or too old", () => {
+    const managed = "/Users/testuser/.oppi/runtime/node/bin/node";
+    vi.stubEnv("OPPI_NODE", managed);
+    mockExistsSync.mockImplementation(
+      (p: string) => p === "/opt/homebrew/bin/node" || p === NPM_CLI,
+    );
+    const missing = installService("/tmp/data");
+    expect(missing.ok).toBe(false);
+    expect(missing.message).toContain(`OPPI_NODE=${managed}`);
+
+    mockExistsSync.mockImplementation(
+      (p: string) => p === managed || p === "/opt/homebrew/bin/node" || p === NPM_CLI,
+    );
+    mockExecSync.mockImplementation((cmd: string) =>
+      cmd.includes(managed) && cmd.includes("--version") ? "v22.18.0" : defaultLaunchctlOutput(cmd),
+    );
+    const old = installService("/tmp/data");
+    expect(old.ok).toBe(false);
+    expect(old.message).toContain("Node.js 22.18.0 found");
+  });
+
+  it("falls back to the Node running the CLI when no system Node exists (nvm)", () => {
+    const nvmNode = "/Users/testuser/.nvm/versions/node/v22.20.0/bin/node";
+    setExecPath(nvmNode);
+    mockExistsSync.mockImplementation((p: string) => p === nvmNode || p === NPM_CLI);
+
+    expect(resolveRuntimeAbsolute(NPM_CLI)).toBe(nvmNode);
+  });
+
   it("returns error when no runtime found", () => {
     mockExistsSync.mockImplementation((p: string) => {
       if (p === "/opt/homebrew/lib/node_modules/oppi-server/dist/src/cli.js") return true;
@@ -316,6 +358,15 @@ describe("runtime resolution when the Mac app starts the install", () => {
     const xml = mockWriteFileSync.mock.calls.at(-1)?.[1] as string;
     expect(xml).toContain(`<string>${BUNDLED_SERVER_NODE}</string>`);
     expect(xml).not.toContain("<string>/opt/homebrew/bin/node</string>");
+  });
+
+  it("ignores OPPI_NODE: the Mac app's install stays bundled-only", () => {
+    vi.stubEnv("OPPI_NODE", "/opt/homebrew/bin/node");
+    mockExistsSync.mockImplementation(
+      (p: string) => p === BUNDLED_SERVER_NODE || p === "/opt/homebrew/bin/node" || p === NPM_CLI,
+    );
+
+    expect(resolveRuntimeAbsolute(NPM_CLI)).toBe(BUNDLED_SERVER_NODE);
   });
 
   it("supports a relocated app because the running helper is authoritative", () => {

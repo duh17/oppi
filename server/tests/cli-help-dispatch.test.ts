@@ -23,6 +23,11 @@ const lifecycle = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/launchd.js", () => lifecycle);
+// Linux dispatches `oppi server` to the systemd module; help must not reach it either.
+vi.mock("../src/systemd.js", () => ({
+  ...lifecycle,
+  readInstalledUnit: lifecycle.readInstalledPlist,
+}));
 vi.mock("../src/cli/runner.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/cli/runner.js")>();
   return { ...actual, runCli: app.runCli };
