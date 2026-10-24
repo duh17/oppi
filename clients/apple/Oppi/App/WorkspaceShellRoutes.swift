@@ -8,8 +8,8 @@ import SwiftUI
 // file (`WorkspaceLinkedFileViewController`), a Skill file
 // (`ServerSkillFileViewController`), an Extension's detail
 // (`ServerExtensionDetailViewController`), SSH Terminal's host list,
-// Schedules, Agents, and App Settings (`SettingsRootViewController`) are UIKit
-// screens.
+// Schedules, Agents, App Settings (`SettingsRootViewController`), and
+// Workspace Settings (`WorkspaceSettingsViewController`) are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -70,6 +70,15 @@ enum ShellRouteScreens {
         if case .serverResourceDetail(let target) = route, target.kind == .extension {
             return ServerExtensionDetailViewController(target: target, root: root)
         }
+        if case .workspaceConfiguration(let target) = route {
+            let screen = WorkspaceSettingsViewController(
+                serverId: target.serverId,
+                workspace: target.workspace,
+                root: root
+            )
+            configure(screen, target: target, placement: placement)
+            return screen
+        }
         return HostFactory.screen(root: root, bars: route.bars) {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
         }
@@ -122,10 +131,30 @@ enum ShellRouteScreens {
             detail.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
+        if let settings = screen as? WorkspaceSettingsViewController {
+            if case .workspaceConfiguration(let target) = route {
+                configure(settings, target: target, placement: placement)
+            }
+            return
+        }
         guard let screen = screen as? HostedScreenController else { return }
         screen.setContent {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
         }
+    }
+
+    /// As the split detail root, Workspace Settings carries the sidebar toggle
+    /// and a Done that returns the column to the workspace's sessions.
+    private static func configure(
+        _ screen: WorkspaceSettingsViewController,
+        target: WorkspaceNavTarget,
+        placement: ShellRoutePlacement
+    ) {
+        let isSplitDetailRoot = placement == .splitDetailRoot
+        screen.showsSidebarToggle = isSplitDetailRoot
+        screen.onDone = isSplitDetailRoot ? { [navigation = screen.root.navigation] in
+            navigation.completeWorkspaceConfiguration(target)
+        } : nil
     }
 
     /// The workspace list beneath the compact stack.
@@ -182,21 +211,18 @@ struct ShellRouteView: View {
     @ViewBuilder
     private var content: some View {
         switch route {
-        case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile, .serverSkillFile:
+        case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile, .serverSkillFile,
+             .workspaceConfiguration:
             // UIKit screens (SessionInboxViewController,
             // WorkspaceSidebarViewController, WorkspaceDetailViewController,
             // ChatRouteViewController, FileBrowserViewController,
-            // WorkspaceLinkedFileViewController, ServerSkillFileViewController).
+            // WorkspaceLinkedFileViewController, ServerSkillFileViewController,
+            // WorkspaceSettingsViewController).
             mountedByUIKitScreen
         case .chatReader(let target):
             if let chatReaderPayloadStore {
                 ChatReaderDestinationView(target: target, store: chatReaderPayloadStore)
             }
-        case .workspaceConfiguration(let target):
-            WorkspaceConfigurationDestinationView(
-                target: target,
-                completesSplitDetail: placement == .splitDetailRoot
-            )
         case .utility(let target):
             WorkspaceUtilityDestinationView(target: target)
         case .serverDetails(let target):
@@ -291,51 +317,6 @@ private struct WorkspaceSplitSidebarToggleButton: View {
         }
         .foregroundStyle(.themeFg)
         .accessibilityIdentifier("workspace.split.sidebarToggle")
-    }
-}
-
-/// Workspace settings for one workspace, on its server. As the split detail
-/// root, Done returns the column to the workspace's sessions.
-private struct WorkspaceConfigurationDestinationView: View {
-    @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(AppNavigation.self) private var navigation
-    let target: WorkspaceNavTarget
-    let completesSplitDetail: Bool
-
-    @State private var scopedConnection: ServerConnection?
-
-    var body: some View {
-        ScopedLockGate(
-            target: .workspace(serverId: target.serverId, workspaceId: target.workspace.id),
-            title: target.workspace.name
-        ) {
-            unlockedBody
-        }
-    }
-
-    private var unlockedBody: some View {
-        Group {
-            if let connection = scopedConnection {
-                WorkspaceSettingsRootView(workspace: target.workspace)
-                    .withServerScopedEnvironment(connection)
-                    .toolbar {
-                        if completesSplitDetail {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Done") {
-                                    navigation.completeWorkspaceConfiguration(target)
-                                }
-                                .accessibilityIdentifier("workspace.edit.done")
-                            }
-                        }
-                    }
-            } else {
-                ProgressView("Connecting…")
-            }
-        }
-        .task(id: target.serverId) {
-            guard await coordinator.switchToServerReady(target.serverId) else { return }
-            scopedConnection = coordinator.connection(for: target.serverId)
-        }
     }
 }
 

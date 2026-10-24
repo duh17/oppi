@@ -2,8 +2,9 @@
 import SwiftUI
 
 /// Real Workspace Settings surfaces with one fixture workspace and no network.
-/// `SCREENSHOT_WORKSPACE_PAGE` picks the root (default) or a page: `details`,
-/// `instructions`, `skills`, `extensions`, `mcp`, `network`.
+/// `SCREENSHOT_WORKSPACE_PAGE` picks the root (default, the UIKit
+/// `WorkspaceSettingsViewController`) or a page: `details`, `instructions`,
+/// `skills`, `extensions`, `mcp`, `network`.
 /// `SCREENSHOT_WORKSPACE_RUNTIME=sandbox` renders a sandbox workspace instead of
 /// a host workspace. `SCREENSHOT_COLOR_SCHEME=dark` selects the dark theme.
 struct WorkspaceSettingsScreenshotPreview: View {
@@ -84,6 +85,11 @@ struct WorkspaceSettingsScreenshotPreview: View {
 
         let connection = ServerConnection()
         connection.setPreviewServerId(serverId)
+        if environment["SCREENSHOT_WORKSPACE_PAGE"] == nil {
+            // The root shows Edit with Oppi only on a connection with an API
+            // client. Nothing sends a request: the fixture URL is never read.
+            connection.setPreviewAPIClient(APIClient(baseURL: URL(string: "https://preview.invalid") ?? URL(fileURLWithPath: "/"), token: "sk_preview"))
+        }
         connection.workspaceStore.setActiveServer(serverId)
         connection.workspaceStore.workspacesByServer[serverId] = [workspace]
         self.connection = connection
@@ -116,7 +122,7 @@ struct WorkspaceSettingsScreenshotPreview: View {
     }
 
     var body: some View {
-        RouterPreviewStack(root: root) { page.withServerScopedEnvironment(connection) }
+        content
             .ignoresSafeArea()
             .appRootEnvironment(root)
             .publishesAppRootToWindow(root)
@@ -125,21 +131,31 @@ struct WorkspaceSettingsScreenshotPreview: View {
     }
 
     @ViewBuilder
-    private var page: some View {
+    private var content: some View {
         switch ProcessInfo.processInfo.environment["SCREENSHOT_WORKSPACE_PAGE"] {
-        case "details": WorkspaceDetailsPage(model: model)
-        case "instructions": WorkspaceInstructionsPage(model: model)
-        case "skills": WorkspaceSkillsPage(model: model)
-        case "extensions": WorkspaceExtensionsPage(model: model)
+        case "details": leaf { WorkspaceDetailsPage(model: model) }
+        case "instructions": leaf { WorkspaceInstructionsPage(model: model) }
+        case "skills": leaf { WorkspaceSkillsPage(model: model) }
+        case "extensions": leaf { WorkspaceExtensionsPage(model: model) }
         case "mcp":
-            if workspace.runtime == .sandbox {
-                WorkspaceSandboxMcpPage(model: model)
-            } else {
-                McpServersView(scopeId: workspace.id)
+            leaf {
+                if workspace.runtime == .sandbox {
+                    WorkspaceSandboxMcpPage(model: model)
+                } else {
+                    McpServersView(scopeId: workspace.id)
+                }
             }
-        case "network": WorkspaceNetworkAccessPage(model: model)
-        default: WorkspaceSettingsRootView(workspace: workspace, model: model)
+        case "network": leaf { WorkspaceNetworkAccessPage(model: model) }
+        default:
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceSettingsViewController(workspace: workspace, model: model, connection: connection, root: root)
+            }
         }
+    }
+
+    /// A pushed SwiftUI page as the root of a router stack.
+    private func leaf<Page: View>(@ViewBuilder _ page: @escaping () -> Page) -> some View {
+        RouterPreviewStack(root: root) { page().withServerScopedEnvironment(connection) }
     }
 }
 #endif

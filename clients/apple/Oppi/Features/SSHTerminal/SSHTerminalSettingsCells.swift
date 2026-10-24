@@ -100,6 +100,7 @@ final class SSHTerminalActionCell: UICollectionViewListCell {
         color: UIColor,
         enabled: Bool = true,
         subtitle: String? = nil,
+        subtitleColor: UIColor? = nil,
         image: String? = nil,
         menu: UIMenu? = nil,
         action: (() -> Void)? = nil
@@ -110,6 +111,13 @@ final class SSHTerminalActionCell: UICollectionViewListCell {
         conf.subtitle = subtitle
         conf.baseForegroundColor = enabled ? color : color.withAlphaComponent(0.4)
         conf.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0)
+        if let subtitleColor {
+            conf.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+                var outgoing = incoming
+                outgoing.foregroundColor = subtitleColor
+                return outgoing
+            }
+        }
         if let image {
             conf.image = UIImage(systemName: image)
             conf.imagePadding = 8
@@ -254,12 +262,14 @@ extension UICellAccessory {
         _ isOn: Bool,
         identifier: String? = nil,
         isEnabled: Bool = true,
+        label: String? = nil,
         onChange: @escaping (Bool) -> Void
     ) -> UICellAccessory {
         let toggle = UISwitch()
         toggle.isOn = isOn
         toggle.isEnabled = isEnabled
         toggle.accessibilityIdentifier = identifier
+        toggle.accessibilityLabel = label
         toggle.addAction(UIAction { action in
             guard let toggle = action.sender as? UISwitch else { return }
             onChange(toggle.isOn)

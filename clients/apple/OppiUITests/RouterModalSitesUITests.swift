@@ -275,6 +275,22 @@ final class RouterModalSitesUITests: XCTestCase {
         pickIconAndSave(row: app.buttons["workspace.edit.icon"])
     }
 
+    /// Workspace Settings' Edit with Oppi row opens the guided composer sheet
+    /// for this workspace; it creates nothing until Send.
+    func testWorkspaceSettingsEditWithOppiOpensTheGuidedSheet() {
+        launch(screen: "workspace-settings")
+        let row = app.buttons["workspace.edit.editWithOppi"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "Workspace Settings did not show Edit with Oppi")
+        row.tap()
+        let sheet = app.navigationBars["Revise oppi-dev"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Edit with Oppi did not open the guided composer")
+        attachScreenshot("workspace-settings-edit-with-oppi")
+        cancelButton.tap()
+        XCTAssertTrue(waitForDisappearance(of: sheet), "Cancel must close the guided composer")
+        XCTAssertTrue(row.exists, "Cancel must leave Workspace Settings open")
+        assertRunning()
+    }
+
     // MARK: SSH terminal
 
     func testHerdrSheetClosesByDoneAndBySwipe() {

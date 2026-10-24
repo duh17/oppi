@@ -3,6 +3,23 @@ import SwiftUI
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WorkspaceList")
 
+enum WorkspaceDeleteConfirmationPolicy {
+    static let swipeButtonRole: ButtonRole? = nil
+
+    static func confirm(
+        workspace: Workspace,
+        clearPending: () -> Void,
+        performDelete: (Workspace) -> Void
+    ) {
+        clearPending()
+        performDelete(workspace)
+    }
+
+    static func deleteMessage(for workspace: Workspace) -> String {
+        "This removes the Oppi workspace record for \"\(workspace.name)\". Files on disk stay. Sessions in this workspace may become unreachable."
+    }
+}
+
 /// Workspace management list for a single server.
 ///
 /// Reached from ServerDetailView. Shows the server's workspaces
@@ -13,6 +30,7 @@ struct WorkspaceListView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.screenNavigator) private var navigator
+    @Environment(\.appRootEnvironment) private var root
     @State private var showCreate = false
     @State private var pendingDelete: Workspace?
     @State private var error: String?
@@ -120,11 +138,15 @@ struct WorkspaceListView: View {
         }
     }
 
+    /// Pushes the workspace's settings. The screen makes this server the
+    /// active one before it shows anything, and pops itself when it leaves.
     private func openSettings(_ workspace: Workspace) {
-        let server = server
-        navigator.push {
-            WorkspaceEditScopedDestinationView(server: server, workspace: workspace)
+        guard let root else { return }
+        let screen = WorkspaceSettingsViewController(serverId: server.id, workspace: workspace, root: root)
+        screen.onLeave = { [weak screen] in
+            if let screen { Router.finish(screen) }
         }
+        navigator.push(screen)
     }
 
     private func deleteWorkspace(_ workspace: Workspace) async {
@@ -154,42 +176,6 @@ struct WorkspaceListView: View {
         } catch {
             logger.error("Delete failed for \(workspace.id.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
             self.error = error.localizedDescription
-        }
-    }
-}
-
-/// Defers WorkspaceSettingsRootView construction until the target transport and
-/// server-scoped environment are ready. This prevents its initial `.task` and
-/// `.onAppear` work from capturing the previously active server.
-struct WorkspaceEditScopedDestinationView: View {
-    let server: PairedServer
-    let workspace: Workspace
-
-    @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(\.screenNavigator) private var navigator
-    @State private var scopedConnection: ServerConnection?
-
-    var body: some View {
-        ScopedLockGate(
-            target: .workspace(serverId: server.id, workspaceId: workspace.id),
-            title: workspace.name
-        ) {
-            unlockedBody
-        }
-    }
-
-    private var unlockedBody: some View {
-        Group {
-            if let scopedConnection {
-                WorkspaceSettingsRootView(workspace: workspace, onLeave: navigator.finish)
-                    .withServerScopedEnvironment(scopedConnection)
-            } else {
-                ProgressView("Connecting…")
-            }
-        }
-        .task(id: server.id) {
-            guard await coordinator.switchToServerReady(server) else { return }
-            scopedConnection = coordinator.connection(for: server.id)
         }
     }
 }

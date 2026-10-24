@@ -131,6 +131,7 @@
 		0F2E17C07687859F1DD353A5 /* MacMarkdownAudioView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16891B95FA5552436ABB600D /* MacMarkdownAudioView.swift */; };
 		0F441199DC1F07E4AACD01B9 /* MermaidTimelineParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F2C7B35E4D10AD812AAEDC /* MermaidTimelineParser.swift */; };
 		0FCEFA20F92A75D952D3EDF6 /* FileSuggestion.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC8A7B115F8D17307A9E34D1 /* FileSuggestion.swift */; };
+		0FD0EB6079AB67E61012318C /* WorkspaceSettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E391B3F4D2BCBEC318A2FC31 /* WorkspaceSettingsViewController.swift */; };
 		101C65C1AEE2CA71312F8B7D /* ChatOutlineColdHarnessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45502653EAAA3873BED392FF /* ChatOutlineColdHarnessView.swift */; };
 		101D616AAEB69B4638217DFD /* FreshnessState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9076AE2969F386F75A21C0E8 /* FreshnessState.swift */; };
 		103003F4A8E82A61D09F16E7 /* AppBuildIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D37324FEC45C4C9120B1D4 /* AppBuildIdentity.swift */; };
@@ -1625,7 +1626,6 @@
 		BA055965AD9709238B21ADB3 /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = 3A703B69A3E193DFE25907DF /* NIOCore */; };
 		BA245C59DA1CF8438E9FFE33 /* SugiyamaLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 579D62B4FDE02BFFB4A2E5B2 /* SugiyamaLayout.swift */; };
 		BA3F526CEEAB2039B9F81D30 /* IPadSplitChatBackE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33F4E5F146DF594781BE49F1 /* IPadSplitChatBackE2ETests.swift */; };
-		BA5FAFFA46DC3B934B2A9D90 /* WorkspaceSettingsRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89CCC1B03CAB03FE60C04092 /* WorkspaceSettingsRootView.swift */; };
 		BA6FAD55D9FA78F6572EC922 /* SettingsStoragePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2DED64ADCDC243DFB8EC89D /* SettingsStoragePage.swift */; };
 		BA9ADB85F711941370C3B40C /* ToolPresentationBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8251C16C8F289EFD6AAAB68 /* ToolPresentationBuilderTests.swift */; };
 		BAA200BA914744DEB43153FA /* FullScreenReaderStreamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DA2A72F5344C56EF43CA152 /* FullScreenReaderStreamTests.swift */; };
@@ -3361,7 +3361,6 @@
 		89564BDB554E63074929647A /* MacThinkingTimelineRowPaintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacThinkingTimelineRowPaintTests.swift; sourceTree = "<group>"; };
 		895EFC0B5E5A5531AB13BB70 /* MacSessionMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionMonitorTests.swift; sourceTree = "<group>"; };
 		89C4F8507B23AFD333A4FAEB /* StreamSessionTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamSessionTestSupport.swift; sourceTree = "<group>"; };
-		89CCC1B03CAB03FE60C04092 /* WorkspaceSettingsRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSettingsRootView.swift; sourceTree = "<group>"; };
 		8A2D97E0A84613E949E2FCE5 /* TimelineInteractionContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineInteractionContext.swift; sourceTree = "<group>"; };
 		8A40A5691F3385B8E61EFFD7 /* CodeEditorPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorPreferences.swift; sourceTree = "<group>"; };
 		8A4BAF27B0787756180D319F /* OrgParserErrorRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgParserErrorRecoveryTests.swift; sourceTree = "<group>"; };
@@ -4017,6 +4016,7 @@
 		E30CBB4CB2CB4AC13B4CC204 /* CodeGutterAlignmentUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeGutterAlignmentUITests.swift; sourceTree = "<group>"; };
 		E3340AD3206F86AF6286F1B5 /* ComposerBarController+Actions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ComposerBarController+Actions.swift"; sourceTree = "<group>"; };
 		E33E11C7F239F16F65BC9E89 /* PairedDeviceRoster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairedDeviceRoster.swift; sourceTree = "<group>"; };
+		E391B3F4D2BCBEC318A2FC31 /* WorkspaceSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSettingsViewController.swift; sourceTree = "<group>"; };
 		E3AB80529A9DCA6A8A7694B8 /* PairedServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairedServer.swift; sourceTree = "<group>"; };
 		E3ACA814F5A5367B42D9E980 /* TelemetrySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetrySettings.swift; sourceTree = "<group>"; };
 		E3CAF3C33E7C1AD6E5F8CA6F /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
@@ -4994,7 +4994,7 @@
 				FD322FBF4D6D46DC9BBC904D /* WorkspaceSandboxMcpPage.swift */,
 				C043EFF3BB5934EAC976C65F /* WorkspaceSessionNavigationChromePolicy.swift */,
 				CFF4C3F93358B0D1EA351CC5 /* WorkspaceSettingsModel.swift */,
-				89CCC1B03CAB03FE60C04092 /* WorkspaceSettingsRootView.swift */,
+				E391B3F4D2BCBEC318A2FC31 /* WorkspaceSettingsViewController.swift */,
 				FDD0AFDC0FD27811CC5B6A9D /* WorkspaceSidebarModels.swift */,
 				059DC71532A5BD33D34A3460 /* WorkspaceSidebarViewController.swift */,
 				0961025EC573201E830EA347 /* WorkspaceSkillsPage.swift */,
@@ -10133,8 +10133,8 @@
 				C7530CAD67D0627823512ACD /* WorkspaceSandboxMcpPage.swift in Sources */,
 				0C3ACDE6B7916015A86EE960 /* WorkspaceSessionNavigationChromePolicy.swift in Sources */,
 				0882BF6C1A5AC61D22718A1E /* WorkspaceSettingsModel.swift in Sources */,
-				BA5FAFFA46DC3B934B2A9D90 /* WorkspaceSettingsRootView.swift in Sources */,
 				EF74C457AF432CED2EDBB683 /* WorkspaceSettingsScreenshotPreview.swift in Sources */,
+				0FD0EB6079AB67E61012318C /* WorkspaceSettingsViewController.swift in Sources */,
 				32FB25154AA0AAC3EE9F6C45 /* WorkspaceShellController.swift in Sources */,
 				EDD677378BC38260912645F3 /* WorkspaceShellRoutes.swift in Sources */,
 				42718579F9BCC21A9EB12207 /* WorkspaceShellScreenshotPreview.swift in Sources */,

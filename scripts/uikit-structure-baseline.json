@@ -439,9 +439,6 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSandboxMcpPage.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsRootView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSkillsPage.swift": {
       "import SwiftUI": 1
     }
