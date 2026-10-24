@@ -98,7 +98,8 @@ Quick start:
 ```bash
 cd server
 
-# Optional: host/ip or tailnet host encoded into pairing links
+# Optional: tailnet host for the first-run TLS choice (pass --host to `oppi pair` to
+# pair; a container has no terminal, so `oppi serve` prints no invite)
 export OPPI_PAIR_HOST=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
 # export OPPI_PAIR_HOST=<machine>.<tailnet>.ts.net
 

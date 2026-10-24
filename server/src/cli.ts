@@ -370,15 +370,21 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     // `oppi pair --ttl 14d` hand-off, or a QR someone is about to scan), and a service
     // restart must not write a usable invite into its log. Only a terminal gets a new one.
     const latest = storage.getConfig();
+    // Same rule as consuming an invite: one stored before expiries were recorded never
+    // expires on its own, so it is still pending.
     const invitePending =
-      latest.pairingToken !== undefined && (latest.pairingTokenExpiresAt ?? 0) > Date.now();
+      latest.pairingToken !== undefined &&
+      (latest.pairingTokenExpiresAt === undefined || latest.pairingTokenExpiresAt > Date.now());
     console.log("");
     if (!process.stdout.isTTY) {
       console.log(c.yellow("  No device is paired yet."));
       console.log(c.dim("  Run 'oppi pair' in a terminal for a pairing code."));
     } else if (invitePending) {
-      const expires = new Date(latest.pairingTokenExpiresAt ?? 0).toLocaleString();
-      console.log(c.yellow(`  A pairing invite is still pending (expires ${expires}).`));
+      const expires =
+        latest.pairingTokenExpiresAt === undefined
+          ? "no expiry recorded"
+          : `expires ${new Date(latest.pairingTokenExpiresAt).toLocaleString()}`;
+      console.log(c.yellow(`  A pairing invite is still pending (${expires}).`));
       console.log(c.dim("  Run 'oppi pair' for a new code; it replaces the pending one."));
     } else {
       showPairingQR(storage, undefined, pairHost);

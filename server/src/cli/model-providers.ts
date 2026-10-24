@@ -11,8 +11,12 @@ import type { ServerConfig } from "../types.js";
  *
  * A background service does not inherit the interactive shell: it starts with a bare
  * environment, and the server then applies `runtimeEnv`. With `serviceOnly`, the lookup
- * runs in that environment, so a key exported in `.zshrc` does not count. `process.env`
- * is swapped only for the lookup and restored afterwards.
+ * runs in that environment, so a key exported in `.zshrc` does not count. Its PATH is the
+ * one the service gets from `runtimePathEntries` (`resolveHostEnv`), because Pi runs a
+ * `!command` credential through a shell that searches that PATH.
+ *
+ * CLI process only; never call this inside the server. It swaps `process.env` for the
+ * lookup and restores it afterwards, and the swap is not safe beside concurrent work.
  */
 export async function listAuthenticatedModelProviders(
   config: ServerConfig,
@@ -22,11 +26,12 @@ export async function listAuthenticatedModelProviders(
   const runtimeEnv = resolveHostEnv(config).env;
   const lookupEnv: NodeJS.ProcessEnv = serviceOnly
     ? Object.fromEntries(
-        ["HOME", "USER", "LOGNAME", "TMPDIR"].flatMap((key) =>
+        ["HOME", "USER", "LOGNAME", "TMPDIR", "SHELL"].flatMap((key) =>
           shellEnv[key] === undefined ? [] : [[key, shellEnv[key]]],
         ),
       )
     : { ...shellEnv };
+  if (serviceOnly) lookupEnv.PATH = runtimeEnv.PATH;
   for (const key of Object.keys(config.runtimeEnv ?? {})) {
     const value = runtimeEnv[key];
     if (value !== undefined) lookupEnv[key] = value;

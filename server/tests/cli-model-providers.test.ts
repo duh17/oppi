@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -33,6 +33,26 @@ describe("listAuthenticatedModelProviders", () => {
     expect(await listAuthenticatedModelProviders(config, true)).toEqual([]);
     expect(process.env.ANTHROPIC_API_KEY).toBe("sk-ant-shell-only");
     expect(process.env.PI_CODING_AGENT_DIR).toBe(join(root, "agent"));
+  });
+
+  it("resolves a !command credential on the PATH the service gets from runtimePathEntries", async () => {
+    const binDir = join(root, "service-bin");
+    mkdirSync(binDir);
+    writeFileSync(join(binDir, "oppi-test-key"), "#!/bin/sh\necho sk-ant-from-command\n", {
+      mode: 0o755,
+    });
+    // The service has no PI_CODING_AGENT_DIR, so it reads the agent dir under HOME.
+    const serviceAgentDir = join(root, ".pi", "agent");
+    mkdirSync(serviceAgentDir, { recursive: true });
+    writeFileSync(
+      join(serviceAgentDir, "auth.json"),
+      JSON.stringify({ anthropic: { type: "api_key", key: "!oppi-test-key" } }),
+      { mode: 0o600 },
+    );
+    delete process.env.ANTHROPIC_API_KEY;
+
+    const withPath = { ...ConfigStore.getDefaultConfig(root), runtimePathEntries: [binDir] };
+    expect(await listAuthenticatedModelProviders(withPath, true)).toContain("anthropic");
   });
 
   it("counts a key the service receives through runtimeEnv", async () => {

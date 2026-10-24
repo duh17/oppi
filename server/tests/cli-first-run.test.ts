@@ -6,7 +6,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -88,6 +88,28 @@ describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not avai
         );
         expect(out).toContain("still pending");
         expect(out).not.toContain("oppi://connect?");
+        expect(new Storage(dir).getConfig().pairingToken).toBe(pending);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 90_000);
+
+    it("in a terminal, treats an invite stored without an expiry as pending", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "oppi-cli-first-run-legacy-"));
+      try {
+        const env = { ...(await prepareHost(dir)), ...TERMINAL_STDOUT_ENV };
+        const storage = new Storage(dir);
+        storage.ensurePaired();
+        const pending = storage.issuePairingToken();
+        const configPath = join(dir, "config.json");
+        const raw = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+        delete raw.pairingTokenExpiresAt;
+        writeFileSync(configPath, JSON.stringify(raw));
+
+        const out = stripAnsi(
+          await runUntilOutput(["serve"], "Run 'oppi pair' for a new code", env, 60_000),
+        );
+        expect(out).toContain("no expiry recorded");
         expect(new Storage(dir).getConfig().pairingToken).toBe(pending);
       } finally {
         rmSync(dir, { recursive: true, force: true });
