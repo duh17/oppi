@@ -255,8 +255,12 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
         reload()
     }
 
-    /// Statuses and usage together. A load for a host that is no longer
-    /// visible, or that a newer load replaced, is dropped.
+    /// Statuses and usage in parallel. Statuses show as soon as they arrive;
+    /// usage (provider round-trips on the server, often seconds) fills in
+    /// behind them, and a reload keeps the previous usage until then. A load
+    /// for a host that is no longer visible, or that a newer load replaced,
+    /// is dropped. Returns once both settle, so pull to refresh spins until
+    /// usage is current.
     private func load() async {
         loadGeneration += 1
         let generation = loadGeneration
@@ -281,19 +285,22 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
         } catch {
             result = .failure(error)
         }
+        if isCurrent() {
+            switch result {
+            case .success(let loaded):
+                statuses = loaded
+                setupState = ProviderSetupState(providerStatuses: loaded)
+                errorMessage = nil
+            case .failure(let error):
+                statuses = []
+                setupState = .unavailable
+                errorMessage = "Failed to load provider status: \(error.localizedDescription)"
+            }
+        }
         let loadedQuotas = await fetchedQuotas
         guard isCurrent() else { return }
-        switch result {
-        case .success(let loaded):
-            statuses = loaded
-            setupState = ProviderSetupState(providerStatuses: loaded)
-            errorMessage = nil
-        case .failure(let error):
-            statuses = []
-            setupState = .unavailable
-            errorMessage = "Failed to load provider status: \(error.localizedDescription)"
-        }
-        quotas = loadedQuotas
+        // A failed refresh keeps the usage already on screen; its footer time says how old it is.
+        if let loadedQuotas { quotas = loadedQuotas }
     }
 
     // MARK: - List
