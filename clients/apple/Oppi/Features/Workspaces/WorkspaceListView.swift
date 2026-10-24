@@ -81,7 +81,10 @@ struct WorkspaceListView: View {
         }
         .routerScreenModal(isPresented: $showCreate, presentation: .sheet.inNavigation()) {
             .controller {
-                guard let root else { preconditionFailure("WorkspaceListView needs the app root above it") }
+                guard let root else {
+                    assertionFailure("Workspaces needs the app root above it")
+                    return UIViewController()
+                }
                 return WorkspaceCreateViewController(root: root, server: server)
             }
         }

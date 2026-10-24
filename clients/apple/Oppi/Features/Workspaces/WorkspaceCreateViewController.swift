@@ -531,7 +531,12 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             identifier = "workspace.create.suggestion.\(completion.path)"
             label = completion.path
             hint = "Use this folder"
-            action = { [weak self] in self?.model.applyHostMountCompletion(completion) }
+            action = { [weak self] in
+                // The field takes the completion's path; one still being edited
+                // would keep showing the prefix the user typed.
+                self?.view.endEditing(true)
+                self?.model.applyHostMountCompletion(completion)
+            }
         case .icon:
             content.text = "Icon"
             content.textProperties.color = UIColor(palette.fg)
@@ -634,11 +639,19 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         let fg = UIColor(palette.fg)
         switch item {
         case .name:
+            let goesToFolder = !model.isHostMountFromProjectPicker
             cell.configure(
                 text: model.name,
-                placeholder: "Name (required)",
+                placeholder: "Required",
                 identifier: "workspace.create.name",
-                textColor: fg
+                label: "Name",
+                autocapitalization: .sentences,
+                textColor: fg,
+                labelColor: fg,
+                returnKey: goesToFolder ? .next : .done,
+                onReturn: { [weak self] in
+                    if goesToFolder { self?.focusFolderField() } else { self?.view.endEditing(true) }
+                }
             ) { [weak self] in self?.model.name = $0 }
             cell.textField.accessibilityLabel = "Name"
         case .folderField:
@@ -646,8 +659,12 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
                 text: model.hostMount,
                 placeholder: "~/workspace/project (must exist)",
                 identifier: "workspace.create.hostMount",
+                label: "Folder",
                 monospaced: true,
-                textColor: fg
+                textColor: fg,
+                labelColor: fg,
+                returnKey: .done,
+                onReturn: { [weak self] in self?.view.endEditing(true) }
             ) { [weak self] in self?.model.setHostMount($0) }
             cell.textField.accessibilityLabel = "Folder"
         case .description:
@@ -657,12 +674,21 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
                 identifier: "workspace.create.description",
                 autocapitalization: .sentences,
                 autocorrection: .default,
-                textColor: fg
+                textColor: fg,
+                returnKey: .done,
+                onReturn: { [weak self] in self?.view.endEditing(true) }
             ) { [weak self] in self?.model.description = $0 }
             cell.textField.accessibilityLabel = "Description"
         default:
             break
         }
+    }
+
+    /// Return in Name moves on to the folder field, where there is one.
+    private func focusFolderField() {
+        guard let path = dataSource?.indexPath(for: .folderField),
+              let cell = collectionView.cellForItem(at: path) as? SSHTerminalTextFieldCell else { return }
+        cell.textField.becomeFirstResponder()
     }
 
     private func configureFolderCheck(_ cell: WorkspaceFolderCheckCell) {
@@ -676,7 +702,11 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             identifierPrefix: "workspace.create",
             onRequestCreate: { [weak self] in self?.model.hostPathPendingCreation = folder },
             onConfirm: { [weak self] in
-                guard let model = self?.model else { return }
+                guard let self else { return }
+                // The server's resolved path replaces the typed one; a field still
+                // being edited would keep showing the old text.
+                view.endEditing(true)
+                let model = model
                 Task { await model.createHostDirectoryFromPendingPath() }
             },
             onCancel: { [weak self] in self?.model.hostPathPendingCreation = nil }
@@ -787,8 +817,10 @@ final class WorkspaceFolderCheckCell: UICollectionViewListCell {
         NSLayoutConstraint.activate([
             column.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
             column.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            column.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
-            column.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
+            // Centered, so a row the list holds at its 44 pt minimum does not
+            // stretch the status text taller than itself and push it down.
+            column.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            contentView.heightAnchor.constraint(greaterThanOrEqualTo: column.heightAnchor, constant: 20),
         ])
     }
 

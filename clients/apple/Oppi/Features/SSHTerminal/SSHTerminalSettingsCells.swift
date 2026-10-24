@@ -1,24 +1,44 @@
 import UIKit
 
-/// Text field in an inset-grouped settings list. Reused by the host form and
-/// the password prompt.
+/// Text field in an inset-grouped settings list. Reused by the host form, the
+/// password prompt, and New Workspace. With a `label` the row reads like a
+/// labeled value: the name on the left, the right-aligned field after it.
 final class SSHTerminalTextFieldCell: UICollectionViewListCell {
     let textField = UITextField()
+    private let titleLabel = UILabel()
     private var onChange: ((String) -> Void)?
+    private var returnAction: UIAction?
+    private var fieldAfterMargin: NSLayoutConstraint?
+    private var fieldAfterLabel: NSLayoutConstraint?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         textField.translatesAutoresizingMaskIntoConstraints = false
+        textField.adjustsFontForContentSizeCategory = true
         textField.addTarget(self, action: #selector(changed), for: .editingChanged)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.setContentHuggingPriority(.required, for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Decorative: the field carries the label.
+        titleLabel.isAccessibilityElement = false
+        contentView.addSubview(titleLabel)
         contentView.addSubview(textField)
+        let margins = contentView.layoutMarginsGuide
         let minHeight = textField.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         minHeight.priority = .defaultHigh
+        let afterMargin = textField.leadingAnchor.constraint(equalTo: margins.leadingAnchor)
+        fieldAfterMargin = afterMargin
+        fieldAfterLabel = textField.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 12)
         NSLayoutConstraint.activate([
-            textField.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
-            textField.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: textField.centerYAnchor),
+            textField.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
             textField.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             textField.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
             minHeight,
+            afterMargin,
         ])
         accessibilityElements = [textField]
     }
@@ -26,10 +46,13 @@ final class SSHTerminalTextFieldCell: UICollectionViewListCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// `onReturn` runs when Return is pressed, after the field resigns. A field
+    /// with none keeps its existing Return behavior.
     func configure(
         text: String,
         placeholder: String,
         identifier: String,
+        label: String? = nil,
         isSecure: Bool = false,
         keyboard: UIKeyboardType = .default,
         autocapitalization: UITextAutocapitalizationType = .none,
@@ -37,7 +60,10 @@ final class SSHTerminalTextFieldCell: UICollectionViewListCell {
         contentType: UITextContentType? = nil,
         monospaced: Bool = false,
         textColor: UIColor = .label,
+        labelColor: UIColor = .label,
         enabled: Bool = true,
+        returnKey: UIReturnKeyType = .default,
+        onReturn: (() -> Void)? = nil,
         onChange: @escaping (String) -> Void
     ) {
         self.onChange = onChange
@@ -51,17 +77,42 @@ final class SSHTerminalTextFieldCell: UICollectionViewListCell {
         textField.autocapitalizationType = autocapitalization
         textField.autocorrectionType = autocorrection
         textField.textContentType = contentType
-        textField.font = monospaced
-            ? .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize, weight: .regular)
-            : .preferredFont(forTextStyle: .body)
+        textField.font = monospaced ? .scaledMonospaced(.body) : .preferredFont(forTextStyle: .body)
         textField.textColor = textColor
         textField.isEnabled = enabled
         textField.clearButtonMode = .never
+        textField.returnKeyType = returnKey
+        titleLabel.text = label
+        titleLabel.textColor = labelColor
+        titleLabel.isHidden = label == nil
+        textField.textAlignment = label == nil ? .natural : .right
+        // Deactivate before activating, so the field never has two leading edges.
+        if label == nil {
+            fieldAfterLabel?.isActive = false
+            fieldAfterMargin?.isActive = true
+        } else {
+            fieldAfterMargin?.isActive = false
+            fieldAfterLabel?.isActive = true
+        }
+        setReturnAction(onReturn)
+    }
+
+    private func setReturnAction(_ onReturn: (() -> Void)?) {
+        if let returnAction {
+            textField.removeAction(returnAction, for: .editingDidEndOnExit)
+            self.returnAction = nil
+        }
+        guard let onReturn else { return }
+        // A target for `.editingDidEndOnExit` also makes Return resign the field.
+        let action = UIAction { _ in onReturn() }
+        returnAction = action
+        textField.addAction(action, for: .editingDidEndOnExit)
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
         onChange = nil
+        setReturnAction(nil)
         textField.delegate = nil
         textField.accessibilityIdentifier = nil
     }

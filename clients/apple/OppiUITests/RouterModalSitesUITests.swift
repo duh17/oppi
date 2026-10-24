@@ -281,6 +281,19 @@ final class RouterModalSitesUITests: XCTestCase {
         )
         attachScreenshot("workspace-create-guided-composer")
 
+        // The server has no workspace, and the composer still takes the request.
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10), "The guided composer's input did not appear")
+        let send = app.buttons["chat.send"]
+        XCTAssertFalse(send.isEnabled, "Send must wait for a request")
+        input.tap()
+        input.typeText("A workspace for my notes")
+        XCTAssertTrue(
+            waitFor(send.isEnabled),
+            "Send must enable once a request is typed, with no workspace on the server"
+        )
+        attachScreenshot("workspace-create-guided-send-enabled")
+
         // Cancel closes the guided sheet and leaves the form under it.
         cancelButton.tap()
         XCTAssertTrue(

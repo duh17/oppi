@@ -172,9 +172,13 @@ struct WorkspaceCreateTests {
 
     // MARK: Screen
 
-    @Test("Create with Oppi opens the guided composer; a prepared session closes both sheets and opens it")
-    func createWithOppiOpensGuidedComposer() async throws {
+    @Test("With no workspaces, Create with Oppi sends from the guided composer, closes both sheets, and opens the control session")
+    func createWithOppiSendsWithNoWorkspaces() async throws {
         let fixture = try Fixture()
+        for server in [fixture.first, fixture.second] {
+            let store = try #require(fixture.coordinator.connection(for: server.id)).workspaceStore
+            #expect(store.workspaces.isEmpty)
+        }
         let presenter = UIViewController()
         let window = try showInWindow(presenter)
         defer { hide(window) }
@@ -196,14 +200,22 @@ struct WorkspaceCreateTests {
         )
         #expect(guided.title == "Create Workspace")
 
-        let target = WorkspaceSessionNavTarget(
-            serverId: fixture.second.id, sessionId: "control-1", routeScope: .control
-        )
-        screen.guidedSessionPrepared(target)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+        // The composer's own setup and send, as the Send button runs them.
+        let model = try #require(guided.children.compactMap { $0 as? GuidedControlComposerController }.first).model
+        model.appear()
+        #expect(await waitForMainActorCondition(timeout: .seconds(20)) { model.isInitialized })
+        #expect(model.selectedWorkspace == nil)
+        #expect(model.acceptsInput)
+        model.request = "A workspace for my notes"
+        model.send()
+
+        let target = WorkspaceSessionNavTarget(serverId: fixture.second.id, sessionId: "control-1", routeScope: .control)
+        #expect(await waitForMainActorCondition(timeout: .seconds(10)) {
             presenter.presentedViewController == nil
                 && fixture.root.navigation.workspaceStackRouteElements.contains(.session(target))
         })
+        let posts = WorkspaceCreateURLProtocol.requests.filter { $0.method == "POST" && $0.path == "/control-sessions" }
+        #expect(posts.map(\.host) == [Fixture.secondHost])
     }
 
     @Test("Both steps offer Create with Oppi, and a server with no connection does not")
@@ -227,7 +239,67 @@ struct WorkspaceCreateTests {
         #expect(await findButton("workspace.create.createWithOppi", in: screen.view, timeout: .milliseconds(300)) == nil)
     }
 
+    @Test("Tapping a suggestion replaces the text being typed, in the field and in the model")
+    func suggestionReplacesTypedText() async throws {
+        let fixture = try Fixture()
+        let screen = WorkspaceCreateViewController(
+            root: fixture.root, server: fixture.second, prefillName: "App", prefillPath: "/tmp"
+        )
+        let window = try showInWindow(screen)
+        defer { hide(window) }
+        let field = try #require(await findTextField("workspace.create.hostMount", in: screen.view))
+
+        // The user is mid-edit: the field is first responder with a prefix typed.
+        #expect(field.becomeFirstResponder())
+        field.text = "~/wo"
+        field.sendActions(for: .editingChanged)
+        #expect(screen.model.hostMount == "~/wo")
+
+        let suggestion = try #require(await findButton("workspace.create.suggestion.~/workspace", in: screen.view, timeout: .seconds(5)))
+        suggestion.sendActions(for: .touchUpInside)
+
+        #expect(screen.model.hostMount == "~/workspace")
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { field.text == "~/workspace" })
+        #expect(field.text == screen.model.hostMount)
+    }
+
+    @Test("Return in Name moves to the folder field; Return in the folder field closes the keyboard")
+    func returnKeyMovesThroughFields() async throws {
+        let fixture = try Fixture()
+        let screen = WorkspaceCreateViewController(
+            root: fixture.root, server: fixture.second, prefillName: "App", prefillPath: "/tmp"
+        )
+        let window = try showInWindow(screen)
+        defer { hide(window) }
+        let name = try #require(await findTextField("workspace.create.name", in: screen.view))
+        let folder = try #require(await findTextField("workspace.create.hostMount", in: screen.view))
+
+        #expect(name.becomeFirstResponder())
+        #expect(name.returnKeyType == .next)
+        name.sendActions(for: .editingDidEndOnExit)
+        #expect(folder.isFirstResponder)
+        #expect(!name.isFirstResponder)
+
+        #expect(folder.returnKeyType == .done)
+        folder.sendActions(for: .editingDidEndOnExit)
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { !folder.isFirstResponder })
+    }
+
     // MARK: Helpers
+
+    private func findTextField(
+        _ identifier: String,
+        in view: UIView,
+        timeout: Duration = .seconds(3)
+    ) async -> UITextField? {
+        var found: UITextField?
+        _ = await waitForMainActorCondition(timeout: timeout) {
+            view.layoutIfNeeded()
+            found = Self.subviews(of: UITextField.self, in: view).first { $0.accessibilityIdentifier == identifier }
+            return found != nil
+        }
+        return found
+    }
 
     private func findButton(
         _ identifier: String,
@@ -237,18 +309,18 @@ struct WorkspaceCreateTests {
         var found: UIButton?
         _ = await waitForMainActorCondition(timeout: timeout) {
             view.layoutIfNeeded()
-            found = Self.buttons(in: view).first { $0.accessibilityIdentifier == identifier }
+            found = Self.subviews(of: UIButton.self, in: view).first { $0.accessibilityIdentifier == identifier }
             return found != nil
         }
         return found
     }
 
-    private static func buttons(in view: UIView) -> [UIButton] {
-        var all: [UIButton] = []
+    private static func subviews<T: UIView>(of type: T.Type, in view: UIView) -> [T] {
+        var all: [T] = []
         view.layoutIfNeeded()
         for subview in view.subviews {
-            if let button = subview as? UIButton { all.append(button) }
-            all += buttons(in: subview)
+            if let match = subview as? T { all.append(match) }
+            all += subviews(of: type, in: subview)
         }
         return all
     }
@@ -359,9 +431,14 @@ final class WorkspaceCreateURLProtocol: URLProtocol, @unchecked Sendable {
             {"status":{"path":"\(path)","resolvedPath":"\(path)","exists":\(!missing),"isDirectory":\(!missing),"isFile":false,"issue":\(missing ? "\"missing\"" : "null"),"message":null}}
             """
         case "/host/path/completions":
-            body = #"{"completions":[]}"#
+            let prefix = query.first { $0.name == "prefix" }?.value ?? ""
+            body = prefix == "~/wo"
+                ? #"{"completions":[{"path":"~/workspace","name":"workspace"}]}"#
+                : #"{"completions":[]}"#
         case "/skills":
             body = #"{"skills":[]}"#
+        case "/control-sessions":
+            body = #"{"session":{"id":"control-1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0},"prompted":true}"#
         case "/workspaces":
             body = #"{"workspace":{"id":"w-new","name":"Fresh","skills":[],"createdAt":0,"updatedAt":0}}"#
         default:
