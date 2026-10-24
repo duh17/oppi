@@ -122,19 +122,19 @@ The sidebar holds saved **Agents** and **Schedules**.
 
 ## Edit with Oppi
 
-Describe a change in a composer. Oppi opens one setup session that inspects the current setup, asks if the outcome is unclear, shows the change, and applies it. Changes made through `oppi` commands change the live server, so the setup prompt tells the session to show each server write and wait for your approval. That is an instruction to the model, not an enforced confirmation. Before it edits a file, the session says what will change. At the end it tells you where to see the change and whether a running session must reload.
+Describe a change in a composer: a list's composer to create something, or the **Describe a change…** bar at the bottom of a detail page to change it (the bar shows the model and thinking pills once you tap it). Oppi opens one setup session that inspects the current setup, asks if the outcome is unclear, shows the change, and applies it. Changes made through `oppi` commands change the live server, so the setup prompt tells the session to show each server write and wait for your approval. That is an instruction to the model, not an enforced confirmation. Before it edits a file, the session says what will change. At the end it tells you where to see the change and whether a running session must reload.
 
 The setup session uses Oppi's own short prompt, not your global Pi prompt ([Pi Control sessions](extensions.md#pi-control-sessions)).
 
 | Surface | Create | Change |
 | --- | --- | --- |
-| Agents | Composer in the Agents list | **Edit with Oppi** on an Agent; comments on its definition become the request |
-| Schedules | Composer in the Schedules list | **Edit with Oppi** on a schedule; comments on its prompt become the request |
-| Pi's system prompt (`SYSTEM.md`) | | **Edit SYSTEM.md with Pi** on the Pi entry under Agents; comments on the file |
+| Agents | Composer in the Agents list | The bar on an active Agent's page; comments on its definition become the request |
+| Schedules | Composer in the Schedules list | The bar on a schedule's page; comments on its prompt become the request |
+| Pi's system prompt (`SYSTEM.md`) | | The bar on the Pi entry under Agents; comments on the file |
 | Skill files | | **Edit → Edit with Oppi** on an editable Skill's file, with your staged comments |
-| Extensions | | **Edit with Oppi** in the chat's context panel, or on the **Extensions** page |
+| Extensions | | **Edit with Oppi** in the chat's context panel, or the bar on an extension's page (single files you own) |
 | Custom themes | Composer in **Settings → Appearance → Custom Themes** | Swipe a theme, or touch and hold, then **Edit with Oppi** |
-| Workspaces | The create sheet | **Edit with Oppi** in Workspace Settings |
+| Workspaces | **Create with Oppi** in the create sheet | The bar in Workspace Settings (hidden while the workspace is locked) |
 
 ## Sandbox, Mirror, and SSH Terminal
 
