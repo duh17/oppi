@@ -57,7 +57,12 @@ function quoteUnitWord(value: string, context: "exec" | "environment"): string {
   return `"${escaped}"`;
 }
 
-export function buildSystemdUnit(runtimePath: string, cliPath: string, dataDir: string): string {
+export function buildSystemdUnit(
+  runtimePath: string,
+  cliPath: string,
+  dataDir: string,
+  installerNode?: string,
+): string {
   // The service PATH only matters until the server applies its configured
   // runtime PATH; the Node directory comes first so `#!/usr/bin/env node`
   // scripts started that early find the same runtime.
@@ -67,6 +72,10 @@ export function buildSystemdUnit(runtimePath: string, cliPath: string, dataDir: 
   const execStart = [runtimePath, cliPath, "serve", "--data-dir", dataDir]
     .map((word) => quoteUnitWord(word, "exec"))
     .join(" ");
+  // host-env.ts appends its directory to the session PATH.
+  const installerNodeEnv = installerNode
+    ? `\nEnvironment=${quoteUnitWord(`OPPI_NODE=${installerNode}`, "environment")}`
+    : "";
   return `# Written by \`oppi server install\`; reinstalling rewrites this file.
 [Unit]
 Description=Oppi server
@@ -77,7 +86,7 @@ Type=simple
 ExecStart=${execStart}
 WorkingDirectory=~
 Environment=${quoteUnitWord(`PATH=${path}`, "environment")}
-Environment=${quoteUnitWord(`OPPI_DATA_DIR=${dataDir}`, "environment")}
+Environment=${quoteUnitWord(`OPPI_DATA_DIR=${dataDir}`, "environment")}${installerNodeEnv}
 Restart=on-failure
 RestartSec=5
 
@@ -219,7 +228,7 @@ export function installService(dataDir?: string): {
   const resolvedDataDir = dataDir || join(homedir(), ".config", "oppi");
   const unitPath = systemdUnitPath();
   try {
-    const unit = buildSystemdUnit(runtimePath, cliPath, resolvedDataDir);
+    const unit = buildSystemdUnit(runtimePath, cliPath, resolvedDataDir, program.installerNode);
     mkdirSync(dirname(unitPath), { recursive: true });
     writeFileSync(unitPath, unit, { mode: 0o644 });
     systemctl("daemon-reload");

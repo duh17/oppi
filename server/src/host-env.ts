@@ -4,11 +4,14 @@
  * Environment configuration is explicit and sourced from config.json:
  *   - runtimePathEntries: string[]
  *   - runtimeEnv: Record<string, string>
+ *
+ * One addition is not from config: the directory of OPPI_NODE goes last on the
+ * runtime PATH (see installerNodeDir).
  */
 
 import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type { ServerConfig } from "./types.js";
 
 const initialHostEnv = { ...process.env } as Record<string, string>;
@@ -56,15 +59,31 @@ function buildPath(entries: string[]): string {
   return out.join(":");
 }
 
+/**
+ * install.sh's launcher, and the service it installs, set OPPI_NODE to the Node
+ * they run, which may be the only Node on the machine (~/.oppi/runtime/node).
+ * Its directory goes last on the runtime PATH so sessions and the npm update
+ * check find node and npm, while a Node the user configured still wins. It is
+ * appended here rather than written into config, which would pin the default
+ * runtimePathEntries for users who never set them.
+ */
+function installerNodeDir(baseEnv: Record<string, string>): string | undefined {
+  const node = baseEnv.OPPI_NODE;
+  return node && isAbsolute(node) ? dirname(node) : undefined;
+}
+
 export function buildHostEnv(
   config: ServerConfig,
   baseEnv: Record<string, string> = initialHostEnv,
 ): Record<string, string> {
   const env = { ...baseEnv } as Record<string, string>;
   const configuredEntries = normalizePathEntries(config.runtimePathEntries);
+  const nodeDir = installerNodeDir(baseEnv);
 
-  // Explicit runtime PATH: configured entries only.
-  env.PATH = buildPath(configuredEntries);
+  // Explicit runtime PATH: configured entries, then the installer's Node.
+  env.PATH = buildPath(nodeDir ? [...configuredEntries, nodeDir] : configuredEntries);
+  // An installer-to-service signal; sessions run `oppi` through the launcher, which sets it.
+  delete env.OPPI_NODE;
 
   for (const [key, raw] of Object.entries(config.runtimeEnv || {})) {
     env[key] = expandHome(raw);
@@ -109,6 +128,8 @@ export function applyHostEnv(
   for (const [key, value] of Object.entries(resolved.env)) {
     process.env[key] = value;
   }
+  // Sessions inherit process.env; keep the installer signal out of it (see buildHostEnv).
+  delete process.env.OPPI_NODE;
 
   lastAppliedRuntimeEnvKeys = nextRuntimeEnvKeys;
   return resolved;

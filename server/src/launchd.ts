@@ -470,8 +470,17 @@ function resolveCLIAbsolute(): string | null {
   return null;
 }
 
-function buildPlistXML(runtimePath: string, cliPath: string, dataDir: string): string {
+function buildPlistXML(
+  runtimePath: string,
+  cliPath: string,
+  dataDir: string,
+  installerNode?: string,
+): string {
   const logPath = join(dataDir, "server.log");
+  // host-env.ts appends its directory to the session PATH.
+  const installerNodeEnv = installerNode
+    ? `\n        <key>OPPI_NODE</key>\n        <string>${installerNode}</string>`
+    : "";
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -494,7 +503,7 @@ function buildPlistXML(runtimePath: string, cliPath: string, dataDir: string): s
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>OPPI_DATA_DIR</key>
-        <string>${dataDir}</string>
+        <string>${dataDir}</string>${installerNodeEnv}
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -522,7 +531,14 @@ function buildPlistXML(runtimePath: string, cliPath: string, dataDir: string): s
 
 /** The Node runtime and CLI entry point a background service runs, by absolute path. */
 export function resolveServiceProgram():
-  { ok: true; runtimePath: string; cliPath: string } | { ok: false; message: string } {
+  | {
+      ok: true;
+      runtimePath: string;
+      cliPath: string;
+      /** OPPI_NODE to set in the service: the runtime came from the install.sh launcher. */
+      installerNode?: string;
+    }
+  | { ok: false; message: string } {
   const cliPath = resolveCLIAbsolute();
   const runtimePath = resolveRuntimeAbsolute(cliPath);
   if (!runtimePath) {
@@ -534,7 +550,8 @@ export function resolveServiceProgram():
       message: "Oppi CLI not found. Run 'npm install -g oppi-server' and try again.",
     };
   }
-  return { ok: true, runtimePath, cliPath };
+  const installerNode = process.env.OPPI_NODE === runtimePath ? runtimePath : undefined;
+  return { ok: true, runtimePath, cliPath, ...(installerNode ? { installerNode } : {}) };
 }
 
 /**
@@ -579,7 +596,7 @@ export function installService(dataDir?: string): {
 
   mkdirSync(launchAgentsDir, { recursive: true });
 
-  const xml = buildPlistXML(runtimePath, cliPath, resolvedDataDir);
+  const xml = buildPlistXML(runtimePath, cliPath, resolvedDataDir, program.installerNode);
   writeFileSync(plist, xml, { mode: 0o644 });
 
   try {

@@ -48,6 +48,24 @@ describe("buildHostEnv", () => {
     expect(env.PATH).toBe("/usr/bin:/bin");
   });
 
+  it("appends the installer's Node directory last, once, and does not pass OPPI_NODE on", () => {
+    const baseEnv = { PATH: "/usr/bin", OPPI_NODE: "/home/a/.oppi/runtime/node/bin/node" };
+    const env = buildHostEnv(makeConfig({ runtimePathEntries: ["/opt/homebrew/bin"] }), baseEnv);
+    expect(env.PATH).toBe("/opt/homebrew/bin:/home/a/.oppi/runtime/node/bin");
+    expect(env).not.toHaveProperty("OPPI_NODE");
+
+    const configured = buildHostEnv(
+      makeConfig({ runtimePathEntries: ["/home/a/.oppi/runtime/node/bin", "/usr/bin"] }),
+      baseEnv,
+    );
+    expect(configured.PATH).toBe("/home/a/.oppi/runtime/node/bin:/usr/bin");
+
+    const relative = buildHostEnv(makeConfig({ runtimePathEntries: ["/usr/bin"] }), {
+      OPPI_NODE: "node",
+    });
+    expect(relative.PATH).toBe("/usr/bin");
+  });
+
   it("applies runtimeEnv overrides", () => {
     const env = buildHostEnv(makeConfig({ runtimeEnv: { EDITOR: "nvim", LANG: "en_US.UTF-8" } }));
     expect(env.EDITOR).toBe("nvim");
