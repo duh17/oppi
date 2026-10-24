@@ -169,7 +169,7 @@ function errorMessage(err: unknown): string {
 }
 
 /** Null when `systemctl --user` reaches a user manager; otherwise why not. */
-function userManagerIssue(): string | null {
+export function userManagerIssue(): string | null {
   try {
     systemctl("show-environment");
     return null;

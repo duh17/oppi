@@ -58,6 +58,7 @@ import {
 import * as systemd from "./systemd.js";
 import { doctorServiceManager, inspectService } from "./cli/doctor-service.js";
 import { parseCliArgs } from "./cli/args.js";
+import { hasPendingPairingInvite } from "./cli/pairing-invite.js";
 import {
   createCliConfigStorage,
   createCliConnectionConfig,
@@ -370,11 +371,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     // `oppi pair --ttl 14d` hand-off, or a QR someone is about to scan), and a service
     // restart must not write a usable invite into its log. Only a terminal gets a new one.
     const latest = storage.getConfig();
-    // Same rule as consuming an invite: one stored before expiries were recorded never
-    // expires on its own, so it is still pending.
-    const invitePending =
-      latest.pairingToken !== undefined &&
-      (latest.pairingTokenExpiresAt === undefined || latest.pairingTokenExpiresAt > Date.now());
+    const invitePending = hasPendingPairingInvite(latest);
     console.log("");
     if (!process.stdout.isTTY) {
       console.log(c.yellow("  No device is paired yet."));

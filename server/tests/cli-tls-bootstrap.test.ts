@@ -404,7 +404,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 60_000);
 
   it.each([{ mode: "disabled" }, { mode: "cloudflare" }, { mode: "self-signed", certPath: "" }])(
-    "paired host: `oppi init --yes --force` keeps the tls block: %j",
+    "host with an owner token: `oppi init --yes --force` keeps the tls block: %j",
     (tls) => {
       const initDir = mkdtempSync(join(tmpdir(), "oppi-cli-init-paired-tls-"));
 
@@ -616,7 +616,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
     }
   });
 
-  it("doctor keeps the TLS-disabled warning once the host is paired", () => {
+  it("doctor keeps the TLS-disabled warning once the host has an owner token", () => {
     const pairedDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-paired-"));
     try {
       writeFileSync(

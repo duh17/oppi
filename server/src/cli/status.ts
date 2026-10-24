@@ -4,6 +4,7 @@ import { hostname as osHostname, networkInterfaces } from "node:os";
 import * as c from "../ansi.js";
 import { tailscaleBinary, tlsSchemeForConfig } from "../tls.js";
 import type { CliConnectionConfig } from "./connection-config.js";
+import { hasPendingPairingInvite } from "./pairing-invite.js";
 import { captureHumanCliOutput, writeHumanLine, writeJsonEnvelope } from "./output.js";
 
 export function getTailscaleHostname(): string | null {
@@ -71,6 +72,8 @@ export function cmdStatus(storage: CliConnectionConfig, jsonOutput = false): voi
   const data = {
     status: {
       paired: storage.isPaired(),
+      // An unexpired invite is outstanding; minting another would replace it.
+      pairingInvitePending: hasPendingPairingInvite(config),
       dataDir: storage.getDataDir(),
       server: {
         host: config.host,
@@ -95,6 +98,7 @@ function renderStatus(
   storage: CliConnectionConfig,
   status: {
     paired: boolean;
+    pairingInvitePending: boolean;
     dataDir: string;
     server: {
       host: string;

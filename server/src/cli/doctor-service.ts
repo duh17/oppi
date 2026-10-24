@@ -11,6 +11,8 @@ export interface DoctorServiceManager {
   label: string;
   status(): { installed: boolean; running: boolean; pid: number | null; linger?: boolean | null };
   installedPaths(): { runtimePath: string; cliPath: string } | null;
+  /** Why the manager cannot run a service here at all (null when it can). */
+  unavailable?(): string | null;
   /** A reason the installed service should be reinstalled, if any. */
   migrationWarning?(paths: { runtimePath: string; cliPath: string }): string | null;
 }
@@ -26,6 +28,7 @@ const systemdUserService: DoctorServiceManager = {
   label: "systemd user service",
   status: () => systemd.getServiceStatus(),
   installedPaths: () => systemd.readInstalledUnit(),
+  unavailable: () => systemd.userManagerIssue(),
 };
 
 /**
@@ -55,6 +58,15 @@ export function inspectService(
   const checks: DoctorCheck[] = [];
 
   if (!status.installed) {
+    // No user manager (a container, WSL without systemd): `oppi server install` cannot help.
+    const unavailable = manager.unavailable?.();
+    if (unavailable) {
+      checks.push({
+        level: "warn",
+        message: `${unavailable} If the installer started oppi serve in the background, it logs to ~/.oppi/serve.log and does not restart after a reboot.`,
+      });
+      return { installed: false, checks };
+    }
     checks.push({
       level: "warn",
       message: `${label} not installed (oppi server install for background service)`,

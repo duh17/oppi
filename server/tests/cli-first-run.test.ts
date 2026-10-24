@@ -54,6 +54,41 @@ function pairedFromStatus(env: Record<string, string>): boolean {
   return (JSON.parse(stdout) as { data: { status: { paired: boolean } } }).data.status.paired;
 }
 
+describe("status --json pairing state", () => {
+  function statusFlags(env: Record<string, string>): { paired: boolean; pending: boolean } {
+    const { stdout } = run(["status", "--json"], env);
+    const status = (
+      JSON.parse(stdout) as {
+        data: { status: { paired: boolean; pairingInvitePending: boolean } };
+      }
+    ).data.status;
+    return { paired: status.paired, pending: status.pairingInvitePending };
+  }
+
+  it("reports an unexpired invite as pending until a device enrolls", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-status-invite-"));
+    try {
+      const env = { OPPI_DATA_DIR: dir };
+      const storage = new Storage(dir);
+      storage.ensurePaired();
+      expect(statusFlags(env)).toEqual({ paired: false, pending: false });
+
+      storage.issuePairingToken();
+      expect(statusFlags(env)).toEqual({ paired: false, pending: true });
+
+      // Enrolling consumes the invite.
+      const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+      storage.enrollViaPairing(storage.issuePairingToken(), {
+        publicKey: publicKey.export({ format: "jwk" }),
+        name: "Phone",
+      });
+      expect(statusFlags(env)).toEqual({ paired: true, pending: false });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not available"))(
   "serve on a host with an owner token",
   () => {

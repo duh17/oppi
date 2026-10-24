@@ -81,6 +81,20 @@ describe("doctor service checks", () => {
     ]);
   });
 
+  it("does not suggest installing a service the machine cannot run", () => {
+    const report = inspectService(
+      manager(
+        { installed: false, running: false, pid: null },
+        { unavailable: () => "systemd user manager unavailable (no bus)." },
+      ),
+    );
+    expect(report?.installed).toBe(false);
+    const [warning] = messages(report!.checks);
+    expect(warning).toContain("systemd user manager unavailable (no bus).");
+    expect(warning).toContain("~/.oppi/serve.log");
+    expect(warning).not.toContain("oppi server install");
+  });
+
   it("fails when the installed runtime or CLI is gone", () => {
     rmSync(runtimePath);
     rmSync(cliPath);
