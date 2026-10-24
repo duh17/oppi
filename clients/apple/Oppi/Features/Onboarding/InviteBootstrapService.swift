@@ -220,10 +220,12 @@ enum InviteBootstrapService {
         codeProblem: .unsigned
     )
 
-    static let invalidResponseFailure = InviteBootstrapError(
-        message: PairingEnrollment.Failure.invalidResponseMessage,
+    static let invalidResponseFailure = InviteBootstrapService.failure(PairingEnrollment.Failure.invalidResponse)
+
+    static let unexplainedFailure = InviteBootstrapError(
+        message: "Pairing failed. Request a fresh invite and try again.",
         recovery: .newCode,
-        codeProblem: .invalidResponse
+        codeProblem: .unexplained
     )
 
     /// Reaches the server before the single-use code goes out, so a network
@@ -284,14 +286,7 @@ enum InviteBootstrapService {
         didRequireApproval: Bool = false
     ) -> InviteBootstrapError {
         if didRequireApproval {
-            let failure = PairingEnrollment.Failure.classify(error)
-            return InviteBootstrapError(
-                message: failure.errorDescription
-                    ?? PairingEnrollment.Failure.disconnected.errorDescription
-                    ?? "Lost contact while waiting for approval. Request a fresh invite and try again.",
-                recovery: .newCode,
-                codeProblem: codeProblem(for: failure)
-            )
+            return failure(PairingEnrollment.Failure.classify(error))
         }
         if APIClientAvailabilityFailure(error: error) != nil {
             return InviteBootstrapError(
@@ -303,15 +298,25 @@ enum InviteBootstrapService {
         return pairingFailure(for: error, host: host)
     }
 
-    private static func codeProblem(for failure: PairingEnrollment.Failure) -> PairingCodeProblem? {
+    /// An enrollment failure after the server took the code. A server error
+    /// with no text says nothing, so it is the unexplained failure.
+    static func failure(_ failure: PairingEnrollment.Failure) -> InviteBootstrapError {
+        let problem: PairingCodeProblem?
         switch failure {
-        case .denied: .denied
-        case .expired, .unknownApproval: .approvalEnded
-        case .disconnected: .lostContactDuringApproval
-        case .cancelled: .cancelled
+        case .denied: problem = .denied
+        case .expired, .unknownApproval: problem = .approvalEnded
+        case .disconnected: problem = .lostContactDuringApproval
+        case .cancelled: problem = .cancelled
+        case .invalidResponse: problem = .invalidResponse
         case .server(let message):
-            message == PairingEnrollment.Failure.invalidResponseMessage ? .invalidResponse : nil
+            guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return unexplainedFailure }
+            problem = nil
         }
+        return InviteBootstrapError(
+            message: failure.errorDescription ?? unexplainedFailure.message,
+            recovery: .newCode,
+            codeProblem: problem
+        )
     }
 
     static func pairingFailureMessage(for error: Error, host: String) -> String {
@@ -322,12 +327,8 @@ enum InviteBootstrapService {
         if let failure = error as? InviteBootstrapError {
             return failure
         }
-        if let failure = error as? PairingEnrollment.Failure {
-            return InviteBootstrapError(
-                message: failure.errorDescription ?? "Pairing failed. Request a fresh invite and try again.",
-                recovery: .newCode,
-                codeProblem: failure.errorDescription == nil ? .unexplained : codeProblem(for: failure)
-            )
+        if let enrollmentFailure = error as? PairingEnrollment.Failure {
+            return failure(enrollmentFailure)
         }
         if let apiError = error as? APIError {
             switch apiError {
@@ -368,13 +369,7 @@ enum InviteBootstrapService {
             }
         }
         let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else {
-            return InviteBootstrapError(
-                message: "Pairing failed. Request a fresh invite and try again.",
-                recovery: .newCode,
-                codeProblem: .unexplained
-            )
-        }
+        guard !message.isEmpty else { return unexplainedFailure }
         return InviteBootstrapError(message: "Pairing failed: \(message)", recovery: .newCode)
     }
 

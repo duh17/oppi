@@ -130,9 +130,12 @@ final class PairingApprovalWaitingView: UIView {
         timer = nil
         guard ticks else { return }
         tick()
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        // Common modes, so the countdown keeps ticking while a scroll tracks.
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     private func tick() {

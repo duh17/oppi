@@ -10,6 +10,8 @@ enum PairingEnrollment {
         case unknownApproval
         case cancelled
         case disconnected
+        /// The server answered pairing with something Oppi cannot use.
+        case invalidResponse
         case server(String)
 
         var errorDescription: String? {
@@ -24,13 +26,12 @@ enum PairingEnrollment {
                 "Pairing cancelled."
             case .disconnected:
                 "Lost contact while waiting for approval. Request a fresh invite and try again."
+            case .invalidResponse:
+                "Server returned an invalid pairing response. Request a fresh invite and try again."
             case .server(let message):
                 message
             }
         }
-
-        /// A server answer pairing cannot use; screens that word it themselves match on it.
-        static let invalidResponseMessage = "Server returned an invalid pairing response. Request a fresh invite and try again."
 
         static func classify(_ error: Error) -> Failure {
             if error is CancellationError { return .cancelled }
@@ -50,7 +51,7 @@ enum PairingEnrollment {
                     }
                     return .server(UserFacingErrorText.normalize(message))
                 case .invalidResponse:
-                    return .server(invalidResponseMessage)
+                    return .invalidResponse
                 }
             }
             if let urlError = error as? URLError {
@@ -85,7 +86,7 @@ enum PairingEnrollment {
             guard required.status == "approval_required",
                   !required.approvalId.isEmpty,
                   !required.pendingToken.isEmpty else {
-                throw Failure.server(Failure.invalidResponseMessage)
+                throw Failure.invalidResponse
             }
             onWaiting?(required.expiresAt)
             while true {

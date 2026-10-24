@@ -216,6 +216,19 @@ struct InviteBootstrapServiceTests {
         #expect(!factoryCalled)
     }
 
+    /// A server error with no text leaves nothing to show, so it reads as an
+    /// unexplained failure instead of an empty message.
+    @Test func blankServerErrorIsUnexplained() {
+        for message in ["", "  \n"] {
+            #expect(
+                InviteBootstrapService.pairingFailure(for: PairingEnrollment.Failure.server(message), host: host)
+                    == InviteBootstrapService.unexplainedFailure
+            )
+        }
+        #expect(InviteBootstrapService.unexplainedFailure.codeProblem == .unexplained)
+        #expect(!InviteBootstrapService.unexplainedFailure.message.isEmpty)
+    }
+
     @Test func TLSFailureMessageRemainsActionable() {
         #expect(InviteBootstrapService.pairingFailureMessage(
             for: URLError(.serverCertificateUntrusted),
