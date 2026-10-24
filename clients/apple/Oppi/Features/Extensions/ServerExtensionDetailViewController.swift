@@ -276,7 +276,8 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
         case .title:
             inputs = [summary.name, summary.description]
         case .enabled:
-            inputs = [summary.name, summary.state, state.isPending, state.mutationsAllowed, state.serverName]
+            // A refused change sets only the mutation error; redraw so the switch snaps back.
+            inputs = [summary.name, summary.state, state.isPending, state.mutationsAllowed, state.serverName, state.mutationError]
         case .mutationError:
             inputs = [summary.name, state.serverName, state.mutationError, mutationVerb]
         case .detail:
@@ -366,7 +367,13 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
             toggle.accessibilityIdentifier = "server.extension.enabled"
             toggle.accessibilityLabel = "Enable \(summary.name) on \(state.serverName)"
             toggle.addAction(UIAction { [weak self, weak toggle] _ in
-                self?.setEnabled(toggle?.isOn ?? false)
+                guard let self, let toggle else { return }
+                // Offline: nothing will redraw the row, so put the switch back now.
+                guard self.connection?.apiClient != nil else {
+                    toggle.setOn(!toggle.isOn, animated: true)
+                    return
+                }
+                self.setEnabled(toggle.isOn)
             }, for: .valueChanged)
             var accessories: [UICellAccessory] = []
             if state.isPending {
