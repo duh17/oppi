@@ -309,19 +309,23 @@ final class RouterModalSitesUITests: XCTestCase {
         pickIconAndSave(row: app.buttons["workspace.edit.icon"])
     }
 
-    /// Workspace Settings' Edit with Oppi row opens the guided composer sheet
-    /// for this workspace; it creates nothing until Send.
-    func testWorkspaceSettingsEditWithOppiOpensTheGuidedSheet() {
+    /// Workspace Settings carries the compact Oppi bar for this workspace:
+    /// no pills at rest, the pills with the keyboard, Send once there is text.
+    func testWorkspaceSettingsShowsTheOppiBar() {
         launch(screen: "workspace-settings")
-        let row = app.buttons["workspace.edit.editWithOppi"]
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "Workspace Settings did not show Edit with Oppi")
-        row.tap()
-        let sheet = app.navigationBars["Revise oppi-dev"]
-        XCTAssertTrue(sheet.waitForExistence(timeout: 5), "Edit with Oppi did not open the guided composer")
-        attachScreenshot("workspace-settings-edit-with-oppi")
-        cancelButton.tap()
-        XCTAssertTrue(waitForDisappearance(of: sheet), "Cancel must close the guided composer")
-        XCTAssertTrue(row.exists, "Cancel must leave Workspace Settings open")
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10), "Workspace Settings did not show the Oppi bar")
+        XCTAssertFalse(app.buttons["workspace.edit.editWithOppi"].exists, "The Edit with Oppi row is the bar now")
+        let send = app.buttons["chat.send"]
+        let model = app.buttons["session.toolbar.model"]
+        XCTAssertFalse(send.isEnabled, "Send must wait for a request")
+        XCTAssertFalse(model.exists, "The compact bar shows no pills at rest")
+        attachScreenshot("workspace-settings-oppi-bar-rest")
+        input.tap()
+        XCTAssertTrue(model.waitForExistence(timeout: 5), "Focus must open the pills")
+        input.typeText("Rename it")
+        XCTAssertTrue(waitFor(send.isEnabled), "Typing must enable Send")
+        attachScreenshot("workspace-settings-oppi-bar-expanded")
         assertRunning()
     }
 

@@ -1,8 +1,9 @@
 import UIKit
 
 /// Workspace Settings root: a summary of the workspace that opens Details, one
-/// index row per focused page, Show Changes in Chat, Lock Workspace, Edit with
-/// Oppi, and Delete Workspace.
+/// index row per focused page, Show Changes in Chat, Lock Workspace, and
+/// Delete Workspace, with the compact Oppi bar at the bottom to describe a
+/// change.
 ///
 /// Toggles and pickers apply as soon as they change. Only the Details page,
 /// the Instructions editor, and the Network Access hosts editor are drafts
@@ -14,7 +15,8 @@ import UIKit
 /// The screen is its own lock gate and server switch: while the workspace is
 /// locked it shows the lock cover and nothing of the workspace; unlocked, it
 /// makes the workspace's server the active one ("Connecting…") and then shows
-/// the list. Rows are real buttons, so a tap, a VoiceOver activation, and
+/// the list. The bar shows with the list and never while the lock cover does.
+/// Rows are real buttons, so a tap, a VoiceOver activation, and
 /// `app.buttons[id]` all run the row's own action.
 @MainActor
 final class WorkspaceSettingsViewController: UIViewController, UICollectionViewDelegate {
@@ -24,8 +26,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     private let model: WorkspaceSettingsModel
     private let locks: ScopedLockService
 
-    /// Closes this screen after Delete Workspace or Edit with Oppi when it was
-    /// pushed onto another screen. As a shell route it leaves through the
+    /// Closes this screen after Delete Workspace or a session prepared by the
+    /// Oppi bar when it was pushed onto another screen. As a shell route it leaves through the
     /// `AppNavigation` change that follows instead.
     var onLeave: (() -> Void)?
     /// The split detail root's Done: returns the column to the workspace's
@@ -51,7 +53,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     private var needsConnect: Bool
     private var shown: Shown?
     private var lockCover: ScopedLockCoverViewController?
-    private weak var editSheet: UIViewController?
+    /// The compact Oppi bar, made once the workspace's server is ready.
+    private var composer: GuidedControlComposerController?
     private weak var deleteAlert: UIAlertController?
     private var sidebarToggle: UIBarButtonItem?
     private var doneItem: UIBarButtonItem?
@@ -68,7 +71,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     private enum Shown: Equatable { case locked, connecting, list }
 
     private enum Section: Hashable {
-        case summary, pages, trust, git, lock, oppi, error, delete
+        case summary, pages, trust, git, lock, error, delete
     }
 
     private enum Item: Hashable {
@@ -77,7 +80,6 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         case projectTrust
         case gitStatus
         case lock
-        case editWithOppi
         case error
         case delete
     }
@@ -220,6 +222,43 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             }
         }
         updateBar()
+        updateComposer()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        composer?.insetContent(of: collectionView)
+    }
+
+    /// The Oppi bar describes a change to this workspace on its own server.
+    /// It shows with the list on a server that has an API client, and a lock
+    /// holds it back: nothing of a locked workspace stays usable.
+    private func updateComposer() {
+        guard let connection else { return }
+        let composer = composer ?? makeComposer(connection)
+        let locked = locks.isLocked(lockTarget)
+        composer.model.isDisabled = locked
+        composer.model.updateTarget(id: workspace.id, name: current.name, path: nil)
+        composer.setHidden(locked || shown != .list || connection.apiClient == nil)
+    }
+
+    private func makeComposer(_ connection: ServerConnection) -> GuidedControlComposerController {
+        let composer = GuidedControlComposerController(
+            configuration: GuidedControlComposerConfiguration(
+                domain: .workspaces,
+                intent: .revise,
+                presentation: .compact,
+                targetId: workspace.id,
+                targetName: current.name,
+                placeholder: String(localized: "Describe a change…")
+            ),
+            root: root,
+            connection: { connection },
+            onSessionPrepared: { [weak self] target in self?.openEditSession(target) }
+        )
+        composer.install(in: self)
+        self.composer = composer
+        return composer
     }
 
     /// Makes the workspace's server the active one, then binds the model to
@@ -284,11 +323,9 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         }
     }
 
-    /// Nothing of a locked workspace stays on screen: the guided sheet and the
-    /// Delete confirmation, which sit above this screen's cover, go with it.
+    /// Nothing of a locked workspace stays on screen: the Delete confirmation,
+    /// which sits above this screen's cover, goes with it.
     private func dismissPresentedModals() {
-        if let editSheet { Router.finish(editSheet) }
-        editSheet = nil
         deleteAlert?.dismiss(animated: false)
         deleteAlert = nil
     }
@@ -332,10 +369,6 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         if lockScope != nil {
             snapshot.appendSections([.lock])
             snapshot.appendItems([.lock], toSection: .lock)
-        }
-        if connection?.apiClient != nil {
-            snapshot.appendSections([.oppi])
-            snapshot.appendItems([.editWithOppi], toSection: .oppi)
         }
         if model.error != nil {
             snapshot.appendSections([.error])
@@ -387,7 +420,6 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                 AnyHashable(locks.isAuthenticating),
                 AnyHashable(toggleRevision),
             ])
-        case .editWithOppi: return AnyHashable(0)
         case .error: return AnyHashable(model.error)
         case .delete: return AnyHashable([model.isDeleting, !model.isWriteQueueIdle])
         }
@@ -450,7 +482,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                 collectionView.dequeueConfiguredReusableCell(using: toggle, for: indexPath, item: item)
             case .projectTrust, .error:
                 collectionView.dequeueConfiguredReusableCell(using: info, for: indexPath, item: item)
-            case .editWithOppi, .delete:
+            case .delete:
                 collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
             }
         }
@@ -563,26 +595,14 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
 
     private func configureAction(_ cell: SSHTerminalActionCell, item: Item) {
         let palette = ThemeRuntimeState.currentPalette()
-        switch item {
-        case .editWithOppi:
-            cell.configure(
-                title: String(localized: "Edit with Oppi"),
-                identifier: "workspace.edit.editWithOppi",
-                color: UIColor(palette.blue),
-                subtitle: String(localized: "Describe a change and Oppi makes it."),
-                subtitleColor: UIColor(palette.comment),
-                image: "text.bubble"
-            ) { [weak self] in self?.perform(.editWithOppi) }
-        default:
-            cell.configure(
-                title: String(localized: "Delete Workspace"),
-                identifier: "workspace.edit.delete",
-                color: UIColor(palette.red),
-                // A queued write could otherwise land after the delete.
-                enabled: canDelete,
-                image: "trash"
-            ) { [weak self] in self?.perform(.delete) }
-        }
+        cell.configure(
+            title: String(localized: "Delete Workspace"),
+            identifier: "workspace.edit.delete",
+            color: UIColor(palette.red),
+            // A queued write could otherwise land after the delete.
+            enabled: canDelete,
+            image: "trash"
+        ) { [weak self] in self?.perform(.delete) }
     }
 
     // MARK: - Footers
@@ -595,7 +615,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             String(localized: "Shows branch, changed files, and line stats above the chat.")
         case .lock:
             ScopedLockToggle.footer(for: "this workspace and its sessions")
-        case .summary, .pages, .oppi, .error, .delete:
+        case .summary, .pages, .error, .delete:
             nil
         }
     }
@@ -626,8 +646,6 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         switch item {
         case .summary, .instructions, .skills, .extensions, .mcpServers, .dictionary, .networkAccess:
             push(item)
-        case .editWithOppi:
-            presentEditWithOppi()
         case .delete:
             confirmDelete()
         case .projectTrust, .gitStatus, .lock, .error:
@@ -689,37 +707,15 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                 WorkspaceNetworkAccessPage(model: model)
                     .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
             }
-        case .projectTrust, .gitStatus, .lock, .editWithOppi, .error, .delete:
+        case .projectTrust, .gitStatus, .lock, .error, .delete:
             break
         }
     }
 
-    /// The guided composer: describe the change, then Send creates one session
-    /// on this screen's server and opens it.
-    private func presentEditWithOppi() {
-        guard let connection, editSheet == nil, !locks.isLocked(lockTarget) else { return }
-        let sheet = GuidedControlSessionViewController(
-            configuration: GuidedControlComposerConfiguration(
-                domain: .workspaces,
-                intent: .revise,
-                targetId: workspace.id,
-                targetName: current.name,
-                allowsEmptyRequest: true,
-                placeholder: "Describe how this workspace should change…"
-            ),
-            root: root,
-            connection: { connection },
-            onSessionPrepared: { [weak self] target in self?.openEditSession(target) }
-        )
-        editSheet = sheet
-        Router.present(sheet, presentation: .sheet.inNavigation(), from: self)
-    }
-
-    /// Closes the sheet, leaves Workspace Settings the way Delete does, and
-    /// opens the prepared session.
+    /// Leaves Workspace Settings the way Delete does and opens the session
+    /// the Oppi bar prepared. A lock that engaged while Send was in flight
+    /// refuses it.
     func openEditSession(_ target: WorkspaceSessionNavTarget) {
-        if let editSheet { Router.finish(editSheet) }
-        // A lock that engaged while the sheet was open refuses the session.
         guard !locks.isLocked(lockTarget) else { return }
         onLeave?()
         let navigation = root.navigation

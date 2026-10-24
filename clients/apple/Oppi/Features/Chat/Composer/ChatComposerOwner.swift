@@ -20,6 +20,9 @@ protocol ChatComposerSource: AnyObject {
     func composerSetPendingRepoPointers(_ value: [PendingFileReference])
     func composerSetBusyStreamingBehavior(_ value: StreamingBehavior)
 
+    /// The field gained or lost the keyboard. Most screens ignore it; the
+    /// compact guided bar opens and closes its pills with it.
+    func composerInputFocusDidChange(_ focused: Bool)
     func composerSend()
     func composerStop()
     func composerForceStop()
@@ -46,6 +49,7 @@ protocol ChatComposerSource: AnyObject {
 
 extension ChatComposerSource {
     var composerAskAutoAdvanceController: AskInlineAutoAdvanceController? { nil }
+    func composerInputFocusDidChange(_ focused: Bool) {}
 }
 
 /// The chat input bar in UIKit: `ComposerBarController` with the dictation
@@ -378,6 +382,7 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
     }
 
     func setInputFocused(_ value: Bool) {
+        source?.composerInputFocusDidChange(value)
         // The action row comes and goes with focus: measure again.
         updateHeight()
     }

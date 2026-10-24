@@ -3,8 +3,8 @@ import UIKit
 /// One Pi extension on one server (route `.serverResourceDetail`, kind
 /// `.extension`): its server default switch, where it comes from, its status
 /// with Retry, and the tools and commands it contributes. An extension with a
-/// user-editable host file also offers Edit with Oppi, which opens the shared
-/// guided composer on this screen's server and then the session it starts.
+/// user-editable host file also carries the compact Oppi bar, the shared guided
+/// composer on this screen's server, which starts a session for that file.
 ///
 /// The route makes the extension's server the active one on every appearance
 /// ("Loading extension…" until it is ready). The catalog row shows at once; the
@@ -15,14 +15,13 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
     let target: ServerResourceDetailNavTarget
 
     private enum Section: Hashable {
-        case summary, serverDefault, actions, source, status, loading, tools, commands
+        case summary, serverDefault, source, status, loading, tools, commands
     }
 
     private enum Item: Hashable {
         case title
         case enabled
         case mutationError
-        case editWithOppi
         case detail(String)
         case status
         case loadError
@@ -59,16 +58,15 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
     private let loader: ServerResourceDetailLoader<ServerExtensionDetail>
     private let collectionView = ControlScreenList.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private let guidedSheet = RouterModalPresenter()
+    /// The compact Oppi bar, made once the screen has its server and an
+    /// editable extension.
+    private var composer: GuidedControlComposerController?
 
     /// The extension's server once it is ready.
     private var connection: ServerConnection? {
         didSet { setNeedsUpdateProperties() }
     }
     private var mutationVerb: String? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var showsEditSheet = false {
         didSet { setNeedsUpdateProperties() }
     }
     private var state: ViewState?
@@ -118,7 +116,11 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
         collectionView.accessibilityIdentifier = "server.extension.list"
         ControlScreenList.pinFullWidth(collectionView, in: view)
         installDataSource()
-        guidedSheet.anchor = self
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        composer?.insetContent(of: collectionView)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -135,11 +137,6 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
         } else {
             startLoad()
         }
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        guidedSheet.sync()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -168,7 +165,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
             show(connection == nil || isLoading || loadError == nil
                 ? .loading
                 : .unavailable(loadError ?? ""))
-            updateModals()
+            updateComposer()
             return
         }
         state = ViewState(
@@ -184,7 +181,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
         )
         show(.list)
         applySnapshot()
-        updateModals()
+        updateComposer()
     }
 
     // MARK: - Content
@@ -228,10 +225,6 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
             state.mutationError == nil ? [.enabled] : [.enabled, .mutationError],
             toSection: .serverDefault
         )
-        if state.editPath != nil {
-            snapshot.appendSections([.actions])
-            snapshot.appendItems([.editWithOppi], toSection: .actions)
-        }
 
         snapshot.appendSections([.source])
         var details = [Item]()
@@ -286,7 +279,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
             inputs = [summary.state]
         case .loadError:
             inputs = [summary.loadError ?? state.loadError]
-        case .editWithOppi, .warning, .retry, .loadingContributions, .tool, .command:
+        case .warning, .retry, .loadingContributions, .tool, .command:
             inputs = []
         }
         return [AnyHashable(themeID), AnyHashable(inputs)]
@@ -396,24 +389,6 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
                     color: UIColor(palette.orange)
                 )
             }
-        case .editWithOppi:
-            let hint = "Starts a new session that changes this extension."
-            ControlScreenList.buttonRow(
-                cell,
-                identifier: "server.extension.editWithOppi",
-                label: "Edit with Oppi",
-                hint: hint
-            ) { [weak self] in
-                self?.showsEditSheet = true
-            }
-            var content = UIListContentConfiguration.cell()
-            content.image = UIImage(systemName: "text.bubble")
-            content.text = "Edit with Oppi"
-            content.secondaryText = hint
-            content.textProperties.color = UIColor(palette.blue)
-            content.imageProperties.tintColor = UIColor(palette.blue)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
-            cell.contentConfiguration = content
         case .detail(let title):
             ControlScreenList.staticRow(cell, identifier: "server.extension.source.\(title.lowercased())")
             let value = switch title {
@@ -471,37 +446,35 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
         }
     }
 
-    // MARK: - Modals
+    // MARK: - Oppi bar
 
-    private func updateModals() {
-        let editPath = state?.editPath
-        let name = state?.summary.name
-        var scoped: (@MainActor () -> ServerConnection)?
-        if let connection { scoped = { connection } }
-        guidedSheet.update(
-            id: showsEditSheet && editPath != nil && connection != nil ? "edit" : nil,
-            presentation: .sheet.inNavigation(),
+    /// The bar revises the extension's host file, so it exists only for an
+    /// extension with one (`ServerExtensionListPresentation.editablePath`),
+    /// on this screen's server.
+    private func updateComposer() {
+        guard let connection, let state, let path = state.editPath else {
+            composer?.setHidden(true)
+            return
+        }
+        let composer = composer ?? makeComposer(connection)
+        composer.model.updateTarget(id: path, name: state.summary.name, path: path)
+        composer.setHidden(false)
+    }
+
+    private func makeComposer(_ connection: ServerConnection) -> GuidedControlComposerController {
+        let composer = GuidedControlComposerController(
+            configuration: GuidedControlComposerConfiguration(
+                domain: .extensions,
+                intent: .revise,
+                presentation: .compact,
+                placeholder: "Describe a change…"
+            ),
             root: root,
-            clear: { [weak self] in self?.showsEditSheet = false },
-            screen: { [root] in
-                .controller {
-                    // The same composer the chat's Context panel opens, on this server.
-                    GuidedControlSessionViewController(
-                        configuration: GuidedControlComposerConfiguration(
-                            domain: .extensions,
-                            intent: .revise,
-                            targetId: editPath,
-                            targetName: name,
-                            targetPath: editPath,
-                            allowsEmptyRequest: true,
-                            placeholder: "Describe how this extension should change…"
-                        ),
-                        root: root,
-                        connection: scoped
-                    )
-                }
-            }
+            connection: { connection }
         )
+        composer.install(in: self)
+        self.composer = composer
+        return composer
     }
 
     // MARK: - Data

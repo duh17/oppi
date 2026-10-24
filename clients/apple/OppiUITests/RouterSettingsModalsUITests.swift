@@ -26,7 +26,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
 
     // MARK: Agents
 
-    func testPiPromptViewerAndGuidedSheet() {
+    func testPiPromptViewerAndOppiBar() {
         launch(page: "agents-pi")
 
         let prompt = app.buttons["agents.pi.systemPrompt"]
@@ -43,10 +43,8 @@ final class RouterSettingsModalsUITests: XCTestCase {
         back.tap()
         XCTAssertTrue(waitForDisappearance(of: back))
 
-        assertGuidedSheet(
-            opener: { self.app.buttons["agents.pi.editSystemPrompt"].tap() },
-            title: "Revise Pi global configuration"
-        )
+        XCTAssertFalse(app.buttons["agents.pi.editSystemPrompt"].exists, "The Edit SYSTEM.md row is the bar now")
+        assertCompactOppiBar(page: "agents-pi")
     }
 
     /// Tools is a pushed screen of its own: a toggle there must show its new
@@ -147,10 +145,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
             title: "Create Schedule"
         )
 
-        assertGuidedSheet(
-            opener: { self.openOverflowAction("Edit with Oppi") },
-            title: "Revise Design Reviewer"
-        )
+        assertCompactOppiBar(page: "agents-detail")
     }
 
     /// The keyboard of the Agents list's guided composer must not outlive the
@@ -231,10 +226,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
         assertRunning()
 
         assertReviewSheet { self.tapScrolledIntoView(prompt) }
-        assertGuidedSheet(
-            opener: { self.openOverflowAction("Edit with Oppi") },
-            title: "Revise Nightly digest"
-        )
+        assertCompactOppiBar(page: "schedule-detail")
     }
 
     // MARK: SSH hosts
@@ -279,13 +271,12 @@ final class RouterSettingsModalsUITests: XCTestCase {
         assertGuidedSheet(opener: { edit.tap() }, title: "Revise release")
     }
 
-    /// An extension that is a user-owned file: its page offers Edit with Oppi,
-    /// which opens the guided composer for that extension.
-    func testExtensionDetailEditWithOppiOpensGuidedSheet() {
+    /// An extension that is a user-owned file: its page carries the compact
+    /// Oppi bar for that extension.
+    func testExtensionDetailShowsTheOppiBar() {
         launch(page: "extension-detail")
-        let edit = app.buttons["server.extension.editWithOppi"]
-        XCTAssertTrue(edit.waitForExistence(timeout: 10), "Extension detail did not offer Edit with Oppi")
-        assertGuidedSheet(opener: { edit.tap() }, title: "Revise workflow")
+        XCTAssertFalse(app.buttons["server.extension.editWithOppi"].exists, "The Edit with Oppi row is the bar now")
+        assertCompactOppiBar(page: "extension-detail")
     }
 
     /// A server that edits Skill files: the one pencil offers the editor and
@@ -511,6 +502,26 @@ final class RouterSettingsModalsUITests: XCTestCase {
 
     // MARK: Shared checks
 
+    /// A detail page's compact Oppi bar: one line at rest with no pills, the
+    /// pills open with the keyboard, and typing enables Send. Sending is
+    /// proved by the model and launch unit tests.
+    private func assertCompactOppiBar(page: String) {
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 10), "\(page) did not show the Oppi bar")
+        let send = app.buttons["chat.send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5), "\(page) did not show Send")
+        let model = app.buttons["session.toolbar.model"]
+        XCTAssertFalse(send.isEnabled, "Send must wait for a request")
+        XCTAssertFalse(model.exists, "The compact bar shows no pills at rest")
+        attachScreenshot("\(page)-oppi-bar-rest")
+        input.tap()
+        XCTAssertTrue(model.waitForExistence(timeout: 5), "Focus must open the pills")
+        input.typeText("Make it shorter")
+        XCTAssertTrue(waitFor(send.isEnabled), "Typing must enable Send")
+        attachScreenshot("\(page)-oppi-bar-expanded")
+        assertRunning()
+    }
+
     /// A guided control-session sheet: Cancel (`finish()` at the root of the
     /// router's navigation controller), then swipe-down, then it opens again.
     private func assertGuidedSheet(opener: () -> Void, title: String) {
@@ -550,17 +561,6 @@ final class RouterSettingsModalsUITests: XCTestCase {
         dismiss.tap()
         XCTAssertTrue(waitForDisappearance(of: dismiss))
         assertRunning()
-    }
-
-    /// Detail actions sit in the system overflow menu on iOS 27, whose items
-    /// keep their labels but not their identifiers.
-    private func openOverflowAction(_ label: String) {
-        let more = app.buttons.matching(NSPredicate(format: "label IN %@", ["More", "Agent actions", "Schedule actions"])).firstMatch
-        XCTAssertTrue(more.waitForExistence(timeout: 5), "No overflow menu")
-        tapBarButton(more)
-        let action = app.buttons[label].firstMatch
-        XCTAssertTrue(action.waitForExistence(timeout: 5), "\(label) is not in the overflow menu")
-        action.tap()
     }
 
     /// Bar items in a router sheet report no hit point ({-1, -1}) to XCTest,

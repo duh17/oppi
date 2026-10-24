@@ -26,6 +26,10 @@ final class UIValidateTests: XCTestCase {
         for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("SCREENSHOT_") {
             app.launchEnvironment[key] = value
         }
+        // A Dynamic Type size, such as UICTContentSizeCategoryAccessibilityXXL.
+        if let size = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_CONTENT_SIZE"], !size.isEmpty {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", size]
+        }
         if let fixture = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_FIXTURE"] {
             app.launchEnvironment["OPPI_UI_VALIDATE_FIXTURE"] = fixture
         }

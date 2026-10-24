@@ -1,10 +1,30 @@
 import UIKit
 
+/// How the composer sits on its screen. A list that creates things shows the
+/// full composer, with its model and thinking pills (and the workspace pill
+/// where the domain takes one), at all times. A page for one thing keeps the
+/// bar compact at rest: one line with the field, the mic, and Send.
+enum GuidedControlComposerPresentation: Equatable {
+    case full
+    case compact
+
+    /// Whether the pills are showing. The compact bar opens while the field
+    /// has focus, holds text, or has staged comments, and closes again once
+    /// it has none of these.
+    func isExpanded(isFocused: Bool, hasText: Bool, hasStagedComments: Bool) -> Bool {
+        switch self {
+        case .full: true
+        case .compact: isFocused || hasText || hasStagedComments
+        }
+    }
+}
+
 /// What a screen asks of its guided control-session composer: the definition
 /// it creates or revises, the starting request, and staged review comments.
 struct GuidedControlComposerConfiguration {
     let domain: ControlSessionDomain
     let intent: ControlSessionIntent
+    var presentation = GuidedControlComposerPresentation.full
     var targetId: String?
     var targetName: String?
     var targetPath: String?
@@ -26,7 +46,7 @@ struct GuidedControlComposerConfiguration {
 /// installed `oppi` CLI.
 @MainActor @Observable
 final class GuidedControlComposerModel {
-    let configuration: GuidedControlComposerConfiguration
+    private(set) var configuration: GuidedControlComposerConfiguration
     /// The server the session starts on. Screens pass the active server (read
     /// each time, so a server switch follows); sheets opened for one server
     /// (a chat's extension, a Skill file) pass that server.
@@ -46,6 +66,11 @@ final class GuidedControlComposerModel {
     private(set) var isCreating = false
     var error: String?
     var showModelPicker = false
+    /// The field has the keyboard (reported by the bar).
+    private(set) var isInputFocused = false
+    /// The screen holds the composer back (a lock, a write in flight): it
+    /// takes no input while set.
+    var isDisabled = false
     var reviewCommentDrawerExpanded = false
     var reviewCommentStashPresentation: ReviewCommentStripChrome.StashPresentation?
 
@@ -112,9 +137,37 @@ final class GuidedControlComposerModel {
         Self.offersWorkspaceContext(for: configuration.domain) ? selectedWorkspace : nil
     }
 
-    /// The composer takes input once it is set up and has a server.
+    /// The composer takes input once it is set up and has a server, unless
+    /// its screen holds it back.
     var acceptsInput: Bool {
-        isInitialized && connection.apiClient != nil
+        isInitialized && connection.apiClient != nil && !isDisabled
+    }
+
+    /// Whether the pills show: always in the full presentation; in the
+    /// compact one only while the field is in use.
+    var isExpanded: Bool {
+        // The full presentation never reads the focus, so it never re-renders for it.
+        guard configuration.presentation == .compact else { return true }
+        return configuration.presentation.isExpanded(
+            isFocused: isInputFocused,
+            hasText: !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            hasStagedComments: reviewCommentPresentation.pendingCount > 0
+        )
+    }
+
+    func inputFocusDidChange(_ focused: Bool) {
+        isInputFocused = focused
+    }
+
+    /// The thing this page configures changed (a rename, a path that
+    /// arrived): later launches name it. The draft stays.
+    func updateTarget(id: String?, name: String?, path: String?) {
+        guard configuration.targetId != id
+            || configuration.targetName != name
+            || configuration.targetPath != path else { return }
+        configuration.targetId = id
+        configuration.targetName = name
+        configuration.targetPath = path
     }
 
     var placeholder: String {
@@ -300,6 +353,8 @@ final class GuidedControlComposerModel {
             }
 
             error = nil
+            // A page leaves with its session: the keyboard goes too.
+            if configuration.presentation == .compact { Self.dismissKeyboard() }
             if let onSessionPrepared {
                 onSessionPrepared(completion.sessionTarget)
             } else {

@@ -30,7 +30,7 @@ extension GuidedControlComposerController: ChatComposerSource {
             slashCommands: [],
             fileSuggestions: [],
             appliesOuterPadding: true,
-            alwaysShowActionRow: !stacks,
+            alwaysShowActionRow: !stacks && model.isExpanded,
             allowsExpansion: false,
             allowsAttachments: false,
             attachmentButtonPlacement: .leading,
@@ -87,6 +87,7 @@ extension GuidedControlComposerController: ChatComposerSource {
     func composerSetPendingRepoPointers(_ value: [PendingFileReference]) {}
     func composerSetBusyStreamingBehavior(_ value: StreamingBehavior) { model.streamingBehavior = value }
 
+    func composerInputFocusDidChange(_ focused: Bool) { model.inputFocusDidChange(focused) }
     func composerSend() { model.send() }
     func composerStop() {}
     func composerForceStop() {}

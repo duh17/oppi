@@ -5,9 +5,13 @@ import UIKit
 /// workspace (Agents and Schedules only), model, and thinking pills in its
 /// action row. At accessibility
 /// text sizes those pills do not fit the row and sit in a panel below it.
+/// The compact presentation (`GuidedControlComposerPresentation`) shows none
+/// of them until the field is in use: a page for one thing carries just the
+/// field, the mic, and Send at rest.
 ///
 /// A screen embeds it as a child pinned above the keyboard (Agents, Schedules,
-/// Custom Themes, the guided session sheet). Its state and launch live in
+/// Custom Themes, the guided session sheet, and the detail pages in the compact
+/// presentation). Its state and launch live in
 /// `GuidedControlComposerModel`; this controller draws them, presents the model
 /// picker and the comment stash, and is the composer's `ChatComposerSource`
 /// (`+Source`).
@@ -90,10 +94,21 @@ final class GuidedControlComposerController: UIViewController {
     func insetContent(of scrollView: UIScrollView) {
         guard let container = view.superview else { return }
         let composerTop = view.convert(view.bounds, to: container).minY
-        let covered = max(0, container.bounds.maxY - container.safeAreaInsets.bottom - composerTop)
+        let covered = view.isHidden
+            ? 0
+            : max(0, container.bounds.maxY - container.safeAreaInsets.bottom - composerTop)
         guard abs(scrollView.contentInset.bottom - covered) > 0.5 else { return }
         scrollView.contentInset.bottom = covered
         scrollView.verticalScrollIndicatorInsets.bottom = covered
+    }
+
+    /// Holds the bar off its screen (a locked workspace, a page with nothing
+    /// to revise). The keyboard goes with it.
+    func setHidden(_ hidden: Bool) {
+        guard isViewLoaded, view.isHidden != hidden else { return }
+        if hidden { view.endEditing(true) }
+        view.isHidden = hidden
+        view.superview?.setNeedsLayout()
     }
 
     // MARK: - Lifecycle
@@ -343,9 +358,9 @@ final class GuidedControlComposerController: UIViewController {
     }
 
     private func updateStackedPanel(colors: ComposerThemeColors) {
-        let stacks = stacksActionControls
-        stackedPanel.isHidden = !stacks
-        guard stacks else { return }
+        let showsPanel = stacksActionControls && model.isExpanded
+        setStackedPanelHidden(!showsPanel)
+        guard showsPanel else { return }
         let workspace = model.selectedWorkspace
         stackedWorkspaceRow.isHidden = !model.showsWorkspacePicker
         stackedWorkspacePill.apply(
@@ -379,6 +394,25 @@ final class GuidedControlComposerController: UIViewController {
             colors: colors
         )
         stackedThinkingPill.accessibilityValue = level.displayTitle
+    }
+
+    /// The compact bar's panel opens and closes with the field. The flag flips
+    /// at once; only the layout around it animates, and not with Reduce Motion.
+    private func setStackedPanelHidden(_ hidden: Bool) {
+        guard stackedPanel.isHidden != hidden else { return }
+        guard model.configuration.presentation == .compact, view.window != nil,
+              !UIAccessibility.isReduceMotionEnabled else {
+            stackedPanel.isHidden = hidden
+            return
+        }
+        UIView.animate(
+            withDuration: 0.18,
+            delay: 0,
+            options: [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction]
+        ) {
+            self.stackedPanel.isHidden = hidden
+            self.view.superview?.layoutIfNeeded()
+        }
     }
 
     // MARK: - Workspace

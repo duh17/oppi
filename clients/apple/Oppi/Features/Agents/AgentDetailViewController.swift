@@ -2,9 +2,9 @@ import UIKit
 
 /// A saved Agent: its definition, system prompt, Pi session defaults,
 /// resources, launch constraints, and automation. Edit opens the native
-/// editor; the actions menu offers Edit with Oppi and Archive; Start Session
-/// in the bottom bar opens Quick Session with the Agent. Edits go back to the
-/// list through `onUpdated`.
+/// editor; the actions menu offers Archive; Start Session in the bottom bar
+/// opens Quick Session with the Agent; an active Agent carries the compact Oppi
+/// bar to describe a change. Edits go back to the list through `onUpdated`.
 @MainActor
 final class AgentDetailViewController: UIViewController, UICollectionViewDelegate {
     private enum Section: Hashable { case state, definition, prompt, defaults, resources, constraints, automation }
@@ -34,9 +34,9 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     private let nativeEditor = RouterModalPresenter()
     private let iconPicker = RouterModalPresenter()
-    private let revisionSheet = RouterModalPresenter()
     private let definitionReview = RouterModalPresenter()
     private let scheduleSheet = RouterModalPresenter()
+    private let composer: GuidedControlComposerController
 
     private var agent: StoredAgentDefinition? {
         didSet { setNeedsUpdateProperties() }
@@ -60,9 +60,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     private var showsIconPicker = false {
         didSet { setNeedsUpdateProperties() }
     }
-    private var showsRevision = false {
-        didSet { setNeedsUpdateProperties() }
-    }
     private var showsDefinitionReview = false {
         didSet { setNeedsUpdateProperties() }
     }
@@ -75,6 +72,15 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         self.root = root
         self.agentId = agentId
         self.onUpdated = onUpdated
+        composer = GuidedControlComposerController(
+            configuration: GuidedControlComposerConfiguration(
+                domain: .agents,
+                intent: .revise,
+                presentation: .compact,
+                placeholder: "Describe a change…"
+            ),
+            root: root
+        )
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
@@ -103,7 +109,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
     private var connection: ServerConnection { root.coordinator.activeConnection }
     private var presenters: [RouterModalPresenter] {
-        [nativeEditor, iconPicker, revisionSheet, definitionReview, scheduleSheet]
+        [nativeEditor, iconPicker, definitionReview, scheduleSheet]
     }
 
     // MARK: - Lifecycle
@@ -120,6 +126,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
         ControlScreenList.pinFullWidth(collectionView, in: view)
         installDataSource()
+        composer.install(in: self)
         for presenter in presenters { presenter.anchor = self }
         // The icon picker's style follows the size classes.
         registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) { (screen: Self, _) in
@@ -155,14 +162,27 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         cancelLoad()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        composer.insetContent(of: collectionView)
+    }
+
     override func updateProperties() {
         super.updateProperties()
         ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         title = agent?.name ?? "Agent"
         updateBarItems()
+        updateComposer()
         applySnapshot()
         updateModals()
         errorAlert.show(title: "Agent", message: error, from: self) { [weak self] in self?.error = nil }
+    }
+
+    /// Only an active Agent can be revised, as its menu item was only offered then.
+    private func updateComposer() {
+        let revisable = agent.flatMap { $0.status == .active ? $0 : nil }
+        composer.model.updateTarget(id: revisable?.id, name: revisable?.name, path: nil)
+        composer.setHidden(revisable == nil)
     }
 
     private func updateBarItems() {
@@ -171,10 +191,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             setToolbarItemsIfChanged([])
             return
         }
-        let revise = UIAction(title: "Edit with Oppi", image: UIImage(systemName: "text.bubble")) { [weak self] _ in
-            self?.showsRevision = true
-        }
-        revise.accessibilityIdentifier = "agents.detail.revise"
         let archive = UIAction(
             title: "Archive Agent",
             image: UIImage(systemName: "archivebox"),
@@ -183,7 +199,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             self?.archiveAgent()
         }
         archive.accessibilityIdentifier = "agents.detail.archive"
-        actionsItem.menu = UIMenu(children: [revise, archive])
+        actionsItem.menu = UIMenu(children: [archive])
         ControlScreenList.setBarItems(trailing: [actionsItem, editItem], leading: [], on: navigationItem)
         launchItem.isEnabled = !connection.workspaceStore.workspaces.isEmpty && connection.currentServerId != nil
         launchItem.accessibilityLabel = "Start session with \(agent.name)"
@@ -480,22 +496,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             root: root,
             clear: { [weak self] in self?.showsIconPicker = false },
             screen: { AgentHostedScreens.iconPicker(agent, onSaved: saved) }
-        )
-        revisionSheet.update(
-            id: showsRevision && agent != nil ? "revision" : nil,
-            presentation: .sheet.inNavigation(),
-            root: root,
-            clear: { [weak self] in self?.showsRevision = false },
-            screen: {
-                guidedSheet(GuidedControlComposerConfiguration(
-                    domain: .agents,
-                    intent: .revise,
-                    targetId: agent?.id,
-                    targetName: agent?.name,
-                    allowsEmptyRequest: true,
-                    placeholder: "Describe how this Agent should change…"
-                ))
-            }
         )
         definitionReview.update(
             id: showsDefinitionReview && agent != nil ? "definition" : nil,

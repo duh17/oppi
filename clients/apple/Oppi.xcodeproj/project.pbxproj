@@ -842,6 +842,7 @@
 		60ECEB554FF4DAD7E7DB2369 /* ChatSessionRuntimePorts.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD796C7717BE566A02AC026D /* ChatSessionRuntimePorts.swift */; };
 		615D75D6385CD95351E9CB03 /* SessionExtensionContextViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BB895285BA2AF4ADA2B07E3 /* SessionExtensionContextViewController.swift */; };
 		619C6BBDB8B13B424E85DC80 /* SSHTerminalKeyStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC8196AA81E1C38D95822FEF /* SSHTerminalKeyStripView.swift */; };
+		61B308E6EA46BBF21665D93A /* GuidedControlComposerPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 309963D58B6186D8209FD1E4 /* GuidedControlComposerPresentationTests.swift */; };
 		61DAF0C82EB97D2ED546A976 /* SessionStatsParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17D88C7235759410491DD1DA /* SessionStatsParser.swift */; };
 		61F56F7CCF885BDEA2060E62 /* DeltaCoalescer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6205E7DCE312857DDF1F5AE /* DeltaCoalescer.swift */; };
 		621C70F5168DA77571D68A64 /* MermaidParserErrorRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F0FDB1D4069DE3DA87923DF /* MermaidParserErrorRecoveryTests.swift */; };
@@ -2731,6 +2732,7 @@
 		30401B5435814741FA174392 /* StreamingFlickerCaptureUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingFlickerCaptureUITests.swift; sourceTree = "<group>"; };
 		3048498B81612DF39D574CDE /* HorizontalPanPassthroughScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizontalPanPassthroughScrollView.swift; sourceTree = "<group>"; };
 		30702BFCED948B9FDEDA2F87 /* WriteExpandScrollTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WriteExpandScrollTests.swift; sourceTree = "<group>"; };
+		309963D58B6186D8209FD1E4 /* GuidedControlComposerPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidedControlComposerPresentationTests.swift; sourceTree = "<group>"; };
 		30C5F0DCEBFD5781F3A254F4 /* SessionToolOutputAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionToolOutputAccessTests.swift; sourceTree = "<group>"; };
 		30D72CB77E12C80F71163613 /* AppRootEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootEnvironment.swift; sourceTree = "<group>"; };
 		312D7E21D52B471DEFE1AFA9 /* OppiShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OppiShareExtension.entitlements; sourceTree = "<group>"; };
@@ -7371,6 +7373,7 @@
 			isa = PBXGroup;
 			children = (
 				79D2089FD76E60EB66A51CAD /* GuidedControlComposerModelTests.swift */,
+				309963D58B6186D8209FD1E4 /* GuidedControlComposerPresentationTests.swift */,
 				A0B4FC7599C52AD4251C28C5 /* ReviewableControlMarkdownTests.swift */,
 			);
 			path = ControlSessions;
@@ -8851,6 +8854,7 @@
 				4E15EDFA6FC4C072990A0C92 /* GitStatusStoreTests.swift in Sources */,
 				1C0EC3705F9EE6E3AA83BD44 /* GraphLayoutTests.swift in Sources */,
 				88542CBD3DFB05D273DF9921 /* GuidedControlComposerModelTests.swift in Sources */,
+				61B308E6EA46BBF21665D93A /* GuidedControlComposerPresentationTests.swift in Sources */,
 				6ACEE40794CC7008B62463BC /* HTMLDOMElementAnnotationTests.swift in Sources */,
 				679196455572F69DCB554BE1 /* HTMLWebViewReloadTests.swift in Sources */,
 				82A3A48708816246770F20FD /* HardwareKeybindingAdapterTests.swift in Sources */,

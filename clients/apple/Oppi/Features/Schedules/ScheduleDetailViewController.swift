@@ -2,8 +2,8 @@ import UIKit
 
 /// One schedule: what it does, what it runs with, Run Now, the Enabled
 /// switch (or Restore), and its recent runs. Edit opens the native editor;
-/// the actions menu offers Edit with Oppi and Archive. Changes go back to the
-/// list through `onChanged`.
+/// the actions menu offers Archive; the compact Oppi bar describes a change.
+/// Changes go back to the list through `onChanged`.
 @MainActor
 final class ScheduleDetailViewController: UIViewController, UICollectionViewDelegate {
     private enum Section: Hashable { case state, summary, instructions, runWith, actions, history }
@@ -31,8 +31,8 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
     private let actionsItem = UIBarButtonItem()
 
     private let nativeEditor = RouterModalPresenter()
-    private let revisionSheet = RouterModalPresenter()
     private let promptReader = RouterModalPresenter()
+    private let composer: GuidedControlComposerController
 
     private var schedule: AgentSchedule? {
         didSet { setNeedsUpdateProperties() }
@@ -55,9 +55,6 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
     private var showNativeEdit = false {
         didSet { setNeedsUpdateProperties() }
     }
-    private var showRevision = false {
-        didSet { setNeedsUpdateProperties() }
-    }
     private var showPromptReader = false {
         didSet { setNeedsUpdateProperties() }
     }
@@ -68,6 +65,15 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         self.root = root
         self.scheduleId = scheduleId
         self.onChanged = onChanged
+        composer = GuidedControlComposerController(
+            configuration: GuidedControlComposerConfiguration(
+                domain: .schedules,
+                intent: .revise,
+                presentation: .compact,
+                placeholder: "Describe a change…"
+            ),
+            root: root
+        )
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
@@ -106,7 +112,8 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
         ControlScreenList.pinFullWidth(collectionView, in: view)
         installDataSource()
-        for presenter in [nativeEditor, revisionSheet, promptReader] { presenter.anchor = self }
+        composer.install(in: self)
+        for presenter in [nativeEditor, promptReader] { presenter.anchor = self }
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -122,7 +129,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        for presenter in [nativeEditor, revisionSheet, promptReader] { presenter.sync() }
+        for presenter in [nativeEditor, promptReader] { presenter.sync() }
         // An error that arrived while the screen was off screen shows now.
         setNeedsUpdateProperties()
     }
@@ -132,14 +139,28 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         loadTask?.cancel()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        composer.insetContent(of: collectionView)
+    }
+
     override func updateProperties() {
         super.updateProperties()
         ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         title = schedule?.name ?? "Schedule"
         updateBarItems()
+        updateComposer()
         applySnapshot()
         updateModals()
         errorAlert.show(title: "Schedule", message: error, from: self) { [weak self] in self?.error = nil }
+    }
+
+    /// Any loaded schedule can be revised, archived or not, until a change to
+    /// it is in flight, as its menu item was.
+    private func updateComposer() {
+        composer.model.updateTarget(id: schedule?.id, name: schedule?.name, path: nil)
+        composer.model.isDisabled = isMutating
+        composer.setHidden(schedule == nil)
     }
 
     private func updateBarItems() {
@@ -148,34 +169,22 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
             return
         }
         editItem.isEnabled = !isMutating
-        let disabled: UIMenuElement.Attributes = isMutating ? .disabled : []
-        let editWithOppi = UIAction(
-            title: "Edit with Oppi",
-            image: UIImage(systemName: "text.bubble"),
-            attributes: disabled
+        // An archived schedule has only Restore (a row) and the Oppi bar.
+        guard schedule.status != .archived else {
+            ControlScreenList.setBarItems(trailing: [], leading: [], on: navigationItem)
+            return
+        }
+        let archive = UIAction(
+            title: "Archive",
+            image: UIImage(systemName: "archivebox"),
+            attributes: isMutating ? [.disabled, .destructive] : .destructive
         ) { [weak self] _ in
-            self?.showRevision = true
+            self?.confirmArchive()
         }
-        editWithOppi.accessibilityIdentifier = "schedule.detail.edit"
-        var children: [UIMenuElement] = [editWithOppi]
-        if schedule.status != .archived {
-            let archive = UIAction(
-                title: "Archive",
-                image: UIImage(systemName: "archivebox"),
-                attributes: disabled.union(.destructive)
-            ) { [weak self] _ in
-                self?.confirmArchive()
-            }
-            archive.accessibilityIdentifier = "schedule.detail.archive"
-            children.append(archive)
-        }
-        actionsItem.menu = UIMenu(children: children)
+        archive.accessibilityIdentifier = "schedule.detail.archive"
+        actionsItem.menu = UIMenu(children: [archive])
         // Native Edit beside the actions menu, as on an Agent's detail.
-        ControlScreenList.setBarItems(
-            trailing: schedule.status == .archived ? [actionsItem] : [actionsItem, editItem],
-            leading: [],
-            on: navigationItem
-        )
+        ControlScreenList.setBarItems(trailing: [actionsItem, editItem], leading: [], on: navigationItem)
     }
 
     // MARK: - List
@@ -493,27 +502,6 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
                 ScheduleHostedScreens.nativeEdit(schedule) { [weak self] updated, summary in
                     self?.schedule = updated
                     self?.onChanged(summary)
-                }
-            }
-        )
-        revisionSheet.update(
-            id: showRevision && schedule != nil ? "revision" : nil,
-            presentation: .sheet.inNavigation(),
-            root: root,
-            clear: { [weak self] in self?.showRevision = false },
-            screen: { [root] in
-                .controller {
-                    GuidedControlSessionViewController(
-                        configuration: GuidedControlComposerConfiguration(
-                            domain: .schedules,
-                            intent: .revise,
-                            targetId: schedule?.id,
-                            targetName: schedule?.name,
-                            allowsEmptyRequest: true,
-                            placeholder: "Describe how this Schedule should change…"
-                        ),
-                        root: root
-                    )
                 }
             }
         )

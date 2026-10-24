@@ -1,12 +1,12 @@
 import UIKit
 
 /// Pi: the server's global Pi configuration. Its system prompt (read it, or
-/// read and comment on SYSTEM.md), its tools (a pushed page), and a guided
-/// session that edits SYSTEM.md.
+/// read and comment on SYSTEM.md), its tools (a pushed page), and the compact
+/// Oppi bar, which starts a guided session that edits SYSTEM.md.
 @MainActor
 final class PiAgentDetailViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case identity, prompt, tools, edit }
-    private enum Item: Hashable { case identity, file, prompt, tools, edit }
+    private enum Section: Hashable { case identity, prompt, tools }
+    private enum Item: Hashable { case identity, file, prompt, tools }
 
     private let root: AppRootEnvironment
     private let collectionView = ControlScreenList.makeCollectionView()
@@ -15,17 +15,14 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     private let tools = PiToolsEditor()
     private let errorAlert = ControlErrorAlert()
 
-    private let guidedSheet = RouterModalPresenter()
     private let fileReview = RouterModalPresenter()
     private let defaultPromptViewer = RouterModalPresenter()
+    private let composer: GuidedControlComposerController
 
     private var prompt: PiSystemPromptSnapshot? {
         didSet { setNeedsUpdateProperties() }
     }
     private var isLoading = false {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var showsSystemPromptSession = false {
         didSet { setNeedsUpdateProperties() }
     }
     private var showsFilePromptReview = false {
@@ -38,6 +35,16 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
 
     init(root: AppRootEnvironment) {
         self.root = root
+        composer = GuidedControlComposerController(
+            configuration: GuidedControlComposerConfiguration(
+                domain: .agents,
+                intent: .revise,
+                presentation: .compact,
+                targetName: "Pi global configuration",
+                placeholder: "Describe a change…"
+            ),
+            root: root
+        )
         super.init(nibName: nil, bundle: nil)
         traitOverrides.appRootEnvironment = root
         title = "Pi"
@@ -64,7 +71,8 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
         ControlScreenList.pinFullWidth(collectionView, in: view)
         installDataSource()
-        for presenter in [guidedSheet, fileReview, defaultPromptViewer] { presenter.anchor = self }
+        composer.install(in: self)
+        for presenter in [fileReview, defaultPromptViewer] { presenter.anchor = self }
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -82,7 +90,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        for presenter in [guidedSheet, fileReview, defaultPromptViewer] { presenter.sync() }
+        for presenter in [fileReview, defaultPromptViewer] { presenter.sync() }
         // An error that arrived while the screen was off screen shows now.
         setNeedsUpdateProperties()
     }
@@ -92,9 +100,16 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         loadTask?.cancel()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        composer.insetContent(of: collectionView)
+    }
+
     override func updateProperties() {
         super.updateProperties()
         ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        // Only a SYSTEM.md that exists is a host file to name.
+        composer.model.updateTarget(id: nil, name: "Pi global configuration", path: prompt?.resolvedPath)
         _ = tools.defaultTools
         applySnapshot()
         updateModals()
@@ -106,11 +121,10 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     private func applySnapshot() {
         guard let dataSource else { return }
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.identity, .prompt, .tools, .edit])
+        snapshot.appendSections([.identity, .prompt, .tools])
         snapshot.appendItems([.identity], toSection: .identity)
         snapshot.appendItems([.file, .prompt], toSection: .prompt)
         snapshot.appendItems([.tools], toSection: .tools)
-        snapshot.appendItems([.edit], toSection: .edit)
         snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
         dataSource.apply(snapshot, animatingDifferences: false)
     }
@@ -133,8 +147,6 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             switch self?.dataSource?.sectionIdentifier(for: indexPath.section) {
             case .tools:
                 content.text = "Chooses Pi's built-in tools and optional tools such as codemode. Extension tools stay enabled."
-            case .edit:
-                content.text = "Opens a Pi Control session so Pi can inspect, create, or edit the global file. Pi is not stored as a saved Agent."
             default:
                 content.text = nil
             }
@@ -226,46 +238,12 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             content.secondaryTextProperties.color = UIColor(palette.comment)
             cell.contentConfiguration = content
             cell.accessories = [.disclosureIndicator()]
-        case .edit:
-            ControlScreenList.buttonRow(cell, identifier: "agents.pi.editSystemPrompt", label: "Edit SYSTEM.md with Pi") { [weak self] in
-                self?.showsSystemPromptSession = true
-            }
-            var content = UIListContentConfiguration.cell()
-            content.text = "Edit SYSTEM.md with Pi"
-            content.image = UIImage(systemName: "text.bubble")
-            content.textProperties.color = UIColor(palette.blue)
-            content.imageProperties.tintColor = UIColor(palette.blue)
-            cell.contentConfiguration = content
         }
     }
 
     // MARK: - Modals
 
     private func updateModals() {
-        // Only a SYSTEM.md that exists is a host file to name.
-        let systemPromptPath = prompt?.resolvedPath
-        guidedSheet.update(
-            id: showsSystemPromptSession ? "system-prompt-session" : nil,
-            presentation: .sheet.inNavigation(),
-            root: root,
-            clear: { [weak self] in self?.showsSystemPromptSession = false },
-            screen: { [root] in
-                .controller {
-                    GuidedControlSessionViewController(
-                        configuration: GuidedControlComposerConfiguration(
-                            domain: .agents,
-                            intent: .revise,
-                            targetName: "Pi global configuration",
-                            targetPath: systemPromptPath,
-                            initialRequest: "Help me create or edit Pi's global system prompt.",
-                            allowsEmptyRequest: false,
-                            placeholder: "Describe how Pi's global system prompt should change…"
-                        ),
-                        root: root
-                    )
-                }
-            }
-        )
         let prompt = prompt
         fileReview.update(
             id: showsFilePromptReview && prompt?.resolvedPath != nil ? "file-prompt" : nil,

@@ -152,7 +152,7 @@ struct ServerExtensionListPresentationTests {
         #expect(rendered?.state == .on)
     }
 
-    @Test func editWithOppiNeedsAUserOwnedEntryFile() {
+    @Test func theOppiBarNeedsAUserOwnedEntryFile() {
         let path = "/Users/chen/.pi/agent/extensions/workflow.ts"
 
         #expect(ServerExtensionListPresentation.editablePath(

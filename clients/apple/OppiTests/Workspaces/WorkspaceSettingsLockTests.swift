@@ -4,8 +4,8 @@ import UIKit
 
 /// A scoped lock that engages while Workspace Settings is open (leave and
 /// return with App Lock off) must leave nothing of the workspace usable: not
-/// its Delete confirmation, not its guided composer, and no action that runs
-/// after one of them.
+/// its Delete confirmation, not its Oppi bar, and no action that runs after
+/// one of them.
 @MainActor
 @Suite("Workspace Settings lock", .serialized)
 struct WorkspaceSettingsLockTests {
@@ -158,17 +158,46 @@ struct WorkspaceSettingsLockTests {
 
     // MARK: Relock
 
-    @Test func relockingClosesTheGuidedSheet() async throws {
+    /// Whether `view` is on screen: it and every ancestor are visible.
+    private func isShown(_ view: UIView) -> Bool {
+        var current: UIView? = view
+        while let view = current {
+            if view.isHidden { return false }
+            current = view.superview
+        }
+        return true
+    }
+
+    @Test func theOppiBarShowsOnAnUnlockedWorkspaceAndRelockHidesIt() async throws {
         let screen = try mount(locked: false)
         defer { close(screen) }
-        try await tap("workspace.edit.editWithOppi", on: screen)
-        try await waitUntil { screen.controller.presentedViewController != nil }
-        #expect(screen.controller.presentedViewController != nil, "Edit with Oppi did not open the guided sheet")
+        screen.window.layoutIfNeeded()
+        let input = try #require(find("chat.input", in: screen.controller.view), "the bar did not appear")
+        #expect(isShown(input))
+        #expect(find("workspace.edit.editWithOppi", in: screen.controller.view) == nil)
 
         screen.locks.lock(Self.scope)
-        try await waitUntil { screen.controller.presentedViewController == nil }
+        try await waitUntil { !isShown(input) }
 
-        #expect(screen.controller.presentedViewController == nil, "a relock must close the guided sheet")
+        #expect(!isShown(input), "a relock must take the bar off screen")
+    }
+
+    @Test func aLockedWorkspaceNeverShowsTheOppiBar() throws {
+        let screen = try mount(locked: true)
+        defer { close(screen) }
+        screen.window.layoutIfNeeded()
+
+        let input = find("chat.input", in: screen.controller.view)
+        #expect(input.map(isShown) != true, "the lock cover must not share the screen with the bar")
+    }
+
+    @Test func theOppiBarNeedsAnAPIClient() throws {
+        let screen = try mount(locked: false, withAPIClient: false)
+        defer { close(screen) }
+        screen.window.layoutIfNeeded()
+
+        let input = find("chat.input", in: screen.controller.view)
+        #expect(input.map(isShown) != true, "an offline server has nothing to start a session on")
     }
 
     @Test func relockingClosesTheDeleteConfirmation() async throws {
