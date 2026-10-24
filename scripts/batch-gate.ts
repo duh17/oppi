@@ -16,6 +16,11 @@
 //   OppiUITests/<Suite>[/<test>]    UI test filter; one `-scheme Oppi` run per --profile
 //                                   (iphone, ipad, duo; default iphone), profiles in parallel
 //   OppiE2ETests/<Suite>[/<test>]   paired-server E2E filter (clients/apple/scripts/e2e.sh --native)
+//   <Suite>[/<test>]                a bare iOS selector: runs as <Target>/<Suite>[/<test>] for the one
+//                                   test target (OppiTests, OppiUITests, OppiE2ETests) that declares
+//                                   <Suite>; the gate logs the resolution. Declared in no target, or
+//                                   in several (QAVerificationSupport is in both UI and E2E), is an
+//                                   error that lists the prefixed forms to choose from.
 //   e2e-group:<name>                an E2E group (clients/apple/scripts/e2e.sh --group <name>)
 //   server/tests/<file>.test.ts     a server Vitest file (the `server/` prefix is optional)
 // Anything else fails the gate: a typo must not pass as "nothing to run". So does a suite
@@ -33,7 +38,8 @@ type Lane = { name: string; steps: Step[] };
 
 const PROFILES = new Set(["iphone", "ipad", "duo"]);
 
-export type Plan = { lanes: Lane[]; errors: string[] };
+/** `resolutions`: one line per bare iOS selector, naming the prefixed filter it became. */
+export type Plan = { lanes: Lane[]; errors: string[]; resolutions: string[] };
 
 /** `functionsOf`: functions declared in the files that declare or extend each type. */
 export type Declarations = { types: Set<string>; functionsOf: Map<string, Set<string>> };
@@ -60,6 +66,10 @@ const TARGET_SOURCES: Record<string, string[]> = {
   OppiUITests: ["OppiUITests", "QAVerificationSupport"],
   OppiE2ETests: ["OppiE2ETests", "QAVerificationSupport"],
 };
+
+/** A `<Suite>[/<test>]` selector with no target prefix; server paths and target names are not suites. */
+const BARE_IOS_SELECTOR = /^[A-Za-z_]\w*(?:\/[\w.()-]+)*$/;
+const NOT_BARE = new Set(["server", "tests", ...Object.keys(TARGET_SOURCES)]);
 
 /**
  * Why a `Target/Suite[/Nested...][/test]` filter names nothing the target declares, or null.
@@ -99,22 +109,36 @@ export function planGate(
   const e2e: string[] = [];
   const groups: string[] = [];
   const server: string[] = [];
+  const resolutions: string[] = [];
+  const known = new Map<string, Declarations>();
+  const declared = (target: string) => {
+    if (!known.has(target)) known.set(target, declaredIn(target));
+    return known.get(target)!;
+  };
   for (const test of tests) {
     if (/^OppiTests(?:\/[\w.()-]+)+$/.test(test)) unit.push(test);
     else if (/^OppiUITests(?:\/[\w.()-]+)+$/.test(test)) ui.push(test);
     else if (/^OppiE2ETests(?:\/[\w.()-]+)+$/.test(test)) e2e.push(test);
     else if (/^e2e-group:[\w-]+$/.test(test)) groups.push(test.slice("e2e-group:".length));
     else if (/^(?:server\/)?tests\/[\w./-]+\.test\.ts$/.test(test) && !test.includes("..")) server.push(test.replace(/^server\//, ""));
-    else errors.push(`unknown --test '${test}'`);
+    else if (BARE_IOS_SELECTOR.test(test) && !NOT_BARE.has(test.split("/")[0])) {
+      // A bare `<Suite>[/<test>]` names the one test target that declares <Suite>.
+      const suite = test.split("/")[0];
+      const owners = Object.keys(TARGET_SOURCES).filter((target) => declared(target).types.has(suite));
+      if (owners.length === 0) errors.push(`unknown --test '${test}': no test target declares ${suite}`);
+      else if (owners.length > 1) errors.push(`ambiguous --test '${test}': declared in ${owners.length} test targets; use ${owners.map((target) => `'${target}/${test}'`).join(" or ")}`);
+      else {
+        const filter = `${owners[0]}/${test}`;
+        resolutions.push(`--test '${test}' resolved to ${filter}`);
+        (owners[0] === "OppiTests" ? unit : owners[0] === "OppiUITests" ? ui : e2e).push(filter);
+      }
+    } else errors.push(`unknown --test '${test}'`);
   }
   for (const profile of profiles) {
     if (!PROFILES.has(profile)) errors.push(`unknown --profile '${profile}' (iphone, ipad, duo)`);
   }
-  const known = new Map<string, Declarations>();
   for (const filter of [...unit, ...ui, ...e2e]) {
-    const target = filter.split("/")[0];
-    if (!known.has(target)) known.set(target, declaredIn(target));
-    const problem = undeclaredFilter(filter, known.get(target)!);
+    const problem = undeclaredFilter(filter, declared(filter.split("/")[0]));
     if (problem) errors.push(`--test '${filter}': ${problem}`);
   }
   const apple = join(worktree, "clients", "apple");
@@ -165,7 +189,7 @@ export function planGate(
       steps: e2eArgs.map((args) => ({ cwd: worktree, command: e2eScript, args, env: pinned, requireTests: true })),
     });
   }
-  return { lanes, errors };
+  return { lanes, errors, resolutions };
 }
 
 /** Tests a finished sim-pool run executed, from the log its summary artifact names. */
@@ -271,6 +295,7 @@ async function main(argv: string[]): Promise<number> {
     return 2;
   }
   const plan = planGate(worktree, tests, profiles);
+  for (const line of plan.resolutions) console.log(`[batch-gate] ${line}`);
   if (plan.errors.length > 0) {
     for (const error of plan.errors) console.error(`[batch-gate] ${error}`);
     return 2;

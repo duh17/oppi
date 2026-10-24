@@ -39,10 +39,11 @@ A merge queue or CI that lands batches of commits can gate a batch with two repo
    - `OppiTests/<Suite>[/<test>]`: one OppiUnitTests run on the iPhone pool.
    - `OppiUITests/<Suite>[/<test>]`: UI tests per `--profile`.
    - `OppiE2ETests/<Suite>[/<test>]`: paired-server E2E through `clients/apple/scripts/e2e.sh --native`.
+   - `<Suite>[/<test>]` (bare, no target prefix): runs as the prefixed form for the one test target that declares `<Suite>`, and the gate logs `--test '<Suite>' resolved to <Target>/<Suite>`. A suite no target declares is an error; a suite several targets declare (types in `QAVerificationSupport` are compiled into both UI and E2E) is an ambiguity error listing the prefixed forms to pick from.
    - `e2e-group:<name>`: an E2E group through `clients/apple/scripts/e2e.sh --group <name>`.
    - `server/tests/<file>.test.ts`: a server Vitest file (the `server/` prefix is optional).
 
-   Exit codes: `0` every lane passed or no suites were named; `1` a lane failed (every lane runs, so one gate reports every red suite); `2` an unknown selector or profile, a suite the test target does not declare, an unknown argument, or a worktree that is not an Oppi checkout; `143` stopped by SIGTERM or SIGINT; the failing exit code of the `server/scripts/ensure-installed-deps.mjs` sync that runs before any lane. A named iOS or E2E run that executes zero tests fails the lane.
+   Exit codes: `0` every lane passed or no suites were named; `1` a lane failed (every lane runs, so one gate reports every red suite); `2` an unknown or ambiguous selector, an unknown profile, a suite the test target does not declare, an unknown argument, or a worktree that is not an Oppi checkout; `143` stopped by SIGTERM or SIGINT; the failing exit code of the `server/scripts/ensure-installed-deps.mjs` sync that runs before any lane. A named iOS or E2E run that executes zero tests fails the lane.
 
 Each sim-pool run writes its log and a `*.summary.json` under `clients/apple/.build/logs/` of the checkout it ran in (`pool-<slot>-<stamp>.summary.json`) and prints `Artifact: <path>`. Read the summary and log before rerunning a red lane. The queue's own landing, bisecting, and cleanup are outside this repository.
 

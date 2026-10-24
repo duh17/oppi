@@ -6,8 +6,9 @@ import { declarations, executedTests, planGate } from "./batch-gate";
 
 const sources: Record<string, string[]> = {
   OppiTests: ["struct FooTests { @Test func a() {} }\n", "struct BarTests { @Test func baz() {} }\n"],
-  OppiUITests: ["final class ChatRoutesUITests: XCTestCase { func testOpen() {} }\n"],
-  OppiE2ETests: ["final class ChatE2ETests: E2ETestCase {}\n", "extension ChatE2ETests { func testSend() {} }\n"],
+  // SharedSupport stands in for QAVerificationSupport, which both UI and E2E targets compile.
+  OppiUITests: ["final class ChatRoutesUITests: XCTestCase { func testOpen() {} }\n", "struct SharedSupport {}\n"],
+  OppiE2ETests: ["final class ChatE2ETests: E2ETestCase {}\n", "extension ChatE2ETests { func testSend() {} }\n", "struct SharedSupport {}\n"],
 };
 const types = (target: string) => declarations(sources[target] ?? []);
 
@@ -34,11 +35,42 @@ describe("batch gate plan", () => {
     ]);
   });
 
+  test("a bare suite plans exactly like its prefixed form, on the one target that declares it", () => {
+    const bare = planGate("/wt", ["FooTests", "BarTests/baz()", "ChatRoutesUITests", "ChatE2ETests/testSend"], ["iphone", "ipad"], types);
+    const prefixed = planGate(
+      "/wt",
+      ["OppiTests/FooTests", "OppiTests/BarTests/baz()", "OppiUITests/ChatRoutesUITests", "OppiE2ETests/ChatE2ETests/testSend"],
+      ["iphone", "ipad"],
+      types,
+    );
+    expect(bare.errors).toEqual([]);
+    expect(bare.lanes).toEqual(prefixed.lanes);
+    expect(bare.resolutions).toEqual([
+      "--test 'FooTests' resolved to OppiTests/FooTests",
+      "--test 'BarTests/baz()' resolved to OppiTests/BarTests/baz()",
+      "--test 'ChatRoutesUITests' resolved to OppiUITests/ChatRoutesUITests",
+      "--test 'ChatE2ETests/testSend' resolved to OppiE2ETests/ChatE2ETests/testSend",
+    ]);
+    expect(prefixed.resolutions).toEqual([]);
+  });
+
+  test("a bare suite no target declares, or two targets declare, or with an undeclared test, is an error", () => {
+    const plan = planGate("/wt", ["NoSuchTests", "NoSuchTests/a", "SharedSupport", "FooTests/baz()", "server", "OppiTests"], [], types);
+    expect(plan.errors).toEqual([
+      "unknown --test 'NoSuchTests': no test target declares NoSuchTests",
+      "unknown --test 'NoSuchTests/a': no test target declares NoSuchTests",
+      "ambiguous --test 'SharedSupport': declared in 2 test targets; use 'OppiUITests/SharedSupport' or 'OppiE2ETests/SharedSupport'",
+      "unknown --test 'server'",
+      "unknown --test 'OppiTests'",
+      "--test 'OppiTests/FooTests/baz()': FooTests declares no test baz()",
+    ]);
+  });
+
   test("an unknown test, an undeclared suite, or an unknown profile is an error, not an empty run", () => {
     const plan = planGate(
       "/wt",
       [
-        "ChatRoutesUITests",
+        "ChatRoutesUITest",
         "server/tests/../../etc.test.ts",
         "OppiUITests/ChatRouteUITests",
         "OppiTests/FooTest",
@@ -50,7 +82,7 @@ describe("batch gate plan", () => {
       types,
     );
     expect(plan.errors).toEqual([
-      "unknown --test 'ChatRoutesUITests'",
+      "unknown --test 'ChatRoutesUITest': no test target declares ChatRoutesUITest",
       "unknown --test 'server/tests/../../etc.test.ts'",
       "unknown --profile 'watch' (iphone, ipad, duo)",
       "--test 'OppiTests/FooTest': OppiTests declares no type FooTest",
