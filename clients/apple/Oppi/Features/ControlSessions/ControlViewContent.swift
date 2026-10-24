@@ -34,6 +34,10 @@ private final class ControlViewContentView: UIView, UIContentView {
         let hug = heightAnchor.constraint(equalToConstant: 0)
         hug.priority = UILayoutPriority(UILayoutPriority.fittingSizeLevel.rawValue + 1)
         hug.isActive = true
+        // Take the list cell's own horizontal margins, the inset its text rows
+        // and separators use, instead of this view's default 8 pt.
+        directionalLayoutMargins = .zero
+        preservesSuperviewLayoutMargins = true
         rebuild()
     }
 

@@ -72,6 +72,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
         didSet { setNeedsUpdateProperties() }
     }
     private var state: ViewState?
+    private var changedRows = ChangedRows<Item>()
     private var shown: Shown?
     private var connectTask: Task<Void, Never>?
 
@@ -162,9 +163,11 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
 
         guard let summary, let store else {
             state = nil
-            show(connection == nil || isLoading
+            // Unavailable only after a load failed: a load that never finished
+            // (cancelled as the screen left) is still loading when it returns.
+            show(connection == nil || isLoading || loadError == nil
                 ? .loading
-                : .unavailable(loadError ?? "The extension could not be loaded."))
+                : .unavailable(loadError ?? ""))
             updateModals()
             return
         }
@@ -187,10 +190,9 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
     // MARK: - Content
 
     private func show(_ next: Shown) {
-        let changed = shown != next
         shown = next
         collectionView.isHidden = next != .list
-        guard changed else { return }
+        // Rebuilt on every pass, so a theme change recolors these states.
         switch next {
         case .list:
             contentUnavailableConfiguration = nil
@@ -257,9 +259,36 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
             snapshot.appendSections([.commands])
             snapshot.appendItems(Self.unique(commands).map(Item.command), toSection: .commands)
         }
+        // Only the rows whose inputs changed: a replaced Enabled switch would
+        // drop a drag in progress, and a replaced text view its selection.
         let current = dataSource.snapshot()
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { current.indexOfItem($0) != nil })
+        let themeID = root.themeStore.activeThemeID
+        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { rowInputs($0, state: state, themeID: themeID) }
+        snapshot.reconfigureItems(changed.filter { current.indexOfItem($0) != nil })
         dataSource.apply(snapshot, animatingDifferences: false)
+    }
+
+    /// What a row draws from, besides its own identity.
+    private func rowInputs(_ item: Item, state: ViewState, themeID: ThemeID) -> AnyHashable {
+        let summary = state.summary
+        let inputs: [AnyHashable]
+        switch item {
+        case .title:
+            inputs = [summary.name, summary.description]
+        case .enabled:
+            inputs = [summary.name, summary.state, state.isPending, state.mutationsAllowed, state.serverName]
+        case .mutationError:
+            inputs = [summary.name, state.serverName, state.mutationError, mutationVerb]
+        case .detail:
+            inputs = [summary.packageName, summary.provenance.label, summary.kind]
+        case .status:
+            inputs = [summary.state]
+        case .loadError:
+            inputs = [summary.loadError ?? state.loadError]
+        case .editWithOppi, .warning, .retry, .loadingContributions, .tool, .command:
+            inputs = []
+        }
+        return [AnyHashable(themeID), AnyHashable(inputs)]
     }
 
     private static func unique(_ values: [String]) -> [String] {
@@ -439,35 +468,32 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
 
     private func updateModals() {
         let editPath = state?.editPath
-        let isOpen = showsEditSheet && editPath != nil && connection != nil
+        let name = state?.summary.name
+        var scoped: (@MainActor () -> ServerConnection)?
+        if let connection { scoped = { connection } }
         guidedSheet.update(
-            id: isOpen ? "edit" : nil,
+            id: showsEditSheet && editPath != nil && connection != nil ? "edit" : nil,
             presentation: .sheet.inNavigation(),
             root: root,
             clear: { [weak self] in self?.showsEditSheet = false },
-            screen: { [weak self] in
-                guard let self, let sheet = makeEditSheet() else { return .controller { UIViewController() } }
-                return .controller { sheet }
+            screen: { [root] in
+                .controller {
+                    // The same composer the chat's Context panel opens, on this server.
+                    GuidedControlSessionViewController(
+                        configuration: GuidedControlComposerConfiguration(
+                            domain: .extensions,
+                            intent: .revise,
+                            targetId: editPath,
+                            targetName: name,
+                            targetPath: editPath,
+                            allowsEmptyRequest: true,
+                            placeholder: "Describe how this extension should change…"
+                        ),
+                        root: root,
+                        connection: scoped
+                    )
+                }
             }
-        )
-    }
-
-    /// The same composer the chat's Context panel opens, on this server.
-    private func makeEditSheet() -> GuidedControlSessionViewController? {
-        guard let path = state?.editPath, let name = state?.summary.name, let connection else { return nil }
-        let scoped: @MainActor () -> ServerConnection = { connection }
-        return GuidedControlSessionViewController(
-            configuration: GuidedControlComposerConfiguration(
-                domain: .extensions,
-                intent: .revise,
-                targetId: path,
-                targetName: name,
-                targetPath: path,
-                allowsEmptyRequest: true,
-                placeholder: "Describe how this extension should change…"
-            ),
-            root: root,
-            connection: scoped
         )
     }
 
