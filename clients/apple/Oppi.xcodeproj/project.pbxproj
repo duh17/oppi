@@ -116,6 +116,7 @@
 		0E02E9DC1FBE67BE5319F6B1 /* WorkspaceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9870CBFC764EFE29F4F0BF8F /* WorkspaceStoreTests.swift */; };
 		0E1F66340C8D67A6E38B323A /* MermaidSemanticSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE47E8A25BF3AB9D9C7D62F3 /* MermaidSemanticSource.swift */; };
 		0E28D2A65A91ACC4AA1E63C1 /* TrailingSidePanelPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF85E4D412BDDB553B3E8AB2 /* TrailingSidePanelPolicy.swift */; };
+		0E37C02303339709D6418EC9 /* PairingApprovalWaitingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 198E5377909A9A872CEFFA0A /* PairingApprovalWaitingView.swift */; };
 		0E51EBE98503A654D3E46CC0 /* SessionInboxComposeChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C85F1AFB4916830FE3F5B125 /* SessionInboxComposeChromeTests.swift */; };
 		0E7055AE0B174FE46077CAC8 /* WorkspaceHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 665B0A72A85F2881EDAE397D /* WorkspaceHomeView.swift */; };
 		0E8059FE9636BE583FFFCD1F /* DragSelectStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3557FB778ED29765D9132B0 /* DragSelectStateTests.swift */; };
@@ -766,7 +767,6 @@
 		57D5D67A3FDCD00CA371AB7D /* MacCurrentFileRequestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4C533A0A9FC70FD67150457 /* MacCurrentFileRequestTests.swift */; };
 		57F7F033DC7D4192C71D61A1 /* StreamSessionTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89C4F8507B23AFD333A4FAEB /* StreamSessionTestSupport.swift */; };
 		5800988D2F232367B147EECF /* FullScreenMarkdownAsyncRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0819880F1B11944637823460 /* FullScreenMarkdownAsyncRenderTests.swift */; };
-		584897A9170F89C0E009DE79 /* WaitingForPairingApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09AEFAEA14068D4CADFAC242 /* WaitingForPairingApprovalView.swift */; };
 		58577F44F9DE7543079ACCC9 /* ServerMessageEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27EC22F73FBBAADDEA1F10A3 /* ServerMessageEffects.swift */; };
 		588132808E548DBD8E7AA812 /* MacMarkdownStreamingParseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5917C23928FFB3335BB6A65B /* MacMarkdownStreamingParseTests.swift */; };
 		58991E893FDFDEEF5B23011A /* QuickSessionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4D423B313FD3B38A1DC168A /* QuickSessionPresentation.swift */; };
@@ -2467,7 +2467,6 @@
 		0982006DDDB46D22C9B4C3F4 /* Date+Relative.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Date+Relative.swift"; sourceTree = "<group>"; };
 		0996499F6180DAE543025C8C /* EmbeddedFileViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmbeddedFileViewerView.swift; sourceTree = "<group>"; };
 		09AE7A4DECD96D8C38F51E1A /* DailyCostChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyCostChartView.swift; sourceTree = "<group>"; };
-		09AEFAEA14068D4CADFAC242 /* WaitingForPairingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitingForPairingApprovalView.swift; sourceTree = "<group>"; };
 		09BE6426563AC7873C7CAC97 /* ChatSessionManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionManagerTests.swift; sourceTree = "<group>"; };
 		09BED87348476D09679D6C9F /* WorkspaceSessionListModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSessionListModelsTests.swift; sourceTree = "<group>"; };
 		09EEB3E6A8D16D65A8F67759 /* TimelinePerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelinePerfBench.swift; sourceTree = "<group>"; };
@@ -2590,6 +2589,7 @@
 		188D7EFDBEE5BBE8BC991CE7 /* HarnessFrameIntervalRecorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessFrameIntervalRecorderTests.swift; sourceTree = "<group>"; };
 		18DB8DD1CB9BC1666D7FEE28 /* MacComposerAutocompleteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacComposerAutocompleteTests.swift; sourceTree = "<group>"; };
 		1902F5B6A921600AE703FCD0 /* WorkspaceFileURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileURLTests.swift; sourceTree = "<group>"; };
+		198E5377909A9A872CEFFA0A /* PairingApprovalWaitingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingApprovalWaitingView.swift; sourceTree = "<group>"; };
 		19C7B9DE35DBC2463800BC78 /* JSONValueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValueTests.swift; sourceTree = "<group>"; };
 		19DF6B26AFB30174BDB64DEE /* InAppBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppBrowserView.swift; sourceTree = "<group>"; };
 		1A115EFD70539A8D0DFDE2B6 /* MacServerHealthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerHealthView.swift; sourceTree = "<group>"; };
@@ -6391,9 +6391,9 @@
 				AB14A9EDB6FA08C5C69048DA /* InviteBootstrapService.swift */,
 				0521AEE53C87ABF58F5EF45C /* ManualEntryViewController.swift */,
 				0FAC7FBDC12DA32393837CBA /* OnboardingViewController.swift */,
+				198E5377909A9A872CEFFA0A /* PairingApprovalWaitingView.swift */,
 				0AB4594A6D4B80B2F368AA3B /* PairingDeviceName.swift */,
 				0DD77BDE6A67F9FFC42DD099 /* QRScannerView.swift */,
-				09AEFAEA14068D4CADFAC242 /* WaitingForPairingApprovalView.swift */,
 				32C1DCD6795B5C6E5C5595F3 /* WhatsNewView.swift */,
 			);
 			path = Onboarding;
@@ -9846,6 +9846,7 @@
 				70F55877EEB613BEE524DECB /* PairedServerKeychain.swift in Sources */,
 				160473910083A84E91185548 /* PairingApprovalController.swift in Sources */,
 				7BC8DD484D28885829C5C25D /* PairingApprovalPrompt.swift in Sources */,
+				0E37C02303339709D6418EC9 /* PairingApprovalWaitingView.swift in Sources */,
 				55A2B884E1915CCA5566515C /* PairingDeviceName.swift in Sources */,
 				5952C50C9577BFC487250201 /* PairingEnrollment.swift in Sources */,
 				00369548518EFEA30CF23956 /* PaperMarkupCanvasHostController.swift in Sources */,
@@ -10230,7 +10231,6 @@
 				9BBF87593AB9F1DA68356D71 /* VoiceSpectrumAnalyzer.swift in Sources */,
 				1D2799A1190943B81A0540B9 /* VoiceTimelinePresentationAdapter.swift in Sources */,
 				D371FE38D3B3E28D84ED1961 /* VoiceTranscriptionProvider.swift in Sources */,
-				584897A9170F89C0E009DE79 /* WaitingForPairingApprovalView.swift in Sources */,
 				74CA2220B09F59441A6C3977 /* WebSocketClient.swift in Sources */,
 				7563911568A2D535119774C5 /* WebSocketFrameCodec.swift in Sources */,
 				9BCB3A7E528CD1AEEC1F6740 /* WebSocketRecoveryPolicy.swift in Sources */,

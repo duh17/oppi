@@ -320,83 +320,37 @@ private final class SetupRowTextElement: UIAccessibilityElement {
     }
 }
 
-/// An enrollment waiting on the user's other device: a spinner, what is
-/// happening, a once-a-second countdown, and Cancel. The UIKit form of
-/// `WaitingForPairingApprovalView`, with the same identifiers.
+/// An enrollment waiting on the user's other device. A thin list cell around
+/// the shared `PairingApprovalWaitingView`, which owns the chrome, the
+/// countdown timer, and the `pairing.waiting.*` identifiers.
 final class PairingWaitRowCell: UICollectionViewListCell {
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    private let messageLabel = UILabel()
-    private let countdownLabel = UILabel()
-    private let cancelButton = UIButton(type: .system)
-    private var cancelAction: UIAction?
-    private var timer: Timer?
-    private var expiresAt: Int64 = 0
+    private let waitingView = PairingApprovalWaitingView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        let stack = UIStackView(arrangedSubviews: [spinner, messageLabel, countdownLabel, cancelButton])
-        stack.axis = .vertical
-        stack.alignment = .center
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(stack)
-        spinner.startAnimating()
-        messageLabel.text = String(localized: "Waiting for approval on your other device")
-        messageLabel.font = .preferredFont(forTextStyle: .headline)
-        messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.numberOfLines = 0
-        messageLabel.textAlignment = .center
-        messageLabel.accessibilityIdentifier = "pairing.waiting.message"
-        countdownLabel.font = .preferredFont(forTextStyle: .subheadline)
-        countdownLabel.adjustsFontForContentSizeCategory = true
-        countdownLabel.accessibilityIdentifier = "pairing.waiting.countdown"
-        var config = UIButton.Configuration.plain()
-        config.title = String(localized: "Cancel")
-        cancelButton.configuration = config
-        cancelButton.accessibilityIdentifier = "pairing.waiting.cancel"
-        accessibilityIdentifier = "pairing.waiting"
+        waitingView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(waitingView)
         let margins = contentView.layoutMarginsGuide
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+            waitingView.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            waitingView.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+            waitingView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            waitingView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    isolated deinit { timer?.invalidate() }
-
-    func configure(expiresAt: Int64, fg: UIColor, comment: UIColor, onCancel: @escaping () -> Void) {
-        self.expiresAt = expiresAt
-        messageLabel.textColor = fg
-        countdownLabel.textColor = comment
-        if let cancelAction { cancelButton.removeAction(cancelAction, for: .touchUpInside) }
-        let action = UIAction { _ in onCancel() }
-        cancelAction = action
-        cancelButton.addAction(action, for: .touchUpInside)
-        tick()
-        timer?.invalidate()
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
-    }
-
-    private func tick() {
-        countdownLabel.text = WaitingForPairingApprovalView.countdown(until: expiresAt, now: Date())
+    func configure(expiresAt: Int64, colors: ComposerThemeColors, onCancel: @escaping () -> Void) {
+        waitingView.apply(colors: colors)
+        waitingView.onCancel = onCancel
+        waitingView.show(expiresAt: expiresAt)
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        timer?.invalidate()
-        timer = nil
-        if let cancelAction {
-            cancelButton.removeAction(cancelAction, for: .touchUpInside)
-            self.cancelAction = nil
-        }
+        waitingView.onCancel = nil
+        waitingView.show(expiresAt: 0)
     }
 }

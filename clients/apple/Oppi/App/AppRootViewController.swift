@@ -21,7 +21,7 @@ final class AppRootViewController: UIViewController {
     private let layer: HostedContentController
     private var content: UIViewController?
     private var contentKind: Content?
-    private var pairingWait: HostedContentController?
+    private var pairingWait: PairingWaitCoverViewController?
     private var pairingWaitExpiresAt: Int64?
     private weak var resourceChoiceAlert: UIAlertController?
     private var resourceChoiceShown: [String]?
@@ -146,10 +146,9 @@ final class AppRootViewController: UIViewController {
             self.pairingWait = nil
         }
         guard let expiresAt else { return }
-        let cover = HostFactory.content(
-            AppRootLayer.pairingWaitCover(expiresAt: expiresAt) { [weak opener = app.root.opener] in opener?.cancelInvitePairing() },
-            root: root
-        )
+        let cover = PairingWaitCoverViewController(expiresAt: expiresAt) { [weak opener = app.root.opener] in
+            opener?.cancelInvitePairing()
+        }
         embed(cover, at: view.subviews.count)
         pairingWait = cover
     }

@@ -266,7 +266,7 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
         let wait = UICollectionView.CellRegistration<PairingWaitRowCell, Item> { [weak self] cell, _, _ in
             guard let self, let expiresAt = pairingWaitExpiresAt else { return }
             cell.configure(
-                expiresAt: expiresAt, fg: UIColor(palette.fg), comment: UIColor(palette.comment)
+                expiresAt: expiresAt, colors: ComposerThemeColors(palette: palette)
             ) { [weak self] in self?.cancelPairing() }
         }
         let index = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in

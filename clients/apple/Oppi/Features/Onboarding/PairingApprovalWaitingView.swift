@@ -1,51 +1,9 @@
-import SwiftUI
 import UIKit
 
-/// Waiting chrome while another paired device approves this enrollment.
-/// `PairingApprovalWaitingView` draws the same chrome, with the same
-/// identifiers, on UIKit screens.
-struct WaitingForPairingApprovalView: View {
-    let expiresAt: Int64
-    var onCancel: (() -> Void)? = nil
-
-    var body: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-            Text("Waiting for approval on your other device")
-                .font(.headline)
-                .multilineTextAlignment(.center)
-                .accessibilityIdentifier("pairing.waiting.message")
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(Self.countdown(until: expiresAt, now: context.date))
-                    .font(.subheadline)
-                    .foregroundStyle(.themeComment)
-                    .accessibilityIdentifier("pairing.waiting.countdown")
-            }
-            if let onCancel {
-                Button("Cancel", role: .cancel, action: onCancel)
-                    .accessibilityIdentifier("pairing.waiting.cancel")
-            }
-        }
-        .padding()
-        .accessibilityIdentifier("pairing.waiting")
-    }
-
-    static func countdown(until expiresAt: Int64, now: Date) -> String {
-        let remaining = max(0, TimeInterval(expiresAt) / 1_000 - now.timeIntervalSince1970)
-        let seconds = Int(remaining.rounded(.down))
-        let minutes = seconds / 60
-        let remainder = seconds % 60
-        if minutes > 0 {
-            return "Expires in \(minutes):\(String(format: "%02d", remainder))"
-        }
-        return "Expires in \(remainder)s"
-    }
-}
-
-/// UIKit waiting chrome while another paired device approves this enrollment:
+/// Waiting chrome while another paired device approves this enrollment:
 /// a spinner, the message, a countdown, and Cancel when `onCancel` is set.
 /// The countdown ticks from `show(expiresAt:)` while the view is visible in a
-/// window.
+/// window. The app-level cover and the SSH setup list row both host this view.
 @MainActor
 final class PairingApprovalWaitingView: UIView {
     private let spinner = UIActivityIndicatorView(style: .medium)
@@ -139,6 +97,51 @@ final class PairingApprovalWaitingView: UIView {
     }
 
     private func tick() {
-        countdownLabel.text = WaitingForPairingApprovalView.countdown(until: expiresAt, now: Date())
+        countdownLabel.text = Self.countdown(until: expiresAt, now: Date())
+    }
+
+    static func countdown(until expiresAt: Int64, now: Date) -> String {
+        let remaining = max(0, TimeInterval(expiresAt) / 1_000 - now.timeIntervalSince1970)
+        let seconds = Int(remaining.rounded(.down))
+        let minutes = seconds / 60
+        let remainder = seconds % 60
+        if minutes > 0 {
+            return "Expires in \(minutes):\(String(format: "%02d", remainder))"
+        }
+        return "Expires in \(remainder)s"
+    }
+}
+
+/// An invite waiting for approval on the user's other device covers the app.
+@MainActor
+final class PairingWaitCoverViewController: UIViewController {
+    private let expiresAt: Int64
+    private let onCancel: () -> Void
+
+    init(expiresAt: Int64, onCancel: @escaping () -> Void) {
+        self.expiresAt = expiresAt
+        self.onCancel = onCancel
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let palette = ThemeRuntimeState.currentPalette()
+        view.backgroundColor = UIColor(palette.bg)
+        let waiting = PairingApprovalWaitingView()
+        waiting.translatesAutoresizingMaskIntoConstraints = false
+        waiting.apply(colors: ComposerThemeColors(palette: palette))
+        waiting.onCancel = onCancel
+        waiting.show(expiresAt: expiresAt)
+        view.addSubview(waiting)
+        let margins = view.layoutMarginsGuide
+        NSLayoutConstraint.activate([
+            waiting.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            waiting.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            waiting.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+        ])
     }
 }

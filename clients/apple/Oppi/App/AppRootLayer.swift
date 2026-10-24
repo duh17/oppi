@@ -93,13 +93,6 @@ struct AppRootLayer: View {
         Color.themeBg.ignoresSafeArea()
     }
 
-    /// An invite waiting for approval on the user's other device covers the app.
-    static func pairingWaitCover(expiresAt: Int64, onCancel: @escaping () -> Void) -> some View {
-        WaitingForPairingApprovalView(expiresAt: expiresAt, onCancel: onCancel)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.themeBg)
-    }
-
     @ViewBuilder
     private var e2eDiagnosticsOverlay: some View {
 #if DEBUG
