@@ -364,17 +364,17 @@ struct SettingsSweepScreenshotPreview: View {
 
     /// Oppi installed and answering over HTTPS: the result offers Pair.
     private static let sshReport = SSHPreflightReport(
-        user: "chenda", kernel: "Darwin", release: "25.0.0", arch: "arm64",
+        user: "alex", kernel: "Darwin", release: "25.0.0", arch: "arm64",
         macOSVersion: "26.0", osRelease: nil,
         nodePath: "/opt/homebrew/bin/node", nodeVersion: "v24.1.0", oppiNodeVersion: nil,
-        gitPath: "/usr/bin/git", oppiPath: "/Users/chenda/.oppi/bin/oppi", tailscalePath: "/usr/local/bin/tailscale",
+        gitPath: "/usr/bin/git", oppiPath: "~/.oppi/bin/oppi", tailscalePath: "/usr/local/bin/tailscale",
         oppiStatus: SSHOppiStatus(json: #"{"ok":true,"data":{"status":{"paired":false,"server":{"port":7749,"transport":"https","tlsMode":"self-signed"}}}}"#),
         oppiAnswers: true, hasCommandLineTools: true
     )
 
     /// A new Mac with only Remote Login on: the result offers Install & Start.
     private static let freshMacReport = SSHPreflightReport(
-        user: "chenda", kernel: "Darwin", release: "25.0.0", arch: "arm64",
+        user: "alex", kernel: "Darwin", release: "25.0.0", arch: "arm64",
         macOSVersion: "26.0", osRelease: nil,
         nodePath: nil, nodeVersion: nil, oppiNodeVersion: nil,
         gitPath: "/usr/bin/git", oppiPath: nil, tailscalePath: nil,
