@@ -372,6 +372,9 @@ private final class ExecHandler: ChannelInboundHandler {
     private var errorOutput = ByteBuffer()
     private var received = 0
     private var exitStatus: Int?
+    /// The remote sent EOF: the command ended, possibly before reading all
+    /// of stdin (an installer that stops early with an error line).
+    private var remoteSentEOF = false
 
     init(
         command: String,
@@ -403,21 +406,25 @@ private final class ExecHandler: ChannelInboundHandler {
         switch event {
         case is ChannelSuccessEvent:
             guard !input.isEmpty else {
-                context.close(mode: .output, promise: nil)
+                closeStdin(context.channel)
                 return
             }
             // The SSH child channel queues writes past the peer's window, so
             // one write is enough; EOF follows the last byte.
+            //
+            // A command may end before reading all of stdin. Its output, exit
+            // status, and close still decide the result, so stdin failing is
+            // not an error here: NIOSSH fails a write still queued when the
+            // channel closes, before `channelInactive` reports the outcome.
+            // Any real channel error still arrives through `errorCaught`.
             let data = SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: input)))
             let channel = context.channel
-            context.writeAndFlush(wrapOutboundOut(data)).whenComplete { [result] outcome in
-                switch outcome {
-                case .success: channel.close(mode: .output, promise: nil)
-                case .failure(let error):
-                    result.fail(error)
-                    channel.close(promise: nil)
-                }
+            context.writeAndFlush(wrapOutboundOut(data)).assumeIsolated().whenSuccess { [self] in
+                closeStdin(channel)
             }
+        case ChannelEvent.inputClosed:
+            remoteSentEOF = true
+            context.fireUserInboundEventTriggered(event)
         case is ChannelFailureEvent:
             result.fail(SSHConnectionError.commandRequestRejected)
             context.close(promise: nil)
@@ -447,7 +454,24 @@ private final class ExecHandler: ChannelInboundHandler {
         }
     }
 
+    /// Sends this side's EOF unless the remote already sent its own. NIOSSH
+    /// rejects an EOF after the peer's as out of sequence and tears the
+    /// channel down, losing the exit status still on its way. Leaving stdin
+    /// open is harmless: the remote's close ends the channel.
+    private func closeStdin(_ channel: Channel) {
+        guard !remoteSentEOF, channel.isActive else { return }
+        channel.close(mode: .output, promise: nil)
+    }
+
     func errorCaught(context: ChannelHandlerContext, error: any Error) {
+        // An EOF already queued behind stdin when the remote's EOF arrived is
+        // rejected the same way. The command's outcome is in the output read
+        // so far (NIOSSH delivers it before `channelInactive`), so that
+        // decides the result, not this.
+        if remoteSentEOF, (error as? NIOSSHError)?.type == .protocolViolation {
+            context.close(promise: nil)
+            return
+        }
         result.fail(error)
         context.close(promise: nil)
     }

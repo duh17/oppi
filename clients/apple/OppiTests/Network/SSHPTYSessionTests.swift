@@ -667,6 +667,29 @@ struct SSHInstallTransportTests {
         #expect(fixture.channelRequests == ["exec:\(SSHInstallScript.command)"])
     }
 
+    @Test func anInstallerThatStopsBeforeReadingAllOfStdinReportsItsOwnError() async throws {
+        // `install.sh` can exit early (`busy`, `usage`, `server_too_old`)
+        // while the app is still writing it. Here the script is larger than
+        // the 2 MiB receive window and the host answers on its first bytes:
+        // error line, EOF, exit status, close, with stdin still being sent.
+        // The installer's error must show, not a dropped connection.
+        let installer = FixtureExecReply(chunks: [
+            Self.data("oppi-install: step=node status=begin detail=checking\n"),
+            Self.data("oppi-install: error code=busy detail=another install holds ~/.oppi/install/.lock\n"),
+        ], exitStatus: 1, answersOnFirstInput: true)
+        let fixture = try await SSHFixture.start(
+            auth: .passwordOnly, maximumPacketSize: 32 * 1024, execReply: Self.machine(installer: installer)
+        )
+        defer { fixture.close() }
+        let script = Data(repeating: UInt8(ascii: "#"), count: 3 * 1024 * 1024)
+        await #expect(throws: SSHPreflightFailure.installFailed(code: "busy", detail: "another install holds ~/.oppi/install/.lock")) {
+            _ = try await SSHPreflightClient.install(
+                Self.request(fixture), script: script, socket: fixture.clientSocket
+            ) { _ in }
+        }
+        #expect(fixture.channelRequests == ["exec:\(SSHInstallScript.command)"])
+    }
+
     @Test func cancellingAnInstallClosesItsChannel() async throws {
         let fixture = try await SSHFixture.start(
             auth: .passwordOnly,
