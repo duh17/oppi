@@ -129,6 +129,36 @@ run_self_test() {
     exit 1
   }
   rm -f "$lane_fixture"/*
+  # The same failure in the shape the hook really runs it: top-level set -euo pipefail and EXIT
+  # trap, `apple_then_mac & PIDS+=("$!")`, waited on later. The lane must return the unit
+  # status only after the Mac compile ended, with nothing like "unbound variable" on stderr.
+  printf '%s\n' "$lane_src" > "$lane_fixture/lane-src.sh"
+  cat > "$lane_fixture/hook-shape.sh" <<'HOOK_SHAPE'
+set -euo pipefail
+trap ':' EXIT
+source "$LANE_FIXTURE/lane-src.sh"
+ensure_lane_clean() { return 0; }
+cache_path() { echo "$LANE_FIXTURE/$1.pass"; }
+MAC_CHANGED=1
+run_apple_gate() { true; }
+run_mac_gate() { sleep 1; echo mac-ran >> "$LANE_FIXTURE/trace"; }
+run_ios_unit_gate() { return 7; }
+PIDS=()
+apple_then_mac & PIDS+=("$!")
+st=0
+wait "${PIDS[0]}" || st=$?
+echo "$st" > "$LANE_FIXTURE/lane-status"
+cat "$LANE_FIXTURE/trace" > "$LANE_FIXTURE/trace-at-return" 2>/dev/null || true
+HOOK_SHAPE
+  LANE_FIXTURE="$lane_fixture" bash "$lane_fixture/hook-shape.sh" >/dev/null 2>"$lane_fixture/stderr" || true
+  [[ "$(cat "$lane_fixture/lane-status" 2>/dev/null)" == "7" \
+    && "$(cat "$lane_fixture/trace-at-return" 2>/dev/null)" == "mac-ran" ]] \
+    && ! grep -q 'unbound variable' "$lane_fixture/stderr" || {
+    echo "pre-push self-test: with the hook's call shape, a failing unit lane must return its status after the Mac compile ended, without shell errors" >&2
+    cat "$lane_fixture/stderr" >&2 || true
+    exit 1
+  }
+  rm -f "$lane_fixture"/*
   # The Mac compile fails while unit tests pass: the lane fails.
   set +e
   (
@@ -518,19 +548,21 @@ fi
 # together, overlapping the server lane. A failed iOS build skips both.
 # Keep run_cached out of || / && / if-tests here: they disable set -e inside its nested
 # shell (see run_cached). The background subshell inherits set -e, so a failed Apple build
-# ends this function with that status before Mac or the unit tests start. A failed unit lane
-# is captured with set +e / status=$? (like run_cached does), then waits for the Mac compile
-# and returns the unit status. An EXIT trap cannot do that wait: it runs after the function
-# frame is gone, so a `local` PID is already unbound under set -u. A failed Mac compile
-# after passing unit tests fails `wait`.
+# ends this function with that status before Mac or the unit tests start. The unit lane runs
+# in the background so run_cached keeps set -e for its own marker write; a failed unit lane is
+# captured at `wait` (set +e / status=$?), then waits for the Mac compile and returns the unit
+# status. An EXIT trap cannot do that wait: it runs after the function frame is gone, so a
+# `local` PID is already unbound under set -u. A failed Mac compile after passing unit tests
+# fails `wait`.
 apple_then_mac() {
   run_cached apple run_apple_gate
-  local mac_pid="" unit_status=0
+  local mac_pid="" unit_pid unit_status=0
   if [[ "$MAC_CHANGED" -eq 1 ]]; then
     run_cached mac run_mac_gate & mac_pid="$!"
   fi
+  run_cached ios-unit run_ios_unit_gate & unit_pid="$!"
   set +e
-  run_cached ios-unit run_ios_unit_gate
+  wait "$unit_pid"
   unit_status=$?
   set -e
   if [[ "$unit_status" -ne 0 ]]; then
