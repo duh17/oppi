@@ -477,7 +477,8 @@ final class UserTimelineRowContentView: UIView, UIContentView {
 
             agentIconSlot.widthAnchor.constraint(equalToConstant: Self.agentCardIconSize),
             agentIconSlot.heightAnchor.constraint(equalTo: agentTitleStack.heightAnchor),
-            agentIconView.topAnchor.constraint(equalTo: agentIconSlot.topAnchor),
+            // Level with the sender name, not the slot's top: the name is what the icon labels.
+            agentIconView.centerYAnchor.constraint(equalTo: agentSenderButton.centerYAnchor),
             agentIconView.centerXAnchor.constraint(equalTo: agentIconSlot.centerXAnchor),
             agentChevronView.widthAnchor.constraint(equalToConstant: 14),
             agentChevronView.heightAnchor.constraint(equalToConstant: 14),
