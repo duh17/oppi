@@ -280,9 +280,6 @@
     "clients/apple/Oppi/Features/Mcp/McpSignInSheet.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Onboarding/OnboardingViewController.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Onboarding/WaitingForPairingApprovalView.swift": {
       "import SwiftUI": 1
     },

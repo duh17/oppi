@@ -1,6 +1,3 @@
-// SwiftUI only for `ComputerSetupSheet`, which presents the SwiftUI Tailscale
-// screen until that screen moves to UIKit.
-import SwiftUI
 import UIKit
 
 /// Mode for the onboarding flow.
@@ -676,29 +673,23 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
 // MARK: - Set Up a Computer
 
 extension OnboardingViewController {
-    /// The Tailscale screen finds the person's computer and pairs it. It is
-    /// SwiftUI until its UIKit conversion; then this function presents that
-    /// controller with the same Cancel and `onPaired`.
+    /// The Tailscale screen finds the person's computer, and its Set Up a Mac
+    /// or Linux Computer row installs and pairs Oppi there. It pushes its own
+    /// pages inside the sheet; its Cancel closes the sheet.
     fileprivate func presentComputerSetup() {
-        computerSetupScreen = Router.present(root: root, presentation: .sheet.inNavigation(), from: self) { [weak self] in
-            ComputerSetupSheet { self?.completeComputerSetup() }
-        }
+        let screen = TailnetSettingsViewController(
+            coordinator: root.coordinator,
+            onPaired: { [weak self] in self?.completeComputerSetup() },
+            onClose: { [weak self] in self?.closeComputerSetup() }
+        )
+        computerSetupScreen = screen
+        Router.present(screen, presentation: .sheet.inNavigation(), from: self, theme: root.themeStore)
     }
-}
 
-/// The Tailscale screen with Cancel, as onboarding presents it.
-private struct ComputerSetupSheet: View {
-    let onPaired: () -> Void
-    @Environment(\.screenNavigator) private var navigator
-
-    var body: some View {
-        // Its machine rows and Check a Machine push through the navigator.
-        TailnetSettingsView(onPaired: onPaired)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) { navigator.finish() }
-                }
-            }
+    private func closeComputerSetup() {
+        if let computerSetupScreen {
+            Router.finish(computerSetupScreen)
+        }
     }
 }
 

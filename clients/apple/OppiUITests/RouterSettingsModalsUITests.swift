@@ -474,8 +474,9 @@ final class RouterSettingsModalsUITests: XCTestCase {
         assertRunning()
     }
 
-    /// Connect through Tailscale is a sheet in a navigation controller: its
-    /// Set Up a Computer row pushes inside the sheet, and Cancel closes it.
+    /// Onboarding's Set Up a Computer opens Tailscale as a sheet in a navigation
+    /// controller: its Set Up a Mac or Linux Computer row pushes the Set Up a
+    /// Computer screen inside the sheet, and Cancel closes it.
     func testOnboardingTailscaleSheetPushesSetUpAComputer() {
         launch(page: "onboarding-tailscale")
         let connect = app.buttons["onboarding.tailscale"]
