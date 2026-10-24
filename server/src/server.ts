@@ -124,7 +124,6 @@ import {
   markLocalRequest,
   parseHttpRequestTarget,
   requestClientIp,
-  resolveRequestProvenance,
 } from "./request-trust.js";
 import { AuthModule } from "./auth-module.js";
 import { DevicePairing } from "./device-pairing.js";
@@ -984,6 +983,7 @@ export class Server {
       appEvents: this.appEventStreamMux,
       serverStartedAt: Date.now(),
       serverVersion: Server.VERSION,
+      networkListener: () => ({ port: this.port, listening: this.httpServer?.listening === true }),
       piVersion: Server.readEmbeddedPiAgentVersion(),
       piCliVersion: optionalPiCliVersion(Server.detectPiVersion(this.piExecutable)),
       serverUpdate: this.serverUpdate,
@@ -1738,14 +1738,6 @@ export class Server {
     }
 
     if (path === "/health") {
-      // `?identity=1` from this machine adds which process answered, so install.sh can
-      // tell the server it just started from another one holding the port. Only a direct
-      // loopback peer gets it: a reverse proxy on this host is a trusted peer, so remote
-      // clients behind it, like every other caller, see the unchanged body.
-      if (url.searchParams.get("identity") === "1" && this.isDirectLoopbackPeer(req)) {
-        this.json(res, { ok: true, protocol: 2, version: Server.VERSION, pid: process.pid });
-        return;
-      }
       this.json(res, { ok: true, protocol: 2 });
       return;
     }
@@ -1910,17 +1902,6 @@ export class Server {
 
   private clientIp(req: IncomingMessage): string | undefined {
     return requestClientIp(req, trustConfigFromServerConfig(this.storage.getConfig()));
-  }
-
-  private isDirectLoopbackPeer(req: IncomingMessage): boolean {
-    const provenance = resolveRequestProvenance(
-      req,
-      trustConfigFromServerConfig(this.storage.getConfig()),
-    );
-    const peer = provenance.socketPeer ?? "";
-    return (
-      !provenance.isLocal && !provenance.trustedPeer && (peer === "::1" || peer.startsWith("127."))
-    );
   }
 
   private authenticateAndUpgrade(

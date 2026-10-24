@@ -401,7 +401,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     });
   }
 
-  async function handleGetServerInfo(res: ServerResponse): Promise<void> {
+  async function handleGetServerInfo(
+    res: ServerResponse,
+    principal: RequestPrincipal | undefined,
+  ): Promise<void> {
     const config = ctx.storage.getConfig();
     const workspaces = ctx.storage.listWorkspaces();
     const sessions = ctx.storage.listSessions();
@@ -432,6 +435,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, {
       name: hostname(),
       version: ctx.serverVersion,
+      // Owner only, which means the local Unix socket: install.sh (through
+      // `oppi server status --json`) checks that the process it started is the one
+      // holding the port. Devices and anything reaching the network listener never see it.
+      ...(principal?.kind === "owner"
+        ? { process: { pid: process.pid, ...ctx.networkListener?.() } }
+        : {}),
       ...(update ? { update } : {}),
       uptime: uptimeSeconds,
       os: process.platform,
@@ -833,7 +842,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return true;
     }
     if (path === "/server/info" && method === "GET") {
-      await handleGetServerInfo(res);
+      await handleGetServerInfo(res, principal);
       return true;
     }
     if (path === "/server/provider-quotas" && method === "GET") {

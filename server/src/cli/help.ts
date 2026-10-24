@@ -460,7 +460,8 @@ const HELP_TOPICS: HelpTopic[] = [
     flags: [
       {
         name: "--json",
-        summary: "write the standard JSON envelope: data.service.manager, installed, running, pid",
+        summary:
+          "write the standard JSON envelope: data.service (manager, installed, running, pid) and data.server (pid, version, port, listening of the server on this data directory, or null)",
       },
     ],
     examples: [{ command: "oppi server status" }, { command: "oppi server status --json" }],

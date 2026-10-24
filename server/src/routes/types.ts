@@ -60,6 +60,8 @@ export interface RouteContext {
   appEvents?: AppEventEmitter;
   serverStartedAt: number;
   serverVersion: string;
+  /** The HTTPS/WSS listener's port and whether it is bound yet (it binds after the owner socket). */
+  networkListener?: () => { port: number; listening: boolean };
   piVersion: string;
   /** Installed Pi TUI/CLI version. Omit when detection is unknown/empty. */
   piCliVersion?: string;

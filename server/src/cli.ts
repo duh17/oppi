@@ -1035,7 +1035,37 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   console.log("");
 }
 
-function cmdServer(action: string | undefined, flags: Record<string, string>): void {
+/**
+ * The server that holds this data directory's owner socket: its pid, version,
+ * and whether its HTTPS listener is bound to `port` yet. Null when nothing
+ * answers the socket, or the server predates the owner-only `process` field.
+ */
+async function ownerSocketServer(): Promise<{
+  pid: number;
+  version: string;
+  port: number | null;
+  listening: boolean;
+} | null> {
+  try {
+    const connection = createCliConnectionConfig(process.env.OPPI_DATA_DIR || undefined);
+    const info = await localApiRequest<{
+      version?: string;
+      process?: { pid?: number; port?: number; listening?: boolean };
+    }>(connection, "/server/info", { signal: AbortSignal.timeout(5_000) });
+    const pid = info.process?.pid;
+    if (typeof pid !== "number" || typeof info.version !== "string") return null;
+    return {
+      pid,
+      version: info.version,
+      port: typeof info.process?.port === "number" ? info.process.port : null,
+      listening: info.process?.listening === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function cmdServer(action: string | undefined, flags: Record<string, string>): Promise<void> {
   const mode = action || "status";
   // macOS: per-user LaunchAgent. Linux: systemd user service. Same verbs on both.
   const linux = process.platform === "linux";
@@ -1129,7 +1159,8 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
   }
 
   if (mode === "status" && flags.json === "true") {
-    // install.sh reads `pid` to tell the service it manages from another server on the port.
+    // install.sh compares the service pid with the owner-socket server to tell the
+    // server it started from another one holding the port.
     const status = linux ? systemd.getServiceStatus() : getServiceStatus();
     writeJsonEnvelope({
       ok: true,
@@ -1140,6 +1171,7 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
           running: status.running,
           pid: status.pid,
         },
+        server: await ownerSocketServer(),
       },
     });
     return;
@@ -1339,7 +1371,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
     return;
   }
   if (command === "server") {
-    cmdServer(positional[0], flags);
+    await cmdServer(positional[0], flags);
     return;
   }
   if (command === "version" || command === "--version" || command === "-v") {

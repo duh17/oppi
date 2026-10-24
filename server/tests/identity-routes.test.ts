@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
 import type { RouteContext } from "../src/routes/types.js";
+import type { RequestPrincipal } from "../src/request-principal.js";
 import { markLocalRequest } from "../src/request-trust.js";
 import { PushSender } from "../src/push/push-sender.js";
 import { pushRegistrationMessage } from "../src/push/registration.js";
@@ -530,6 +531,50 @@ describe("identity module", () => {
       version: 1,
       maxBytes: 1_048_576,
     });
+  });
+
+  it("tells only the owner (the local socket) which process answers and whether its listener is bound", async () => {
+    const ctx = {
+      storage: {
+        getConfig: vi.fn(() => ({ configVersion: 2 })),
+        listWorkspaces: vi.fn(() => []),
+        listSessions: vi.fn(() => []),
+      },
+      sessions: {
+        durableSessionsAvailable: () => false,
+        conversationStreamAvailable: () => false,
+      },
+      sessionRuntimes: { getActiveSessionIds: vi.fn(() => new Set()) },
+      skillRegistry: { list: vi.fn(() => []) },
+      getModelCatalog: vi.fn(() => []),
+      voiceBackendHealth: makeUnconfiguredVoiceBackendHealth(),
+      serverStartedAt: Date.now(),
+      serverVersion: "test",
+      piVersion: "test",
+      networkListener: () => ({ port: 7749, listening: true }),
+    } as unknown as RouteContext;
+    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
+    async function info(principal: RequestPrincipal | undefined): Promise<Record<string, unknown>> {
+      const res = makeResponse();
+      await dispatch({
+        method: "GET",
+        path: "/server/info",
+        url: new URL("http://localhost/server/info"),
+        req: {} as never,
+        res: res as never,
+        principal,
+      });
+      return JSON.parse(res.body) as Record<string, unknown>;
+    }
+
+    expect((await info({ kind: "owner" })).process).toEqual({
+      pid: process.pid,
+      port: 7749,
+      listening: true,
+    });
+    expect(await info({ kind: "device", deviceId: "d1", tokenClass: "at_" })).not.toHaveProperty(
+      "process",
+    );
   });
 
   it("advertises pushNotifications in GET /server/info only in relay mode", async () => {
