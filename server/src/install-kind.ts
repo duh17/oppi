@@ -1,7 +1,8 @@
-/* Detect whether this process is the globally installed npm package. */
+/* Detect how this process was installed: npm global, source link, install.sh, or other. */
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type { ServerInstallKind } from "./types/server-update.js";
@@ -55,6 +56,28 @@ export function manualUpdateCommand(packageName: string, version = "latest"): st
   return `npm install -g ${packageName}@${version}`;
 }
 
+/** Rerunning install.sh upgrades a managed install in place and restarts its service. */
+export const MANAGED_UPDATE_COMMAND =
+  "curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh";
+
+/**
+ * install.sh puts each version in its own npm prefix under
+ * ~/.oppi/install/releases/<version>. `npm install -g` would add a second copy
+ * the service never runs, so these installs get their own kind.
+ */
+export function isManagedInstall(
+  packageDir: string | undefined,
+  home: string = homedir(),
+): boolean {
+  if (!packageDir) return false;
+  try {
+    const releases = realpathSync(join(home, ".oppi", "install", "releases"));
+    return realpathSync(packageDir).startsWith(releases + sep);
+  } catch {
+    return false;
+  }
+}
+
 export type InstallKind = {
   kind: ServerInstallKind;
   /** The app can update this install: npm-global installs, source-link rebuilds. */
@@ -77,6 +100,9 @@ function installKind(
       packageDir,
     };
   }
+  if (kind === "managed") {
+    return { kind, updatable: false, manualCommand: MANAGED_UPDATE_COMMAND, packageDir };
+  }
   return {
     kind: kind === "npm-global" ? kind : "other",
     updatable: kind === "npm-global",
@@ -88,6 +114,7 @@ function installKind(
 /** CLI-only synchronous lookup; server requests use resolveInstallKindAsync. */
 export function resolveInstallKind(packageName = getPackageInfo().name): InstallKind {
   const packageDir = packageRootDir();
+  if (isManagedInstall(packageDir)) return installKind(packageName, "managed", packageDir);
   try {
     const globalRoot = execFileSync("npm", ["root", "-g"], {
       encoding: "utf-8",
@@ -108,6 +135,7 @@ export async function resolveInstallKindAsync(
   packageName = getPackageInfo().name,
   packageDir = packageRootDir(),
 ): Promise<InstallKind> {
+  if (isManagedInstall(packageDir)) return installKind(packageName, "managed", packageDir);
   try {
     const { stdout } = await execFileAsync("npm", ["root", "-g"], {
       encoding: "utf-8",

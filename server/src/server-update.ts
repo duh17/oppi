@@ -525,8 +525,12 @@ export class ServerUpdateService {
       manualCommand: manualUpdateCommand(packageInfo.name),
     };
     let latest = this.latestVersion;
+    // A managed (install.sh) install cannot update from the app, but it still says a
+    // newer release exists so the app shows its installer command as the way to get it.
     let available =
-      install.updatable && latest !== null && isNpmVersionNewer(latest, packageInfo.version);
+      (install.updatable || install.kind === "managed") &&
+      latest !== null &&
+      isNpmVersionNewer(latest, packageInfo.version);
     let manualCommand =
       latest && install.updatable
         ? manualUpdateCommand(packageInfo.name, latest)

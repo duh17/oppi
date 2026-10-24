@@ -504,6 +504,40 @@ describe("ServerUpdateService", () => {
     }
   });
 
+  it("sends an install.sh install to the installer: update available, installer command, no in-app update", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-update-managed-"));
+    try {
+      useFakeNpm(dir, { latest: "9.9.9" });
+      vi.stubEnv("HOME", dir);
+      const packageDir = join(
+        dir,
+        ".oppi",
+        "install",
+        "releases",
+        "0.0.1",
+        "lib",
+        "node_modules",
+        "oppi-server",
+      );
+      writePackage(packageDir, "0.0.1", false);
+      const service = await resolvedService(packageDir);
+      await service.refreshLatest();
+      expect(service.snapshot()).toMatchObject({
+        installKind: "managed",
+        available: true,
+        manualCommand:
+          "curl -fsSL https://raw.githubusercontent.com/duh17/oppi/main/install.sh | sh",
+      });
+      const result = await service.beginUpdate("9.9.9");
+      if (result.ok) throw new Error("expected rejection");
+      expect(result.code).toBe(SERVER_UPDATE_ERROR.installNotUpdatable);
+      expect(npmCalls(dir).some((call) => call.startsWith("install"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("treats a global symlink to a package it cannot rebuild as not app-updatable", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-update-src-packed-"));
     try {

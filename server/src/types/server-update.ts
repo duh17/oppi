@@ -1,8 +1,11 @@
 /**
  * How this Oppi server was installed. The app updates `npm-global` from the
  * registry and rebuilds a `source-link` (an `npm link`ed checkout) in place.
+ * `managed` is install.sh's ~/.oppi/install; rerunning the installer (the
+ * `manualCommand`) updates it. Clients treat any kind they cannot update as
+ * show-the-command.
  */
-export type ServerInstallKind = "npm-global" | "source-link" | "other";
+export type ServerInstallKind = "npm-global" | "source-link" | "managed" | "other";
 
 /** In-flight or last completed in-app update. */
 export type ServerUpdateStatus = "idle" | "installing" | "restarting" | "restart-needed" | "failed";
@@ -24,7 +27,8 @@ export interface ServerUpdateInfo {
    */
   latestVersion: string | null;
   /**
-   * npm-global: `latestVersion` is newer than `version`. source-link: the checkout
+   * npm-global and managed: `latestVersion` is newer than `version` (managed shows
+   * `manualCommand` instead of an update button). source-link: the checkout
    * changed since the running build (version, or a file under src/ or extensions/ edited
    * after the earlier of process start and the dist build).
    */
