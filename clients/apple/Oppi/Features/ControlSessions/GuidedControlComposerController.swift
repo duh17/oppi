@@ -32,11 +32,16 @@ final class GuidedControlComposerController: UIViewController {
     private let reviewPill = ReviewCommentStripPillView()
     private let reviewDrawer = ReviewCommentStashDrawerView()
     private let stackedPanel = UIStackView()
+    /// The compact bar's panel sits on the bar's own glass: its pills would
+    /// otherwise lie on the page's text.
+    private let stackedBackdrop = ComposerThemedPanelView()
     private let stackedWorkspaceRow = UIStackView()
     private let stackedWorkspacePill = ComposerToolbarPillButton()
     private let stackedModelPill = ComposerToolbarPillButton()
     private let stackedThinkingPill = ComposerToolbarPillButton()
 
+    /// The accessibility-size panel's thinking popover while it is up.
+    private weak var stackedThinkingPicker: UIViewController?
     private let modelPicker = RouterModalPresenter()
     private let commentStash = RouterModalPresenter()
 
@@ -103,12 +108,23 @@ final class GuidedControlComposerController: UIViewController {
     }
 
     /// Holds the bar off its screen (a locked workspace, a page with nothing
-    /// to revise). The keyboard goes with it.
+    /// to revise). Everything the bar owns goes with it: the keyboard, a
+    /// dictation take, and the model and thinking pickers.
     func setHidden(_ hidden: Bool) {
         guard isViewLoaded, view.isHidden != hidden else { return }
-        if hidden { view.endEditing(true) }
+        if hidden { dismissEverything() }
         view.isHidden = hidden
         view.superview?.setNeedsLayout()
+    }
+
+    private func dismissEverything() {
+        view.endEditing(true)
+        model.cancelVoiceTake()
+        model.showModelPicker = false
+        model.reviewCommentStashPresentation = nil
+        for picker in [composer.bar.presentedPicker, stackedThinkingPicker] {
+            picker?.dismiss(animated: false)
+        }
     }
 
     // MARK: - Lifecycle
@@ -273,12 +289,17 @@ final class GuidedControlComposerController: UIViewController {
     /// The stacked thinking pill's popover, as the action row's pill shows
     /// its own. The picker closes itself on a choice.
     private func presentStackedThinkingPicker() {
-        ComposerThinkingPickerController.present(
+        let picker = ComposerThinkingPickerController.make(
             levels: model.supportedThinkingLevels,
             selected: model.thinkingLevel,
             colors: colors,
             onSelect: { [weak model] in model?.selectThinkingLevel($0) },
-            onSaveDefault: nil,
+            onSaveDefault: nil
+        )
+        stackedThinkingPicker = picker
+        Router.present(
+            picker,
+            presentation: .popover.arrowDirections(.down).keepsPopoverInCompactWidth(),
             from: self,
             sourceView: stackedThinkingPill
         )
@@ -349,7 +370,21 @@ final class GuidedControlComposerController: UIViewController {
         stackedPanel.alignment = .fill
         stackedPanel.spacing = 6
         stackedPanel.isLayoutMarginsRelativeArrangement = true
-        stackedPanel.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16)
+        let compact = model.configuration.presentation == .compact
+        stackedPanel.directionalLayoutMargins = compact
+            ? NSDirectionalEdgeInsets(top: 12, leading: 28, bottom: 20, trailing: 28)
+            : NSDirectionalEdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16)
+        if compact {
+            stackedBackdrop.translatesAutoresizingMaskIntoConstraints = false
+            stackedBackdrop.isUserInteractionEnabled = false
+            stackedPanel.insertSubview(stackedBackdrop, at: 0)
+            NSLayoutConstraint.activate([
+                stackedBackdrop.topAnchor.constraint(equalTo: stackedPanel.topAnchor),
+                stackedBackdrop.bottomAnchor.constraint(equalTo: stackedPanel.bottomAnchor, constant: -8),
+                stackedBackdrop.leadingAnchor.constraint(equalTo: stackedPanel.leadingAnchor, constant: 16),
+                stackedBackdrop.trailingAnchor.constraint(equalTo: stackedPanel.trailingAnchor, constant: -16),
+            ])
+        }
         stackedPanel.isHidden = true
         for pill in [stackedWorkspacePill, stackedModelPill, stackedThinkingPill] {
             pill.heightAnchor.constraint(greaterThanOrEqualToConstant: ComposerInputMetrics.controlDiameter).isActive = true
@@ -361,6 +396,7 @@ final class GuidedControlComposerController: UIViewController {
         let showsPanel = stacksActionControls && model.isExpanded
         setStackedPanelHidden(!showsPanel)
         guard showsPanel else { return }
+        stackedBackdrop.apply(colors: colors)
         let workspace = model.selectedWorkspace
         stackedWorkspaceRow.isHidden = !model.showsWorkspacePicker
         stackedWorkspacePill.apply(

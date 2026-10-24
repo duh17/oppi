@@ -86,7 +86,7 @@ struct WorkspaceSettingsScreenshotPreview: View {
         let connection = ServerConnection()
         connection.setPreviewServerId(serverId)
         if environment["SCREENSHOT_WORKSPACE_PAGE"] == nil {
-            // The root shows Edit with Oppi only on a connection with an API
+            // The root shows the Oppi bar only on a connection with an API
             // client. Its requests go to an unresolvable host and fail harmlessly.
             connection.setPreviewAPIClient(APIClient(baseURL: URL(string: "https://preview.invalid") ?? URL(fileURLWithPath: "/"), token: "sk_preview"))
         }

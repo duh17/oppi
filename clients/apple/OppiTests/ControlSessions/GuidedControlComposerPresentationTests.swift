@@ -118,4 +118,34 @@ struct GuidedControlComposerPresentationTests {
         let prompt = model.makeLaunch(cleanRequest: "Keep this").request.prompt ?? ""
         #expect(prompt.contains("Renamed"))
     }
+
+    /// A disabled bar takes no touch, and a hardware-keyboard Return must not
+    /// reach Send either: the request would otherwise start a session.
+    @Test func aDisabledBarDoesNotSend() async throws {
+        let connection = ServerConnection()
+        connection.setPreviewAPIClient(APIClient(
+            baseURL: try #require(URL(string: "https://preview.invalid")), token: "sk_test"
+        ))
+        let model = GuidedControlComposerModel(
+            configuration: GuidedControlComposerConfiguration(
+                domain: .schedules, intent: .revise, presentation: .compact,
+                targetId: "s1", targetName: "Nightly", placeholder: "Describe a change…"
+            ),
+            connection: { connection },
+            navigation: AppNavigation()
+        )
+        model.appear()
+        let ready = await waitForMainActorCondition(timeout: .seconds(20)) { model.isInitialized }
+        try #require(ready)
+        model.request = "Make it hourly"
+
+        model.isDisabled = true
+        await model.createControlSession()
+        #expect(model.error == nil, "a disabled bar must not reach the server")
+
+        model.isDisabled = false
+        await model.createControlSession()
+        #expect(model.error != nil, "the same request goes out once the bar is enabled (here it fails offline)")
+        model.disappear()
+    }
 }

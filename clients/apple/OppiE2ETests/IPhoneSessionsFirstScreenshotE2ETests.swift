@@ -682,14 +682,13 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         try saveLabScreenshot(name: "iphone-schedule-detail-human-when-e2e")
 
         tap(scheduleActions, named: "schedule actions menu")
-        let editWithOppi = app.buttons["schedule.detail.edit"].exists
-            ? app.buttons["schedule.detail.edit"]
-            : app.buttons["Edit with Oppi"]
-        tap(editWithOppi, named: "guided schedule revision")
-        XCTAssertTrue(app.navigationBars["Revise Daily telemetry review"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 10))
+        // Revising a schedule is the compact Oppi bar now, not a menu item.
+        XCTAssertTrue(app.textViews["chat.input"].waitForExistence(timeout: 10), "Schedule detail did not show the Oppi bar")
+        XCTAssertFalse(app.buttons["chat.send"].isEnabled, "Send must wait for a request")
         XCTAssertFalse(app.buttons["schedule.edit.save"].exists, "Schedule revision must not expose the manual form")
-        tap(app.buttons["Cancel"], named: "dismiss guided revision")
+        XCTAssertTrue(app.buttons["schedule.detail.archive"].exists || app.buttons["Archive"].exists, "Archive missing from the schedule actions menu")
+        XCTAssertFalse(app.buttons["Edit with Oppi"].exists, "The actions menu must not offer Edit with Oppi")
+        tap(scheduleActions, named: "close schedule actions menu")
         tap(app.navigationBars["Daily telemetry review"].buttons.firstMatch, named: "schedule detail back button")
 
         tap(app.buttons["schedules.filter"], named: "schedule status filter")

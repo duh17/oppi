@@ -254,6 +254,19 @@ final class GuidedControlComposerModel {
         }
     }
 
+    /// Stops a dictation take this composer started, keeping its microphone:
+    /// a screen that holds the bar off (a lock) must not keep taking speech.
+    func cancelVoiceTake() {
+        let manager = voiceInputManager
+        let takeIdentity = ComposerShared.takeIdentityForDismissedComposer(
+            manager: manager,
+            generation: voiceComposerGeneration
+        )
+        Task {
+            await ComposerShared.cancelVoiceInputOnDismiss(manager: manager, matching: takeIdentity)
+        }
+    }
+
     private func initialize() async {
         request = configuration.initialRequest
 
@@ -302,9 +315,10 @@ final class GuidedControlComposerModel {
         Task { await createControlSession() }
     }
 
-    private func createControlSession() async {
+    func createControlSession() async {
         let connection = connection
-        guard let apiClient = connection.apiClient, !isCreating else { return }
+        // A hardware-keyboard Return reaches Send past a disabled bar's touch block.
+        guard acceptsInput, let apiClient = connection.apiClient, !isCreating else { return }
         let cleanRequest = request.trimmingCharacters(in: .whitespacesAndNewlines)
         guard configuration.allowsEmptyRequest || !cleanRequest.isEmpty else { return }
 
