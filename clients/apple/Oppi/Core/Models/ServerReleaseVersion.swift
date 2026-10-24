@@ -68,6 +68,10 @@ enum ServerUpdatePresentation {
 
     static func footer(_ update: ServerInfo.UpdateInfo?) -> String {
         guard let update, update.isAppUpdatable else {
+            // The installer restarts its own service; others need a restart.
+            if update?.isInstallerManaged == true {
+                return "This install cannot be updated from the app. Run the command on the host."
+            }
             return "This install cannot be updated from the app. Run the command on the host, then restart the server."
         }
         if update.isSourceLink {

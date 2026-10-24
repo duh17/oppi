@@ -75,6 +75,9 @@ struct ServerInfo: Codable, Sendable, Equatable {
         /// checkout) rebuilds in place, and `latestVersion` is the checkout's version.
         var isAppUpdatable: Bool { installKind == "npm-global" || isSourceLink }
         var isSourceLink: Bool { installKind == "source-link" }
+        /// Installed by `install.sh` (`~/.oppi`). Its manual command reruns the
+        /// installer, which restarts the service itself.
+        var isInstallerManaged: Bool { installKind == "managed" }
         var isIdle: Bool { status == "idle" }
         var isInstalling: Bool { status == "installing" }
         var isRestarting: Bool { status == "restarting" }
