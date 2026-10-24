@@ -172,10 +172,6 @@ private actor E2EAppAuthRecordingAPI: InviteBootstrapAPI {
         return User(user: "owner", name: "Owner")
     }
 
-    func serverInfo() async throws -> ServerInfo {
-        throw APIError.invalidResponse
-    }
-
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session] {
         await log.append("listSessions:\(recentDays)")
         return []

@@ -120,7 +120,8 @@ struct InviteBootstrapServiceTests {
 
         await #expect(throws: InviteBootstrapError(
             message: "Pairing may have completed, but its response was lost. Open Oppi to check, or request a fresh invite before trying again.",
-            recovery: .newCode
+            recovery: .newCode,
+            codeProblem: .responseLost
         )) {
             _ = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials(),
@@ -169,7 +170,8 @@ struct InviteBootstrapServiceTests {
 
         await #expect(throws: InviteBootstrapError(
             message: "Invite link expired or was already used. Request a fresh invite.",
-            recovery: .newCode
+            recovery: .newCode,
+            codeProblem: .expiredOrUsed
         )) {
             _ = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials(),
@@ -181,53 +183,36 @@ struct InviteBootstrapServiceTests {
         }
     }
 
-    /// Host-and-token entry carries no server identity: pairing reads it from
-    /// the server it just paired with and asks the person to trust it.
-    @Test func hostAndTokenEntryConfirmsTheIdentityTheServerReports() async throws {
-        let log = InviteBootstrapCallLog()
-        var apis = [
-            RecordingInviteBootstrapAPI(log: log, accessToken: "at_paired"),
-            RecordingInviteBootstrapAPI(log: log),
-        ]
-        var reasons: [String] = []
+    /// An unsigned payload names no server identity, so pairing stops before
+    /// the trust prompt and before anything reaches the network.
+    @Test func unsignedPayloadSendsNothing() async throws {
+        let payload = #"{"v":3,"host":"pairing.example.test","port":7749,"token":"","pairingToken":"pt_unsigned","name":"Unsigned"}"#
+        let encoded = try #require(payload.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed))
+        let unsigned = try #require(ServerCredentials.decodeInviteURLString("oppi://connect?v=3&payload=\(encoded)"))
+        var trustPrompted = false
+        var factoryCalled = false
 
-        let result = try await InviteBootstrapService.validateAndBootstrap(
-            credentials: credentials(serverFingerprint: nil),
-            existingCredentials: nil,
-            confirmTrust: { reason in
-                reasons.append(reason)
-                return true
-            },
-            apiFactory: { _, _, _ in apis.removeFirst() },
-            deviceKeyProvider: { InMemoryP256DeviceKey() }
-        )
-
-        #expect(reasons == ["Trust pairing.example.test (sha256:read-from-server)"])
-        #expect(result.effectiveCredentials.normalizedServerFingerprint == "sha256:read-from-server")
-        #expect(await log.snapshot() == [
-            "health", "pair:one-time-token", "serverInfo", "health", "me", "listSessions:3",
-        ])
-    }
-
-    @Test func declinedHostAndTokenIdentityRevokesTheEnrolledDevice() async throws {
-        let log = InviteBootstrapCallLog()
-        var apis = [
-            RecordingInviteBootstrapAPI(log: log, accessToken: "at_paired"),
-            RecordingInviteBootstrapAPI(log: log, bearer: "at_paired"),
-        ]
-
-        await #expect(throws: InviteBootstrapError(message: "Trust confirmation cancelled", recovery: .newCode)) {
+        await #expect(throws: InviteBootstrapError(
+            message: "This pairing code is not signed by an Oppi server, so Oppi cannot verify it. Run `oppi pair` on the server for a new one.",
+            recovery: .newCode,
+            codeProblem: .unsigned
+        )) {
             _ = try await InviteBootstrapService.validateAndBootstrap(
-                credentials: credentials(serverFingerprint: nil),
+                credentials: unsigned,
                 existingCredentials: nil,
-                confirmTrust: { _ in false },
-                apiFactory: { _, _, _ in apis.removeFirst() },
-                deviceKeyProvider: { InMemoryP256DeviceKey() }
+                confirmTrust: { _ in
+                    trustPrompted = true
+                    return true
+                },
+                apiFactory: { _, _, _ in
+                    factoryCalled = true
+                    return RecordingInviteBootstrapAPI(log: InviteBootstrapCallLog())
+                }
             )
         }
 
-        let calls = try await waitForCalls(log, count: 4)
-        #expect(calls == ["health", "pair:one-time-token", "serverInfo", "revoke:dev_https bearer:at_paired"])
+        #expect(!trustPrompted)
+        #expect(!factoryCalled)
     }
 
     @Test func TLSFailureMessageRemainsActionable() {
@@ -329,7 +314,7 @@ struct InviteBootstrapServiceTests {
             )
         }
 
-        await #expect(throws: InviteBootstrapError(message: "Pairing cancelled.", recovery: .newCode)) {
+        await #expect(throws: InviteBootstrapError(message: "Pairing cancelled.", recovery: .newCode, codeProblem: .cancelled)) {
             _ = try await task.value
         }
         // No authenticated bootstrap: the caller gets no credential to save.
@@ -359,7 +344,7 @@ struct InviteBootstrapServiceTests {
         _ = try await waitForCalls(log, count: 2)
         task.cancel()
 
-        await #expect(throws: InviteBootstrapError(message: "Pairing cancelled.", recovery: .newCode)) {
+        await #expect(throws: InviteBootstrapError(message: "Pairing cancelled.", recovery: .newCode, codeProblem: .cancelled)) {
             _ = try await task.value
         }
         try await Task.sleep(for: .milliseconds(100))
@@ -600,7 +585,7 @@ struct WhatsNewManagerTests {
     }
 }
 
-private func pairingTestServerInfo(identityFingerprint: String? = nil) -> ServerInfo {
+private func pairingTestServerInfo() -> ServerInfo {
     ServerInfo(
         name: "Test",
         version: "1.0.0",
@@ -611,7 +596,7 @@ private func pairingTestServerInfo(identityFingerprint: String? = nil) -> Server
         nodeVersion: "22",
         piVersion: "1",
         configVersion: 1,
-        identity: identityFingerprint.map { .init(fingerprint: $0, keyId: "key", algorithm: "ed25519") },
+        identity: nil,
         uploadProtocol: nil,
         images: nil,
         capabilities: .init(
@@ -755,11 +740,6 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
         return User(user: "owner", name: "Owner")
     }
 
-    func serverInfo() async throws -> ServerInfo {
-        await log.append("serverInfo")
-        return pairingTestServerInfo(identityFingerprint: "sha256:read-from-server")
-    }
-
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session] {
         await log.append("listSessions:\(recentDays)")
         return []
@@ -805,7 +785,6 @@ private actor FailingInviteBootstrapAPI: InviteBootstrapAPI {
         return true
     }
     func me() async throws -> User { throw error }
-    func serverInfo() async throws -> ServerInfo { throw error }
     func listSessionsFromWorkspaces(recentDays _: Int) async throws -> [Session] { throw error }
     func revokeAuthDevice(id _: String) async throws { throw error }
 }

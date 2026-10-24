@@ -43,8 +43,9 @@ struct WaitingForPairingApprovalView: View {
 }
 
 /// UIKit waiting chrome while another paired device approves this enrollment:
-/// a spinner, the message, a countdown that ticks while the view is in a
-/// window, and Cancel when `onCancel` is set.
+/// a spinner, the message, a countdown, and Cancel when `onCancel` is set.
+/// The countdown ticks from `show(expiresAt:)` while the view is visible in a
+/// window.
 @MainActor
 final class PairingApprovalWaitingView: UIView {
     private let spinner = UIActivityIndicatorView(style: .medium)
@@ -102,6 +103,11 @@ final class PairingApprovalWaitingView: UIView {
     func show(expiresAt: Int64) {
         self.expiresAt = expiresAt
         tick()
+        updateTimer()
+    }
+
+    override var isHidden: Bool {
+        didSet { updateTimer() }
     }
 
     func apply(colors: ComposerThemeColors) {
@@ -113,9 +119,16 @@ final class PairingApprovalWaitingView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        updateTimer()
+    }
+
+    /// Ticks only between `show(expiresAt:)` and being hidden or removed.
+    private func updateTimer() {
+        let ticks = expiresAt > 0 && !isHidden && window != nil
+        guard ticks != (timer != nil) else { return }
         timer?.invalidate()
         timer = nil
-        guard window != nil else { return }
+        guard ticks else { return }
         tick()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }

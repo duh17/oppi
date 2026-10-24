@@ -452,28 +452,25 @@ final class RouterSettingsModalsUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(of: entry), "Swipe-down must close manual entry")
         assertRunning()
 
-        // Connect hands the credentials back: onboarding starts pairing and
-        // shows its outcome. Nothing listens on port 1, so the code is never
-        // sent and Try Again is offered.
+        // Connect hands the credentials back and onboarding shows the
+        // outcome. An unsigned link names no server identity, so pairing
+        // stops before sending anything and asks for a new code.
         manual.tap()
         XCTAssertTrue(entry.waitForExistence(timeout: 5), "Manual entry did not reopen after the swipe")
         let connect = app.buttons["onboarding.manual.connect"]
-        XCTAssertFalse(connect.isEnabled, "Connect needs a pairing link or host fields")
-        app.buttons["onboarding.manual.hostFields"].tap()
-        let host = app.textFields["onboarding.manual.host"]
-        XCTAssertTrue(host.waitForExistence(timeout: 5), "The host fields did not appear")
-        host.tap()
-        // A host typed as a URL brings its own port.
-        host.typeText("https://127.0.0.1:1")
-        let token = app.textFields["onboarding.manual.token"]
-        token.tap()
-        token.typeText("pt_none")
+        XCTAssertFalse(connect.isEnabled, "Connect needs a pairing link")
+        let link = app.textFields["onboarding.manual.link"]
+        link.tap()
+        link.typeText(
+            "oppi://connect?v=3&payload=%7B%22v%22:3,%22host%22:%22127.0.0.1%22,%22port%22:1,"
+                + "%22token%22:%22%22,%22pairingToken%22:%22pt_none%22,%22name%22:%22Unsigned%22%7D"
+        )
         tapBarButton(connect)
         XCTAssertTrue(waitForDisappearance(of: entry), "Connect must close manual entry")
-        XCTAssertTrue(
-            app.buttons["onboarding.retry"].waitForExistence(timeout: 30),
-            "An unreachable server must offer Try Again with the same code"
-        )
+        let failure = app.staticTexts["onboarding.failure.message"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 10), "Onboarding must show why the link failed")
+        XCTAssertTrue(failure.label.contains("not signed"), "Unexpected failure: \(failure.label)")
+        XCTAssertFalse(app.buttons["onboarding.retry"].exists, "An unusable code must not offer Try Again")
         XCTAssertTrue(app.buttons["onboarding.manual"].exists, "The pairing choices stay under the failure")
         assertRunning()
     }
@@ -634,12 +631,15 @@ final class RouterSettingsModalsUITests: XCTestCase {
     /// `Button(role: .cancel)` draws the system cancel control. Bar items can
     /// sit outside the navigation bar element: the iPhone Duo moves them to a
     /// vertical rail.
-    /// The front-most one: presented controllers come last in the tree, and a
-    /// presenter's own Cancel (Add Server onboarding) sits under the sheet.
+    /// The front-most one: presented controllers come last in the tree. Add
+    /// Server onboarding's own Cancel stays under its sheets, so it is left out.
     private var cancelButton: XCUIElement {
-        let matches = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"]))
-        let candidates = matches.allElementsBoundByIndex
-        return candidates.last(where: \.isHittable) ?? matches.element(boundBy: max(matches.count - 1, 0))
+        let matches = app.buttons.matching(NSPredicate(
+            format: "label IN %@ AND identifier != %@",
+            ["Cancel", "Close"],
+            "onboarding.cancel"
+        ))
+        return matches.element(boundBy: max(matches.count - 1, 0))
     }
 
     private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {

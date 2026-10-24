@@ -1486,6 +1486,16 @@
     "Files are read-only and come from %@." : {
 
     },
+    "Finds your Mac or Linux computer through Tailscale and sets up the Oppi server on it" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过 Tailscale 找到你的 Mac 或 Linux 电脑，并在上面设置 Oppi 服务器"
+          }
+        }
+      }
+    },
     "Finish setup by signing in or adding an API key. This unlocks model selection for sessions on this server." : {
 
     },
@@ -1587,7 +1597,14 @@
       }
     },
     "How to set up the server" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如何设置服务器"
+          }
+        }
+      }
     },
     "HTTP" : {
 
@@ -2181,6 +2198,26 @@
     "Oppi pairs with an Oppi server you run yourself on a Mac or Linux machine. Install the server, then pair this phone." : {
 
     },
+    "Opens the public server setup and pairing guide" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开公开的服务器设置与配对指南"
+          }
+        }
+      }
+    },
+    "Oppi lost contact with the server while waiting for approval." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "等待批准时，Oppi 与服务器失去了连接。"
+          }
+        }
+      }
+    },
     "Oppi sends your password only to a machine whose SSH key you trusted, and does not save it." : {
 
     },
@@ -2238,8 +2275,55 @@
     "Paired *.ts.net servers stop connecting until you connect again." : {
 
     },
+    "Pairing cancelled." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已取消配对。"
+          }
+        }
+      }
+    },
+    "Pairing Link" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对链接"
+          }
+        }
+      }
+    },
+    "Pairing may have finished, but the server’s answer was lost." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对可能已完成，但服务器的响应丢失了。"
+          }
+        }
+      }
+    },
+    "Pairing was denied on your other device." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的另一台设备拒绝了配对。"
+          }
+        }
+      }
+    },
     "Pairing…" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在配对…"
+          }
+        }
+      }
     },
     "Photo Library" : {
       "extractionState" : "stale",
@@ -2617,6 +2701,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在你自己的电脑上运行 AI 编程智能体，并在 %@ 上跟进和批准它们的工作。"
+          }
+        }
+      }
+    },
+    "Run oppi pair on your computer and paste what it prints: the oppi://connect link, or the whole output of oppi pair --json. A link works once and expires after 90 seconds unless you set --ttl.\n\nAway from the computer’s network, this %@ reaches it only through Tailscale or a public HTTPS address." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在电脑上运行 oppi pair，并粘贴它输出的内容：oppi://connect 链接，或 oppi pair --json 的完整输出。每个链接只能使用一次，默认 90 秒后过期，可用 --ttl 修改。\n\n不在电脑所在的网络时，这台 %@ 只能通过 Tailscale 或公共 HTTPS 地址连接到它。"
           }
         }
       }
@@ -3173,11 +3267,31 @@
     "The loaded Skills catalog has no selectable paths." : {
 
     },
+    "The approval request ended before another device approved it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "批准请求在另一台设备批准之前已结束。"
+          }
+        }
+      }
+    },
     "The selected server has no cached Extensions catalog." : {
 
     },
     "The selected server has no cached Skills catalog." : {
 
+    },
+    "The server refused this code after too many invalid pairing attempts. Wait a moment before you use a new one." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无效的配对尝试过多，服务器拒绝了此配对码。请稍候再使用新的配对码。"
+          }
+        }
+      }
     },
     "The server no longer has this sign-in attempt. It may have expired or the server restarted." : {
 
@@ -3233,6 +3347,16 @@
     "This extension asked for \"%@\". Cancel and try the task another way." : {
 
     },
+    "This is not an Oppi pairing link." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这不是 Oppi 配对链接。"
+          }
+        }
+      }
+    },
     "This only removes pairing from this iPhone. It does not delete the server or its data." : {
       "localizations" : {
         "zh-Hans" : {
@@ -3245,6 +3369,26 @@
     },
     "This paired server is no longer available." : {
 
+    },
+    "This pairing code expired or was already used." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此配对码已过期或已被使用。"
+          }
+        }
+      }
+    },
+    "This pairing code is not signed by an Oppi server, so Oppi cannot verify it." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此配对码未经 Oppi 服务器签名，Oppi 无法验证它。"
+          }
+        }
+      }
     },
     "This reader is no longer available." : {
 
@@ -3442,7 +3586,14 @@
       }
     },
     "Waiting for approval on your other device" : {
-
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在等待你的另一台设备批准"
+          }
+        }
+      }
     },
     "Waiting for sign-in link…" : {
 
