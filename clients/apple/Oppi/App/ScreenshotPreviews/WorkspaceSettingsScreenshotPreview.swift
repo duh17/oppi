@@ -87,7 +87,7 @@ struct WorkspaceSettingsScreenshotPreview: View {
         connection.setPreviewServerId(serverId)
         if environment["SCREENSHOT_WORKSPACE_PAGE"] == nil {
             // The root shows Edit with Oppi only on a connection with an API
-            // client. Nothing sends a request: the fixture URL is never read.
+            // client. Its requests go to an unresolvable host and fail harmlessly.
             connection.setPreviewAPIClient(APIClient(baseURL: URL(string: "https://preview.invalid") ?? URL(fileURLWithPath: "/"), token: "sk_preview"))
         }
         connection.workspaceStore.setActiveServer(serverId)

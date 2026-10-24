@@ -121,6 +121,8 @@ struct WorkspaceSettingsLockTests {
         #expect(screen.leaves.count == 0)
     }
 
+    /// Assumes the test host has App Lock off: `deleteWorkspace` still asks
+    /// `AppLockService.shared` to authorize before the request.
     @Test func anUnlockedWorkspaceReachesTheDeleteRequest() async throws {
         let screen = try mount(locked: false, withAPIClient: false)
         defer { close(screen) }
