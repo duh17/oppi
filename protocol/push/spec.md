@@ -424,7 +424,7 @@ events stack per session.
 
 One counts-only card per paired server on the phone's Lock Screen and Dynamic Island: how
 many threads run and how many wait on the person (a thread is a top-level session with its
-subagents; see below). Apple and the relay can read
+subagents; section 5 gives the counting rule). Apple and the relay can read
 ActivityKit payloads, so this path carries two integers and a random slot, never text. It is not encrypted; there is nothing in it to encrypt beyond the counts.
 
 **Slot.** The phone makes a random 16-byte value per server (22 base64url characters,

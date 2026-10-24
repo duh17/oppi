@@ -5,7 +5,8 @@ import WidgetKit
 private let countAnimation = Animation.easeInOut(duration: 0.22)
 
 /// Oppi's counts-only Live Activity on the Lock Screen and in the Dynamic Island: how many
-/// agents run and how many wait on you on one server. It shows no session names or text.
+/// threads (a top-level session with its subagents) run and how many wait on you on one
+/// server. It shows no session names or text.
 struct OppiLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: OppiActivityAttributes.self) { context in

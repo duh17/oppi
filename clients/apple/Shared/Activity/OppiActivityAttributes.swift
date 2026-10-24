@@ -19,7 +19,7 @@ struct OppiActivityAttributes: ActivityAttributes {
     /// Counts are per thread (a top-level session with its subagents). Field names are the
     /// relay template's `content-state` keys, decoded with ActivityKit's default JSON strategy.
     struct ContentState: Codable, Hashable {
-        /// Threads running: none of their sessions is blocked, and one is working.
+        /// Threads running: none of their sessions is blocked, and at least one is working.
         var running: Int
         /// Threads waiting on the person: a session in them is blocked on an approval, a question,
         /// or a sign-in.
