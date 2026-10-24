@@ -456,8 +456,14 @@ const HELP_TOPICS: HelpTopic[] = [
     path: ["server", "status"],
     title: "Background server status",
     summary: "Show service installation, PID, runtime path, CLI path, and data dir.",
-    usage: "oppi server status",
-    examples: [{ command: "oppi server status" }],
+    usage: "oppi server status [--json]",
+    flags: [
+      {
+        name: "--json",
+        summary: "write the standard JSON envelope: data.service.manager, installed, running, pid",
+      },
+    ],
+    examples: [{ command: "oppi server status" }, { command: "oppi server status --json" }],
   },
   {
     path: ["server", "restart"],

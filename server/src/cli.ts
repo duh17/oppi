@@ -1128,6 +1128,23 @@ function cmdServer(action: string | undefined, flags: Record<string, string>): v
     return;
   }
 
+  if (mode === "status" && flags.json === "true") {
+    // install.sh reads `pid` to tell the service it manages from another server on the port.
+    const status = linux ? systemd.getServiceStatus() : getServiceStatus();
+    writeJsonEnvelope({
+      ok: true,
+      data: {
+        service: {
+          manager: linux ? "systemd" : "launchd",
+          installed: status.installed,
+          running: status.running,
+          pid: status.pid,
+        },
+      },
+    });
+    return;
+  }
+
   if (mode === "status" && linux) {
     const status = systemd.getServiceStatus();
     console.log("  " + c.bold("systemd User Service"));
@@ -1234,9 +1251,22 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
   const target = latest;
   if (flags.check === "true" || flags.dry === "true") {
     console.log(c.yellow("  Update available."));
-    console.log(c.dim(`  Command: npm install -g ${info.name}@${target}`));
+    const command =
+      install.kind === "managed" ? install.manualCommand : `npm install -g ${info.name}@${target}`;
+    console.log(c.dim(`  Command: ${command}`));
     console.log("");
     return;
+  }
+
+  if (install.kind === "managed") {
+    // Not run from here: the installer restarts the service, and an `oppi update` started
+    // inside an Oppi session would be killed with the old server partway through that.
+    console.log(
+      c.yellow("  This Oppi was installed by install.sh; rerun the installer to update it:"),
+    );
+    console.log(c.dim(`  ${install.manualCommand}`));
+    console.log("");
+    process.exit(1);
   }
 
   if (!install.updatable) {
