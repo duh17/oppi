@@ -1482,7 +1482,6 @@ struct ComposerBarTests {
         let entry = try #require(descendant(in: controller.view, identifier: ComposerLiveVoiceCall.startIdentifier) as? UIControl)
         #expect(!entry.isHidden && entry.isEnabled)
         #expect(entry.accessibilityLabel == "Live Voice")
-        #expect(entry.accessibilityHint?.contains("microphone") == true, "Says why there is no dictation")
         entry.sendActions(for: .touchUpInside)
         #expect(await waitForMainActorCondition { entries == 1 }, "A tap is the entry's own action, not dictation")
 

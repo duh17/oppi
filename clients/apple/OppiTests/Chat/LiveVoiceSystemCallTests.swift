@@ -86,10 +86,14 @@ struct LiveVoiceSystemCallTests {
         try #require(call.tap() != nil)
         try #require(await waitForMainActorCondition { call.system.callId != nil && !call.telephony.requested.isEmpty })
         let id = try #require(call.system.callId)
-        #expect(call.telephony.performSystem(.end(call: id)))
+        // One main-actor turn: the failed request resumes first, then the system's End lands
+        // before that resumption runs. Only a synchronous stop in the End keeps the failed
+        // start from falling back to a call without CallKit; an `end()` scheduled in a task
+        // would run after the fallback began.
         call.telephony.releaseStartRequest(
             throwing: NSError(domain: CXErrorCodeRequestTransactionError.errorDomain, code: 1)
         )
+        #expect(call.telephony.performSystem(.end(call: id)))
 
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
             call.channel.opened.isEmpty && !call.controller.isLive
