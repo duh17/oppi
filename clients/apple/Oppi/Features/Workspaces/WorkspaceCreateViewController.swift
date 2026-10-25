@@ -689,7 +689,12 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
     private func focusFolderField() {
         guard let path = dataSource?.indexPath(for: .folderField),
               let cell = collectionView.cellForItem(at: path) as? SSHTerminalTextFieldCell else { return }
-        cell.textField.becomeFirstResponder()
+        // After a long test run in one process, UIKit has been seen to refuse this first
+        // call after already resigning Name, so giving up would close the keyboard. An
+        // immediate second call succeeds. Root cause unknown.
+        if !cell.textField.becomeFirstResponder() {
+            cell.textField.becomeFirstResponder()
+        }
     }
 
     private func configureFolderCheck(_ cell: WorkspaceFolderCheckCell) {
