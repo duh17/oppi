@@ -189,6 +189,13 @@ final class LiveVoiceCallController {
         statusText = "Connecting"
     }
 
+    /// The system ended the call while it was still starting (its End, a provider reset): the
+    /// start goes no further from this moment, before the `end()` that follows gets to run. A
+    /// start request failing meanwhile must not fall back to a call without CallKit.
+    func stopStarting() {
+        isStarting = false
+    }
+
     /// Everything that must happen before the system call starts: microphone access (a denied
     /// permission never shows a system call), the server channel, and quiet, with read-aloud
     /// and any dictation take stopped (cancelling a take deactivates the audio session, which

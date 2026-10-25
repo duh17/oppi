@@ -310,6 +310,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
             // An end for a call already gone (the app hung up first) has nothing left to do.
             guard let call = active, call.id == id else { return true }
             release(call)
+            call.controller.stopStarting()
             Task { await call.controller.end() }
             return true
         case .setMuted(let id, let muted):
@@ -371,6 +372,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     func providerDidReset() {
         guard let call = active else { return }
         release(call)
+        call.controller.stopStarting()
         Task { await call.controller.end() }
     }
 }

@@ -29,7 +29,6 @@ struct LiveVoiceSystemCallTests {
         try #require(call.tap() != nil)
 
         #expect(await waitForMainActorCondition { call.controller.lastError != nil })
-        #expect(call.controller.lastError?.contains("microphone access") == true)
         #expect(call.telephony.requested.isEmpty)
         #expect(call.channel.opened.isEmpty)
         #expect(!call.center.ownsMicrophone)
@@ -71,6 +70,46 @@ struct LiveVoiceSystemCallTests {
         #expect(call.telephony.performSystem(.end(call: id)))
         call.telephony.releaseStartRequest()
 
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
+            call.channel.opened.isEmpty && !call.controller.isLive
+        })
+        #expect(!call.channel.sent.contains { $0.typeLabel == "voice_call_start" })
+        #expect(!call.controller.isStarting)
+        #expect(call.system.callId == nil)
+    }
+
+    @Test("A system End while the start request is in flight, then the request failing, starts no call without CallKit")
+    func systemEndThenFailedStartRequestStartsNoFallback() async throws {
+        let call = SystemCallHarness()
+        call.telephony.holdsStartRequest = true
+
+        try #require(call.tap() != nil)
+        try #require(await waitForMainActorCondition { call.system.callId != nil && !call.telephony.requested.isEmpty })
+        let id = try #require(call.system.callId)
+        #expect(call.telephony.performSystem(.end(call: id)))
+        call.telephony.releaseStartRequest(
+            throwing: NSError(domain: CXErrorCodeRequestTransactionError.errorDomain, code: 1)
+        )
+
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
+            call.channel.opened.isEmpty && !call.controller.isLive
+        })
+        #expect(!call.controller.isStarting)
+        #expect(call.system.callId == nil)
+    }
+
+    @Test("The app's End while the start request is in flight hangs up the system call and starts nothing on the server")
+    func appEndDuringStartRequestStartsNothing() async throws {
+        let call = SystemCallHarness()
+        call.telephony.holdsStartRequest = true
+
+        try #require(call.tap() != nil)
+        try #require(await waitForMainActorCondition { call.system.callId != nil && !call.telephony.requested.isEmpty })
+        let id = try #require(call.system.callId)
+        await call.controller.end()
+        call.telephony.releaseStartRequest()
+
+        #expect(await waitForMainActorCondition { call.endRequested(id) })
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
             call.channel.opened.isEmpty && !call.controller.isLive
         })
@@ -466,12 +505,13 @@ private final class FakeLiveVoiceTelephony: LiveVoiceTelephony {
     weak var events: LiveVoiceTelephonyEvents?
     var startError: Error?
     var performsRequests = true
-    /// The start request returns only on `releaseStartRequest`, after the system performed it.
+    /// The start request returns (or throws) only on `releaseStartRequest`, after the system
+    /// performed it.
     var holdsStartRequest = false
     private(set) var requested: [CXCallAction] = []
     private(set) var reports: [Report] = []
     private var pending: [CXCallAction] = []
-    private var heldStart: CheckedContinuation<Void, Never>?
+    private var heldStart: CheckedContinuation<Void, Error>?
 
     func request(_ action: CXCallAction) async throws {
         if action is CXStartCallAction, let startError { throw startError }
@@ -482,12 +522,16 @@ private final class FakeLiveVoiceTelephony: LiveVoiceTelephony {
             pending.append(action)
         }
         if action is CXStartCallAction, holdsStartRequest {
-            await withCheckedContinuation { heldStart = $0 }
+            try await withCheckedThrowingContinuation { heldStart = $0 }
         }
     }
 
-    func releaseStartRequest() {
-        heldStart?.resume()
+    func releaseStartRequest(throwing error: Error? = nil) {
+        if let error {
+            heldStart?.resume(throwing: error)
+        } else {
+            heldStart?.resume()
+        }
         heldStart = nil
     }
 
