@@ -86,7 +86,7 @@ Example:
 
 ### Fixed
 
-- **Server:** When a durable session store's lock is disturbed while open, for example by a file written into its `.lock` folder, Oppi closes only that store and ends its sessions with an error, and refuses to reopen it until the server restarts. Before, the whole server exited with `Uncaught exception: Unable to update lock within the stale threshold`.
+- **Server:** When a durable session store's lock is disturbed while open, for example by a file written into its `.lock` folder, Oppi closes only that store and ends its sessions with an error, and refuses to reopen it until the server restarts. Remove any stray file from the `.lock` folder before that restart, or the store still cannot open. Before, the whole server exited with `Uncaught exception: Unable to update lock within the stale threshold`.
 - **Server:** A durable session store that cannot be locked for a reason other than another live server, such as a leftover file in its stale `.lock` folder, now fails with an error naming the cause (for example `ENOTEMPTY`) and the `.lock` path, instead of `Durable store … is already open`. Remove the stray file to open it again.
 - **Server:** A durable session whose store could not be locked, because another process held it, opens once the lock is free instead of failing until the server restarts, and server shutdown no longer stops early with `Shutdown error: Durable store … is already open`.
 - **Server:** Automatic session titles no longer turn the model's reply into the name, such as "I can't see the attachment contents..." with Claude Haiku. The server now asks for a title the same way on-device titles do, and leaves a session unnamed when the model answers instead.

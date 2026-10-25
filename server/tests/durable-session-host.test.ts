@@ -281,7 +281,7 @@ describe("durable SessionHost stores", () => {
     expect(refused?.message).toContain("ENOTEMPTY");
     expect(refused?.message).toContain(realpathSync(lockPath));
     expect(refused?.message).not.toMatch(/already open/);
-    expect(refused?.code).not.toBe("durable_store_locked");
+    expect(refused?.code).toBe("durable_store_lock_failed");
   });
 
   it("ignores a late compromise report from a lock it already released", async () => {

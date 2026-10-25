@@ -794,7 +794,12 @@ export class SessionHost {
             new Error(`Durable store ${this.storeId} is already open`, { cause: error }),
             { code: "durable_store_locked" },
           );
-        const lockPath = `${realpathSync(this.directory)}.lock`;
+        let lockPath = `${this.directory}.lock`;
+        try {
+          lockPath = `${realpathSync(this.directory)}.lock`;
+        } catch {
+          // Name the unresolved path; the lock error is the one to report.
+        }
         throw Object.assign(
           new Error(
             `Durable store ${this.storeId} could not take its lock ${lockPath}: ${safeErrorMessage(error)}`,
@@ -853,7 +858,10 @@ export class SessionHost {
         },
         BACKGROUND_CONTEXT,
       );
+      // A lost lock can seal this host while it opens: a sealed host takes no Harness.
+      if (this.closed) throw await this.discardSealedOpen(harness);
       await this.watchTaskGraph(harness);
+      if (this.closed) throw await this.discardSealedOpen(harness);
       this.watchFailure(harness);
       return this.opened(harness, shared.models);
     } catch (error) {
@@ -863,13 +871,31 @@ export class SessionHost {
     }
   }
 
+  /** Close a Harness that finished opening after the host was sealed; the error to reject with. */
+  private async discardSealedOpen(harness: Harness): Promise<Error> {
+    this.stopTaskGraph?.();
+    this.stopTaskGraph = undefined;
+    this.taskGraph = undefined;
+    this.harnessStorage = undefined;
+    await harness.close(BACKGROUND_CONTEXT).catch((error: unknown) => {
+      log.warn("durable_store.close_failed", {
+        storeId: this.storeId,
+        error: safeErrorMessage(error),
+      });
+    });
+    return this.abandoned instanceof Error
+      ? this.abandoned
+      : new Error("Server durable store is closed");
+  }
+
   /**
-   * The lock's refresh found it gone or changed (a stray file in the lock directory, a clock
-   * jump, a stall past the stale threshold): another process may hold the store now. The
-   * default `onCompromised` throws from a timer, which is an uncaught exception that takes the
-   * whole server and every other store down for one store's lock. Instead stop writing to this
-   * store only: seal the host, end its sessions, and refuse to reopen it in this process, so
-   * this server never becomes a second writer. A restart takes the lock again when it is free.
+   * The lock's refresh found it gone or changed (the lock directory removed, or its mtime
+   * changed: a stray file written into it, or another process that took it over): another
+   * process may hold the store now. The default `onCompromised` throws from a timer, which is
+   * an uncaught exception that takes the whole server and every other store down for one
+   * store's lock. Instead stop writing to this store only: seal the host, end its sessions, and
+   * refuse to reopen it in this process, so this server never becomes a second writer. A
+   * restart takes the lock again once its directory is free, which may need a stray file removed.
    */
   private loseLock(token: object, cause: Error): void {
     // A report for an acquisition already released, or already reported.
@@ -878,7 +904,7 @@ export class SessionHost {
     // The lock is no longer ours to release: it may be another holder's now.
     this.releaseLock = undefined;
     const failure = new Error(
-      `Durable store ${this.storeId} lost its lock; restart the server to reopen it: ${safeErrorMessage(cause)}`,
+      `Durable store ${this.storeId} lost its lock (${safeErrorMessage(cause)}). Another process may hold it, or its lock directory ${this.directory}.lock may need cleaning before a server restart can reopen it`,
       { cause },
     );
     this.runtime.loseLock(this.storeId, failure);
@@ -900,6 +926,8 @@ export class SessionHost {
     while (this.closing) await this.closing.catch(() => undefined);
     if (this.closed) return;
     await this.seal(failure);
+    // Shutdown leaves the sessions for the restart, as recovery does.
+    if (this.runtime.shuttingDown) return;
     await this.runtime.onHostRecovered?.(this, failure);
   }
 
@@ -1013,7 +1041,11 @@ export class SessionHost {
     this.opening = undefined;
     this.harnessStorage = undefined;
     await opening
-      ?.then(({ harness }) => harness.close(BACKGROUND_CONTEXT))
+      ?.then(
+        ({ harness }) => harness.close(BACKGROUND_CONTEXT),
+        // An open that failed closed what it opened; its caller has the error.
+        () => undefined,
+      )
       .catch((error: unknown) => {
         log.warn("durable_store.close_failed", {
           storeId: this.storeId,
