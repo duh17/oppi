@@ -4,13 +4,14 @@ import UIKit
 /// The workspace shell with a Live Voice call on a fake channel, so the call strip and the
 /// session row's call badge can be captured without a server or a microphone
 /// (`SCREENSHOT_SCREEN=live-voice-call-strip`). `SCREENSHOT_CALL_STRIP` picks the call's
-/// state: `live` (default), `connecting`, `muted`, `failed`, or `untitled` (a call whose
+/// state: `live` (default), `connecting`, `muted`, `failed`, `none` (the same screen with no
+/// call, the baseline to compare against), or `untitled` (a call whose
 /// session title is unknown or locked: the strip says "Live Voice"). `SCREENSHOT_COLOR_SCHEME=dark|light`
 /// pins the theme.
 @MainActor
 enum LiveVoiceCallStripScreenshotPreview {
     enum Variant: String {
-        case live, connecting, muted, failed, untitled
+        case live, connecting, muted, failed, untitled, none
     }
 
     static let root: AppRootEnvironment = {
@@ -40,7 +41,7 @@ enum LiveVoiceCallStripScreenshotPreview {
             liveVoiceCalls: calls
         )
         let sessionId = variant == .untitled ? "not-listed" : "call-session"
-        if let call = calls.placeCall(serverId: server.id, sessionId: sessionId) {
+        if variant != .none, let call = calls.placeCall(serverId: server.id, sessionId: sessionId) {
             Task { @MainActor in
                 await call.start(sessionId: sessionId, routeScope: .workspace(workspaceId))
                 if variant == .muted { call.toggleMute() }
@@ -140,7 +141,7 @@ private final class PreviewCallChannel: LiveVoiceCallChannel {
                 data: nil,
                 error: "The server's voice backend stopped. Try again in a moment."
             ))
-        case .live, .muted, .untitled:
+        case .live, .muted, .untitled, .none:
             continuation?.yield(.voiceCallState(VoiceCallStateSnapshot(
                 callId: "preview-call",
                 controlSessionId: sessionId,
