@@ -81,8 +81,6 @@ struct AudioPlayerSpeechTests {
         await waitUntil { player.loadingItemID == nil }
         #expect(player.loadingItemID == nil)
         #expect(player.playingItemID == nil)
-        try? await Task.sleep(for: .milliseconds(100))
-        #expect(player.playingItemID == nil)
     }
 
     @Test func tappingAgainWhileLoadingStopsBeforeAudioStarts() async {

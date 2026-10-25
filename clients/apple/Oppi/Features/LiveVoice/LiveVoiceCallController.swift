@@ -161,8 +161,10 @@ final class LiveVoiceCallController {
             return
         }
         bind(connection, sessionId: sessionId)
-        // A reply being read aloud would talk over the call.
+        // A reply being read aloud would talk over the call, and a dictation take still running
+        // (a call started from a Shortcut or the Action Button mid-take) would hold the mic.
         connection.audioPlayer.stop()
+        await ComposerShared.stopDictationBeforeLiveVoice(manager: .shared)
         await start(sessionId: sessionId, routeScope: routeScope)
     }
 
@@ -236,6 +238,14 @@ final class LiveVoiceCallController {
         invalidateStartWaiter()
         consumeTask?.cancel()
         resetLocalCall()
+    }
+
+    /// Ends the call as End does, then leaves `message` on the call surface until End: the
+    /// call could not run (`LiveVoiceSystemCall`: the system never gave it audio).
+    func end(failing message: String) async {
+        await end()
+        lastError = message
+        statusText = message
     }
 
     func toggleMute() {

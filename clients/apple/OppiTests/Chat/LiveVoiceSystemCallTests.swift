@@ -51,6 +51,58 @@ struct LiveVoiceSystemCallTests {
         #expect(!call.telephony.reports.contains { if case .ended = $0 { true } else { false } })
     }
 
+    @Test("Removing the call's server ends the system call with the app's call")
+    func serverRemovalEndsSystemCall() async throws {
+        let call = SystemCallHarness()
+        try await call.start()
+        let id = try #require(call.system.callId)
+
+        await call.center.endCall(serverId: "server-1")
+
+        #expect(!call.controller.isLive)
+        #expect(await waitForMainActorCondition {
+            call.telephony.requested.contains { ($0 as? CXEndCallAction)?.callUUID == id }
+        })
+        #expect(call.system.callId == nil)
+    }
+
+    @Test("An End before the server confirms hangs up the system call at once, and the late confirmation does not bring it back")
+    func endBeforeConfirmLeavesNoSystemCall() async throws {
+        let call = SystemCallHarness()
+        try await call.start(confirm: false)
+        let id = try #require(call.system.callId)
+
+        await call.controller.end()
+        await call.startTask?.value
+        #expect(call.controller.isEndingUnconfirmedCall)
+        #expect(await waitForMainActorCondition {
+            call.telephony.requested.contains { ($0 as? CXEndCallAction)?.callUUID == id }
+        })
+        #expect(call.system.callId == nil)
+
+        // The server's late confirmation: the retiring call ends it on the server only.
+        call.confirm()
+        #expect(await waitForMainActorCondition { call.channel.sent.last?.typeLabel == "voice_call_end" })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(100)) {
+            call.system.callId == nil && !call.telephony.reports.contains(.connected(id))
+        })
+    }
+
+    @Test("A call whose audio session the system never activates fails with the reason instead of staying live and silent")
+    func missingActivationFailsCall() async throws {
+        let call = SystemCallHarness(activationTimeout: .milliseconds(400))
+        try await call.start(activateAudio: false)
+        let id = try #require(call.system.callId)
+        #expect(call.controller.isLive)
+
+        #expect(await waitForMainActorCondition { !call.controller.isLive })
+        #expect(call.controller.lastError == LiveVoiceSystemCall.noAudioText)
+        #expect(call.channel.sent.last?.typeLabel == "voice_call_end", "The server call ends too")
+        #expect(call.telephony.reports.filter { if case .ended = $0 { true } else { false } } == [.ended(id, .failed)])
+        #expect(!call.telephony.requested.contains { $0 is CXEndCallAction })
+        #expect(call.audio.starts == 0)
+    }
+
     @Test("A call the server ended is reported as the other side hanging up, a dropped link as failed",
           arguments: [EndCause.serverEnded, .linkDropped])
     func appSideEndsReportReason(cause: EndCause) async throws {
@@ -234,10 +286,12 @@ private final class SystemCallHarness {
     let audio = FakeLiveVoiceAudioOwner()
     let controller: LiveVoiceCallController
     let system: LiveVoiceSystemCall
+    /// The app's call center, whose one controller is `controller`.
+    let center: LiveVoiceCallCenter
     private(set) var startTask: Task<Void, Never>?
 
-    init(keepAliveInterval: Duration = .seconds(10)) {
-        controller = LiveVoiceCallController(
+    init(keepAliveInterval: Duration = .seconds(10), activationTimeout: Duration = .seconds(5)) {
+        let controller = LiveVoiceCallController(
             channel: channel,
             audio: audio,
             memory: FakeLiveVoiceSessionMemory(),
@@ -245,12 +299,15 @@ private final class SystemCallHarness {
             clientCallId: "client-call-1",
             keepAliveInterval: keepAliveInterval
         )
+        self.controller = controller
         let telephony = telephony
         system = LiveVoiceSystemCall(
             telephony: { telephony },
             displayName: { _ in "Fix the build" },
-            configureAudioSession: {}
+            configureAudioSession: {},
+            activationTimeout: activationTimeout
         )
+        center = LiveVoiceCallCenter(systemCall: system) { controller }
     }
 
     var muteRequests: [Bool] {
@@ -264,7 +321,8 @@ private final class SystemCallHarness {
     /// Starts the call through the system call up to the server's start; CallKit activates
     /// the audio session first unless `activateAudio` is false.
     func start(confirm: Bool = true, activateAudio: Bool = true) async throws {
-        let controller = controller
+        // As `LiveVoiceCallCenter.startCall` does, with the test channel instead of a server.
+        let controller = try #require(center.placeCall(serverId: "server-1", sessionId: "sess-1"))
         let system = system
         startTask = Task {
             await system.start(controller, key: .init(serverId: "server-1", sessionId: "sess-1")) {

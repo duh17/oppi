@@ -30,8 +30,6 @@ struct AppRootEnvironment {
     let sessionRows: SessionRowDisplayStore
     /// The app's one Live Voice call, which outlives the chat that started it.
     let liveVoiceCalls: LiveVoiceCallCenter
-    /// That call as a CallKit call: the system's call UI, mute, End, and hold.
-    let liveVoiceSystemCall: LiveVoiceSystemCall
     /// The one owner of every open. UIKit reaches it here; SwiftUI through
     /// the root's `openURL` action.
     let opener: AppOpener
@@ -47,7 +45,6 @@ struct AppRootEnvironment {
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
         liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
-        liveVoiceSystemCall: LiveVoiceSystemCall = .withoutCallKit(),
         opener: AppOpener
     ) {
         self.coordinator = coordinator
@@ -58,7 +55,6 @@ struct AppRootEnvironment {
         self.chatReaderPayloadStore = chatReaderPayloadStore
         self.sessionRows = sessionRows
         self.liveVoiceCalls = liveVoiceCalls
-        self.liveVoiceSystemCall = liveVoiceSystemCall
         self.opener = opener
     }
 
@@ -71,8 +67,7 @@ struct AppRootEnvironment {
         composerDraftStore: ComposerDraftStore,
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
-        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
-        liveVoiceSystemCall: LiveVoiceSystemCall = .withoutCallKit()
+        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter()
     ) {
         self.init(
             coordinator: coordinator,
@@ -83,7 +78,6 @@ struct AppRootEnvironment {
             chatReaderPayloadStore: chatReaderPayloadStore,
             sessionRows: sessionRows,
             liveVoiceCalls: liveVoiceCalls,
-            liveVoiceSystemCall: liveVoiceSystemCall,
             opener: AppOpener(
                 coordinator: coordinator,
                 navigation: navigation,
@@ -104,7 +98,6 @@ extension AppRootEnvironment: Equatable {
             && lhs.chatReaderPayloadStore === rhs.chatReaderPayloadStore
             && lhs.sessionRows === rhs.sessionRows
             && lhs.liveVoiceCalls === rhs.liveVoiceCalls
-            && lhs.liveVoiceSystemCall === rhs.liveVoiceSystemCall
             && lhs.opener === rhs.opener
     }
 }

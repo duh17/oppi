@@ -71,7 +71,14 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
         /// Mute actions the app requested. Their performs echo the app's own state.
         var appMuteActions: Set<UUID> = []
         var watch: Task<Void, Never>?
+        /// CallKit activated the call's audio session at least once.
+        var audioActivated = false
+        /// Fails the call when the activation never comes.
+        var activationDeadline: Task<Void, Never>?
     }
+
+    /// Shown on the call surface when the system never gave the call its audio.
+    static let noAudioText = "Live Voice couldn't get audio from iOS. Try again; if it keeps happening, quit and reopen Oppi."
 
     private var active: Active?
     private let makeTelephony: @MainActor () -> LiveVoiceTelephony?
@@ -79,18 +86,23 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     private var telephonyInstance: LiveVoiceTelephony?
     private let displayName: @MainActor @Sendable (LiveVoiceCallCenter.CallKey) -> String
     private let configureAudioSession: @MainActor () throws -> Void
+    private let activationTimeout: Duration
 
     /// - Parameters:
     ///   - telephony: made on the first call, so the provider exists only once Live Voice is used.
     ///   - displayName: what the system UI calls the session; read again whenever it may change.
+    ///   - activationTimeout: how long after the start action the system may take to activate
+    ///     the audio session before the call fails instead of staying live and silent.
     init(
         telephony: @escaping @MainActor () -> LiveVoiceTelephony? = { CallKitLiveVoiceTelephony.make() },
         displayName: @escaping @MainActor @Sendable (LiveVoiceCallCenter.CallKey) -> String,
-        configureAudioSession: @escaping @MainActor () throws -> Void = { try LiveVoiceDuplexCaptureEngine.configureSession() }
+        configureAudioSession: @escaping @MainActor () throws -> Void = { try LiveVoiceDuplexCaptureEngine.configureSession() },
+        activationTimeout: Duration = .seconds(5)
     ) {
         makeTelephony = telephony
         self.displayName = displayName
         self.configureAudioSession = configureAudioSession
+        self.activationTimeout = activationTimeout
     }
 
     /// Previews and tests: every call starts without CallKit.
@@ -240,10 +252,16 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
         }
     }
 
+    /// The system call is over on this side: stop following it.
+    private func release(_ call: Active) {
+        if active?.id == call.id { active = nil }
+        call.watch?.cancel()
+        call.activationDeadline?.cancel()
+    }
+
     /// The app's call is over: hang up the system call with the reason it ended.
     private func finish(_ call: Active) {
-        active = nil
-        call.watch?.cancel()
+        release(call)
         guard let telephony else { return }
         switch call.controller.lastError {
         case nil:
@@ -281,12 +299,12 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
             }
             telephony?.reportUpdate(call: id, displayName: call.displayName)
             telephony?.reportConnecting(call: id)
+            armActivationDeadline(for: id)
             return true
         case .end(let id):
             // An end for a call already gone (the app hung up first) has nothing left to do.
             guard let call = active, call.id == id else { return true }
-            active = nil
-            call.watch?.cancel()
+            release(call)
             Task { await call.controller.end() }
             return true
         case .setMuted(let id, let muted, let actionId):
@@ -306,7 +324,31 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     }
 
     func audioSessionDidActivate() {
+        active?.audioActivated = true
+        active?.activationDeadline?.cancel()
+        active?.activationDeadline = nil
         active?.controller.setAudioSessionActive(true)
+    }
+
+    /// The system activates the session soon after the start action is fulfilled. When it
+    /// never does (a stale audio session ID in callservicesd, Apple DTS in forums thread
+    /// 837211), the call would sit live and silent: fail it with the reason instead.
+    private func armActivationDeadline(for id: UUID) {
+        let timeout = activationTimeout
+        active?.activationDeadline = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled, let self, let call = self.active, call.id == id,
+                  !call.audioActivated else { return }
+            ClientLog.warning("LiveVoice", "CallKit never activated the audio session", metadata: [
+                "timeout": String(describing: timeout),
+            ], flush: true)
+            // Not cancelled by the release below: the end it sends must still go out.
+            var expired = call
+            expired.activationDeadline = nil
+            self.release(expired)
+            self.telephony?.reportEnded(call: id, reason: .failed)
+            await call.controller.end(failing: Self.noAudioText)
+        }
     }
 
     func audioSessionDidDeactivate() {
@@ -316,8 +358,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     /// The system dropped every call: the app's call ends too.
     func providerDidReset() {
         guard let call = active else { return }
-        active = nil
-        call.watch?.cancel()
+        release(call)
         Task { await call.controller.end() }
     }
 }

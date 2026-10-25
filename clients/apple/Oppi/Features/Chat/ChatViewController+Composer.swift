@@ -394,11 +394,15 @@ extension ChatViewController {
 
     /// Live Voice talks to this chat's session: its agent hears the caller and answers out loud.
     /// The app holds the call, so it keeps running when this chat leaves the screen, and the
-    /// system shows it as a call (`LiveVoiceSystemCall`).
+    /// system shows it as a call (`LiveVoiceCallCenter.startCall`).
     func startLiveVoice() {
         guard let routeScope = focusedRouteScope, let serverId = resolvedServerId,
-              let systemCall = root?.liveVoiceSystemCall,
-              let call = root?.liveVoiceCalls.placeCall(serverId: serverId, sessionId: sessionId) else {
+              root?.liveVoiceCalls.startCall(
+                  serverId: serverId,
+                  sessionId: sessionId,
+                  routeScope: routeScope,
+                  using: connection
+              ) != nil else {
             return
         }
         // The call starts with an empty field, now rather than on the next pass, so a
@@ -407,14 +411,6 @@ extension ChatViewController {
         composerDraftController.setAsideMessage()
         model.composerTextBeforeRecording = nil
         synchronizeComposerMode()
-        let sessionId = sessionId
-        let connection = connection
-        let key = LiveVoiceCallCenter.CallKey(serverId: serverId, sessionId: sessionId)
-        Task {
-            await systemCall.start(call, key: key) {
-                await call.start(sessionId: sessionId, routeScope: routeScope, using: connection)
-            }
-        }
     }
 
     func dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle() {

@@ -205,9 +205,17 @@ final class OppiApp {
         )
         let navigation = AppNavigation()
         let composerDraftStore = ComposerDraftStore()
-        // One Live Voice call for the app. Removing its server ends it, and dictation
-        // anywhere waits while it holds the microphone.
-        let liveVoiceCalls = LiveVoiceCallCenter()
+        // One Live Voice call for the app, shown by the system as a call. Removing its
+        // server ends it, and dictation anywhere waits while it holds the microphone.
+        let liveVoiceCalls = LiveVoiceCallCenter(
+            systemCall: LiveVoiceSystemCall(displayName: { [coordinator] key in
+                LiveVoiceSystemCall.displayName(
+                    for: key,
+                    locks: .shared,
+                    session: coordinator.connection(for: key.serverId)?.sessionStore.session(id: key.sessionId)
+                )
+            })
+        )
         coordinator.liveVoiceCalls = liveVoiceCalls
         VoiceInputManager.shared.liveVoiceCalls = liveVoiceCalls
         // The opener exists before any scene connects, so a notification
@@ -226,13 +234,6 @@ final class OppiApp {
             chatReaderPayloadStore: ChatReaderPayloadStore(),
             sessionRows: SessionRowDisplayStore(),
             liveVoiceCalls: liveVoiceCalls,
-            liveVoiceSystemCall: LiveVoiceSystemCall(displayName: { [coordinator] key in
-                LiveVoiceSystemCall.displayName(
-                    for: key,
-                    locks: .shared,
-                    session: coordinator.connection(for: key.serverId)?.sessionStore.session(id: key.sessionId)
-                )
-            }),
             opener: opener
         )
         // An invite or a background pairing deny can arrive before launch has

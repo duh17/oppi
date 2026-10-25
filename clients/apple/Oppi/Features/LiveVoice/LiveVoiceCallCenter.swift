@@ -32,8 +32,14 @@ final class LiveVoiceCallCenter {
     /// server's call running detached until its TTL.
     @ObservationIgnored private var retiring: [LiveVoiceCallController] = []
     @ObservationIgnored private let makeController: @MainActor () -> LiveVoiceCallController
+    /// The calls as CallKit calls. Previews and tests start without CallKit.
+    @ObservationIgnored let systemCall: LiveVoiceSystemCall
 
-    init(makeController: @escaping @MainActor () -> LiveVoiceCallController = { LiveVoiceCallController() }) {
+    init(
+        systemCall: LiveVoiceSystemCall = .withoutCallKit(),
+        makeController: @escaping @MainActor () -> LiveVoiceCallController = { LiveVoiceCallController() }
+    ) {
+        self.systemCall = systemCall
         self.makeController = makeController
     }
 
@@ -74,6 +80,28 @@ final class LiveVoiceCallCenter {
         let call = Call(key: key, controller: makeController())
         placed = call
         return call.controller
+    }
+
+    /// The one way a call starts (a chat's Live Voice tap, a Quick Session's call): places the
+    /// session's call and starts it as a system call, or without CallKit when the system
+    /// refuses (`LiveVoiceSystemCall`). Nil while `mayStartCall` refuses. The start runs on;
+    /// the controller shows it connecting at once.
+    @discardableResult
+    func startCall(
+        serverId: String,
+        sessionId: String,
+        routeScope: SessionRouteScope,
+        using connection: ServerConnection
+    ) -> LiveVoiceCallController? {
+        guard let call = placeCall(serverId: serverId, sessionId: sessionId) else { return nil }
+        let key = CallKey(serverId: serverId, sessionId: sessionId)
+        let systemCall = systemCall
+        Task {
+            await systemCall.start(call, key: key) {
+                await call.start(sessionId: sessionId, routeScope: routeScope, using: connection)
+            }
+        }
+        return call
     }
 
     /// Ends the call on `serverId`, if there is one: the server is going away, and its call
