@@ -7,7 +7,14 @@ export const properLockfile = createRequire(
 )("proper-lockfile") as {
   lock: (
     file: string,
-    options?: { realpath?: boolean; stale?: number; update?: number; retries?: number },
+    options?: {
+      realpath?: boolean;
+      stale?: number;
+      update?: number;
+      retries?: number;
+      /** Called once the held lock is lost. The default throws, outside any caller. */
+      onCompromised?: (error: Error) => void;
+    },
   ) => Promise<() => Promise<void>>;
   lockSync: (file: string, options?: { realpath?: boolean }) => () => void;
 };

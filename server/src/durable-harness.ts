@@ -760,6 +760,8 @@ export class SessionHost {
     // Every failure clears `opening`: a kept rejection would keep this host "open", so each
     // later `open()` and the shutdown `close()` would rethrow it instead of trying again.
     try {
+      const lost = this.runtime.lostLock(this.storeId);
+      if (lost) throw lost;
       const shared = await this.runtime.ensureShared();
       mkdirSync(this.directory, { recursive: true, mode: 0o700 });
       try {
@@ -768,6 +770,7 @@ export class SessionHost {
           stale: 2_000,
           update: 1_000,
           retries: 0,
+          onCompromised: (error) => this.loseLock(error),
         });
       } catch (error) {
         throw Object.assign(
@@ -833,6 +836,43 @@ export class SessionHost {
       this.opening = undefined;
       throw error;
     }
+  }
+
+  /**
+   * The lock's refresh found it gone or changed (a stray file in the lock directory, a clock
+   * jump, a stall past the stale threshold): another process may hold the store now. The
+   * default `onCompromised` throws from a timer, which is an uncaught exception that takes the
+   * whole server and every other store down for one store's lock. Instead stop writing to this
+   * store only: seal the host, end its sessions, and refuse to reopen it in this process, so
+   * this server never becomes a second writer. A restart takes the lock again when it is free.
+   */
+  private loseLock(cause: Error): void {
+    // The lock is no longer ours to release: it may be another holder's now.
+    this.releaseLock = undefined;
+    const failure = new Error(
+      `Durable store ${this.storeId} lost its lock; restart the server to reopen it: ${safeErrorMessage(cause)}`,
+      { cause },
+    );
+    this.runtime.loseLock(this.storeId, failure);
+    log.warn("durable_store.lock_compromised", {
+      storeId: this.storeId,
+      error: safeErrorMessage(cause),
+    });
+    void this.sealLostLock(failure).catch((error: unknown) => {
+      log.error("durable_store.lock_compromised_seal_failed", {
+        storeId: this.storeId,
+        error: safeErrorMessage(error),
+      });
+    });
+  }
+
+  private async sealLostLock(failure: Error): Promise<void> {
+    // A recovery under way cannot reopen (`openInner` refuses a lost store): it abandons.
+    while (this.recovering) await this.recovering;
+    while (this.closing) await this.closing.catch(() => undefined);
+    if (this.closed) return;
+    await this.seal(failure);
+    await this.runtime.onHostRecovered?.(this, failure);
   }
 
   private async watchTaskGraph(harness: Harness): Promise<void> {
@@ -1277,6 +1317,8 @@ export class DurableHarness {
   }>;
   private readonly hosts = new Map<string, SessionHost>();
   private readonly openingHosts = new Map<string, Promise<SessionHost>>();
+  /** Stores whose lock this process lost; they stay closed until a restart. */
+  private readonly lostLocks = new Map<string, Error>();
   /** Abort leftover work of stopped conversations when a store first opens. */
   onHostOpened?: (host: SessionHost) => Promise<void>;
   /**
@@ -1728,6 +1770,15 @@ export class DurableHarness {
     this.registry = registry;
     this.runSettings = harnessSettings(settings, () => this.defaultExtensions);
     return { models, registry, settings: this.runSettings };
+  }
+
+  /** Why store `storeId` must not reopen in this process, when its lock was lost. */
+  lostLock(storeId: string): Error | undefined {
+    return this.lostLocks.get(storeId);
+  }
+
+  loseLock(storeId: string, failure: Error): void {
+    if (!this.lostLocks.has(storeId)) this.lostLocks.set(storeId, failure);
   }
 
   host(storeId: string): SessionHost | undefined {

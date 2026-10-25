@@ -250,6 +250,25 @@ describe("durable SessionHost stores", () => {
     expect(reopened.isOpen).toBe(true);
   });
 
+  it("seals only the store whose lock was compromised and keeps serving the others", async () => {
+    const f = await fixture();
+    const lost = enroll(f.storage, f.workspace.id, "Lost lock");
+    const kept = enroll(f.storage, f.workspace.id, "Kept lock");
+    await f.manager.startSession(lost.id, f.workspace);
+    await f.manager.startSession(kept.id, f.workspace);
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    const host = runtime.host(lost.id)!;
+    // A stray file in the lock directory changes its mtime under the holder: the lock is
+    // compromised at its next refresh.
+    writeFileSync(join(`${durableStoreDir(f.dir, lost.id)}.lock`, "session.sqlite"), "");
+    await until(() => !f.manager.isActive(lost.id), "the lost-lock session to end");
+    await expect(host.use(async () => undefined)).rejects.toThrow(/lost its lock/);
+    await expect(runtime.openHost(lost.id)).rejects.toThrow(/lost its lock/);
+    expect(f.manager.isActive(kept.id)).toBe(true);
+    await expect(runtime.host(kept.id)!.use(async () => "served")).resolves.toBe("served");
+  });
+
   it("re-attaches a transcript socket whose room failed, on one subscription", async () => {
     const f = await fixture([fauxAssistantMessage("done")]);
     const session = enroll(f.storage, f.workspace.id, "Lost room");
