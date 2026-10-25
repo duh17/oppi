@@ -96,6 +96,8 @@ enum ChatMetricName: String, Codable, Sendable {
     case dictationCancel = "chat.dictation_cancel"
     case dictationResultUpdates = "chat.dictation_result_updates"
     case dictationPreviewFinalDelta = "chat.dictation_preview_final_delta"
+    case dictationInputLevelPeak = "chat.dictation_input_level_peak"
+    case liveVoiceLeftoverCall = "chat.live_voice_leftover_call"
     case cellConfigureMs = "chat.cell_configure_ms"
     case renderStrategyMs = "chat.render_strategy_ms"
     case sessionSwitchMs = "chat.session_switch_ms"

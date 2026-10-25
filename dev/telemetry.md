@@ -187,6 +187,8 @@ The front page should focus on metrics that directly map to user experience. Kee
 | `chat.dictation_first_result_ms`                    | Time until the user sees first transcript feedback. |
 | `chat.dictation_finalize_ms`                        | Stop-to-final-result latency.                       |
 | `chat.dictation_preview_final_delta`                | How much final text changed from the preview.       |
+| `chat.dictation_input_level_peak`                   | Loudest mic level of a take; near 0 means silence.  |
+| `chat.live_voice_leftover_call`                     | A CallKit call iOS kept after Live Voice ended.     |
 | `server.dictation_stt_ms`                           | Backend STT latency.                                |
 | `server.dictation_stt_audio_ratio`                  | STT real-time factor.                               |
 | `chat.dictation_error` and `server.dictation_error` | User-visible dictation failures.                    |

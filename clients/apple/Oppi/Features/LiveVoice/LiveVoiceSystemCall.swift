@@ -15,6 +15,8 @@ protocol LiveVoiceTelephony: AnyObject {
     func reportConnected(call: UUID)
     func reportUpdate(call: UUID, displayName: String)
     func reportEnded(call: UUID, reason: CXCallEndedReason)
+    /// The calls iOS still lists as not ended (`CXCallObserver`).
+    func unendedCallIds() -> Set<UUID>
 }
 
 /// A call action the system performs, whether the app or the system asked for it.
@@ -45,7 +47,8 @@ protocol LiveVoiceTelephonyEvents: AnyObject {
 ///   it and activates its own audio session: Live Voice never fails because the system call did.
 /// - End: the system's End ends the app's call. The app's End hangs up the system call with an
 ///   end action; a call the server ended is reported as the other side hanging up, and a
-///   failed or dropped call as failed.
+///   failed or dropped call as failed. A call iOS still lists once it is over is ended again
+///   (`endLeftoverCalls`): shortly after the hang-up, and before the next call or dictation.
 /// - Mute: every mute the system performs is the call's mute, whoever asked for it: its UI, a
 ///   headset or AirPods gesture, or the app, whose mute asks the system for the same mute. The
 ///   app asks only when its mute differs from the system's last one, so a perform never echoes
@@ -81,28 +84,39 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     static let noAudioText = "Live Voice couldn't get audio from iOS. Try again; if it keeps happening, quit and reopen Oppi."
 
     private var active: Active?
+    /// Every system call this app asked for that iOS may still list. `endLeftoverCalls`
+    /// drops the ones iOS no longer lists.
+    private var placedCallIds: Set<UUID> = []
+    /// When each placed call's side here was over. iOS lists a call it is still hanging up,
+    /// so a call is logged and counted as left over only `leftoverCheckDelay` after this.
+    private var releasedAt: [UUID: ContinuousClock.Instant] = [:]
     private let makeTelephony: @MainActor () -> LiveVoiceTelephony?
     private var madeTelephony = false
     private var telephonyInstance: LiveVoiceTelephony?
     private let displayName: @MainActor @Sendable (LiveVoiceCallCenter.CallKey) -> String
     private let configureAudioSession: @MainActor () throws -> Void
     private let activationTimeout: Duration
+    private let leftoverCheckDelay: Duration
 
     /// - Parameters:
     ///   - telephony: made on the first call, so the provider exists only once Live Voice is used.
     ///   - displayName: what the system UI calls the session; read again whenever it may change.
     ///   - activationTimeout: how long after the start action the system may take to activate
     ///     the audio session before the call fails instead of staying live and silent.
+    ///   - leftoverCheckDelay: how long after the app hangs up a system call it checks that
+    ///     iOS no longer lists it (`endLeftoverCalls`).
     init(
         telephony: @escaping @MainActor () -> LiveVoiceTelephony? = { CallKitLiveVoiceTelephony.make() },
         displayName: @escaping @MainActor @Sendable (LiveVoiceCallCenter.CallKey) -> String,
         configureAudioSession: @escaping @MainActor () throws -> Void = { try LiveVoiceDuplexCaptureEngine.configureSession() },
-        activationTimeout: Duration = .seconds(5)
+        activationTimeout: Duration = .seconds(5),
+        leftoverCheckDelay: Duration = .seconds(3)
     ) {
         makeTelephony = telephony
         self.displayName = displayName
         self.configureAudioSession = configureAudioSession
         self.activationTimeout = activationTimeout
+        self.leftoverCheckDelay = leftoverCheckDelay
     }
 
     /// Previews and tests: every call starts without CallKit.
@@ -129,6 +143,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
         key: LiveVoiceCallCenter.CallKey,
         run: @MainActor () async -> Void
     ) async {
+        endLeftoverCalls(phase: "call_start")
         if let stale = active {
             // The last call ended and its watch has not caught up yet.
             finish(stale)
@@ -140,6 +155,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
         let id = UUID()
         let name = displayName(key)
         active = Active(id: id, controller: controller, key: key, displayName: name)
+        placedCallIds.insert(id)
         // The audio waits for CallKit to activate the session.
         controller.useSystemAudioSession(true)
         let action = CXStartCallAction(call: id, handle: CXHandle(type: .generic, value: name))
@@ -260,6 +276,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     /// The system call is over on this side: stop following it.
     private func release(_ call: Active) {
         if active?.id == call.id { active = nil }
+        if placedCallIds.contains(call.id) { releasedAt[call.id] = .now }
         call.watch?.cancel()
         call.activationDeadline?.cancel()
     }
@@ -284,6 +301,60 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
         default:
             telephony.reportEnded(call: call.id, reason: .failed)
         }
+        scheduleLeftoverCheck()
+    }
+
+    /// After the app hung up a system call, checks once the hang-up had time to land.
+    private func scheduleLeftoverCheck() {
+        let delay = leftoverCheckDelay
+        Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            self?.endLeftoverCalls(phase: "call_end")
+        }
+    }
+
+    /// Ends every system call of ours that iOS still lists although its Live Voice call is
+    /// over. Such a call keeps the app in a phone call: a Bluetooth headset stays in call mode,
+    /// and every later capture through it (dictation, the next call) can record near-silence
+    /// until the app is relaunched. `phase` says where it was found: `call_end` (shortly after
+    /// the app hung up), `call_start`, or `dictation_start`. The call that is up is never ended.
+    /// One hung up less than `leftoverCheckDelay` ago is ended too, so a take or call started
+    /// right after End cannot inherit it, but is not logged or counted: iOS still lists a call
+    /// while it performs an ordinary hang-up. Returns how many it ended.
+    @discardableResult
+    func endLeftoverCalls(phase: String) -> Int {
+        // No provider yet means no call was ever placed: do not create one just to look.
+        guard let telephonyInstance, !placedCallIds.isEmpty else { return 0 }
+        let listed = telephonyInstance.unendedCallIds()
+        let activeId = active?.id
+        placedCallIds = placedCallIds.filter { $0 == activeId || listed.contains($0) }
+        releasedAt = releasedAt.filter { placedCallIds.contains($0.key) }
+        let leftovers = placedCallIds.filter { $0 != activeId }
+        guard !leftovers.isEmpty else { return 0 }
+        let stuck = leftovers.filter { id in
+            guard let released = releasedAt[id] else { return true }
+            return released.duration(to: .now) >= leftoverCheckDelay
+        }
+        for id in leftovers {
+            telephonyInstance.reportEnded(call: id, reason: .remoteEnded)
+            placedCallIds.remove(id)
+            releasedAt[id] = nil
+        }
+        guard !stuck.isEmpty else { return leftovers.count }
+        ClientLog.warning("LiveVoice", "Ended a leftover CallKit call", metadata: [
+            "phase": phase,
+            "count": String(stuck.count),
+        ], flush: true)
+        let count = Double(stuck.count)
+        Task.detached(priority: .utility) {
+            await ChatMetricsService.shared.record(
+                metric: .liveVoiceLeftoverCall,
+                value: count,
+                unit: .count,
+                tags: ["phase": phase]
+            )
+        }
+        return leftovers.count
     }
 
     // MARK: LiveVoiceTelephonyEvents
@@ -314,7 +385,13 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
             Task { await call.controller.end() }
             return true
         case .setMuted(let id, let muted):
-            guard let call = active, call.id == id else { return false }
+            guard let call = active, call.id == id else {
+                ClientLog.warning("LiveVoice", "CallKit mute for no live call", metadata: [
+                    "muted": String(muted),
+                    "has_active_call": String(active != nil),
+                ])
+                return false
+            }
             // Authoritative whoever asked: the app's own request lands as a no-op.
             active?.systemMuted = muted
             call.controller.setMuted(muted)
@@ -359,6 +436,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
             expired.activationDeadline = nil
             self.release(expired)
             self.telephony?.reportEnded(call: id, reason: .failed)
+            self.scheduleLeftoverCheck()
             await call.controller.end(failing: Self.noAudioText)
         }
     }
@@ -405,6 +483,7 @@ final class CallKitLiveVoiceTelephony: NSObject, LiveVoiceTelephony, CXProviderD
     weak var events: LiveVoiceTelephonyEvents?
     private let provider: CXProvider
     private let callController = CXCallController()
+    private let callObserver = CXCallObserver()
 
     /// Nil in the Simulator, which has no call service: every request there fails with
     /// NSCocoaErrorDomain 4099 ("Couldn't communicate with a helper application") and the
@@ -475,6 +554,10 @@ final class CallKitLiveVoiceTelephony: NSObject, LiveVoiceTelephony, CXProviderD
 
     func reportEnded(call: UUID, reason: CXCallEndedReason) {
         provider.reportCall(with: call, endedAt: nil, reason: reason)
+    }
+
+    func unendedCallIds() -> Set<UUID> {
+        Set(callObserver.calls.lazy.filter { !$0.hasEnded }.map(\.uuid))
     }
 
     // MARK: CXProviderDelegate (main queue)

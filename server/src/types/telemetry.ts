@@ -251,6 +251,16 @@ export const CHAT_METRIC_REGISTRY = {
     description:
       "Edit distance ratio between preview and final transcript (0=identical, 1=completely different).",
   },
+  "chat.dictation_input_level_peak": {
+    unit: "ratio",
+    description:
+      "Loudest microphone level of a dictation take on the waveform meter scale (RMS x 25, capped at 1). Near 0 means the microphone delivered silence.",
+  },
+  "chat.live_voice_leftover_call": {
+    unit: "count",
+    description:
+      "CallKit calls iOS still listed after their Live Voice call was over, which the app then ended. Tags: phase (call_end, call_start, dictation_start).",
+  },
   "chat.dictation_error": {
     unit: "count",
     description: "Dictation error count. Tags: phase, error_kind.",

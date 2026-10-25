@@ -150,6 +150,53 @@ struct LiveVoiceSystemCallTests {
         #expect(!call.telephony.reports.contains { if case .ended = $0 { true } else { false } })
     }
 
+    @Test("A system call iOS still lists after the app's End is ended shortly after; a clean End reports nothing more")
+    func leftoverSystemCallIsEndedAfterHangUp() async throws {
+        let clean = SystemCallHarness(leftoverCheckDelay: .milliseconds(20))
+        try await clean.start()
+        let cleanId = try #require(clean.system.callId)
+        await clean.controller.end()
+        #expect(await waitForMainActorCondition { clean.endRequested(cleanId) })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
+            !clean.telephony.reports.contains { if case .ended = $0 { true } else { false } }
+        })
+
+        let stuck = SystemCallHarness(leftoverCheckDelay: .milliseconds(20))
+        stuck.telephony.keepsEndedCalls = true
+        try await stuck.start()
+        let stuckId = try #require(stuck.system.callId)
+        await stuck.controller.end()
+
+        #expect(await waitForMainActorCondition { stuck.telephony.reports.contains(.ended(stuckId, .remoteEnded)) })
+        #expect(stuck.telephony.listed.isEmpty)
+    }
+
+    @Test("Dictation right after End ends a system call iOS still lists, before the delayed check")
+    func dictationRightAfterEndEndsLeftoverCall() async throws {
+        let call = SystemCallHarness()
+        call.telephony.keepsEndedCalls = true
+        try await call.start()
+        let id = try #require(call.system.callId)
+        await call.controller.end()
+        #expect(await waitForMainActorCondition { call.endRequested(id) })
+
+        #expect(call.system.endLeftoverCalls(phase: "dictation_start") == 1)
+        #expect(call.telephony.reports.last == .ended(id, .remoteEnded))
+        #expect(call.telephony.listed.isEmpty)
+    }
+
+    @Test("The leftover check never ends the call that is up")
+    func leftoverCheckSparesTheLiveCall() async throws {
+        let call = SystemCallHarness(leftoverCheckDelay: .zero)
+        try await call.start()
+        let liveId = try #require(call.system.callId)
+
+        #expect(call.system.endLeftoverCalls(phase: "call_start") == 0)
+        #expect(call.controller.isLive)
+        #expect(call.telephony.listed == [liveId])
+        #expect(!call.telephony.reports.contains { if case .ended = $0 { true } else { false } })
+    }
+
     @Test("Removing the call's server ends the system call with the app's call")
     func serverRemovalEndsSystemCall() async throws {
         let call = SystemCallHarness()
@@ -434,7 +481,11 @@ private final class SystemCallHarness {
     /// The app's call center, whose one controller is `controller`.
     let center: LiveVoiceCallCenter
 
-    init(keepAliveInterval: Duration = .seconds(10), activationTimeout: Duration = .seconds(5)) {
+    init(
+        keepAliveInterval: Duration = .seconds(10),
+        activationTimeout: Duration = .seconds(5),
+        leftoverCheckDelay: Duration = .seconds(3)
+    ) {
         let microphone = microphone
         let controller = LiveVoiceCallController(
             channel: channel,
@@ -451,7 +502,8 @@ private final class SystemCallHarness {
             telephony: { telephony },
             displayName: { _ in "Fix the build" },
             configureAudioSession: {},
-            activationTimeout: activationTimeout
+            activationTimeout: activationTimeout,
+            leftoverCheckDelay: leftoverCheckDelay
         )
         center = LiveVoiceCallCenter(systemCall: system) { controller }
     }
@@ -512,6 +564,10 @@ private final class FakeLiveVoiceTelephony: LiveVoiceTelephony {
     /// The start request returns (or throws) only on `releaseStartRequest`, after the system
     /// performed it.
     var holdsStartRequest = false
+    /// iOS keeps listing a call the app hung up: the end action is accepted, the call stays.
+    var keepsEndedCalls = false
+    /// The calls iOS lists as not ended.
+    private(set) var listed: Set<UUID> = []
     private(set) var requested: [CXCallAction] = []
     private(set) var reports: [Report] = []
     private var pending: [CXCallAction] = []
@@ -520,6 +576,11 @@ private final class FakeLiveVoiceTelephony: LiveVoiceTelephony {
     func request(_ action: CXCallAction) async throws {
         if action is CXStartCallAction, let startError { throw startError }
         requested.append(action)
+        if action is CXStartCallAction {
+            listed.insert(action.callUUID)
+        } else if action is CXEndCallAction, !keepsEndedCalls {
+            listed.remove(action.callUUID)
+        }
         if performsRequests {
             _ = events?.perform(Self.systemAction(for: action))
         } else {
@@ -541,7 +602,8 @@ private final class FakeLiveVoiceTelephony: LiveVoiceTelephony {
 
     /// The system performing an action it started (its UI, a headset, another call).
     func performSystem(_ action: LiveVoiceSystemAction) -> Bool {
-        events?.perform(action) ?? false
+        if case .end(let id) = action { listed.remove(id) }
+        return events?.perform(action) ?? false
     }
 
     func performPendingRequests() {
@@ -553,7 +615,11 @@ private final class FakeLiveVoiceTelephony: LiveVoiceTelephony {
     func reportConnecting(call: UUID) { reports.append(.connecting(call)) }
     func reportConnected(call: UUID) { reports.append(.connected(call)) }
     func reportUpdate(call: UUID, displayName: String) { reports.append(.update(call, displayName)) }
-    func reportEnded(call: UUID, reason: CXCallEndedReason) { reports.append(.ended(call, reason)) }
+    func reportEnded(call: UUID, reason: CXCallEndedReason) {
+        reports.append(.ended(call, reason))
+        listed.remove(call)
+    }
+    func unendedCallIds() -> Set<UUID> { listed }
 
     private static func systemAction(for action: CXCallAction) -> LiveVoiceSystemAction {
         switch action {

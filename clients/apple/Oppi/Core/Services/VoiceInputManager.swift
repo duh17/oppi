@@ -652,6 +652,9 @@ final class VoiceInputManager {
     private var dictationSessionStart: ContinuousClock.Instant?
     private var recordingStart: ContinuousClock.Instant?
     private var resultUpdateCount = 0
+    /// Loudest capture level this take (`VoiceSpectrumFrame.level`), reported at stop: a
+    /// take that stays near 0 recorded silence, whatever the transcript says.
+    private var inputLevelPeak: Float = 0
     private var replaceTranscriptState = ReplaceTranscriptState()
     /// On-device Speech keeps a long volatile window. Paint new words as draft
     /// until a pause, then keep that prefix settled even if later results arrive.
@@ -1074,6 +1077,9 @@ final class VoiceInputManager {
         onCaptureFailure: (@MainActor () -> Void)? = nil
     ) async throws {
         try validateStartAdmission()
+        // A CallKit call iOS still lists after its Live Voice call ended keeps a Bluetooth
+        // headset in call mode, and this take would record near-silence through it.
+        liveVoiceCalls?.systemCall.endLeftoverCalls(phase: "dictation_start")
         captureFailure = nil
         captureFailureHandler = onCaptureFailure
         nextStartRequestID += 1
@@ -1107,6 +1113,7 @@ final class VoiceInputManager {
         dictationSessionStart = nil
         recordingStart = nil
         resultUpdateCount = 0
+        inputLevelPeak = 0
         replaceTranscriptState.reset()
         activeRecordingSource = source
         // Expose the take before HTTP suspends so dismiss can retire it even if
@@ -1519,6 +1526,7 @@ final class VoiceInputManager {
             onAudioLevel: { [weak self] level in
                 guard let self else { return }
                 self.voiceSpectrum = level
+                self.inputLevelPeak = max(self.inputLevelPeak, level.level)
                 self.lastCaptureAudioAt = .now
                 if let recoveryStart = self.captureRecoveryAudioBeganAt,
                    recoveryStart.elapsedMs() >= Self.captureStallTimeoutMs {
@@ -1942,6 +1950,7 @@ final class VoiceInputManager {
         dictationSessionStart = nil
         recordingStart = nil
         resultUpdateCount = 0
+        inputLevelPeak = 0
     }
 
     /// Tears down a failed start. Returns false if this request lost ownership
@@ -2377,6 +2386,12 @@ final class VoiceInputManager {
         recordDictationRatioMetric(
             .dictationPreviewFinalDelta,
             value: Self.previewFinalDelta(preview: previewTranscript, final: finalTranscript),
+            annotation: annotation,
+            status: "ok"
+        )
+        recordDictationRatioMetric(
+            .dictationInputLevelPeak,
+            value: Double(inputLevelPeak),
             annotation: annotation,
             status: "ok"
         )
