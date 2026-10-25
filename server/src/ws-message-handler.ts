@@ -174,6 +174,7 @@ export class WsMessageHandler {
       case "voice_call_detach":
       case "voice_call_keepalive":
       case "voice_call_end":
+      case "voice_call_barge_in":
         await this.handleVoiceCommand(session, msg, send, meta);
         return;
 
@@ -302,7 +303,8 @@ export class WsMessageHandler {
           | "voice_call_attach"
           | "voice_call_detach"
           | "voice_call_keepalive"
-          | "voice_call_end";
+          | "voice_call_end"
+          | "voice_call_barge_in";
       }
     >,
     send: (msg: ServerMessage) => void,
@@ -375,6 +377,16 @@ export class WsMessageHandler {
             }),
           );
         }
+        return;
+      }
+
+      if (msg.type === "voice_call_barge_in") {
+        voiceCalls.requireController(msg, frontend);
+        // Cancelling is synchronous, so every call audio frame sent after this result is new
+        // speech; the phone drops call audio until it arrives.
+        const cancelled =
+          this.deps.voiceMedia?.bargeIn(frontend.connectionId, msg.requestId) ?? false;
+        send(runtimeCommandSuccess(msg.type, requestId, { callId: msg.callId, cancelled }));
         return;
       }
 

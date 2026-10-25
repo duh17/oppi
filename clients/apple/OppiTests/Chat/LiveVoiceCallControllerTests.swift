@@ -279,6 +279,104 @@ struct LiveVoiceCallControllerTests {
         #expect(!harness.controller.isMuted)
     }
 
+    @Test("Talking over the reply stops it, sends one barge-in, and drops that reply's late audio until the server answers")
+    func localBargeInStopsAndGatesPlayback() async throws {
+        let harness = try await startedHarness()
+        harness.controller.meter.publishPlayback(.zero, dbfs: -20)
+        harness.audio.setPlaybackActive(true)
+        let stopsBefore = harness.audio.playbackStops
+
+        // Past the reply's start holdoff, then sustained speech.
+        for _ in 0..<6 { harness.audio.emit(Self.mic(amplitude: 8_000)) }
+        await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_barge_in") }
+        #expect(harness.audio.playbackStops == stopsBefore + 1)
+        guard case .voiceCallBargeIn(let callId, let epoch, let bargeInId)? = harness.channel.sent.last else {
+            Issue.record("expected a barge-in")
+            return
+        }
+        #expect(callId == "call-1")
+        #expect(epoch == 1)
+
+        // More speech in the same reply sends nothing more.
+        for _ in 0..<6 { harness.audio.emit(Self.mic(amplitude: 8_000)) }
+        await Task.yield()
+        #expect(sentTypes(harness.channel.sent).filter { $0 == "voice_call_barge_in" }.count == 1)
+
+        // The interrupted reply's tail, still in flight, is not played.
+        harness.channel.emitAudio(Data([7]))
+        harness.channel.emit(.commandResult(
+            command: "voice_call_keepalive", requestId: "other", success: true, data: nil, error: nil
+        ))
+        harness.channel.emitAudio(Data([7]))
+        harness.channel.emit(.commandResult(
+            command: "voice_call_barge_in", requestId: bargeInId, success: true, data: nil, error: nil
+        ))
+        await Self.drain(harness, eventSeq: 2)
+        #expect(harness.audio.played.isEmpty)
+        harness.channel.emitAudio(Data([8]))
+        #expect(harness.audio.played == [Data([8])])
+
+        // The next reply can be interrupted again.
+        harness.audio.setPlaybackActive(false)
+        harness.audio.setPlaybackActive(true)
+        for _ in 0..<6 { harness.audio.emit(Self.mic(amplitude: 8_000)) }
+        await waitUntil { sentTypes(harness.channel.sent).filter { $0 == "voice_call_barge_in" }.count == 2 }
+        #expect(sentTypes(harness.channel.sent).filter { $0 == "voice_call_barge_in" }.count == 2)
+        #expect(harness.controller.isLive)
+    }
+
+    @Test("A refused barge-in resumes playback and leaves the call up")
+    func refusedBargeInKeepsCall() async throws {
+        let harness = try await startedHarness()
+        harness.controller.meter.publishPlayback(.zero, dbfs: -20)
+        harness.audio.setPlaybackActive(true)
+        for _ in 0..<6 { harness.audio.emit(Self.mic(amplitude: 8_000)) }
+        await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_barge_in") }
+        guard case .voiceCallBargeIn(_, _, let bargeInId)? = harness.channel.sent.last else {
+            Issue.record("expected a barge-in")
+            return
+        }
+
+        harness.channel.emit(.commandResult(
+            command: "voice_call_barge_in", requestId: bargeInId, success: false, data: nil,
+            error: "Stale voice controller lease"
+        ))
+        await Self.drain(harness, eventSeq: 2)
+        harness.channel.emitAudio(Data([8]))
+        #expect(harness.audio.played == [Data([8])])
+        #expect(harness.controller.isLive)
+        #expect(harness.controller.lastError == nil)
+    }
+
+    @Test("Hold clears a pending barge-in, so audio after unhold plays")
+    func holdClearsBargeInGate() async throws {
+        let harness = try await startedHarness()
+        harness.controller.meter.publishPlayback(.zero, dbfs: -20)
+        harness.audio.setPlaybackActive(true)
+        for _ in 0..<6 { harness.audio.emit(Self.mic(amplitude: 8_000)) }
+        await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_barge_in") }
+
+        harness.controller.setOnHold(true)
+        harness.controller.setOnHold(false)
+        await waitUntil { harness.audio.isCapturing }
+        harness.channel.emitAudio(Data([8]))
+        #expect(harness.audio.played == [Data([8])])
+        #expect(sentTypes(harness.channel.sent).filter { $0 == "voice_call_barge_in" }.count == 1)
+    }
+
+    @Test("The reply's own echo never interrupts it")
+    func echoDoesNotBargeIn() async throws {
+        let harness = try await startedHarness()
+        harness.controller.meter.publishPlayback(.zero, dbfs: -12)
+        harness.audio.setPlaybackActive(true)
+        // About -30 dBFS: above the speech floor, but too far below the reply to be the caller.
+        for _ in 0..<20 { harness.audio.emit(Self.mic(amplitude: 1_000)) }
+        await Task.yield()
+        #expect(!sentTypes(harness.channel.sent).contains("voice_call_barge_in"))
+        harness.channel.emitAudio(Data([8]))
+        #expect(harness.audio.played == [Data([8])])
+    }
+
     @Test("Voice call state without a user partial leaves playback scheduled")
     func stateWithoutPartialDoesNotFlushPlayback() async throws {
         let harness = try await startedHarness()
@@ -732,6 +830,19 @@ struct LiveVoiceCallControllerTests {
         harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 1, leaseEpoch: 1)))
         await harness.startTask.value
         return harness
+    }
+
+    /// Waits until the controller has handled everything emitted so far, by emitting a call
+    /// state behind it.
+    private static func drain(_ harness: Harness, eventSeq: Int) async {
+        harness.channel.emit(.voiceCallState(snapshot(callId: "call-1", eventSeq: eventSeq, leaseEpoch: 1)))
+        await waitUntil { harness.controller.callState?.eventSeq == eventSeq }
+    }
+
+    /// 100 ms of 16 kHz mic audio at a constant amplitude (RMS = amplitude / 32768).
+    private static func mic(amplitude: Int16) -> Data {
+        var samples = [Int16](repeating: amplitude.littleEndian, count: 1_600)
+        return Data(bytes: &samples, count: samples.count * 2)
     }
 
     private static func snapshot(

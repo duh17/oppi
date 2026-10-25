@@ -312,6 +312,12 @@ struct ClientMessageTests {
         let detach = try decode(.voiceCallDetach(callId: "call-1", controllerLeaseEpoch: 3, requestId: "voice-3"))
         #expect(detach["type"] as? String == "voice_call_detach")
         #expect(detach["controllerLeaseEpoch"] as? Int == 3)
+
+        let bargeIn = try decode(.voiceCallBargeIn(callId: "call-1", controllerLeaseEpoch: 3, requestId: "voice-4"))
+        #expect(bargeIn["type"] as? String == "voice_call_barge_in")
+        #expect(bargeIn["callId"] as? String == "call-1")
+        #expect(bargeIn["controllerLeaseEpoch"] as? Int == 3)
+        #expect(bargeIn["requestId"] as? String == "voice-4")
     }
 
     // MARK: - Helpers

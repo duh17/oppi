@@ -78,6 +78,10 @@ enum ClientMessage: Sendable {
     case voiceCallDetach(callId: String, controllerLeaseEpoch: Int, requestId: String? = nil)
     case voiceCallKeepAlive(callId: String, controllerLeaseEpoch: Int, requestId: String? = nil)
     case voiceCallEnd(callId: String, controllerLeaseEpoch: Int, requestId: String? = nil)
+    /// The phone heard the caller over the agent and stopped playback. The server drops the
+    /// reply being said and queued; its `command_result` for `requestId` marks the point after
+    /// which call audio is new speech.
+    case voiceCallBargeIn(callId: String, controllerLeaseEpoch: Int, requestId: String)
 
     // ── Dictation (session audio stream) ──
     case dictationStart(contextualStrings: [String] = [])
@@ -452,6 +456,11 @@ extension ClientMessage: Encodable {
             try c.encode(callId, forKey: .callId)
             try c.encode(leaseEpoch, forKey: .controllerLeaseEpoch)
             try c.encodeIfPresent(reqId, forKey: .requestId)
+        case .voiceCallBargeIn(let callId, let leaseEpoch, let reqId):
+            try c.encode("voice_call_barge_in", forKey: .type)
+            try c.encode(callId, forKey: .callId)
+            try c.encode(leaseEpoch, forKey: .controllerLeaseEpoch)
+            try c.encode(reqId, forKey: .requestId)
 
         // ── Dictation ──
         case .dictationStart(let contextualStrings):
@@ -523,6 +532,7 @@ extension ClientMessage {
         case .voiceCallDetach: return "voice_call_detach"
         case .voiceCallKeepAlive: return "voice_call_keepalive"
         case .voiceCallEnd: return "voice_call_end"
+        case .voiceCallBargeIn: return "voice_call_barge_in"
         case .dictationStart: return "dictation_start"
         case .dictationStop: return "dictation_stop"
         case .dictationCancel: return "dictation_cancel"

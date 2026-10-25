@@ -164,6 +164,15 @@ describe("parseClientCommand", () => {
       command: "voice_call_end",
       requestId: "req-voice",
     },
+    {
+      // The phone drops call audio until this request's result, so it cannot be omitted.
+      name: "voice_call_barge_in missing requestId",
+      body: { type: "voice_call_barge_in", callId: "call-1", controllerLeaseEpoch: 4 },
+      code: "invalid_field",
+      error: "Invalid payload: expected requestId",
+      command: "voice_call_barge_in",
+      requestId: undefined,
+    },
   ])("rejects malformed required fields: $name", ({ body, code, error, command, requestId }) => {
     expect(parseClientCommand(body)).toEqual({
       ok: false,
@@ -291,6 +300,15 @@ describe("parseClientCommand", () => {
     {
       name: "voice_call_end",
       body: { type: "voice_call_end", callId: "call-1", controllerLeaseEpoch: 4 },
+    },
+    {
+      name: "voice_call_barge_in",
+      body: {
+        type: "voice_call_barge_in",
+        callId: "call-1",
+        controllerLeaseEpoch: 4,
+        requestId: "barge-1",
+      },
     },
   ])("accepts a valid $name command body", ({ body }) => {
     const parsed = parseClientCommand(body);

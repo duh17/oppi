@@ -285,6 +285,17 @@ export type ClientMessage =
         controllerLeaseEpoch: number;
         requestId?: string;
       }
+    /**
+     * The phone heard the caller over the agent and stopped playback. The server drops the
+     * reply being said and queued, then answers with a `command_result` for `requestId`: call
+     * audio after that result is new speech, so the phone drops call audio until it arrives.
+     */
+    | {
+        type: "voice_call_barge_in";
+        callId: string;
+        controllerLeaseEpoch: number;
+        requestId: string;
+      }
     // ── Dictation (dedicated ASR stream) ──
     | { type: "dictation_start"; contextualStrings?: string[] }
     | { type: "dictation_stop" }

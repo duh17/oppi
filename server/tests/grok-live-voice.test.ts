@@ -429,6 +429,29 @@ describe("Grok Voice media", () => {
     expect(socket.sentTypes()).toEqual(["conversation.item.create", "response.create"]);
   });
 
+  it("withholds the rest of a reply the phone stopped, leaves turn-taking to xAI, and plays the next reply", async () => {
+    const h = harness();
+    const socket = await h.attach();
+    socket.server({ type: "response.created" });
+    socket.serverAudio(Buffer.from("before"));
+
+    expect(h.coordinator.bargeIn("connection-1", "barge-1")).toBe(true);
+    // A repeat of the same request, or a second one while the reply is already withheld.
+    expect(h.coordinator.bargeIn("connection-1", "barge-1")).toBe(false);
+    expect(h.coordinator.bargeIn("connection-1", "barge-2")).toBe(false);
+    socket.serverAudio(Buffer.from("stale tail"));
+    // xAI's server VAD cancels the response itself; nothing is sent to xAI.
+    expect(socket.json).toEqual([]);
+    socket.server({ type: "response.done", response: { status: "cancelled" } });
+
+    socket.server({ type: "response.created" });
+    socket.serverAudio(Buffer.from("next reply"));
+    expect(h.frontend.audio.map(String)).toEqual(["before", "next reply"]);
+
+    socket.server({ type: "response.done" });
+    // No response is playing: nothing to withhold.
+    expect(h.coordinator.bargeIn("connection-1", "barge-3")).toBe(false);
+  });
 
   it("refuses Pi work that Grok proposes while answering a Pi update", async () => {
     const h = harness();

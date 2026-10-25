@@ -125,6 +125,11 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   /** Between `speech_started` and the turn commit; Grok must not start talking over it. */
   private userSpeaking = false;
   /**
+   * The phone heard the caller over the current response and stopped it: its remaining audio
+   * is not sent. The next `response.created` is new speech.
+   */
+  private dropResponseAudio = false;
+  /**
    * The id of this adapter's `response.create` (Pi update, tool error) until xAI creates it.
    * Flow control only: at most one is in flight. Which response is ours comes from the
    * metadata xAI echoes on `response.created`, never from timing. xAI silently drops a create
@@ -148,6 +153,8 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     xaiReplies: 0,
     piUpdateReplies: 0,
     cancelledReplies: 0,
+    /** Responses whose remaining audio was dropped because the phone heard the caller first. */
+    localBargeIns: 0,
     delegations: 0,
     outputBytes: 0,
     /** Longest wait between two audio chunks of one reply, as sent to the phone. */
@@ -276,6 +283,20 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     this.requestResponse();
   }
 
+  /**
+   * The phone heard the caller over Grok and stopped playback. xAI's server VAD hears the same
+   * mic and cancels the response itself ("In VAD mode, interruptions are automatic"), so no
+   * `response.cancel` is sent and turn-taking stays xAI's; only the rest of this response's
+   * audio is withheld, so the phone does not resume it before xAI's VAD catches up.
+   */
+  bargeIn(): boolean {
+    if (!this.responseActive || this.dropResponseAudio) return false;
+    this.dropResponseAudio = true;
+    this.playbackEndsAt = this.now();
+    this.stats.localBargeIns += 1;
+    return true;
+  }
+
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
@@ -378,6 +399,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       }
       case "response.created": {
         this.responseActive = true;
+        this.dropResponseAudio = false;
         this.stats.lastOutputAt = 0; // gaps are measured within one reply
         this.stats.replyFirstOutputAt = 0;
         this.stats.replyOutputMs = 0;
@@ -427,6 +449,8 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     if (pcm.length === 0 || this.stopped) return;
     // Grok speaking resets what xAI repeats in the next transcript.
     this.lastCommittedItem = undefined;
+    // xAI still said it, but the caller talked over it and the phone stopped it.
+    if (this.dropResponseAudio) return;
     const now = this.now();
     this.stats.outputBytes += pcm.length;
     const gap = now - this.stats.lastOutputAt;
@@ -612,6 +636,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       xaiReplies: st.xaiReplies,
       piUpdateReplies: st.piUpdateReplies,
       cancelledReplies: st.cancelledReplies,
+      localBargeIns: st.localBargeIns,
       delegations: st.delegations,
       maxOutputGapMs: Math.round(st.maxOutputGapMs),
       maxNeededBufferMs: Math.round(st.maxNeededBufferMs),

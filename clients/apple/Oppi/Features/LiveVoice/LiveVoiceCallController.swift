@@ -130,6 +130,13 @@ final class LiveVoiceCallController {
     @ObservationIgnored private let microphoneAccess: @MainActor () async -> Bool
     /// A channel passed in is kept; otherwise each start binds its connection's own.
     @ObservationIgnored private let bindsServerChannel: Bool
+    @ObservationIgnored private var bargeInDetector = LiveVoiceBargeInDetector()
+    /// Request id of the barge-in the phone sent after hearing the caller over the reply.
+    /// Until its result arrives, call audio is the interrupted reply's (the server answers only
+    /// after cancelling it, on the same socket), so it is dropped, not played. Cleared by that
+    /// result, success or not, by a new socket (whose media starts fresh), by hold, or by the
+    /// call ending.
+    @ObservationIgnored private var bargeInRequestId: String?
 
     private struct StartWaiter {
         let generation: UInt64
@@ -216,11 +223,13 @@ final class LiveVoiceCallController {
         keepAliveTask = nil
         audio?.stopPlayback()
         isSpeaking = false
+        resetBargeIn()
         audio?.onPlaybackActiveChange = { [weak self] active in
             self?.isSpeaking = active
+            self?.bargeInDetector.setPlaying(active)
         }
         channel.onInboundAudio = { [weak self] data in
-            guard let self, self.mayRunAudio else { return }
+            guard let self, self.mayRunAudio, self.bargeInRequestId == nil else { return }
             self.audio?.play(data)
         }
         channel.close()
@@ -304,6 +313,7 @@ final class LiveVoiceCallController {
     func setMuted(_ muted: Bool) {
         guard isMuted != muted else { return }
         isMuted = muted
+        bargeInDetector.setMuted(muted)
         audio?.setMuted(muted)
     }
 
@@ -418,8 +428,10 @@ final class LiveVoiceCallController {
 
         switch message {
         case .streamConnected:
-            // A new socket: an attach sent on the old one will never be answered.
+            // A new socket: an attach sent on the old one will never be answered, nor will a
+            // barge-in, and the old socket's reply audio cannot arrive on this one.
             rejoinRequestId = nil
+            bargeInRequestId = nil
             await sendJoinOrStart()
         case .voiceCallState(let snapshot):
             apply(snapshot)
@@ -435,6 +447,12 @@ final class LiveVoiceCallController {
         case .commandResult(let command, let requestId, let success, _, let error):
             // The session's stream also carries other callers' command results (model, compact).
             guard command.hasPrefix("voice_") else { return }
+            if command == "voice_call_barge_in" {
+                // Success or not, the server sends no more of the interrupted reply after
+                // this. A refused one (stale lease) is the keepalive's to repair.
+                if requestId != nil, requestId == bargeInRequestId { bargeInRequestId = nil }
+                return
+            }
             if requestId != nil, requestId == rejoinRequestId {
                 rejoinRequestId = nil
                 if !success {
@@ -665,6 +683,7 @@ final class LiveVoiceCallController {
         captureStarted = true
         audio.systemActivatesSession = systemActivatesAudioSession
         audio.onPCM = { [weak self] data in
+            self?.listenForBargeIn(data)
             Task { await self?.forwardAudio(data) }
         }
         do {
@@ -681,6 +700,47 @@ final class LiveVoiceCallController {
         }
     }
 
+    /// Stops the reply the moment the caller talks over it, then tells the server to drop the
+    /// rest. One barge-in per reply; the detector re-arms when the next reply starts.
+    private func listenForBargeIn(_ pcm: Data) {
+        guard isLive, mayRunAudio, bargeInRequestId == nil,
+              let callState, callState.lifecycle == .active else { return }
+        let micDBFS = LiveVoiceBargeInDetector.dbfs(pcm16: pcm)
+        let playbackDBFS = meter.current.playbackDBFS
+        guard bargeInDetector.observe(
+            micDBFS: micDBFS,
+            playbackDBFS: playbackDBFS,
+            duration: LiveVoiceBargeInDetector.duration(pcm16: pcm)
+        ) else { return }
+        let requestId = nextRequestId()
+        bargeInRequestId = requestId
+        audio?.stopPlayback()
+        ClientLog.info("LiveVoice", "Barge-in", metadata: [
+            "mic_dbfs": String(Int(micDBFS.rounded())),
+            "playback_dbfs": String(Int(playbackDBFS.rounded())),
+        ])
+        Task {
+            await send(.voiceCallBargeIn(
+                callId: callState.callId,
+                controllerLeaseEpoch: callState.controllerLeaseEpoch,
+                requestId: requestId
+            ))
+        }
+    }
+
+    private func resetBargeIn() {
+        let stats = bargeInDetector.stats
+        if stats.peakMicDBFS > LiveVoiceBargeInDetector.silenceDBFS {
+            ClientLog.info("LiveVoice", "Barge-in summary", metadata: [
+                "fires": String(stats.fires),
+                "peak_mic_dbfs": String(Int(stats.peakMicDBFS.rounded())),
+            ])
+        }
+        bargeInDetector = LiveVoiceBargeInDetector()
+        bargeInDetector.setMuted(isMuted)
+        bargeInRequestId = nil
+    }
+
     private func forwardAudio(_ pcm: Data) async {
         guard isLive, !isMuted, !pcm.isEmpty else { return }
         try? await channel?.sendAudio(pcm)
@@ -693,6 +753,8 @@ final class LiveVoiceCallController {
         audio?.onPCM = nil
         audio?.suspend()
         isSpeaking = false
+        // Playback is gone with the audio; the next reply re-arms the detector.
+        resetBargeIn()
     }
 
     private func stopCapture() {
@@ -701,6 +763,7 @@ final class LiveVoiceCallController {
         audio?.stopPlayback()
         audio?.stop()
         isSpeaking = false
+        resetBargeIn()
     }
 
     private func failClosed(_ message: String, closeChannel: Bool) {

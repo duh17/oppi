@@ -1176,6 +1176,244 @@ describe("continuous voice media", () => {
     expect(pcm).toEqual(["working on it"]);
   });
 
+  describe("the phone's voice_call_barge_in", () => {
+    /** A call started through the socket handler on `connection-1`, with local ASR and TTS. */
+    async function bargeInCall() {
+      const calls = makeCalls();
+      const stt = new ScriptedSttProvider();
+      let clock = 1_000;
+      const spoken: string[] = [];
+      const cancelled: string[] = [];
+      const tts = new GateableTtsPort({
+        onSpeak: (text) => spoken.push(text),
+        onCancel: (text) => cancelled.push(text),
+      });
+      const coordinator = new VoiceCallMediaCoordinator({
+        createAdapter: ({ callId }) =>
+          localAdapter(stt, { tts, callId, turnEndPauseMs: 60_000, now: () => clock }),
+        calls,
+      });
+      const handler = new WsMessageHandler({
+        sessions: { supportsLiveVoice: () => true } as unknown as WsMessageHandlerDeps["sessions"],
+        ensureSessionContextWindow: (session) => session,
+        voiceCalls: calls,
+        voiceMedia: coordinator,
+      });
+      const sent: ServerMessage[] = [];
+      const audio: string[] = [];
+      const send = (connId: string, message: Record<string, unknown>) =>
+        handler.handleClientMessage(
+          makeVoiceSession(),
+          message as Parameters<WsMessageHandler["handleClientMessage"]>[1],
+          (reply) => sent.push(reply),
+          {
+            connId,
+            authenticatedDeviceId: "paired-device-a",
+            sendAudio: (pcm) => audio.push(pcm.toString()),
+          },
+        );
+      await send("connection-1", {
+        type: "voice_call_start",
+        clientCallId: "client-1",
+        requestId: "start-1",
+      });
+      const { callId, controllerLeaseEpoch } = calls.snapshot("call-1");
+      const bargeIn = async (
+        requestId: string,
+        overrides: { callId?: string; controllerLeaseEpoch?: number; connId?: string } = {},
+      ) => {
+        sent.length = 0;
+        await send(overrides.connId ?? "connection-1", {
+          type: "voice_call_barge_in",
+          callId: overrides.callId ?? callId,
+          controllerLeaseEpoch: overrides.controllerLeaseEpoch ?? controllerLeaseEpoch,
+          requestId,
+        });
+        return sent.find((message) => message.type === "command_result");
+      };
+      return {
+        calls,
+        coordinator,
+        stt,
+        tts,
+        spoken,
+        cancelled,
+        audio,
+        sent,
+        callId,
+        bargeIn,
+        /** Moves the adapter's clock: how long the phone may still be playing what was sent. */
+        advance: (ms: number) => (clock += ms),
+      };
+    }
+
+    it("drops the reply being said and queued before answering, once per request", async () => {
+      const lines: Record<string, unknown>[] = [];
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+        const line = JSON.parse(String(chunk)) as Record<string, unknown>;
+        if (String(line.event).startsWith("voice_media.")) lines.push(line);
+        return true;
+      }) as typeof process.stderr.write);
+      try {
+        const call = await bargeInCall();
+        const playing = call.coordinator.speak(call.callId, "working on it");
+        const queued = call.coordinator.speak(call.callId, "still working");
+        await call.tts.waitForSpeak("working on it");
+
+        expect(await call.bargeIn("barge-1")).toEqual({
+          type: "command_result",
+          command: "voice_call_barge_in",
+          requestId: "barge-1",
+          success: true,
+          data: { callId: call.callId, cancelled: true },
+        });
+        // Cancelled before the result went out: no audio of that reply can follow it.
+        expect(call.cancelled).toEqual(["working on it"]);
+        await Promise.all([playing, queued]);
+
+        const next = call.coordinator.speak(call.callId, "done");
+        await call.tts.waitForSpeak("done");
+        // A repeat of the handled request cannot cut off the reply that started after it.
+        expect(await call.bargeIn("barge-1")).toMatchObject({
+          success: true,
+          data: { cancelled: false },
+        });
+        call.tts.release("done");
+        await next;
+        call.advance(1_000);
+        // Nothing is queued and the phone has played it all: a late barge-in changes nothing.
+        expect(await call.bargeIn("barge-2")).toMatchObject({
+          success: true,
+          data: { cancelled: false },
+        });
+
+        expect(call.spoken).toEqual(["working on it", "done"]);
+        expect(call.audio).toEqual(["done"]);
+        expect(call.calls.snapshot(call.callId).lifecycle).toBe("active");
+        await call.coordinator.detach("connection-1");
+
+        const bargeIns = lines.filter((line) => line.event === "voice_media.barge_in");
+        expect(bargeIns).toEqual([
+          expect.objectContaining({ source: "local", queuedItems: 2, callId: call.callId }),
+        ]);
+        expect(lines.find((line) => line.event === "voice_media.call_summary")).toMatchObject({
+          bargeIns: 1,
+          localBargeIns: 1,
+        });
+      } finally {
+        stderr.mockRestore();
+      }
+    });
+
+    /** `voice_media.*` log lines while `run` runs. */
+    async function voiceLogs(run: () => Promise<void>): Promise<Record<string, unknown>[]> {
+      const lines: Record<string, unknown>[] = [];
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+        const line = JSON.parse(String(chunk)) as Record<string, unknown>;
+        if (String(line.event).startsWith("voice_media.")) lines.push(line);
+        return true;
+      }) as typeof process.stderr.write);
+      try {
+        await run();
+      } finally {
+        stderr.mockRestore();
+      }
+      return lines;
+    }
+
+    const placeholderSent = (sent: ServerMessage[]) =>
+      sent.some(
+        (message) => message.type === "voice_call_state" && message.partialTranscript === "\u2026",
+      );
+
+    it("phone first: the speech detector's barge-in on the same speech finds nothing left", async () => {
+      const call = await bargeInCall();
+      const lines = await voiceLogs(async () => {
+        const playing = call.coordinator.speak(call.callId, "working on it");
+        await call.tts.waitForSpeak("working on it");
+        expect(await call.bargeIn("barge-1")).toMatchObject({ data: { cancelled: true } });
+
+        call.stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+        call.stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+        await playing;
+        expect(placeholderSent(call.sent)).toBe(false);
+        expect(call.cancelled).toEqual(["working on it"]);
+        await call.coordinator.detach("connection-1");
+      });
+      expect(lines.filter((line) => line.event === "voice_media.barge_in")).toEqual([
+        expect.objectContaining({ source: "local" }),
+      ]);
+      expect(lines.find((line) => line.event === "voice_media.call_summary")).toMatchObject({
+        bargeIns: 1,
+        localBargeIns: 1,
+      });
+    });
+
+    it("detector first: the phone's barge-in on the same speech is a no-op", async () => {
+      const call = await bargeInCall();
+      const lines = await voiceLogs(async () => {
+        const playing = call.coordinator.speak(call.callId, "working on it");
+        await call.tts.waitForSpeak("working on it");
+        call.stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+        call.stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+        await playing;
+        expect(placeholderSent(call.sent)).toBe(true);
+
+        expect(await call.bargeIn("barge-1")).toMatchObject({
+          success: true,
+          data: { cancelled: false },
+        });
+        expect(call.cancelled).toEqual(["working on it"]);
+        await call.coordinator.detach("connection-1");
+      });
+      expect(lines.filter((line) => line.event === "voice_media.barge_in")).toEqual([
+        expect.objectContaining({ source: "vad" }),
+      ]);
+    });
+
+    it("counts a phone barge-in on audio the phone is still playing after the queue drained", async () => {
+      const call = await bargeInCall();
+      // 100 ms of playback: the test TTS sends each character as one byte.
+      const reply = "x".repeat(4_800);
+      const lines = await voiceLogs(async () => {
+        const spoken = call.coordinator.speak(call.callId, reply);
+        await call.tts.waitForSpeak(reply);
+        call.tts.release(reply);
+        await spoken;
+        call.advance(40);
+        expect(await call.bargeIn("barge-1")).toMatchObject({ data: { cancelled: true } });
+        await call.coordinator.detach("connection-1");
+      });
+      expect(lines.filter((line) => line.event === "voice_media.barge_in")).toEqual([
+        expect.objectContaining({ source: "local", queuedItems: 0, playbackRemainingMs: 60 }),
+      ]);
+    });
+
+    it("refuses a stale lease, another call, or another connection, and keeps speaking", async () => {
+      const call = await bargeInCall();
+      const playing = call.coordinator.speak(call.callId, "working on it");
+      await call.tts.waitForSpeak("working on it");
+
+      for (const overrides of [
+        { controllerLeaseEpoch: 99 },
+        { connId: "connection-2" },
+        { callId: "call-other" },
+      ]) {
+        expect(await call.bargeIn("barge-x", overrides)).toMatchObject({
+          command: "voice_call_barge_in",
+          requestId: "barge-x",
+          success: false,
+        });
+      }
+
+      call.tts.release("working on it");
+      await playing;
+      expect(call.cancelled).toEqual([]);
+      expect(call.audio).toEqual(["working on it"]);
+      await call.coordinator.detach("connection-1");
+    });
+  });
+
   it("delegates a later committed utterance after barge-in and keeps the call up", async () => {
     const calls = makeCalls();
     const stt = new ScriptedSttProvider();

@@ -321,6 +321,8 @@ final class LiveVoiceAudioMeter: Sendable {
     struct Levels: Equatable, Sendable {
         var mic = VoiceSpectrumFrame.zero
         var playback = VoiceSpectrumFrame.zero
+        /// The reply's RMS level as it leaves the player, for the barge-in echo guard.
+        var playbackDBFS = LiveVoiceBargeInDetector.silenceDBFS
     }
 
     private let levels = Mutex(Levels())
@@ -331,8 +333,11 @@ final class LiveVoiceAudioMeter: Sendable {
         levels.withLock { $0.mic = frame }
     }
 
-    func publishPlayback(_ frame: VoiceSpectrumFrame) {
-        levels.withLock { $0.playback = frame }
+    func publishPlayback(_ frame: VoiceSpectrumFrame, dbfs: Float = LiveVoiceBargeInDetector.silenceDBFS) {
+        levels.withLock {
+            $0.playback = frame
+            $0.playbackDBFS = dbfs
+        }
     }
 
     func reset() {
@@ -700,7 +705,11 @@ enum LiveVoiceCaptureEngineHelper {
         meter: LiveVoiceAudioMeter
     ) {
         player.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            meter.publishPlayback(spectrum.analyze(buffer))
+            var rms: Float = 0
+            if let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 {
+                vDSP_rmsqv(channel, vDSP_Stride(buffer.stride), &rms, vDSP_Length(buffer.frameLength))
+            }
+            meter.publishPlayback(spectrum.analyze(buffer), dbfs: LiveVoiceBargeInDetector.dbfs(rms: rms))
         }
     }
 

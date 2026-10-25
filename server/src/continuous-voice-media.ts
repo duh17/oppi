@@ -29,6 +29,12 @@ export interface VoiceMediaAdapter {
   stop(): void | Promise<void>;
   feedAudio?(pcm: Buffer): void;
   setPlaybackSink?(sendAudio: (pcm: Buffer) => void): void;
+  /**
+   * The phone heard the caller over the agent and already stopped playback: stop sending
+   * the reply being said and anything queued behind it, before returning. True when there
+   * was something to drop. Turn-taking stays the backend's own.
+   */
+  bargeIn?(): boolean;
 }
 
 /** The phone plays Live Voice audio as 16-bit mono PCM at this rate, whatever the backend. */
@@ -117,6 +123,8 @@ interface CallStats {
   turns: number;
   endReasons: Partial<Record<TurnEndReason, number>>;
   bargeIns: number;
+  /** Of `bargeIns`, the ones the phone heard first (`voice_call_barge_in`). */
+  localBargeIns: number;
   ttsItems: number;
   ttsAborted: number;
   ttsFailures: number;
@@ -214,6 +222,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
       turns: 0,
       endReasons: {},
       bargeIns: 0,
+      localBargeIns: 0,
       ttsItems: 0,
       ttsAborted: 0,
       ttsFailures: 0,
@@ -255,6 +264,19 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     const work = this.speechQueue.then(run, run);
     this.speechQueue = work.catch(() => undefined);
     return work;
+  }
+
+  /**
+   * The phone heard the caller first. Like the speech detector's barge-in, it counts while
+   * speech is queued or the phone may still be playing what was sent (it just stopped). The
+   * cancel ends both, so the detector or transcript barge-in for the same speech finds
+   * nothing left, and this is a no-op after theirs.
+   */
+  bargeIn(): boolean {
+    if (this.queuedSpeechItems === 0 && this.now() >= this.playbackEndsAt) return false;
+    this.logBargeIn("local");
+    this.cancelAssistantSpeech();
+    return true;
   }
 
   async stop(): Promise<void> {
@@ -358,14 +380,19 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   /**
    * The user spoke over the assistant: log how long it had been speaking or queued, and how
    * much audio the phone still had to play. TTS outruns playback, so most barge-ins land
-   * after the queue drained, while the phone is still playing.
+   * after the queue drained, while the phone is still playing. `source` says who noticed:
+   * this adapter's transcript, its speech detector (`vad`), or the phone's own mic (`local`).
+   * Every path cancels, which drains the queue and ends playback, so the second path to hear
+   * the same speech logs nothing.
    */
-  private logBargeIn(): void {
+  private logBargeIn(source: "transcript" | "vad" | "local" = "transcript"): void {
     const now = this.now();
     const playbackRemainingMs = Math.max(0, Math.round(this.playbackEndsAt - now));
     if (this.queuedSpeechItems === 0 && playbackRemainingMs === 0) return;
     this.stats.bargeIns += 1;
+    if (source === "local") this.stats.localBargeIns += 1;
     this.log.info("voice_media.barge_in", {
+      source,
       assistantActiveMs:
         this.speechQueuedSince === undefined ? undefined : now - this.speechQueuedSince,
       queuedItems: this.queuedSpeechItems,
@@ -384,6 +411,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
       turns: st.turns,
       endReasons: st.endReasons,
       bargeIns: st.bargeIns,
+      localBargeIns: st.localBargeIns,
       ttsItems: st.ttsItems,
       ttsAborted: st.ttsAborted,
       ttsFailures: st.ttsFailures,
@@ -446,7 +474,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
    */
   private bargeInOnSpeech(): void {
     if (this.queuedSpeechItems === 0 && this.now() >= this.playbackEndsAt) return;
-    this.logBargeIn();
+    this.logBargeIn("vad");
     this.cancelAssistantSpeech();
     // A non-empty partial is the phone's barge-in signal (it drops audio already buffered),
     // as with Grok. Words already showing flush the phone on their next change, and "…"
@@ -709,6 +737,18 @@ export class VoiceCallMediaCoordinator {
     return [...callIds];
   }
 
+  /**
+   * The caller's phone stopped playback because it heard them: drop the reply on that
+   * connection's media. A repeated `requestId` is a no-op, so a duplicate cannot cut off a
+   * reply that started after the first one. True when speech was dropped.
+   */
+  bargeIn(connectionId: string, requestId: string): boolean {
+    const session = this.sessions.get(connectionId);
+    if (!session || session.lastBargeInRequestId === requestId) return false;
+    session.lastBargeInRequestId = requestId;
+    return session.adapter.bargeIn?.() ?? false;
+  }
+
   /** Say the agent's words on the call. */
   speak(callId: string, text: string): Promise<void> {
     for (const session of this.sessions.values()) {
@@ -790,4 +830,6 @@ interface MediaSession {
   controllerLeaseEpoch: number;
   frontend: VoiceCallFrontendConnection;
   adapter: VoiceMediaAdapter;
+  /** The phone's latest `voice_call_barge_in`, so a repeat of it changes nothing. */
+  lastBargeInRequestId?: string;
 }

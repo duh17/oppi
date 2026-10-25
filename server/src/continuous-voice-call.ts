@@ -318,6 +318,18 @@ export class VoiceCallController {
     return this.snapshot(call.callId);
   }
 
+  /** Throws unless `frontend` holds the call's current controller lease. Changes nothing. */
+  requireController(
+    input: { callId: string; controllerLeaseEpoch: number },
+    frontend: Pick<VoiceCallFrontendConnection, "connectionId" | "authenticatedDeviceId">,
+  ): void {
+    this.assertController(
+      this.requireActiveCall(input.callId),
+      input.controllerLeaseEpoch,
+      frontend,
+    );
+  }
+
   endCall(
     input: { callId: string; controllerLeaseEpoch: number },
     frontend: Pick<VoiceCallFrontendConnection, "connectionId" | "authenticatedDeviceId">,
