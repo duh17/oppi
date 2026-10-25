@@ -125,7 +125,8 @@ extension ChatViewController {
 
     /// Tells the app's call center whether this chat is on screen, so the call strip stays out
     /// of the way of the call's own chat and shows everywhere else. Coming is said as the
-    /// transition starts and going as soon as it starts too, so the strip moves with it.
+    /// transition starts, and going too, except for a back swipe, which says it once the swipe
+    /// completes.
     private func noteOnScreen(_ shown: Bool) {
         guard shown else {
             callCenterShowingChat?.chatDisappeared(self)
@@ -145,7 +146,15 @@ extension ChatViewController {
         if screen.isMovingFromParent || screen.isBeingDismissed {
             barItems.clear()
         }
-        noteOnScreen(false)
+        // A back swipe can be called off: the chat leaves only once the finger lets go of a
+        // swipe that completes, so the strip never pushes the layouts down mid-gesture.
+        if let coordinator = transitionCoordinator, coordinator.isInteractive {
+            coordinator.notifyWhenInteractionChanges { [weak self] context in
+                if !context.isCancelled { self?.noteOnScreen(false) }
+            }
+        } else {
+            noteOnScreen(false)
+        }
     }
 
     /// Runs once per appearance, from the first of `viewWillAppear` and

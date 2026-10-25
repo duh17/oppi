@@ -141,6 +141,7 @@ final class LiveVoiceCallStripController: UIViewController {
     private(set) var content: LiveVoiceCallStripContent?
     private let stripView = LiveVoiceCallStripView()
     private var clock: Timer?
+    private var isInBackground = false
 
     /// The strip changed: the shell lays its content out again, animated when the strip came
     /// or went.
@@ -181,6 +182,13 @@ final class LiveVoiceCallStripController: UIViewController {
         // system colors match the screen whatever the window was given.
         stripView.setAppearance(root.themeStore.userInterfaceStyle)
         stripView.backdropColor = root.themeStore.backgroundColor
+        // No clock in the background; the duration is current again the moment the app is back.
+        let inBackground = AppScenePhase.shared.isBackground
+        if inBackground != isInBackground {
+            isInBackground = inBackground
+            if !inBackground, content != nil { stripView.updateDuration(now: Date()) }
+            updateClock()
+        }
         guard next != content else { return }
         let cameOrWent = (next == nil) != (content == nil)
         content = next
@@ -206,7 +214,7 @@ final class LiveVoiceCallStripController: UIViewController {
 
     /// One tick a second while a connected call's duration shows; nothing otherwise.
     private func updateClock() {
-        let ticks = content?.connectedAt != nil && viewIfLoaded?.window != nil
+        let ticks = content?.connectedAt != nil && viewIfLoaded?.window != nil && !isInBackground
         guard ticks != (clock != nil) else { return }
         clock?.invalidate()
         clock = nil
