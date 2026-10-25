@@ -135,17 +135,20 @@ final class LiveVoiceCallCenter {
         await placed.controller.end()
     }
 
-    /// End & Call: ends another session's call (live or still starting), waits for it to
-    /// finish, then starts this session's through `startCall`, so it is a system call like any
-    /// other (a call ended before the server confirmed it retires in `placeCall`). The person
-    /// confirmed ending the other call. Nil when a call still stands in the way.
+    /// End & Call: ends the call the person agreed to end (`ending`, live or still starting),
+    /// waits for it to finish, then starts this session's through `startCall`, so it is a system
+    /// call like any other (a call ended before the server confirmed it retires in
+    /// `placeCall`). Only that call is ended: if another call holds the microphone by now, it
+    /// is left alone and this returns nil, for the caller to ask again about that one.
     func replaceCall(
         serverId: String,
         sessionId: String,
+        ending agreed: CallKey,
         routeScope: SessionRouteScope,
         using connection: ServerConnection
     ) async -> LiveVoiceCallController? {
-        if case .endsCall = callStart(serverId: serverId, sessionId: sessionId), let current = placed {
+        if case .endsCall(let holder) = callStart(serverId: serverId, sessionId: sessionId),
+           holder == agreed, let current = placed {
             await current.controller.end()
         }
         return startCall(serverId: serverId, sessionId: sessionId, routeScope: routeScope, using: connection)

@@ -122,7 +122,7 @@ struct LiveVoiceCallStripTests {
         #expect(app.center.placeCall(serverId: serverId, sessionId: "b") == nil, "No silent takeover without End & Call")
         #expect(app.center.currentCall?.controller === first)
 
-        let second = try #require(await app.replaceCall(sessionId: "b", serverId: serverId))
+        let second = try #require(await app.replaceCall(sessionId: "b", serverId: serverId, ending: a))
         #expect(firstChannel.sent.last?.typeLabel == "voice_call_end", "The first call is ended on the server")
         #expect(firstChannel.closed)
         #expect(!first.isLive)
@@ -157,7 +157,11 @@ struct LiveVoiceCallStripTests {
         ), "A starting call is already the call")
 
         app.microphone.holds = false
-        let second = try #require(await app.replaceCall(sessionId: "b", serverId: serverId))
+        let second = try #require(await app.replaceCall(
+            sessionId: "b",
+            serverId: serverId,
+            ending: LiveVoiceCallCenter.CallKey(serverId: serverId, sessionId: "a")
+        ))
         #expect(!first.isStarting && !first.isLive)
         app.microphone.answerHeld()
 
@@ -166,6 +170,27 @@ struct LiveVoiceCallStripTests {
                 "The ended call never reaches the server")
         #expect(await waitForMainActorCondition { app.channels[1].opened.map(\.sessionId) == ["b"] })
         #expect(app.center.call(serverId: serverId, sessionId: "b") === second)
+    }
+
+    @Test("End & Call never ends a call other than the one the person agreed to end")
+    func endAndCallLeavesADifferentCallAlone() async throws {
+        let app = CallApp()
+        let first = try await app.confirmedCall(sessionId: "a", serverId: serverId)
+        let agreed = LiveVoiceCallCenter.CallKey(serverId: serverId, sessionId: "a")
+        #expect(app.center.callStart(serverId: serverId, sessionId: "b") == .endsCall(agreed))
+
+        // While the alert is up, that call ends and another session's call takes the mic.
+        await first.end()
+        let other = try await app.confirmedCall(sessionId: "c", serverId: serverId)
+        let otherChannel = try #require(app.channels.last)
+
+        #expect(await app.replaceCall(sessionId: "b", serverId: serverId, ending: agreed) == nil)
+        #expect(other.isLive, "The call nobody agreed to end keeps running")
+        #expect(!otherChannel.sent.contains { $0.typeLabel == "voice_call_end" })
+        // The chat asks again, now naming that call.
+        #expect(app.center.callStart(serverId: serverId, sessionId: "b") == .endsCall(
+            LiveVoiceCallCenter.CallKey(serverId: serverId, sessionId: "c")
+        ))
     }
 
     @Test("A failed call on another session is replaced without asking")
@@ -273,8 +298,18 @@ private final class CallApp {
     }
 
     /// End & Call, as the confirmation runs it.
-    func replaceCall(sessionId: String, serverId: String) async -> LiveVoiceCallController? {
-        await center.replaceCall(serverId: serverId, sessionId: sessionId, routeScope: .workspace("ws"), using: connection)
+    func replaceCall(
+        sessionId: String,
+        serverId: String,
+        ending agreed: LiveVoiceCallCenter.CallKey
+    ) async -> LiveVoiceCallController? {
+        await center.replaceCall(
+            serverId: serverId,
+            sessionId: sessionId,
+            ending: agreed,
+            routeScope: .workspace("ws"),
+            using: connection
+        )
     }
 
     func strip() -> LiveVoiceCallStripContent? {

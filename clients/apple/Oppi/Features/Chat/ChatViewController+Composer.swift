@@ -429,9 +429,17 @@ extension ChatViewController {
                 guard await calls.replaceCall(
                     serverId: serverId,
                     sessionId: sessionId,
+                    ending: other,
                     routeScope: routeScope,
                     using: connection
-                ) != nil else { return }
+                ) != nil else {
+                    // Another call took the microphone while the alert was up: ask about that
+                    // one by name instead of ending a call the person never agreed to end.
+                    if case .endsCall = calls.callStart(serverId: serverId, sessionId: sessionId) {
+                        self.requestLiveVoice()
+                    }
+                    return
+                }
                 self.setDraftAsideForCall()
             }
         }
