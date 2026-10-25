@@ -1,4 +1,11 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -248,6 +255,32 @@ describe("durable SessionHost stores", () => {
     await until(() => runtime.host(session.id) === undefined, "idle store close");
     const reopened = await other.openHost(session.id);
     expect(reopened.isOpen).toBe(true);
+  });
+
+  it("names why a stale lock directory could not be removed instead of calling the store open", async () => {
+    const f = await fixture();
+    const session = enroll(f.storage, f.workspace.id, "Stale lock");
+    await f.manager.startSession(session.id, f.workspace);
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    await f.manager.stopSession(session.id);
+    await until(() => runtime.host(session.id) === undefined, "idle store close");
+    // A stale lock directory nothing refreshes, holding a stray file: rmdir fails.
+    const lockPath = `${durableStoreDir(f.dir, session.id)}.lock`;
+    mkdirSync(lockPath);
+    writeFileSync(join(lockPath, "session.sqlite"), "");
+    const past = new Date(Date.now() - 60_000);
+    utimesSync(lockPath, past, past);
+    const other = new DurableHarness(f.dir);
+    runtimes.push(other);
+    const refused = await other.openHost(session.id).then(
+      () => undefined,
+      (error: unknown) => error as Error & { code?: string },
+    );
+    expect(refused?.message).toContain("ENOTEMPTY");
+    expect(refused?.message).toContain(realpathSync(lockPath));
+    expect(refused?.message).not.toMatch(/already open/);
+    expect(refused?.code).not.toBe("durable_store_locked");
   });
 
   it("seals only the store whose lock was compromised and keeps serving the others", async () => {

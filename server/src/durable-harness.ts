@@ -29,7 +29,14 @@ import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -773,9 +780,21 @@ export class SessionHost {
           onCompromised: (error) => this.loseLock(error),
         });
       } catch (error) {
+        // ELOCKED is the only refusal by a live holder, whose refreshes keep the lock fresh.
+        // Anything else is not "open": an expired lock directory that rmdir cannot remove
+        // (ENOTEMPTY, a stray file inside it) fails every open until someone empties it.
+        if ((error as NodeJS.ErrnoException).code === "ELOCKED")
+          throw Object.assign(
+            new Error(`Durable store ${this.storeId} is already open`, { cause: error }),
+            { code: "durable_store_locked" },
+          );
+        const lockPath = `${realpathSync(this.directory)}.lock`;
         throw Object.assign(
-          new Error(`Durable store ${this.storeId} is already open`, { cause: error }),
-          { code: "durable_store_locked" },
+          new Error(
+            `Durable store ${this.storeId} could not take its lock ${lockPath}: ${safeErrorMessage(error)}`,
+            { cause: error },
+          ),
+          { code: "durable_store_lock_failed" },
         );
       }
       const { openNodeSqliteStorage } =
