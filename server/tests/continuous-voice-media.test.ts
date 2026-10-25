@@ -1027,6 +1027,155 @@ describe("continuous voice media", () => {
     expect(pcm).toEqual([]);
   });
 
+  it("cancels in-flight and queued speech after two consecutive speaking reports", async () => {
+    const stt = new ScriptedSttProvider();
+    const cancelled: string[] = [];
+    const spoken: string[] = [];
+    const pcm: Buffer[] = [];
+    const tts = new GateableTtsPort({
+      onSpeak: (text) => spoken.push(text),
+      onCancel: (text) => cancelled.push(text),
+    });
+    const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
+    adapter.setPlaybackSink((chunk) => pcm.push(Buffer.from(chunk)));
+    await adapter.start(async () => {});
+
+    const playing = adapter.speak("working on it");
+    const queued = adapter.speak("still working");
+    await tts.waitForSpeak("working on it");
+
+    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    expect(cancelled).toEqual([]);
+    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    tts.release("working on it");
+    await Promise.all([playing, queued]);
+
+    expect(cancelled).toEqual(["working on it"]);
+    expect(spoken).toEqual(["working on it"]);
+    expect(pcm).toEqual([]);
+  });
+
+  it("tells the phone to drop buffered audio on each speech barge-in", async () => {
+    const calls = makeCalls();
+    const stt = new ScriptedSttProvider();
+    const tts = new GateableTtsPort();
+    const frontend = new DeterministicVoiceCallFrontend({
+      connectionId: "connection-1",
+      authenticatedDeviceId: "paired-device-a",
+    });
+    const coordinator = new VoiceCallMediaCoordinator({
+      createAdapter: () => localAdapter(stt, { tts, turnEndPauseMs: 60_000 }),
+      calls,
+    });
+    const started = calls.startCall(
+      { controlSessionId: "voice-1", clientCallId: "client-1" },
+      frontend.connection,
+    );
+    await coordinator.attach({
+      callId: started.state.callId,
+      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
+      frontend: frontend.connection,
+    });
+    const partials = () =>
+      frontend.messages.flatMap((message) =>
+        message.type === "voice_call_state" ? [message.partialTranscript] : [],
+      );
+    const speaking = { speechActive: true, speechFinal: false, trailingSilenceMs: 0 };
+
+    const first = coordinator.speak(started.state.callId, "working on it");
+    await tts.waitForSpeak("working on it");
+    stt.speech(speaking);
+    expect(partials()).toEqual([]);
+    stt.speech(speaking);
+    expect(partials()).toEqual(["…"]);
+    tts.release("working on it");
+    await first;
+
+    // The user only coughed: the placeholder clears so the next "…" is a change again.
+    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+    expect(partials()).toEqual(["…", undefined]);
+
+    const second = coordinator.speak(started.state.callId, "still here");
+    await tts.waitForSpeak("still here");
+    stt.speech(speaking);
+    stt.speech(speaking);
+    expect(partials()).toEqual(["…", undefined, "…"]);
+    tts.release("still here");
+    await second;
+    await coordinator.detach("connection-1");
+  });
+
+  it("barges in on audio the phone is still playing, not after it ends", async () => {
+    const calls = makeCalls();
+    const stt = new ScriptedSttProvider();
+    // TTS runs faster than real time: 3 s of audio is sent at once and nothing stays pending.
+    const threeSeconds = Buffer.alloc(3 * LIVE_VOICE_PLAYBACK_SAMPLE_RATE * 2);
+    const tts: LiveVoiceTtsPort = {
+      async *speak() {
+        yield threeSeconds;
+      },
+    };
+    let clock = 1_000;
+    const frontend = new DeterministicVoiceCallFrontend({
+      connectionId: "connection-1",
+      authenticatedDeviceId: "paired-device-a",
+    });
+    const coordinator = new VoiceCallMediaCoordinator({
+      createAdapter: () => localAdapter(stt, { tts, turnEndPauseMs: 60_000, now: () => clock }),
+      calls,
+    });
+    const started = calls.startCall(
+      { controlSessionId: "voice-1", clientCallId: "client-1" },
+      frontend.connection,
+    );
+    await coordinator.attach({
+      callId: started.state.callId,
+      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
+      frontend: frontend.connection,
+    });
+    const partials = () =>
+      frontend.messages.flatMap((message) =>
+        message.type === "voice_call_state" ? [message.partialTranscript] : [],
+      );
+    const speaking = { speechActive: true, speechFinal: false, trailingSilenceMs: 0 };
+
+    await coordinator.speak(started.state.callId, "working on it");
+    clock += 500;
+    stt.speech(speaking);
+    stt.speech(speaking);
+    expect(partials()).toEqual(["…"]);
+    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+
+    await coordinator.speak(started.state.callId, "still here");
+    clock += 3_001;
+    stt.speech(speaking);
+    stt.speech(speaking);
+    expect(partials()).toEqual(["…", undefined]);
+    await coordinator.detach("connection-1");
+  });
+
+  it("keeps speaking through isolated speaking reports", async () => {
+    const stt = new ScriptedSttProvider();
+    const cancelled: string[] = [];
+    const pcm: string[] = [];
+    const tts = new GateableTtsPort({ onCancel: (text) => cancelled.push(text) });
+    const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
+    adapter.setPlaybackSink((chunk) => pcm.push(chunk.toString()));
+    await adapter.start(async () => {});
+
+    const playing = adapter.speak("working on it");
+    await tts.waitForSpeak("working on it");
+
+    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 200 });
+    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    tts.release("working on it");
+    await playing;
+
+    expect(cancelled).toEqual([]);
+    expect(pcm).toEqual(["working on it"]);
+  });
+
   it("delegates a later committed utterance after barge-in and keeps the call up", async () => {
     const calls = makeCalls();
     const stt = new ScriptedSttProvider();

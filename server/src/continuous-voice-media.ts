@@ -84,6 +84,14 @@ const UNFINISHED_SILENCE_MS = 1_200;
 const SENTENCE_END = /[。？！?.!]$/;
 /** Playback is 16-bit mono PCM, so this many bytes make a millisecond of audio. */
 const PLAYBACK_BYTES_PER_MS = (LIVE_VOICE_PLAYBACK_SAMPLE_RATE * 2) / 1_000;
+/**
+ * Consecutive speaking reports that interrupt the assistant. Yuwp reports speech state with
+ * every feed (~200 ms), so two in a row mean the detector still hears speech one feed later:
+ * ~200-400 ms of continuous speech, not a blip (cough, click). A third would spend another
+ * ~200 ms of the ~0.5-0.7 s this saves over waiting for text (measured: speech_active
+ * ~400 ms after onset, first text ~1160 ms).
+ */
+const BARGE_IN_SPEAKING_REPORTS = 2;
 
 /** Why a user turn was handed to the session. Telemetry only; never carries what was said. */
 type TurnEndReason =
@@ -138,6 +146,10 @@ function percentile(values: readonly number[], fraction: number): number | undef
  * firing, and when they stop (mute, a stalled upload, a backend error) the turn still ends.
  * Without endpointing that is the only rule, and it can fire mid-sentence when recognition
  * lags.
+ *
+ * The user can talk over the assistant: sustained speaking reports (or, failing that, the
+ * first new words) stop the sentence playing, drop queued ones, and tell the phone to drop
+ * the audio it has buffered.
  */
 export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   private handler: VoiceMediaEventHandler | undefined;
@@ -172,6 +184,15 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   private queuedSpeechItems = 0;
   private speechQueuedSince: number | undefined;
   private speechAudioBytes = 0;
+  /**
+   * When the phone should finish playing what was sent. TTS runs faster than real time, so
+   * the phone keeps playing buffered audio long after the queue has drained.
+   */
+  private playbackEndsAt = 0;
+  /** Speaking reports in a row since the last silent one. */
+  private speakingReports = 0;
+  /** The "…" barge-in placeholder is the visible partial; real turn text or a clear replaces it. */
+  private placeholderShowing = false;
 
   constructor(
     private readonly stt: SttProvider,
@@ -267,6 +288,8 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
         if (chunk.length === 0) continue;
         firstAudioMs ??= this.now() - startedAt;
         if (this.playbackSink) {
+          this.playbackEndsAt =
+            Math.max(this.playbackEndsAt, this.now()) + chunk.length / PLAYBACK_BYTES_PER_MS;
           this.playbackSink(chunk);
           this.speechAudioBytes += chunk.length;
           this.noteVoiceStarted();
@@ -378,6 +401,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     // Repeats of the same text are not new speech and must not push the turn end back.
     if (!turn || turn === this.lastTurnText) return;
     this.lastTurnText = turn;
+    this.placeholderShowing = false;
     this.turnStartedAt ??= this.now();
     if (!this.speaking) {
       this.speaking = true;
@@ -398,21 +422,54 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     this.speechGeneration += 1;
     this.queuedSpeechItems = 0;
     this.endSpeechRun();
+    // The phone drops what it buffered when the partial changes (or the call ends).
+    this.playbackEndsAt = this.now();
     const abort = this.speechAbort;
     if (!abort) return;
     this.speechAbort = undefined;
     abort.abort();
   }
 
+  /**
+   * Sustained speech while the assistant is audible or about to be: still generating, or the
+   * phone may still be playing what was sent. Otherwise an ordinary turn would flash "…".
+   */
+  private bargeInOnSpeech(): void {
+    if (this.queuedSpeechItems === 0 && this.now() >= this.playbackEndsAt) return;
+    this.logBargeIn();
+    this.cancelAssistantSpeech();
+    // A non-empty partial is the phone's barge-in signal (it drops audio already buffered),
+    // as with Grok. Words already showing flush the phone on their next change, and "…"
+    // would hide them.
+    if (this.placeholderShowing || this.pendingTurnText()) return;
+    this.placeholderShowing = true;
+    // The phone no longer shows the last words; if ASR retracts them and they return, they
+    // must count as new.
+    this.lastTurnText = "";
+    void this.handler?.({ type: "user_transcript_partial", text: "…" });
+  }
+
   private handleSpeechState(state: SttSpeechState): void {
+    this.lastTrailingSilenceMs = state.trailingSilenceMs;
+    // The speaking run ended without any words (cough, noise), or endpointing was released.
+    // Clear the placeholder, or the next barge-in's identical "…" would not flush the phone.
+    if (
+      this.placeholderShowing &&
+      (state.speechFinal || (!state.speechActive && state.trailingSilenceMs === undefined))
+    ) {
+      this.placeholderShowing = false;
+      void this.handler?.({ type: "user_transcript_partial", text: "" });
+    }
     // While the user talks a speaking report arrives with every feed and restarts the
     // watchdog, so the turn cannot end however long the text stalls. Silent reports leave
     // it running: the silence rules below or the watchdog end the turn.
-    this.lastTrailingSilenceMs = state.trailingSilenceMs;
     if (state.speechActive) {
+      this.speakingReports += 1;
+      if (this.speakingReports >= BARGE_IN_SPEAKING_REPORTS) this.bargeInOnSpeech();
       this.scheduleTurnEnd();
       return;
     }
+    this.speakingReports = 0;
     const turn = this.pendingTurnText();
     if (!turn) return;
     const silence = state.trailingSilenceMs ?? 0;
