@@ -32,6 +32,9 @@ function localAdapter(
   return new YuwpVoiceMediaAdapter(stt, { turnEndPauseMs: TEST_TURN_END_PAUSE_MS, ...options });
 }
 
+/** Let a committed turn finish handing over, so the next one is judged on its own. */
+const settled = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 /** Let the user's pause end the turn. */
 const turnEnd = () => new Promise<void>((resolve) => setTimeout(resolve, 60));
 
@@ -906,6 +909,60 @@ describe("continuous voice media", () => {
     expect(spoken).toEqual(["working on it", "three open sessions"]);
     expect(cancelled).toEqual([]);
     expect(pcm).toEqual(["working on it", "three open sessions"]);
+  });
+
+  it("logs why each turn ended and a call summary, never the words said", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+      const line = JSON.parse(String(chunk)) as Record<string, unknown>;
+      if (String(line.event).startsWith("voice_media.")) lines.push(line);
+      return true;
+    }) as typeof process.stderr.write);
+    try {
+      const stt = new ScriptedSttProvider();
+      stt.stopResult = { text: "Plum is the passphrase. Plum again. Plum and then. Plum, plum" };
+      const adapter = localAdapter(stt, { callId: "call-1" });
+      await adapter.start(async () => {});
+
+      stt.emit({ text: "Plum is the passphrase." });
+      stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+      await settled();
+      stt.emit({ text: "Plum is the passphrase. Plum again." });
+      stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 450 });
+      await settled();
+      stt.emit({ text: "Plum is the passphrase. Plum again. Plum and then" });
+      stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 1_200 });
+      await settled();
+      stt.emit({ text: "Plum is the passphrase. Plum again. Plum and then. Plum" });
+      await turnEnd();
+      stt.emit({ text: "Plum is the passphrase. Plum again. Plum and then. Plum, plum" });
+      await adapter.stop();
+
+      const turns = lines.filter((line) => line.event === "voice_media.turn_committed");
+      expect(turns.map((line) => [line.reason, line.endsSentence, line.units])).toEqual([
+        ["speech_final", true, 4],
+        ["sentence_end_silence", true, 2],
+        ["unfinished_silence", false, 3],
+        ["watchdog", false, 1],
+        ["call_stop", false, 1],
+      ]);
+      expect(turns[0]).toMatchObject({ callId: "call-1", trailingSilenceMs: 700 });
+      const summary = lines.find((line) => line.event === "voice_media.call_summary");
+      expect(summary).toMatchObject({
+        callId: "call-1",
+        turns: 5,
+        endReasons: {
+          speech_final: 1,
+          sentence_end_silence: 1,
+          unfinished_silence: 1,
+          watchdog: 1,
+          call_stop: 1,
+        },
+      });
+      expect(JSON.stringify(lines)).not.toMatch(/plum/i);
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("plays what the session's agent says as call audio", async () => {

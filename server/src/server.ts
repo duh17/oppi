@@ -651,7 +651,7 @@ export class Server {
       getAuth: async (providerId) => this.modelRuntime?.getAuth(providerId),
     });
     this.voiceMediaCoordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => this.createLiveVoiceMediaAdapter(),
+      createAdapter: ({ callId }) => this.createLiveVoiceMediaAdapter(callId),
       calls: this.voiceCallController,
       nextUtteranceId: () => randomUUID(),
       nextDelegationId: () => randomUUID(),
@@ -1439,12 +1439,13 @@ export class Server {
   }
 
   /** Built per call from the voice settings on disk, so a call picks up changes without a restart. */
-  private createLiveVoiceMediaAdapter(): VoiceMediaAdapter {
+  private createLiveVoiceMediaAdapter(callId: string): VoiceMediaAdapter {
     const { asr, tts } = this.storage.readVoiceConfig();
     const endpoint = asr?.sttEndpoint?.trim() || undefined;
     const model = asr?.sttModel?.trim() || DEFAULT_DICTATION_CONFIG.sttModel;
     const getAuth: SttGetAuth = async (providerId) => this.modelRuntime?.getAuth(providerId);
     return selectLiveVoiceMediaAdapter({
+      callId,
       liveVoiceBackend: asr?.liveVoiceBackend,
       sttEndpoint: endpoint,
       createStt: endpoint

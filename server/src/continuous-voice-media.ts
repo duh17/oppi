@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { VoiceCallController, VoiceCallFrontendConnection } from "./continuous-voice-call.js";
 import type { SttProvider, SttSpeechState, SttTranscriptUpdate } from "./stt-provider.js";
-import { createLogger } from "./logger.js";
+import { createLogger, type Logger } from "./logger.js";
 import { startSpeech, type SpeechDeps, type TtsConfig } from "./speech-synthesis.js";
 
 const log = createLogger({ base: { component: "voice_media" } });
@@ -49,6 +49,8 @@ export function selectLiveVoiceMediaAdapter(input: {
   createStt?: () => SttProvider;
   tts?: LiveVoiceTtsPort;
   createGrokVoice?: () => VoiceMediaAdapter;
+  /** The call this adapter serves; local-route telemetry is tagged with it. */
+  callId?: string;
 }): VoiceMediaAdapter {
   const backend = input.liveVoiceBackend ?? "yuwp";
   if (backend === "grok-voice") {
@@ -61,7 +63,7 @@ export function selectLiveVoiceMediaAdapter(input: {
   if (!input.sttEndpoint || !input.createStt) {
     throw new Error("Live Voice ASR is unavailable");
   }
-  return new YuwpVoiceMediaAdapter(input.createStt(), { tts: input.tts });
+  return new YuwpVoiceMediaAdapter(input.createStt(), { tts: input.tts, callId: input.callId });
 }
 
 export interface VoiceCallMediaAttachInput {
@@ -80,6 +82,45 @@ const SENTENCE_END_SILENCE_MS = 450;
  */
 const UNFINISHED_SILENCE_MS = 1_200;
 const SENTENCE_END = /[。？！?.!]$/;
+/** Playback is 16-bit mono PCM, so this many bytes make a millisecond of audio. */
+const PLAYBACK_BYTES_PER_MS = (LIVE_VOICE_PLAYBACK_SAMPLE_RATE * 2) / 1_000;
+
+/** Why a user turn was handed to the session. Telemetry only; never carries what was said. */
+type TurnEndReason =
+  /** The backend's end of speech, on a turn that ends a sentence. */
+  | "speech_final"
+  /** Enough trailing silence after a turn that ends a sentence. */
+  | "sentence_end_silence"
+  /** Long trailing silence after a turn that does not read as finished. */
+  | "unfinished_silence"
+  /** Nothing new arrived for `turnEndPauseMs`. */
+  | "watchdog"
+  /** The call ended with words not yet handed over. */
+  | "call_stop";
+
+/**
+ * Counters for one local call, logged once as `voice_media.call_summary`. Counts, durations,
+ * and reasons only.
+ */
+interface CallStats {
+  startedAt: number;
+  turns: number;
+  endReasons: Partial<Record<TurnEndReason, number>>;
+  bargeIns: number;
+  ttsItems: number;
+  ttsAborted: number;
+  ttsFailures: number;
+  firstAudioMs: number[];
+  turnToVoiceMs: number[];
+  asrRestarts: number;
+}
+
+/** Nearest-rank percentile of `values`; undefined when empty. */
+function percentile(values: readonly number[], fraction: number): number | undefined {
+  if (values.length === 0) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)];
+}
 
 /**
  * Local Live Voice: streaming ASR in, read-aloud TTS out, the session's agent does the work.
@@ -115,13 +156,48 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   private turnEndTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly turnEndPauseMs: number;
   private readonly tts: LiveVoiceTtsPort | undefined;
+  private readonly now: () => number;
+  private readonly log: Logger;
+  private readonly stats: CallStats;
+  private summarized = false;
+  /** When the user's pending turn first showed text; unset between turns. */
+  private turnStartedAt: number | undefined;
+  /** The ASR transcript restarted while the pending turn was being said. */
+  private turnRestarted = false;
+  /** Trailing silence in the backend's latest speech report; unset before one and after a commit. */
+  private lastTrailingSilenceMs: number | undefined;
+  /** When the newest turn was committed and no assistant audio has reached the phone since. */
+  private awaitingVoiceSince: number | undefined;
+  /** Assistant speech queued or playing since the last barge-in: items, first queued, audio sent. */
+  private queuedSpeechItems = 0;
+  private speechQueuedSince: number | undefined;
+  private speechAudioBytes = 0;
 
   constructor(
     private readonly stt: SttProvider,
-    options: { turnEndPauseMs?: number; tts?: LiveVoiceTtsPort } = {},
+    options: {
+      turnEndPauseMs?: number;
+      tts?: LiveVoiceTtsPort;
+      callId?: string;
+      now?: () => number;
+    } = {},
   ) {
     this.turnEndPauseMs = options.turnEndPauseMs ?? 1_800;
     this.tts = options.tts;
+    this.now = options.now ?? Date.now;
+    this.log = log.child({ callId: options.callId });
+    this.stats = {
+      startedAt: this.now(),
+      turns: 0,
+      endReasons: {},
+      bargeIns: 0,
+      ttsItems: 0,
+      ttsAborted: 0,
+      ttsFailures: 0,
+      firstAudioMs: [],
+      turnToVoiceMs: [],
+      asrRestarts: 0,
+    };
   }
 
   setPlaybackSink(sendAudio: (pcm: Buffer) => void): void {
@@ -130,6 +206,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
 
   async start(handler: VoiceMediaEventHandler): Promise<void> {
     this.handler = handler;
+    this.stats.startedAt = this.now();
     this.stt.onToken((update) => {
       this.handleTranscript(update);
     });
@@ -148,7 +225,10 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     const text = raw.trim();
     if (!text) return Promise.resolve();
     const generation = this.speechGeneration;
-    const run = (): Promise<void> => this.say(text, generation);
+    const queuedAt = this.now();
+    this.queuedSpeechItems += 1;
+    this.speechQueuedSince ??= queuedAt;
+    const run = (): Promise<void> => this.say(text, generation, queuedAt);
     const work = this.speechQueue.then(run, run);
     this.speechQueue = work.catch(() => undefined);
     return work;
@@ -160,32 +240,126 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     this.clearTurnEnd();
     const final = await this.stt.stop().catch(() => undefined);
     if (final?.text.trim()) this.transcript = final.text.trim();
-    await this.commitTurn();
+    await this.commitTurn("call_stop");
+    this.logCallSummary();
     const handler = this.handler;
     this.handler = undefined;
     if (handler) await handler({ type: "disconnected" });
   }
 
-  private async say(text: string, generation: number): Promise<void> {
-    if (generation !== this.speechGeneration) return;
+  private async say(text: string, generation: number, queuedAt: number): Promise<void> {
     const abort = new AbortController();
-    this.speechAbort = abort;
+    const startedAt = this.now();
+    let firstAudioMs: number | undefined;
+    let outcome: "completed" | "aborted" | "failed" = "completed";
     try {
-      if (!this.tts || abort.signal.aborted) return;
-      for await (const chunk of this.tts.speak(text, abort.signal)) {
-        if (abort.signal.aborted) return;
-        if (chunk.length > 0) this.playbackSink?.(chunk);
+      if (generation !== this.speechGeneration) {
+        outcome = "aborted";
+        return;
       }
+      this.speechAbort = abort;
+      if (!this.tts) return;
+      for await (const chunk of this.tts.speak(text, abort.signal)) {
+        if (abort.signal.aborted) {
+          outcome = "aborted";
+          return;
+        }
+        if (chunk.length === 0) continue;
+        firstAudioMs ??= this.now() - startedAt;
+        if (this.playbackSink) {
+          this.playbackSink(chunk);
+          this.speechAudioBytes += chunk.length;
+          this.noteVoiceStarted();
+        }
+      }
+      if (abort.signal.aborted) outcome = "aborted";
     } catch (error) {
-      if (!abort.signal.aborted) {
-        log.warn("voice_media.tts_failed", {
+      if (abort.signal.aborted) {
+        outcome = "aborted";
+      } else {
+        outcome = "failed";
+        this.log.warn("voice_media.tts_failed", {
           error: error instanceof Error ? error.message : String(error),
         });
       }
     } finally {
-      // A barge-in already cleared speechAbort.
+      // A barge-in already cleared speechAbort and the queue counters.
       if (this.speechAbort === abort) this.speechAbort = undefined;
+      if (generation === this.speechGeneration) {
+        this.queuedSpeechItems = Math.max(0, this.queuedSpeechItems - 1);
+        if (this.queuedSpeechItems === 0) this.endSpeechRun();
+      }
+      if (this.tts) this.logTtsItem(text.length, outcome, queuedAt, startedAt, firstAudioMs);
     }
+  }
+
+  /** The queue drained: the next item starts a fresh run for barge-in's "how long". */
+  private endSpeechRun(): void {
+    this.speechQueuedSince = undefined;
+    this.speechAudioBytes = 0;
+  }
+
+  private logTtsItem(
+    chars: number,
+    outcome: "completed" | "aborted" | "failed",
+    queuedAt: number,
+    startedAt: number,
+    firstAudioMs: number | undefined,
+  ): void {
+    const stats = this.stats;
+    stats.ttsItems += 1;
+    if (outcome === "aborted") stats.ttsAborted += 1;
+    if (outcome === "failed") stats.ttsFailures += 1;
+    if (firstAudioMs !== undefined) stats.firstAudioMs.push(firstAudioMs);
+    this.log.info("voice_media.tts_item", {
+      outcome,
+      chars,
+      queuedMs: startedAt - queuedAt,
+      firstAudioMs,
+      totalMs: this.now() - startedAt,
+    });
+  }
+
+  /** The first assistant audio after a committed turn reaches the phone: the reply's latency. */
+  private noteVoiceStarted(): void {
+    const since = this.awaitingVoiceSince;
+    if (since === undefined) return;
+    this.awaitingVoiceSince = undefined;
+    const latencyMs = this.now() - since;
+    this.stats.turnToVoiceMs.push(latencyMs);
+    this.log.info("voice_media.turn_to_voice", { latencyMs });
+  }
+
+  /** The user spoke over the assistant: log how long it had been speaking or queued. */
+  private logBargeIn(): void {
+    if (this.queuedSpeechItems === 0 || this.speechQueuedSince === undefined) return;
+    this.stats.bargeIns += 1;
+    this.log.info("voice_media.barge_in", {
+      assistantActiveMs: this.now() - this.speechQueuedSince,
+      queuedItems: this.queuedSpeechItems,
+      audioSentMs: Math.round(this.speechAudioBytes / PLAYBACK_BYTES_PER_MS),
+    });
+  }
+
+  private logCallSummary(): void {
+    if (this.summarized) return;
+    this.summarized = true;
+    const st = this.stats;
+    this.log.info("voice_media.call_summary", {
+      ended: "stop",
+      durationMs: this.now() - st.startedAt,
+      turns: st.turns,
+      endReasons: st.endReasons,
+      bargeIns: st.bargeIns,
+      ttsItems: st.ttsItems,
+      ttsAborted: st.ttsAborted,
+      ttsFailures: st.ttsFailures,
+      asrRestarts: st.asrRestarts,
+      firstAudioP50Ms: percentile(st.firstAudioMs, 0.5),
+      firstAudioMaxMs: percentile(st.firstAudioMs, 1),
+      turnToVoiceP50Ms: percentile(st.turnToVoiceMs, 0.5),
+      turnToVoiceMaxMs: percentile(st.turnToVoiceMs, 1),
+    });
   }
 
   private handleTranscript(update: SttTranscriptUpdate): void {
@@ -196,14 +370,18 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     if (update.transcriptRestarted) {
       this.delegatedUnits = 0;
       this.lastTurnText = "";
+      this.turnRestarted = true;
+      this.stats.asrRestarts += 1;
     }
     this.transcript = update.text.trim();
     const turn = this.pendingTurnText();
     // Repeats of the same text are not new speech and must not push the turn end back.
     if (!turn || turn === this.lastTurnText) return;
     this.lastTurnText = turn;
+    this.turnStartedAt ??= this.now();
     if (!this.speaking) {
       this.speaking = true;
+      this.logBargeIn();
       this.cancelAssistantSpeech();
     }
     void handler({ type: "user_transcript_partial", text: turn });
@@ -218,6 +396,8 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   /** Barge-in and End: stop the sentence playing and drop queued ones. */
   private cancelAssistantSpeech(): void {
     this.speechGeneration += 1;
+    this.queuedSpeechItems = 0;
+    this.endSpeechRun();
     const abort = this.speechAbort;
     if (!abort) return;
     this.speechAbort = undefined;
@@ -228,6 +408,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     // While the user talks a speaking report arrives with every feed and restarts the
     // watchdog, so the turn cannot end however long the text stalls. Silent reports leave
     // it running: the silence rules below or the watchdog end the turn.
+    this.lastTrailingSilenceMs = state.trailingSilenceMs;
     if (state.speechActive) {
       this.scheduleTurnEnd();
       return;
@@ -235,11 +416,16 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     const turn = this.pendingTurnText();
     if (!turn) return;
     const silence = state.trailingSilenceMs ?? 0;
-    const finished =
-      SENTENCE_END.test(turn) && (state.speechFinal || silence >= SENTENCE_END_SILENCE_MS);
+    const endsSentence = SENTENCE_END.test(turn);
+    const finished = endsSentence && (state.speechFinal || silence >= SENTENCE_END_SILENCE_MS);
     if (finished || silence >= UNFINISHED_SILENCE_MS) {
       this.clearTurnEnd();
-      void this.commitTurn();
+      const reason: TurnEndReason = !finished
+        ? "unfinished_silence"
+        : state.speechFinal
+          ? "speech_final"
+          : "sentence_end_silence";
+      void this.commitTurn(reason);
     }
   }
 
@@ -247,7 +433,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     this.clearTurnEnd();
     this.turnEndTimer = setTimeout(() => {
       this.turnEndTimer = undefined;
-      void this.commitTurn();
+      void this.commitTurn("watchdog");
     }, this.turnEndPauseMs);
   }
 
@@ -258,16 +444,43 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     }
   }
 
-  private commitTurn(): Promise<void> {
+  /** One line per user turn: what ended it and how long it took. Never the words. */
+  private logTurnCommitted(
+    turn: string,
+    reason: TurnEndReason,
+    trailingSilenceMs: number | undefined,
+    committedAt: number,
+  ): void {
+    const stats = this.stats;
+    stats.turns += 1;
+    stats.endReasons[reason] = (stats.endReasons[reason] ?? 0) + 1;
+    this.log.info("voice_media.turn_committed", {
+      reason,
+      trailingSilenceMs,
+      endsSentence: SENTENCE_END.test(turn),
+      units: speechUnits(turn).length,
+      turnMs: this.turnStartedAt === undefined ? undefined : committedAt - this.turnStartedAt,
+      asrRestarted: this.turnRestarted,
+    });
+    this.turnStartedAt = undefined;
+    this.turnRestarted = false;
+    this.lastTrailingSilenceMs = undefined;
+  }
+
+  private commitTurn(reason: TurnEndReason): Promise<void> {
+    const trailingSilenceMs = this.lastTrailingSilenceMs;
     // A pause and End can overlap. Chain them so each word is handed to Pi once.
     const perform = async (): Promise<void> => {
       const handler = this.handler;
       if (!handler) return;
       const turn = this.pendingTurnText();
       if (!turn) return;
+      const committedAt = this.now();
+      this.logTurnCommitted(turn, reason, trailingSilenceMs, committedAt);
       this.delegatedUnits = speechUnits(this.transcript).length;
       this.lastTurnText = "";
       this.speaking = false;
+      this.awaitingVoiceSince = committedAt;
       await handler({
         type: "user_utterance_committed",
         utteranceId: randomUUID(),
@@ -348,7 +561,7 @@ export class VoiceCallMediaCoordinator {
 
   constructor(
     private readonly deps: {
-      createAdapter: () => VoiceMediaAdapter;
+      createAdapter: (call: { callId: string }) => VoiceMediaAdapter;
       calls: VoiceCallController;
       nextUtteranceId?: () => string;
       nextDelegationId?: () => string;
@@ -368,7 +581,7 @@ export class VoiceCallMediaCoordinator {
       });
       return;
     }
-    const adapter = this.deps.createAdapter();
+    const adapter = this.deps.createAdapter({ callId: input.callId });
     if (input.frontend.sendAudio) {
       adapter.setPlaybackSink?.(input.frontend.sendAudio);
     }
