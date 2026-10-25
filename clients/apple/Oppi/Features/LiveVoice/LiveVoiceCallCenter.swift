@@ -57,8 +57,11 @@ final class LiveVoiceCallCenter {
         return currentCall.controller
     }
 
-    /// A live call owns the one microphone: no dictation anywhere while it runs.
-    var ownsMicrophone: Bool { placed?.controller.isLive == true }
+    /// A live or starting call owns the one microphone: no dictation anywhere while it runs.
+    var ownsMicrophone: Bool {
+        guard let controller = placed?.controller else { return false }
+        return controller.isLive || controller.isStarting
+    }
 
     /// Whether any session may offer a new call now. Interim policy: while a call is live,
     /// no session offers one, its own included (that one already has it). Switching a call to
@@ -82,10 +85,11 @@ final class LiveVoiceCallCenter {
         return call.controller
     }
 
-    /// The one way a call starts (a chat's Live Voice tap, a Quick Session's call): places the
-    /// session's call and starts it as a system call, or without CallKit when the system
-    /// refuses (`LiveVoiceSystemCall`). Nil while `mayStartCall` refuses. The start runs on;
-    /// the controller shows it connecting at once.
+    /// The one way a call starts (a chat's Live Voice tap, a Quick Session's call). Nil while
+    /// `mayStartCall` refuses. Otherwise the session's call is placed and starting when this
+    /// returns: it holds the microphone and shows Connecting, and a second start is refused.
+    /// The rest runs on in order: microphone access, read-aloud and dictation stopped, then the
+    /// system call (`LiveVoiceSystemCall`, or none when CallKit refuses), then the server call.
     @discardableResult
     func startCall(
         serverId: String,
@@ -94,11 +98,13 @@ final class LiveVoiceCallCenter {
         using connection: ServerConnection
     ) -> LiveVoiceCallController? {
         guard let call = placeCall(serverId: serverId, sessionId: sessionId) else { return nil }
+        call.beginStart()
         let key = CallKey(serverId: serverId, sessionId: sessionId)
         let systemCall = systemCall
         Task {
+            guard await call.prepareStart(sessionId: sessionId, using: connection) else { return }
             await systemCall.start(call, key: key) {
-                await call.start(sessionId: sessionId, routeScope: routeScope, using: connection)
+                await call.start(sessionId: sessionId, routeScope: routeScope)
             }
         }
         return call

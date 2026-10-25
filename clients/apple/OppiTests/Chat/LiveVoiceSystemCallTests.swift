@@ -3,8 +3,9 @@ import Foundation
 import Testing
 @testable import Oppi
 
-/// A Live Voice call as a CallKit call: the system's call UI and the app's call drive each
-/// other, and the system decides when the call's audio may run.
+/// A Live Voice call as a CallKit call, started the way the app starts every call
+/// (`LiveVoiceCallCenter.startCall`): the system's call UI and the app's call drive each other,
+/// and the system decides when the call's audio may run.
 @Suite("Live Voice system call")
 @MainActor
 struct LiveVoiceSystemCallTests {
@@ -16,9 +17,66 @@ struct LiveVoiceSystemCallTests {
         #expect(call.telephony.reports == [.update(id, "Fix the build"), .connecting(id)])
 
         call.confirm()
-        await call.startTask?.value
         #expect(await waitForMainActorCondition { call.telephony.reports.contains(.connected(id)) })
         #expect(call.telephony.reports.filter { $0 == .connected(id) }.count == 1)
+    }
+
+    @Test("Denied microphone access fails the call with the reason and never shows a system call")
+    func deniedMicrophoneShowsNoSystemCall() async throws {
+        let call = SystemCallHarness()
+        call.microphone.granted = false
+
+        try #require(call.tap() != nil)
+
+        #expect(await waitForMainActorCondition { call.controller.lastError != nil })
+        #expect(call.controller.lastError?.contains("microphone access") == true)
+        #expect(call.telephony.requested.isEmpty)
+        #expect(call.channel.opened.isEmpty)
+        #expect(!call.center.ownsMicrophone)
+    }
+
+    @Test("From the tap the starting call holds the mic and shows Connecting; a second start is refused, and End during the permission prompt starts nothing")
+    func startingCallHoldsTheMicAndEndsCleanly() async throws {
+        let call = SystemCallHarness()
+        call.microphone.holdsAnswer = true
+
+        try #require(call.tap() != nil)
+
+        #expect(call.controller.isStarting)
+        #expect(call.center.ownsMicrophone)
+        #expect(!call.center.mayStartCall)
+        #expect(call.tap() == nil)
+        #expect(call.controller.composerCall?.isConnecting == true)
+        #expect(call.controller.composerStatus == "Connecting")
+
+        await call.controller.end()
+        call.microphone.answer()
+
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
+            call.telephony.requested.isEmpty && call.channel.opened.isEmpty
+        })
+        #expect(!call.controller.isStarting)
+        #expect(!call.center.ownsMicrophone)
+        #expect(call.controller.composerCall == nil)
+    }
+
+    @Test("A system End while the start request is in flight starts nothing on the server")
+    func systemEndDuringStartRequestStartsNothing() async throws {
+        let call = SystemCallHarness()
+        call.telephony.holdsStartRequest = true
+
+        try #require(call.tap() != nil)
+        try #require(await waitForMainActorCondition { call.system.callId != nil && !call.telephony.requested.isEmpty })
+        let id = try #require(call.system.callId)
+        #expect(call.telephony.performSystem(.end(call: id)))
+        call.telephony.releaseStartRequest()
+
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
+            call.channel.opened.isEmpty && !call.controller.isLive
+        })
+        #expect(!call.channel.sent.contains { $0.typeLabel == "voice_call_start" })
+        #expect(!call.controller.isStarting)
+        #expect(call.system.callId == nil)
     }
 
     @Test("The system's End ends the app's call on the server, and nothing is reported back")
@@ -44,9 +102,7 @@ struct LiveVoiceSystemCallTests {
 
         await call.controller.end()
 
-        #expect(await waitForMainActorCondition {
-            call.telephony.requested.contains { ($0 as? CXEndCallAction)?.callUUID == id }
-        })
+        #expect(await waitForMainActorCondition { call.endRequested(id) })
         #expect(call.system.callId == nil)
         #expect(!call.telephony.reports.contains { if case .ended = $0 { true } else { false } })
     }
@@ -60,9 +116,7 @@ struct LiveVoiceSystemCallTests {
         await call.center.endCall(serverId: "server-1")
 
         #expect(!call.controller.isLive)
-        #expect(await waitForMainActorCondition {
-            call.telephony.requested.contains { ($0 as? CXEndCallAction)?.callUUID == id }
-        })
+        #expect(await waitForMainActorCondition { call.endRequested(id) })
         #expect(call.system.callId == nil)
     }
 
@@ -73,11 +127,8 @@ struct LiveVoiceSystemCallTests {
         let id = try #require(call.system.callId)
 
         await call.controller.end()
-        await call.startTask?.value
         #expect(call.controller.isEndingUnconfirmedCall)
-        #expect(await waitForMainActorCondition {
-            call.telephony.requested.contains { ($0 as? CXEndCallAction)?.callUUID == id }
-        })
+        #expect(await waitForMainActorCondition { call.endRequested(id) })
         #expect(call.system.callId == nil)
 
         // The server's late confirmation: the retiring call ends it on the server only.
@@ -101,6 +152,37 @@ struct LiveVoiceSystemCallTests {
         #expect(call.telephony.reports.filter { if case .ended = $0 { true } else { false } } == [.ended(id, .failed)])
         #expect(!call.telephony.requested.contains { $0 is CXEndCallAction })
         #expect(call.audio.starts == 0)
+    }
+
+    @Test("The no-audio reason stays on the call surface through the server's late confirmation, until End")
+    func noAudioReasonOutlivesLateConfirmation() async throws {
+        let call = SystemCallHarness(activationTimeout: .milliseconds(300))
+        try await call.start(confirm: false, activateAudio: false)
+
+        #expect(await waitForMainActorCondition { call.controller.lastError == LiveVoiceSystemCall.noAudioText })
+        call.confirm()
+        #expect(await waitForMainActorCondition { call.channel.sent.last?.typeLabel == "voice_call_end" })
+        #expect(call.controller.lastError == LiveVoiceSystemCall.noAudioText)
+        #expect(call.controller.composerCall != nil)
+
+        await call.controller.end()
+        #expect(call.controller.lastError == nil)
+        #expect(call.controller.composerCall == nil)
+    }
+
+    @Test("A held call never fails for having no audio; after unhold the system must give the session back")
+    func holdPausesTheNoAudioDeadline() async throws {
+        let call = SystemCallHarness(activationTimeout: .milliseconds(200))
+        try await call.start()
+        let id = try #require(call.system.callId)
+
+        #expect(call.telephony.performSystem(.setHeld(call: id, onHold: true)))
+        call.telephony.events?.audioSessionDidDeactivate()
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) { call.controller.isLive })
+
+        #expect(call.telephony.performSystem(.setHeld(call: id, onHold: false)))
+        #expect(await waitForMainActorCondition { call.controller.lastError == LiveVoiceSystemCall.noAudioText })
+        #expect(call.telephony.reports.last == .ended(id, .failed))
     }
 
     @Test("A call the server ended is reported as the other side hanging up, a dropped link as failed",
@@ -137,9 +219,8 @@ struct LiveVoiceSystemCallTests {
             data: nil,
             error: "Voice backend is unavailable"
         ))
-        await call.startTask?.value
 
-        #expect(call.telephony.reports.last == .ended(id, .failed))
+        #expect(await waitForMainActorCondition { call.telephony.reports.last == .ended(id, .failed) })
         #expect(!call.telephony.reports.contains(.connected(id)))
         #expect(call.system.callId == nil)
     }
@@ -150,14 +231,12 @@ struct LiveVoiceSystemCallTests {
         try await call.start()
         let id = try #require(call.system.callId)
 
-        #expect(call.telephony.performSystem(.setMuted(call: id, muted: true, action: UUID())))
+        #expect(call.telephony.performSystem(.setMuted(call: id, muted: true)))
         #expect(call.controller.isMuted)
         call.audio.emit(Data([1, 2]))
         #expect(call.channel.sentAudio.isEmpty)
 
-        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
-            !call.telephony.requested.contains { $0 is CXSetMutedCallAction }
-        })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) { call.muteRequests.isEmpty })
     }
 
     @Test("The app's mute asks the system once, and the system performing that request changes nothing")
@@ -174,8 +253,8 @@ struct LiveVoiceSystemCallTests {
         })
     }
 
-    @Test("A system unmute that lands while the app's mute request is in flight wins, and the late echo is ignored")
-    func systemMuteRacingAppRequest() async throws {
+    @Test("When the app's mute request and a system unmute cross, both sides end in the last mute the system performed")
+    func crossingMutesSettleOnTheLastPerformed() async throws {
         let call = SystemCallHarness()
         try await call.start()
         let id = try #require(call.system.callId)
@@ -183,15 +262,15 @@ struct LiveVoiceSystemCallTests {
 
         call.controller.toggleMute()
         #expect(await waitForMainActorCondition { call.muteRequests == [true] })
-        // AirPods unmute before the system got to the app's request.
-        #expect(call.telephony.performSystem(.setMuted(call: id, muted: false, action: UUID())))
+        // AirPods unmute before the system got to the app's request, which it performs last.
+        #expect(call.telephony.performSystem(.setMuted(call: id, muted: false)))
         #expect(!call.controller.isMuted)
         call.telephony.performPendingRequests()
 
+        #expect(call.controller.isMuted, "The system's last performed mute was the app's: muted")
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
-            !call.controller.isMuted
+            call.controller.isMuted && call.muteRequests == [true]
         })
-        #expect(call.muteRequests == [true])
     }
 
     @Test("Hold stops the mic and playback but keeps the server call and its keepalive; unhold resumes capture")
@@ -199,7 +278,7 @@ struct LiveVoiceSystemCallTests {
         let call = SystemCallHarness(keepAliveInterval: .milliseconds(30))
         try await call.start()
         let id = try #require(call.system.callId)
-        #expect(call.audio.starts == 1)
+        #expect(await waitForMainActorCondition { call.audio.starts == 1 })
 
         #expect(call.telephony.performSystem(.setHeld(call: id, onHold: true)))
         call.telephony.events?.audioSessionDidDeactivate()
@@ -279,25 +358,49 @@ enum EndCause: Sendable {
     case linkDropped
 }
 
+/// The microphone permission answer, optionally held while the prompt would be up.
+@MainActor
+private final class FakeMicrophoneAccess {
+    var granted = true
+    var holdsAnswer = false
+    private var waiting: CheckedContinuation<Void, Never>?
+
+    func ask() async -> Bool {
+        if holdsAnswer {
+            await withCheckedContinuation { waiting = $0 }
+        }
+        return granted
+    }
+
+    func answer() {
+        holdsAnswer = false
+        waiting?.resume()
+        waiting = nil
+    }
+}
+
 @MainActor
 private final class SystemCallHarness {
     let telephony = FakeLiveVoiceTelephony()
     let channel = FakeLiveVoiceCallChannel()
     let audio = FakeLiveVoiceAudioOwner()
+    let microphone = FakeMicrophoneAccess()
+    let connection = ServerConnection()
     let controller: LiveVoiceCallController
     let system: LiveVoiceSystemCall
     /// The app's call center, whose one controller is `controller`.
     let center: LiveVoiceCallCenter
-    private(set) var startTask: Task<Void, Never>?
 
     init(keepAliveInterval: Duration = .seconds(10), activationTimeout: Duration = .seconds(5)) {
+        let microphone = microphone
         let controller = LiveVoiceCallController(
             channel: channel,
             audio: audio,
             memory: FakeLiveVoiceSessionMemory(),
             serverKey: "server-1",
             clientCallId: "client-call-1",
-            keepAliveInterval: keepAliveInterval
+            keepAliveInterval: keepAliveInterval,
+            microphoneAccess: { await microphone.ask() }
         )
         self.controller = controller
         let telephony = telephony
@@ -318,17 +421,21 @@ private final class SystemCallHarness {
         channel.sent.filter { $0.typeLabel == "voice_call_keepalive" }.count
     }
 
-    /// Starts the call through the system call up to the server's start; CallKit activates
-    /// the audio session first unless `activateAudio` is false.
+    func endRequested(_ id: UUID) -> Bool {
+        telephony.requested.contains { ($0 as? CXEndCallAction)?.callUUID == id }
+    }
+
+    /// The Live Voice tap: the app's one start path.
+    @discardableResult
+    func tap() -> LiveVoiceCallController? {
+        center.startCall(serverId: "server-1", sessionId: "sess-1", routeScope: .workspace("ws-1"), using: connection)
+    }
+
+    /// Taps Live Voice and runs the call up to the server's start; CallKit activates the audio
+    /// session first unless `activateAudio` is false, and the server confirms unless `confirm`
+    /// is false.
     func start(confirm: Bool = true, activateAudio: Bool = true) async throws {
-        // As `LiveVoiceCallCenter.startCall` does, with the test channel instead of a server.
-        let controller = try #require(center.placeCall(serverId: "server-1", sessionId: "sess-1"))
-        let system = system
-        startTask = Task {
-            await system.start(controller, key: .init(serverId: "server-1", sessionId: "sess-1")) {
-                await controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1"))
-            }
-        }
+        try #require(tap() != nil)
         try #require(await waitForMainActorCondition { !channel.opened.isEmpty })
         channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
         try #require(await waitForMainActorCondition { channel.sent.map(\.typeLabel) == ["voice_call_start"] })
@@ -337,8 +444,7 @@ private final class SystemCallHarness {
         }
         guard confirm else { return }
         self.confirm()
-        await startTask?.value
-        try #require(controller.isLive)
+        try #require(await waitForMainActorCondition { controller.isLive && controller.callState?.lifecycle == .active })
     }
 
     func confirm() {
@@ -360,9 +466,12 @@ private final class FakeLiveVoiceTelephony: LiveVoiceTelephony {
     weak var events: LiveVoiceTelephonyEvents?
     var startError: Error?
     var performsRequests = true
+    /// The start request returns only on `releaseStartRequest`, after the system performed it.
+    var holdsStartRequest = false
     private(set) var requested: [CXCallAction] = []
     private(set) var reports: [Report] = []
     private var pending: [CXCallAction] = []
+    private var heldStart: CheckedContinuation<Void, Never>?
 
     func request(_ action: CXCallAction) async throws {
         if action is CXStartCallAction, let startError { throw startError }
@@ -372,6 +481,14 @@ private final class FakeLiveVoiceTelephony: LiveVoiceTelephony {
         } else {
             pending.append(action)
         }
+        if action is CXStartCallAction, holdsStartRequest {
+            await withCheckedContinuation { heldStart = $0 }
+        }
+    }
+
+    func releaseStartRequest() {
+        heldStart?.resume()
+        heldStart = nil
     }
 
     /// The system performing an action it started (its UI, a headset, another call).
@@ -393,7 +510,7 @@ private final class FakeLiveVoiceTelephony: LiveVoiceTelephony {
     private static func systemAction(for action: CXCallAction) -> LiveVoiceSystemAction {
         switch action {
         case let mute as CXSetMutedCallAction:
-            .setMuted(call: mute.callUUID, muted: mute.isMuted, action: mute.uuid)
+            .setMuted(call: mute.callUUID, muted: mute.isMuted)
         case let hold as CXSetHeldCallAction:
             .setHeld(call: hold.callUUID, onHold: hold.isOnHold)
         case is CXEndCallAction:

@@ -48,12 +48,16 @@ final class LiveVoiceCallController {
     /// The system put the call on hold (a phone call answered over it, `LiveVoiceSystemCall`):
     /// no mic audio goes out and nothing plays, but the server call and its keepalive go on.
     private(set) var isOnHold = false
+    /// From the tap (`beginStart`) until the call's stream opens (`isLive`): the permission
+    /// check, the system call's start, the server channel. The call already holds the
+    /// microphone and shows Connecting, so a second start or a dictation take is refused.
+    private(set) var isStarting = false
     /// Mic and playback levels for the composer's orb; outlives each call's audio.
     @ObservationIgnored let meter = LiveVoiceAudioMeter()
 
     /// The composer is the call surface while the call is up, and after a failed call until
     /// End, so the reason stays on screen.
-    var holdsComposer: Bool { isLive || lastError != nil }
+    var holdsComposer: Bool { isLive || isStarting || lastError != nil }
 
     /// What the user is saying right now, before the server sends it as their message.
     var partialTranscript: String {
@@ -79,8 +83,8 @@ final class LiveVoiceCallController {
     var composerCall: ComposerLiveVoiceCall? {
         guard holdsComposer else { return nil }
         return ComposerLiveVoiceCall(
-            isLive: isLive,
-            isConnecting: isLive && callState == nil,
+            isLive: isLive || isStarting,
+            isConnecting: isStarting || (isLive && callState == nil),
             isMuted: isMuted,
             isSpeaking: isSpeaking,
             status: composerStatus,
@@ -119,6 +123,13 @@ final class LiveVoiceCallController {
     @ObservationIgnored private var startGeneration: UInt64 = 0
     @ObservationIgnored private var startWaiter: StartWaiter?
     @ObservationIgnored private var captureStarted = false
+    /// Why the call could not run (`end(failing:)`), kept on the call surface through an end
+    /// that waits for the server's late confirmation.
+    @ObservationIgnored private var failureAfterEnd: String?
+    /// Whether the microphone may be used; asks the first time.
+    @ObservationIgnored private let microphoneAccess: @MainActor () async -> Bool
+    /// A channel passed in is kept; otherwise each start binds its connection's own.
+    @ObservationIgnored private let bindsServerChannel: Bool
 
     private struct StartWaiter {
         let generation: UInt64
@@ -131,9 +142,12 @@ final class LiveVoiceCallController {
         memory: LiveVoiceSessionMemory = UserDefaultsLiveVoiceSessionMemory(),
         serverKey: String = "default",
         clientCallId: String = UUID().uuidString,
-        keepAliveInterval: Duration = .seconds(10)
+        keepAliveInterval: Duration = .seconds(10),
+        microphoneAccess: @escaping @MainActor () async -> Bool = { await LiveVoiceCallController.hasMicrophoneAccess() }
     ) {
         self.keepAliveInterval = keepAliveInterval
+        self.microphoneAccess = microphoneAccess
+        bindsServerChannel = channel == nil
         self.channel = channel
         self.audio = audio
         self.memory = memory
@@ -147,25 +161,42 @@ final class LiveVoiceCallController {
     /// confirmation arrives. Whoever replaces this controller keeps it until then.
     var isEndingUnconfirmedCall: Bool { endsOrphanedCall }
 
-    func start(
-        sessionId: String,
-        routeScope: SessionRouteScope,
-        using connection: ServerConnection
-    ) async {
+    /// The start's synchronous first step (`LiveVoiceCallCenter.startCall`): from here the call
+    /// holds the microphone and the composer, connecting.
+    func beginStart() {
+        startGeneration &+= 1
+        isStarting = true
+        lastError = nil
+        failureAfterEnd = nil
+        statusText = "Connecting"
+    }
+
+    /// Everything that must happen before the system call starts: microphone access (a denied
+    /// permission never shows a system call), the server channel, and quiet, with read-aloud
+    /// and any dictation take stopped (cancelling a take deactivates the audio session, which
+    /// after CallKit activated it would cut the call's audio). False when the call cannot
+    /// start, or End was pressed meanwhile.
+    func prepareStart(sessionId: String, using connection: ServerConnection) async -> Bool {
+        let generation = startGeneration
+        var stillStarting: Bool { isStarting && generation == startGeneration }
+        guard stillStarting else { return false }
         // Without the microphone the call would start and send silence while showing "Listening".
-        guard await Self.hasMicrophoneAccess() else {
-            failClosed(
-                "Oppi needs microphone access for Live Voice. Turn it on in Settings.",
-                closeChannel: false
-            )
-            return
+        guard await microphoneAccess() else {
+            if stillStarting {
+                failClosed(
+                    "Oppi needs microphone access for Live Voice. Turn it on in Settings.",
+                    closeChannel: false
+                )
+            }
+            return false
         }
+        guard stillStarting else { return false }
         bind(connection, sessionId: sessionId)
         // A reply being read aloud would talk over the call, and a dictation take still running
         // (a call started from a Shortcut or the Action Button mid-take) would hold the mic.
         connection.audioPlayer.stop()
         await ComposerShared.stopDictationBeforeLiveVoice(manager: .shared)
-        await start(sessionId: sessionId, routeScope: routeScope)
+        return stillStarting
     }
 
     func start(sessionId: String, routeScope: SessionRouteScope) async {
@@ -176,6 +207,10 @@ final class LiveVoiceCallController {
 
         startGeneration &+= 1
         let generation = startGeneration
+        // A start that replaces one still waiting lets that one return.
+        let replaced = startWaiter
+        startWaiter = nil
+        replaced?.continuation.resume()
         consumeTask?.cancel()
         keepAliveTask?.cancel()
         keepAliveTask = nil
@@ -196,8 +231,10 @@ final class LiveVoiceCallController {
         startSent = false
         callState = nil
         lastError = nil
+        failureAfterEnd = nil
         statusText = "Connecting"
         isLive = true
+        isStarting = false
         prepareIdentityForNewStart()
 
         let stream = channel.open(sessionId: sessionId, routeScope: routeScope)
@@ -212,8 +249,27 @@ final class LiveVoiceCallController {
     }
 
     /// Ends the call for good. Only End, the server, or a dead link end a call: leaving its
-    /// chat does not.
+    /// chat does not. End also dismisses a failure the call surface is showing.
     func end() async {
+        failureAfterEnd = nil
+        if !isLive, lastError != nil {
+            lastError = nil
+            statusText = Self.listening
+        }
+        await finishCall()
+    }
+
+    /// Ends the call as End does, then leaves `message` on the call surface until End: the
+    /// call could not run (`LiveVoiceSystemCall`: the system never gave it audio). The reason
+    /// stays through an end that waits for the server's late confirmation.
+    func end(failing message: String) async {
+        failureAfterEnd = message
+        await finishCall()
+        lastError = message
+        statusText = message
+    }
+
+    private func finishCall() async {
         keepAliveTask?.cancel()
         keepAliveTask = nil
 
@@ -238,14 +294,6 @@ final class LiveVoiceCallController {
         invalidateStartWaiter()
         consumeTask?.cancel()
         resetLocalCall()
-    }
-
-    /// Ends the call as End does, then leaves `message` on the call surface until End: the
-    /// call could not run (`LiveVoiceSystemCall`: the system never gave it audio).
-    func end(failing message: String) async {
-        await end()
-        lastError = message
-        statusText = message
     }
 
     func toggleMute() {
@@ -313,7 +361,7 @@ final class LiveVoiceCallController {
     }
 
     // nonisolated: the permission callback runs off the main actor (as in VoiceInputSystemAccess).
-    nonisolated private static func hasMicrophoneAccess() async -> Bool {
+    nonisolated static func hasMicrophoneAccess() async -> Bool {
         if AVAudioApplication.shared.recordPermission == .undetermined {
             return await withCheckedContinuation { continuation in
                 AVAudioApplication.requestRecordPermission { granted in
@@ -325,7 +373,9 @@ final class LiveVoiceCallController {
     }
 
     private func bind(_ connection: ServerConnection, sessionId: String) {
-        channel = ServerConnectionLiveVoiceChannel(connection: connection)
+        if bindsServerChannel {
+            channel = ServerConnectionLiveVoiceChannel(connection: connection)
+        }
         if audio == nil {
             audio = LiveVoiceAudioOwner(engine: LiveVoiceDuplexCaptureEngine(meter: meter))
         }
@@ -656,6 +706,7 @@ final class LiveVoiceCallController {
     private func failClosed(_ message: String, closeChannel: Bool) {
         lastError = message
         isLive = false
+        isStarting = false
         isMuted = false
         isOnHold = false
         statusText = message
@@ -684,11 +735,13 @@ final class LiveVoiceCallController {
         endsOrphanedCall = false
         rejoinRequestId = nil
         callState = nil
-        lastError = nil
+        lastError = failureAfterEnd
+        statusText = failureAfterEnd ?? Self.listening
+        failureAfterEnd = nil
         isLive = false
+        isStarting = false
         isMuted = false
         isOnHold = false
-        statusText = "Listening"
         stopCapture()
     }
 

@@ -21,8 +21,7 @@ protocol LiveVoiceTelephony: AnyObject {
 enum LiveVoiceSystemAction: Equatable {
     case start(call: UUID)
     case end(call: UUID)
-    /// `action` is the action's own id, so an app request's perform is recognized.
-    case setMuted(call: UUID, muted: Bool, action: UUID)
+    case setMuted(call: UUID, muted: Bool)
     case setHeld(call: UUID, onHold: Bool)
 }
 
@@ -39,19 +38,22 @@ protocol LiveVoiceTelephonyEvents: AnyObject {
 /// Island call indicator, the in-call UI), and the two sides drive each other. There is at most
 /// one, the `LiveVoiceCallCenter` call it was started for.
 ///
-/// - Start: `start` asks CallKit for an outgoing call, then starts the app's call. The system
-///   shows it connecting at once and connected when the server confirms the call. When CallKit
+/// - Start: `start` (after `LiveVoiceCallController.prepareStart`) asks CallKit for an outgoing
+///   call, then starts the app's call. The system shows it connecting at once and connected when
+///   the server confirms the call. When CallKit
 ///   refuses (another call, a policy, no CallKit here), the app's call starts anyway without
 ///   it and activates its own audio session: Live Voice never fails because the system call did.
 /// - End: the system's End ends the app's call. The app's End hangs up the system call with an
 ///   end action; a call the server ended is reported as the other side hanging up, and a
 ///   failed or dropped call as failed.
-/// - Mute: the system's mute (its UI, a headset or AirPods gesture) mutes the app's call. The
-///   app's mute asks the system for the same mute, and that request's perform is not applied
-///   again.
+/// - Mute: every mute the system performs is the call's mute, whoever asked for it: its UI, a
+///   headset or AirPods gesture, or the app, whose mute asks the system for the same mute. The
+///   app asks only when its mute differs from the system's last one, so a perform never echoes
+///   back, and when performs cross the last one wins on both sides.
 /// - Hold and audio: the call's audio runs only while CallKit has the audio session active and
 ///   the call is not on hold. A phone call answered over it holds it: the mic and playback stop
-///   and the server call stays up with its keepalive; unhold resumes them.
+///   and the server call stays up with its keepalive; unhold resumes them. A session the system
+///   never activates (after the start, or after unhold) fails the call with the reason.
 ///
 /// The system UI shows the session's title, or "Live Voice" for a session the scoped locks
 /// keep out of notifications. Nothing else about the session is handed to CallKit, and calls
@@ -68,11 +70,9 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
         var reportedConnected = false
         /// What the system last knew: the mute it performed, or the one the app asked for.
         var systemMuted = false
-        /// Mute actions the app requested. Their performs echo the app's own state.
-        var appMuteActions: Set<UUID> = []
         var watch: Task<Void, Never>?
-        /// CallKit activated the call's audio session at least once.
-        var audioActivated = false
+        /// CallKit has the call's audio session active.
+        var audioActive = false
         /// Fails the call when the activation never comes.
         var activationDeadline: Task<Void, Never>?
     }
@@ -151,8 +151,13 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
             await runWithoutSystemCall(controller, reason: "refused", error: error, run: run)
             return
         }
-        // The system reset its calls during the request.
-        guard active?.id == id else { return }
+        // The system ended or reset the call during the request: it never starts.
+        guard let requested = active, requested.id == id else { return }
+        // End in the app during the request: hang up the call it asked for.
+        guard controller.isStarting else {
+            finish(requested)
+            return
+        }
         await run()
         guard let call = active, call.id == id else { return }
         guard controller.isLive else {
@@ -173,6 +178,8 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
             metadata["error_domain"] = (error as NSError).domain
             metadata["error_code"] = String((error as NSError).code)
         }
+        // End in the app while CallKit was asked: nothing to start.
+        guard controller.isStarting else { return }
         ClientLog.warning("LiveVoice", "Call starts without CallKit", metadata: metadata)
         controller.useSystemAudioSession(false)
         await run()
@@ -232,10 +239,8 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     private func requestMute(_ muted: Bool, call: Active) {
         guard let telephony else { return }
         let action = CXSetMutedCallAction(call: call.id, muted: muted)
-        let actionId = action.uuid
         let previous = call.systemMuted
         active?.systemMuted = muted
-        active?.appMuteActions.insert(actionId)
         let id = call.id
         Task { [weak self] in
             do {
@@ -245,8 +250,8 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
                     "error_domain": (error as NSError).domain,
                     "error_code": String((error as NSError).code),
                 ])
-                guard let self, self.active?.id == id,
-                      self.active?.appMuteActions.remove(actionId) != nil else { return }
+                // The system kept its mute; a later change of the app's asks again.
+                guard let self, self.active?.id == id, self.active?.systemMuted == muted else { return }
                 self.active?.systemMuted = previous
             }
         }
@@ -307,38 +312,44 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
             release(call)
             Task { await call.controller.end() }
             return true
-        case .setMuted(let id, let muted, let actionId):
+        case .setMuted(let id, let muted):
             guard let call = active, call.id == id else { return false }
-            if active?.appMuteActions.remove(actionId) != nil {
-                // The app asked for this one: the call is already where the app put it.
-                return true
-            }
+            // Authoritative whoever asked: the app's own request lands as a no-op.
             active?.systemMuted = muted
             call.controller.setMuted(muted)
             return true
         case .setHeld(let id, let onHold):
             guard let call = active, call.id == id else { return false }
             call.controller.setOnHold(onHold)
+            if onHold {
+                // A held call has no audio by design.
+                active?.activationDeadline?.cancel()
+                active?.activationDeadline = nil
+            } else if !call.audioActive {
+                // Unhold: the system gives the session back, or the call fails with the reason.
+                armActivationDeadline(for: id)
+            }
             return true
         }
     }
 
     func audioSessionDidActivate() {
-        active?.audioActivated = true
+        active?.audioActive = true
         active?.activationDeadline?.cancel()
         active?.activationDeadline = nil
         active?.controller.setAudioSessionActive(true)
     }
 
-    /// The system activates the session soon after the start action is fulfilled. When it
-    /// never does (a stale audio session ID in callservicesd, Apple DTS in forums thread
-    /// 837211), the call would sit live and silent: fail it with the reason instead.
+    /// The system activates the session soon after the start action is fulfilled, and again
+    /// after unhold. When it never does (a stale audio session ID in callservicesd, Apple DTS in
+    /// forums thread 837211), the call would sit live and silent: fail it with the reason instead.
     private func armActivationDeadline(for id: UUID) {
         let timeout = activationTimeout
+        active?.activationDeadline?.cancel()
         active?.activationDeadline = Task { [weak self] in
             try? await Task.sleep(for: timeout)
             guard !Task.isCancelled, let self, let call = self.active, call.id == id,
-                  !call.audioActivated else { return }
+                  !call.audioActive, !call.controller.isOnHold else { return }
             ClientLog.warning("LiveVoice", "CallKit never activated the audio session", metadata: [
                 "timeout": String(describing: timeout),
             ], flush: true)
@@ -352,6 +363,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     }
 
     func audioSessionDidDeactivate() {
+        active?.audioActive = false
         active?.controller.setAudioSessionActive(false)
     }
 
@@ -372,11 +384,10 @@ extension LiveVoiceSystemCall {
         locks: ScopedLockService,
         session: Session?
     ) -> String {
-        let target = ScopedLockTarget.session(
+        let target = locks.sessionTarget(
             serverId: key.serverId,
-            workspaceId: session?.workspaceId,
             sessionId: key.sessionId,
-            isIncognito: session?.ephemeral == true
+            workspaceId: session?.workspaceId
         )
         guard !locks.hidesContentOutsideApp(target), let session else { return lockedDisplayName }
         return session.displayTitle
@@ -479,7 +490,7 @@ final class CallKitLiveVoiceTelephony: NSObject, LiveVoiceTelephony, CXProviderD
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
-        complete(action, .setMuted(call: action.callUUID, muted: action.isMuted, action: action.uuid))
+        complete(action, .setMuted(call: action.callUUID, muted: action.isMuted))
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {
