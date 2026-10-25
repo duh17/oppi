@@ -170,6 +170,9 @@ final class ChatViewController: UIViewController {
     var observed = ChatObservedValues()
     var sessionEntryTask: Task<Void, Never>?
     var hasAppeared = false
+    /// The call center told this chat is on screen; kept because the app root is gone from the
+    /// traits once the chat leaves the window, when it must say it left.
+    weak var callCenterShowingChat: LiveVoiceCallCenter?
     /// The workspace route held this chat's session when it appeared. Only
     /// such a chat can tell from `AppNavigation` that it was left; one pushed
     /// straight onto a stack (`pushChat`) never ends an incognito session.
@@ -237,6 +240,7 @@ final class ChatViewController: UIViewController {
         for observer in notificationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
+        callCenterShowingChat?.chatDisappeared(self)
     }
 
     // MARK: - Derived state

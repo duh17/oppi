@@ -409,7 +409,8 @@ final class SessionInboxViewController: UIViewController {
                 workspaceName: item.workspace?.name
             ),
             searchSnippet: searchStore.snippetsBySessionId[item.session.id],
-            lockTarget: rowActions.lockTarget
+            lockTarget: rowActions.lockTarget,
+            callBadge: root.liveVoiceCalls.rowBadge(serverId: item.serverId, sessionId: item.session.id)
         )
     }
 
@@ -931,7 +932,10 @@ final class SessionInboxViewController: UIViewController {
     private func syncBars(_ state: InboxState) {
         let joinsRail = SessionListBarItems.joinsRail(traitCollection)
         let palette = root.themeStore.activeThemeID.palette
-        let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(hasActivePlayback: state.hasActivePlayback)
+        let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(
+            hasActivePlayback: state.hasActivePlayback,
+            callHoldsMicrophone: root.liveVoiceCalls.ownsMicrophone
+        )
         let player = state.connection?.audioPlayer
 
         if !joinsRail {

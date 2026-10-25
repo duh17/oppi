@@ -22,6 +22,8 @@ struct SessionListRowContent: Equatable {
     var lockBadges: [String: ScopedLockState] = [:]
     /// Durable Sessions experiment: the row session runs on the durable engine.
     var isDurable = false
+    /// The row session has the app's live Live Voice call (`LiveVoiceCallCenter.rowBadge`).
+    var callBadge: SessionRowCallBadge?
 
     func status(of session: Session) -> SessionStatusKind {
         statuses[session.id] ?? SessionStatusKind.resolve(session: session, seenAt: nil)
@@ -73,7 +75,8 @@ struct SessionListRowContent: Equatable {
         workspaceContext: String? = nil,
         foreignWorkspaceName: (Session) -> String? = { _ in nil },
         searchSnippet: AttributedString?,
-        lockTarget: (Session) -> ScopedLockTarget?
+        lockTarget: (Session) -> ScopedLockTarget?,
+        callBadge: SessionRowCallBadge? = nil
     ) -> Self {
         var statuses: [String: SessionStatusKind] = [:]
         var foreignNames: [String: String] = [:]
@@ -102,7 +105,8 @@ struct SessionListRowContent: Equatable {
             statuses: statuses,
             foreignWorkspaceNames: foreignNames,
             lockBadges: Self.lockBadges(of: entry, target: lockTarget),
-            isDurable: Self.isDurable(session)
+            isDurable: Self.isDurable(session),
+            callBadge: callBadge
         )
     }
 }
@@ -1141,12 +1145,12 @@ final class SessionListBottomBar {
         item.tintColor = tint
         item.accessibilityLabel = String(localized: "Start Quick Session")
         item.accessibilityIdentifier = "workspace.quickSession.start"
-        item.accessibilityCustomActions = [
+        item.accessibilityCustomActions = showsDictation ? [
             UIAccessibilityCustomAction(name: String(localized: "Dictate Quick Session")) { _ in
                 onDictate()
                 return true
             },
-        ]
+        ] : nil
         return SessionListBarItems.railItem(item, priority: .keep)
     }
 

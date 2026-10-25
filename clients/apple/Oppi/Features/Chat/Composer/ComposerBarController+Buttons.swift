@@ -111,9 +111,10 @@ extension ComposerBarController {
         micButton.setLiveSpectrumSource(nil)
         micButton.accessibilityIdentifier = "chat.voiceInput"
         guard let host, let manager = host.content.voiceInputManager else {
-            micButton.setHiddenIfChanged(true)
+            applyLiveVoiceOnlyChrome()
             return
         }
+        micButton.accessibilityHint = nil
         micButton.setHiddenIfChanged(false)
         let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
         let accent = host.content.isBusy ? host.content.colors.purple : host.content.colors.blue
@@ -134,6 +135,34 @@ extension ComposerBarController {
                 return true
             }]
             : nil
+    }
+
+    /// No dictation here (another session's call has the microphone), but Live Voice is still
+    /// offered: the mic slot is the Live Voice entry, and a tap is the entry's own action.
+    /// With neither, the slot is empty.
+    private func applyLiveVoiceOnlyChrome() {
+        guard let content = host?.content, content.onLiveVoiceSelected != nil else {
+            micButton.setHiddenIfChanged(true)
+            return
+        }
+        micButton.setHiddenIfChanged(false)
+        micButton.apply(
+            isRecording: false,
+            isProcessing: false,
+            voiceSpectrum: .zero,
+            languageLabel: nil,
+            accentColor: content.colors.blue,
+            engineBadge: .onDevice,
+            diameter: ComposerInputMetrics.controlDiameter,
+            idleSymbol: "waveform"
+        )
+        micButton.isEnabled = true
+        micButton.accessibilityIdentifier = ComposerLiveVoiceCall.startIdentifier
+        micButton.accessibilityLabel = "Live Voice"
+        micButton.accessibilityValue = nil
+        micButton.accessibilityHint = "Another session's call has the microphone. Asks to end it and call here."
+        micButton.isContextMenuInteractionEnabled = false
+        micButton.accessibilityCustomActions = nil
     }
 
     /// The dictation ring or orb, following the user's mic while they have the floor and the
@@ -164,6 +193,7 @@ extension ComposerBarController {
             listeningSymbol: "waveform"
         )
         micButton.isEnabled = call.isLive
+        micButton.accessibilityHint = nil
         micButton.accessibilityIdentifier = ComposerLiveVoiceCall.muteIdentifier
         micButton.accessibilityLabel = call.isMuted ? "Unmute" : "Mute"
         micButton.accessibilityValue = call.isMuted ? "Muted" : call.status
@@ -181,7 +211,7 @@ extension ComposerBarController {
     }
 
     /// Live Voice owns the microphone, so an in-progress dictation take ends first.
-    private func handleLiveVoiceChoice() {
+    func handleLiveVoiceChoice() {
         Task {
             await ComposerShared.stopDictationBeforeLiveVoice(manager: host?.content.voiceInputManager)
             applyChrome()

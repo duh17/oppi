@@ -26,6 +26,15 @@ During a call the chat input bar is the call surface:
 - `chat.liveVoice.mute` is the mic slot. It is present for the whole call, its label is `Mute` or `Unmute`, and its value always carries the call state: `Muted`, or the status (`Connecting`, `Listening`, `Speaking`, the failure). Read the call state from this value.
 - `chat.liveVoice.state` is the visible status in the empty field. It exists only while the field is empty; the user's live transcript or a typed message replaces it.
 - `chat.liveVoice.end` holds the send position for the whole call, including after a failure until End. `chat.send` sits beside it only while there is text to send.
+- `chat.liveVoice.start` is another session's mic slot while a call has the microphone: label `Live Voice`; activation asks to end the other call (End & Call, Cancel).
+
+Every other screen shows the call strip, `liveVoice.callStrip`:
+
+- `liveVoice.callStrip.open` reopens the call's session. Its label names the call and session (`Live Voice call, <title>`, `Live Voice call failed, <title>`, or just `Live Voice call` while a lock hides the title); its value is the status, `Muted` when muted, and the duration, read when focused.
+- `liveVoice.callStrip.mute`: label `Mute`, value `Muted` or `Not muted`. Hidden after a failure.
+- `liveVoice.callStrip.route` is the system audio route picker. Hidden after a failure.
+- `liveVoice.callStrip.end`: label `End call`, or `Dismiss` after a failure.
+- A session row on the call has `session.callBadge.<sessionId>`, spoken in the row's label.
 
 ## Semantic journey proof
 

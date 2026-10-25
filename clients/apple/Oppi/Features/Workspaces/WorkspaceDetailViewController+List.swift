@@ -90,7 +90,8 @@ extension WorkspaceDetailViewController {
             connection: connection,
             foreignWorkspaceName: { foreignWorkspaceName(for: $0, connection: connection) },
             searchSnippet: searchStore.snippetsBySessionId[entry.session.id],
-            lockTarget: rowActions.lockTarget
+            lockTarget: rowActions.lockTarget,
+            callBadge: root.liveVoiceCalls.rowBadge(serverId: serverId, sessionId: entry.session.id)
         )
         SessionListPerf.recordRowCompute(
             durationMs: Int((SessionListPerf.timestampNs() &- rowStartNs) / 1_000_000),

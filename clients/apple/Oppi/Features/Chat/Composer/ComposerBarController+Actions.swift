@@ -108,6 +108,10 @@ extension ComposerBarController {
             call.onToggleMute()
             return
         }
+        if host?.content.voiceInputManager == nil, host?.content.onLiveVoiceSelected != nil {
+            handleLiveVoiceChoice()
+            return
+        }
         Task {
             guard let manager = host?.content.voiceInputManager else { return }
             guard ComposerShared.canControlVoiceInput(manager, owner: .inlineComposer) else { return }

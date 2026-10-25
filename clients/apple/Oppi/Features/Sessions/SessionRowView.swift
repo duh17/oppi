@@ -23,6 +23,8 @@ final class SessionRowView: UIView {
         var hidesDetails = false
         /// Durable Sessions experiment: marks a durable-engine session, as the chat title does.
         var isDurable = false
+        /// The session has the app's live Live Voice call.
+        var callBadge: SessionRowCallBadge?
     }
 
     /// Accessibility activation of a list row: the same open as a tap on the cell.
@@ -44,6 +46,7 @@ final class SessionRowView: UIView {
     private let titleLabel = UILabel()
     private let lockLabel = UILabel()
     private let durableLabel = UILabel()
+    private let callLabel = UILabel()
     private let timeLabel = UILabel()
     private let snippetLabel = UILabel()
 
@@ -124,6 +127,7 @@ final class SessionRowView: UIView {
         durableLabel.setHiddenIfChanged(!content.isDurable)
         durableLabel.attributedText = SessionRowText.symbol("infinity", style: .caption2, weight: .semibold, color: colors.comment)
         durableLabel.accessibilityIdentifier = "session.durableMarker.\(session.id)"
+        applyCallBadge(content.callBadge, sessionId: session.id)
         timeLabel.setHiddenIfChanged(!display.showsTime)
         timeLabel.textColor = colors.comment
         updateTime()
@@ -262,6 +266,23 @@ final class SessionRowView: UIView {
         statusLabel.text = status.label
         statusLabel.font = UIFont.scaled(.caption2, status.needsAttention ? .semibold : .medium)
         statusLabel.textColor = tint
+    }
+
+    /// A phone in the call green while the session is on the app's call; a crossed-out mic
+    /// while that call is muted, so muted reads by shape as well as color.
+    private func applyCallBadge(_ badge: SessionRowCallBadge?, sessionId: String) {
+        callLabel.setHiddenIfChanged(badge == nil)
+        guard let badge else {
+            callLabel.accessibilityIdentifier = nil
+            return
+        }
+        let (symbol, color): (String, UIColor) = switch badge {
+        case .live: ("phone.fill", .systemGreen)
+        case .muted: ("mic.slash.fill", .systemOrange)
+        }
+        callLabel.attributedText = SessionRowText.symbol(symbol, style: .caption2, weight: .semibold, color: color)
+        callLabel.accessibilityLabel = badge.accessibilityLabel
+        callLabel.accessibilityIdentifier = "session.callBadge.\(sessionId)"
     }
 
     /// "Incognito" with its eye glyph on a purple capsule.
@@ -440,7 +461,7 @@ final class SessionRowView: UIView {
     /// The facts a list row shows, in reading order.
     private var facts: [UIView] {
         [
-            icon, titleLabel, lockLabel, durableLabel, timeLabel, snippetLabel,
+            icon, titleLabel, lockLabel, durableLabel, callLabel, timeLabel, snippetLabel,
             workspaceLabel, providerIcon, modelLabel, compactionLabel, worktreeIcon, attentionLabel, mirrorIndicator,
             gauge.valueLabel, incognitoBadge, costLabel, filesLabel, statusLabel,
         ].filter(\.isShownForAutomation)
@@ -485,7 +506,7 @@ final class SessionRowView: UIView {
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        for label in [lockLabel, durableLabel] {
+        for label in [lockLabel, durableLabel, callLabel] {
             label.setContentCompressionResistancePriority(.required, for: .horizontal)
             label.setContentHuggingPriority(.required, for: .horizontal)
         }
@@ -497,7 +518,8 @@ final class SessionRowView: UIView {
         titleRow.axis = .horizontal
         titleRow.alignment = .firstBaseline
         titleRow.spacing = 8
-        [titleLabel, lockLabel, durableLabel, titleSpacer, timeLabel].forEach(titleRow.addArrangedSubview)
+        callLabel.isHidden = true
+        [titleLabel, lockLabel, durableLabel, callLabel, titleSpacer, timeLabel].forEach(titleRow.addArrangedSubview)
 
         snippetLabel.numberOfLines = 2
         snippetLabel.adjustsFontForContentSizeCategory = true

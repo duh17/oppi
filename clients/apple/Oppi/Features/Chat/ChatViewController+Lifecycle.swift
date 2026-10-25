@@ -119,7 +119,22 @@ extension ChatViewController {
         appearIfNeeded(animated: animated)
         // Bar items come back after a pop that was cancelled (`viewWillDisappear`).
         barItems.isSuspended = false
+        noteOnScreen(true)
         setNeedsUpdateProperties()
+    }
+
+    /// Tells the app's call center whether this chat is on screen, so the call strip stays out
+    /// of the way of the call's own chat and shows everywhere else. Coming is said as the
+    /// transition starts and going as soon as it starts too, so the strip moves with it.
+    private func noteOnScreen(_ shown: Bool) {
+        guard shown else {
+            callCenterShowingChat?.chatDisappeared(self)
+            callCenterShowingChat = nil
+            return
+        }
+        guard let calls = root?.liveVoiceCalls, let serverId = resolvedServerId else { return }
+        calls.chatAppeared(self, serverId: serverId, sessionId: sessionId)
+        callCenterShowingChat = calls
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -130,6 +145,7 @@ extension ChatViewController {
         if screen.isMovingFromParent || screen.isBeingDismissed {
             barItems.clear()
         }
+        noteOnScreen(false)
     }
 
     /// Runs once per appearance, from the first of `viewWillAppear` and
@@ -158,10 +174,12 @@ extension ChatViewController {
         modals.sync()
         // In the window now, which `viewWillAppear` cannot promise.
         updateTopBarTip()
+        noteOnScreen(true)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        noteOnScreen(false)
         // A sheet over the chat keeps it in the window; only leaving the
         // window (a push, a full-screen cover, a pop) is a disappearance.
         guard viewIfLoaded?.window == nil || isMovingFromParent || screen.isMovingFromParent else { return }

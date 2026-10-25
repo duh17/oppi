@@ -25,6 +25,8 @@ final class MicButtonChromeView: UIControl {
     private var isMuted = false
     /// Shown inside the ring while listening, in place of the language (a Live Voice call).
     private var listeningSymbol: String?
+    /// Shown at rest in place of the mic (the slot as the Live Voice entry).
+    private var idleSymbol: String?
     private var showsOrb = false
     private var voiceSpectrum: VoiceSpectrumFrame = .zero
     /// Levels read once per frame instead of pushed through `apply` (a Live Voice call).
@@ -117,13 +119,15 @@ final class MicButtonChromeView: UIControl {
         animated: Bool = true,
         isPreparing: Bool = false,
         isMuted: Bool = false,
-        listeningSymbol: String? = nil
+        listeningSymbol: String? = nil,
+        idleSymbol: String? = nil
     ) {
         self.isRecording = isRecording
         self.isPreparing = isPreparing
         self.isProcessing = isProcessing
         self.isMuted = isMuted
         self.listeningSymbol = listeningSymbol
+        self.idleSymbol = idleSymbol
         if liveSpectrum == nil {
             self.voiceSpectrum = voiceSpectrum
         }
@@ -352,7 +356,7 @@ final class MicButtonChromeView: UIControl {
         } else {
             imageView.isHidden = false
             imageView.image = UIImage(
-                systemName: isMuted ? "mic.slash" : "mic",
+                systemName: idleSymbol ?? (isMuted ? "mic.slash" : "mic"),
                 withConfiguration: UIImage.SymbolConfiguration(pointSize: diameter * 0.47, weight: .bold)
             )
             imageView.tintColor = isMuted

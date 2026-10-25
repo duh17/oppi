@@ -44,7 +44,7 @@ struct LiveVoiceSystemCallTests {
 
         #expect(call.controller.isStarting)
         #expect(call.center.ownsMicrophone)
-        #expect(!call.center.mayStartCall)
+        #expect(call.center.callStart(serverId: "server-1", sessionId: "sess-2") != .available)
         #expect(call.tap() == nil)
         #expect(call.controller.composerCall?.isConnecting == true)
         #expect(call.controller.composerStatus == "Connecting")

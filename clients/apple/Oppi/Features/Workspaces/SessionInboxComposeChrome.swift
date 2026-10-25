@@ -42,9 +42,10 @@ enum SessionInboxComposeChrome {
     }
 
     /// Mic is a one-tap path into Quick Session. Hide it when now-playing
-    /// already owns the bar.
-    static func showsDictationShortcut(hasActivePlayback: Bool) -> Bool {
-        !hasActivePlayback
+    /// already owns the bar, and while a Live Voice call holds the one
+    /// microphone (`LiveVoiceCallCenter.ownsMicrophone`).
+    static func showsDictationShortcut(hasActivePlayback: Bool, callHoldsMicrophone: Bool) -> Bool {
+        !hasActivePlayback && !callHoldsMicrophone
     }
 
     /// Folder stays in the trailing capsule on both lists. Enabled whenever a
@@ -115,7 +116,11 @@ struct SessionInboxCompactComposeBar: View {
         }
         .accessibilityLabel("Start Quick Session")
         .accessibilityIdentifier("workspace.quickSession.start")
-        .accessibilityAction(named: "Dictate Quick Session", onDictate)
+        .accessibilityActions {
+            if showsDictation {
+                Button("Dictate Quick Session", action: onDictate)
+            }
+        }
     }
 
     private var placeholderLabel: some View {

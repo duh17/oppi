@@ -212,6 +212,10 @@ struct ScreenshotPreviewView: View {
             MetalOrbScreenshotPreview()
         case "workspace-shell":
             WorkspaceShellScreenshotPreview()
+        case "live-voice-call-strip":
+            WorkspaceShellPreview(root: LiveVoiceCallStripScreenshotPreview.root)
+                .ignoresSafeArea()
+                .preferredColorScheme(LiveVoiceCallStripScreenshotPreview.root.themeStore.preferredColorScheme)
         case "chat-top-bar":
             ChatRoutesHarnessPreview()
         case "chat-top-bar-default":

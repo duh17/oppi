@@ -19,9 +19,13 @@ final class WorkspaceShellController: UIViewController {
     /// launch never mounts the wrong layout for a frame.
     private var measuredPresentation: WorkspaceNavigationPresentation?
     private var wasMediaOverlayActive = false
+    /// The app's Live Voice call, over every screen but the call's own chat. It pushes the
+    /// layout and the lock cover down rather than covering them.
+    private let callStrip: LiveVoiceCallStripController
 
     init(root: AppRootEnvironment) {
         self.root = root
+        callStrip = LiveVoiceCallStripController(root: root)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -39,6 +43,13 @@ final class WorkspaceShellController: UIViewController {
             (shell: Self, _: UITraitCollection) in
             shell.view.setNeedsLayout()
         }
+        addChild(callStrip)
+        view.addSubview(callStrip.view)
+        callStrip.didMove(toParent: self)
+        callStrip.view.isHidden = true
+        callStrip.onContentChange = { [weak self] cameOrWent in
+            self?.callStripDidChange(animated: cameOrWent)
+        }
     }
 
     override func viewWillLayoutSubviews() {
@@ -46,6 +57,36 @@ final class WorkspaceShellController: UIViewController {
         // UIKit bounds exclude nothing for the keyboard, so a docked keyboard
         // on a portrait window (Duo inner display, iPad) cannot flip the layout.
         measurePresentation()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutCallStrip()
+    }
+
+    // MARK: Call strip
+
+    /// The strip sits under the status bar, its backdrop behind it; what the shell shows under
+    /// it starts below the strip through its safe area, so bars and content move down with it.
+    private func layoutCallStrip() {
+        let height = callStrip.contentHeight(fitting: view.bounds.width)
+        let top = view.safeAreaInsets.top
+        callStrip.view.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: height > 0 ? top + height : 0)
+        view.bringSubviewToFront(callStrip.view)
+        for child in [layout, lockCover].compactMap(\.self) where child.additionalSafeAreaInsets.top != height {
+            child.additionalSafeAreaInsets.top = height
+        }
+    }
+
+    private func callStripDidChange(animated: Bool) {
+        view.setNeedsLayout()
+        guard animated, view.window != nil, !UIAccessibility.isReduceMotionEnabled else {
+            view.layoutIfNeeded()
+            return
+        }
+        UIView.animate(springDuration: 0.3, bounce: 0) {
+            self.view.layoutIfNeeded()
+        }
     }
 
     override func updateProperties() {
@@ -125,6 +166,7 @@ final class WorkspaceShellController: UIViewController {
         next.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.insertSubview(next.view, at: 0)
         next.didMove(toParent: self)
+        view.setNeedsLayout()
         setNeedsStatusBarAppearanceUpdate()
     }
 
@@ -135,8 +177,9 @@ final class WorkspaceShellController: UIViewController {
             addChild(cover)
             cover.view.frame = view.bounds
             cover.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            view.addSubview(cover.view)
+            view.insertSubview(cover.view, belowSubview: callStrip.view)
             cover.didMove(toParent: self)
+            view.setNeedsLayout()
             lockCover = cover
             lockedServerId = serverId
             setNeedsStatusBarAppearanceUpdate()

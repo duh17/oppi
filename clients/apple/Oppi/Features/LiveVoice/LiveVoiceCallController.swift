@@ -52,6 +52,9 @@ final class LiveVoiceCallController {
     /// check, the system call's start, the server channel. The call already holds the
     /// microphone and shows Connecting, so a second start or a dictation take is refused.
     private(set) var isStarting = false
+    /// When the server first confirmed this call: the call's duration counts from here. Nil
+    /// while connecting and once the call ends or fails; a reconnect within the call keeps it.
+    private(set) var connectedAt: Date?
     /// Mic and playback levels for the composer's orb; outlives each call's audio.
     @ObservationIgnored let meter = LiveVoiceAudioMeter()
 
@@ -250,6 +253,7 @@ final class LiveVoiceCallController {
         lastError = nil
         failureAfterEnd = nil
         statusText = "Connecting"
+        connectedAt = nil
         isLive = true
         isStarting = false
         prepareIdentityForNewStart()
@@ -303,6 +307,7 @@ final class LiveVoiceCallController {
         if startSent || pendingRequestId != nil {
             endsOrphanedCall = true
             isLive = false
+            connectedAt = nil
             statusText = "Listening"
             invalidateStartWaiter()
             return
@@ -513,6 +518,7 @@ final class LiveVoiceCallController {
         }
         if snapshot.lifecycle == .ended {
             isLive = false
+            connectedAt = nil
             statusText = "Listening"
             keepAliveTask?.cancel()
             keepAliveTask = nil
@@ -669,6 +675,9 @@ final class LiveVoiceCallController {
 
     private func confirmStart(generation: UInt64) {
         didConfirmCall = true
+        if connectedAt == nil {
+            connectedAt = Date()
+        }
         // Every call state (each partial transcript while the user talks) confirms the call.
         // Restarting the timer here would starve the keepalive during long speech and let
         // the server's lease expire under a live call.
@@ -803,6 +812,7 @@ final class LiveVoiceCallController {
         lastError = message
         isLive = false
         isStarting = false
+        connectedAt = nil
         isMuted = false
         isOnHold = false
         statusText = message
@@ -836,6 +846,7 @@ final class LiveVoiceCallController {
         failureAfterEnd = nil
         isLive = false
         isStarting = false
+        connectedAt = nil
         isMuted = false
         isOnHold = false
         stopCapture()

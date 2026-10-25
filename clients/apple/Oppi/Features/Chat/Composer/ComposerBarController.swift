@@ -9,6 +9,8 @@ import UniformTypeIdentifiers
 struct ComposerLiveVoiceCall {
     static let muteIdentifier = "chat.liveVoice.mute"
     static let endIdentifier = "chat.liveVoice.end"
+    /// The mic slot as the Live Voice entry while another session's call has the microphone.
+    static let startIdentifier = "chat.liveVoice.start"
     static let stateIdentifier = "chat.liveVoice.state"
 
     /// False after a failed call: the reason stays in the field until End.

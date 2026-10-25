@@ -380,16 +380,80 @@ extension ChatViewController {
         manager.setPlaybackInterrupter(audioPlayer)
     }
 
-    /// The composer's Live Voice entry: none while the Live Voice experiment is off, while the
-    /// app's call policy refuses a new call (`LiveVoiceCallCenter.mayStartCall`: any live call),
-    /// for a terminal Pi mirror, which cannot answer out loud, or when the server's voice
-    /// backend is not set up.
+    /// The composer's Live Voice entry: none while the Live Voice experiment is off, while this
+    /// session's own call is live (`LiveVoiceCallCenter.callStart`), for a terminal Pi mirror,
+    /// which cannot answer out loud, or when the server's voice backend is not set up. While
+    /// another session's call is live the entry stays and asks to end that call first.
     var liveVoiceEntry: (() -> Void)? {
         guard AppPreferences.Experiments.liveVoiceEnabled, connection.liveVoiceAvailable,
-              root?.liveVoiceCalls.mayStartCall == true, session?.runtime != .piTui else {
+              let calls = root?.liveVoiceCalls, session?.runtime != .piTui,
+              calls.callStart(serverId: resolvedServerId, sessionId: sessionId) != .onThisCall else {
             return nil
         }
-        return { [weak self] in self?.startLiveVoice() }
+        return { [weak self] in self?.requestLiveVoice() }
+    }
+
+    /// The entry's tap: start here, or first ask to end the call another session has. Decided
+    /// on the tap, since that call may have ended since the composer drew the entry.
+    func requestLiveVoice() {
+        guard let calls = root?.liveVoiceCalls, let serverId = resolvedServerId else { return }
+        switch calls.callStart(serverId: serverId, sessionId: sessionId) {
+        case .available:
+            startLiveVoice()
+        case .onThisCall:
+            break
+        case .endsCall(let other):
+            confirmEndingCall(other, calls: calls, serverId: serverId)
+        }
+    }
+
+    /// "End the call in <A> and start one here?" End & Call ends that call, waits for it to
+    /// finish, then starts this session's.
+    private func confirmEndingCall(
+        _ other: LiveVoiceCallCenter.CallKey,
+        calls: LiveVoiceCallCenter,
+        serverId: String
+    ) {
+        let alert = UIAlertController(
+            title: Self.endCallTitle(otherSessionTitle: otherCallSessionTitle(other)),
+            message: nil,
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        let endAndCall = UIAlertAction(title: "End & Call", style: .destructive) { [weak self] _ in
+            guard let self else { return }
+            let sessionId = sessionId
+            let connection = connection
+            guard let routeScope = focusedRouteScope else { return }
+            Task {
+                guard await calls.replaceCall(
+                    serverId: serverId,
+                    sessionId: sessionId,
+                    routeScope: routeScope,
+                    using: connection
+                ) != nil else { return }
+                self.setDraftAsideForCall()
+            }
+        }
+        alert.addAction(endAndCall)
+        alert.preferredAction = endAndCall
+        Router.topPresenter(from: self).present(alert, animated: true)
+    }
+
+    static func endCallTitle(otherSessionTitle: String?) -> String {
+        guard let otherSessionTitle else { return "End the current Live Voice call and start one here?" }
+        return "End the call in \u{201C}\(otherSessionTitle)\u{201D} and start one here?"
+    }
+
+    /// The other call's session title, or nil while a lock hides it (or it is unknown).
+    private func otherCallSessionTitle(_ key: LiveVoiceCallCenter.CallKey) -> String? {
+        guard let root else { return nil }
+        let session = root.coordinator.connection(for: key.serverId)?.sessionStore.session(id: key.sessionId)
+        guard let session, !ScopedLockService.shared.isLocked(.session(session, serverId: key.serverId)) else {
+            return nil
+        }
+        let title = session.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? nil : title
     }
 
     /// Live Voice talks to this chat's session: its agent hears the caller and answers out loud.
@@ -405,6 +469,10 @@ extension ChatViewController {
               ) != nil else {
             return
         }
+        setDraftAsideForCall()
+    }
+
+    private func setDraftAsideForCall() {
         // The call starts with an empty field, now rather than on the next pass, so a
         // message placed in the composer right after (a Quick Session's first) is the
         // call's own and sends, not a draft set aside.

@@ -8,7 +8,8 @@ struct SessionInboxComposeChromeTests {
     @Test func showsDictationWhenIdle() {
         #expect(
             SessionInboxComposeChrome.showsDictationShortcut(
-                hasActivePlayback: false
+                hasActivePlayback: false,
+                callHoldsMicrophone: false
             )
         )
     }
@@ -16,7 +17,18 @@ struct SessionInboxComposeChromeTests {
     @Test func hidesDictationWhileNowPlayingOwnsTheBar() {
         #expect(
             !SessionInboxComposeChrome.showsDictationShortcut(
-                hasActivePlayback: true
+                hasActivePlayback: true,
+                callHoldsMicrophone: false
+            )
+        )
+    }
+
+    @Test("The Message capsule offers no mic while a Live Voice call holds it")
+    func hidesDictationDuringACall() {
+        #expect(
+            !SessionInboxComposeChrome.showsDictationShortcut(
+                hasActivePlayback: false,
+                callHoldsMicrophone: true
             )
         )
     }

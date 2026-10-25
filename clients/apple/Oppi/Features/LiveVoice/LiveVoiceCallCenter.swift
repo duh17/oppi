@@ -63,15 +63,33 @@ final class LiveVoiceCallCenter {
         return controller.isLive || controller.isStarting
     }
 
-    /// Whether any session may offer a new call now. Interim policy: while a call is live,
-    /// no session offers one, its own included (that one already has it). Switching a call to
-    /// another session is a later product decision; this is the one place to change.
-    var mayStartCall: Bool { !ownsMicrophone }
+    /// What a new call on a session means now. The one policy for offering and starting calls.
+    enum CallStart: Equatable {
+        /// No call is live: a call may start here.
+        case available
+        /// This session's own call is live; its composer already is the call.
+        case onThisCall
+        /// Another session's call is live. A call here ends that one first, once the person
+        /// confirms (`replaceCall`).
+        case endsCall(CallKey)
+    }
+
+    /// What starting a call on this session would do. A nil session id is a session not made
+    /// yet (Quick Session), which can only meet another session's call.
+    /// A call counts from the moment it holds the microphone (`ownsMicrophone`), so one still
+    /// starting is already the call another session would end.
+    func callStart(serverId: String?, sessionId: String?) -> CallStart {
+        guard let placed, ownsMicrophone else { return .available }
+        if let serverId, let sessionId, placed.key == CallKey(serverId: serverId, sessionId: sessionId) {
+            return .onThisCall
+        }
+        return .endsCall(placed.key)
+    }
 
     /// The controller for a new call on this session, now the app's call; the caller starts it.
-    /// Nil while `mayStartCall` refuses. A call that failed on another session is replaced.
+    /// Nil unless `callStart` is `.available`. A call that failed on another session is replaced.
     func placeCall(serverId: String, sessionId: String) -> LiveVoiceCallController? {
-        guard mayStartCall else { return nil }
+        guard callStart(serverId: serverId, sessionId: sessionId) == .available else { return nil }
         let key = CallKey(serverId: serverId, sessionId: sessionId)
         if let placed, placed.key == key {
             return placed.controller
@@ -85,8 +103,8 @@ final class LiveVoiceCallCenter {
         return call.controller
     }
 
-    /// The one way a call starts (a chat's Live Voice tap, a Quick Session's call). Nil while
-    /// `mayStartCall` refuses. Otherwise the session's call is placed and starting when this
+    /// The one way a call starts (a chat's Live Voice tap, End & Call, a Quick Session's call).
+    /// Nil unless `callStart` is `.available`. Otherwise the session's call is placed and starting when this
     /// returns: it holds the microphone and shows Connecting, and a second start is refused.
     /// The rest runs on in order: microphone access, read-aloud and dictation stopped, then the
     /// system call (`LiveVoiceSystemCall`, or none when CallKit refuses), then the server call.
@@ -115,5 +133,38 @@ final class LiveVoiceCallCenter {
     func endCall(serverId: String) async {
         guard let placed, placed.key.serverId == serverId else { return }
         await placed.controller.end()
+    }
+
+    /// End & Call: ends another session's call (live or still starting), waits for it to
+    /// finish, then starts this session's through `startCall`, so it is a system call like any
+    /// other (a call ended before the server confirmed it retires in `placeCall`). The person
+    /// confirmed ending the other call. Nil when a call still stands in the way.
+    func replaceCall(
+        serverId: String,
+        sessionId: String,
+        routeScope: SessionRouteScope,
+        using connection: ServerConnection
+    ) async -> LiveVoiceCallController? {
+        if case .endsCall = callStart(serverId: serverId, sessionId: sessionId), let current = placed {
+            await current.controller.end()
+        }
+        return startCall(serverId: serverId, sessionId: sessionId, routeScope: routeScope, using: connection)
+    }
+
+    /// Chats on screen, by the session they show (`chatAppeared`), so the app-wide call strip
+    /// stays out of the way of the call's own chat.
+    private(set) var shownChats: [ObjectIdentifier: CallKey] = [:]
+
+    /// A chat for this session came on screen (or back, after what covered it left).
+    func chatAppeared(_ chat: AnyObject, serverId: String, sessionId: String) {
+        let key = CallKey(serverId: serverId, sessionId: sessionId)
+        guard shownChats[ObjectIdentifier(chat)] != key else { return }
+        shownChats[ObjectIdentifier(chat)] = key
+    }
+
+    /// The chat left the screen: popped, covered by a pushed page, or torn down.
+    func chatDisappeared(_ chat: AnyObject) {
+        guard shownChats[ObjectIdentifier(chat)] != nil else { return }
+        shownChats[ObjectIdentifier(chat)] = nil
     }
 }

@@ -99,6 +99,25 @@ struct LiveVoiceCallLifetimeTests {
                 "The pending end never went out: \(first.sent.map(\.typeLabel))")
     }
 
+    @Test("The call strip steps aside while the call's chat is on screen and returns when it leaves or another chat shows")
+    func callStripFollowsTheCallsChat() async throws {
+        let fixture = try await Fixture(serverId: serverId, workspaceId: workspaceId)
+        defer { fixture.remove() }
+        _ = try await fixture.startConfirmedCall()
+        #expect(LiveVoiceCallStripContent.current(root: fixture.root) != nil, "No chat on screen")
+
+        let own = fixture.mountChat()
+        #expect(await waitForMainActorCondition { LiveVoiceCallStripContent.current(root: fixture.root) == nil },
+                "The call's own chat is the call surface")
+        own.unmount()
+        #expect(await waitForMainActorCondition { LiveVoiceCallStripContent.current(root: fixture.root) != nil })
+
+        let other = fixture.mountChat(sessionId: "other-\(UUID().uuidString)")
+        defer { other.unmount() }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(LiveVoiceCallStripContent.current(root: fixture.root) != nil, "Another session's chat shows the strip")
+    }
+
     @Test("A chat that opens mid-call keeps the pre-call draft aside, and the draft returns once when the call ends")
     func chatOpeningMidCallKeepsTheDraftAside() async throws {
         let fixture = try await Fixture(serverId: serverId, workspaceId: workspaceId)

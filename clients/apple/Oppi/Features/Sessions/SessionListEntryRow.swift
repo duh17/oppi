@@ -129,7 +129,8 @@ final class SessionListEntryContentView: UIView, UIContentView {
                 presentation: row.presentation,
                 lockBadge: row.lockBadge(of: session),
                 hidesDetails: row.lockBadge(of: session) == .locked,
-                isDurable: row.isDurable
+                isDurable: row.isDurable,
+                callBadge: row.callBadge
             ),
             display: configuration.display,
             themeID: configuration.themeID,

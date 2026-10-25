@@ -304,12 +304,19 @@ final class QuickSessionModel {
     }
 
     /// Starts the session and opens it straight into a Live Voice call; none while the Live
-    /// Voice experiment is off, the app's call policy refuses a new call (a call is live), or
-    /// the selected server's voice backend is not set up.
+    /// Voice experiment is off, the selected server's voice backend is not set up, or a call is
+    /// live (`callIsLive`).
     var liveVoiceEntry: (() -> Void)? {
-        guard AppPreferences.Experiments.liveVoiceEnabled, liveVoiceCalls.mayStartCall,
+        guard AppPreferences.Experiments.liveVoiceEnabled, !callIsLive,
               selectedServerConnection()?.liveVoiceAvailable == true else { return nil }
         return { [weak self] in self?.handleSend(startsLiveVoice: true) }
+    }
+
+    /// A session not made yet can only meet another session's call. Quick Session does not
+    /// offer End & Call: it hides its entry, and a requested start says to end the call first.
+    var callIsLive: Bool {
+        if case .endsCall = liveVoiceCalls.callStart(serverId: nil, sessionId: nil) { return true }
+        return false
     }
 
     /// Quick Session closed: stop its loads and hand back the microphone.
