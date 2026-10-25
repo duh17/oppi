@@ -606,9 +606,11 @@ export class BoundSessionStreamMux {
       sendForSession(msg);
     };
 
+    // Playback PCM skips permessage-deflate: speech, pauses included, deflates only to ~89% for a
+    // zlib pass per frame on both ends. JSON frames on this socket still compress.
     const sendAudio = (pcm: Buffer): void => {
       if (ws.readyState !== WebSocket.OPEN || pcm.length === 0) return;
-      ws.send(pcm, { binary: true });
+      ws.send(pcm, { binary: true, compress: false });
     };
 
     let liveConnections = this.liveSessionConnections.get(sessionId);

@@ -4,7 +4,11 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WebSocket } from "ws";
+import { randomBytes } from "node:crypto";
+import { constants as zlibConstants, inflateRawSync } from "node:zlib";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import type { AddressInfo, Socket } from "node:net";
+import { WebSocket, WebSocketServer } from "ws";
 import { AgentConfigurationError } from "../src/agent-launch-errors.js";
 import { CLOCK_SKEW_MS } from "../src/storage/device-auth.js";
 import { BoundSessionStreamMux, DictationStreamMux, type StreamContext } from "../src/stream.js";
@@ -33,15 +37,10 @@ function makeSession(id: string, workspaceId?: string): Session {
 class FakeWebSocket extends EventEmitter {
   readyState: number = WebSocket.OPEN;
   sent: ServerMessage[] = [];
-  sentBinary: Buffer[] = [];
   closeCode?: number;
   onSend?: (message: ServerMessage) => void;
 
-  send(data: string | Buffer, options?: { binary?: boolean }): void {
-    if (typeof data !== "string" || options?.binary) {
-      this.sentBinary.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
-      return;
-    }
+  send(data: string): void {
     const message = JSON.parse(data) as ServerMessage;
     this.sent.push(message);
     this.onSend?.(message);
@@ -190,6 +189,82 @@ function createMockContext(sessions: Session[]): {
   };
 
   return { ctx, sessionMap, subscribers, runtimeOverrides, broadcastTo };
+}
+
+interface RawFrame {
+  opcode: number;
+  rsv1: boolean;
+  payload: Buffer;
+}
+
+/** A WebSocket client that offers permessage-deflate and records each server frame's RSV1 bit. */
+async function connectDeflateClient(port: number): Promise<{
+  socket: Socket;
+  extensions: string;
+  frames: RawFrame[];
+  sendText: (text: string) => void;
+}> {
+  const req = httpRequest({
+    host: "127.0.0.1",
+    port,
+    headers: {
+      Connection: "Upgrade",
+      Upgrade: "websocket",
+      "Sec-WebSocket-Version": "13",
+      "Sec-WebSocket-Key": randomBytes(16).toString("base64"),
+      // No context takeover lets the test inflate one message without its predecessors.
+      "Sec-WebSocket-Extensions": "permessage-deflate; server_no_context_takeover",
+    },
+  });
+  const [res, socket, head] = await new Promise<[IncomingMessage, Socket, Buffer]>(
+    (resolve, reject) => {
+      req.once("upgrade", (res, socket, head) => resolve([res, socket, head]));
+      req.once("error", reject);
+      req.end();
+    },
+  );
+  const frames: RawFrame[] = [];
+  let pending = head;
+  const parse = (): void => {
+    while (pending.length >= 2) {
+      let length = pending[1] & 0x7f;
+      let offset = 2;
+      if (length === 126) {
+        if (pending.length < 4) return;
+        length = pending.readUInt16BE(2);
+        offset = 4;
+      } else if (length === 127) {
+        if (pending.length < 10) return;
+        length = Number(pending.readBigUInt64BE(2));
+        offset = 10;
+      }
+      if (pending.length < offset + length) return;
+      frames.push({
+        opcode: pending[0] & 0x0f,
+        rsv1: (pending[0] & 0x40) !== 0,
+        payload: Buffer.from(pending.subarray(offset, offset + length)),
+      });
+      pending = pending.subarray(offset + length);
+    }
+  };
+  socket.on("data", (chunk: Buffer) => {
+    pending = Buffer.concat([pending, chunk]);
+    parse();
+  });
+  parse();
+  const sendText = (text: string): void => {
+    const payload = Buffer.from(text);
+    if (payload.length >= 126) throw new Error("test client sends short frames only");
+    const mask = randomBytes(4);
+    const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
+    socket.write(Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask, masked]));
+  };
+  return {
+    socket,
+    extensions: String(res.headers["sec-websocket-extensions"] ?? ""),
+    frames,
+    sendText,
+  };
 }
 
 async function drain(): Promise<void> {
@@ -1386,24 +1461,54 @@ describe("BoundSessionStreamMux", () => {
     expect(ws.sent.map((message) => message.type)).toEqual(["voice_delegation_update"]);
   });
 
-  it("sends Live Voice playback PCM as binary on the session stream", async () => {
+  it("sends Live Voice playback PCM uncompressed on a deflate socket while JSON stays compressed", async () => {
     const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);
     let sendAudio: ((pcm: Buffer) => void) | undefined;
-    ctx.handleClientMessage = async (_session, _msg, _send, meta) => {
+    let sendJson: ((msg: ServerMessage) => void) | undefined;
+    ctx.handleClientMessage = async (_session, _msg, send, meta) => {
       sendAudio = meta?.sendAudio;
+      sendJson = send;
     };
     const mux = new BoundSessionStreamMux(ctx);
-    const ws = new FakeWebSocket();
-    await mux.handleWebSocket("w1", session.id, ws as unknown as WebSocket, undefined, "phone");
-    await drain();
+    const wss = new WebSocketServer({
+      host: "127.0.0.1",
+      port: 0,
+      perMessageDeflate: { threshold: 1024 },
+    });
+    wss.on("connection", (ws) => {
+      void mux.handleWebSocket("w1", session.id, ws, undefined, "phone");
+    });
+    await new Promise((resolve) => wss.once("listening", resolve));
+    const phone = await connectDeflateClient((wss.address() as AddressInfo).port);
+    try {
+      expect(phone.extensions).toContain("permessage-deflate");
+      phone.sendText(
+        JSON.stringify({ type: "reload", sessionId: session.id, requestId: "reload-1" }),
+      );
+      await vi.waitFor(() => expect(sendAudio).toEqual(expect.any(Function)));
 
-    ws.receive({ type: "reload", sessionId: session.id, requestId: "reload-1" } as ClientMessage);
-    await drain();
+      // Speech-sized frames that deflate would otherwise take (>= threshold).
+      const pcm = Buffer.alloc(9_600);
+      sendAudio?.(pcm);
+      sendJson?.({ type: "error", error: "x".repeat(4_000) });
 
-    expect(sendAudio).toEqual(expect.any(Function));
-    sendAudio?.(Buffer.from([9, 8, 7, 6]));
-    expect(ws.sentBinary).toEqual([Buffer.from([9, 8, 7, 6])]);
+      await vi.waitFor(() =>
+        expect(phone.frames.findIndex((f) => f.opcode === 2)).toBeGreaterThan(-1),
+      );
+      const audioAt = phone.frames.findIndex((f) => f.opcode === 2);
+      expect(phone.frames[audioAt]).toEqual({ opcode: 2, rsv1: false, payload: pcm });
+      await vi.waitFor(() => expect(phone.frames.length).toBeGreaterThan(audioAt + 1));
+      const json = phone.frames[audioAt + 1];
+      expect(json.rsv1).toBe(true);
+      const inflated = inflateRawSync(json.payload, {
+        finishFlush: zlibConstants.Z_SYNC_FLUSH,
+      });
+      expect(JSON.parse(inflated.toString())).toMatchObject({ type: "error" });
+    } finally {
+      phone.socket.destroy();
+      await new Promise((resolve) => wss.close(resolve));
+    }
   });
 });
 
