@@ -384,6 +384,15 @@ APNs token, the id of its current registration (the Cloudflare adapter keys this
 token and stores only the id). No challenges (3.1), no envelopes, no Live Activity counts, no
 client addresses, no request logs.
 
+What the hosting edge keeps is separate from what the relay stores. A relay on Cloudflare
+puts ordinary connection metadata in Cloudflare's HTTP analytics for its hostname — client
+address, method, path, status, and time — for as long as that product retains it. The relay's
+Workers Logs, invocation logs, and observability are off, and no Logpush job ships request
+logs, but an edge that answers HTTPS has to see who called it. A relay that keeps nothing
+still leaves that window at its host; a self-hosted relay leaves it with whoever terminates
+TLS. The path names the registration's id, which is opaque and not a credential: a caller
+also needs the registration secret and, when attested, a fresh App Attest assertion.
+
 A registration that carries no push, alert or Live Activity, for 90 days is deleted with its
 permissions and its APNs-token entry. The relay counts from its creation or the last counted
 push, whichever is later, using the quota counters above, so this keeps no extra data. The
@@ -663,7 +672,7 @@ removes them from Notification Center when it becomes active: they open nothing.
 
 | Party | Can | Cannot |
 | --- | --- | --- |
-| Relay operator, Cloudflare | See APNs tokens, environments, server IP addresses, push timing, collapse IDs, and whether a registration is attested. Drop, delay, or duplicate pushes. Send pushes that show the fixed fallback text. | Read content; forge content (Ed25519); replay accepted pushes (`enc` ledger and freshness; one exception after a phone clock correction, §2.5 step 7); learn content length (fixed size); learn urgency or session grouping (set inside the ciphertext). |
+| Relay operator, Cloudflare | See APNs tokens, environments, IP addresses (of the phone on its own relay calls, of each server when it pushes), request paths and times, push timing, collapse IDs, and whether a registration is attested. Drop, delay, or duplicate pushes. Send pushes that show the fixed fallback text. | Read content; forge content (Ed25519); replay accepted pushes (`enc` ledger and freshness; one exception after a phone clock correction, §2.5 step 7); learn content length (fixed size); learn urgency or session grouping (set inside the ciphertext). |
 | Apple (APNs) | Same metadata as the relay, minus server addresses. | Same as the relay. |
 | Network attacker between app and server, including a TLS-terminating proxy | See the push public key and send token. | Substitute either: the device key signs both. |
 | Holder of a stolen send token | Push fallback-text alerts to one device until the token is revoked. | Read or forge content. |
@@ -717,8 +726,10 @@ practice.
    through a backup or iCloud Keychain, and only Oppi and its extension can read it. Taking it needs full device compromise, and
    an attacker with that can already open Oppi itself.
 
-**Metadata that leaks by design:** device APNs token and environment; the sending server's
-IP address (to the relay); the time of each push; one fixed size; the collapse ID's
+**Metadata that leaks by design:** device APNs token and environment; IP addresses, of the
+phone on each of its own relay calls (registering, adding a server, syncing a card) and of the
+sending server on each push; the request path, which names the phone's opaque registration
+id; the time of each push and card sync; one fixed size; the collapse ID's
 per-device-and-session linkability; the attested flag; registration and permission counts.
 
 **Post-quantum:** out of scope for v1. The KEM is classical X25519, so someone who records

@@ -176,7 +176,7 @@ struct ServerNotificationsSection: View {
         switch consent {
         case .push(let relay, let withCounts):
             let relayHost = relay.host() ?? relay.absoluteString
-            let base = String(localized: "Alerts travel through \(relayHost) on Cloudflare, then Apple, encrypted so only this device can read them. All three see this device's push token and when alerts are sent; only the relay and Cloudflare see your server's IP address. App Attest checks with Apple that this is Oppi, so Apple learns this install uses push.")
+            let base = String(localized: "Alerts travel through \(relayHost) on Cloudflare, then Apple, encrypted so only this device can read them. All three see this device's push token and when alerts are sent; only the relay and Cloudflare see the IP addresses of your server and of this device. App Attest checks with Apple that this is Oppi, so Apple learns this install uses push.")
             guard withCounts else { return base }
             return base + " " + String(localized: "The Live Activity's two counts also reach all three unencrypted, up to once a minute.")
         case .liveActivity(let relayHost):

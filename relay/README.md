@@ -19,15 +19,24 @@ This package implements relay API v1.
 
 | | Sees | Stores |
 | --- | --- | --- |
-| Device registration | APNs token, sandbox or production, App Attest attestation | Token, environment, App Attest public key and counter, `SHA-256` of the registration secret |
+| Device registration | APNs token, sandbox or production, App Attest attestation, your device's IP address | Token, environment, App Attest public key and counter, `SHA-256` of the registration secret |
 | Send permissions | — | Permission ID and `SHA-256` of its secret, up to 16 per registration |
 | Each push | Server IP address, time, a 641-byte envelope it cannot open, an optional collapse ID | Daily and per-minute alert counts |
-| Live Activity state | Push-to-start token; per server with a card on, the permission ID allowed to drive it, a random slot, the card's update token, and whether you dismissed it | These tokens, slots, and permission IDs, when each update token arrived, and which dismissed cards a server has ended since |
+| Live Activity state | Your device's IP address, push-to-start token; per server with a card on, the permission ID allowed to drive it, a random slot, the card's update token, and whether you dismissed it | These tokens, slots, and permission IDs, when each update token arrived, and which dismissed cards a server has ended since |
 | Each Live Activity push | Server IP address, time, `start`/`update`/`end`, the running and needs-you counts | Daily and per-minute Live Activity counts |
 
 The relay stores no envelopes, IP addresses, request bodies, or request logs. Its logs carry
 event names and status codes only. Client addresses feed in-memory rate limits and are never
 written down.
+
+Cloudflare, which runs the HTTPS endpoint, keeps its own HTTP analytics for the hostname:
+client address, method, path, status, and time, for as long as that product retains them. So
+IP addresses reach Cloudflare — your phone's on each registration, permission, and card sync,
+and your server's on each push — even though the relay stores none, and the path names the
+registration's opaque id (not a credential: a caller also needs the registration secret and a
+fresh App Attest assertion when attested). The relay turns off Workers Logs, invocation logs,
+observability, and Logpush, so there is no request log beyond that; keeping less than that
+needs an endpoint you run yourself.
 
 The relay deletes a registration when:
 
