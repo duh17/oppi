@@ -221,6 +221,35 @@ describe("durable SessionHost stores", () => {
     expect(runtime.host(session.id)?.isOpen).toBe(true);
   });
 
+  it("shuts down cleanly after another holder refused it a store's lock", async () => {
+    const f = await fixture();
+    const session = enroll(f.storage, f.workspace.id, "Held");
+    await f.manager.startSession(session.id, f.workspace);
+    const other = new DurableHarness(f.dir);
+    runtimes.push(other);
+    await expect(other.openHost(session.id)).rejects.toMatchObject({
+      code: "durable_store_locked",
+    });
+    await expect(other.closeAll()).resolves.toBeUndefined();
+  });
+
+  it("opens a store whose lock it was refused once the holder releases it", async () => {
+    const f = await fixture();
+    const session = enroll(f.storage, f.workspace.id, "Released");
+    await f.manager.startSession(session.id, f.workspace);
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    const other = new DurableHarness(f.dir);
+    runtimes.push(other);
+    await expect(other.openHost(session.id)).rejects.toMatchObject({
+      code: "durable_store_locked",
+    });
+    await f.manager.stopSession(session.id);
+    await until(() => runtime.host(session.id) === undefined, "idle store close");
+    const reopened = await other.openHost(session.id);
+    expect(reopened.isOpen).toBe(true);
+  });
+
   it("re-attaches a transcript socket whose room failed, on one subscription", async () => {
     const f = await fixture([fauxAssistantMessage("done")]);
     const session = enroll(f.storage, f.workspace.id, "Lost room");

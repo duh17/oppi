@@ -86,6 +86,7 @@ Example:
 
 ### Fixed
 
+- **Server:** A durable session whose store could not be locked, because another process held it, opens once the lock is free instead of failing until the server restarts, and server shutdown no longer stops early with `Shutdown error: Durable store … is already open`.
 - **Server:** Automatic session titles no longer turn the model's reply into the name, such as "I can't see the attachment contents..." with Claude Haiku. The server now asks for a title the same way on-device titles do, and leaves a session unnamed when the model answers instead.
 - **Client:** SSH Terminal: rotating the device or showing or hiding the keyboard during a password prompt no longer ends secure entry one line of output early, while the secret may still be on screen.
 - **Server:** `oppi` commands run from a durable session's `bash` are attributed to that session, so `oppi session create` there is parented, checked against the nested-delegation policy, and cannot target the session that ran it. A durable child without the `allowNestedDelegation` grant can no longer start an unparented root session from its shell. A detached lead created with `oppi session create` from a durable session is now that session's child; pass `--allow-nested-delegation --no-auto-stop` to keep it a delegating, long-lived lead.

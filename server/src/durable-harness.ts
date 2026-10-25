@@ -757,22 +757,24 @@ export class SessionHost {
   }
 
   private async openInner(): Promise<{ harness: Harness; models: ModelRuntime }> {
-    const shared = await this.runtime.ensureShared();
-    mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+    // Every failure clears `opening`: a kept rejection would keep this host "open", so each
+    // later `open()` and the shutdown `close()` would rethrow it instead of trying again.
     try {
-      this.releaseLock = await properLockfile.lock(this.directory, {
-        realpath: true,
-        stale: 2_000,
-        update: 1_000,
-        retries: 0,
-      });
-    } catch (error) {
-      throw Object.assign(
-        new Error(`Durable store ${this.storeId} is already open`, { cause: error }),
-        { code: "durable_store_locked" },
-      );
-    }
-    try {
+      const shared = await this.runtime.ensureShared();
+      mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+      try {
+        this.releaseLock = await properLockfile.lock(this.directory, {
+          realpath: true,
+          stale: 2_000,
+          update: 1_000,
+          retries: 0,
+        });
+      } catch (error) {
+        throw Object.assign(
+          new Error(`Durable store ${this.storeId} is already open`, { cause: error }),
+          { code: "durable_store_locked" },
+        );
+      }
       const { openNodeSqliteStorage } =
         await import("@earendil-works/pi-durable/storage/sqlite/node");
       const storage = await openNodeSqliteStorage(join(this.directory, STORAGE_FILE));
