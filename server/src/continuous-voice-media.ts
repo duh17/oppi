@@ -86,8 +86,10 @@ const SENTENCE_END = /[。？！?.!]$/;
 const PLAYBACK_BYTES_PER_MS = (LIVE_VOICE_PLAYBACK_SAMPLE_RATE * 2) / 1_000;
 /**
  * Consecutive speaking reports that interrupt the assistant. Yuwp reports speech state with
- * every feed (~200 ms), so two in a row mean the detector still hears speech one feed later:
- * ~200-400 ms of continuous speech, not a blip (cough, click). A third would spend another
+ * every feed (~200 ms), so two in a row normally mean the detector still hears speech one feed
+ * later, roughly 200-400 ms of speech rather than a blip (cough, click). It is a heuristic,
+ * not a guarantee: a feed too short for a new detector chunk (0.16 s at current settings)
+ * repeats the last state, so the floor is about one chunk. A third report would spend another
  * ~200 ms of the ~0.5-0.7 s this saves over waiting for text (measured: speech_active
  * ~400 ms after onset, first text ~1160 ms).
  */
@@ -353,14 +355,22 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     this.log.info("voice_media.turn_to_voice", { latencyMs });
   }
 
-  /** The user spoke over the assistant: log how long it had been speaking or queued. */
+  /**
+   * The user spoke over the assistant: log how long it had been speaking or queued, and how
+   * much audio the phone still had to play. TTS outruns playback, so most barge-ins land
+   * after the queue drained, while the phone is still playing.
+   */
   private logBargeIn(): void {
-    if (this.queuedSpeechItems === 0 || this.speechQueuedSince === undefined) return;
+    const now = this.now();
+    const playbackRemainingMs = Math.max(0, Math.round(this.playbackEndsAt - now));
+    if (this.queuedSpeechItems === 0 && playbackRemainingMs === 0) return;
     this.stats.bargeIns += 1;
     this.log.info("voice_media.barge_in", {
-      assistantActiveMs: this.now() - this.speechQueuedSince,
+      assistantActiveMs:
+        this.speechQueuedSince === undefined ? undefined : now - this.speechQueuedSince,
       queuedItems: this.queuedSpeechItems,
       audioSentMs: Math.round(this.speechAudioBytes / PLAYBACK_BYTES_PER_MS),
+      playbackRemainingMs,
     });
   }
 
