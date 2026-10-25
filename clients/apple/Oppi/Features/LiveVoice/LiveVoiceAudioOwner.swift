@@ -148,6 +148,12 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
 /// Network audio arrives in uneven chunks. Playing each one the moment it lands turns every
 /// late chunk into an audible gap, so a reply starts only once `primeFrames` are queued (or
 /// `primeWait` has passed, for short replies), and the queue re-primes whenever it runs dry.
+///
+/// The prime adapts within a call. While a reply plays, its lag is how much of the audio queued
+/// at its start the network used up before more arrived. Any lag raises the next start's prime
+/// to the lag plus `primeMarginMs` at once; each reply that plays out without an underrun
+/// lowers it by at most `primeStepMs`. The prime stays between `floorPrimeMs` and
+/// `safePrimeMs`, and an underrun puts it back to `safePrimeMs`.
 struct LiveVoicePlaybackScheduler {
     enum Decision: Equatable {
         /// Keep the chunk until the queue is primed.
@@ -168,15 +174,34 @@ struct LiveVoicePlaybackScheduler {
         var underruns = 0
         /// Queued audio dropped because the user talked over the reply.
         var flushes = 0
+        /// Lowest prime any reply started with.
+        var minPrimeMs = LiveVoicePlaybackScheduler.safePrimeMs
+        /// Most of its starting audio a reply used up waiting for the network.
+        var maxLagMs = 0
     }
 
     static let sampleRate = 24_000
-    static let primeFrames = sampleRate * 180 / 1000
-    static let primeWait: TimeInterval = 0.3
+    /// A call's first reply, and any reply after an underrun, primes this much.
+    static let safePrimeMs = 180
+    /// The least a steady link primes. No phone playback stats existed when it was set: the
+    /// server sees xAI deliver every reply ahead of real time, so the risk is the last hop to
+    /// the phone, where a Wi-Fi or cellular radio can hold packets for around 100 ms. Tune it
+    /// from the `max_lag_ms` and `min_prime_ms` of logged calls.
+    static let floorPrimeMs = 100
+    /// Kept on top of the worst lag seen, for the next reply to be a little worse.
+    static let primeMarginMs = 40
+    /// The most one clean reply lowers the prime, so a single quiet reply cannot undo jitter.
+    static let primeStepMs = 20
     /// Gaps longer than this are a pause between replies, not jitter.
     static let replyGap: TimeInterval = 1.0
 
     private(set) var stats = Stats()
+    /// The prime the next reply starts with.
+    private(set) var primeMs = Self.safePrimeMs
+    var primeFrames: Int { Self.sampleRate * primeMs / 1000 }
+    /// A reply shorter than the prime starts after this, the prime plus the 120 ms slack the
+    /// safe prime always had.
+    var primeWait: TimeInterval { Double(primeMs + 120) / 1000 }
     /// A reply is on its way out of the speaker: started and not yet drained or flushed.
     var isPlaying: Bool { !priming }
     private var priming = true
@@ -184,6 +209,12 @@ struct LiveVoicePlaybackScheduler {
     private var queuedFrames = 0
     private var lastArrival: TimeInterval?
     private var drainedAt: TimeInterval?
+    /// When the playing reply started, and the audio that has arrived for it since.
+    private var startedAt: TimeInterval = 0
+    private var framesSinceStart = 0
+    private var replyLagMs = 0
+    /// The last reply drained, not flushed; it lowers the prime unless more of it follows.
+    private var replyPlayedOut = false
 
     mutating func receive(frames: Int, at now: TimeInterval) -> Decision {
         stats.chunks += 1
@@ -193,22 +224,22 @@ struct LiveVoicePlaybackScheduler {
         }
         lastArrival = now
         guard priming else {
+            noteLag(at: now)
+            framesSinceStart += frames
             queuedFrames += frames
             return .schedule
         }
-        if heldFrames == 0, let drainedAt, now - drainedAt < Self.replyGap {
-            stats.underruns += 1
-        }
+        if heldFrames == 0 { adaptPrime(at: now) }
         heldFrames += frames
-        guard heldFrames >= Self.primeFrames else { return .hold }
-        startHeld()
+        guard heldFrames >= primeFrames else { return .hold }
+        startHeld(at: now)
         return .startWithHeld
     }
 
     /// The prime wait ran out; true when held audio should start now.
-    mutating func primeTimedOut() -> Bool {
+    mutating func primeTimedOut(at now: TimeInterval) -> Bool {
         guard priming, heldFrames > 0 else { return false }
-        startHeld()
+        startHeld(at: now)
         return true
     }
 
@@ -217,6 +248,7 @@ struct LiveVoicePlaybackScheduler {
         guard !priming, queuedFrames == 0 else { return }
         priming = true
         drainedAt = now
+        replyPlayedOut = true
     }
 
     /// Drops held and queued audio. Only a drop the user caused counts as a flush.
@@ -227,12 +259,41 @@ struct LiveVoicePlaybackScheduler {
         queuedFrames = 0
         drainedAt = nil
         lastArrival = nil
+        // A cut-off reply never showed it played out clean; its lag so far still counts.
+        replyPlayedOut = false
     }
 
-    private mutating func startHeld() {
+    /// The first chunk of the next reply, or of the same reply after it ran dry.
+    private mutating func adaptPrime(at now: TimeInterval) {
+        if let drainedAt, now - drainedAt < Self.replyGap {
+            stats.underruns += 1
+            primeMs = Self.safePrimeMs
+        } else if replyPlayedOut {
+            primeMs = max(Self.floorPrimeMs, replyLagMs + Self.primeMarginMs, primeMs - Self.primeStepMs)
+        }
+        replyPlayedOut = false
+    }
+
+    /// Audio plays in real time from `startedAt`; arrivals slower than that use up the start's
+    /// queued audio. A next reply primed for that lag would have survived this one.
+    private mutating func noteLag(at now: TimeInterval) {
+        let playedMs = (now - startedAt) * 1000
+        let arrivedMs = Double(framesSinceStart * 1000) / Double(Self.sampleRate)
+        let lag = Int((playedMs - arrivedMs).rounded())
+        guard lag > replyLagMs else { return }
+        replyLagMs = lag
+        stats.maxLagMs = max(stats.maxLagMs, lag)
+        primeMs = max(primeMs, min(Self.safePrimeMs, lag + Self.primeMarginMs))
+    }
+
+    private mutating func startHeld(at now: TimeInterval) {
+        stats.minPrimeMs = min(stats.minPrimeMs, primeMs)
         priming = false
         queuedFrames += heldFrames
         heldFrames = 0
+        startedAt = now
+        framesSinceStart = 0
+        replyLagMs = 0
     }
 }
 
@@ -390,7 +451,7 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         playbackFormat = nil
         audioEngine = nil
         meter.reset()
-        Self.logCallAudio(stats, echoCancellation: echoCancellation, recoveries: recoveries)
+        Self.logCallAudio(stats, primeMs: scheduler.primeMs, echoCancellation: echoCancellation, recoveries: recoveries)
         scheduler = LiveVoicePlaybackScheduler()
         echoCancellation = false
         recoveries = 0
@@ -417,11 +478,12 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
     private func armPrimeTimer() {
         guard primeTimer == nil else { return }
         let generation = generation
+        let wait = scheduler.primeWait
         primeTimer = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(LiveVoicePlaybackScheduler.primeWait))
+            try? await Task.sleep(for: .seconds(wait))
             guard let self, !Task.isCancelled, self.generation == generation else { return }
             self.primeTimer = nil
-            if self.scheduler.primeTimedOut() { self.startHeld() }
+            if self.scheduler.primeTimedOut(at: ProcessInfo.processInfo.systemUptime) { self.startHeld() }
         }
     }
 
@@ -533,6 +595,7 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
 
     private static func logCallAudio(
         _ stats: LiveVoicePlaybackScheduler.Stats,
+        primeMs: Int,
         echoCancellation: Bool,
         recoveries: Int
     ) {
@@ -542,6 +605,9 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
             "max_gap_ms": String(stats.maxGapMs),
             "underruns": String(stats.underruns),
             "flushes": String(stats.flushes),
+            "min_prime_ms": String(stats.minPrimeMs),
+            "final_prime_ms": String(primeMs),
+            "max_lag_ms": String(stats.maxLagMs),
             "echo_cancellation": String(echoCancellation),
             "audio_restarts": String(recoveries),
         ], flush: true)

@@ -103,14 +103,14 @@ struct LiveVoicePlaybackSchedulerTests {
         do { let decision = scheduler.receive(frames: chunk, at: 0.1); #expect(decision == .startWithHeld) }
         #expect(scheduler.isPlaying)
         do { let decision = scheduler.receive(frames: chunk, at: 0.15); #expect(decision == .schedule) }
-        do { let started = scheduler.primeTimedOut(); #expect(!started) }
+        do { let started = scheduler.primeTimedOut(at: 0.3); #expect(!started) }
     }
 
     @Test("A short reply starts when the prime wait runs out")
     func shortReplyStartsOnTimeout() {
         var scheduler = LiveVoicePlaybackScheduler()
         do { let decision = scheduler.receive(frames: chunk, at: 0); #expect(decision == .hold) }
-        do { let started = scheduler.primeTimedOut(); #expect(started) }
+        do { let started = scheduler.primeTimedOut(at: 0.3); #expect(started) }
         do { let decision = scheduler.receive(frames: chunk, at: 0.05); #expect(decision == .schedule) }
     }
 
@@ -148,6 +148,73 @@ struct LiveVoicePlaybackSchedulerTests {
         #expect(scheduler.stats.flushes == 1)
         do { let decision = scheduler.receive(frames: chunk, at: 0.5); #expect(decision == .hold) }
         #expect(scheduler.stats.underruns == 0)
+    }
+
+    @Test("Steady replies lower the prime one step per reply, down to the floor")
+    func steadyRepliesLowerPrime() {
+        var scheduler = LiveVoicePlaybackScheduler()
+        // Chunks 50 ms apart: each reply uses up 50 ms of its starting audio.
+        let primes = (0..<7).map { playReply(&scheduler, at: Double($0) * 5) }
+        #expect(primes == [180, 160, 140, 120, 100, 100, 100])
+        #expect(scheduler.primeWait == 0.22)
+        // Replies that never lag still stop at the floor.
+        for reply in 7..<12 { playReply(&scheduler, at: Double(reply) * 5, chunks: 1, frames: 24_000) }
+        #expect(scheduler.primeMs == LiveVoicePlaybackScheduler.floorPrimeMs)
+        #expect(scheduler.stats.minPrimeMs == 100)
+        #expect(scheduler.stats.underruns == 0)
+    }
+
+    @Test("A late chunk raises the prime to its lag plus margin, capped at the safe prime")
+    func lateChunkRaisesPrime() {
+        var scheduler = LiveVoicePlaybackScheduler()
+        for reply in 0..<5 { playReply(&scheduler, at: Double(reply) * 5) }
+        #expect(scheduler.primeMs == 100)
+        // Two chunks fill the 100 ms prime; the next lands 100 ms after playback starts.
+        _ = scheduler.receive(frames: chunk, at: 25)
+        _ = scheduler.receive(frames: chunk, at: 25.05)
+        _ = scheduler.receive(frames: chunk, at: 25.15)
+        #expect(scheduler.primeMs == 140)
+        scheduler.played(frames: chunk * 3, at: 25.4)
+        // One long chunk starts the reply, and the next waits 160 ms.
+        _ = scheduler.receive(frames: chunk * 4, at: 30)
+        _ = scheduler.receive(frames: chunk, at: 30.16)
+        #expect(scheduler.primeMs == LiveVoicePlaybackScheduler.safePrimeMs)
+        #expect(scheduler.stats.maxLagMs == 160)
+        // A reply the user talked over never played out clean, so it does not lower the prime.
+        scheduler.flush(userTalked: true)
+        _ = scheduler.receive(frames: chunk, at: 35)
+        #expect(scheduler.primeMs == LiveVoicePlaybackScheduler.safePrimeMs)
+        #expect(scheduler.stats.underruns == 0)
+    }
+
+    @Test("An underrun puts the prime straight back to the safe prime")
+    func underrunRestoresSafePrime() {
+        var scheduler = LiveVoicePlaybackScheduler()
+        for reply in 0..<5 { playReply(&scheduler, at: Double(reply) * 5) }
+        #expect(scheduler.primeMs == 100)
+        _ = scheduler.receive(frames: chunk * 2, at: 25)
+        scheduler.played(frames: chunk * 2, at: 25.12)
+        do { let decision = scheduler.receive(frames: chunk, at: 25.4); #expect(decision == .hold) }
+        #expect(scheduler.stats.underruns == 1)
+        #expect(scheduler.primeMs == LiveVoicePlaybackScheduler.safePrimeMs)
+        #expect(scheduler.primeWait == 0.3)
+    }
+
+    /// Plays one reply to the end: `chunks` arrivals `spacing` apart from `start`.
+    /// Returns the prime the reply started with.
+    @discardableResult
+    private func playReply(
+        _ scheduler: inout LiveVoicePlaybackScheduler,
+        at start: TimeInterval,
+        chunks: Int = 10,
+        frames: Int = 1_440,
+        spacing: TimeInterval = 0.05
+    ) -> Int {
+        _ = scheduler.receive(frames: frames, at: start)
+        let prime = scheduler.primeMs
+        for i in 1..<max(chunks, 1) { _ = scheduler.receive(frames: frames, at: start + Double(i) * spacing) }
+        scheduler.played(frames: frames * chunks, at: start + 2)
+        return prime
     }
 }
 

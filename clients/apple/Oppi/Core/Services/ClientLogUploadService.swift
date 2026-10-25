@@ -144,6 +144,9 @@ enum ClientLogUploadService {
         // One "Diff reader session" line per review diff visit: open time,
         // scroll frames, hitches. Device smoothness evidence for the reader.
         "DiffReader",
+        // One "Call playback" line per Live Voice call: jitter, underruns, and the adaptive
+        // prime, the evidence that tunes the playback buffer.
+        "LiveVoice",
     ]
 
     private static func uploadLevel(for level: ClientLogLevel) -> ClientLogUploadLevel {
