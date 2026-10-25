@@ -114,7 +114,7 @@ Server-side Skills, Extensions, tools, and voice features run on the paired serv
 
 Live Voice is an experiment, off until you turn on **Settings → Experiments → Live Voice**. During a call, the app streams 16 kHz microphone audio to the paired server until the call ends. The server's `asr.liveVoiceBackend` decides where it goes:
 
-- `yuwp` (the default): the server sends the audio to `asr.sttEndpoint` for transcription. With a `tts` config, the text-to-speech service read aloud uses speaks the agent's replies. If the agent does not speak during a reply, the server has that service read the start of its written reply, or its error.
+- `yuwp` (the default): the server sends the audio to `asr.sttEndpoint` for transcription. With a `tts` config, the text-to-speech service read aloud uses speaks the opening of each agent reply while it is written, the agent's spoken heads-ups, and a failed run's error.
 - `grok-voice`: the server sends the audio to xAI (`wss://api.x.ai/v1/realtime`) with the server's xAI sign-in or API key. xAI transcribes it, decides which of your words to pass to the agent, and receives the text of everything the agent says aloud. xAI's privacy policy and retention apply.
 
 On iPhone and iPad the call is a system call (CallKit), so the system shows the session's title in its call UI, including on the Lock Screen, and it can also appear on a paired Apple Watch or in CarPlay; a session behind App Lock's Incognito rule or a server, workspace, or session lock shows as "Live Voice" instead. Calls are not added to the Phone app's Recents, and nothing else about the session goes to the system.

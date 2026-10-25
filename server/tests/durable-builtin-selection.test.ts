@@ -519,18 +519,20 @@ describe("durable built-in selection", () => {
     await f.manager.stopSession(session.id);
   });
 
-  it("gives speak only during a Live Voice call, plays it on the call, and reads an unspoken reply", async () => {
+  it("gives speak only during a Live Voice call and says each reply's opening as it is written", async () => {
     const f = await fixture([
       fauxAssistantMessage([fauxToolCall("speak", { text: "On it." })], {
         stopReason: "toolUse",
       }),
-      fauxAssistantMessage("Checked the logs."),
+      fauxAssistantMessage("Checked the logs. Nothing failed.\n\n- `server.log`: clean"),
       fauxAssistantMessage("All five tests pass."),
     ]);
     const spoken: string[] = [];
     const ended: RunOutcome[] = [];
     const speech = new LiveVoiceSpeech({
       speak: (_sessionId, text) => spoken.push(text),
+      speakSentence: (_sessionId, _replyId, text) => spoken.push(text),
+      openingWritten: () => {},
       runEnded: (_sessionId, outcome) => ended.push(outcome),
     });
     f.manager.liveVoiceSpeech = speech;
@@ -561,14 +563,13 @@ describe("durable built-in selection", () => {
     await f.manager.startSession(session.id, workspace);
     await vi.waitFor(async () => expect(voiced(await selection(f, session.id))).toBe(true));
 
-    // The agent speaks: the words play once, and the run's end does not repeat its reply.
+    // A heads-up with speak, then the reply's spoken opening, sentence by sentence.
     await run("check the logs");
-    expect(spoken).toEqual(["On it."]);
-    expect(ended.at(-1)).toEqual({ kind: "final", spoken: "On it." });
+    expect(spoken).toEqual(["On it.", "Checked the logs.", "Nothing failed."]);
+    expect(ended.at(-1)).toEqual({ kind: "final", spoken: "Checked the logs. Nothing failed." });
 
-    // The agent never speaks: its final reply's opening is read aloud instead.
     await run("did the tests pass");
-    expect(spoken).toEqual(["On it.", "All five tests pass."]);
+    expect(spoken.slice(3)).toEqual(["All five tests pass."]);
     expect(ended.at(-1)).toEqual({ kind: "final", spoken: "All five tests pass." });
 
     speech.setCallAttached(session.id, false);

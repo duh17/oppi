@@ -676,9 +676,7 @@ describe("continuous voice media", () => {
           speak: vi.fn(),
           feedAudio: vi.fn(),
           // Yuwp's stop can take seconds; only the first adapter's is slow here.
-          stop: first
-            ? () => new Promise<void>((resolve) => (releaseStop = resolve))
-            : vi.fn(),
+          stop: first ? () => new Promise<void>((resolve) => (releaseStop = resolve)) : vi.fn(),
         };
         adapters.push(adapter);
         return adapter;
@@ -1002,7 +1000,6 @@ describe("continuous voice media", () => {
     await coordinator.detach("connection-1");
   });
 
-
   it("aborts in-flight Yuwp TTS on the first user partial", async () => {
     const stt = new ScriptedSttProvider();
     const cancelled: string[] = [];
@@ -1054,6 +1051,49 @@ describe("continuous voice media", () => {
     expect(spoken).toEqual(["working on it"]);
     expect(pcm).toEqual([]);
   });
+
+  it.each([
+    [
+      "the speech detector",
+      (stt: ScriptedSttProvider) => {
+        stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+        stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+      },
+    ],
+    ["the phone", (_stt: ScriptedSttProvider, adapter: YuwpVoiceMediaAdapter) => adapter.bargeIn()],
+    ["the transcript", (stt: ScriptedSttProvider) => stt.emit({ text: "wait" })],
+  ])(
+    "drops the rest of a reply still being written when %s hears the caller",
+    async (_path, bargeIn) => {
+      const stt = new ScriptedSttProvider();
+      const spoken: string[] = [];
+      // The first sentence plays until a barge-in stops it; later ones finish at once.
+      const tts: LiveVoiceTtsPort = {
+        async *speak(text, signal) {
+          spoken.push(text);
+          if (spoken.length === 1) {
+            await new Promise((_resolve, reject) =>
+              signal.addEventListener("abort", () => reject(abortError()), { once: true }),
+            );
+          }
+          yield Buffer.from(text);
+        },
+      };
+      const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
+      adapter.setPlaybackSink(() => {});
+      await adapter.start(async () => {});
+
+      const first = adapter.speak("The build is green.", "reply-1");
+      await settled();
+      bargeIn(stt, adapter);
+      // The model is still writing the reply the caller talked over.
+      const later = adapter.speak("It took four minutes.", "reply-1");
+      const next = adapter.speak("Okay, waiting.", "reply-2");
+      await Promise.all([first, later, next]);
+
+      expect(spoken).toEqual(["The build is green.", "Okay, waiting."]);
+    },
+  );
 
   it("tells the phone to drop buffered audio on each speech barge-in", async () => {
     const calls = makeCalls();
@@ -1490,7 +1530,6 @@ describe("continuous voice media", () => {
     expect(calls.snapshot(started.state.callId).lifecycle).toBe("active");
     await coordinator.detach("connection-1");
   });
-
 });
 
 class GateableTtsPort implements LiveVoiceTtsPort {

@@ -24,8 +24,14 @@ export type VoiceMediaEventHandler = (event: VoiceMediaEvent) => void | Promise<
  */
 export interface VoiceMediaAdapter {
   start(handler: VoiceMediaEventHandler): void | Promise<void>;
-  /** Say the agent's words to the caller, after anything already being said. */
-  speak(text: string): void | Promise<void>;
+  /**
+   * Say the agent's words to the caller, after anything already being said. With
+   * `streamsReplies`, `replyId` marks one sentence of a reply still being written; once the
+   * caller speaks over that reply, its later sentences are not said.
+   */
+  speak(text: string, replyId?: string): void | Promise<void>;
+  /** Says replies sentence by sentence as they are written; otherwise each is said whole. */
+  readonly streamsReplies?: boolean;
   stop(): void | Promise<void>;
   feedAudio?(pcm: Buffer): void;
   setPlaybackSink?(sendAudio: (pcm: Buffer) => void): void;
@@ -162,6 +168,7 @@ function percentile(values: readonly number[], fraction: number): number | undef
  * the audio it has buffered.
  */
 export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
+  readonly streamsReplies = true;
   private handler: VoiceMediaEventHandler | undefined;
   /** The call's whole transcript as last heard. */
   private transcript = "";
@@ -174,6 +181,8 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   private speechGeneration = 0;
   private speechAbort: AbortController | undefined;
   private speechQueue: Promise<void> = Promise.resolve();
+  /** The reply whose sentences are arriving, and the speech generation its first one found. */
+  private reply: { id: string; generation: number } | undefined;
   private playbackSink: ((pcm: Buffer) => void) | undefined;
   private turnEndTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly turnEndPauseMs: number;
@@ -253,10 +262,15 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   }
 
   /** The agent's words are said in order; newer ones wait for the one playing instead of cutting it off. */
-  speak(raw: string): Promise<void> {
+  speak(raw: string, replyId?: string): Promise<void> {
     const text = raw.trim();
     if (!text) return Promise.resolve();
     const generation = this.speechGeneration;
+    if (replyId !== undefined) {
+      if (this.reply?.id !== replyId) this.reply = { id: replyId, generation };
+      // The caller spoke over this reply: the rest of it stays unsaid.
+      else if (this.reply.generation !== generation) return Promise.resolve();
+    }
     const queuedAt = this.now();
     this.queuedSpeechItems += 1;
     this.speechQueuedSince ??= queuedAt;
@@ -750,12 +764,20 @@ export class VoiceCallMediaCoordinator {
   }
 
   /** Say the agent's words on the call. */
-  speak(callId: string, text: string): Promise<void> {
+  speak(callId: string, text: string, replyId?: string): Promise<void> {
+    const adapter = this.adapterFor(callId);
+    return Promise.resolve(adapter?.speak(text, replyId));
+  }
+
+  streamsReplies(callId: string): boolean {
+    return this.adapterFor(callId)?.streamsReplies === true;
+  }
+
+  private adapterFor(callId: string): VoiceMediaAdapter | undefined {
     for (const session of this.sessions.values()) {
-      if (session.callId !== callId) continue;
-      return Promise.resolve(session.adapter.speak(text));
+      if (session.callId === callId) return session.adapter;
     }
-    return Promise.resolve();
+    return undefined;
   }
 
   private sessionMediaChanged(sessionId: string): void {

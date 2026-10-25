@@ -112,7 +112,7 @@ export function adaptDurableEvent(
     case "run_end": {
       // Durable run_end has no Pi message list. The caller supplies the ending run's assistant,
       // last as in Pi's list: SessionEventProcessor records turn_error from it, and Live Voice
-      // reads its reply aloud when the agent never spoke.
+      // says a failed or stopped run failed.
       return [
         asPi({
           type: "agent_end",

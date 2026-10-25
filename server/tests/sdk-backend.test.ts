@@ -337,14 +337,17 @@ describe("SdkBackend control sessions", () => {
   });
 });
 
+/** A Live Voice sink that drops what the agent says. */
+const unheard = { speak() {}, speakSentence() {}, openingWritten() {}, runEnded() {} };
+
 describe("SdkBackend Live Voice", () => {
   it("offers its agent speak only while a call is attached and routes what it says", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-"));
     const session = makeSession({ workspaceId: undefined });
     const spoken: Array<{ sessionId: string; text: string }> = [];
     const speech = new LiveVoiceSpeech({
+      ...unheard,
       speak: (sessionId, text) => spoken.push({ sessionId, text }),
-      runEnded: () => {},
     });
     let backend: SdkBackend | undefined;
     try {
@@ -398,7 +401,7 @@ describe("SdkBackend Live Voice call mode", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-mode-"));
     const session = makeSession({ workspaceId: undefined });
     const make = () => {
-      const speech = new LiveVoiceSpeech({ speak: () => {}, runEnded: () => {} });
+      const speech = new LiveVoiceSpeech(unheard);
       return {
         speech,
         create: () =>
@@ -516,7 +519,7 @@ describe("SdkBackend Live Voice call mode", () => {
   ): Promise<void> {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-mode-"));
     const session = makeSession({ workspaceId: undefined });
-    const speech = new LiveVoiceSpeech({ speak: () => {}, runEnded: () => {} });
+    const speech = new LiveVoiceSpeech(unheard);
     let backend: SdkBackend | undefined;
     try {
       backend = await SdkBackend.create({
