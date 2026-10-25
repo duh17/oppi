@@ -180,10 +180,29 @@ struct LiveVoicePlaybackSchedulerTests {
         _ = scheduler.receive(frames: chunk, at: 30.16)
         #expect(scheduler.primeMs == LiveVoicePlaybackScheduler.safePrimeMs)
         #expect(scheduler.stats.maxLagMs == 160)
-        // A reply the user talked over never played out clean, so it does not lower the prime.
-        scheduler.flush(userTalked: true)
+        // That reply plays out clean, but its lag plus margin still never primes past safe.
+        scheduler.played(frames: chunk * 5, at: 30.5)
         _ = scheduler.receive(frames: chunk, at: 35)
         #expect(scheduler.primeMs == LiveVoicePlaybackScheduler.safePrimeMs)
+        #expect(scheduler.primeWait == 0.3)
+        #expect(scheduler.stats.underruns == 0)
+    }
+
+    @Test("The user's turn after a reply played out still lowers the prime; a cut-off reply does not")
+    func flushOnlyKeepsPrimeForCutOffReply() {
+        var scheduler = LiveVoicePlaybackScheduler()
+        playReply(&scheduler, at: 0)
+        // The user starts talking once the reply is over: nothing queued to drop.
+        scheduler.flush(userTalked: true)
+        #expect(scheduler.stats.flushes == 0)
+        #expect(playReply(&scheduler, at: 5) == 160)
+        // This reply is talked over mid-play, so the one after it keeps its prime.
+        _ = scheduler.receive(frames: chunk * 3, at: 10)
+        #expect(scheduler.primeMs == 140)
+        scheduler.flush(userTalked: true)
+        #expect(scheduler.stats.flushes == 1)
+        _ = scheduler.receive(frames: chunk, at: 15)
+        #expect(scheduler.primeMs == 140)
         #expect(scheduler.stats.underruns == 0)
     }
 
@@ -198,6 +217,21 @@ struct LiveVoicePlaybackSchedulerTests {
         #expect(scheduler.stats.underruns == 1)
         #expect(scheduler.primeMs == LiveVoicePlaybackScheduler.safePrimeMs)
         #expect(scheduler.primeWait == 0.3)
+    }
+
+    @Test("A chunk that lands after the queue ran out counts an underrun before the drain is reported")
+    func lateChunkBeforeDrainReportCountsUnderrun() {
+        var scheduler = LiveVoicePlaybackScheduler()
+        for reply in 0..<5 { playReply(&scheduler, at: Double(reply) * 5) }
+        #expect(scheduler.primeMs == 100)
+        // 120 ms starts playing; the next chunk comes 200 ms later, before `played` reports it.
+        _ = scheduler.receive(frames: chunk * 2, at: 25)
+        do { let decision = scheduler.receive(frames: chunk, at: 25.2); #expect(decision == .schedule) }
+        #expect(scheduler.stats.underruns == 1)
+        #expect(scheduler.primeMs == LiveVoicePlaybackScheduler.safePrimeMs)
+        // Playback restarted with that chunk: one 50 ms later is in time.
+        _ = scheduler.receive(frames: chunk, at: 25.25)
+        #expect(scheduler.stats.underruns == 1)
     }
 
     /// Plays one reply to the end: `chunks` arrivals `spacing` apart from `start`.

@@ -209,11 +209,13 @@ struct LiveVoicePlaybackScheduler {
     private var queuedFrames = 0
     private var lastArrival: TimeInterval?
     private var drainedAt: TimeInterval?
-    /// When the playing reply started, and the audio that has arrived for it since.
+    /// When the playing reply started, the audio it started with, and what arrived since.
     private var startedAt: TimeInterval = 0
+    private var startQueuedMs: Double = 0
     private var framesSinceStart = 0
     private var replyLagMs = 0
-    /// The last reply drained, not flushed; it lowers the prime unless more of it follows.
+    /// The last reply played out to its end; it lowers the prime unless more of it follows. A
+    /// flush after that (the user's next turn) keeps it; a reply cut off mid-play never set it.
     private var replyPlayedOut = false
 
     mutating func receive(frames: Int, at now: TimeInterval) -> Decision {
@@ -224,8 +226,7 @@ struct LiveVoicePlaybackScheduler {
         }
         lastArrival = now
         guard priming else {
-            noteLag(at: now)
-            framesSinceStart += frames
+            noteLag(frames: frames, at: now)
             queuedFrames += frames
             return .schedule
         }
@@ -259,8 +260,6 @@ struct LiveVoicePlaybackScheduler {
         queuedFrames = 0
         drainedAt = nil
         lastArrival = nil
-        // A cut-off reply never showed it played out clean; its lag so far still counts.
-        replyPlayedOut = false
     }
 
     /// The first chunk of the next reply, or of the same reply after it ran dry.
@@ -269,26 +268,42 @@ struct LiveVoicePlaybackScheduler {
             stats.underruns += 1
             primeMs = Self.safePrimeMs
         } else if replyPlayedOut {
-            primeMs = max(Self.floorPrimeMs, replyLagMs + Self.primeMarginMs, primeMs - Self.primeStepMs)
+            let stepped = max(Self.floorPrimeMs, replyLagMs + Self.primeMarginMs, primeMs - Self.primeStepMs)
+            primeMs = min(Self.safePrimeMs, stepped)
         }
         replyPlayedOut = false
     }
 
     /// Audio plays in real time from `startedAt`; arrivals slower than that use up the start's
     /// queued audio. A next reply primed for that lag would have survived this one.
-    private mutating func noteLag(at now: TimeInterval) {
+    private mutating func noteLag(frames: Int, at now: TimeInterval) {
         let playedMs = (now - startedAt) * 1000
-        let arrivedMs = Double(framesSinceStart * 1000) / Double(Self.sampleRate)
-        let lag = Int((playedMs - arrivedMs).rounded())
-        guard lag > replyLagMs else { return }
-        replyLagMs = lag
-        stats.maxLagMs = max(stats.maxLagMs, lag)
-        primeMs = max(primeMs, min(Self.safePrimeMs, lag + Self.primeMarginMs))
+        let lag = Int((playedMs - Self.durationMs(framesSinceStart)).rounded())
+        framesSinceStart += frames
+        if lag > replyLagMs {
+            replyLagMs = lag
+            stats.maxLagMs = max(stats.maxLagMs, lag)
+            primeMs = max(primeMs, min(Self.safePrimeMs, lag + Self.primeMarginMs))
+        }
+        // The speaker ran out before this chunk came: `played` reports a drain only after the
+        // output latency and a main-actor hop, so the queue still looked busy. The chunk plays
+        // at once, which restarts the real-time clock with only it queued.
+        guard Double(lag) >= startQueuedMs else { return }
+        stats.underruns += 1
+        primeMs = Self.safePrimeMs
+        startedAt = now
+        startQueuedMs = Self.durationMs(frames)
+        framesSinceStart = 0
+    }
+
+    private static func durationMs(_ frames: Int) -> Double {
+        Double(frames * 1000) / Double(sampleRate)
     }
 
     private mutating func startHeld(at now: TimeInterval) {
         stats.minPrimeMs = min(stats.minPrimeMs, primeMs)
         priming = false
+        startQueuedMs = Self.durationMs(heldFrames)
         queuedFrames += heldFrames
         heldFrames = 0
         startedAt = now
