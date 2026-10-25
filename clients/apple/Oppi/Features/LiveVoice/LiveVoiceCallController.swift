@@ -45,6 +45,9 @@ final class LiveVoiceCallController {
     private(set) var lastError: String?
     /// The agent's reply is playing.
     private(set) var isSpeaking = false
+    /// The system put the call on hold (a phone call answered over it, `LiveVoiceSystemCall`):
+    /// no mic audio goes out and nothing plays, but the server call and its keepalive go on.
+    private(set) var isOnHold = false
     /// Mic and playback levels for the composer's orb; outlives each call's audio.
     @ObservationIgnored let meter = LiveVoiceAudioMeter()
 
@@ -63,6 +66,7 @@ final class LiveVoiceCallController {
         guard isLive, callState?.frontend == .attached else {
             return statusText
         }
+        if isOnHold { return "On Hold" }
         if isSpeaking { return "Speaking" }
         // Muted replaces only plain listening; the agent's progress still shows.
         if isMuted, statusText == Self.listening { return "Muted" }
@@ -97,7 +101,14 @@ final class LiveVoiceCallController {
     @ObservationIgnored private var keepAliveTask: Task<Void, Never>?
     @ObservationIgnored private var didConfirmCall = false
     @ObservationIgnored private var startSent = false
-    private static let endedText = "Live Voice ended."
+    /// The failure text of a call the server ended; `LiveVoiceSystemCall` reports it to the
+    /// system as the other side hanging up, not as a failure.
+    static let endedText = "Live Voice ended."
+    /// CallKit activates and deactivates the audio session for a system call
+    /// (`LiveVoiceSystemCall`); the call's audio then waits for `setAudioSessionActive(true)`
+    /// and never activates or deactivates the session itself.
+    @ObservationIgnored private var systemActivatesAudioSession = false
+    @ObservationIgnored private var systemAudioSessionActive = false
     @ObservationIgnored private var pendingRequestId: String?
     /// Request id of an attach that rejoins a call (a remembered one, or this one after the
     /// stream reconnected). Until it answers the lease is unknown, so no keepalive goes out;
@@ -172,7 +183,8 @@ final class LiveVoiceCallController {
             self?.isSpeaking = active
         }
         channel.onInboundAudio = { [weak self] data in
-            self?.audio?.play(data)
+            guard let self, self.mayRunAudio else { return }
+            self.audio?.play(data)
         }
         channel.close()
         endsOrphanedCall = false
@@ -227,8 +239,56 @@ final class LiveVoiceCallController {
     }
 
     func toggleMute() {
-        isMuted.toggle()
-        audio?.setMuted(isMuted)
+        setMuted(!isMuted)
+    }
+
+    /// Mute as the system asked for it (`LiveVoiceSystemCall`): its in-call UI or a headset.
+    func setMuted(_ muted: Bool) {
+        guard isMuted != muted else { return }
+        isMuted = muted
+        audio?.setMuted(muted)
+    }
+
+    // MARK: System call (CallKit)
+
+    /// Who activates the audio session for the next start: CallKit for a system call, the
+    /// call's own audio otherwise. A system call's session starts out inactive.
+    func useSystemAudioSession(_ system: Bool) {
+        systemActivatesAudioSession = system
+        systemAudioSessionActive = false
+    }
+
+    /// CallKit activated (`provider(_:didActivate:)`) or took away (`didDeactivate`) the
+    /// session. Audio runs only while it is active; the server call is not touched.
+    func setAudioSessionActive(_ active: Bool) {
+        systemAudioSessionActive = active
+        updateAudioGate()
+    }
+
+    /// CallKit's hold: capture and playback stop without ending the call; unhold resumes them.
+    func setOnHold(_ held: Bool) {
+        guard isOnHold != held else { return }
+        isOnHold = held
+        updateAudioGate()
+    }
+
+    /// Whether the call's audio may run now: not on hold, and for a system call only while
+    /// CallKit has the session active.
+    private var mayRunAudio: Bool {
+        !isOnHold && (!systemActivatesAudioSession || systemAudioSessionActive)
+    }
+
+    private func updateAudioGate() {
+        guard mayRunAudio else {
+            suspendCapture()
+            return
+        }
+        guard isLive, callState?.lifecycle == .active, !captureStarted else { return }
+        Task { [weak self] in
+            // The gate may have closed again before this ran.
+            guard let self, self.mayRunAudio, self.isLive, self.callState?.lifecycle == .active else { return }
+            await self.startCaptureIfNeeded()
+        }
     }
 
     func sendKeepAliveNow() async {
@@ -541,13 +601,16 @@ final class LiveVoiceCallController {
     }
 
     private func startCaptureIfNeeded() async {
-        guard let audio, !captureStarted else { return }
+        guard let audio, !captureStarted, mayRunAudio else { return }
         captureStarted = true
+        audio.systemActivatesSession = systemActivatesAudioSession
         audio.onPCM = { [weak self] data in
             Task { await self?.forwardAudio(data) }
         }
         do {
             try await audio.start()
+            // A start (or a resume after hold) opens the mic; a muted call stays muted.
+            if isMuted { audio.setMuted(true) }
         } catch {
             let activeCall = callState
             if let activeCall, activeCall.lifecycle == .active {
@@ -563,6 +626,15 @@ final class LiveVoiceCallController {
         try? await channel?.sendAudio(pcm)
     }
 
+    /// Hold, or the system took the audio session: stop the audio, keep the call.
+    private func suspendCapture() {
+        guard captureStarted else { return }
+        captureStarted = false
+        audio?.onPCM = nil
+        audio?.suspend()
+        isSpeaking = false
+    }
+
     private func stopCapture() {
         captureStarted = false
         audio?.onPCM = nil
@@ -575,6 +647,7 @@ final class LiveVoiceCallController {
         lastError = message
         isLive = false
         isMuted = false
+        isOnHold = false
         statusText = message
         stopCapture()
         keepAliveTask?.cancel()
@@ -604,6 +677,7 @@ final class LiveVoiceCallController {
         lastError = nil
         isLive = false
         isMuted = false
+        isOnHold = false
         statusText = "Listening"
         stopCapture()
     }

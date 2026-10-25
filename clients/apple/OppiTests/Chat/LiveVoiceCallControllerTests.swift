@@ -788,15 +788,27 @@ final class FakeLiveVoiceAudioOwner: LiveVoiceAudioOwning {
     let openedDictationStream = false
     var onPCM: (@MainActor (Data) -> Void)?
     var onPlaybackActiveChange: (@MainActor (Bool) -> Void)?
+    var systemActivatesSession = false
     var startError: Error?
     private(set) var played: [Data] = []
     private(set) var playbackStops = 0
+    private(set) var starts = 0
+    private(set) var suspends = 0
+    /// The session owner each start ran with.
+    private(set) var startedWithSystemSession: [Bool] = []
 
     func start() async throws {
         if let startError {
             throw startError
         }
+        starts += 1
+        startedWithSystemSession.append(systemActivatesSession)
         isCapturing = true
+    }
+
+    func suspend() {
+        suspends += 1
+        isCapturing = false
     }
 
     func setMuted(_ muted: Bool) {

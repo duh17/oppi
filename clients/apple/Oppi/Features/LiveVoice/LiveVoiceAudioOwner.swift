@@ -14,16 +14,23 @@ protocol LiveVoiceAudioOwning: AnyObject {
     var onPCM: (@MainActor (Data) -> Void)? { get set }
     /// True while the agent's reply is playing, false once it has gone quiet.
     var onPlaybackActiveChange: (@MainActor (Bool) -> Void)? { get set }
+    /// CallKit activates and deactivates the audio session (a system call): the audio only
+    /// configures it, and never calls `setActive` itself.
+    var systemActivatesSession: Bool { get set }
     func start() async throws
     func setMuted(_ muted: Bool)
     func play(_ pcm: Data)
     func stopPlayback()
+    /// A held call: capture and playback stop, but the call keeps its claim on the app's
+    /// audio and never deactivates the session. `start()` resumes.
+    func suspend()
     func stop()
 }
 
 @MainActor
 protocol LiveVoiceCaptureEngine: AnyObject {
     var isCapturing: Bool { get }
+    var systemActivatesSession: Bool { get set }
     func start(onPCM: @escaping @Sendable (Data) -> Void) throws
     func stopCapture()
 }
@@ -44,6 +51,10 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
     var onPlaybackActiveChange: (@MainActor (Bool) -> Void)? {
         get { playback?.onPlaybackActiveChange }
         set { playback?.onPlaybackActiveChange = newValue }
+    }
+    var systemActivatesSession: Bool {
+        get { engine.systemActivatesSession }
+        set { engine.systemActivatesSession = newValue }
     }
 
     private let engine: LiveVoiceCaptureEngine
@@ -88,6 +99,15 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
         playback?.stopPlayback()
     }
 
+    func suspend() {
+        // The process capture claim stays: read-aloud must not restore its session or
+        // autoplay start while a phone call holds this one.
+        started = false
+        playback?.teardown()
+        engine.stopCapture()
+        isCapturing = false
+    }
+
     func stop() {
         let wasStarted = started
         started = false
@@ -99,9 +119,10 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
         // Mirrors VoiceInputManager.releaseAudioSessionAfterCapture: free the session
         // (Music resumes, Bluetooth leaves HFP) only after a real call, and only when
         // no other capture or restored playback took it over. A stop with no call
-        // running must not cut off read-aloud or audio replies.
+        // running must not cut off read-aloud or audio replies. A system call's session is
+        // CallKit's to deactivate once the call ends.
         #if os(iOS)
-        if wasStarted, !playbackRestored {
+        if wasStarted, !playbackRestored, !engine.systemActivatesSession {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
         #endif
@@ -251,6 +272,7 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
 
     private(set) var isCapturing = false
     var onPlaybackActiveChange: (@MainActor (Bool) -> Void)?
+    var systemActivatesSession = false
     private let meter: LiveVoiceAudioMeter
     private var reportedPlaying = false
     private var quietTask: Task<Void, Never>?
@@ -526,6 +548,18 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
     }
 
     private func activateSession() throws {
+        try Self.configureSession()
+        // CallKit activates a system call's session with call priority
+        // (`provider(_:didActivate:)`); the engine starts only after that.
+        guard !systemActivatesSession else { return }
+        #if os(iOS)
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+    }
+
+    /// The call's category, mode, and rate. `LiveVoiceSystemCall` sets them when CallKit
+    /// performs the start action, before the system activates the session.
+    static func configureSession() throws {
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
@@ -534,7 +568,6 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
             options: [.defaultToSpeaker, .allowBluetoothHFP]
         )
         try session.setPreferredSampleRate(16_000)
-        try session.setActive(true)
         #endif
     }
 

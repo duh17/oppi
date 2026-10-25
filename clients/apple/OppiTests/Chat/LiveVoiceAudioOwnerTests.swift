@@ -174,6 +174,7 @@ private final class FakeLiveVoicePlaybackEngine: LiveVoicePlaybackEngine {
 @MainActor
 private final class FakeLiveVoiceCaptureEngine: LiveVoiceCaptureEngine {
     private(set) var isCapturing = false
+    var systemActivatesSession = false
     private var handler: (@Sendable (Data) -> Void)?
 
     func start(onPCM: @escaping @Sendable (Data) -> Void) throws {

@@ -226,6 +226,13 @@ final class OppiApp {
             chatReaderPayloadStore: ChatReaderPayloadStore(),
             sessionRows: SessionRowDisplayStore(),
             liveVoiceCalls: liveVoiceCalls,
+            liveVoiceSystemCall: LiveVoiceSystemCall(displayName: { [coordinator] key in
+                LiveVoiceSystemCall.displayName(
+                    for: key,
+                    locks: .shared,
+                    session: coordinator.connection(for: key.serverId)?.sessionStore.session(id: key.sessionId)
+                )
+            }),
             opener: opener
         )
         // An invite or a background pairing deny can arrive before launch has

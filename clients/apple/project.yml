@@ -191,9 +191,13 @@ targets:
             UIWindowSceneSessionRoleApplication:
               - UISceneConfigurationName: Default Configuration
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
+        # voip: a Live Voice call is a CallKit call (LiveVoiceSystemCall). While a phone
+        # call holds it, its audio stops, and this mode keeps the app running so the call's
+        # socket and keepalive survive the hold. No PushKit: calls are outgoing only.
         UIBackgroundModes:
           - remote-notification
           - audio
+          - voip
         NSSupportsLiveActivities: true
         NSCameraUsageDescription: "Oppi uses the camera to scan pairing QR codes and take photos for agent conversations."
         NSPhotoLibraryAddUsageDescription: "Oppi saves images from agent conversations to your photo library."
