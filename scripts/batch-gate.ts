@@ -4,7 +4,8 @@
 //
 //   bun scripts/batch-gate.ts --worktree <path> [--target <branch>] [--test <s>]... [--profile <p>]...
 //
-// --worktree defaults to the current directory. --target is accepted and ignored: callers
+// --worktree defaults to the current directory; the gate resolves symlinks in it, so lanes run
+// at the checkout's canonical path (the one pre-push built in). --target is accepted and ignored: callers
 // pass the branch the batch will land on, and this gate does not need it.
 //
 // Exit codes: 0 every lane passed (or no suites were named); 1 a lane failed; 2 a bad
@@ -29,7 +30,7 @@
 // Every lane runs even when an earlier one failed, so one gate reports every red suite.
 // Lane output is prefixed with the lane name; SIGTERM/SIGINT stop every lane's process group.
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 /** `requireTests`: a sim-pool run whose log must show at least one executed test. */
@@ -305,6 +306,11 @@ async function main(argv: string[]): Promise<number> {
     console.error(`[batch-gate] not an Oppi checkout: ${worktree}`);
     return 2;
   }
+  // Queues pass a symlinked temp path (/var/... -> /private/var/...), but the pre-push hook
+  // builds from `git rev-parse --show-toplevel`, the canonical path. Xcode keys its build
+  // plan on the spelled DerivedData path, so a non-canonical spelling recompiles the whole
+  // app (~100 s) over the build pre-push just finished. Derive every path from the real one.
+  worktree = realpathSync.native(worktree);
   const plan = planGate(worktree, tests, profiles);
   for (const line of plan.resolutions) console.log(`[batch-gate] ${line}`);
   if (plan.errors.length > 0) {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { declarations, executedTests, planGate } from "./batch-gate";
@@ -130,5 +130,45 @@ describe("batch gate plan", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("batch gate worktree path", () => {
+  // A merge queue passes a symlinked temp path (/var/... -> /private/var/...). The pre-push hook
+  // builds from the canonical path, and Xcode recompiles everything for a different DerivedData
+  // spelling, so the lane must run, and pin OPPI_ROOT, at the canonical path.
+  test("a symlinked --worktree runs lanes at the canonical path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "batch-gate-link-"));
+    try {
+      const real = realpathSync.native(dir);
+      const checkout = join(real, "checkout");
+      const scripts = join(checkout, "clients", "apple", "scripts");
+      mkdirSync(scripts, { recursive: true });
+      mkdirSync(join(checkout, "clients", "apple", "OppiTests"), { recursive: true });
+      mkdirSync(join(checkout, "server", "scripts"), { recursive: true });
+      writeFileSync(join(checkout, "clients", "apple", "OppiTests", "FooTests.swift"), "struct FooTests { @Test func a() {} }\n");
+      writeFileSync(join(checkout, "server", "scripts", "ensure-installed-deps.mjs"), "");
+      // A stand-in sim-pool: records where it ran and prints a one-test artifact.
+      writeFileSync(join(scripts, "sim-pool.sh"), `#!/bin/sh
+echo "$PWD $OPPI_ROOT" > "${real}/seen"
+echo "✔ Test run with 1 test in 1 suite passed after 0.1 seconds." > "${real}/run.log"
+echo '{"log_path":"${real}/run.log"}' > "${real}/summary.json"
+echo "Artifact: ${real}/summary.json"
+`);
+      chmodSync(join(scripts, "sim-pool.sh"), 0o755);
+      const link = join(real, "link");
+      symlinkSync(checkout, link);
+      const run = Bun.spawnSync(["bun", join(import.meta.dir, "batch-gate.ts"), "--worktree", link, "--test", "OppiTests/FooTests"], { stdout: "pipe", stderr: "pipe" });
+      expect(run.exitCode).toBe(0);
+      expect(readFileSync(join(real, "seen"), "utf8").trim()).toBe(`${join(checkout, "clients", "apple")} ${checkout}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a worktree that does not exist is not an Oppi checkout (exit 2)", () => {
+    const run = Bun.spawnSync(["bun", join(import.meta.dir, "batch-gate.ts"), "--worktree", join(tmpdir(), "batch-gate-missing-xyz")], { stdout: "pipe", stderr: "pipe" });
+    expect(run.exitCode).toBe(2);
+    expect(run.stderr.toString()).toContain("not an Oppi checkout");
   });
 });
