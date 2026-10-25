@@ -680,6 +680,12 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         do {
             let audio = try await open()
             guard !Task.isCancelled, loadingItemID == itemID else { return }
+            // A capture (dictation, a Live Voice call) took the session while the read
+            // loaded. Switching it to playback would cut that capture off: stay quiet.
+            guard !playbackSuppressedForCapture else {
+                stop()
+                return
+            }
             let channels = AVAudioChannelCount(audio.channels)
             guard Self.isPlayableStreamFormat(sampleRate: audio.sampleRate, channels: channels) else {
                 throw SpeechAudioStream.Failure.unsupportedFormat

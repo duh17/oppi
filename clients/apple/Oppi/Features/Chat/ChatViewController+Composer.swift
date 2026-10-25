@@ -380,9 +380,6 @@ extension ChatViewController {
         manager.setPlaybackInterrupter(audioPlayer)
     }
 
-    /// A live call anywhere in the app, this session's or another's, owns the microphone.
-    var liveVoiceCallOwnsMic: Bool { root?.liveVoiceCalls.ownsMicrophone ?? false }
-
     /// The composer's Live Voice entry: none while the Live Voice experiment is off, while the
     /// app's call policy refuses a new call (`LiveVoiceCallCenter.mayStartCall`: any live call),
     /// for a terminal Pi mirror, which cannot answer out loud, or when the server's voice

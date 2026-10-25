@@ -205,6 +205,11 @@ final class OppiApp {
         )
         let navigation = AppNavigation()
         let composerDraftStore = ComposerDraftStore()
+        // One Live Voice call for the app. Removing its server ends it, and dictation
+        // anywhere waits while it holds the microphone.
+        let liveVoiceCalls = LiveVoiceCallCenter()
+        coordinator.liveVoiceCalls = liveVoiceCalls
+        VoiceInputManager.shared.liveVoiceCalls = liveVoiceCalls
         // The opener exists before any scene connects, so a notification
         // response or scene URL delivered during launch has its owner.
         let opener = AppOpener(
@@ -220,7 +225,7 @@ final class OppiApp {
             composerDraftStore: composerDraftStore,
             chatReaderPayloadStore: ChatReaderPayloadStore(),
             sessionRows: SessionRowDisplayStore(),
-            liveVoiceCalls: LiveVoiceCallCenter(),
+            liveVoiceCalls: liveVoiceCalls,
             opener: opener
         )
         // An invite or a background pairing deny can arrive before launch has

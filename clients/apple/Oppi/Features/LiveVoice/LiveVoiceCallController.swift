@@ -132,6 +132,10 @@ final class LiveVoiceCallController {
 
     var isActive: Bool { isLive }
 
+    /// End was pressed before the server confirmed the call; the end goes out when the
+    /// confirmation arrives. Whoever replaces this controller keeps it until then.
+    var isEndingUnconfirmedCall: Bool { endsOrphanedCall }
+
     func start(
         sessionId: String,
         routeScope: SessionRouteScope,

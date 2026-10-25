@@ -490,6 +490,9 @@ final class VoiceInputManager {
     }
     @ObservationIgnored private var captureReleaseObservers: [UUID: CaptureReleaseObserver] = [:]
     @ObservationIgnored private(set) var composerStartupID: UUID?
+    /// The app's Live Voice call (set by `OppiApp` on `shared`). While a call holds the
+    /// microphone no dictation starts, from any composer or picker.
+    @ObservationIgnored weak var liveVoiceCalls: LiveVoiceCallCenter?
 
     /// A composer attempt starts before its async preparation. Keep its identity
     /// on the shared owner so inline/expanded handoff cannot revive old cleanup.
@@ -1044,6 +1047,10 @@ final class VoiceInputManager {
     // MARK: - Recording
 
     private func validateStartAdmission() throws {
+        guard liveVoiceCalls?.ownsMicrophone != true else {
+            logger.warning("Cannot start: a Live Voice call holds the microphone")
+            throw VoiceInputError.microphoneHeldByLiveVoice
+        }
         guard !operationInFlight else {
             logger.warning("Cannot start: operation already in flight")
             throw VoiceInputError.captureBusy

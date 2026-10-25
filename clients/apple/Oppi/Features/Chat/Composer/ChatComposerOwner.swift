@@ -163,6 +163,8 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         content.focusRequestID = focusRequestID
         content.keyboardLanguage = keyboardLanguage
         content.mediaImportEpoch = source?.composerMediaImportGate?.epoch ?? 0
+        // Every source (chat, Quick Session, guided control) loses its mic during a call.
+        content.voiceInputManager = ComposerShared.dictation(content.voiceInputManager, near: viewIfLoaded)
     }
 
     /// The bar asked for a change of its own value: apply it now, then let

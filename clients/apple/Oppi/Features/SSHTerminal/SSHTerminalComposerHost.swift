@@ -107,7 +107,8 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
             allowsEmptySubmit: true,
             sendProgressText: uploading ? "Uploading" : nil,
             isStopping: false,
-            voiceInputManager: voiceInputManager,
+            // No mic while a Live Voice call holds it.
+            voiceInputManager: ComposerShared.dictation(voiceInputManager, near: controller?.viewIfLoaded),
             showForceStop: false,
             isForceStopInFlight: false,
             askRequest: nil,

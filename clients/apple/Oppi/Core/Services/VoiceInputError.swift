@@ -2,6 +2,7 @@ import Foundation
 
 enum VoiceInputError: LocalizedError {
     case captureBusy
+    case microphoneHeldByLiveVoice
     case audioCaptureUnavailable
     case captureBufferOverflow
     case microphonePermissionDenied
@@ -29,7 +30,7 @@ enum VoiceInputError: LocalizedError {
             "decode"
         case .serverNotConnected, .serverAsrUnavailable:
             "misconfigured"
-        case .captureBusy, .audioCaptureUnavailable, .microphonePermissionDenied, .localeNotSupported, .internalError:
+        case .captureBusy, .microphoneHeldByLiveVoice, .audioCaptureUnavailable, .microphonePermissionDenied, .localeNotSupported, .internalError:
             "other"
         }
     }
@@ -38,6 +39,8 @@ enum VoiceInputError: LocalizedError {
         switch self {
         case .captureBusy:
             "Voice input is already busy. Stop the current recording and try again."
+        case .microphoneHeldByLiveVoice:
+            "A Live Voice call is using the microphone. End the call to dictate."
         case .audioCaptureUnavailable:
             "The microphone did not deliver audio. Please try dictation again."
         case .captureBufferOverflow:

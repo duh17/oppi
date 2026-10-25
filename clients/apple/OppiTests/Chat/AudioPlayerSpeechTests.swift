@@ -3,7 +3,8 @@ import Foundation
 import Testing
 @testable import Oppi
 
-@Suite("Read aloud playback")
+/// Serialized: one test holds the process-wide capture claim, which quiets every player.
+@Suite("Read aloud playback", .serialized)
 @MainActor
 struct AudioPlayerSpeechTests {
     private static let playbackID = AudioPlayerService.speechPlaybackItemID(forMessageID: "m1")
@@ -51,6 +52,37 @@ struct AudioPlayerSpeechTests {
         #expect(player.loadingItemID == nil)
         #expect(player.playingItemID == nil)
         #expect(player.playbackFailure?.itemID == Self.playbackID)
+    }
+
+    @Test func aCaptureThatStartsWhileTheReadLoadsKeepsTheReadQuiet() async {
+        let player = AudioPlayerService()
+        defer { player.stop() }
+        let captureOwner = NSObject()
+        defer { AudioPlayerService.endProcessCaptureInterruption(owner: captureOwner) }
+        // Left open through the checks below, so a read that wrongly started would still be playing.
+        let (chunks, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        defer { continuation.finish() }
+        let opened = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+
+        player.toggleSpeech(messageID: "m1") {
+            opened.continuation.yield()
+            var releaseIterator = release.stream.makeAsyncIterator()
+            await releaseIterator.next()
+            return SpeechAudioStream(sampleRate: 24_000, channels: 1, chunks: chunks)
+        }
+        var openedIterator = opened.stream.makeAsyncIterator()
+        await openedIterator.next()
+
+        // A Live Voice call (or dictation) takes the audio session before the read's audio arrives.
+        AudioPlayerService.beginProcessCaptureInterruption(owner: captureOwner)
+        release.continuation.yield()
+
+        await waitUntil { player.loadingItemID == nil }
+        #expect(player.loadingItemID == nil)
+        #expect(player.playingItemID == nil)
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(player.playingItemID == nil)
     }
 
     @Test func tappingAgainWhileLoadingStopsBeforeAudioStarts() async {

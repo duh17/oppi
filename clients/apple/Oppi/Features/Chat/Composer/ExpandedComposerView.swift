@@ -406,7 +406,10 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
 
     // MARK: - Derived state
 
-    private var voiceInputManager: VoiceInputManager? { configuration.voiceInputManager }
+    /// No dictation while a Live Voice call holds the microphone.
+    private var voiceInputManager: VoiceInputManager? {
+        ComposerShared.dictation(configuration.voiceInputManager, near: viewIfLoaded)
+    }
 
     private var composerDisplayText: String {
         ComposerShared.currentComposerText(

@@ -78,6 +78,10 @@ final class ConnectionCoordinator {
     /// Per-server connections. Each has its own WS, stores, reducer.
     private(set) var connections: [String: ServerConnection] = [:]
 
+    /// The app's Live Voice call (set by `OppiApp`). Its socket is not one of a connection's
+    /// streams, so removing a server ends the call here first.
+    @ObservationIgnored weak var liveVoiceCalls: LiveVoiceCallCenter?
+
     /// The focused server's connection.
     /// Falls back to a disconnected sentinel if no server is active.
     var activeConnection: ServerConnection {
@@ -1106,6 +1110,9 @@ final class ConnectionCoordinator {
         retryPreparationAfterBoundaryServerIds.remove(id)
         // Remove identity before suspension so a re-pair cannot observe or reuse it.
         let removedConnection = connections.removeValue(forKey: id)
+        // The call holds the microphone on its own socket; with the server gone there is no
+        // chat left to end it from.
+        await liveVoiceCalls?.endCall(serverId: id)
         if let conn = removedConnection {
             conn.cancelListRefreshWork()
             conn.disconnectSession()

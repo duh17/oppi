@@ -254,8 +254,8 @@ extension ChatViewController: ChatComposerSource {
             allowsEmptySubmit: false,
             sendProgressText: model.attachmentPreparationText ?? actionHandler.sendProgressText,
             isStopping: isStopping,
-            // A call owns the microphone; the composer offers neither dictation nor a second call.
-            voiceInputManager: liveVoiceCallOwnsMic ? nil : voiceInputManager,
+            // `ChatComposerOwner` drops the mic while a call holds it (`ComposerShared.dictation`).
+            voiceInputManager: voiceInputManager,
             onLiveVoiceSelected: liveVoiceEntry,
             // The input bar is the call surface while a call holds the composer.
             liveVoiceCall: liveVoiceCall?.composerCall,
@@ -358,7 +358,7 @@ extension ChatViewController: ChatComposerSource {
 
     func makeExpandedComposer() -> ExpandedComposerViewController {
         let configuration = ExpandedComposerConfiguration(
-            voiceInputManager: liveVoiceCallOwnsMic ? nil : voiceInputManager,
+            voiceInputManager: voiceInputManager,
             onPrepareVoiceInput: { [weak self] in try await self?.prepareChatVoiceInput($0) },
             onLiveVoiceSelected: liveVoiceEntry,
             onSend: { [weak self] in self?.sendComposerAction(draftClearance: .afterSuccess) },

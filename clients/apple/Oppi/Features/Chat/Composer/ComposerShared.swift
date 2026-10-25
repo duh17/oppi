@@ -752,6 +752,16 @@ enum ComposerShared {
         ])
     }
 
+    /// The dictation a composer near `view` offers: none while the app's Live Voice call holds
+    /// the one microphone, whichever session it is on. Read in a pass that Observation
+    /// tracks, the mic comes back when the call ends.
+    static func dictation(_ manager: VoiceInputManager?, near view: UIView?) -> VoiceInputManager? {
+        if let view, HostFactory.root(near: view)?.liveVoiceCalls.ownsMicrophone == true {
+            return nil
+        }
+        return manager
+    }
+
     static func stopDictationBeforeLiveVoice(manager: VoiceInputManager?) async {
         guard let manager, manager.isRecording || manager.isPreparing else { return }
         await manager.cancelRecording()

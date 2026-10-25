@@ -925,7 +925,6 @@ private func requestId(of message: ClientMessage?) -> String? {
     switch message {
     case .voiceCallStart(_, let requestId),
          .voiceCallAttach(_, _, let requestId),
-         .voiceCallDetach(_, _, let requestId),
          .voiceCallKeepAlive(_, _, let requestId),
          .voiceCallEnd(_, _, let requestId):
         return requestId
@@ -942,7 +941,6 @@ private func attachPayload(_ message: ClientMessage?) -> (String, Int)? {
 private func leasePayload(_ message: ClientMessage?) -> (String, Int)? {
     switch message {
     case .voiceCallKeepAlive(let callId, let epoch, _),
-         .voiceCallDetach(let callId, let epoch, _),
          .voiceCallEnd(let callId, let epoch, _):
         return (callId, epoch)
     default:
