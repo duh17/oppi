@@ -372,7 +372,6 @@ enum SessionThreadLoad {
 private struct SessionThreadDetailContentView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
-    @Environment(\.appRootEnvironment) private var appRoot
     @Environment(\.theme) private var theme
     @State private var locks = ScopedLockService.shared
 
@@ -637,8 +636,7 @@ private struct SessionThreadDetailContentView: View {
         let hasActivePlayback = connection?.audioPlayer.hasActivePlayback ?? false
         return SessionInboxCompactComposeBar(
             showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
-                hasActivePlayback: hasActivePlayback,
-                callHoldsMicrophone: appRoot?.liveVoiceCalls.ownsMicrophone == true
+                hasActivePlayback: hasActivePlayback
             ),
             hasActivePlayback: hasActivePlayback,
             columnWidth: composeBarColumnWidth,

@@ -932,10 +932,7 @@ final class SessionInboxViewController: UIViewController {
     private func syncBars(_ state: InboxState) {
         let joinsRail = SessionListBarItems.joinsRail(traitCollection)
         let palette = root.themeStore.activeThemeID.palette
-        let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(
-            hasActivePlayback: state.hasActivePlayback,
-            callHoldsMicrophone: root.liveVoiceCalls.ownsMicrophone
-        )
+        let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(hasActivePlayback: state.hasActivePlayback)
         let player = state.connection?.audioPlayer
 
         if !joinsRail {

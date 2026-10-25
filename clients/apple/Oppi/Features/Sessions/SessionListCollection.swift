@@ -1145,12 +1145,12 @@ final class SessionListBottomBar {
         item.tintColor = tint
         item.accessibilityLabel = String(localized: "Start Quick Session")
         item.accessibilityIdentifier = "workspace.quickSession.start"
-        item.accessibilityCustomActions = showsDictation ? [
+        item.accessibilityCustomActions = [
             UIAccessibilityCustomAction(name: String(localized: "Dictate Quick Session")) { _ in
                 onDictate()
                 return true
             },
-        ] : nil
+        ]
         return SessionListBarItems.railItem(item, priority: .keep)
     }
 

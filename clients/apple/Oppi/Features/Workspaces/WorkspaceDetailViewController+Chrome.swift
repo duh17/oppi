@@ -24,10 +24,7 @@ extension WorkspaceDetailViewController {
     func syncBars(_ detail: DetailState) {
         let joinsRail = SessionListBarItems.joinsRail(traitCollection)
         let palette = root.themeStore.activeThemeID.palette
-        let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(
-            hasActivePlayback: detail.hasActivePlayback,
-            callHoldsMicrophone: root.liveVoiceCalls.ownsMicrophone
-        )
+        let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(hasActivePlayback: detail.hasActivePlayback)
         let showsBottomItems = !detail.isNavigatingDeeper
 
         navigationItem.title = detail.workspace.name
