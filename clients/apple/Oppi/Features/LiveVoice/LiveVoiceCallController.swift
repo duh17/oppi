@@ -137,6 +137,12 @@ final class LiveVoiceCallController {
     /// result, success or not, by a new socket (whose media starts fresh), by hold, or by the
     /// call ending.
     @ObservationIgnored private var bargeInRequestId: String?
+    /// The server refused the barge-in (stale lease, or a server without it), so the interrupted
+    /// reply keeps streaming. Its audio is dropped until the stream has been quiet for
+    /// `LiveVoicePlaybackScheduler.replyGap`, instead of resuming mid-sentence. The time the
+    /// last of it was dropped (or the refusal arrived).
+    @ObservationIgnored private var refusedReplyHeardAt: TimeInterval?
+    @ObservationIgnored private let now: @MainActor () -> TimeInterval
 
     private struct StartWaiter {
         let generation: UInt64
@@ -150,10 +156,12 @@ final class LiveVoiceCallController {
         serverKey: String = "default",
         clientCallId: String = UUID().uuidString,
         keepAliveInterval: Duration = .seconds(10),
-        microphoneAccess: @escaping @MainActor () async -> Bool = { await LiveVoiceCallController.hasMicrophoneAccess() }
+        microphoneAccess: @escaping @MainActor () async -> Bool = { await LiveVoiceCallController.hasMicrophoneAccess() },
+        now: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.keepAliveInterval = keepAliveInterval
         self.microphoneAccess = microphoneAccess
+        self.now = now
         bindsServerChannel = channel == nil
         self.channel = channel
         self.audio = audio
@@ -229,7 +237,7 @@ final class LiveVoiceCallController {
             self?.bargeInDetector.setPlaying(active)
         }
         channel.onInboundAudio = { [weak self] data in
-            guard let self, self.mayRunAudio, self.bargeInRequestId == nil else { return }
+            guard let self, self.mayRunAudio, self.admitsReplyAudio() else { return }
             self.audio?.play(data)
         }
         channel.close()
@@ -431,7 +439,7 @@ final class LiveVoiceCallController {
             // A new socket: an attach sent on the old one will never be answered, nor will a
             // barge-in, and the old socket's reply audio cannot arrive on this one.
             rejoinRequestId = nil
-            bargeInRequestId = nil
+            clearBargeInGate()
             await sendJoinOrStart()
         case .voiceCallState(let snapshot):
             apply(snapshot)
@@ -448,9 +456,12 @@ final class LiveVoiceCallController {
             // The session's stream also carries other callers' command results (model, compact).
             guard command.hasPrefix("voice_") else { return }
             if command == "voice_call_barge_in" {
-                // Success or not, the server sends no more of the interrupted reply after
-                // this. A refused one (stale lease) is the keepalive's to repair.
-                if requestId != nil, requestId == bargeInRequestId { bargeInRequestId = nil }
+                // After a success the server sends no more of the interrupted reply. After a
+                // refusal (stale lease, the keepalive's to repair, or an older server) it does,
+                // so that reply stays dropped until its stream goes quiet.
+                guard requestId != nil, requestId == bargeInRequestId else { return }
+                bargeInRequestId = nil
+                if !success { refusedReplyHeardAt = now() }
                 return
             }
             if requestId != nil, requestId == rejoinRequestId {
@@ -703,21 +714,18 @@ final class LiveVoiceCallController {
     /// Stops the reply the moment the caller talks over it, then tells the server to drop the
     /// rest. One barge-in per reply; the detector re-arms when the next reply starts.
     private func listenForBargeIn(_ pcm: Data) {
-        guard isLive, mayRunAudio, bargeInRequestId == nil,
+        // Most mic buffers arrive with no reply playing; they cost nothing here.
+        guard isSpeaking, isLive, mayRunAudio, bargeInRequestId == nil,
               let callState, callState.lifecycle == .active else { return }
-        let micDBFS = LiveVoiceBargeInDetector.dbfs(pcm16: pcm)
         let playbackDBFS = meter.current.playbackDBFS
-        guard bargeInDetector.observe(
-            micDBFS: micDBFS,
-            playbackDBFS: playbackDBFS,
-            duration: LiveVoiceBargeInDetector.duration(pcm16: pcm)
-        ) else { return }
+        guard let micDBFS = bargeInDetector.observe(pcm16: pcm, playbackDBFS: playbackDBFS) else { return }
         let requestId = nextRequestId()
         bargeInRequestId = requestId
         audio?.stopPlayback()
         ClientLog.info("LiveVoice", "Barge-in", metadata: [
             "mic_dbfs": String(Int(micDBFS.rounded())),
             "playback_dbfs": String(Int(playbackDBFS.rounded())),
+            "buffer_ms": String(Int((LiveVoiceBargeInDetector.duration(pcm16: pcm) * 1_000).rounded())),
         ])
         Task {
             await send(.voiceCallBargeIn(
@@ -728,17 +736,39 @@ final class LiveVoiceCallController {
         }
     }
 
-    private func resetBargeIn() {
-        let stats = bargeInDetector.stats
-        if stats.peakMicDBFS > LiveVoiceBargeInDetector.silenceDBFS {
-            ClientLog.info("LiveVoice", "Barge-in summary", metadata: [
-                "fires": String(stats.fires),
-                "peak_mic_dbfs": String(Int(stats.peakMicDBFS.rounded())),
-            ])
+    /// Whether inbound call audio may play: not while a barge-in waits for its result, nor while
+    /// a refused one's reply is still streaming.
+    private func admitsReplyAudio() -> Bool {
+        guard bargeInRequestId == nil else { return false }
+        guard let heardAt = refusedReplyHeardAt else { return true }
+        let current = now()
+        if current - heardAt >= LiveVoicePlaybackScheduler.replyGap {
+            refusedReplyHeardAt = nil
+            return true
         }
+        refusedReplyHeardAt = current
+        return false
+    }
+
+    private func clearBargeInGate() {
+        bargeInRequestId = nil
+        refusedReplyHeardAt = nil
+    }
+
+    /// A fresh detector for a new call; the gate opens.
+    private func resetBargeIn() {
         bargeInDetector = LiveVoiceBargeInDetector()
         bargeInDetector.setMuted(isMuted)
-        bargeInRequestId = nil
+        clearBargeInGate()
+    }
+
+    private func logBargeInSummary() {
+        let stats = bargeInDetector.stats
+        guard stats.peakMicDBFS > LiveVoiceBargeInDetector.silenceDBFS else { return }
+        ClientLog.info("LiveVoice", "Barge-in summary", metadata: [
+            "fires": String(stats.fires),
+            "peak_mic_dbfs": String(Int(stats.peakMicDBFS.rounded())),
+        ])
     }
 
     private func forwardAudio(_ pcm: Data) async {
@@ -753,8 +783,10 @@ final class LiveVoiceCallController {
         audio?.onPCM = nil
         audio?.suspend()
         isSpeaking = false
-        // Playback is gone with the audio; the next reply re-arms the detector.
-        resetBargeIn()
+        // Playback is gone with the audio; the next reply re-arms the detector. Its stats
+        // carry on to the call's summary.
+        bargeInDetector.setPlaying(false)
+        clearBargeInGate()
     }
 
     private func stopCapture() {
@@ -763,6 +795,7 @@ final class LiveVoiceCallController {
         audio?.stopPlayback()
         audio?.stop()
         isSpeaking = false
+        logBargeInSummary()
         resetBargeIn()
     }
 

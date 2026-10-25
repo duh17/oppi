@@ -1184,9 +1184,14 @@ describe("continuous voice media", () => {
       let clock = 1_000;
       const spoken: string[] = [];
       const cancelled: string[] = [];
+      /** TTS cancels and socket replies, in the order they happened. */
+      const order: string[] = [];
       const tts = new GateableTtsPort({
         onSpeak: (text) => spoken.push(text),
-        onCancel: (text) => cancelled.push(text),
+        onCancel: (text) => {
+          cancelled.push(text);
+          order.push("cancel");
+        },
       });
       const coordinator = new VoiceCallMediaCoordinator({
         createAdapter: ({ callId }) =>
@@ -1205,7 +1210,10 @@ describe("continuous voice media", () => {
         handler.handleClientMessage(
           makeVoiceSession(),
           message as Parameters<WsMessageHandler["handleClientMessage"]>[1],
-          (reply) => sent.push(reply),
+          (reply) => {
+            sent.push(reply);
+            order.push(reply.type);
+          },
           {
             connId,
             authenticatedDeviceId: "paired-device-a",
@@ -1238,6 +1246,7 @@ describe("continuous voice media", () => {
         tts,
         spoken,
         cancelled,
+        order,
         audio,
         sent,
         callId,
@@ -1259,6 +1268,7 @@ describe("continuous voice media", () => {
         const playing = call.coordinator.speak(call.callId, "working on it");
         const queued = call.coordinator.speak(call.callId, "still working");
         await call.tts.waitForSpeak("working on it");
+        call.order.length = 0;
 
         expect(await call.bargeIn("barge-1")).toEqual({
           type: "command_result",
@@ -1268,6 +1278,7 @@ describe("continuous voice media", () => {
           data: { callId: call.callId, cancelled: true },
         });
         // Cancelled before the result went out: no audio of that reply can follow it.
+        expect(call.order).toEqual(["cancel", "command_result"]);
         expect(call.cancelled).toEqual(["working on it"]);
         await Promise.all([playing, queued]);
 

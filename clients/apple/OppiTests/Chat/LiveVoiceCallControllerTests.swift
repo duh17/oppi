@@ -325,7 +325,7 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.isLive)
     }
 
-    @Test("A refused barge-in resumes playback and leaves the call up")
+    @Test("A refused barge-in keeps the interrupted reply dropped until its stream goes quiet, and leaves the call up")
     func refusedBargeInKeepsCall() async throws {
         let harness = try await startedHarness()
         harness.controller.meter.publishPlayback(.zero, dbfs: -20)
@@ -342,6 +342,21 @@ struct LiveVoiceCallControllerTests {
             error: "Stale voice controller lease"
         ))
         await Self.drain(harness, eventSeq: 2)
+
+        // The server did not cancel: the rest of that reply keeps arriving and is not played
+        // from mid-sentence, however long it runs.
+        for _ in 0..<5 {
+            harness.clock.now += 0.6
+            harness.channel.emitAudio(Data([7]))
+        }
+        #expect(harness.audio.played.isEmpty)
+        // Nothing more re-arms the detector while that reply is dropped.
+        for _ in 0..<6 { harness.audio.emit(Self.mic(amplitude: 8_000)) }
+        await Task.yield()
+        #expect(sentTypes(harness.channel.sent).filter { $0 == "voice_call_barge_in" }.count == 1)
+
+        // A quiet stream ends that reply; what comes next is new speech.
+        harness.clock.now += LiveVoicePlaybackScheduler.replyGap
         harness.channel.emitAudio(Data([8]))
         #expect(harness.audio.played == [Data([8])])
         #expect(harness.controller.isLive)
@@ -788,13 +803,15 @@ struct LiveVoiceCallControllerTests {
         let channel = FakeLiveVoiceCallChannel()
         let audio = FakeLiveVoiceAudioOwner()
         let memory = FakeLiveVoiceSessionMemory()
+        let clock = TestClock()
         let controller = LiveVoiceCallController(
             channel: channel,
             audio: audio,
             memory: memory,
             serverKey: "server-1",
             clientCallId: "client-call-1",
-            keepAliveInterval: keepAliveInterval
+            keepAliveInterval: keepAliveInterval,
+            now: { clock.now }
         )
         let startTask = Task { await controller.start(sessionId: "sess-1", routeScope: .workspace("ws-1")) }
         await waitUntil { !channel.opened.isEmpty }
@@ -805,6 +822,7 @@ struct LiveVoiceCallControllerTests {
             channel: channel,
             audio: audio,
             memory: memory,
+            clock: clock,
             startTask: startTask
         )
     }
@@ -890,7 +908,14 @@ private struct Harness {
     let channel: FakeLiveVoiceCallChannel
     let audio: FakeLiveVoiceAudioOwner
     let memory: FakeLiveVoiceSessionMemory
+    let clock: TestClock
     let startTask: Task<Void, Never>
+}
+
+/// The controller's clock for inbound-audio timing, moved by hand.
+@MainActor
+private final class TestClock {
+    var now: TimeInterval = 1_000
 }
 
 @MainActor
