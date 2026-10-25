@@ -1145,12 +1145,13 @@ final class SessionListBottomBar {
         item.tintColor = tint
         item.accessibilityLabel = String(localized: "Start Quick Session")
         item.accessibilityIdentifier = "workspace.quickSession.start"
-        item.accessibilityCustomActions = [
+        // Dictate is offered only where the mic is.
+        item.accessibilityCustomActions = showsDictation ? [
             UIAccessibilityCustomAction(name: String(localized: "Dictate Quick Session")) { _ in
                 onDictate()
                 return true
             },
-        ]
+        ] : nil
         return SessionListBarItems.railItem(item, priority: .keep)
     }
 

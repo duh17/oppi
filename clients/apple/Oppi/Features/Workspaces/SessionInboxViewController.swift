@@ -932,7 +932,10 @@ final class SessionInboxViewController: UIViewController {
     private func syncBars(_ state: InboxState) {
         let joinsRail = SessionListBarItems.joinsRail(traitCollection)
         let palette = root.themeStore.activeThemeID.palette
+        // No Message mic while a Live Voice call holds the microphone; read here, in the
+        // observed pass, so the mic goes and comes back with the call.
         let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(hasActivePlayback: state.hasActivePlayback)
+            && !root.liveVoiceCalls.ownsMicrophone
         let player = state.connection?.audioPlayer
 
         if !joinsRail {
@@ -972,6 +975,7 @@ final class SessionInboxViewController: UIViewController {
             showsNowPlaying: state.toolbar.showsNowPlayingPill && player != nil,
             parksNowPlayingNextToCompose: state.toolbar.parksNowPlayingNextToCompose,
             canOpenFiles: SessionInboxComposeChrome.canOpenFiles(hasServer: state.activeServerId != nil),
+            showsDictation: showsDictation,
             themeID: root.themeStore.activeThemeID
         )
         if bars != barState {
@@ -1165,6 +1169,8 @@ private extension SessionInboxViewController {
         let showsNowPlaying: Bool
         let parksNowPlayingNextToCompose: Bool
         let canOpenFiles: Bool
+        /// The rail's Message item offers Dictate only with the mic.
+        let showsDictation: Bool
         let themeID: ThemeID
     }
 }

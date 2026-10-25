@@ -24,7 +24,10 @@ extension WorkspaceDetailViewController {
     func syncBars(_ detail: DetailState) {
         let joinsRail = SessionListBarItems.joinsRail(traitCollection)
         let palette = root.themeStore.activeThemeID.palette
+        // No Message mic while a Live Voice call holds the microphone; read here, in the
+        // observed pass, so the mic goes and comes back with the call.
         let showsDictation = SessionInboxComposeChrome.showsDictationShortcut(hasActivePlayback: detail.hasActivePlayback)
+            && !root.liveVoiceCalls.ownsMicrophone
         let showsBottomItems = !detail.isNavigatingDeeper
 
         navigationItem.title = detail.workspace.name
