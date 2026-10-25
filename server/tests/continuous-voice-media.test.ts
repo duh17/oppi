@@ -136,11 +136,17 @@ describe("continuous voice media", () => {
     lockIn("Can you ask pi how many sessions are running?");
     expect(calls.snapshot(started.state.callId).delegations).toEqual([]);
     await turnEnd();
+    // A handed-off turn clears the phone's input bar: the newest state carries no partial.
+    const lastState = () =>
+      frontend.messages.filter((message) => message.type === "voice_call_state").at(-1);
+    expect(lastState()).toEqual(expect.objectContaining({ type: "voice_call_state" }));
+    expect(lastState()).not.toHaveProperty("partialTranscript");
 
     // The next turn revises the earlier punctuation; only the new words are handed off.
     lockIn("Can you ask pi how many sessions are running, and");
     lockIn("Can you ask pi how many sessions are running, and then check the tests?");
     await turnEnd();
+    expect(lastState()).not.toHaveProperty("partialTranscript");
 
     expect(stt.fed).toHaveLength(1);
     expect(calls.snapshot(started.state.callId).delegations).toEqual([

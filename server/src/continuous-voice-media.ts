@@ -802,7 +802,16 @@ export class VoiceCallMediaCoordinator {
       }
       case "user_utterance_committed": {
         const request = event.text.trim();
-        if (request) this.delegate(session, event.utteranceId, request);
+        if (!request) return;
+        this.delegate(session, event.utteranceId, request);
+        // The commit cleared the partial transcript; without this state the phone keeps
+        // showing the sent words in its input bar until the user's next partial. Only this
+        // path: Grok's delegation_requested lands while the user may already be talking,
+        // and Grok clears its own turn with an empty partial.
+        session.frontend.send({
+          type: "voice_call_state",
+          ...this.deps.calls.snapshot(session.callId),
+        });
         return;
       }
       case "disconnected": {

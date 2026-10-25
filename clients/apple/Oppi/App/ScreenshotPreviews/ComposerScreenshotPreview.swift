@@ -211,6 +211,8 @@ final class LiveVoiceComposerPreviewController: UIViewController, ChatComposerSo
                 isSpeaking: step == .speaking,
                 status: status,
                 transcript: step == .talking ? transcript : "",
+                // Talking → Speaking is the turn going out as the user's message.
+                sentTurnID: step == .speaking ? "turn-1" : nil,
                 meter: meter,
                 onToggleMute: {},
                 onEnd: {}
@@ -257,8 +259,9 @@ final class LiveVoiceComposerPreviewController: UIViewController, ChatComposerSo
                     transcript = words.prefix(count).joined(separator: " ")
                     try? await Task.sleep(for: .milliseconds(350))
                 }
+                // The words stay until Speaking: the server clears them in the same update
+                // that sends the turn, which lifts them toward the timeline.
                 try? await Task.sleep(for: .seconds(1))
-                transcript = ""
             }
             try? await Task.sleep(for: hold)
             guard !Task.isCancelled else { return }

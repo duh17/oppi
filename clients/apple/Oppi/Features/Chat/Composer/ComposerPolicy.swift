@@ -32,6 +32,19 @@ struct AskComposerClearingState {
 /// so `ComposerBarController` and its tests share them.
 @MainActor
 enum ComposerPolicy {
+    /// A call's transcript left the field because the server sent it as the user's message:
+    /// it cleared in the same update that brought a new sent turn. A transcript that only
+    /// cleared (a cough's "…", the call ending) did not go to the timeline.
+    static func liftsSentCallTranscript(
+        previousTranscript: String?,
+        transcript: String?,
+        previousSentTurnID: String?,
+        sentTurnID: String?
+    ) -> Bool {
+        previousTranscript != nil && transcript == nil
+            && sentTurnID != nil && sentTurnID != previousSentTurnID
+    }
+
     static func composerTextTrailingPadding(showsExpandButton: Bool) -> CGFloat {
         showsExpandButton ? 10 : 0
     }

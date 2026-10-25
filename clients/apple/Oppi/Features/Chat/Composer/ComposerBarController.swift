@@ -23,6 +23,8 @@ struct ComposerLiveVoiceCall {
     var status: String
     /// What the user is saying, read-only until the server sends it as their message.
     var transcript: String
+    /// The newest turn the server sent as the user's message; it changes with each send.
+    var sentTurnID: String?
     var meter: LiveVoiceAudioMeter
     var onToggleMute: () -> Void
     var onEnd: () -> Void
@@ -716,6 +718,10 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
 
     var askClearing = AskComposerClearingState()
     var inlineVisualLineCount = 1
+    /// The call transcript and sent turn the text view last showed, to tell a sent turn
+    /// (`ComposerPolicy.liftsSentCallTranscript`) from a transcript that only cleared.
+    var shownCallTranscript: String?
+    var shownCallSentTurnID: String?
     var isFinishingVoiceBeforeSend = false
     var localMediaImportEpoch: UInt64 = 0
     var isInputFocused = false

@@ -19,6 +19,25 @@ struct ComposerBarTests {
         }
     }
 
+    @Test("A call's words lift toward the timeline only when they cleared because a new turn was sent")
+    func liveVoiceTranscriptLiftsOnlyOnSend() {
+        func lifts(_ previous: String?, _ next: String?, _ previousTurn: String?, _ turn: String?) -> Bool {
+            ComposerPolicy.liftsSentCallTranscript(
+                previousTranscript: previous, transcript: next,
+                previousSentTurnID: previousTurn, sentTurnID: turn
+            )
+        }
+        // The turn went out: the words cleared with a new sent turn.
+        #expect(lifts("check the tests", nil, nil, "turn-1"))
+        #expect(lifts("and the build", nil, "turn-1", "turn-2"))
+        // A cough's "\u{2026}" cleared with no new turn, or the call ended.
+        #expect(!lifts("\u{2026}", nil, "turn-1", "turn-1"))
+        #expect(!lifts("check the tests", nil, nil, nil))
+        // A turn sent while nothing was in the field, or while the user keeps talking.
+        #expect(!lifts(nil, nil, "turn-1", "turn-2"))
+        #expect(!lifts("check", "check the tests", nil, "turn-1"))
+    }
+
     /// Chrome updates run inside a rotation's animation. Empty updates that
     /// hide an already hidden panel must not keep it hidden once it has rows.
     @Test("Suggestion panel shows on the first update after animated empty updates")

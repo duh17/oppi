@@ -6,6 +6,17 @@ extension ComposerBarController {
         // A call's live transcript stands in for the draft until it is sent; the draft
         // comes back when the user stops talking.
         let transcript = callTranscript
+        let sentTurnID = content.liveVoiceCall?.sentTurnID
+        if ComposerPolicy.liftsSentCallTranscript(
+            previousTranscript: shownCallTranscript,
+            transcript: transcript,
+            previousSentTurnID: shownCallSentTurnID,
+            sentTurnID: sentTurnID
+        ) {
+            liftSentTranscript(reduceMotion: content.reduceMotion)
+        }
+        shownCallTranscript = transcript
+        shownCallSentTurnID = sentTurnID
         let visible = transcript ?? ComposerShared.visibleComposerText(composerDisplayText)
         let callStatus = content.askRequest == nil && content.placeholderOverride == nil
             ? content.liveVoiceCall?.status
@@ -60,6 +71,35 @@ extension ComposerBarController {
         }
         attemptFocusIfRequested()
         applyTextLayout(proposedWidth: view.bounds.width)
+    }
+
+    /// The call's transcript just went out as the user's message: its words rise and fade
+    /// toward the timeline while the field clears for the next turn. Reduce Motion fades
+    /// them in place. The copy lives in the window: the bar shrinks back to one line in the
+    /// same pass, and a copy inside it would drop with the shrink before rising.
+    private func liftSentTranscript(reduceMotion: Bool) {
+        // A sheet over the chat shares its window: the copy would float over the sheet.
+        var screen: UIViewController = self
+        while let parent = screen.parent { screen = parent }
+        guard screen.presentedViewController == nil,
+              let window = textView.window,
+              let ghost = textView.snapshotView(afterScreenUpdates: false) else { return }
+        ghost.frame = textView.convert(textView.bounds, to: window)
+        ghost.isUserInteractionEnabled = false
+        window.addSubview(ghost)
+        UIView.animate(
+            withDuration: reduceMotion ? 0.2 : 0.32,
+            delay: 0,
+            options: [.curveEaseIn, .beginFromCurrentState]
+        ) {
+            ghost.alpha = 0
+            if !reduceMotion {
+                ghost.transform = CGAffineTransform(translationX: 0, y: -ghost.bounds.height)
+                    .scaledBy(x: 0.96, y: 0.96)
+            }
+        } completion: { _ in
+            ghost.removeFromSuperview()
+        }
     }
 
     func attemptFocusIfRequested() {

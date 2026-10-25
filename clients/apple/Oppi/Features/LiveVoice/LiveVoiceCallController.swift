@@ -92,6 +92,7 @@ final class LiveVoiceCallController {
             isSpeaking: isSpeaking,
             status: composerStatus,
             transcript: partialTranscript,
+            sentTurnID: callState?.delegations.last?.delegationId,
             meter: meter,
             onToggleMute: { [weak self] in self?.toggleMute() },
             onEnd: { [weak self] in Task { await self?.end() } }
