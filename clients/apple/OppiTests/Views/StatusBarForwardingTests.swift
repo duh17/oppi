@@ -38,8 +38,12 @@ struct StatusBarForwardingTests {
             window.rootViewController = nil
         }
         shell.view.layoutIfNeeded()
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { !shell.children.isEmpty })
-        let layout = try #require(shell.children.first)
+        // The shell also holds the Live Voice call strip; the layout is the stack or the split.
+        func mountedLayout() -> UIViewController? {
+            shell.children.first { $0 is WorkspaceDrawerController || $0 is WorkspaceSplitController }
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { mountedLayout() != nil })
+        let layout = try #require(mountedLayout())
         #expect(shell.childForStatusBarStyle === layout)
     }
 
