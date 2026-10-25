@@ -23,6 +23,7 @@ import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { SANDBOX_RESOURCE_MAX_BYTES } from "../src/gondolin-ops.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import { properLockfile } from "../src/pi-lockfile.js";
 import type { ConversationStreamServerMessage } from "../src/types.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
@@ -281,6 +282,29 @@ describe("durable SessionHost stores", () => {
     expect(refused?.message).toContain(realpathSync(lockPath));
     expect(refused?.message).not.toMatch(/already open/);
     expect(refused?.code).not.toBe("durable_store_locked");
+  });
+
+  it("ignores a late compromise report from a lock it already released", async () => {
+    const f = await fixture();
+    const session = enroll(f.storage, f.workspace.id, "Released lock");
+    const runtime = new DurableHarness(f.dir);
+    runtimes.push(runtime);
+    const lock = vi.spyOn(properLockfile, "lock");
+    const host = await runtime.openHost(session.id, { cwd: f.dir });
+    const released = lock.mock.calls.at(-1)?.[1]?.onCompromised;
+    await host.close();
+    // The same host takes the lock again, as a store recovery does.
+    await host.open();
+    // proper-lockfile reports ENOENT from a refresh stat that was in flight when the release
+    // removed the lock directory: the report belongs to the first, released acquisition.
+    released?.(
+      Object.assign(new Error("ENOENT: no such file or directory"), { code: "ECOMPROMISED" }),
+    );
+    expect(host.isOpen).toBe(true);
+    await expect(host.use(async () => "served")).resolves.toBe("served");
+    // The current lock is still released on close, and the store is not refused afterwards.
+    await host.close();
+    await expect(runtime.openHost(session.id)).resolves.toMatchObject({ isOpen: true });
   });
 
   it("seals only the store whose lock was compromised and keeps serving the others", async () => {

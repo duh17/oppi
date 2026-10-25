@@ -363,6 +363,8 @@ export class SessionHost {
   private readonly sandboxEnvs = new Map<ConversationId, ExecutionEnv>();
   private readonly mcps = new Map<string, DurableMcp>();
   private releaseLock?: () => Promise<void>;
+  /** The current lock acquisition; a compromise report for any other one is stale. */
+  private lockToken?: object;
   private readonly holds: string[] = [];
   private taskGraph?: AttachedReplicatedState<TaskGraph>;
   private stopTaskGraph?: () => void;
@@ -771,13 +773,17 @@ export class SessionHost {
       if (lost) throw lost;
       const shared = await this.runtime.ensureShared();
       mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+      // One token per acquisition: proper-lockfile can report a compromise after the release
+      // (a refresh stat in flight when the release removes the directory reports ENOENT).
+      const token = {};
+      this.lockToken = token;
       try {
         this.releaseLock = await properLockfile.lock(this.directory, {
           realpath: true,
           stale: 2_000,
           update: 1_000,
           retries: 0,
-          onCompromised: (error) => this.loseLock(error),
+          onCompromised: (error) => this.loseLock(token, error),
         });
       } catch (error) {
         // ELOCKED is the only refusal by a live holder, whose refreshes keep the lock fresh.
@@ -865,7 +871,10 @@ export class SessionHost {
    * store only: seal the host, end its sessions, and refuse to reopen it in this process, so
    * this server never becomes a second writer. A restart takes the lock again when it is free.
    */
-  private loseLock(cause: Error): void {
+  private loseLock(token: object, cause: Error): void {
+    // A report for an acquisition already released, or already reported.
+    if (this.lockToken !== token) return;
+    this.lockToken = undefined;
     // The lock is no longer ours to release: it may be another holder's now.
     this.releaseLock = undefined;
     const failure = new Error(
@@ -1074,15 +1083,18 @@ export class SessionHost {
   }
 
   private async unlock(): Promise<void> {
+    // Before the release: a compromise reported while it removes the directory is not a loss.
+    this.lockToken = undefined;
+    const release = this.releaseLock;
+    this.releaseLock = undefined;
     try {
-      await this.releaseLock?.();
+      await release?.();
     } catch (error) {
       log.error("durable_store.unlock_failed", {
         storeId: this.storeId,
         error: safeErrorMessage(error),
       });
     }
-    this.releaseLock = undefined;
   }
 
   /**
