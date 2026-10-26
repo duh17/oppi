@@ -8,9 +8,17 @@
  * - One pi-durable extension per session, `oppi.mcp/<sessionId>`, rebuilt and reinstalled in
  *   place whenever a server's tool list changes. Conversations store extension and tool
  *   names, so a reinstall reaches the next request while running calls finish on old code.
- * - `direct` tools are appended to the conversation's explicit tool list. `deferred` tools
- *   (and `codemode` ones: durable has no codemode, see `withoutCodemode`) stay unoffered until
- *   `tool_search` returns them in `control.addTools`, which pi-durable commits with the round.
+ * - Exposure as in Pi (default `codemode`). Every tool but a `hidden` one is appended to the
+ *   conversation's explicit tool list, so codemode scripts can call it. `direct` tools are
+ *   offered to the model; `codemode` and `deferred` ones are pi-durable `deferred` tools, not
+ *   offered until `tool_search` returns them in `control.addTools`, which pi-durable commits
+ *   with the round. As Pi does, a `codemode` server turns codemode on (unless `mcp.json` sets
+ *   `autoEnableCodemode: false`) and a `deferred` one turns `tool_search` on.
+ * - Each connected server is a codemode namespace (`describeNamespace()`), reported through
+ *   `options.namespaces` to the one codemode extension of every durable session. A namespace
+ *   carries only the owner's configured `description`, never the server's own instructions
+ *   (the session's `mcp_servers` section has those): the extension is shared, and a sandbox
+ *   server's instructions are guest-written text.
  * - A tool reruns after a crash only when the server marks it read-only or idempotent.
  * - Sign-in stays in Oppi's MCP settings. Problems are reported once after startup, and a
  *   server whose stored credentials changed since it needed sign-in reconnects before the
@@ -41,7 +49,8 @@ import {
   type PiMcpInternals,
   type ToolSearchDocument,
 } from "./pi-mcp-internals.js";
-import { withoutCodemode, type SandboxMcpOptions } from "./sandbox-mcp.js";
+import { CODEMODE_TOOL_NAME, type CodemodeNamespace } from "@earendil-works/pi-durable/codemode";
+import type { SandboxMcpOptions } from "./sandbox-mcp.js";
 import type { Session } from "./types.js";
 
 const log = createLogger({ base: { component: "durable_mcp" } });
@@ -81,14 +90,18 @@ export interface DurableMcpOptions {
   /** A sandbox workspace's servers, transports, and log; host Pi defaults when absent. */
   sandbox?: SandboxMcpOptions;
   policy: ToolPolicy | undefined;
+  /** The Pi Tools setting's tools (`piDefaultTools`), which can turn `tool_search` on. */
+  piTools: ReadonlySet<string>;
   providerToken: (provider: string) => Promise<string | undefined>;
   install: (extension: Extension) => void;
   uninstall: (extension: Extension) => void;
+  /** This session's connected servers as codemode namespaces; undefined once it closes. */
+  namespaces: (namespaces: readonly CodemodeNamespace[] | undefined) => void;
   metrics?: ServerMetricCollector;
 }
 
 function exposureOf(entry: McpServerEntry): McpExposure {
-  return entry.config.exposure ?? "deferred";
+  return entry.config.exposure ?? "codemode";
 }
 
 /** Exposures the server's tools can have, known from its config before it connects. */
@@ -105,14 +118,18 @@ function firstLine(text: string): string {
   return text.split("\n", 1)[0] ?? "";
 }
 
-/** A classic Pi tool definition as a pi-durable tool. MCP definitions use only signal and onUpdate. */
-function durableTool(definition: ToolDefinition): ToolRegistration {
+/**
+ * A classic Pi tool definition as a pi-durable tool. MCP definitions use only signal and
+ * onUpdate. Only a `direct` tool is offered to the model before `tool_search` loads it.
+ */
+function durableTool(definition: ToolDefinition, exposure: McpExposure): ToolRegistration {
   return {
     name: definition.name,
     description: definition.description,
     // MCP input schemas are JSON Schema; pi-durable validates them with TypeBox, which accepts it.
     parameters: definition.parameters,
     replay: replayOf(definition),
+    ...(exposure === "direct" ? {} : { deferred: true }),
     async execute(args, api, context) {
       const result = await definition.execute(
         api.callId,
@@ -141,6 +158,10 @@ export class DurableMcp {
   readonly extensionName: string;
   private readonly servers: Server[];
   private readonly configErrors: string[];
+  /** Tool names the conversation offers once it attaches: codemode and tool search as needed. */
+  private readonly discoveryTools: string[];
+  /** Connected servers by name, as codemode namespaces. */
+  private readonly namespaces = new Map<string, CodemodeNamespace>();
   private conversation?: Conversation;
   private startup?: Promise<void>;
   private waitedForStartup = false;
@@ -175,11 +196,15 @@ export class DurableMcp {
           cwd: options.cwd,
           projectTrusted: options.projectTrusted,
         });
-    const entries = loaded.servers
-      .filter((entry) => entry.config.enabled !== false)
-      .map(withoutCodemode);
+    const entries = loaded.servers.filter((entry) => entry.config.enabled !== false);
     if (!entries.length && !loaded.errors.length) return undefined;
-    const mcp = new DurableMcp(internals, options, entries, loaded.errors);
+    const mcp = new DurableMcp(
+      internals,
+      options,
+      entries,
+      loaded.errors,
+      loaded.autoEnableCodemode !== false,
+    );
     mcp.publish();
     return mcp;
   }
@@ -189,6 +214,7 @@ export class DurableMcp {
     private readonly options: DurableMcpOptions,
     entries: McpServerEntry[],
     configErrors: string[],
+    autoEnableCodemode: boolean,
   ) {
     this.extensionName = `${DURABLE_MCP_EXTENSION_PREFIX}${options.sessionId}`;
     this.servers = entries.map((entry) => ({ entry }));
@@ -203,11 +229,29 @@ export class DurableMcp {
     this.allowlistFiltersMcp =
       allowed !== undefined &&
       (allowed.length === 0 || allowed.some((entry) => entry.startsWith("mcp__")));
+    const exposures = new Set(
+      this.servers.flatMap((server) => [...configuredExposures(server.entry)]),
+    );
+    // Tool search reaches every tool the model is not offered: `codemode` and `deferred` ones.
     this.toolSearch =
-      this.servers.some((server) => configuredExposures(server.entry).has("deferred")) &&
+      (exposures.has("deferred") || exposures.has("codemode")) &&
       this.permitted(DURABLE_TOOL_SEARCH_NAME, "direct")
         ? this.createToolSearch()
         : undefined;
+    // Pi's `ensureDiscoveryActive`: the tool the servers' exposure asks for is on, as is one the
+    // Pi Tools setting (or an allow list) enables.
+    const enabled = (name: string): boolean =>
+      this.allowed ? this.allowed(name) : options.piTools.has(name);
+    this.discoveryTools = [
+      ...(exposures.has("codemode") &&
+      autoEnableCodemode &&
+      this.permitted(CODEMODE_TOOL_NAME, "direct")
+        ? [CODEMODE_TOOL_NAME]
+        : []),
+      ...(this.toolSearch && (exposures.has("deferred") || enabled(DURABLE_TOOL_SEARCH_NAME))
+        ? [DURABLE_TOOL_SEARCH_NAME]
+        : []),
+    ];
     this.extension = this.buildExtension();
     if (configErrors.length > 0) {
       recordMcpConnect(options.metrics, {
@@ -223,16 +267,14 @@ export class DurableMcp {
     return this.extension;
   }
 
-  /** Tools a conversation offers before any server connects. */
-  get initialTools(): ToolRegistration[] {
-    return this.toolSearch ? [this.toolSearch] : [];
-  }
-
-  /** Start connecting. Direct tools are appended to the conversation's tool list as servers connect. */
+  /**
+   * Start connecting. Codemode and tool search are offered as the servers' exposure asks, and
+   * each server's tools are appended to the conversation's tool list as it connects.
+   */
   attach(conversation: Conversation): void {
     if (this.conversation) throw new Error("Durable MCP is already attached");
     this.conversation = conversation;
-    this.offerTools(this.initialTools.map((tool) => tool.name));
+    this.offerTools(this.discoveryTools);
     const readies = this.servers.map((server) => {
       const connection = new this.internals.McpServerConnection({
         entry: server.entry,
@@ -296,9 +338,9 @@ export class DurableMcp {
    * Before a prompt: surface a failed tool-list commit, reconnect servers whose credentials
    * were stored since they needed a sign-in, and on the first prompt wait (bounded) for the
    * servers whose tools the request offers. Direct servers always; every server when the
-   * conversation already offers MCP or resource tools (loaded by `tool_search` before a
-   * restart). A name cannot be mapped back to its server: Pi shortens long names with a hash,
-   * and resource tools reach every server with resources.
+   * conversation already loaded MCP or resource tools (with `tool_search` before a restart).
+   * A name cannot be mapped back to its server: Pi shortens long names with a hash, and
+   * resource tools reach every server with resources.
    */
   async beforePrompt(): Promise<void> {
     await this.reconnectSignedIn();
@@ -313,16 +355,23 @@ export class DurableMcp {
     const conversation = this.conversation;
     if (this.waitedForStartup || !conversation) return;
     this.waitedForStartup = true;
-    const offered = await conversation.commit(async (tx) => {
-      const tools = (await tx.doc(AgentDoc, conversation.id)).tools;
-      return Array.isArray(tools) ? [...tools] : [];
+    // Codemode and tool search, as `attach` offered them.
+    await this.offers;
+    // Loaded deferred tools are in `modelTools` (`control.addTools`), direct ones are not.
+    const loaded = await conversation.commit(async (tx) => {
+      const modelTools = (await tx.doc(AgentDoc, conversation.id)).modelTools;
+      return Array.isArray(modelTools) ? [...modelTools] : [...(modelTools?.add ?? [])];
     }, BACKGROUND_CONTEXT);
-    const resourceTools = new Set(this.internals.MCP_RESOURCE_TOOL_NAMES);
-    const loadedBefore = offered.some(
-      (name) => name.startsWith("mcp__") || resourceTools.has(name),
+    // Offered, not only named: an exact Agent selection may leave the extension out.
+    const codemode = (await conversation.agent(BACKGROUND_CONTEXT)).tools.some(
+      (tool) => tool.name === CODEMODE_TOOL_NAME,
     );
+    const resourceTools = new Set(this.internals.MCP_RESOURCE_TOOL_NAMES);
+    const loadedBefore = loaded.some((name) => name.startsWith("mcp__") || resourceTools.has(name));
+    // A codemode script runs on the tools its call started with: a server that connects during
+    // the call is too late for it. So with codemode, the first prompt waits for every server.
     await this.waitFor(
-      loadedBefore
+      loadedBefore || codemode
         ? this.servers
         : this.servers.filter((server) => configuredExposures(server.entry).has("direct")),
       DURABLE_MCP_STARTUP_WAIT_MS,
@@ -332,6 +381,7 @@ export class DurableMcp {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.options.namespaces(undefined);
     this.options.uninstall(this.extension);
     await Promise.allSettled(this.servers.map((server) => server.connection?.close()));
   }
@@ -339,15 +389,11 @@ export class DurableMcp {
   /**
    * Pi's tool policy (`AgentSession._isAllowedTool` and `_isActivatable`): exclusions and the
    * allow list match exact names or `*` patterns, and an allow list that names no `mcp__` entry
-   * keeps MCP tools that tool search can load (not `direct` ones), as classic keeps them for
-   * codemode and tool search. Durable has no codemode, so an allow list naming `codemode` also
-   * permits `tool_search`, the way durable reaches what classic reaches through codemode.
+   * keeps the MCP tools codemode and tool search reach (not `direct` ones).
    */
   private permitted(name: string, exposure: McpExposure): boolean {
     if (this.excluded?.(name)) return false;
     if (!this.allowed || this.allowed(name)) return true;
-    if (name === DURABLE_TOOL_SEARCH_NAME)
-      return this.allowed("codemode") && !this.excluded?.("codemode");
     if (this.allowlistFiltersMcp || !this.internals.isMcpToolName(name)) return false;
     return exposure !== "direct";
   }
@@ -405,6 +451,13 @@ export class DurableMcp {
       ...(description ? { description } : {}),
       ...(connection.instructions ? { instructions: connection.instructions } : {}),
     };
+    // Tool names are `mcp__<server>__<tool>` with the server name sanitized like the namespace.
+    this.namespaces.set(server, {
+      name: namespace.name,
+      ...(description ? { description } : {}),
+      prefix: `${namespace.name}__`,
+    });
+    this.options.namespaces([...this.namespaces.values()]);
     const current = new Map<string, Registered>();
     // Like Pi: every tool whose name sanitizes to the same name gets the hash suffix, so which
     // one keeps the plain name does not depend on the order of the list.
@@ -439,7 +492,7 @@ export class DurableMcp {
         readableResources: () => this.resourceConnections().includes(connection),
       });
       current.set(name, {
-        tool: durableTool(definition),
+        tool: durableTool(definition, exposure),
         exposure,
         document: this.internals.createToolSearchDocument(definition, namespace),
       });
@@ -447,7 +500,7 @@ export class DurableMcp {
     this.serverTools.set(server, current);
     this.syncResourceTools();
     this.publish();
-    this.offerTools(this.directToolNames());
+    this.offerTools(this.enabledToolNames());
   }
 
   /** Connected servers with resources whose exposure is not `hidden`, which the resource tools reach. */
@@ -466,7 +519,7 @@ export class DurableMcp {
         .filter((server) => server.connection?.hasResources)
         .map((server) => exposureOf(server.entry)),
     );
-    const exposure = (["direct", "deferred"] as const).find((candidate) =>
+    const exposure = (["direct", "codemode", "deferred"] as const).find((candidate) =>
       exposures.has(candidate),
     );
     if (!exposure) {
@@ -477,7 +530,7 @@ export class DurableMcp {
     this.resourceTools = this.internals
       .createMcpResourceToolDefinitions({ exposure, servers: () => this.resourceConnections() })
       .map((definition) => ({
-        tool: durableTool(definition),
+        tool: durableTool(definition, exposure),
         exposure,
         document: this.internals.createToolSearchDocument(definition),
       }));
@@ -496,9 +549,10 @@ export class DurableMcp {
     ];
   }
 
-  private directToolNames(): string[] {
+  /** Every tool the policy permits: offered when `direct`, else callable by scripts and loadable. */
+  private enabledToolNames(): string[] {
     return this.registered()
-      .filter((item) => item.exposure === "direct" && this.permitted(item.tool.name, "direct"))
+      .filter((item) => this.permitted(item.tool.name, item.exposure))
       .map((item) => item.tool.name);
   }
 
@@ -574,16 +628,20 @@ export class DurableMcp {
         if (!Number.isInteger(max) || max <= 0) throw new Error("limit must be a positive integer");
         await this.reconnectSignedIn();
         await this.waitFor(
-          this.servers.filter((server) => configuredExposures(server.entry).has("deferred")),
+          this.servers.filter((server) =>
+            [...configuredExposures(server.entry)].some(
+              (exposure) => exposure === "deferred" || exposure === "codemode",
+            ),
+          ),
           Number.POSITIVE_INFINITY,
           context.abortSignal,
         );
         const offered = new Set((await api.agent(context)).tools.map((tool) => tool.name));
         const candidates = this.registered().filter(
           (item) =>
-            item.exposure === "deferred" &&
+            item.exposure !== "direct" &&
             !offered.has(item.tool.name) &&
-            this.permitted(item.tool.name, "deferred"),
+            this.permitted(item.tool.name, item.exposure),
         );
         const matches = new this.internals.Bm25Ranker().rank(
           query,

@@ -357,11 +357,11 @@ export type SandboxMcpOptions = Required<
 >;
 
 /**
- * Sandboxes and server durable sessions have no codemode (sandbox scripts would be
- * model-written code running on the host; durable has no codemode port). Pi registers
+ * Classic sandbox sessions have no codemode (Pi's codemode is not given to them). Pi registers
  * `codemode` and `deferred` tools identically and differs only in which tool reaches them,
  * so `deferred` keeps every tool reachable through `tool_search`. Pi's config loader has
- * already resolved the `codemode-deferred` alias to `codemode`.
+ * already resolved the `codemode-deferred` alias to `codemode`. Durable sandbox sessions have
+ * codemode and keep each server's exposure.
  */
 export function withoutCodemode(entry: McpServerEntry): McpServerEntry {
   const toDeferred = (exposure: unknown): unknown =>
@@ -373,6 +373,17 @@ export function withoutCodemode(entry: McpServerEntry): McpServerEntry {
       Object.entries(config.toolExposure).map(([tool, exposure]) => [tool, toDeferred(exposure)]),
     );
   return { ...entry, config: config as unknown as McpServerEntry["config"] };
+}
+
+/** `options` for a classic sandbox session: every server's codemode exposure becomes `deferred`. */
+export function classicSandboxMcp(options: SandboxMcpOptions): SandboxMcpOptions {
+  return {
+    ...options,
+    loadConfig: (ctx) => {
+      const loaded = options.loadConfig(ctx);
+      return { ...loaded, servers: loaded.servers.map(withoutCodemode) };
+    },
+  };
 }
 
 /** No picks: load nothing, so Pi's default loader never reads host or project config. */
@@ -440,15 +451,12 @@ export function createSandboxMcpOptions(input: {
         projectTrusted: false,
       });
       const errors = [...loaded.errors];
-      const servers = loaded.servers
-        .filter((entry) => {
-          if (!selected.has(entry.name)) return false;
-          const reason = blockReason(entry);
-          if (reason)
-            errors.push(`MCP server "${entry.name}" is blocked in this sandbox: ${reason}`);
-          return !reason;
-        })
-        .map(withoutCodemode);
+      const servers = loaded.servers.filter((entry) => {
+        if (!selected.has(entry.name)) return false;
+        const reason = blockReason(entry);
+        if (reason) errors.push(`MCP server "${entry.name}" is blocked in this sandbox: ${reason}`);
+        return !reason;
+      });
       for (const name of selected)
         if (!loaded.servers.some((entry) => entry.name === name))
           errors.push(`MCP server "${name}" is selected for this sandbox but not in mcp.json.`);

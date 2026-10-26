@@ -81,7 +81,7 @@ import {
   createMcpBuiltinExtensions,
   isBuiltinExtensionPath,
 } from "./host-mcp-extensions.js";
-import { sandboxMcpForWorkspace } from "./sandbox-mcp.js";
+import { classicSandboxMcp, sandboxMcpForWorkspace } from "./sandbox-mcp.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import { createNotifyExtension } from "./session-notify-extension.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
@@ -1297,20 +1297,23 @@ export class SdkBackend implements AgentBackend {
       // run inside the VM. Servers connect at session_start, after the VM exists below.
       let sandboxVm: GondolinVm | undefined;
       const sandboxMcpPicks = sandboxMode ? (workspace?.sandboxConfig?.mcpServers ?? []) : [];
+      // A classic sandbox has no codemode: its servers' codemode tools load through tool_search.
       const sandboxMcp =
         sandboxMode && workspace
-          ? await sandboxMcpForWorkspace({
-              workspace,
-              agentDir: runtimeAgentDir,
-              dataDir: config.dataDir ?? join(runtimeAgentDir, "oppi"),
-              guestCwd,
-              // This session's own VM. Re-ensuring could stop a newer session's VM whose
-              // settings differ, and bring back this session's older Allowed Hosts.
-              vm: async () => {
-                if (!sandboxVm) throw new Error("The sandbox VM is not ready");
-                return sandboxVm;
-              },
-            })
+          ? classicSandboxMcp(
+              await sandboxMcpForWorkspace({
+                workspace,
+                agentDir: runtimeAgentDir,
+                dataDir: config.dataDir ?? join(runtimeAgentDir, "oppi"),
+                guestCwd,
+                // This session's own VM. Re-ensuring could stop a newer session's VM whose
+                // settings differ, and bring back this session's older Allowed Hosts.
+                vm: async () => {
+                  if (!sandboxVm) throw new Error("The sandbox VM is not ready");
+                  return sandboxVm;
+                },
+              }),
+            )
           : undefined;
 
       // Resource loader: follow Pi's normal cwd/settings/package discovery.

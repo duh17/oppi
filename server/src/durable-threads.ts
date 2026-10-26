@@ -251,6 +251,9 @@ export class DurableThreads {
       loaded: this.deps.runtime.loadedPackages,
       classic: this.deps.runtime.classicExtensions,
       enabled: (name) => this.deps.runtime.isExtensionEnabled(name),
+      // A child gets the Pi Tools setting's tools its parent offers.
+      piTools: new Set(agent.tools.map((tool) => tool.name)),
+      codemode: this.deps.runtime.codemode,
       sessions: this.deps.runtime.sessionsExtension,
       spawn: grant,
       // Children report to their parent; only top-level sessions notify the user.

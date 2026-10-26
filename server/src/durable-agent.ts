@@ -46,10 +46,11 @@ export type OppiAgentState = {
   /** False when the Agent's instructions replace the prompt: no `project_context` section. */
   projectContext?: false;
   /**
-   * An exact Extension selection: Pi package durable extensions by name, MCP or not, and the
-   * names of selected Extensions the session runs without (no durable version), for its warning.
+   * An exact Extension selection: Pi package durable extensions by name, MCP and codemode or not,
+   * and the names of selected Extensions the session runs without (no durable version), for its
+   * warning.
    */
-  extensions?: { packages: string[]; mcp: boolean; skipped?: string[] };
+  extensions?: { packages: string[]; mcp: boolean; codemode: boolean; skipped?: string[] };
   /** The tool policy, also applied to tools added when the session attaches again. */
   tools?: DurableToolPolicy;
 };
@@ -103,7 +104,7 @@ function durableInstructions(options: {
 
 /**
  * Pi's built-in tool names (`allToolNames`, `pi-coding-agent` dist/core/tools/index.js). Durable
- * offers them through CodingTools (read, bash, edit, write) and the sandbox tools (ls, find, grep).
+ * offers them through CodingTools (read, bash, edit, write) and the file tools (ls, find, grep).
  */
 const PI_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "read",
@@ -117,16 +118,46 @@ const PI_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Pi's tool policy (`createAgentSession` in `pi-coding-agent` dist/core/sdk.js): an allow list is
- * the enabled set and overrides `noTools`; otherwise `noTools: "all"` enables nothing and
- * `"builtin"` drops only Pi's built-in tools, keeping extension and MCP tools. `excluded` always
- * applies.
+ * The tools Pi's `defaultTools` setting (the Pi Tools page) turns on and off: Pi's built-in tools
+ * and the tools of its built-in `codemode` and `tool-search` extensions. Every other tool, an
+ * extension's or an MCP server's, is on unless a tool policy says otherwise.
  */
-export function toolAllowed(policy: DurableToolPolicy | undefined, name: string): boolean {
+const PI_TOOLS_SETTING_NAMES: ReadonlySet<string> = new Set([
+  ...PI_BUILTIN_TOOL_NAMES,
+  "codemode",
+  "tool_search",
+]);
+
+/** Pi's `DEFAULT_TOOL_NAMES` (`pi-coding-agent` dist/core/settings-manager.js), not exported. */
+const PI_DEFAULT_TOOL_NAMES = ["read", "bash", "edit", "write"];
+
+/**
+ * The tools Pi's `defaultTools` enables for a session whose settings are `settings`, as
+ * `createAgentSession` reads it: plain names replace Pi's defaults, `+name` and `-name` edit them.
+ */
+export function piDefaultTools(settings: {
+  getDefaultTools(): string[] | undefined;
+}): ReadonlySet<string> {
+  return new Set(settings.getDefaultTools() ?? PI_DEFAULT_TOOL_NAMES);
+}
+
+/**
+ * Pi's tool policy (`createAgentSession` in `pi-coding-agent` dist/core/sdk.js): an allow list is
+ * the enabled set and overrides `noTools` and `defaultTools`; otherwise `noTools: "all"` enables
+ * nothing, `"builtin"` drops only Pi's built-in tools, keeping extension and MCP tools, and a tool
+ * the Pi Tools setting governs is on only when `piTools` (`piDefaultTools`) names it. `excluded`
+ * always applies.
+ */
+export function toolAllowed(
+  policy: DurableToolPolicy | undefined,
+  name: string,
+  piTools: ReadonlySet<string>,
+): boolean {
   if (policy?.excluded?.includes(name)) return false;
   if (policy?.allowed) return policy.allowed.includes(name);
   if (policy?.noTools === "all") return false;
-  return !(policy?.noTools === "builtin" && PI_BUILTIN_TOOL_NAMES.has(name));
+  if (policy?.noTools === "builtin" && PI_BUILTIN_TOOL_NAMES.has(name)) return false;
+  return !PI_TOOLS_SETTING_NAMES.has(name) || piTools.has(name);
 }
 
 /** What Oppi knows of the classic Extensions a saved Agent selects by ID. */
@@ -138,16 +169,16 @@ export interface ClassicExtensionIndex {
 }
 
 const MCP_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}mcp`;
+const CODEMODE_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}codemode`;
 const TOOL_SEARCH_EXTENSION_ID = `${BUILTIN_EXTENSION_PATH_PREFIX}tool-search`;
 
 /**
  * The durable extensions a saved Agent's exact Extension selection names. `builtin:mcp` is the
  * session's own MCP extension, which brings durable's `tool_search` (it searches MCP tools, so
- * `builtin:tool-search` needs `builtin:mcp`). An ID whose durable version Oppi bundles is in every
- * session already. Any other ID must belong to a Pi package whose durable entry is loaded for this
- * runtime and enabled. The rest, `builtin:codemode` among them (durable sessions have no codemode;
- * MCP tools classic reaches through it load through `tool_search`), are `skipped` by name: the
- * session starts without them and warns.
+ * `builtin:tool-search` needs `builtin:mcp`), and `builtin:codemode` is pi-durable's codemode, as
+ * in classic. An ID whose durable version Oppi bundles is in every session already. Any other ID
+ * must belong to a Pi package whose durable entry is loaded for this runtime and enabled. The rest
+ * are `skipped` by name: the session starts without them and warns.
  */
 export function resolveDurableExtensionSelection(
   extensionIds: readonly string[],
@@ -155,14 +186,20 @@ export function resolveDurableExtensionSelection(
   classic: ClassicExtensionIndex,
   runtime: "host" | "sandbox",
   enabled: (name: string) => boolean,
-): { packages: LoadedDurableExtension[]; mcp: boolean; skipped: string[] } {
+): { packages: LoadedDurableExtension[]; mcp: boolean; codemode: boolean; skipped: string[] } {
   const ids = new Set(extensionIds);
   const mcp = ids.has(MCP_EXTENSION_ID);
+  const codemode = ids.has(CODEMODE_EXTENSION_ID);
   const packages: LoadedDurableExtension[] = [];
   // By name: two IDs of one package are one skipped Extension.
   const skipped = new Set<string>();
   for (const id of ids) {
-    if (id === MCP_EXTENSION_ID || (id === TOOL_SEARCH_EXTENSION_ID && mcp)) continue;
+    if (
+      id === MCP_EXTENSION_ID ||
+      id === CODEMODE_EXTENSION_ID ||
+      (id === TOOL_SEARCH_EXTENSION_ID && mcp)
+    )
+      continue;
     if (classic.bundled.has(id)) continue;
     const found = loaded.find((candidate) => candidate.extensionIds.includes(id));
     if (found?.runtimes.includes(runtime) && enabled(found.extension.name)) {
@@ -176,7 +213,7 @@ export function resolveDurableExtensionSelection(
           : id),
     );
   }
-  return { packages, mcp, skipped: [...skipped] };
+  return { packages, mcp, codemode, skipped: [...skipped] };
 }
 
 /**
@@ -202,13 +239,16 @@ const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set(["read", "bash"]);
  * document's policy becomes that allow list. `excludeTools` alone only adds exclusions: the
  * policy keeps its shape, so a tool the child gets later, such as an MCP or `notify` tool that
  * only exists at attach, is not dropped for being outside a list nobody asked for. Either way
- * every tool resolved here but absent from the parent is excluded by name, so the stored policy
- * also caps the tools a saved Agent's packages would add at attach.
+ * every tool of the child's extensions absent from the parent is excluded by name, so the stored
+ * policy also caps what an attach would add: a saved Agent's package tools, and Pi tools the Pi
+ * Tools setting enables (`selectable`, before the setting filters them out of `tools`).
  */
 function narrowTools(
   tools: readonly ToolRegistration[],
+  selectable: readonly ToolRegistration[],
   policy: DurableToolPolicy | undefined,
   narrowing: DurableToolNarrowing,
+  piTools: ReadonlySet<string>,
 ): { tools: ToolRegistration[]; policy: DurableToolPolicy } {
   const offered = new Set(narrowing.parentTools);
   const named = narrowing.tools === undefined ? undefined : new Set(narrowing.tools);
@@ -219,14 +259,14 @@ function narrowTools(
     : named;
   // A package extension the child starts with may offer tools the parent never had: the cap is
   // the parent's set, so store them as exclusions too and a later attach cannot bring them back.
-  const unoffered = tools.filter((tool) => !offered.has(tool.name)).map((tool) => tool.name);
+  const unoffered = selectable.filter((tool) => !offered.has(tool.name)).map((tool) => tool.name);
   const excluded = [
     ...new Set([...(policy?.excluded ?? []), ...(narrowing.excludeTools ?? []), ...unoffered]),
   ];
   const kept = tools.filter(
     (tool) =>
       offered.has(tool.name) &&
-      toolAllowed(policy, tool.name) &&
+      toolAllowed(policy, tool.name, piTools) &&
       (wanted === undefined || wanted.has(tool.name)) &&
       !excluded.includes(tool.name),
   );
@@ -276,6 +316,13 @@ interface DurableAgentInput {
   classic: ClassicExtensionIndex;
   /** Whether the server enables the durable extension of this name (`isExtensionEnabled`). */
   enabled: (name: string) => boolean;
+  /**
+   * The tools of the Pi Tools setting this session gets (`piDefaultTools`): the setting for a
+   * top-level session, the parent's tools for a child.
+   */
+  piTools: ReadonlySet<string>;
+  /** pi-durable's `codemode`; an exact Extension selection keeps it only with `builtin:codemode`. */
+  codemode: Extension;
   /** Oppi's extension that offers `subagent`. */
   sessions: Extension;
   spawn: boolean;
@@ -328,6 +375,11 @@ export function resolveDurableAgent(input: DurableAgentInput): {
           runtime,
           input.enabled,
         );
+  // An exact selection without `builtin:codemode` has no codemode, as a classic one loads none.
+  const base =
+    selection && !selection.codemode
+      ? kept.filter((extension) => extension.name !== input.codemode.name)
+      : kept;
   const packages = !saved
     ? []
     : (selection?.packages ?? loaded.filter((entry) => entry.runtimes.includes(runtime))).map(
@@ -335,7 +387,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
       );
   // A disabled extension leaves every selection, a child's copy of its parent's included.
   const extensions = [
-    ...kept,
+    ...base,
     ...(input.spawn ? [input.sessions] : []),
     ...(input.notifies ? [input.notify] : []),
     ...packages,
@@ -347,8 +399,16 @@ export function resolveDurableAgent(input: DurableAgentInput): {
     input.inherited?.tools;
   const resolved: ToolRegistration[] = extensions
     .flatMap((extension) => extension.tools ?? [])
-    .filter((tool) => toolAllowed(policy, tool.name));
-  const narrowed = input.narrow ? narrowTools(resolved, policy, input.narrow) : undefined;
+    .filter((tool) => toolAllowed(policy, tool.name, input.piTools));
+  const narrowed = input.narrow
+    ? narrowTools(
+        resolved,
+        extensions.flatMap((extension) => extension.tools ?? []),
+        policy,
+        input.narrow,
+        input.piTools,
+      )
+    : undefined;
   const tools: ToolRegistration[] = narrowed?.tools ?? resolved;
   const toolPolicy: DurableToolPolicy | undefined = narrowed?.policy ?? policy;
 
@@ -390,6 +450,7 @@ export function resolveDurableAgent(input: DurableAgentInput): {
               extensions: {
                 packages: selection.packages.map((entry) => entry.extension.name),
                 mcp: selection.mcp,
+                codemode: selection.codemode,
                 ...(selection.skipped.length ? { skipped: selection.skipped } : {}),
               },
             }

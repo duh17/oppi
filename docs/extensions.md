@@ -19,7 +19,7 @@ Oppi adds a lifecycle-journal extension and Pi's built-ins to each managed sessi
 | --- | --- |
 | Managed host | `mcp`, `codemode`, `tool-search` |
 | Managed sandbox | `mcp`, `tool-search` (no `codemode`) |
-| Durable | None of Pi's; native durable extensions instead ([Durable extensions](#durable-extensions)) |
+| Durable (host and sandbox) | Durable versions of `mcp`, `codemode`, and `tool_search`, and native durable extensions instead of Pi's ([Durable extensions](#durable-extensions)). An Agent's exact selection keeps `codemode` only with `builtin:codemode`. |
 | Oppi Mirror | None; the terminal's own Pi loads its built-ins |
 
 `-builtin:<name>` in Pi settings, an Agent's exact extension selection, or another extension that registers the same tool, command, or flag can leave a built-in out ([MCP, codemode, and tool search](server-configuration.md#mcp-servers-codemode-and-tool-search)). A Pi extension can register a tool named `oppi`; Oppi does not reserve that name.

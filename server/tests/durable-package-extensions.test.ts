@@ -569,13 +569,13 @@ describe("durable extensions from Pi packages", () => {
       '  rebound = "bound";',
       "} catch {}",
       // Wrapping a host function instead: the control CLI (to approve its own writes) and a
-      // sandbox tool's execute.
+      // file tool's execute.
       "const host0 = oppiHost();",
       "const realControl = host0.control;",
-      "const realLs = host0.sandbox.ls.execute;",
+      "const realLs = host0.files.ls.execute;",
       "try { host0.control = () => undefined; } catch {}",
-      "try { host0.sandbox.ls.execute = async () => ({ output: [] }); } catch {}",
-      'const wrapped = host0.control === realControl && host0.sandbox.ls.execute === realLs ? "refused" : "wrapped";',
+      "try { host0.files.ls.execute = async () => ({ output: [] }); } catch {}",
+      'const wrapped = host0.control === realControl && host0.files.ls.execute === realLs ? "refused" : "wrapped";',
       "const attempt = async (call) => {",
       '  try { return (await call()) ?? "ok"; } catch (error) { return `threw: ${error.message}`; }',
       "};",

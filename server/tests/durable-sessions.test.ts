@@ -3183,8 +3183,8 @@ describe("durable engine on create requests", () => {
     expect(meta.agent).toEqual({ id: agent.id, version: 1 });
 
     // A selection the durable engine cannot fully honor still starts: MCP and tool search
-    // come with `builtin:mcp`, a Pi package whose durable version Oppi bundles is that
-    // built-in, and the rest (codemode, classic-only Extensions) are named as skipped.
+    // come with `builtin:mcp`, codemode with `builtin:codemode`, a Pi package whose durable
+    // version Oppi bundles is that built-in, and classic-only Extensions are named as skipped.
     const agentDir = process.env.PI_CODING_AGENT_DIR!;
     const twin = join(agentDir, "extensions", "my-ask");
     mkdirSync(twin, { recursive: true });
@@ -3234,11 +3234,12 @@ describe("durable engine on create requests", () => {
     ).toEqual({
       packages: [],
       mcp: true,
-      skipped: ["commit-trailer", "extension_missing", "codemode"],
+      codemode: true,
+      skipped: ["commit-trailer", "extension_missing"],
     });
     // The session row says what it runs without, once, also after another attach.
     const warnings = [
-      "Selected Agent Extensions are not loaded in this durable session (no durable version, or turned off with oppi extensions disable): commit-trailer, extension_missing, codemode. Edit the Agent's selected Extensions, or start it Classic, to use them.",
+      "Selected Agent Extensions are not loaded in this durable session (no durable version, or turned off with oppi extensions disable): commit-trailer, extension_missing. Edit the Agent's selected Extensions, or start it Classic, to use them.",
     ];
     expect(f.storage.getSession(pluggedId)?.warnings).toEqual(warnings);
     await f.manager.stopSession(pluggedId);

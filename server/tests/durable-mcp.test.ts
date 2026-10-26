@@ -60,6 +60,8 @@ async function fixture(
   responses: FauxResponseStep[],
   sandboxConfig?: NonNullable<Workspace["sandboxConfig"]>,
   tools?: NonNullable<Session["launch"]>["tools"],
+  /** The Pi Tools setting (`defaultTools`); Pi's default when unset. */
+  defaultTools?: string[],
 ) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-mcp-test-"));
   const models = await ModelRuntime.create({
@@ -80,6 +82,7 @@ async function fixture(
       defaultModel: "faux-1",
       defaultThinkingLevel: "off",
       compaction: { enabled: false },
+      ...(defaultTools ? { defaultTools } : {}),
     }),
   );
   const storage = new Storage(dir);
@@ -229,34 +232,50 @@ describe("server durable MCP (host)", () => {
     }, "echo server to exit after Stop");
   });
 
-  it("loads deferred (codemode-default) tools only through tool_search and keeps them after a restart", async () => {
+  it("turns codemode on for a codemode server, whose tools scripts call and tool_search loads, and keeps loaded ones after a restart", async () => {
     const marker = join(agentDir, "echo.marker");
-    // No exposure: Pi's default is codemode, which durable sessions reach through tool_search.
+    // No exposure: Pi's default, codemode. The Pi Tools setting adds tool_search but not
+    // codemode: the server turns codemode on, as in classic.
     writeMcpJson(agentDir, { echo: echoServer(marker) });
-    const f = await fixture([
-      fauxAssistantMessage([fauxToolCall("mcp__echo__echo", { text: "early" })], {
-        stopReason: "toolUse",
-      }),
-      fauxAssistantMessage([fauxToolCall("tool_search", { query: "echo text back" })], {
-        stopReason: "toolUse",
-      }),
-      fauxAssistantMessage([fauxToolCall("mcp__echo__echo", { text: "found" })], {
-        stopReason: "toolUse",
-      }),
-      fauxAssistantMessage("SEARCH_DONE"),
-    ]);
+    const f = await fixture(
+      [
+        fauxAssistantMessage([fauxToolCall("mcp__echo__echo", { text: "early" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage(
+          [
+            fauxToolCall("codemode", {
+              code: 'console.log(await tools.mcp__echo__echo({ text: "script" }));',
+            }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage([fauxToolCall("tool_search", { query: "echo text back" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage([fauxToolCall("mcp__echo__echo", { text: "found" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage("SEARCH_DONE"),
+      ],
+      undefined,
+      undefined,
+      ["+tool_search"],
+    );
     await f.manager.startSession(f.session.id, f.workspace);
     await prompt(f.manager, f.session.id, "Find and use the echo tool");
 
     const calls = read(marker)
       .split("\n")
       .filter((line) => line.startsWith("call "));
-    expect(calls).toEqual(['call echo {"text":"found"}']);
+    // Not offered to the model before tool_search loads it, but scripts call it.
+    expect(calls).toEqual(['call echo {"text":"script"}', 'call echo {"text":"found"}']);
     const results = await toolResults(f.manager, f.session.id);
-    expect(results).toHaveLength(3);
+    expect(results).toHaveLength(4);
     expect(results[0]).not.toContain("echo:early");
-    expect(results[1]).toContain("mcp__echo__echo");
-    expect(results[2]).toContain("echo:found");
+    expect(results[1]).toContain("echo:script");
+    expect(results[2]).toContain("mcp__echo__echo");
+    expect(results[3]).toContain("echo:found");
 
     // A new server process and Harness: the loaded tool stays offered without a search.
     await f.manager.close();
@@ -276,7 +295,7 @@ describe("server durable MCP (host)", () => {
     expect((await toolResults(restarted, f.session.id)).at(-1)).toContain("echo:again");
   });
 
-  it("follows Pi's tool policy: an allow list naming codemode reaches MCP through tool_search, never direct or excluded tools", async () => {
+  it("follows Pi's tool policy: an allow list naming codemode lets scripts reach MCP tools, never direct or excluded ones", async () => {
     const marker = (name: string) => join(agentDir, `${name}.marker`);
     writeMcpJson(agentDir, {
       echo: echoServer(marker("echo")),
@@ -293,8 +312,15 @@ describe("server durable MCP (host)", () => {
         }),
         fauxAssistantMessage(
           [
-            fauxToolCall("mcp__echo__echo", { text: "found" }),
-            fauxToolCall("mcp__secret__echo", { text: "excluded" }),
+            fauxToolCall("codemode", {
+              code: [
+                'console.log(await tools.mcp__echo__echo({ text: "script" }));',
+                'for (const name of ["mcp__secret__echo", "mcp__loud__echo"]) {',
+                '  try { await tools[name]({ text: "no" }); console.log(name, "called"); }',
+                '  catch { console.log(name, "unavailable"); }',
+                "}",
+              ].join("\n"),
+            }),
           ],
           { stopReason: "toolUse" },
         ),
@@ -311,12 +337,16 @@ describe("server durable MCP (host)", () => {
       read(marker(name))
         .split("\n")
         .filter((line) => line.startsWith("call "));
-    expect(calls("echo")).toEqual(['call echo {"text":"found"}']);
+    expect(calls("echo")).toEqual(['call echo {"text":"script"}']);
     expect(calls("loud")).toEqual([]);
     expect(calls("secret")).toEqual([]);
     const results = await toolResults(f.manager, f.session.id);
-    expect(results[1]).toContain("mcp__echo__echo");
-    expect(results[1]).not.toContain("mcp__secret__echo");
+    // The allow list names neither the direct tool nor tool_search: the model gets neither.
+    expect(results[0]).not.toContain("echo:direct");
+    expect(results[1]).not.toContain("mcp__echo__echo");
+    expect(results[2]).toContain("echo:script");
+    expect(results[2]).toContain("mcp__secret__echo unavailable");
+    expect(results[2]).toContain("mcp__loud__echo unavailable");
   });
 
   it("in a sandbox, loads only picked global servers, runs stdio in the VM, and refuses hosts outside Allowed Hosts", async () => {
@@ -324,7 +354,7 @@ describe("server durable MCP (host)", () => {
     const rootsEnv = (name: string) => ({ MCP_ECHO_MARKER: marker(name), MCP_ECHO_ROOTS: "1" });
     writeMcpJson(agentDir, {
       picked: echoServer(marker("picked"), { exposure: "direct", env: rootsEnv("picked") }),
-      // Default exposure is codemode, which a sandbox never gets: tool_search only.
+      // Default exposure, codemode: scripts call it in the sandbox too.
       lazy: echoServer(marker("lazy"), { env: rootsEnv("lazy") }),
       unpicked: echoServer(marker("unpicked"), { exposure: "direct" }),
       remote: { url: "https://evil.test/mcp", exposure: "direct" },
@@ -392,13 +422,16 @@ describe("server durable MCP (host)", () => {
 
     const { harness } = await opening.mock.results.at(-1)!.value;
     const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId as ConversationId;
-    const offered = (
-      await (await harness.conversation(id, BACKGROUND_CONTEXT))!.agent(BACKGROUND_CONTEXT)
-    ).tools.map((tool: { name: string }) => tool.name);
-    expect(offered).toEqual(expect.arrayContaining(["tool_search", "mcp__picked__echo"]));
+    const agent = await (await harness.conversation(id, BACKGROUND_CONTEXT))!.agent(
+      BACKGROUND_CONTEXT,
+    );
+    const offered = agent.tools.map((tool: { name: string }) => tool.name);
+    expect(offered).toEqual(expect.arrayContaining(["codemode", "mcp__picked__echo"]));
     expect(offered.filter((name: string) => name.startsWith("mcp__"))).toEqual([
       "mcp__picked__echo",
     ]);
+    // The codemode server keeps its exposure in a sandbox: callable from scripts, not offered.
+    expect(agent.callable.map((tool: { name: string }) => tool.name)).toContain("mcp__lazy__echo");
   });
 
   it.each([

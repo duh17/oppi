@@ -11,21 +11,37 @@ import {
 } from "../src/durable-agent.js";
 import { DurableMcp } from "../src/durable-mcp.js";
 import { bindOppiHost } from "../src/durable-extension-api.js";
-import { sandboxHost } from "../src/durable-sandbox-host.js";
+import { fileToolsHost } from "../src/durable-file-tools-host.js";
 import type { Session } from "../src/types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
 
-// The sandbox tools' entry reads the host when it is evaluated, as the loader's import does.
+// The file tools' entry reads the host when it is evaluated, as the loader's import does.
 bindOppiHost({
-  sandbox: sandboxHost,
+  files: fileToolsHost,
   sessions: () => undefined,
   control: () => undefined,
   notify: () => undefined,
 });
-const { default: DurableSandboxTools } =
-  await import("../extensions/durable/sandbox-tools/durable.js");
+const { default: DurableFileTools } = await import("../extensions/durable/file-tools/durable.js");
 
 type Policy = NonNullable<NonNullable<Session["launch"]>["tools"]>;
+
+/** A Pi Tools setting that enables every tool it governs, so only the policy decides. */
+const EVERY_PI_TOOL: ReadonlySet<string> = new Set([
+  "read",
+  "bash",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+  "codemode",
+  "tool_search",
+]);
+const Codemode = defineExtension({
+  name: "codemode",
+  tools: [{ name: "codemode" } as unknown as ToolRegistration],
+});
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -38,10 +54,12 @@ function toolsFor(policy: Policy, narrow?: DurableToolNarrowing): string[] {
     ...(narrow ? { narrow } : {}),
     policy,
     runtime: "sandbox",
-    base: [CodingTools, DurableSandboxTools, DurableAsk],
+    base: [CodingTools, DurableFileTools, DurableAsk],
     loaded: [],
     classic: { bundled: new Set(), names: new Map() },
     enabled: () => true,
+    piTools: EVERY_PI_TOOL,
+    codemode: Codemode,
     sessions: defineExtension({ name: "oppi.sessions" }),
     spawn: false,
     grant: false,
@@ -62,6 +80,78 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     expect(toolsFor({ noTools: "builtin", allowed: ["read", "ask"], excluded: ["ask"] })).toEqual([
       "read",
     ]);
+  });
+
+  it("offers the Pi tools the Pi Tools setting enables; an allow list overrides the setting", () => {
+    const offered = (piTools: readonly string[], policy?: Policy): string[] =>
+      resolveDurableAgent({
+        ...(policy ? { policy } : {}),
+        runtime: "host",
+        base: [CodingTools, DurableFileTools, DurableAsk, Codemode],
+        loaded: [],
+        classic: { bundled: new Set(), names: new Map() },
+        enabled: () => true,
+        piTools: new Set(piTools),
+        codemode: Codemode,
+        sessions: defineExtension({ name: "oppi.sessions" }),
+        spawn: false,
+        grant: false,
+        notify: defineExtension({ name: "oppi.notify" }),
+        notifies: false,
+      })
+        .change.tools.map((tool) => tool.name)
+        .sort();
+    // Pi's defaults: no ls, find, grep, or codemode; an extension's tool is always on.
+    expect(offered(["read", "bash", "edit", "write"])).toEqual([
+      "ask",
+      "bash",
+      "edit",
+      "read",
+      "write",
+    ]);
+    expect(offered(["read", "bash", "codemode", "grep"])).toEqual([
+      "ask",
+      "bash",
+      "codemode",
+      "grep",
+      "read",
+    ]);
+    // An allow list is the enabled set, past what the setting turns on or off.
+    expect(offered(["read"], { allowed: ["write", "codemode", "ask"] })).toEqual([
+      "ask",
+      "codemode",
+      "write",
+    ]);
+  });
+
+  it("gives a saved Agent with an exact Extension selection codemode only with builtin:codemode", () => {
+    const launch = (extensionIds: string[]) =>
+      resolveDurableAgent({
+        saved: {
+          id: "agent-1",
+          version: 1,
+          definition: { name: "Exact", resources: { extensionIds } },
+        },
+        runtime: "sandbox",
+        base: [CodingTools, DurableAsk, Codemode],
+        loaded: [],
+        classic: { bundled: new Set(), names: new Map() },
+        enabled: () => true,
+        piTools: EVERY_PI_TOOL,
+        codemode: Codemode,
+        sessions: defineExtension({ name: "oppi.sessions" }),
+        spawn: false,
+        grant: false,
+        notify: defineExtension({ name: "oppi.notify" }),
+        notifies: false,
+      });
+    const selected = launch(["builtin:codemode"]);
+    expect(selected.change.tools.map((tool) => tool.name)).toContain("codemode");
+    expect(selected.doc.extensions).toEqual({ packages: [], mcp: false, codemode: true });
+    const without = launch(["builtin:mcp"]);
+    expect(without.change.extensions.map((extension) => extension.name)).not.toContain("codemode");
+    expect(without.change.tools.map((tool) => tool.name)).not.toContain("codemode");
+    expect(without.doc.extensions).toEqual({ packages: [], mcp: true, codemode: false });
   });
 
   it("narrows a spawn's tools and never widens them past the parent's", () => {
@@ -94,10 +184,12 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     const { change, doc } = resolveDurableAgent({
       narrow,
       runtime: "sandbox",
-      base: [CodingTools, DurableSandboxTools, DurableAsk],
+      base: [CodingTools, DurableFileTools, DurableAsk],
       loaded: [],
       classic: { bundled: new Set(), names: new Map() },
       enabled: () => true,
+      piTools: EVERY_PI_TOOL,
+      codemode: Codemode,
       sessions: defineExtension({ name: "oppi.sessions" }),
       spawn: false,
       grant: false,
@@ -106,12 +198,12 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     });
     expect(change.tools.map((tool) => tool.name).sort()).toEqual(["ask", "read"]);
     // The policy is not an allow list: a tool this session only gets at attach still passes.
-    expect(toolAllowed(doc.tools, "write")).toBe(false);
-    expect(toolAllowed(doc.tools, "mcp_echo_run")).toBe(true);
-    expect(toolAllowed(doc.tools, "notify")).toBe(true);
+    expect(toolAllowed(doc.tools, "write", EVERY_PI_TOOL)).toBe(false);
+    expect(toolAllowed(doc.tools, "mcp_echo_run", EVERY_PI_TOOL)).toBe(true);
+    expect(toolAllowed(doc.tools, "notify", EVERY_PI_TOOL)).toBe(true);
     // What the parent did not offer is excluded by name, so nothing can widen the child later.
     for (const absent of ["bash", "edit", "ls"])
-      expect(toolAllowed(doc.tools, absent), absent).toBe(false);
+      expect(toolAllowed(doc.tools, absent, EVERY_PI_TOOL), absent).toBe(false);
   });
 
   it("caps a saved Agent's package tool at spawn when the parent lacks it", () => {
@@ -143,6 +235,8 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
       ],
       classic: { bundled: new Set(), names: new Map() },
       enabled: () => true,
+      piTools: EVERY_PI_TOOL,
+      codemode: Codemode,
       sessions: defineExtension({ name: "oppi.sessions" }),
       spawn: false,
       grant: false,
@@ -152,20 +246,47 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
     // It starts with the parent's intersection only.
     expect(change.tools.map((tool) => tool.name).sort()).toEqual(["ask", "read"]);
     // The stored policy carries the cap, so an attach that loads `pkg` cannot add it back.
-    expect(toolAllowed(doc.tools, "pkg_only")).toBe(false);
+    expect(toolAllowed(doc.tools, "pkg_only", EVERY_PI_TOOL)).toBe(false);
     expect(doc.tools?.excluded).toContain("pkg_only");
     // A tool that only exists at attach is still allowed.
-    expect(toolAllowed(doc.tools, "mcp_echo_run")).toBe(true);
+    expect(toolAllowed(doc.tools, "mcp_echo_run", EVERY_PI_TOOL)).toBe(true);
+  });
+
+  it("caps a narrowed child at its parent's Pi tools, so an attach with the Pi Tools setting cannot add one back", () => {
+    // The parent offers no bash (its own Agent excluded it); the child spawns with another Agent.
+    const parentTools = ["read", "edit", "write"];
+    const { change, doc } = resolveDurableAgent({
+      saved: { id: "agent-b", version: 1, definition: { name: "B" } },
+      narrow: { parentTools, excludeTools: ["write"] },
+      runtime: "host",
+      base: [CodingTools, DurableFileTools, Codemode],
+      loaded: [],
+      classic: { bundled: new Set(), names: new Map() },
+      enabled: () => true,
+      piTools: new Set(parentTools),
+      codemode: Codemode,
+      sessions: defineExtension({ name: "oppi.sessions" }),
+      spawn: false,
+      grant: false,
+      notify: defineExtension({ name: "oppi.notify" }),
+      notifies: false,
+    });
+    expect(change.tools.map((tool) => tool.name).sort()).toEqual(["edit", "read"]);
+    // At attach, the server's Pi Tools setting enables every Pi tool; the policy still says no.
+    for (const absent of ["bash", "write", "grep", "codemode"])
+      expect(toolAllowed(doc.tools, absent, EVERY_PI_TOOL), absent).toBe(false);
   });
 
   it("stores the narrowed list as the tool policy, so a later attach cannot widen it", async () => {
     const { doc, change } = resolveDurableAgent({
       narrow: { parentTools: ["read", "bash", "ask"], readOnly: true },
       runtime: "sandbox",
-      base: [CodingTools, DurableSandboxTools, DurableAsk],
+      base: [CodingTools, DurableFileTools, DurableAsk],
       loaded: [],
       classic: { bundled: new Set(), names: new Map() },
       enabled: () => true,
+      piTools: EVERY_PI_TOOL,
+      codemode: Codemode,
       sessions: defineExtension({ name: "oppi.sessions" }),
       spawn: false,
       grant: false,
@@ -190,9 +311,11 @@ describe("durable tool policy, as Pi's createAgentSession", () => {
         agentDir,
         projectTrusted: false,
         policy,
+        piTools: EVERY_PI_TOOL,
         providerToken: async () => undefined,
         install: () => {},
         uninstall: () => {},
+        namespaces: () => {},
       });
 
     expect(await open({ noTools: "all" })).toBeUndefined();

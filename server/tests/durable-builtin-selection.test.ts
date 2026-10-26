@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -27,30 +27,34 @@ import type { ServerMessage, Session } from "../src/types.js";
 // not change any of it.
 
 /**
- * Recorded from the server before built-ins became packages (main at c68f8ca64). Note the
- * reattached host and child sessions: their `{ add }` edit applies to the Harness default
- * selection, which includes the sandbox tools; only their `read` wrap is active, and it reads
- * the host as before.
+ * Every workspace session selects the file tools and codemode; the Pi Tools setting (Pi's
+ * defaults here: read, bash, edit, write) decides which of their tools it offers, so neither
+ * ls, find, grep, nor codemode is offered. Note the reattached sessions: their `{ add }` edit
+ * applies to the Harness default selection.
  */
 const PINNED = {
   host: {
     created: {
       stored: [
         "coding-tools",
+        "oppi.file-tools",
         "ask",
         "working-words",
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "codemode",
         "oppi.sessions",
       ],
       extensions: [
         "coding-tools",
+        "oppi.file-tools",
         "ask",
         "working-words",
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "codemode",
         "oppi.sessions",
       ],
       tools: [
@@ -69,6 +73,7 @@ const PINNED = {
         "background-jobs",
         "project_context",
         "skills",
+        "codemode",
         "sessions",
         "instructions",
       ],
@@ -76,25 +81,27 @@ const PINNED = {
     reattached: {
       stored: {
         add: [
+          "oppi.file-tools",
           "ask",
           "working-words",
           "background-jobs",
           "oppi.sessions",
           "project-context",
           "sql-explorer",
+          "codemode",
         ],
-        // No device registered for pushes: no `notify`.
         remove: ["oppi.notify"],
       },
       extensions: [
         "coding-tools",
-        "oppi.sandbox-tools",
+        "oppi.file-tools",
         "ask",
         "working-words",
         "background-jobs",
         "oppi.sessions",
         "project-context",
         "sql-explorer",
+        "codemode",
       ],
       tools: [
         "read",
@@ -113,6 +120,7 @@ const PINNED = {
         "sessions",
         "project_context",
         "skills",
+        "codemode",
         "instructions",
       ],
     },
@@ -121,22 +129,24 @@ const PINNED = {
     created: {
       stored: [
         "coding-tools",
-        "oppi.sandbox-tools",
+        "oppi.file-tools",
         "ask",
         "working-words",
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "codemode",
         "oppi.sessions",
       ],
       extensions: [
         "coding-tools",
-        "oppi.sandbox-tools",
+        "oppi.file-tools",
         "ask",
         "working-words",
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "codemode",
         "oppi.sessions",
       ],
       tools: [
@@ -144,9 +154,6 @@ const PINNED = {
         "write",
         "edit",
         "bash",
-        "ls",
-        "find",
-        "grep",
         "ask",
         "background_job",
         "sqlite_schema",
@@ -158,6 +165,7 @@ const PINNED = {
         "background-jobs",
         "project_context",
         "skills",
+        "codemode",
         "sessions",
         "instructions",
       ],
@@ -165,33 +173,33 @@ const PINNED = {
     reattached: {
       stored: {
         add: [
+          "oppi.file-tools",
           "ask",
           "working-words",
           "background-jobs",
           "oppi.sessions",
           "project-context",
           "sql-explorer",
+          "codemode",
         ],
         remove: ["oppi.notify"],
       },
       extensions: [
         "coding-tools",
-        "oppi.sandbox-tools",
+        "oppi.file-tools",
         "ask",
         "working-words",
         "background-jobs",
         "oppi.sessions",
         "project-context",
         "sql-explorer",
+        "codemode",
       ],
       tools: [
         "read",
         "write",
         "edit",
         "bash",
-        "ls",
-        "find",
-        "grep",
         "ask",
         "background_job",
         "sqlite_schema",
@@ -204,6 +212,7 @@ const PINNED = {
         "sessions",
         "project_context",
         "skills",
+        "codemode",
         "instructions",
       ],
     },
@@ -212,19 +221,23 @@ const PINNED = {
     created: {
       stored: [
         "coding-tools",
+        "oppi.file-tools",
         "ask",
         "working-words",
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "codemode",
       ],
       extensions: [
         "coding-tools",
+        "oppi.file-tools",
         "ask",
         "working-words",
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "codemode",
       ],
       tools: [
         "read",
@@ -236,21 +249,37 @@ const PINNED = {
         "sqlite_schema",
         "sqlite_query",
       ],
-      sections: ["ask-guidelines", "background-jobs", "project_context", "skills", "instructions"],
+      sections: [
+        "ask-guidelines",
+        "background-jobs",
+        "project_context",
+        "skills",
+        "codemode",
+        "instructions",
+      ],
     },
     reattached: {
       stored: {
-        add: ["ask", "working-words", "background-jobs", "project-context", "sql-explorer"],
+        add: [
+          "oppi.file-tools",
+          "ask",
+          "working-words",
+          "background-jobs",
+          "project-context",
+          "sql-explorer",
+          "codemode",
+        ],
         remove: ["oppi.sessions", "oppi.notify"],
       },
       extensions: [
         "coding-tools",
-        "oppi.sandbox-tools",
+        "oppi.file-tools",
         "ask",
         "working-words",
         "background-jobs",
         "project-context",
         "sql-explorer",
+        "codemode",
       ],
       tools: [
         "read",
@@ -262,7 +291,14 @@ const PINNED = {
         "sqlite_schema",
         "sqlite_query",
       ],
-      sections: ["ask-guidelines", "background-jobs", "project_context", "skills", "instructions"],
+      sections: [
+        "ask-guidelines",
+        "background-jobs",
+        "project_context",
+        "skills",
+        "codemode",
+        "instructions",
+      ],
     },
   },
   control: {
@@ -338,7 +374,8 @@ afterEach(async () => {
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 });
 
-async function fixture(responses: FauxResponseStep[] = []) {
+/** `defaultTools` is the Pi Tools setting; Pi's default when unset. */
+async function fixture(responses: FauxResponseStep[] = [], defaultTools?: string[]) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-selection-"));
   // No user packages: only Oppi's own extensions.
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
@@ -360,6 +397,7 @@ async function fixture(responses: FauxResponseStep[] = []) {
       defaultModel: "faux-1",
       defaultThinkingLevel: "off",
       compaction: { enabled: false },
+      ...(defaultTools ? { defaultTools } : {}),
     }),
   );
   const opening = vi.spyOn(SessionHost.prototype, "open");
@@ -463,6 +501,138 @@ describe("durable built-in selection", () => {
       control: await createdAndReattached(f, control),
     };
     expect(pinned).toEqual(PINNED);
+  });
+
+  it("offers the Pi tools the Pi Tools setting enables: host grep and a codemode script over them", async () => {
+    const f = await fixture(
+      [
+        fauxAssistantMessage([fauxToolCall("grep", { pattern: "needle" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage(
+          [
+            fauxToolCall("codemode", {
+              code: [
+                'const found = await tools.grep({ pattern: "needle" });',
+                'const text = await tools.read({ path: "notes.txt" });',
+                'console.log("SCRIPT", typeof found, text.trim());',
+              ].join("\n"),
+            }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage([fauxToolCall("write", { path: "x.txt", content: "no" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage("Done."),
+      ],
+      ["+grep", "+codemode", "-write"],
+    );
+    const { session, workspace } = workspaceSession(f, "host");
+    writeFileSync(join(f.dir, "notes.txt"), "a needle in the hay\n");
+
+    await f.manager.startSession(session.id, workspace);
+    const created = await selection(f, session.id);
+    expect(created.tools).toEqual(expect.arrayContaining(["grep", "codemode", "read"]));
+    expect(created.tools).not.toContain("write");
+    expect(created.tools).not.toContain("ls");
+
+    const ended = new Promise<void>((resolve) => {
+      const unsubscribe = f.manager.subscribe(session.id, (message: ServerMessage) => {
+        if (message.type !== "agent_end") return;
+        unsubscribe();
+        resolve();
+      });
+    });
+    await f.manager.sendPrompt(session.id, "Find the needle");
+    await ended;
+    const harness: Harness = (await f.opening.mock.results.at(-1)!.value).harness;
+    const id = f.storage.getSession(session.id)!.serverDurable!.conversationId as ConversationId;
+    const page = await (await harness.conversation(id, context))!.entries(
+      {},
+      50,
+      undefined,
+      context,
+    );
+    const results = page.items
+      .map((entry) => entry.model?.[0])
+      .filter((message) => message?.role === "toolResult")
+      .map((message) => JSON.stringify(message?.content));
+    expect(results).toEqual(
+      expect.arrayContaining([
+        // Pi's grep ran over the host workspace.
+        expect.stringContaining("notes.txt:1: a needle in the hay"),
+        // The script called the same tools as nested calls.
+        expect.stringContaining("SCRIPT string a needle in the hay"),
+        // The setting's `-write` leaves the model without it.
+        expect.stringContaining("Tool write is not available"),
+      ]),
+    );
+    expect(existsSync(join(f.dir, "x.txt"))).toBe(false);
+    await f.manager.stopSession(session.id);
+  });
+
+  it("runs a sandbox session's codemode script tools in its VM", async () => {
+    const f = await fixture(
+      [
+        fauxAssistantMessage(
+          [
+            fauxToolCall("codemode", {
+              code: 'const run = await tools.bash({ command: "echo from-script" }); console.log("EXIT", run.exitCode);',
+            }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage("Done."),
+      ],
+      ["+codemode"],
+    );
+    const commands: string[] = [];
+    vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue({
+      ...vm,
+      exec: (argv, options) => {
+        const command = [...(argv as string[])].join(" ");
+        if (!command.includes("oppi-exec")) return vm.exec(argv, options);
+        // A guest shell: its process identity line, then the command's output.
+        commands.push(command);
+        const result = { ok: true, exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0) };
+        return Object.assign(Promise.resolve(result), {
+          async *output() {
+            yield { stream: "stdout" as const, data: Buffer.from("42 12345\nfrom-script\n") };
+          },
+          write() {},
+          end() {},
+        });
+      },
+    });
+    const { session, workspace } = workspaceSession(f, "sandbox");
+    await f.manager.startSession(session.id, workspace);
+    expect((await selection(f, session.id)).tools).toContain("codemode");
+
+    const ended = new Promise<void>((resolve) => {
+      const unsubscribe = f.manager.subscribe(session.id, (message: ServerMessage) => {
+        if (message.type !== "agent_end") return;
+        unsubscribe();
+        resolve();
+      });
+    });
+    await f.manager.sendPrompt(session.id, "Run it");
+    await ended;
+    // The script's nested bash ran in the guest, not on the host.
+    expect(commands.some((command) => command.includes("echo from-script"))).toBe(true);
+    const harness: Harness = (await f.opening.mock.results.at(-1)!.value).harness;
+    const id = f.storage.getSession(session.id)!.serverDurable!.conversationId as ConversationId;
+    const page = await (await harness.conversation(id, context))!.entries(
+      {},
+      50,
+      undefined,
+      context,
+    );
+    const result = page.items
+      .map((entry) => entry.model?.[0])
+      .find((message) => message?.role === "toolResult");
+    expect(JSON.stringify(result?.content)).toContain("EXIT 0");
+    await f.manager.stopSession(session.id);
   });
 
   it("offers notify only while the server does, and sends a call through it", async () => {

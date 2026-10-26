@@ -30,6 +30,7 @@ import {
   CompactionEntry,
   ResetEntry,
 } from "@earendil-works/pi-durable";
+import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { computeCacheWaste } from "./cache-miss.js";
 import {
@@ -46,6 +47,7 @@ import {
 import { durableUnsupportedFeature, type AgentDefinition } from "./agent-launch-service.js";
 import {
   OppiAgentDoc,
+  piDefaultTools,
   resolveDurableAgent,
   toolAllowed,
   type OppiAgentState,
@@ -341,14 +343,19 @@ export class DurableBackend implements AgentBackend {
     const host = options.host;
     const agentDir = getAgentDir();
     const control = isControlConversation(session);
-    const launched = control
-      ? undefined
-      : await DurableBackend.launchedAs(options, { hostCwd, cwd, sandbox });
-    const skipped = launched?.doc?.extensions?.skipped;
-    if (skipped?.length) recordSkippedExtensionsWarning(session, skipped);
     // Sandboxes see only the workspace, as SDK sandbox sessions: trusted.
     const projectTrusted =
       sandbox || (!control && (await resolveProjectTrust(hostCwd, agentDir, options)));
+    // The Pi Tools setting, as a classic session reads it. A sandbox reads only the global one:
+    // the project's `.pi/settings.json` is in the guest-writable workspace.
+    const piTools = piDefaultTools(
+      SettingsManager.create(hostCwd, agentDir, { projectTrusted: projectTrusted && !sandbox }),
+    );
+    const launched = control
+      ? undefined
+      : await DurableBackend.launchedAs(options, { hostCwd, cwd, sandbox, piTools });
+    const skipped = launched?.doc?.extensions?.skipped;
+    if (skipped?.length) recordSkippedExtensionsWarning(session, skipped);
     // A sandbox's workspace VM comes first: its Skills and context files are what this VM
     // mounts and reads, whichever session booted it. Before the conversation exists, so a
     // saved Agent selection the VM cannot present still fails the launch before it binds.
@@ -398,9 +405,11 @@ export class DurableBackend implements AgentBackend {
                   }
                 : {}),
               policy: session.launch?.tools,
+              piTools,
               providerToken: (provider) => registry.getApiKeyForProvider(provider),
               install: (extension) => host.runtime.installExtension(extension),
               uninstall: (extension) => host.runtime.uninstallExtension(extension),
+              namespaces: (namespaces) => host.runtime.setMcpNamespaces(session.id, namespaces),
               metrics: options.metrics,
             });
           });
@@ -409,6 +418,7 @@ export class DurableBackend implements AgentBackend {
         hostCwd,
         cwd,
         mcp,
+        piTools,
         launched,
         sandboxEnv,
         resources,
@@ -427,7 +437,7 @@ export class DurableBackend implements AgentBackend {
    */
   private static async launchedAs(
     options: DurableBackendOptions,
-    target: { hostCwd: string; cwd: string; sandbox: boolean },
+    target: { hostCwd: string; cwd: string; sandbox: boolean; piTools: ReadonlySet<string> },
   ): Promise<LaunchedAs> {
     const { harness, session, host } = options;
     const id = session.serverDurable?.conversationId as ConversationId | undefined;
@@ -455,6 +465,8 @@ export class DurableBackend implements AgentBackend {
       loaded: host.runtime.loadedPackages,
       classic: host.runtime.classicExtensions,
       enabled: (name) => host.runtime.isExtensionEnabled(name),
+      piTools: target.piTools,
+      codemode: host.runtime.codemode,
       sessions: host.runtime.sessionsExtension,
       spawn,
       grant,
@@ -471,6 +483,7 @@ export class DurableBackend implements AgentBackend {
       hostCwd: string;
       cwd: string;
       mcp: DurableMcp | undefined;
+      piTools: ReadonlySet<string>;
       launched: LaunchedAs | undefined;
       sandboxEnv: GondolinExecutionEnv | undefined;
       resources: DurableProjectResources;
@@ -501,7 +514,12 @@ export class DurableBackend implements AgentBackend {
     const spawn = launched?.spawn === true;
     // Asked again on every attach: push may have turned on or off since the last one.
     const notifies = host.runtime.offersNotify(session.id);
-    const builtIns = host.runtime.attachedBuiltIns(spawn, notifies);
+    // A saved Agent's exact Extension selection without `builtin:codemode` has none.
+    const codemode = launched?.doc?.extensions?.codemode !== false;
+    const builtIns = [
+      ...host.runtime.attachedBuiltIns(spawn, notifies),
+      ...(codemode ? [host.runtime.codemode] : []),
+    ];
     let conversation: Conversation;
     if (id !== undefined) {
       const existing = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
@@ -539,10 +557,11 @@ export class DurableBackend implements AgentBackend {
           : {
               extensions: {
                 add: [...builtIns, ...packageExtensions, ...(mcp ? [mcp.selection] : [])],
-                // The host default selection includes both.
+                // The host default selection includes all three.
                 remove: [
                   ...(spawn ? [] : [host.runtime.sessionsExtension]),
                   ...(notifies ? [] : [host.runtime.notifyExtension]),
+                  ...(codemode ? [] : [host.runtime.codemode]),
                 ],
               },
             },
@@ -551,9 +570,13 @@ export class DurableBackend implements AgentBackend {
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const policy = session.launch?.tools;
       const selected = new Set(agent.tools.map((tool) => tool.name));
-      const additions = (control ? [] : [...builtIns, ...packageExtensions])
+      // As Pi's `/reload`: a tool the Pi Tools setting newly enables joins; one it no longer
+      // enables stays until the session ends.
+      const additions = (control ? [] : [CodingTools, ...builtIns, ...packageExtensions])
         .flatMap((extension) => extension.tools ?? [])
-        .filter((tool) => !selected.has(tool.name) && toolAllowed(policy, tool.name));
+        .filter(
+          (tool) => !selected.has(tool.name) && toolAllowed(policy, tool.name, target.piTools),
+        );
       // Append names instead of rewriting the list from resolved tools: MCP tools a
       // previous attachment offered are not registered until their servers reconnect.
       if (additions.length)
@@ -570,8 +593,8 @@ export class DurableBackend implements AgentBackend {
         ? {
             ...created.change,
             cwd,
+            // MCP offers its tools, codemode, and tool search when it attaches, before a prompt.
             extensions: [...created.change.extensions, ...(mcp ? [mcp.selection] : [])],
-            tools: [...created.change.tools, ...(mcp?.initialTools ?? [])],
           }
         : {
             extensions: [...host.runtime.controlExtensions],
@@ -1002,9 +1025,10 @@ export class DurableBackend implements AgentBackend {
     const extension = this.host.runtime.liveVoiceExtension;
     const on = attached && this.host.runtime.isExtensionEnabled(extension.name);
     const policy = this.session.launch?.tools;
+    // `speak` is no tool of the Pi Tools setting: only the policy decides.
     const tools = (extension.tools ?? [])
       .map((tool) => tool.name)
-      .filter((name) => toolAllowed(policy, name));
+      .filter((name) => toolAllowed(policy, name, new Set()));
     const id = this.conversation.id;
     this.liveVoiceSelection = this.liveVoiceSelection
       .then(async () => {

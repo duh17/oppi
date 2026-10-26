@@ -77,8 +77,8 @@ export interface OppiDurableHost {
    * not make, or a conversation without a Session.
    */
   liveVoice(env: ExecutionEnv | undefined): ((text: string) => void) | undefined;
-  /** File tools over a sandbox session's Gondolin VM. */
-  readonly sandbox: OppiSandboxHost;
+  /** Pi's file tools over the host or a sandbox session's Gondolin VM. */
+  readonly files: OppiFileToolsHost;
 }
 
 const HOST = Symbol.for("oppi.durable.host");
@@ -94,14 +94,14 @@ export function oppiHost(): OppiDurableHost {
 /**
  * Server only: bind the host once, before any package loads. The slot cannot be written,
  * deleted, or bound again, and the host's objects are frozen, so package code cannot replace
- * the host or wrap one of its functions (`control`, a sandbox tool's `execute`).
+ * the host or wrap one of its functions (`control`, a file tool's `execute`).
  */
 export function bindOppiHost(host: OppiDurableHost): void {
   if (Object.hasOwn(globalThis, HOST))
     throw new Error("oppi/durable: the Oppi durable host is already bound");
   // Freeze is shallow: freeze each object a built-in calls through.
-  for (const tool of [host.sandbox.ls, host.sandbox.find, host.sandbox.grep]) Object.freeze(tool);
-  Object.freeze(host.sandbox);
+  for (const tool of [host.files.ls, host.files.find, host.files.grep]) Object.freeze(tool);
+  Object.freeze(host.files);
   Object.freeze(host);
   Object.defineProperty(globalThis, HOST, {
     value: host,
@@ -306,24 +306,27 @@ export interface DurableControlHost {
   readonly docsPath?: string;
 }
 
-// --- sandbox tools (`oppi.sandbox-tools`) ----------------------------------------------------
+// --- file tools (`oppi.file-tools`) ----------------------------------------------------------
 
-/** A file tool over the calling sandbox session's VM. Throws for any other execution env. */
-export interface OppiSandboxTool {
+/**
+ * A file tool over the calling session's execution env: the host for a host session, the VM for a
+ * sandbox session. Throws for an env the server did not make.
+ */
+export interface OppiFileTool {
   readonly description: string;
   readonly parameters: TSchema;
   execute(args: unknown, api: ToolExecutionApi, context: Context): Promise<ToolExecutionResult>;
 }
 
 /**
- * Gondolin operations behind the sandbox tools. Only schemas and descriptions come from Pi's
- * host tools; execution always runs over the invocation's sandbox VM, never host rg/fd.
+ * The operations behind Pi's ls, find, and grep. Schemas and descriptions are Pi's; a host session
+ * runs Pi's own tools in its cwd, a sandbox session runs them over its VM, never host rg/fd.
  */
-export interface OppiSandboxHost {
-  readonly ls: OppiSandboxTool;
-  readonly find: OppiSandboxTool;
-  /** Guest rg or grep. */
-  readonly grep: OppiSandboxTool;
+export interface OppiFileToolsHost {
+  readonly ls: OppiFileTool;
+  readonly find: OppiFileTool;
+  /** Host rg in a host session; guest rg or grep in a sandbox. */
+  readonly grep: OppiFileTool;
   /**
    * Read an image file (PNG, JPEG, GIF, WebP) through the sandbox VM. Undefined when the call
    * does not run in a sandbox or the file is not an image, so the caller reads it as text.

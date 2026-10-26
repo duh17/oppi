@@ -212,7 +212,7 @@ export async function discoverDurableExtensionPackages(agentDir: string): Promis
  * (next to `src/`, also in the build) whose `package.json` declares its entry like any package.
  */
 const BUNDLED_PACKAGES = [
-  "sandbox-tools",
+  "file-tools",
   "ask",
   "working-words",
   "background-jobs",

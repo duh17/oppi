@@ -27,7 +27,11 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
+import {
+  CODEMODE_TOOL_NAME,
+  createCodemodeExtension,
+  type CodemodeNamespace,
+} from "@earendil-works/pi-durable/codemode";
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import {
   existsSync,
@@ -51,7 +55,7 @@ import {
   type OppiDurableHost,
 } from "./durable-extension-api.js";
 import type { DurableControlCli } from "./durable-control-cli.js";
-import { sandboxHost } from "./durable-sandbox-host.js";
+import { fileToolsHost } from "./durable-file-tools-host.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import {
   BUNDLED_PACKAGES_DIR,
@@ -115,8 +119,10 @@ const STORE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
  * A store that cannot reopen after these is given up, so a broken disk does not loop forever.
  */
 const RECOVERY_DELAYS_MS = [0, 1_000, 5_000];
-/** VM memory of one control codemode script; the VM runs in a worker of the server process. */
-const CONTROL_SCRIPT_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
+/** VM memory of one codemode script; the VM runs in a worker of the server process. */
+const CODEMODE_SCRIPT_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
+/** Codemode script VMs running at once on this server, across every durable session. */
+const MAX_CODEMODE_SCRIPTS = 8;
 const METADATA_FILE = "meta.json";
 const STORAGE_FILE = "session.sqlite";
 
@@ -238,7 +244,7 @@ export interface DurableSessionBinding {
 
 /**
  * What Oppi's built-ins get from `oppiHost()`: the subagent and control hosts scoped to the
- * conversation that runs a tool call's env, and the Gondolin sandbox operations. One object for
+ * conversation that runs a tool call's env, and the file tools over the host or a sandbox VM. One object for
  * every runtime of the process, bound once before the first package loads.
  */
 const durableHost: OppiDurableHost = {
@@ -269,7 +275,7 @@ const durableHost: OppiDurableHost = {
     const sessionId = runtime.sessionIdOf(caller.host.storeId, caller.conversationId);
     return port && sessionId ? (text) => port.spoke(sessionId, text) : undefined;
   },
-  sandbox: sandboxHost,
+  files: fileToolsHost,
 };
 let durableHostBound = false;
 
@@ -1396,22 +1402,64 @@ export class DurableHarness {
    * (`failure` is the last error). Re-attach or end the sessions of that tree.
    */
   onHostRecovered?: (host: SessionHost, failure: unknown) => Promise<void>;
+  /** Script VMs running now, across every durable session (`acquireWorker`). */
+  private runningScripts = 0;
   /**
-   * Runs Oppi Control sessions' codemode scripts. A sandbox only holds defaults; each script
-   * gets its own VM worker, limited so a runaway script fails inside it, not the server.
+   * Runs every durable session's codemode scripts. A sandbox only holds defaults; each script
+   * gets its own VM worker, limited so a runaway script fails inside it, not the server, and at
+   * most `MAX_CODEMODE_SCRIPTS` run at once, so scripts a sandbox session starts cannot take the
+   * server's memory and CPU. Another one fails to start until one exits.
    */
-  private readonly controlSandbox = new CodemodeSandbox({
-    memoryLimitBytes: CONTROL_SCRIPT_MEMORY_LIMIT_BYTES,
+  private readonly codemodeSandbox = new CodemodeSandbox({
+    memoryLimitBytes: CODEMODE_SCRIPT_MEMORY_LIMIT_BYTES,
+    acquireWorker: () => {
+      if (this.runningScripts >= MAX_CODEMODE_SCRIPTS)
+        throw new Error(
+          `${MAX_CODEMODE_SCRIPTS} codemode scripts are already running on this server; try again when one finishes`,
+        );
+      this.runningScripts++;
+      return () => {
+        this.runningScripts--;
+      };
+    },
   });
+  /** Each open session's connected MCP servers, as codemode namespaces (`setMcpNamespaces`). */
+  private readonly mcpNamespaces = new Map<string, readonly CodemodeNamespace[]>();
   /**
-   * pi-durable's own `codemode` for Oppi Control sessions: scripts call the control tools as
-   * nested calls and resume after a restart without running finished calls again. No `models.*`:
-   * control has no use for classifiers or image generation.
+   * pi-durable's own `codemode`, one extension for every durable session: scripts call the
+   * conversation's tools as nested calls and resume after a restart without running finished
+   * calls again. The script VM has no host access; every effect is a nested tool call, which runs
+   * in the session's execution env (the Gondolin VM for a sandbox session). No `models.*`, as
+   * classic Pi's codemode. MCP servers are namespaces (`describeNamespace()`), read at each script
+   * start and prompt render from the servers the open sessions connect (`codemodeNamespaces`).
+   * Every workspace session
+   * selects it; whether it offers the tool is the Pi Tools setting's and MCP's, and its prompt
+   * section, which declares the tools scripts can call, renders only in a request that offers it.
    */
-  readonly controlCodemode = createCodemodeExtension({
-    sandbox: this.controlSandbox,
-    models: false,
-  });
+  readonly codemode: Extension = offeredSectionsOnly(
+    codemodeExtension(this.codemodeSandbox, () => this.codemodeNamespaces()),
+    CODEMODE_TOOL_NAME,
+  );
+
+  /** `sessionId`'s connected MCP servers as codemode namespaces; undefined when its MCP closes. */
+  setMcpNamespaces(sessionId: string, namespaces: readonly CodemodeNamespace[] | undefined): void {
+    if (namespaces) this.mcpNamespaces.set(sessionId, namespaces);
+    else this.mcpNamespaces.delete(sessionId);
+  }
+
+  /**
+   * Every open session's MCP servers, one namespace per tool name prefix (the first session's
+   * when two configure a server of one name differently). The codemode extension is one for every
+   * session; a prefix only matters for the tools a conversation has, and a namespace carries only
+   * the owner's configured description.
+   */
+  private codemodeNamespaces(): CodemodeNamespace[] {
+    const byPrefix = new Map<string, CodemodeNamespace>();
+    for (const namespaces of this.mcpNamespaces.values())
+      for (const namespace of namespaces)
+        if (!byPrefix.has(namespace.prefix)) byPrefix.set(namespace.prefix, namespace);
+    return [...byPrefix.values()];
+  }
 
   /**
    * @param bundledDir Where Oppi's bundled packages are; a test points it at a copy to reload.
@@ -1449,16 +1497,12 @@ export class DurableHarness {
 
   /** Every Oppi Control session's exact selection. Never part of `defaultExtensions`. */
   get controlExtensions(): readonly Extension[] {
-    return controlConversationExtensions(
-      (name) => this.builtIn(name),
-      this.controlCodemode,
-      CodingTools,
-    );
+    return controlConversationExtensions((name) => this.builtIn(name), this.codemode, CodingTools);
   }
 
   /**
-   * The Harness default selection: CodingTools and every built-in but control and live voice, in
-   * install order.
+   * The Harness default selection: CodingTools, every built-in but control and live voice, in
+   * install order, and codemode.
    * A conversation whose stored selection is an `{ add }` edit starts from it, so it never picks
    * up another session's MCP extension from the registry.
    */
@@ -1472,10 +1516,14 @@ export class DurableHarness {
             this.isExtensionEnabled(builtIn.extension.name),
         )
         .map((builtIn) => builtIn.extension),
+      this.codemode,
     ];
   }
 
-  /** What a new session of `runtime` starts from: CodingTools and the enabled built-ins it allows. */
+  /**
+   * What a new session of `runtime` starts from: CodingTools, the enabled built-ins it allows, and
+   * codemode. Which of their Pi tools it offers is the Pi Tools setting's (`toolAllowed`).
+   */
   builtInsFor(runtime: DurableExtensionRuntime): Extension[] {
     return [
       CodingTools,
@@ -1487,6 +1535,7 @@ export class DurableHarness {
             this.isExtensionEnabled(builtIn.extension.name),
         )
         .map((builtIn) => builtIn.extension),
+      this.codemode,
     ];
   }
 
@@ -1635,9 +1684,7 @@ export class DurableHarness {
     first: boolean,
   ): Promise<DurableExtensionReport> {
     const builtIns = await this.loadBuiltIns(registry, first);
-    // Installed so Oppi Control sessions can select it by name. Installing is not
-    // selecting: only `defaultExtensions` is the default selection of other conversations.
-    if (first) registry.install(this.controlCodemode);
+    if (first) registry.install(this.codemode);
     const packages = await this.loadPackages(registry);
     const report: DurableExtensionReport = {
       loaded: [...builtIns.loaded, ...packages.loaded],
@@ -1663,7 +1710,7 @@ export class DurableHarness {
     const found = bundledDurableExtensionPackages(this.bundledDir);
     // Names only: built-ins may offer a tool CodingTools has, as background-jobs does with `bash`.
     const result = await loadDurableExtensions(found.packages, {
-      names: reservedBy([CodingTools, this.controlCodemode]).names,
+      names: reservedBy([CodingTools, this.codemode]).names,
       tools: new Set(),
       tasks: installedTasks(registry),
     });
@@ -1715,7 +1762,7 @@ export class DurableHarness {
       ...reservedBy([
         CodingTools,
         ...this.bundled.map((builtIn) => builtIn.extension),
-        this.controlCodemode,
+        this.codemode,
       ]),
       // This load replaces or removes the previous packages' extensions, and their tasks with them.
       tasks: installedTasks(registry, new Set(previous.map((old) => old.extension.name))),
@@ -1969,8 +2016,36 @@ export class DurableHarness {
     this.closed = true;
     const hosts = [...this.hosts.values()];
     await Promise.all(hosts.map((host) => host.close()));
-    await this.controlSandbox.close();
+    await this.codemodeSandbox.close();
   }
+}
+
+/** pi-durable's codemode without `models.*`, with namespaces read at each use. */
+function codemodeExtension(
+  sandbox: CodemodeSandbox,
+  namespaces: () => readonly CodemodeNamespace[],
+): Extension {
+  return createCodemodeExtension({
+    sandbox,
+    models: false,
+    get namespaces() {
+      return namespaces();
+    },
+  });
+}
+
+/** `extension` whose prompt sections render only in a request that offers the tool `tool`. */
+function offeredSectionsOnly(extension: Extension, tool: string): Extension {
+  return {
+    ...extension,
+    sections: extension.sections?.map((section) => ({
+      ...section,
+      render: (input, context) =>
+        input.agent.tools.some((offered) => offered.name === tool)
+          ? section.render(input, context)
+          : undefined,
+    })),
+  };
 }
 
 /** Names and tool names a loaded package must not take from `extensions`. */

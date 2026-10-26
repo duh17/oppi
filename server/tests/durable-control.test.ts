@@ -169,7 +169,7 @@ async function fixture() {
   // The server's own codemode for control: its sandbox, memory limit, and options.
   const runtime = new DurableHarness(dir);
   runtimes.push(runtime);
-  return { dir, models, faux, host, run, real, codemode: runtime.controlCodemode, ...api };
+  return { dir, models, faux, host, run, real, codemode: runtime.codemode, ...api };
 }
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
