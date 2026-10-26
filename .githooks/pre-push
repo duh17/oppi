@@ -470,7 +470,8 @@ run_harness_gate() {
 run_server_gate() {
   (cd "$REPO_ROOT/server" && npm run check:server)
   local log_dir test_log
-  log_dir="$(git rev-parse --git-dir)/oppi/pre-push-logs"
+  # Absolute: the suites below run from server/, and the log redirect resolves there.
+  log_dir="$(git rev-parse --absolute-git-dir)/oppi/pre-push-logs"
   mkdir -p "$log_dir"
   test_log="$log_dir/server-$(date +%Y%m%d-%H%M%S).log"
   echo "[server] test log: $test_log"
