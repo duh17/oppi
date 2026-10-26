@@ -76,8 +76,6 @@ function makeSession(id: string, workspaceId = "w1", changedFiles: string[] = []
       mutatingToolCalls: changedFiles.length,
       filesChanged: changedFiles.length,
       changedFiles,
-      addedLines: 0,
-      removedLines: 0,
     },
   };
 }

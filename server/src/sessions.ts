@@ -819,7 +819,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   async getServerDurableTrace(
     sessionId: string,
     view: "context" | "full",
-    inlineUserImages?: boolean,
   ): Promise<TraceEvent[] | null> {
     return this.withDurableConversation(sessionId, (harness, conversationId) =>
       import("./durable-history.js").then(({ readDurableTrace }) => {
@@ -831,7 +830,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
           view,
           this.getEntryRenderers(sessionId),
           images,
-          inlineUserImages,
         );
       }),
     );

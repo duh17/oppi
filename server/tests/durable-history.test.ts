@@ -260,7 +260,7 @@ it("uses the same renderer set for cards and invalidates cursors when its versio
   expect(stale.page.staleCursor).toBe(true);
 });
 
-it("keeps a user photo inline for an app that cannot read stored-image refs", async () => {
+it("stores a user photo in the attachment store and emits a media ref", async () => {
   const f = await history({ stopped: false, image: true });
   const dataDir = mkdtempSync(join(tmpdir(), "oppi-durable-history-images-"));
   const images = { dataDir, sessionId: "session-1" };
@@ -278,22 +278,4 @@ it("keeps a user photo inline for an app that cannot read stored-image refs", as
     ).trace,
   );
   expect(storedPage?.media).toHaveLength(1);
-
-  const inline = `a photo\ndata:image/png;base64,${IMAGE_BASE64}`;
-  const inlineFull = photo(
-    await readDurableTrace(f.harness, f.id, "full", undefined, images, true),
-  );
-  expect(inlineFull?.text).toBe(inline);
-  expect(inlineFull?.media).toBeUndefined();
-  const inlinePage = photo(
-    (
-      await readDurableTracePage(f.harness, f.id, {
-        attachmentDataDir: dataDir,
-        attachmentSessionId: "session-1",
-        inlineUserImages: true,
-      })
-    ).trace,
-  );
-  expect(inlinePage?.text).toBe(inline);
-  expect(inlinePage?.media).toBeUndefined();
 });

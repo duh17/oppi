@@ -123,7 +123,7 @@ Images on a user message are stored once in the session attachment store, next t
 - A history entry carries `media[]` with the attachment record, the same shape as a tool `details.media[]` entry, instead of the image's data URI.
 - The Apple client fetches the bytes by reference, reserves each thumbnail's slot from `width` and `height`, opens the full-screen viewer on tap, and keeps decoded thumbnails in a shared cache so scrolling back does not download them again.
 - An image the server cannot store (over the 50 MB attachment cap, undecodable, or a write failure) stays an inline `data:image/...;base64,...` line, and the message keeps every image in order.
-- Older app builds that do not declare `user-image-refs` get the earlier inline shape ([App capabilities and older builds](../protocol/README.md#app-capabilities-and-older-builds)).
+- Builds 55 and older read only inline data URIs and are not supported ([Older app builds](../protocol/README.md#older-app-builds)).
 
 ## Direct file paths
 

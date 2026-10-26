@@ -1445,8 +1445,6 @@ function ensureSessionChangeStats(session: Session): NonNullable<Session["change
     mutatingToolCalls: 0,
     filesChanged: 0,
     changedFiles: [],
-    addedLines: 0,
-    removedLines: 0,
   };
   session.changeStats = stats;
   return stats;
@@ -1507,8 +1505,6 @@ export function updateSessionChangeStats(
     filesChanged: stats.filesChanged,
     changedFiles: stats.changedFiles,
     ...(stats.changedFilesOverflow > 0 ? { changedFilesOverflow: stats.changedFilesOverflow } : {}),
-    addedLines: 0,
-    removedLines: 0,
   };
 }
 

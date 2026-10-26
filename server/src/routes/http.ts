@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { gzipSync } from "node:zlib";
 
-import { stringifyForApp } from "../legacy-app-compat.js";
 import type { ApiError } from "../types.js";
 import type { RouteHelpers } from "./types.js";
 
@@ -34,7 +33,7 @@ async function parseBody<T>(req: IncomingMessage, options?: { maxBytes?: number 
 
 function json(res: ServerResponse, data: unknown, status = 200): void {
   res.writeHead(status, { "Content-Type": "application/json" });
-  res.end(stringifyForApp(res, data));
+  res.end(JSON.stringify(data));
 }
 
 /**
@@ -50,7 +49,7 @@ function compressedJson(
   data: unknown,
   status = 200,
 ): void {
-  const body = stringifyForApp(res, data);
+  const body = JSON.stringify(data);
   const acceptEncoding = req.headers?.["accept-encoding"];
   const supportsGzip = typeof acceptEncoding === "string" && acceptEncoding.includes("gzip");
 

@@ -388,7 +388,7 @@ describe("session_state_sessions columns-only migration", () => {
 
 /**
  * What a full read returned before, minus the stored workspace name. Pre-0.53 line counts
- * read back as 0, the value kept for Build 55.
+ * and their bookkeeping are dropped.
  */
 function expectedAfterMigration(legacy: Session): Session {
   const { workspaceName: _, ...session } = legacy;
@@ -396,7 +396,7 @@ function expectedAfterMigration(legacy: Session): Session {
   const { mutatingToolCalls, filesChanged, changedFiles } = session.changeStats;
   return {
     ...session,
-    changeStats: { mutatingToolCalls, filesChanged, changedFiles, addedLines: 0, removedLines: 0 },
+    changeStats: { mutatingToolCalls, filesChanged, changedFiles },
   };
 }
 

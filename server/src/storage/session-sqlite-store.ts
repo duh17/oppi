@@ -845,8 +845,7 @@ function buildSession(row: SessionRow): Session {
 
 /**
  * Known fields only: rows saved before 0.53 also hold estimated line counts and a
- * per-file line-count map that must not reach clients or stay in memory. The line
- * counts go out as 0 for Build 55 (see `SessionChangeStats.addedLines`).
+ * per-file line-count map that must not reach clients or stay in memory.
  */
 function projectChangeStats(stats: NonNullable<Session["changeStats"]>): Session["changeStats"] {
   return {
@@ -857,8 +856,6 @@ function projectChangeStats(stats: NonNullable<Session["changeStats"]>): Session
     ...(stats.changedFilesOverflow !== undefined
       ? { changedFilesOverflow: stats.changedFilesOverflow }
       : {}),
-    addedLines: 0,
-    removedLines: 0,
   };
 }
 

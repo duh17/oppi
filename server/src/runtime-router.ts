@@ -108,12 +108,8 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     return this.oppi.getServerDurableTraceOutline(sessionId);
   }
 
-  getServerDurableTrace(
-    sessionId: string,
-    view: "context" | "full",
-    inlineUserImages?: boolean,
-  ): Promise<TraceEvent[] | null> {
-    return this.oppi.getServerDurableTrace(sessionId, view, inlineUserImages);
+  getServerDurableTrace(sessionId: string, view: "context" | "full"): Promise<TraceEvent[] | null> {
+    return this.oppi.getServerDurableTrace(sessionId, view);
   }
 
   /** Startup belongs to Oppi, including a disconnected mirror promoted during open. */

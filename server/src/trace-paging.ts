@@ -18,8 +18,6 @@ export interface TracePageOptions {
   maxInitialReadBytes?: number;
   attachmentDataDir?: string;
   attachmentSessionId?: string;
-  /// Keep user-message images inline in `text` (see TraceReadOptions.inlineUserImages).
-  inlineUserImages?: boolean;
   /// Current in-memory tree leaf for the initial page. Omit for cursor and around-entry pages.
   leafId?: string | null;
   entryRenderers?: LiveEntryRendererSet | null;
@@ -128,7 +126,6 @@ export function readSessionTracePageFromFiles(
       maxInitialReadBytes,
       attachmentDataDir: options.attachmentDataDir,
       attachmentSessionId: options.attachmentSessionId,
-      inlineUserImages: options.inlineUserImages,
       entryRenderers: options.entryRenderers,
     });
   }
@@ -251,7 +248,6 @@ export function readSessionTracePageFromFiles(
       maxInitialReadBytes,
       attachmentDataDir: options.attachmentDataDir,
       attachmentSessionId: options.attachmentSessionId,
-      inlineUserImages: options.inlineUserImages,
       leafId: requestedLeafId,
       entryRenderers: options.entryRenderers,
     });
@@ -456,7 +452,6 @@ function readAroundTracePage(
     maxInitialReadBytes: number;
     attachmentDataDir?: string;
     attachmentSessionId?: string;
-    inlineUserImages?: boolean;
     leafId?: string;
     entryRenderers?: LiveEntryRendererSet | null;
   },
@@ -1275,14 +1270,13 @@ function formatEntries(
   entries: SessionEntry[],
   options: Pick<
     TracePageOptions,
-    "attachmentDataDir" | "attachmentSessionId" | "inlineUserImages" | "leafId" | "entryRenderers"
+    "attachmentDataDir" | "attachmentSessionId" | "leafId" | "entryRenderers"
   >,
 ): TraceEvent[] {
   return buildSessionContext(entries, {
     view: "full",
     attachmentDataDir: options.attachmentDataDir,
     attachmentSessionId: options.attachmentSessionId,
-    ...(options.inlineUserImages ? { inlineUserImages: true } : {}),
     ...(options.leafId !== undefined ? { leafId: options.leafId } : {}),
     ...(options.entryRenderers ? { entryRenderers: options.entryRenderers } : {}),
   });

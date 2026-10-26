@@ -101,6 +101,11 @@ Example:
 ### Removed
 
 - **Server:** `oppi pair --show-token` is gone. It printed the owner token, which the server rejects over the network, so it never helped pair a device.
+- **Protocol:** `changeStats.addedLines` and `changeStats.removedLines` on a session are no longer sent. They were always `0`, kept only for Build 55.
+
+### Migration notes
+
+- **Compatibility:** This server no longer supports Builds 55 and older; update the app to Build 56 or later. It stopped sending the older shapes those builds need: user images in session history do not show, because they are stored references these builds cannot read; a session list fails to load in Builds 53 and 54 when a session has a control domain they do not know (`extensions` or `themes`); and Build 55 and older fail to load sessions that have change stats, which no longer carry `addedLines` and `removedLines`.
 
 ## [0.53.0] - 2026-10-22
 

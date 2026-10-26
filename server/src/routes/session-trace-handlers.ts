@@ -2,7 +2,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { performance } from "node:perf_hooks";
 import { gzipSync } from "node:zlib";
 import { SessionTraceService, type SessionTraceViewMode } from "../session-trace-service.js";
-import { isLegacyAppRequest } from "../legacy-app-compat.js";
 import { admitSessionRoute } from "../session-route-scope.js";
 import type { Session, SessionEventsResponse } from "../types.js";
 import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
@@ -282,7 +281,6 @@ export function createSessionTraceRouteHandlers(
       session,
       traceView: resolveTraceView(url),
       includePresentationSegments: true,
-      inlineUserImages: isLegacyAppRequest(req, "user-image-refs"),
     });
     helpers.compressedJson(req, res, result);
   }
@@ -342,7 +340,6 @@ export function createSessionTraceRouteHandlers(
       targetEvents: targetEvents.value,
       previewBytes: previewBytes.value,
       includePresentationSegments: url.searchParams.get("presentation") === "mobile",
-      inlineUserImages: isLegacyAppRequest(req, "user-image-refs"),
     });
     if (!result) {
       helpers.error(res, 404, "Session trace not found");

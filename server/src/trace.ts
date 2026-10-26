@@ -59,12 +59,6 @@ export interface TraceReadOptions {
   leafId?: string | null;
   attachmentDataDir?: string;
   attachmentSessionId?: string;
-  /**
-   * Keep user-message images as data URIs in `text` instead of storing them and emitting `media`
-   * refs. For apps that cannot read refs (`legacy-app-compat.ts`); tool-result attachments are
-   * unaffected.
-   */
-  inlineUserImages?: boolean;
   /** Live registerEntryRenderer set for this process. Absent = hide custom cards. */
   entryRenderers?: LiveEntryRendererSet | null;
 }
@@ -993,7 +987,7 @@ function emitMessageEvents(
     // User images live in the session attachment store, so history does not carry their bytes
     // on every delivery. An image that cannot be stored keeps its data URI in `text`.
     const storedImages =
-      options.attachmentDataDir && options.attachmentSessionId && !options.inlineUserImages
+      options.attachmentDataDir && options.attachmentSessionId
         ? storeUserMessageImages({
             dataDir: options.attachmentDataDir,
             sessionId: options.attachmentSessionId,
