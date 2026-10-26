@@ -243,43 +243,6 @@ struct ToolPresentationConfigTests {
         #expect(voiceConfig.makeContentView() is ToolTimelineRowContentView)
     }
 
-    @Test func lifecycleOnlyCollapsedVoiceKeepsFullConfiguration() throws {
-        let harness = makeTimelineHarness(sessionId: "session-lifecycle-voice")
-        let audioLifecycle = AudioLifecycleCoordinator()
-        harness.coordinator.audioLifecycleCoordinator = audioLifecycle
-        audioLifecycle.updateAudioText(
-            itemID: "voice-lifecycle-collapsed",
-            text: "Hello from direct voice.",
-            playbackBehavior: .playNow
-        )
-
-        let voiceItem = ChatItem.toolCall(
-            id: "voice-lifecycle-collapsed",
-            tool: "voice_speak",
-            argsSummary: "text: hi",
-            outputPreview: "Hello from direct voice.",
-            outputByteCount: 24,
-            isError: false,
-            isDone: false
-        )
-        #expect(harness.reducer.toolDetailsStore.details(for: voiceItem.id) == nil)
-        #expect(!ToolContentDescriptorBuilder.inspect(tool: "arbitrary", context: .init(), includeOutput: false).audioOutput)
-
-        let voiceConfig = try #require(
-            harness.coordinator.toolRowConfiguration(itemID: voiceItem.id, item: voiceItem)
-                as? ToolTimelineRowConfiguration,
-            "lifecycle-only collapsed voice must keep ToolTimelineRowConfiguration"
-        )
-        guard case .audioMessage(let text, _, _, _, let playbackBehavior) = voiceConfig.expandedContent else {
-            Issue.record("lifecycle-only collapsed voice must keep audio expandedContent")
-            return
-        }
-        #expect(text == "Hello from direct voice.")
-        #expect(playbackBehavior == .playNow)
-        #expect(voiceConfig.sessionAttachmentFetcher != nil)
-        #expect(voiceConfig.makeContentView() is ToolTimelineRowContentView)
-    }
-
     @Test func collapsedParityToolsUseNativeToolConfiguration() {
         let harness = makeTimelineHarness(sessionId: "session-a")
         seedCollapsedParityToolArgs(in: harness)

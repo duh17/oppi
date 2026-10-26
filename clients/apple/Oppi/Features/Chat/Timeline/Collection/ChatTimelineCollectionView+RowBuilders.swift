@@ -437,16 +437,12 @@ extension ChatTimelineController {
         )
         let inspection = resolved.inspection
         let hasCanonicalAudioDetails = inspection.audioOutput
-        let hasLifecycleVoicePresentation = audioLifecycleCoordinator.map {
-            $0.presentation.timelinePresentation(for: itemID) != .hidden
-        } ?? false
 
         // One inspection serves chrome, native media and the inspector. Reading
         // stored output shares its String; collapsed generic documents stay lazy.
         // Branch before media adapters and fetcher closures.
-        // Voice-while-collapsed stays full when serialized audio details exist
-        // or the lifecycle coordinator already has a non-hidden presentation.
-        if !isExpanded && !hasCanonicalAudioDetails && !hasLifecycleVoicePresentation {
+        // Voice-while-collapsed stays full when serialized audio details exist.
+        if !isExpanded && !hasCanonicalAudioDetails {
             return makeCollapsedToolRowConfiguration(
                 itemID: itemID,
                 tool: tool,
@@ -607,10 +603,6 @@ extension ChatTimelineController {
             isDone: isDone,
             isInterrupted: reducer?.isToolInterrupted(itemID) == true,
             context: context
-        )
-        configuration.expandedContent = AudioTimelinePresentationAdapter.expandedContent(
-            from: audioLifecycleCoordinator?.presentation.timelinePresentation(for: itemID),
-            fallback: configuration.expandedContent
         )
         configuration.resourcePressure = resourcePressure
         configuration.rowWidth = timelineRowWidth()

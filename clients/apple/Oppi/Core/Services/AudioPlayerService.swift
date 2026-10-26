@@ -707,7 +707,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             func enqueue(minimumBytes: Int) {
                 let usable = pending.count - pending.count % frameBytes
                 guard usable >= max(minimumBytes, frameBytes),
-                      let buffer = pcm16LEBuffer(data: pending.prefix(usable), format: format) else { return }
+                      let buffer = LiveVoiceCaptureEngineHelper.pcm16LEBuffer(data: pending.prefix(usable), format: format) else { return }
                 pending.removeFirst(usable)
                 _ = enqueueStreamPCM(buffer, streamID: itemID)
             }
@@ -1107,7 +1107,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             return
         }
 
-        guard let buffer = pcm16LEBuffer(data: data, format: format) else {
+        guard let buffer = LiveVoiceCaptureEngineHelper.pcm16LEBuffer(data: data, format: format) else {
             recordVoicePlaybackError(source: "stream_pcm", phase: "chunk", errorKind: "decode")
             logger.error("Failed to decode audio stream PCM chunk")
             return
@@ -1197,29 +1197,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 "error_kind": errorKind ?? error.map(ChatSessionTelemetry.metricErrorKind(for:)) ?? "other",
             ]
         )
-    }
-
-    private func pcm16LEBuffer(data: Data, format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let channels = Int(format.channelCount)
-        guard channels > 0, data.count >= channels * 2 else { return nil }
-        let frameCount = data.count / (channels * 2)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)),
-              let floatChannels = buffer.floatChannelData else {
-            return nil
-        }
-
-        buffer.frameLength = AVAudioFrameCount(frameCount)
-        data.withUnsafeBytes { rawBuffer in
-            guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress else { return }
-            for frame in 0..<frameCount {
-                for channel in 0..<channels {
-                    let byteOffset = (frame * channels + channel) * 2
-                    let sample = Int16(bitPattern: UInt16(bytes[byteOffset]) | (UInt16(bytes[byteOffset + 1]) << 8))
-                    floatChannels[channel][frame] = max(-1, Float(sample) / 32768.0)
-                }
-            }
-        }
-        return buffer
     }
 
     private func scheduleStreamBuffer(
@@ -1447,17 +1424,17 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         nowPlayingItemTitle = title
     }
 
-    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    // periphery:ignore - test seam used by AudioPlayerServiceLifecycleTests
     func _startPCMStreamForTesting(id: String = "test-stream") {
         startAudioStream(id: id, sessionId: nil, sampleRate: 24_000, channels: 1)
     }
 
-    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    // periphery:ignore - test seam used by AudioPlayerServiceLifecycleTests
     func _rebuildPCMStreamForTesting() {
         rebuildCurrentAudioStreamEngine()
     }
 
-    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    // periphery:ignore - test seam used by AudioPlayerServiceLifecycleTests
     func _appendUnscheduledPCMBufferForTesting() -> UUID {
         guard let format = streamFormat,
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1) else {
@@ -1469,12 +1446,12 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         return pending.token
     }
 
-    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    // periphery:ignore - test seam used by AudioPlayerServiceLifecycleTests
     func _beginPCMConfigurationChangeForTesting(generation: Int) {
         beginStreamConfigurationChange(generation: generation)
     }
 
-    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    // periphery:ignore - test seam used by AudioPlayerServiceLifecycleTests
     func _completePCMBufferForTesting(
         token: UUID, streamID: String, generation: Int,
         callbackType: AVAudioPlayerNodeCompletionCallbackType = .dataPlayedBack,
@@ -1489,7 +1466,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     // periphery:ignore - schedules real PCM through the production path without autoplay preferences
     func _schedulePCMForTesting(_ data: Data) -> UUID? {
         guard streamNode != nil, let format = streamFormat, let id = streamID,
-              let buffer = pcm16LEBuffer(data: data, format: format) else { return nil }
+              let buffer = LiveVoiceCaptureEngineHelper.pcm16LEBuffer(data: data, format: format) else { return nil }
         return enqueueStreamPCM(buffer, streamID: id)
     }
 
@@ -1506,20 +1483,20 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
     }
 
-    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    // periphery:ignore - test seam used by AudioPlayerServiceLifecycleTests
     func _finishPCMConfigurationChangeForTesting(generation: Int, engineIsRunning: Bool) {
         finishStreamConfigurationChange(generation: generation, engineIsRunning: engineIsRunning)
     }
 
-    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    // periphery:ignore - test seam used by AudioPlayerServiceLifecycleTests
     func _setPausedForTesting(_ paused: Bool) {
         isPaused = paused
     }
 
-    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    // periphery:ignore - test seam used by AudioPlayerServiceLifecycleTests
     var _streamEngineGenerationForTesting: Int { streamEngineGeneration }
 
-    // periphery:ignore - test seam used by AudioLifecycleCoordinatorTests
+    // periphery:ignore - test seam used by AudioPlayerServiceLifecycleTests
     var _pendingPCMBufferCountForTesting: Int { streamPendingBuffers.count }
 
     // periphery:ignore - test seam used by websocket/audio lifecycle tests

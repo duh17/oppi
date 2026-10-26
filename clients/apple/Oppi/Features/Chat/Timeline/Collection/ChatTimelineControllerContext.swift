@@ -31,7 +31,6 @@ final class ChatTimelineControllerContext {
     var currentModel: String?
     var extensionSurface: SessionExtensionSurface?
     var extensionHiddenThinkingLabel: String?
-    var audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let interactionContext = TimelineInteractionContext()
 
     func didChangeSessionScope(for configuration: ChatTimelineConfiguration) -> Bool {
@@ -82,7 +81,6 @@ final class ChatTimelineControllerContext {
         currentModel = configuration.currentModel
         extensionSurface = configuration.extensionSurface
         extensionHiddenThinkingLabel = configuration.extensionHiddenThinkingLabel
-        audioLifecycleCoordinator = configuration.audioLifecycleCoordinator
         interactionContext.reviewCommentSelectionRouter = configuration.reviewCommentSelectionRouter
         interactionContext.sessionId = configuration.sessionId
         interactionContext.openChatReader = configuration.onOpenChatReader

@@ -334,18 +334,6 @@ extension ChatViewController {
                 MainActor.assumeIsolated { self?.model.topBarRefresh += 1 }
             },
             center.addObserver(
-                forName: AudioPlayerService.stateDidChangeNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] notification in
-                let objectID = (notification.object as AnyObject?).map(ObjectIdentifier.init)
-                let playing = notification.userInfo?[AudioPlayerService.playingItemIDUserInfoKey] as? String
-                let loading = notification.userInfo?[AudioPlayerService.loadingItemIDUserInfoKey] as? String
-                MainActor.assumeIsolated {
-                    self?.handleAudioPlayerStateChange(objectID: objectID, playing: playing, loading: loading)
-                }
-            },
-            center.addObserver(
                 forName: .workspaceLinkedFileWillOpen,
                 object: nil,
                 queue: .main
@@ -439,10 +427,7 @@ extension ChatViewController {
     private func startSessionEntryTasks() {
         audioPlayer.setSessionContext(session)
         activateChatVoiceComposer(voiceInputManager)
-        audioLifecycleCoordinator.setPlaybackInterrupter(audioPlayer)
         // Dictation must use the concrete player as the hardware source of truth.
-        // The lifecycle coordinator owns presentation state and can be stale across
-        // direct-speak/reconnect edges; using it here can make the mic appear wedged.
         voiceInputManager.setPlaybackInterrupter(audioPlayer)
         // Manager owns loop restarts. Leaving the chat must not cancel the
         // connect loop; this only binds the session identity.
@@ -600,14 +585,6 @@ extension ChatViewController {
                 sessionStore: sessionStore
             )
         }
-    }
-
-    private func handleAudioPlayerStateChange(objectID: ObjectIdentifier?, playing: String?, loading: String?) {
-        guard objectID == ObjectIdentifier(audioPlayer) else { return }
-        audioLifecycleCoordinator.syncPlaybackState(
-            playingItemID: playing?.isEmpty == false ? playing : nil,
-            loadingItemID: loading?.isEmpty == false ? loading : nil
-        )
     }
 
     private func handleSessionStatusChange(_ newStatus: SessionStatus?) {

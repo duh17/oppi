@@ -71,7 +71,6 @@ enum ComposerShared {
 
     static func micEngineBadge(for manager: VoiceInputManager) -> MicButtonLabel.EngineBadge {
         switch manager.routeIndicator {
-        case .auto: return .auto
         case .onDevice: return .onDevice
         case .remote: return .remote
         }

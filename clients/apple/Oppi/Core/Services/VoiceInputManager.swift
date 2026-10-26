@@ -115,28 +115,14 @@ final class VoiceInputManager {
         }
     }
 
-    enum EngineMode: String, Equatable, Sendable {
-        case auto
-        case onDevice
-        case remote
-
-        var logName: String {
-            switch self {
-            case .auto: return "auto"
-            case .onDevice: return "on_device"
-            case .remote: return "remote"
-            }
-        }
-    }
+    typealias EngineMode = AppPreferences.Voice.EngineMode
 
     enum RouteIndicator: Equatable, Sendable {
-        case auto
         case onDevice
         case remote
 
         var accessibilityLabel: String {
             switch self {
-            case .auto: return "Automatic"
             case .onDevice: return "On-device"
             case .remote: return "Server"
             }
@@ -607,8 +593,6 @@ final class VoiceInputManager {
         }
 
         switch engineMode {
-        case .auto:
-            return .auto
         case .onDevice:
             return .onDevice
         case .remote:
@@ -682,7 +666,7 @@ final class VoiceInputManager {
     private(set) var serverConnection: ServerConnection?
 
     /// User-selected engine routing mode.
-    private(set) var engineMode: EngineMode = .auto
+    private(set) var engineMode: EngineMode = .onDevice
 
     private var composerOwner: VoiceComposerOwner?
     private var composerGeneration = 0
@@ -729,7 +713,7 @@ final class VoiceInputManager {
 
     /// Reload persisted voice settings.
     func loadPreferences() {
-        applyEngineMode(from: AppPreferences.Voice.engineMode)
+        setEngineMode(AppPreferences.Voice.engineMode)
     }
 
     /// Update server credentials for the dictation provider.
@@ -958,17 +942,6 @@ final class VoiceInputManager {
             throw VoiceInputError.internalError("No voice provider registered for \(engine.rawValue)")
         }
         return provider
-    }
-
-    private func applyEngineMode(from preference: AppPreferences.Voice.EngineMode) {
-        switch preference {
-        case .auto:
-            setEngineMode(.auto)
-        case .onDevice:
-            setEngineMode(.onDevice)
-        case .remote:
-            setEngineMode(.remote)
-        }
     }
 
     // MARK: - Pre-warm
@@ -2501,6 +2474,15 @@ extension VoiceInputManager {
             } else {
                 providerRegistry.provider(for: .classicDictation)?.invalidateCache()
             }
+        }
+    }
+}
+
+extension VoiceInputManager.EngineMode {
+    var logName: String {
+        switch self {
+        case .onDevice: return "on_device"
+        case .remote: return "remote"
         }
     }
 }

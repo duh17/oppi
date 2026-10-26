@@ -319,7 +319,7 @@ struct VoiceEnginePreferenceStoreTests {
         UserDefaults.standard.set("auto", forKey: key)
         #expect(AppPreferenceStore.Voice.engineMode == .remote)
 
-        AppPreferenceStore.Voice.setEngineMode(.auto)
+        AppPreferenceStore.Voice.setEngineMode(.remote)
         #expect(UserDefaults.standard.string(forKey: key) == "remote")
         #expect(AppPreferenceStore.Voice.engineMode == .remote)
     }

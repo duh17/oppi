@@ -10,7 +10,6 @@ import Synchronization
 @MainActor
 protocol LiveVoiceAudioOwning: AnyObject {
     var isCapturing: Bool { get }
-    var openedDictationStream: Bool { get }
     var onPCM: (@MainActor (Data) -> Void)? { get set }
     /// True while the agent's reply is playing, false once it has gone quiet.
     var onPlaybackActiveChange: (@MainActor (Bool) -> Void)? { get set }
@@ -46,7 +45,6 @@ protocol LiveVoicePlaybackEngine: AnyObject {
 @MainActor
 final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
     private(set) var isCapturing = false
-    let openedDictationStream = false
     var onPCM: (@MainActor (Data) -> Void)?
     var onPlaybackActiveChange: (@MainActor (Bool) -> Void)? {
         get { playback?.onPlaybackActiveChange }

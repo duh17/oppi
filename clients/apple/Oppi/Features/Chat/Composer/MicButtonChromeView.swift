@@ -36,7 +36,7 @@ final class MicButtonChromeView: UIControl {
     private var accentColor = UIColor(ThemeRuntimeState.currentPalette().blue)
     /// The disc's colors; nil is the app theme's palette. Takes effect on the next `apply`.
     var colors: ComposerThemeColors?
-    private var engineBadge: MicButtonLabel.EngineBadge = .auto
+    private var engineBadge: MicButtonLabel.EngineBadge = .onDevice
     private var dictationStyle: DictationIndicatorStyle = .current
     nonisolated(unsafe) private var dictationStyleObserver: NSObjectProtocol?
 
@@ -298,7 +298,7 @@ final class MicButtonChromeView: UIControl {
         }
         ringLayer.strokeColor = (isRecording
             ? indicator
-            : indicator.withAlphaComponent(engineBadge == .auto ? 0.35 : 0.6)
+            : indicator.withAlphaComponent(0.6)
         ).cgColor
         ringLayer.fillColor = UIColor.clear.cgColor
         applyVoiceLevel(animated: animated)
@@ -361,7 +361,7 @@ final class MicButtonChromeView: UIControl {
             )
             imageView.tintColor = isMuted
                 ? palette.fg
-                : indicator.withAlphaComponent(engineBadge == .auto ? 0.75 : 1)
+                : indicator
             textLabel.isHidden = true
         }
     }
@@ -392,8 +392,6 @@ final class MicButtonChromeView: UIControl {
         }
 
         switch engineBadge {
-        case .auto:
-            return palette.comment
         case .onDevice:
             return accentColor
         case .remote:

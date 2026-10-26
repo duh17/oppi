@@ -88,8 +88,6 @@ struct SettingsVoicePage: View {
             return "Server dictation sends audio to the speech-to-text service configured on your paired server."
         case .onDevice:
             return "On-device dictation uses Apple's local dictation."
-        case .auto:
-            return "Server dictation sends audio to the speech-to-text service configured on your paired server; on-device dictation uses Apple's local dictation."
         }
     }
 }

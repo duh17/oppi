@@ -91,40 +91,21 @@ struct VoiceInputRoutingTests {
         #expect(probeCount == 0)
     }
 
-    /// Engine Server or the legacy Auto while the server's dictation backend is not ready:
+    /// Engine Server while the server's dictation backend is not ready:
     /// on-device dictation takes the recording.
-    @Test(arguments: [VoiceInputManager.EngineMode.remote, .auto])
-    func serverModesFallBackOnDeviceWithoutServerDictation(mode: VoiceInputManager.EngineMode) async {
+    @Test func serverModeFallsBackOnDeviceWithoutServerDictation() async {
         let resolver = VoiceInputRouteResolver { engine, _ in
             engine == .classicDictation
         }
 
         let resolved = await resolver.resolveEngine(
-            mode: mode,
+            mode: .remote,
             fallback: .modernSpeech,
             locale: Locale(identifier: "en-US"),
             serverDictationAvailable: false
         )
 
         #expect(resolved == .classicDictation)
-    }
-
-    @Test func autoWithServerDoesNotProbeOnDeviceCapabilities() async {
-        var probeCount = 0
-        let resolver = VoiceInputRouteResolver { _, _ in
-            probeCount += 1
-            return true
-        }
-
-        let resolved = await resolver.resolveEngine(
-            mode: .auto,
-            fallback: .modernSpeech,
-            locale: Locale(identifier: "en-US"),
-            serverDictationAvailable: true
-        )
-
-        #expect(resolved == .serverDictation)
-        #expect(probeCount == 0)
     }
 }
 

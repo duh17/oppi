@@ -209,7 +209,6 @@ extension ChatViewController {
             extensionSurface: extensionSurface,
             extensionHiddenThinkingLabel: extensionLayout.hiddenThinkingLabel,
             audioPlayer: audioPlayer,
-            audioLifecycleCoordinator: audioLifecycleCoordinator,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             topOverlap: timelineTopOverlap,
             bottomOverlap: footerHeight,

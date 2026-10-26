@@ -113,7 +113,6 @@ final class ChatViewController: UIViewController {
     let scrollController = ChatScrollController()
     let actionHandler = ChatActionHandler()
     let voiceInputManager = VoiceInputManager.shared
-    let audioLifecycleCoordinator = AudioLifecycleCoordinator()
     let composerDraftController: ChatComposerDraftController
     let reviewComments = ChatReviewCommentsController()
     let outlineAvailability = ChatTimelineOutlineAvailability()

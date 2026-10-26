@@ -46,7 +46,7 @@
  "AssistantTimelineRowContentViewTests": 0.62,
  "AttentionNotificationServiceTests": 0,
  "AudioExtractorTests": 0,
- "AudioLifecycleCoordinatorTests": 13.81,
+ "AudioPlayerServiceLifecycleTests": 13.81,
  "AudioLongformListeningTests": 0.15,
  "AudioPlayerSeekTests": 0.01,
  "AudioPlayerSkipTests": 0,

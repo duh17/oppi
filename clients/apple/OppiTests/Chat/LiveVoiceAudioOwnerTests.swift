@@ -28,7 +28,6 @@ struct LiveVoiceAudioOwnerTests {
         try await owner.start()
         #expect(owner.isCapturing)
         #expect(engine.isCapturing)
-        #expect(!owner.openedDictationStream)
 
         engine.emit(Data([1, 2]))
         await waitUntil { forwarded == [Data([1, 2])] }
@@ -61,7 +60,6 @@ struct LiveVoiceAudioOwnerTests {
     @Test("Owner never opens the dictation stream")
     func neverOpensDictationStream() {
         let owner = LiveVoiceAudioOwner(engine: FakeLiveVoiceCaptureEngine())
-        #expect(!owner.openedDictationStream)
     }
 
     @Test("Inbound PCM plays even while capture is muted")

@@ -196,7 +196,6 @@ struct LiveVoiceCallControllerTests {
     func muteStopsCapture() async throws {
         let harness = try await startedHarness()
         #expect(harness.audio.isCapturing)
-        #expect(!harness.audio.openedDictationStream)
 
         harness.audio.emit(Data([1, 2, 3, 4]))
         await waitUntil { !harness.channel.sentAudio.isEmpty }
@@ -223,7 +222,6 @@ struct LiveVoiceCallControllerTests {
         await waitUntil { harness.controller.partialTranscript == "list open" }
         #expect(harness.controller.composerStatus == "Listening")
         #expect(harness.controller.isLive)
-        #expect(!harness.audio.openedDictationStream)
 
         harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 3, leaseEpoch: 1)))
         await waitUntil { harness.controller.callState?.eventSeq == 3 }
@@ -921,7 +919,6 @@ private final class TestClock {
 @MainActor
 final class FakeLiveVoiceAudioOwner: LiveVoiceAudioOwning {
     private(set) var isCapturing = false
-    let openedDictationStream = false
     var onPCM: (@MainActor (Data) -> Void)?
     var onPlaybackActiveChange: (@MainActor (Bool) -> Void)?
     var systemActivatesSession = false

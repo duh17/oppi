@@ -83,7 +83,6 @@ struct ChatTimelineConfiguration {
     let extensionSurface: SessionExtensionSurface?
     let extensionHiddenThinkingLabel: String?
     let audioPlayer: AudioPlayerService
-    let audioLifecycleCoordinator: AudioLifecycleCoordinator?
     let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     let topOverlap: CGFloat
     let bottomOverlap: CGFloat
@@ -142,7 +141,6 @@ struct ChatTimelineConfiguration {
         extensionSurface: SessionExtensionSurface? = nil,
         extensionHiddenThinkingLabel: String? = nil,
         audioPlayer: AudioPlayerService,
-        audioLifecycleCoordinator: AudioLifecycleCoordinator? = nil,
         reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil,
         topOverlap: CGFloat = 0,
         bottomOverlap: CGFloat = 0,
@@ -197,7 +195,6 @@ struct ChatTimelineConfiguration {
         self.extensionSurface = extensionSurface
         self.extensionHiddenThinkingLabel = extensionHiddenThinkingLabel
         self.audioPlayer = audioPlayer
-        self.audioLifecycleCoordinator = audioLifecycleCoordinator
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.topOverlap = topOverlap
         self.bottomOverlap = bottomOverlap
@@ -318,10 +315,6 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     var earlierRowsRequestMark: EarlierRowsRequestMark?
     var streamingAssistantID: String?
     var audioPlayer: AudioPlayerService?
-    var audioLifecycleCoordinator: AudioLifecycleCoordinator? {
-        get { context.audioLifecycleCoordinator }
-        set { context.audioLifecycleCoordinator = newValue }
-    }
     weak var collectionView: UICollectionView?
     var hardwareKeybindingResponder: HardwareKeybindingResponder?
     private var backSwipeGestureInstaller: HorizontalBackSwipeGestureInstaller?

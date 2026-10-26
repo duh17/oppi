@@ -8,7 +8,6 @@ import SwiftUI
 /// New orb styles show only the orb. Language and engine stay in accessibility.
 struct MicButtonLabel: View {
     enum EngineBadge: Equatable, Sendable {
-        case auto
         case onDevice
         case remote
     }
@@ -72,8 +71,6 @@ struct MicButtonLabel: View {
         }
 
         switch engineBadge {
-        case .auto:
-            return .themeComment
         case .onDevice:
             return accentColor
         case .remote:
@@ -108,7 +105,7 @@ struct MicButtonLabel: View {
                     .animation(.easeOut(duration: 0.1), value: voiceSpectrum.level)
             } else {
                 Circle()
-                    .stroke(indicatorColor.opacity(engineBadge == .auto ? 0.35 : 0.6), lineWidth: 1)
+                    .stroke(indicatorColor.opacity(0.6), lineWidth: 1)
             }
 
             if isProcessing {
@@ -131,7 +128,7 @@ struct MicButtonLabel: View {
             } else {
                 Image(systemName: "mic")
                     .font(.system(size: diameter * 0.47, weight: .bold))
-                    .foregroundStyle(indicatorColor.opacity(engineBadge == .auto ? 0.75 : 1))
+                    .foregroundStyle(indicatorColor)
             }
 
         }
@@ -147,7 +144,6 @@ struct MicButtonLabel: View {
             parts.append(languageLabel)
         }
         switch engineBadge {
-        case .auto: break
         case .onDevice: parts.append("On-device")
         case .remote: parts.append("Server")
         }

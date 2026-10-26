@@ -18,8 +18,7 @@ final class VoiceInputRouteResolver {
     }
 
     /// `serverDictationAvailable` is the server's `capabilities.dictationStream`: its
-    /// dictation backend is configured and answering. Engine Server (and the legacy Auto,
-    /// which the settings UI no longer offers) use the server only then; otherwise the take
+    /// dictation backend is configured and answering. Engine Server uses the server only then; otherwise the take
     /// falls back to on-device dictation, which always works, instead of failing.
     func resolveEngine(
         mode: VoiceInputManager.EngineMode,
@@ -28,7 +27,7 @@ final class VoiceInputRouteResolver {
         serverDictationAvailable: Bool = false
     ) async -> VoiceInputManager.TranscriptionEngine {
         switch mode {
-        case .remote, .auto:
+        case .remote:
             if serverDictationAvailable {
                 return .serverDictation
             }

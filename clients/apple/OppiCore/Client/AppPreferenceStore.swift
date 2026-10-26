@@ -54,7 +54,6 @@ enum AppPreferenceStore {
     /// User-facing preferences for dictation engine selection and voice replies.
     enum Voice {
         enum EngineMode: String, CaseIterable, Identifiable, Sendable {
-            case auto
             case onDevice
             case remote
 
@@ -62,7 +61,6 @@ enum AppPreferenceStore {
 
             var label: String {
                 switch self {
-                case .auto: return "Automatic"
                 case .onDevice: return "On-device"
                 case .remote: return "Server"
                 }
@@ -92,8 +90,7 @@ enum AppPreferenceStore {
             }
         }
 
-        /// User-facing engine choices. Auto remains available only as a stored
-        /// value so older installs can be migrated safely.
+        /// User-facing engine choices.
         static let supportedModes: [EngineMode] = [.remote, .onDevice]
 
         static let engineModeKey = "\(AppIdentifiers.subsystem).voice.engineMode"
@@ -105,17 +102,15 @@ enum AppPreferenceStore {
         /// "Automatic" pick in the old three-way picker (server when connected, else
         /// on-device), so it keeps the nearest current meaning: Server.
         static var engineMode: EngineMode {
-            guard let raw = UserDefaults.standard.string(forKey: engineModeKey),
-                  let mode = EngineMode(rawValue: raw)
-            else {
+            guard let raw = UserDefaults.standard.string(forKey: engineModeKey) else {
                 return .onDevice
             }
-            return mode == .auto ? .remote : mode
+            if raw == "auto" { return .remote }
+            return EngineMode(rawValue: raw) ?? .onDevice
         }
 
         static func setEngineMode(_ mode: EngineMode) {
-            let normalizedMode: EngineMode = mode == .auto ? .remote : mode
-            UserDefaults.standard.set(normalizedMode.rawValue, forKey: engineModeKey)
+            UserDefaults.standard.set(mode.rawValue, forKey: engineModeKey)
         }
 
         static var replyMode: ReplyMode {
