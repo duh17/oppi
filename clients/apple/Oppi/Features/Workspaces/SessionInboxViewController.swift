@@ -548,6 +548,13 @@ final class SessionInboxViewController: UIViewController {
         )
         expandedStoppedGroupIDs = reset.expandedStoppedGroupIDs
         collapsedStoppedGroupIDs = reset.collapsedStoppedGroupIDs
+        // Another server's sessions replace the list; they are not edits of
+        // this one. Emptying it makes this pass's snapshot apply without
+        // animation. Animated, the old server's deleted headers fade out
+        // over the new rows, and while the bar is collapsed the top scroll
+        // edge effect grows to cover them and stays that tall: a blurred
+        // band over a list too short to scroll, until the next relayout.
+        list.removeAll()
     }
 
     private func pullToRefresh() {
