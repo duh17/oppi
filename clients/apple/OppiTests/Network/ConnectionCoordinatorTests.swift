@@ -346,7 +346,6 @@ struct ConnectionCoordinatorTests {
             sessionId: "newer-session",
             workspaceId: "newer-workspace"
         ))
-        let requestCoordinator = ResourceReferenceRequestCoordinator()
         let gate = CoordinatorPreparationGate()
         coordinator._initialLANEndpointForTesting = { serverID in
             guard serverID == staleServer.id else { return nil }
@@ -354,12 +353,13 @@ struct ConnectionCoordinatorTests {
             return nil
         }
 
-        requestCoordinator.perform { token in
+        var superseded = false
+        let switching = Task {
             let switched = await coordinator.switchToServerReady(
                 staleServer,
-                shouldActivate: { requestCoordinator.isCurrent(token) }
+                shouldActivate: { !superseded }
             )
-            guard switched, requestCoordinator.isCurrent(token) else { return }
+            guard switched, !superseded else { return }
             navigation.openReferencedSession(.init(
                 serverId: staleServer.id,
                 sessionId: "stale-session",
@@ -368,11 +368,9 @@ struct ConnectionCoordinatorTests {
         }
         await gate.waitUntilStarted()
 
-        requestCoordinator.perform { token in
-            #expect(requestCoordinator.isCurrent(token))
-        }
+        superseded = true
         await gate.release()
-        for _ in 0..<10 { await Task.yield() }
+        await switching.value
 
         #expect(coordinator.activeServerId == newerServer.id)
         #expect(navigation.workspaceStackRouteElements.count == 1)

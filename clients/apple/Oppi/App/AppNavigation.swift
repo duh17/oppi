@@ -1216,39 +1216,6 @@ final class AppNavigation {
     /// Consumed once by that session's ChatViewController, then cleared.
     var pendingLiveVoiceSessionId: String?
 
-    // MARK: - Legacy Shell Routing
-
-    /// Routes legacy tab selections into the Workspaces-primary navigation stack.
-    ///
-    /// Older persisted state and a few compatibility call sites can still set
-    /// `.server` or `.settings`. They route to utility destinations in the
-    /// Workspaces navigation shell and the selected tab resets to `.workspaces`.
-    @discardableResult
-    func routeLegacySelectedTabIfNeeded() -> WorkspaceUtilityNavTarget? {
-        guard !showOnboarding else { return nil }
-        guard case .ready = launchPhase else { return nil }
-
-        let target: WorkspaceUtilityNavTarget
-        switch selectedTab {
-        case .workspaces:
-            return nil
-        case .server:
-            target = .manageServers
-        case .settings:
-            target = .appSettings
-        }
-
-        switch workspaceNavigationPresentation {
-        case .stack:
-            workspaceStackRouteElements = [.utility(target)]
-        case .split:
-            splitDetailTarget = .utility(target)
-            resetSplitDetailPath()
-        }
-        selectedTab = .workspaces
-        return target
-    }
-
     func pushWorkspaceFileBrowser(_ target: FileBrowserNavTarget) {
         workspaceStackRouteElements.append(.fileBrowser(target))
     }
@@ -1669,6 +1636,4 @@ struct QuickSessionNav {
 
 enum AppTab: Hashable {
     case workspaces
-    case server
-    case settings
 }

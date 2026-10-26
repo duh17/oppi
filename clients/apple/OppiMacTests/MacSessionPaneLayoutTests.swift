@@ -233,12 +233,11 @@ struct MacSessionPaneLayoutTests {
         #expect(layout.paneCount == 2)
     }
 
-    @Test func minimumUsefulPaneMatchesNarrowComposerWidth() {
+    @Test func minimumUsefulPaneMatchesTimelineMinimumWidth() {
         #expect(
             MacSessionPaneSplitAdmission.minimumPaneWidth
                 == Double(MacSessionShellLayoutPolicy.timelineMinimumWidth)
         )
-        #expect(MacComposerActionLayout.minimumPaneWidth == MacSessionShellLayoutPolicy.timelineMinimumWidth)
     }
 
     @Test func closingFocusedPaneRebalancesAndFocusesItsVisualNeighbor() throws {

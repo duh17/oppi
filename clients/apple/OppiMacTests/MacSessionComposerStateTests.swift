@@ -5,19 +5,6 @@ import Testing
 @MainActor
 @Suite("Mac pane composer state")
 struct MacSessionComposerStateTests {
-    @Test func actionLayoutUsesStablePaneWidthBoundaries() {
-        #expect(MacComposerActionLayout.resolve(paneWidth: 319) == .minimum)
-        #expect(MacComposerActionLayout.resolve(paneWidth: 320) == .minimum)
-        #expect(MacComposerActionLayout.resolve(paneWidth: 359) == .minimum)
-        #expect(MacComposerActionLayout.resolve(paneWidth: 360) == .compact)
-        #expect(MacComposerActionLayout.resolve(paneWidth: 519) == .compact)
-        #expect(MacComposerActionLayout.resolve(paneWidth: 520) == .wide)
-
-        #expect(MacComposerActionLayout.minimum.minimumContentWidth == 296)
-        #expect(MacComposerActionLayout.compact.minimumContentWidth == 336)
-        #expect(MacComposerActionLayout.wide.minimumContentWidth == 496)
-    }
-
     @Test func commandReturnBelongsOnlyToActivePane() {
         #expect(MacComposerPaneKeyboardRouting.installsCommandReturn(isActivePane: true))
         #expect(!MacComposerPaneKeyboardRouting.installsCommandReturn(isActivePane: false))

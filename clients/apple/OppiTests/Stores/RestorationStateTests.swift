@@ -259,15 +259,25 @@ struct AppTabTests {
 
     @Test func rawStringRoundTrips() {
         #expect(AppTab.workspaces.rawString == "workspaces")
-        #expect(AppTab.server.rawString == "server")
-        #expect(AppTab.settings.rawString == "settings")
     }
 
     @Test func initFromRawString() {
         #expect(AppTab(rawString: "sessions") == .workspaces)
         #expect(AppTab(rawString: "workspaces") == .workspaces)
-        #expect(AppTab(rawString: "server") == .server)
-        #expect(AppTab(rawString: "settings") == .settings)
+    }
+
+    @Test func retiredTabsRestoreAsWorkspaces() throws {
+        for retired in ["server", "settings"] {
+            let json = """
+            {"version":2,"activeSessionId":"s1","activeServerId":"server-1","selectedTab":"\(retired)","composerDraft":null,"scrollAnchorItemId":null,"wasNearBottom":true,"timestamp":\(Date().timeIntervalSince1970)}
+            """
+            UserDefaults.standard.set(Data(json.utf8), forKey: RestorationState.key)
+            defer { RestorationState.clear() }
+
+            let loaded = try #require(RestorationState.load())
+            #expect(loaded.selectedTab == retired)
+            #expect(AppTab(rawString: loaded.selectedTab) == .workspaces)
+        }
     }
 
     @Test func unknownRawStringDefaultsToWorkspaces() {

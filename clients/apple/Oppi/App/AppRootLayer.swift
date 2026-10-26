@@ -76,9 +76,6 @@ struct AppRootLayer: View {
                 presentation: .fullScreen,
                 screen: { .controller { WhatsNewViewController { Router.finish($0) } } }
             )
-            .onChange(of: navigation.selectedTab) { _, _ in
-                navigation.routeLegacySelectedTabIfNeeded()
-            }
             .onReceive(NotificationCenter.default.publisher(for: .workspaceMediaOverlayDidBegin)) { _ in
                 navigation.beginMediaOverlay(activeServerId: coordinator.activeServerId)
             }

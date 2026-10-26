@@ -41,27 +41,3 @@ enum PiAvatarRenderer {
         }
     }
 }
-
-struct PiAvatarView: View {
-    var size: CGFloat = 28
-
-    @Environment(\.themeID) private var themeID
-
-    var body: some View {
-        Image(
-            uiImage: PiAvatarRenderer.render(
-                size: size * 2,
-                themeID: themeID
-            )
-        )
-        .resizable()
-        .interpolation(.high)
-        .scaledToFit()
-        .frame(width: size, height: size)
-        .background(
-            .themeComment.opacity(0.10),
-            in: RoundedRectangle(cornerRadius: size * 0.32, style: .continuous)
-        )
-        .accessibilityHidden(true)
-    }
-}

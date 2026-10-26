@@ -196,7 +196,7 @@
     "clients/apple/Oppi/Core/Views/PhotoLibraryPicker.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/PiAvatarView.swift": {
+    "clients/apple/Oppi/Core/Views/PiAvatar.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/ProviderIcon.swift": {

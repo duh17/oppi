@@ -139,7 +139,6 @@ final class WorkspaceShellController: UIViewController {
                 windowSize: view.bounds.size
             )
         )
-        navigation.routeLegacySelectedTabIfNeeded()
         setNeedsUpdateProperties()
     }
 

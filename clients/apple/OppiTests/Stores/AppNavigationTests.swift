@@ -23,67 +23,6 @@ private actor ResourceReferenceAsyncGate {
 @Suite("AppNavigation shell routing")
 @MainActor
 struct AppNavigationShellRoutingTests {
-    @Test func workspacesSelectionLeavesPathUntouched() {
-        let navigation = readyNavigation()
-        navigation.openWorkspaceUtility(.appSettings)
-        navigation.selectedTab = .workspaces
-
-        let routed = navigation.routeLegacySelectedTabIfNeeded()
-
-        #expect(routed == nil)
-        #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspaceStackRouteElements.count == 1)
-    }
-
-    @Test func legacyServerSelectionRoutesToManageServersUtility() {
-        let navigation = readyNavigation()
-        navigation.openWorkspaceUtility(.appSettings)
-        navigation.selectedTab = .server
-
-        let routed = navigation.routeLegacySelectedTabIfNeeded()
-
-        #expect(routed == .manageServers)
-        #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspaceStackRouteElements.count == 1)
-    }
-
-    @Test func legacySettingsSelectionRoutesToSettingsUtility() {
-        let navigation = readyNavigation()
-        navigation.selectedTab = .settings
-
-        let routed = navigation.routeLegacySelectedTabIfNeeded()
-
-        #expect(routed == .appSettings)
-        #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspaceStackRouteElements.count == 1)
-    }
-
-    @Test func legacySelectionDoesNotRouteDuringOnboarding() {
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = true
-        navigation.selectedTab = .server
-
-        let routed = navigation.routeLegacySelectedTabIfNeeded()
-
-        #expect(routed == nil)
-        #expect(navigation.selectedTab == .server)
-        #expect(navigation.workspaceStackRouteElements.isEmpty)
-    }
-
-    @Test func legacySelectionDoesNotRouteBeforeLaunchIsReady() {
-        let navigation = AppNavigation()
-        navigation.launchPhase = .resolving
-        navigation.showOnboarding = false
-        navigation.selectedTab = .settings
-
-        let routed = navigation.routeLegacySelectedTabIfNeeded()
-
-        #expect(routed == nil)
-        #expect(navigation.selectedTab == .settings)
-        #expect(navigation.workspaceStackRouteElements.isEmpty)
-    }
-
     @Test func pairedLaunchRevealNeverShowsOnboarding() {
         let navigation = AppNavigation()
         navigation.showOnboarding = true
@@ -418,60 +357,7 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "source")
     }
 
-    @Test func latestResourceReferenceRequestSuppressesSlowerEarlierCompletion() async {
-        let coordinator = ResourceReferenceRequestCoordinator()
-        let firstGate = ResourceReferenceAsyncGate()
-        var committed: [String] = []
-
-        coordinator.perform { token in
-            await firstGate.wait()
-            if coordinator.isCurrent(token) {
-                committed.append("first")
-            }
-        }
-        await Task.yield()
-        coordinator.perform { token in
-            if coordinator.isCurrent(token) {
-                committed.append("second")
-            }
-        }
-        for _ in 0..<10 { await Task.yield() }
-        await firstGate.open()
-        for _ in 0..<10 { await Task.yield() }
-
-        #expect(committed == ["second"])
-    }
-
-    @Test func cancellingNewestResourceReferenceRequestSuppressesItsDialogAndOlderWork() async {
-        let coordinator = ResourceReferenceRequestCoordinator()
-        let firstGate = ResourceReferenceAsyncGate()
-        let secondGate = ResourceReferenceAsyncGate()
-        var committed: [String] = []
-
-        coordinator.perform { token in
-            await firstGate.wait()
-            if coordinator.isCurrent(token) {
-                committed.append("first")
-            }
-        }
-        await Task.yield()
-        coordinator.perform { token in
-            await secondGate.wait()
-            if coordinator.isCurrent(token) {
-                committed.append("second dialog")
-            }
-        }
-        coordinator.cancel()
-
-        await firstGate.open()
-        await secondGate.open()
-        for _ in 0..<10 { await Task.yield() }
-
-        #expect(committed.isEmpty)
-    }
-
     @Test func supersededRequestDuringPreparationCannotActivateServerOrNavigate() async {
-        let requestCoordinator = ResourceReferenceRequestCoordinator()
         let preparationGate = ResourceReferenceAsyncGate()
         let navigation = AppNavigation()
         let newerSession = WorkspaceSessionNavTarget(
@@ -487,13 +373,14 @@ struct AppNavigationShellRoutingTests {
         navigation.openWorkspaceSession(newerSession)
         var activeServerID = "server-newer"
 
-        requestCoordinator.perform { token in
+        var superseded = false
+        let activation = Task {
             _ = await PreparedServerActivation.run(
                 prepare: {
                     await preparationGate.wait()
                     return "server-stale"
                 },
-                shouldActivate: { requestCoordinator.isCurrent(token) },
+                shouldActivate: { !superseded },
                 activate: { serverID in
                     activeServerID = serverID
                     navigation.openReferencedSession(staleSession)
@@ -502,12 +389,9 @@ struct AppNavigationShellRoutingTests {
         }
         await Task.yield()
 
-        requestCoordinator.perform { token in
-            #expect(requestCoordinator.isCurrent(token))
-        }
-        for _ in 0..<10 { await Task.yield() }
+        superseded = true
         await preparationGate.open()
-        for _ in 0..<10 { await Task.yield() }
+        await activation.value
 
         #expect(activeServerID == "server-newer")
         #expect(navigation.workspaceStackRouteElements.count == 1)
@@ -1507,20 +1391,6 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitSelectedWorkspace == workspaceTarget)
         #expect(navigation.splitDetailTarget == nil)
         #expect(navigation.splitDetailPathElements.isEmpty)
-    }
-
-    @Test func legacySettingsSelectionRoutesToSplitDetailUtility() {
-        let navigation = readyNavigation()
-        navigation.setWorkspaceNavigationPresentation(.split)
-        navigation.selectedTab = .settings
-
-        let routed = navigation.routeLegacySelectedTabIfNeeded()
-
-        #expect(routed == .appSettings)
-        #expect(navigation.selectedTab == .workspaces)
-        #expect(navigation.workspaceStackRouteElements.isEmpty)
-        #expect(navigation.splitDetailTarget == .utility(.appSettings))
-        #expect(navigation.splitColumnVisibility == .all)
     }
 
     @Test func utilitySelectionPreservesSplitColumnVisibility() {

@@ -114,34 +114,6 @@ final class MacSessionComposerState {
     }
 }
 
-enum MacComposerActionLayout: Equatable {
-    case wide
-    case compact
-    case minimum
-
-    static let minimumPaneWidth: CGFloat = 320
-    static let compactPaneWidth: CGFloat = 360
-    static let widePaneWidth: CGFloat = 520
-    static let horizontalContentInset: CGFloat = 24
-
-    static func resolve(paneWidth: CGFloat) -> Self {
-        if paneWidth >= widePaneWidth { return .wide }
-        if paneWidth >= compactPaneWidth { return .compact }
-        return .minimum
-    }
-
-    var minimumContentWidth: CGFloat {
-        switch self {
-        case .wide:
-            Self.widePaneWidth - Self.horizontalContentInset
-        case .compact:
-            Self.compactPaneWidth - Self.horizontalContentInset
-        case .minimum:
-            Self.minimumPaneWidth - Self.horizontalContentInset
-        }
-    }
-}
-
 enum MacComposerPaneKeyboardRouting {
     static func installsCommandReturn(isActivePane: Bool) -> Bool {
         isActivePane

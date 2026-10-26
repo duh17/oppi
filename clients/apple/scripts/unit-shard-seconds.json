@@ -753,7 +753,6 @@
  "WorkspaceReviewModelsTests": 0,
  "WorkspaceServerStatusPresentationTests": 0,
  "WorkspaceSessionListModelsTests": 0,
- "WorkspaceSessionNavigationChromePolicyTests": 0,
  "WorkspaceSettingsModelTests": 0.24,
  "WorkspaceSettingsRequestTests": 0,
  "WorkspaceSidebarSessionStatusTests": 0,

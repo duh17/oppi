@@ -802,22 +802,17 @@ struct MarkdownInlineAudioTests {
             ],
             selectedIndex: 0
         )
-        let host = UIHostingController(
-            rootView: AuthenticatedMediaPlayerView(
-                source: AuthenticatedMediaSource(
-                    url: URL(fileURLWithPath: "/tmp/oppi-missing-inline-video.mp4"),
-                    authorizationHeaderValue: "Bearer test",
-                    tlsCertFingerprint: nil,
-                    contentTypeHint: "video/mp4",
-                    sourceFileExtension: "mp4"
-                ),
-                height: 180,
-                isActive: false,
-                model: model,
-                timedTextLoader: { timedText }
-            )
+        let host = AuthenticatedMediaPlayerHostController(model: model)
+        host.update(
+            model: model,
+            sourceIdentity: "oppi-missing-inline-video.mp4",
+            chrome: AuthenticatedMediaPlayerHostController.Chrome(
+                unavailableTitle: "Media preview unavailable",
+                unavailableSystemImage: "play.slash"
+            ),
+            timedTextLoader: { timedText }
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 220))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }

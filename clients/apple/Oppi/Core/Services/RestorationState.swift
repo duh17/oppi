@@ -12,7 +12,9 @@ struct RestorationState: Codable {
     let activeSessionId: String?
     /// Server fingerprint of the active server when backgrounded.
     let activeServerId: String?
-    let selectedTab: String  // "workspaces", "server", "settings"
+    /// Raw `AppTab` string. Unknown values (including the retired "server" and
+    /// "settings" tabs) restore as `.workspaces`.
+    let selectedTab: String
     /// Read-only migration field. New snapshots write this as nil.
     let composerDraft: String?
     /// ID of the topmost visible chat item when the app was backgrounded.
@@ -72,21 +74,11 @@ extension AppTab {
     var rawString: String {
         switch self {
         case .workspaces: return "workspaces"
-        case .server: return "server"
-        case .settings: return "settings"
         }
     }
 
     init(rawString: String) {
-        switch rawString {
-        case "workspaces":
-            self = .workspaces
-        case "server":
-            self = .server
-        case "settings":
-            self = .settings
-        default:
-            self = .workspaces
-        }
+        // Only one tab remains; saved state naming a retired tab lands here.
+        self = .workspaces
     }
 }

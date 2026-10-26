@@ -1427,71 +1427,6 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
-    @Test("default FileBrowser player keeps one model across GeometryReader rebuilds")
-    func defaultFileBrowserModelSurvivesGeometryRebuild() async {
-        let source = dummyMediaSource(fileName: "oppi-filebrowser-player-\(UUID().uuidString).mp4")
-        AuthenticatedMediaPlayerTesting.reset(allowingSource: source)
-        defer { AuthenticatedMediaPlayerTesting.reset() }
-
-        let knob = FileBrowserPlayerRebuildKnob()
-        let host = UIHostingController(
-            rootView: FileBrowserStylePlayerHost(source: source, knob: knob)
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-
-        host.view.layoutIfNeeded()
-        await Task.yield()
-        let afterFirst = AuthenticatedMediaPlayerTesting.resolvedModels
-        #expect(!afterFirst.isEmpty)
-
-        knob.height = 560
-        host.view.setNeedsLayout()
-        host.view.layoutIfNeeded()
-        await Task.yield()
-        await Task.yield()
-
-        let afterRebuild = AuthenticatedMediaPlayerTesting.resolvedModels
-        #expect(afterRebuild.count >= 2)
-        #expect(
-            Set(afterRebuild).count == 1,
-            "Geometry rebuild created a new player model: \(afterRebuild)"
-        )
-    }
-
-    @MainActor
-    @Test("injected markdown playback model is reused instead of a throwaway")
-    func injectedMarkdownModelIsPreserved() async {
-        let injected = AuthenticatedMediaPlayerModel()
-        let source = dummyMediaSource(fileName: "oppi-injected-player-\(UUID().uuidString).mp4")
-        AuthenticatedMediaPlayerTesting.reset(allowingSource: source)
-        defer { AuthenticatedMediaPlayerTesting.reset() }
-
-        let host = UIHostingController(
-            rootView: AuthenticatedMediaPlayerView(
-                source: source,
-                height: 180,
-                model: injected
-            )
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 220))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        host.view.layoutIfNeeded()
-        await Task.yield()
-
-        #expect(!AuthenticatedMediaPlayerTesting.resolvedModels.isEmpty)
-        #expect(
-            AuthenticatedMediaPlayerTesting.resolvedModels.allSatisfy {
-                $0 == ObjectIdentifier(injected)
-            }
-        )
-    }
-
-    @MainActor
     @Test("full-screen and PiP keep the same player when AVKit detaches the inline host")
     func fullScreenAndPiPKeepPlayerAcrossInlineDetach() {
         let hiddenOffscreen = AuthenticatedMediaPlayerModel()
@@ -2094,17 +2029,19 @@ struct MarkdownInlineVideoTests {
     func inPlayerFailureControlMeetsHitTarget() async {
         let model = AuthenticatedMediaPlayerModel()
         model.debugForceFailureForTesting("Media failed to load")
-        let host = UIHostingController(
-            rootView: AuthenticatedMediaPlayerView(
-                source: dummyMediaSource(),
-                height: 180,
-                isActive: false,
+        let host = AuthenticatedMediaPlayerHostController(model: model)
+        host.update(
+            model: model,
+            sourceIdentity: dummyMediaSource().identity,
+            chrome: AuthenticatedMediaPlayerHostController.Chrome(
+                unavailableTitle: "Media preview unavailable",
+                unavailableSystemImage: "play.slash",
                 failureActionTitle: "Open video file",
-                onFailureAction: {},
-                model: model
-            )
+                onFailureAction: {}
+            ),
+            timedTextLoader: nil
         )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 220))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { window.isHidden = true }
@@ -2232,30 +2169,6 @@ struct FullScreenDismissVideoCase: CaseIterable, CustomTestStringConvertible, Se
 
     var testDescription: String {
         "\(isPlaying ? "playing" : "paused")-\(disappearTiming.rawValue)"
-    }
-}
-
-@MainActor
-private final class FileBrowserPlayerRebuildKnob: ObservableObject {
-    @Published var height: CGFloat = 400
-}
-
-private struct FileBrowserStylePlayerHost: View {
-    let source: AuthenticatedMediaSource
-    @ObservedObject var knob: FileBrowserPlayerRebuildKnob
-
-    var body: some View {
-        GeometryReader { geometry in
-            AuthenticatedMediaPlayerView(
-                source: source,
-                height: min(max(geometry.size.height * 0.34, 220), 420),
-                unavailableTitle: "Video preview unavailable",
-                unavailableSystemImage: "film.slash"
-            )
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(height: knob.height)
     }
 }
 

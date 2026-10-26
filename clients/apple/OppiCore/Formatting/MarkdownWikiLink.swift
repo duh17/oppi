@@ -474,39 +474,6 @@ enum ResourceReferenceCandidateCollector {
     }
 }
 
-/// Cancels superseded tap work and provides a generation token for guarding
-/// UI commits after asynchronous session/file lookup.
-@MainActor
-final class ResourceReferenceRequestCoordinator {
-    struct Token: Equatable, Sendable {
-        fileprivate let generation: UInt64
-    }
-
-    private var generation: UInt64 = 0
-    private var task: Task<Void, Never>?
-
-    func perform(_ operation: @escaping @MainActor (Token) async -> Void) {
-        cancel()
-        generation &+= 1
-        let token = Token(generation: generation)
-        task = Task { @MainActor [weak self] in
-            await operation(token)
-            guard let self, isCurrent(token) else { return }
-            task = nil
-        }
-    }
-
-    func cancel() {
-        generation &+= 1
-        task?.cancel()
-        task = nil
-    }
-
-    func isCurrent(_ token: Token) -> Bool {
-        token.generation == generation && !Task.isCancelled
-    }
-}
-
 enum ResourceFileCandidatePolicy {
     /// Nil means the parent-directory listing was truncated before it could
     /// prove that the candidate is absent.
