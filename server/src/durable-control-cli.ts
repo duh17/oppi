@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@earendil-works/chord";
-import type { ControlJson, ControlWrite, DurableControlHost } from "./durable-extension-api.js";
+import {
+  answerRecord,
+  decodePathSegment,
+  type ControlJson,
+  type ControlWrite,
+  type DurableControlHost,
+} from "./durable-extension-api.js";
 import { parseCliArgs } from "./cli/args.js";
 import { createCliConnectionConfig } from "./cli/connection-config.js";
 import {
@@ -137,6 +143,46 @@ export function withReplayKey(argv: readonly string[], key: string): string[] {
   return [...rest.slice(0, at), `--${flag}`, `${key}:${hash}`, ...rest.slice(at)];
 }
 
+/** Collections whose `GET /<collection>/:id` answers one record the confirm card can read. */
+const NAMED_COLLECTIONS: ReadonlySet<string> = new Set([
+  "agents",
+  "schedules",
+  "sessions",
+  "workspaces",
+]);
+
+/** Body keys that hold the id of a record in a collection above. */
+const ID_KEY_COLLECTION: { readonly [key: string]: string } = {
+  workspaceId: "workspaces",
+  agentId: "agents",
+  sessionId: "sessions",
+};
+
+/** The most records the host reads for one card. */
+const MAX_NAME_LOOKUPS = 8;
+
+function collectBodyIds(value: JsonValue | undefined, into: Map<string, string>, depth = 0): void {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || depth > 4) return;
+  for (const [key, inner] of Object.entries(value)) {
+    const collection = ID_KEY_COLLECTION[key];
+    if (collection !== undefined && typeof inner === "string" && inner !== "")
+      into.set(inner, `/${collection}/${encodeURIComponent(inner)}`);
+    else collectBodyIds(inner, into, depth + 1);
+  }
+}
+
+/** The name in a `GET` answer: `{ agent: { name } }`, `{ workspace: { name } }`, and so on. */
+function recordName(answer: JsonValue): string | undefined {
+  const record = answerRecord(answer);
+  const definition = record?.definition;
+  const name =
+    record?.name ??
+    (definition !== null && typeof definition === "object" && !Array.isArray(definition)
+      ? definition.name
+      : undefined);
+  return typeof name === "string" && name !== "" ? name : undefined;
+}
+
 function failure(code: string, message: string): ControlJson {
   return { ok: false, error: { code, message } };
 }
@@ -227,7 +273,10 @@ export class DurableControlCli {
     return { envelope, wrote: outcome.wrote };
   }
 
-  /** The request as the confirm card shows it; a PATCH also carries the record it changes. */
+  /**
+   * The request as the confirm card shows it, with the records it names read by GET (safe): the
+   * record the path targets as `current`, and the name of every record the path or body points at.
+   */
   private async describe(
     request: LocalApiInterceptedRequest,
     callerSessionId: string,
@@ -238,16 +287,47 @@ export class DurableControlCli {
       path: request.path,
       ...(request.body ? { body: request.body as JsonValue } : {}),
     };
-    if (request.method !== "PATCH") return write;
-    try {
-      write.current = await localApiRequest<JsonValue>(
-        createCliConnectionConfig(this.deps.dataDir),
-        request.path.split("?")[0] ?? request.path,
-        { signal, callerSessionId },
-      );
-    } catch (error) {
-      write.currentError = safeErrorMessage(error);
+    const get = (path: string): Promise<JsonValue> =>
+      localApiRequest<JsonValue>(createCliConnectionConfig(this.deps.dataDir), path, {
+        signal,
+        callerSessionId,
+      });
+    const segments = (request.path.split("?")[0] ?? "").split("/").filter(Boolean);
+    const targetPath =
+      segments[0] !== undefined && segments[1] !== undefined && NAMED_COLLECTIONS.has(segments[0])
+        ? `/${segments[0]}/${segments[1]}`
+        : undefined;
+    if (targetPath !== undefined) {
+      try {
+        write.current = await get(targetPath);
+      } catch (error) {
+        write.currentError = safeErrorMessage(error);
+      }
     }
+
+    // Every id the card may show by name: path pairs, then ids in the body.
+    const lookups = new Map<string, string>();
+    for (let i = 0; i + 1 < segments.length; i += 1)
+      if (NAMED_COLLECTIONS.has(segments[i] as string))
+        lookups.set(
+          decodePathSegment(segments[i + 1] as string),
+          `/${segments[i]}/${segments[i + 1]}`,
+        );
+    collectBodyIds(request.body as JsonValue | undefined, lookups);
+    const names: { [id: string]: string } = {};
+    await Promise.all(
+      [...lookups].slice(0, MAX_NAME_LOOKUPS).map(async ([id, path]) => {
+        try {
+          const found =
+            path === targetPath && write.current !== undefined ? write.current : await get(path);
+          const name = recordName(found);
+          if (name !== undefined) names[id] = name;
+        } catch {
+          // Shown by its id.
+        }
+      }),
+    );
+    if (Object.keys(names).length > 0) write.names = names;
     return write;
   }
 }

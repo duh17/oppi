@@ -19,6 +19,7 @@ import {
   type ControlWrite,
   type DurableControlHost,
 } from "oppi/durable";
+import { cardOf, type WriteCard } from "./card.js";
 
 // ---------------------------------------------------------------------------------------------
 // The tools: ONE table. Every control tool, its argv, and its schemas live here. The schemas
@@ -354,14 +355,14 @@ Oppi documentation: ${docs}. Read the matching file before changing a surface yo
 // The owner's confirm card
 // ---------------------------------------------------------------------------------------------
 
-const YES = "Yes";
-const YES_ALL = "Yes to all remaining in this script";
-const NO = "No";
+/** The codemode option that approves every later write of the script; each write's own button is its `WriteCard.confirm`. */
+const APPLY_ALL = "Apply All in This Script";
+const CANCEL = "Cancel";
 /** Longest request body a confirm card shows. A longer one is refused: the owner approves only what they can read. */
 const CARD_BODY_LIMIT = 6000;
 
 /**
- * "Yes to all" of one codemode script, on the script's own task: its later writes go out without
+ * "Apply All in This Script" of one codemode script, on the script's own task: its later writes go out without
  * a card, and the next script asks again. Retired with the script.
  */
 const ScriptApproval = defineDoc<{ all: boolean }>({
@@ -375,7 +376,7 @@ const ScriptApproval = defineDoc<{ all: boolean }>({
 
 /**
  * Cards of one script, or of one conversation's direct calls, are asked one at a time, so a
- * "Yes to all" answer covers the writes waiting behind it. Process memory: a restart re-asks in
+ * "Apply All" answer covers the writes waiting behind it. Process memory: a restart re-asks in
  * whatever order the calls resume.
  */
 const asking = new Map<string, Promise<unknown>>();
@@ -416,58 +417,13 @@ class BodyTooLarge extends Error {
   }
 }
 
-/** `name: before → after` for each leaf of a merge patch against the record it patches. */
-function patchDiff(body: JsonValue, current: JsonValue): string[] {
-  const record = (value: JsonValue | undefined): ControlJson | undefined =>
-    value !== null && typeof value === "object" && !Array.isArray(value) ? value : undefined;
-  let base = record(current);
-  // `GET /agents/:id` wraps the record, and an Agent's patch is of its `definition`.
-  const wrapped =
-    base && Object.keys(base).length === 1 ? record(Object.values(base)[0]) : undefined;
-  base = wrapped ?? base;
-  const inner = record(base?.definition);
-  const lines: string[] = [];
-  const walk = (patch: JsonValue, before: JsonValue | undefined, name: string): void => {
-    const patchRecord = record(patch);
-    if (patchRecord) {
-      for (const [key, value] of Object.entries(patchRecord))
-        walk(value, record(before)?.[key], name ? `${name}.${key}` : key);
-      return;
-    }
-    if (JSON.stringify(patch) === JSON.stringify(before)) return;
-    const shown = (value: JsonValue | undefined): string =>
-      value === undefined ? "(unset)" : JSON.stringify(value);
-    lines.push(`  ${name}: ${shown(before)} → ${patch === null ? "(removed)" : shown(patch)}`);
-  };
-  const patch = record(body);
-  if (!patch) return lines;
-  for (const [key, value] of Object.entries(patch)) {
-    const before = base && key in base ? base[key] : inner?.[key];
-    walk(value, before, key);
-  }
-  return lines;
-}
-
-function cardMessage(write: ControlWrite): string {
-  const lines = [`${write.method} ${write.path}`];
+/** The card of a write, refused when its body is too long for the owner to read. */
+function cardFor(write: ControlWrite): WriteCard {
   if (write.body !== undefined) {
-    const text = JSON.stringify(write.body, null, 2);
-    if (text.length > CARD_BODY_LIMIT) throw new BodyTooLarge(text.length);
-    lines.push("Request body:", text);
+    const length = JSON.stringify(write.body, null, 2).length;
+    if (length > CARD_BODY_LIMIT) throw new BodyTooLarge(length);
   }
-  if (write.method === "PATCH") {
-    if (write.current === undefined)
-      lines.push(
-        `Current record unavailable${write.currentError ? `: ${write.currentError}` : ""}.`,
-      );
-    else {
-      const diff = write.body === undefined ? [] : patchDiff(write.body, write.current);
-      lines.push("Changes against the current record:", ...(diff.length > 0 ? diff : ["  (none)"]));
-    }
-    if (!/[?&]expectedVersion=/.test(write.path))
-      lines.push("No expected version: this applies over any newer change.");
-  }
-  return lines.join("\n");
+  return cardOf(write);
 }
 
 /** The codemode script that made this call, or undefined for a call the model made directly. */
@@ -489,11 +445,11 @@ async function confirm(
   slot: number,
   write: ControlWrite,
 ): Promise<void> {
-  // Before "Yes to all" too: no write goes out with a body its owner could not see.
-  const message = cardMessage(write);
+  // Before "Apply All" too: no write goes out with a body its owner could not see.
+  const card = cardFor(write);
   const ask = async (): Promise<void> => {
     // What the owner is asked, kept with the call before anything is asked, first write wins.
-    // Under "Yes to all" too: a rerun's write must be the one this card stood for.
+    // Under "Apply All" too: a rerun's write must be the one this card stood for.
     const shown = JSON.stringify([write.method, write.path, write.body ?? null]);
     if ((await api.memo<string>(`oppi-card:${slot}`, shown, context)) !== shown)
       throw new CardChanged();
@@ -507,9 +463,10 @@ async function confirm(
         {
           id,
           method: "select",
-          title: `Allow ${write.method} ${write.path.split("?")[0]}?`,
-          message,
-          options: script === undefined ? [YES, NO] : [YES, YES_ALL, NO],
+          title: card.title,
+          message: card.message,
+          options:
+            script === undefined ? [card.confirm, CANCEL] : [card.confirm, APPLY_ALL, CANCEL],
           extensionScopeId: "oppi:control",
           extensionDisplayName: "Oppi Control",
         },
@@ -525,9 +482,9 @@ async function confirm(
           .catch(() => undefined);
       throw error;
     }
-    if (answer.cancelled || (answer.value !== YES && answer.value !== YES_ALL))
+    if (answer.cancelled || (answer.value !== card.confirm && answer.value !== APPLY_ALL))
       throw new Declined();
-    if (answer.value === YES_ALL && script !== undefined)
+    if (answer.value === APPLY_ALL && script !== undefined)
       await api.commit(async (tx) => {
         (await tx.doc(ScriptApproval, script)).all = true;
       }, context);

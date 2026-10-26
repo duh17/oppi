@@ -270,15 +270,43 @@ export interface DurableSessionsHost {
 /** A JSON object; the CLI envelope is one, and a stored document must be JSON. */
 export type ControlJson = { [key: string]: JsonValue };
 
+/** The record in a `GET` answer: `{ agent: { … } }` is its one value, any other object is itself. */
+export function answerRecord(answer: JsonValue | undefined): ControlJson | undefined {
+  const only = (value: JsonValue | undefined): ControlJson | undefined =>
+    value !== null && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+  const outer = only(answer);
+  const wrapped =
+    outer && Object.keys(outer).length === 1 ? only(Object.values(outer)[0]) : undefined;
+  return wrapped ?? outer;
+}
+
+/** A path segment as the id it carries. */
+export function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 /** One write the CLI is about to send, as the owner must see it before it goes out. */
 export interface ControlWrite {
   method: string;
   /** Path and query, as sent. */
   path: string;
   body?: JsonValue;
-  /** For a PATCH: the record as it is now, fetched by the host; absent when it could not be read. */
+  /**
+   * For a write on `/agents|schedules|sessions|workspaces/:id[/…]`: that record as it is now,
+   * read by the host; absent when it could not be read (or the path names no such record).
+   */
   current?: JsonValue;
+  /** Why `current` could not be read. */
   currentError?: string;
+  /**
+   * Names the host looked up for the ids in the path and body (workspace, Agent, and session
+   * ids), so the card can show them by name. An id it could not look up is absent.
+   */
+  names?: { [id: string]: string };
 }
 
 /** What the control tools need from Oppi (see `DurableControlCli`). */

@@ -613,8 +613,8 @@ describe("control conversation lifecycle on the durable harness", () => {
     }
 
     it.each([
-      ["Yes", 1],
-      ["No", 0],
+      ["Create Agent", 1],
+      ["Cancel", 0],
     ])(
       "answering %j on the owner stream decides the pending write (%i Agent rows)",
       async (answer, rows) => {
@@ -674,7 +674,7 @@ describe("control conversation lifecycle on the durable harness", () => {
         const card = (await ws.next(
           (m) => m.type === "extension_ui_request" && m.method === "select",
         )) as Extract<ServerMessage, { type: "extension_ui_request" }>;
-        expect(JSON.stringify(card)).toContain("POST /agents");
+        expect(card.title).toBe("Create Agent “Via stream”?");
         expect(store.listAgents()).toHaveLength(before);
 
         ws.receive({ type: "extension_ui_response", id: card.id, value: answer });
