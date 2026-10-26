@@ -1,5 +1,11 @@
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import type { ConversationId, EntryId, EntryRecord, Harness } from "@earendil-works/pi-durable";
+import type {
+  Conversation,
+  ConversationId,
+  EntryId,
+  EntryRecord,
+  Harness,
+} from "@earendil-works/pi-durable";
 import { performance } from "node:perf_hooks";
 import {
   buildSessionContext,
@@ -29,7 +35,8 @@ import { readDurableInputCards } from "./durable-input-cards.js";
  * proves continuation; aborted/faulted/orphaned/unknown tasks stay visible.
  * Task attribution, not adjacency/text matching, also handles repeated crashes.
  * Shared by live projection, the conversation stream, and the durable history reader;
- * storage stays untouched.
+ * storage stays untouched. Callers pass `entries` holding the attempt's retry
+ * when it lies past their window: see `readRetryEvidence`.
  */
 export async function isRecoveredPartial(
   entry: EntryRecord,
@@ -37,20 +44,59 @@ export async function isRecoveredPartial(
   entries: readonly EntryRecord[],
 ): Promise<boolean> {
   if (!isAbortedAttempt(entry)) return false;
-  if (
-    entries.some(
-      (later) =>
-        later.id > entry.id &&
-        later.byTaskId === entry.byTaskId &&
-        later.model?.[0]?.role === "assistant",
-    )
-  )
-    return true;
+  if (hasRetryEntry(entry, entries)) return true;
   const task = await harness.getTask(entry.byTaskId, context);
   if (!task || task.kind !== "pi.generation" || task.abortRequested) return false;
   return task.state.status !== "terminal" && task.state.status !== "completing"
     ? true
     : task.state.outcome.status === "completed" || task.state.outcome.status === "failed";
+}
+
+/** `entries` hold a later assistant entry of the attempt's own task: the part of the rule that needs no task record. */
+export function hasRetryEntry(
+  attempt: EntryRecord & { byTaskId: NonNullable<EntryRecord["byTaskId"]> },
+  entries: readonly EntryRecord[],
+): boolean {
+  return entries.some(
+    (later) =>
+      later.id > attempt.id &&
+      later.byTaskId === attempt.byTaskId &&
+      later.model?.[0]?.role === "assistant",
+  );
+}
+
+/**
+ * Entries after `afterId`, oldest first, through the first assistant entry (or `maxEntryId`):
+ * where the retry of an attempt that ended at or before `afterId` must be, since a
+ * conversation runs one generation at a time. That entry is the bound: a reader never goes
+ * past it, one 32-row page at a time, so a stopped attempt that never retried costs at most
+ * the gap to the next answer.
+ */
+export async function readRetryEvidence(
+  conversation: Conversation,
+  afterId: number,
+  maxEntryId?: number,
+): Promise<EntryRecord[]> {
+  const entries: EntryRecord[] = [];
+  let cursor;
+  do {
+    const page = await conversation.entries(
+      {
+        minEntryId: (afterId + 1) as EntryId,
+        ...(maxEntryId === undefined ? {} : { maxEntryId: maxEntryId as EntryId }),
+        order: "ascending",
+      },
+      32,
+      cursor,
+      context,
+    );
+    for (const entry of page.items) {
+      entries.push(entry);
+      if (entry.model?.[0]?.role === "assistant") return entries;
+    }
+    cursor = page.next;
+  } while (cursor !== undefined);
+  return entries;
 }
 
 /** An aborted assistant entry a task committed: the only entries `isRecoveredPartial` may hide. */
@@ -275,9 +321,7 @@ export async function readDurableTracePage(
       return readSessionTracePageFromEntries([], sourceId, options);
     }
     const records: EntryRecord[] = [];
-    const newerRecords: EntryRecord[] = [];
-    let newerCursor;
-    let newerExhausted = false;
+    let newer: EntryRecord[] | undefined;
     let cursor;
     do {
       const page = await conversation.entries(
@@ -288,49 +332,21 @@ export async function readDurableTracePage(
       );
       records.push(...page.items);
       cursor = page.next;
-      // Cursor windows cannot decide recovery from their prefix alone. Only
-      // aborted assistants need forward evidence: stop as soon as each task has
-      // a newer assistant, or after exhausting the range through the captured tip.
-      const pending = new Set(
-        records.flatMap((entry) =>
-          entry.model?.[0]?.role === "assistant" &&
-          entry.model[0].stopReason === "aborted" &&
-          entry.byTaskId &&
-          ![...records, ...newerRecords].some(
-            (later) =>
-              later.id > entry.id &&
-              later.byTaskId === entry.byTaskId &&
-              later.model?.[0]?.role === "assistant",
-          )
-            ? [entry.byTaskId]
-            : [],
-        ),
-      );
+      // A window cannot decide recovery from its prefix alone: an attempt with no retry
+      // in it may have one just past its newest entry. Read that once, bounded by the
+      // captured tip (the window's newest entry never changes between iterations).
       const windowTip = records[0]?.id;
-      while (
-        pending.size &&
-        !newerExhausted &&
+      if (
+        !newer &&
         windowTip !== undefined &&
         tip !== undefined &&
-        windowTip < tip
-      ) {
-        const newer = await conversation.entries(
-          { minEntryId: (windowTip + 1) as EntryId, maxEntryId: tip },
-          Math.max(32, target + 1),
-          newerCursor,
-          context,
-        );
-        newerRecords.push(...newer.items);
-        for (const entry of newer.items) {
-          if (entry.byTaskId && entry.model?.[0]?.role === "assistant")
-            pending.delete(entry.byTaskId);
-        }
-        newerCursor = newer.next;
-        newerExhausted = newerCursor === undefined;
-      }
+        windowTip < tip &&
+        records.some((entry) => isAbortedAttempt(entry) && !hasRetryEntry(entry, records))
+      )
+        newer = await readRetryEvidence(conversation, windowTip, tip);
       result = await pageFromRecords(
         [...records].reverse(),
-        [...records, ...newerRecords],
+        newer ? [...records, ...newer] : records,
         cursor !== undefined,
       );
       // A result at the lower window edge may have its call just outside it.

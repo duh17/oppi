@@ -19,6 +19,7 @@ import {
   readDurableTracePage,
   readDurableTraceOutline,
 } from "../src/durable-history.js";
+import { readOlderConversationEntries } from "../src/durable-conversation-stream.js";
 import { createLiveEntryRendererSet, type TraceEvent } from "../src/trace.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 
@@ -186,6 +187,31 @@ it.each([false, true])(
     ]);
     expect(await pages(f)).toEqual(full);
     expect(f.resume).not.toHaveBeenCalled();
+  },
+);
+
+// Scrolled-back chat (`older`) and the trace decide a stub's retry with the same rule, even
+// when the stub and its retry sit on different pages.
+it.each([false, true])(
+  "pages older chat entries past a crash stub whose retry is on the newer page (stopped=%s)",
+  async (stopped) => {
+    const f = await history({ stopped });
+    const retry = f.records.at(-1)!;
+    const older = (beforeEntryId: number) =>
+      readOlderConversationEntries({
+        harness: f.harness,
+        conversationId: f.id,
+        renderers: new MobileRendererRegistry(),
+        beforeEntryId,
+        limit: 2,
+      });
+    // Newest page: "between two" and the retry. The page before it holds "between one"
+    // and hides the crash stub (records[0]), whose retry is only on the newer page.
+    const newest = await older(retry.id + 1);
+    expect(newest.entries.map((entry) => entry.id)).toEqual([f.records[2]!.id, retry.id]);
+    const previous = await older(f.records[2]!.id);
+    expect(previous.entries.map((entry) => entry.id)).toEqual([f.records[1]!.id]);
+    expect(previous.hasOlder).toBe(false);
   },
 );
 

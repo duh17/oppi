@@ -21,7 +21,12 @@ import {
   snapshotEvents,
 } from "./durable-event-adapter.js";
 
-import { compactionSummary, isRecoveredPartial } from "./durable-history.js";
+import {
+  compactionSummary,
+  hasRetryEntry,
+  isAbortedAttempt,
+  isRecoveredPartial,
+} from "./durable-history.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 
 /** The unanswered reasons of a failed run: pi-durable keeps the inputs queued behind it. */
@@ -69,21 +74,9 @@ export class DurableEventProjection {
 
   snapshot(snapshot: SnapshotEvent, recovering: boolean): AgentSessionEvent[] {
     this.entries = [...snapshot.entries];
-    for (const entry of this.entries) {
-      const message = entry.model?.[0];
-      if (
-        message?.role === "assistant" &&
-        message.stopReason === "aborted" &&
-        entry.byTaskId &&
-        this.entries.some(
-          (later) =>
-            later.id > entry.id &&
-            later.byTaskId === entry.byTaskId &&
-            later.model?.[0]?.role === "assistant",
-        )
-      )
+    for (const entry of this.entries)
+      if (isAbortedAttempt(entry) && hasRetryEntry(entry, this.entries))
         this.recoveredEntryIds.add(entry.id);
-    }
     const run = snapshot.run;
     const sameRun =
       this.snapshotSeen &&

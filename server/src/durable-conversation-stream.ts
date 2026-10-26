@@ -25,7 +25,6 @@ import { diffRevisions } from "@earendil-works/chord/delta";
 import {
   InboxDoc,
   type CommitPublication,
-  type Conversation,
   type ConversationId,
   type EntryId,
   type EntryRecord,
@@ -45,7 +44,7 @@ import {
   type ToolPresenter,
   type UserImageStoreScope,
 } from "./durable-conversation-view.js";
-import { isAbortedAttempt, isRecoveredPartial } from "./durable-history.js";
+import { isAbortedAttempt, isRecoveredPartial, readRetryEvidence } from "./durable-history.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -813,29 +812,6 @@ export async function attachConversationStream(options: {
   }
 }
 
-/** Entries after `afterId`, oldest first, through the first assistant entry. */
-async function throughNextAssistant(
-  conversation: Conversation,
-  afterId: number,
-): Promise<EntryRecord[]> {
-  const entries: EntryRecord[] = [];
-  let cursor;
-  do {
-    const page = await conversation.entries(
-      { minEntryId: (afterId + 1) as EntryId, order: "ascending" },
-      32,
-      cursor,
-      context,
-    );
-    for (const entry of page.items) {
-      entries.push(entry);
-      if (entry.model?.[0]?.role === "assistant") return entries;
-    }
-    cursor = page.next;
-  } while (cursor !== undefined);
-  return entries;
-}
-
 /**
  * The `older` page: up to `limit` shown entries before `beforeEntryId`, oldest first, with
  * the presentation the stream and trace history give them. Reads `conversation.entries()`
@@ -859,8 +835,7 @@ export async function readOlderConversationEntries(options: {
   if (!conversation) throw new Error(`Durable conversation ${conversationId} is missing`);
   const scanned: EntryRecord[] = [];
   const shown: EntryRecord[] = [];
-  // Recovery evidence past the page: a retry's answer is the next assistant entry, since a
-  // conversation runs one generation at a time.
+  // Recovery evidence past the page: only the first assistant entry after it (`readRetryEvidence`).
   let after: EntryRecord[] | undefined;
   let cursor;
   if (beforeEntryId > 1)
@@ -875,7 +850,7 @@ export async function readOlderConversationEntries(options: {
       scanned.push(...page.items);
       for (const entry of page.items) {
         if (isAbortedAttempt(entry)) {
-          after ??= await throughNextAssistant(conversation, beforeEntryId - 1);
+          after ??= await readRetryEvidence(conversation, beforeEntryId - 1);
           if (await isRecoveredPartial(entry, harness, [...scanned, ...after])) continue;
         }
         shown.push(entry);
