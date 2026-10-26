@@ -24,7 +24,7 @@ graph TD
   Summary --> Client
 ```
 
-The recent lane is time-bounded with `sinceMs` and `untilMs`. Older stopped sessions and importable local sessions are summarized into archive buckets and loaded lazily.
+The recent lane is time-bounded with `sinceMs` and `untilMs`. Older stopped sessions and importable local sessions are summarized into archive buckets and loaded lazily. `SessionListService` alone places both kinds of session in a bucket, in the server's local time zone: a calendar day for the last 30 days, else a calendar month, each ending at the next local midnight (so a daylight-saving day spans 23 or 25 hours). The iOS workspace list starts its recent lane at a local midnight and asks for buckets before that same instant, so a day is never both.
 
 `SessionTraceService` owns trace paging, outline snapshots, recovery, tool output lookup, overall diffs, changed-file summaries, and raw changed-file previews.
 

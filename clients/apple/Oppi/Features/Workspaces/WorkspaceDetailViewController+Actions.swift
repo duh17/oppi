@@ -51,6 +51,7 @@ extension WorkspaceDetailViewController {
     private func resetWorktreeScopedState() {
         state.workspaceRefreshGeneration &+= 1
         state.localSessions = []
+        state.recentRangeStart = nil
         state.archiveBuckets = []
         state.archiveStoppedSessionsByBucketID = [:]
         state.archiveLocalSessionsByBucketID = [:]

@@ -685,6 +685,8 @@ extension WorkspaceDetailViewController {
         var selectedWorktreeId = WorkspaceWorktree.mainId
         var isLoadingWorktrees = false
         var isImportingLocal = false
+        /// The recent/older boundary the last refresh asked for; `archiveBuckets` end at it.
+        var recentRangeStart: Date?
         var archiveBuckets: [WorkspaceSessionArchiveBucket] = []
         var archiveStoppedSessionsByBucketID: [String: [Session]] = [:]
         var archiveLocalSessionsByBucketID: [String: [LocalSession]] = [:]

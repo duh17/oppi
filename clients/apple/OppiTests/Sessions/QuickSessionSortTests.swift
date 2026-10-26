@@ -340,7 +340,7 @@ struct SessionInboxRecentStoppedDayTests {
 
         let groups = SessionInboxStoppedDayPolicy.groups(
             sessions,
-            now: now,
+            rangeStart: SessionInboxStoppedDayPolicy.visibleRangeStart(now: now, calendar: calendar),
             calendar: calendar,
             activityDate: { $0.lastActivity }
         )

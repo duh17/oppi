@@ -7,11 +7,13 @@ struct SessionInboxStoppedDayGroup<Item>: Identifiable {
     var id: String { SessionInboxStoppedDayPolicy.groupID(for: day) }
 }
 
-/// Calendar-day window and labels for the global session inbox stopped groups.
+/// Calendar-day window and labels for recent stopped groups, in All Sessions
+/// and in a workspace's list.
 ///
-/// The root inbox shows stopped sessions from the three most recent calendar
-/// days. Today's group starts expanded; earlier days start collapsed.
-/// Stopped incognito sessions are omitted because they have no resumable history.
+/// Both show stopped sessions from the three most recent calendar days,
+/// starting at local midnight. Today's group starts expanded; earlier days
+/// start collapsed. All Sessions omits stopped incognito sessions because they
+/// have no resumable history.
 struct SessionInboxStoppedDayPolicy {
     static let visibleDayCount = 3
 
@@ -24,13 +26,14 @@ struct SessionInboxStoppedDayPolicy {
         return calendar.date(byAdding: .day, value: -(dayCount - 1), to: today) ?? today
     }
 
+    /// Day groups for items at or after `rangeStart` (a local midnight, from
+    /// `visibleRangeStart`), newest day first, keeping input order within a day.
     static func groups<Item>(
         _ items: [Item],
-        now: Date,
+        rangeStart: Date,
         calendar: Calendar,
         activityDate: (Item) -> Date
     ) -> [SessionInboxStoppedDayGroup<Item>] {
-        let rangeStart = visibleRangeStart(now: now, calendar: calendar)
         var itemsByDay: [Date: [Item]] = [:]
         itemsByDay.reserveCapacity(visibleDayCount)
 
@@ -118,7 +121,7 @@ enum SessionInboxGrouping {
             working: split.working,
             stoppedGroups: SessionInboxStoppedDayPolicy.groups(
                 split.stopped.filter { SessionInboxStoppedDayPolicy.includesStoppedSession(session($0)) },
-                now: now,
+                rangeStart: SessionInboxStoppedDayPolicy.visibleRangeStart(now: now, calendar: calendar),
                 calendar: calendar,
                 activityDate: { session($0).lastActivity }
             )

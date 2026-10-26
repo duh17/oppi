@@ -30,7 +30,7 @@ extension WorkspaceDetailViewController {
             )
         }
 
-        // Same sections and order as All Sessions; stopped history keeps this list's day/month grouping.
+        // Same sections, order, and recent stopped days as All Sessions; older history follows as server sections.
         let attention = { (session: Session) in
             SessionListAttentionCounts(askCount: detail.connection.sessionListAskCount(for: session.id))
         }
@@ -107,10 +107,10 @@ extension WorkspaceDetailViewController {
         return connection.workspaceStore.workspaces.first { $0.id == id }?.name ?? session.workspaceName
     }
 
-    private func isGroupExpanded(_ group: WorkspaceStoppedSessionGrouping.Group) -> Bool {
-        if state.expandedStoppedGroupIDs.contains(group.id) { return true }
-        if state.collapsedStoppedGroupIDs.contains(group.id) { return false }
-        return group.isExpandedByDefault
+    private func isGroupExpanded(_ groupID: String, day: Date, now: Date, calendar: Calendar) -> Bool {
+        if state.expandedStoppedGroupIDs.contains(groupID) { return true }
+        if state.collapsedStoppedGroupIDs.contains(groupID) { return false }
+        return SessionInboxStoppedDayPolicy.isExpandedByDefault(day: day, now: now, calendar: calendar)
     }
 
     private func isArchiveBucketExpanded(_ bucketId: String) -> Bool {
@@ -187,19 +187,24 @@ extension WorkspaceDetailViewController {
             if !data.working.isEmpty {
                 appendSessions(data.working, to: .working, title: SessionInboxSectionTitle.working)
             }
+            let now = Date()
+            let calendar = Calendar.current
             let groups = WorkspaceStoppedSessionGrouping.groups(
                 stoppedEntries: data.stopped,
-                localSessions: data.localFiltered
+                localSessions: data.localFiltered,
+                rangeStart: recentRangeStart(now: now, calendar: calendar),
+                calendar: calendar
             )
             for (index, group) in groups.enumerated() {
-                let section = Section.stopped(group.id)
-                let isExpanded = isGroupExpanded(group)
-                let title = WorkspaceStoppedSessionGrouping.title(group.bucket)
+                let groupID = WorkspaceStoppedSessionGrouping.groupID(for: group.day)
+                let section = Section.stopped(groupID)
+                let isExpanded = isGroupExpanded(groupID, day: group.day, now: now, calendar: calendar)
+                let title = SessionInboxStoppedDayPolicy.title(for: group.day, now: now, calendar: calendar)
                 next.appendSection(section, header: .group(
                     title: index == 0 ? "Stopped · \(title)" : title,
                     isExpanded: isExpanded,
-                    accessibilityIdentifier: "workspace.stoppedGroup.\(group.id)",
-                    toggle: .stopped(groupID: group.id, isExpanded: isExpanded)
+                    accessibilityIdentifier: "workspace.stoppedGroup.\(groupID)",
+                    toggle: .stopped(groupID: groupID, isExpanded: isExpanded)
                 ))
                 if isExpanded {
                     append(group.items, to: section, archive: false)
@@ -209,7 +214,7 @@ extension WorkspaceDetailViewController {
                 let section = Section.archive(bucket.id)
                 let isExpanded = isArchiveBucketExpanded(bucket.id)
                 next.appendSection(section, header: .group(
-                    title: "Stopped · \(WorkspaceStoppedSessionGrouping.title(bucket))",
+                    title: "Stopped · \(WorkspaceStoppedSessionGrouping.title(bucket, now: now, calendar: calendar))",
                     detail: "\(bucket.itemCount)",
                     isExpanded: isExpanded,
                     accessibilityIdentifier: nil,

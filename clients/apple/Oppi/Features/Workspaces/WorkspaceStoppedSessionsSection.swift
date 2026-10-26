@@ -1,25 +1,13 @@
 import Foundation
 
-enum WorkspaceStoppedSessionExpansionPolicy {
-    static func dayBucket(
-        for date: Date,
-        calendar: Calendar = .current
-    ) -> Date {
-        calendar.startOfDay(for: date)
-    }
-
-    static func isDayExpandedByDefault(
-        _ day: Date,
-        now: Date = Date(),
-        calendar: Calendar = .current
-    ) -> Bool {
-        calendar.isDate(day, inSameDayAs: now)
-    }
-}
-
-/// A workspace's stopped history: recent days, then months, then older months
-/// loaded on demand (archive buckets), with importable host Pi sessions mixed
-/// in by date. The workspace screen draws the groups.
+/// A workspace's stopped history: the recent calendar days as day groups,
+/// then older history loaded on demand (archive buckets), with importable host
+/// Pi sessions mixed in by date. The workspace screen draws the groups.
+///
+/// The recent days follow All Sessions (`SessionInboxStoppedDayPolicy`): they
+/// start at a local midnight, and the workspace asks the server for older
+/// history from that same instant back, so no day is both a recent group and
+/// an older section.
 enum WorkspaceStoppedSessionGrouping {
     enum Item: Equatable {
         case entry(SessionListEntry)
@@ -33,79 +21,29 @@ enum WorkspaceStoppedSessionGrouping {
         }
     }
 
-    enum Bucket: Hashable {
-        case day(Date)
-        case month(Date)
-    }
+    typealias Group = SessionInboxStoppedDayGroup<Item>
 
-    struct Group: Equatable {
-        let bucket: Bucket
-        /// Newest first.
-        let items: [Item]
-
-        /// `workspace.stoppedGroup.<id>` names the group's header.
-        var id: String {
-            switch bucket {
-            case .day(let day): "day-\(Int(day.timeIntervalSince1970))"
-            case .month(let month): "month-\(Int(month.timeIntervalSince1970))"
-            }
-        }
-
-        var isExpandedByDefault: Bool {
-            switch bucket {
-            case .day(let day): WorkspaceStoppedSessionExpansionPolicy.isDayExpandedByDefault(day)
-            case .month: false
-            }
-        }
-    }
-
-    /// Day groups for the last 30 days, then month groups, newest first.
+    /// Day groups from `rangeStart` on, newest first, items newest first.
+    /// Older items belong to the server's older sections and are dropped here.
     static func groups(
         stoppedEntries: [SessionListEntry],
         localSessions: [LocalSession],
-        now: Date = Date(),
-        calendar: Calendar = .current
+        rangeStart: Date,
+        calendar: Calendar
     ) -> [Group] {
-        var allItems = stoppedEntries.map(Item.entry) + localSessions.map(Item.local)
-        guard !allItems.isEmpty else { return [] }
-        allItems.sort { $0.sortDate > $1.sortDate }
+        let items = (stoppedEntries.map(Item.entry) + localSessions.map(Item.local))
+            .sorted { $0.sortDate > $1.sortDate }
+        return SessionInboxStoppedDayPolicy.groups(
+            items,
+            rangeStart: rangeStart,
+            calendar: calendar,
+            activityDate: \.sortDate
+        )
+    }
 
-        let recentCutoffTs = now.timeIntervalSince1970 - 30 * 86400
-
-        // Int-keyed grouping: positive = local day-start timestamp, negative = -YYYYMM.
-        // Calendar-derived day starts remain correct across 23/25-hour DST days.
-        var bucketItems: [Int: [Item]] = [:]
-        var bucketDates: [Int: Date] = [:]
-        bucketItems.reserveCapacity(40)
-        bucketDates.reserveCapacity(40)
-
-        for item in allItems {
-            let ts = item.sortDate.timeIntervalSince1970
-            let key: Int
-            let bucketDate: Date
-            if ts >= recentCutoffTs {
-                bucketDate = WorkspaceStoppedSessionExpansionPolicy.dayBucket(for: item.sortDate, calendar: calendar)
-                key = Int(bucketDate.timeIntervalSince1970)
-            } else {
-                let comps = calendar.dateComponents([.year, .month], from: item.sortDate)
-                let year = comps.year ?? 2000
-                let month = comps.month ?? 1
-                key = -(year * 100 + month)
-                bucketDate = calendar.date(from: DateComponents(year: year, month: month)) ?? item.sortDate
-            }
-            bucketItems[key, default: []].append(item)
-            bucketDates[key] = bucketDates[key] ?? bucketDate
-        }
-
-        return bucketItems
-            .sorted { lhs, rhs in
-                (bucketDates[lhs.key] ?? .distantPast) > (bucketDates[rhs.key] ?? .distantPast)
-            }
-            .map { key, items in
-                let bucketDate = bucketDates[key] ?? items[0].sortDate
-                // Items are already sorted descending from the pre-sorted input.
-                return Group(bucket: key >= 0 ? .day(bucketDate) : .month(bucketDate), items: items)
-            }
+    /// `workspace.stoppedGroup.<id>` names a day group's header; UI tests match the `day-` prefix.
+    static func groupID(for day: Date) -> String {
+        "day-\(Int(day.timeIntervalSince1970))"
     }
 
     /// An archive bucket's loaded rows, newest first.
@@ -113,25 +51,10 @@ enum WorkspaceStoppedSessionGrouping {
         (entries.map(Item.entry) + localSessions.map(Item.local)).sorted { $0.sortDate > $1.sortDate }
     }
 
-    static func title(_ bucket: Bucket, calendar: Calendar = .current) -> String {
-        switch bucket {
-        case .day(let day):
-            if calendar.isDateInToday(day) {
-                return "Today"
-            }
-            if calendar.isDateInYesterday(day) {
-                return "Yesterday"
-            }
-            return day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
-        case .month(let month):
-            return month.formatted(.dateTime.month(.wide).year())
-        }
-    }
-
-    static func title(_ bucket: WorkspaceSessionArchiveBucket) -> String {
+    static func title(_ bucket: WorkspaceSessionArchiveBucket, now: Date, calendar: Calendar) -> String {
         switch bucket.kind {
-        case .day: title(.day(bucket.startAt))
-        case .month: title(.month(bucket.startAt))
+        case .day: SessionInboxStoppedDayPolicy.title(for: bucket.startAt, now: now, calendar: calendar)
+        case .month: bucket.startAt.formatted(.dateTime.month(.wide).year())
         }
     }
 }

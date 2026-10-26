@@ -143,11 +143,12 @@ extension WorkspaceDetailViewController {
 
         do {
             let startedAt = Date()
-            let range = (since: startedAt.addingTimeInterval(-Double(Self.hotStoppedRangeDays) * 86_400), until: startedAt)
+            // Recent rows from this midnight on; older sections end at it.
+            let rangeStart = SessionInboxStoppedDayPolicy.visibleRangeStart(now: startedAt, calendar: .current)
             let response = try await api.getWorkspaceSessionList(
                 workspace: currentWorkspace(connection),
-                since: range.since,
-                until: range.until,
+                since: rangeStart,
+                until: startedAt,
                 worktreeId: state.selectedWorktreeId
             )
             guard !Task.isCancelled, requestedGeneration == state.workspaceRefreshGeneration else { return }
@@ -157,6 +158,7 @@ extension WorkspaceDetailViewController {
                 summaries: response.sessionSummaries,
                 requestStartedAt: startedAt
             )
+            state.recentRangeStart = rangeStart
             state.archiveBuckets = response.archiveBuckets
             pruneArchiveState(validBucketIDs: Set(response.archiveBuckets.map(\.id)))
             state.localSessions = response.importableSessions
@@ -181,8 +183,14 @@ extension WorkspaceDetailViewController {
         }
     }
 
-    private static let hotStoppedRangeDays = 3
     private static let loadErrorPrefix = "Failed to load workspace:"
+
+    /// Where the recent day groups start: the boundary the last refresh sent,
+    /// so recent groups and older sections keep splitting at the same instant
+    /// until the next refresh, even across midnight.
+    func recentRangeStart(now: Date, calendar: Calendar) -> Date {
+        state.recentRangeStart ?? SessionInboxStoppedDayPolicy.visibleRangeStart(now: now, calendar: calendar)
+    }
 
     func refreshGitStatus() {
         // GitStatusStore is connection-scoped, so returning from a chat can leave
