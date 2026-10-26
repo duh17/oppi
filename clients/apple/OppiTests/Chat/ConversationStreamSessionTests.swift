@@ -1101,6 +1101,96 @@ struct ConversationStreamSessionTests {
         ], docs: [:]
     ))
 
+    /// A script's calls are cells of its own row while it runs, become the landed result's
+    /// calls in place (same ids, no rows of their own), and come back from a fresh snapshot.
+    @Test func scriptCallsShowAsCellsWhileRunningAndSettleIntoTheLandedRow() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let reducer = harness.manager.reducer
+        let call = Wire.assistant(2, [Wire.toolCall("call-c", "codemode", ["code": "await tools.read({ path: 'a' }); await tools.bash({ command: 'ls' })"])])
+        func nested(_ statuses: [String]) -> NestedToolCalls {
+            .init(calls: [
+                .init(id: "call-c/c1", name: "read", arguments: ["path": "a"], status: statuses[0], durationMs: 3),
+                .init(id: "call-c/c2", name: "bash", arguments: ["command": "ls"], status: statuses[1]),
+            ], complete: true)
+        }
+        func cellCalls() -> [String]? {
+            guard let item = reducer.items.first(where: { $0.id == "call-c" }),
+                  case .toolCall(_, _, _, _, _, let isError, let isDone) = item,
+                  let inspection = reducer.toolInspection(for: item),
+                  let cell = ToolPresentationBuilder.notebookCell(from: inspection, details: nil, isDone: isDone, isError: isError)
+            else { return nil }
+            return cell.calls.map { "\($0.name) \($0.status)" }
+        }
+
+        let runningCalls = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(nested(["ok", "running"])))
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "Script it"), call], docs: [
+            "pi.live": [
+                "run": ["taskId": 14, "inputs": [1]],
+                "tools": [["callId": "call-c", "name": "codemode", "status": "running"]],
+                "nestedCalls": ["call-c": runningCalls],
+            ],
+        ])))
+        #expect(await waitForMainActorCondition { cellCalls() == ["read ok", "bash running"] })
+        #expect(harness.isDone("call-c") == false)
+
+        var result = Wire.toolResult(3, callId: "call-c", output: "done")
+        result.toolResult = .init(nestedCalls: nested(["ok", "ok"]))
+        harness.frame(.update(.init(conversationId: 7, entries: [result], docs: ["pi.live": [
+            .delete([.key("run")]), .delete([.key("tools")]), .delete([.key("nestedCalls")]),
+        ]])))
+        #expect(await waitForMainActorCondition { harness.isDone("call-c") == true })
+        #expect(cellCalls() == ["read ok", "bash ok"])
+        #expect(reducer.items.map(\.id) == ["1", "call-c"])
+
+        // A fresh snapshot (a reload) rebuilds the row with the result's calls.
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "Script it"), call, result], docs: ["pi.live": [:]])))
+        await harness.sync()
+        #expect(reducer.items.map(\.id) == ["1", "call-c"])
+        #expect(cellCalls() == ["read ok", "bash ok"])
+        await harness.finish()
+    }
+
+    /// A stopped script's result carries no calls: the cells it showed stay, and the call that
+    /// was still running reads unfinished instead of running on a finished row.
+    @Test func stoppedScriptLeavesItsRunningCellUnfinished() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let reducer = harness.manager.reducer
+        let call = Wire.assistant(2, [Wire.toolCall("call-s", "codemode", ["code": "await tools.bash({ command: 'sleep 60' })"])])
+        func cellCalls() -> [String]? {
+            guard let item = reducer.items.first(where: { $0.id == "call-s" }),
+                  case .toolCall(_, _, _, _, _, let isError, let isDone) = item,
+                  let inspection = reducer.toolInspection(for: item),
+                  let cell = ToolPresentationBuilder.notebookCell(from: inspection, details: nil, isDone: isDone, isError: isError)
+            else { return nil }
+            return cell.calls.map { "\($0.name) \($0.status)" }
+        }
+        let running = NestedToolCalls(calls: [
+            .init(id: "call-s/c1", name: "bash", arguments: ["command": "sleep 60"], status: "running"),
+        ], complete: true)
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "Wait"), call], docs: [
+            "pi.live": [
+                "run": ["taskId": 14, "inputs": [1]],
+                "tools": [["callId": "call-s", "name": "codemode", "status": "running"]],
+                "nestedCalls": ["call-s": try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(running))],
+            ],
+        ])))
+        #expect(await waitForMainActorCondition { cellCalls() == ["bash running"] })
+
+        // Like a landed script result, but without its calls.
+        var result = Wire.toolResult(3, callId: "call-s", output: "aborted")
+        result.toolResult = .init()
+        harness.frame(.update(.init(conversationId: 7, entries: [result], docs: ["pi.live": [
+            .delete([.key("run")]), .delete([.key("tools")]), .delete([.key("nestedCalls")]),
+        ]])))
+        #expect(await waitForMainActorCondition { harness.isDone("call-s") == true })
+        #expect(cellCalls() == ["bash unfinished"])
+        await harness.finish()
+    }
+
     @Test func committedPromptReplacesTheOptimisticRow() async throws {
         let harness = Harness()
         await harness.connect()

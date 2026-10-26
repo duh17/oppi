@@ -868,6 +868,8 @@ export interface ConversationToolResultView {
   outputAvailability?: ToolOutputAvailability;
   /** Display name read from the result's details (MCP server and tool); overrides the call's. */
   display?: ToolDisplay;
+  /** Tool calls the call made, from its result's details (`durableNestedCalls`), like classic `tool_end`. */
+  nestedCalls?: NestedToolCalls;
 }
 
 /** A transcript card, sanitized like trace history (`sanitizeTranscriptCard`). */

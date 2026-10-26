@@ -8,7 +8,7 @@ import { MobileRendererRegistry, resolveToolDisplay } from "../src/mobile-render
 import { translatePiEvent, type TranslationContext } from "../src/session-protocol.js";
 import { SessionTraceService } from "../src/session-trace-service.js";
 import { McpService } from "../src/mcp-service.js";
-import { validatedNestedCalls } from "../src/tool-nested-calls.js";
+import { durableNestedCalls, validatedNestedCalls } from "../src/tool-nested-calls.js";
 import type { Session } from "../src/types.js";
 
 const nested = {
@@ -270,6 +270,33 @@ describe("tool call document producer", () => {
     });
     expect(kept?.calls).toHaveLength(1);
     expect(kept?.complete).toBe(true);
+  });
+  it("reads durable script calls only from their exact shape", () => {
+    // Another tool's `details.calls` is not a script's call list.
+    expect(durableNestedCalls("call-1", { calls: [{ id: "a", name: "x" }] })).toBeUndefined();
+    expect(
+      durableNestedCalls("call-1", {
+        calls: [
+          { id: 1, name: "bash", args: "{}", status: "ok" },
+          { id: 2, name: "bash" },
+        ],
+      }),
+    ).toBeUndefined();
+    expect(durableNestedCalls("call-1", { calls: [] })).toBeUndefined();
+    expect(
+      durableNestedCalls("call-1", {
+        calls: [
+          { id: 1, name: "tool", args: '["a"]', status: "running" },
+          { id: 2, name: "tool", args: "", status: "cancelled" },
+        ],
+      }),
+    ).toEqual({
+      calls: [
+        { id: "call-1/c1", name: "tool", status: "unfinished", argumentsBytes: 5 },
+        { id: "call-1/c2", name: "tool", status: "cancelled" },
+      ],
+      complete: true,
+    });
   });
   it("produces identical live and raw/mobile trace metadata", async () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-document-trace-"));

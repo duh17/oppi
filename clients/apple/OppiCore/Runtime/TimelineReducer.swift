@@ -1011,6 +1011,12 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             changed = true
         }
         liveToolOverlayIDs = overlays
+        // A running call's calls so far. Its result lands with the same call ids in the frame
+        // that drops them here, so they stay until the committed calls replace them.
+        for (id, calls) in tail.nestedCalls where toolDetailsStore.nestedCalls(for: id) != calls {
+            toolDetailsStore.setNestedCalls(calls, for: id)
+            changed = true
+        }
 
         turnInProgress = tail.isRunning
         currentAssistantID = streamingTextID
@@ -1304,7 +1310,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             let matchId = event.toolCallId ?? event.id
             if let presentation = event.outputPresentation { toolArgsStore.setOutputPresentation(presentation, for: matchId) }
             if let availability = event.outputAvailability { toolArgsStore.setOutputAvailability(availability, for: matchId) }
-            if let nested = event.nestedCalls { toolDetailsStore.setNestedCalls(nested, for: matchId) }
+            if let nested = event.nestedCalls {
+                toolDetailsStore.setNestedCalls(nested, for: matchId)
+            } else if var recorded = toolDetailsStore.nestedCalls(for: matchId),
+                      recorded.calls.contains(where: { $0.status == "running" }) {
+                // A result without its calls (a stopped script): those still running never
+                // finished, as Pi records them.
+                for index in recorded.calls.indices where recorded.calls[index].status == "running" {
+                    recorded.calls[index].status = "unfinished"
+                }
+                toolDetailsStore.setNestedCalls(recorded, for: matchId)
+            }
 
             // Ask tool result — convert to user message, skip tool row update.
             if isInteractiveTool(matchId) {

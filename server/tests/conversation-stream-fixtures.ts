@@ -161,6 +161,76 @@ const inputCardEntry: ConversationEntryView = {
   inputCard: true,
 };
 
+/** A code mode script: its calls show in `pi.live.nestedCalls` while it runs, then on its result. */
+const scriptCallEntry: ConversationEntryView = {
+  id: 22,
+  kind: "pi.assistant",
+  model: [
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "call-2",
+          name: "codemode",
+          arguments: {
+            code: 'await tools.read({ path: "README.md" });\nreturn await tools.bash({ command: "ls" });',
+          },
+        },
+      ],
+      stopReason: "toolUse",
+      timestamp: 1_791_650_007_000,
+    },
+  ],
+  toolCalls: {
+    "call-2": { inputPresentation: { fields: { code: { role: "code", language: "javascript" } } } },
+  },
+};
+
+const scriptResultEntry: ConversationEntryView = {
+  id: 23,
+  kind: "pi.tool-result",
+  model: [
+    {
+      role: "toolResult",
+      toolCallId: "call-2",
+      toolName: "codemode",
+      content: [{ type: "text", text: "README.md\nsrc\n" }],
+      details: {
+        calls: [
+          { id: 1, name: "read", args: '{"path":"README.md"}', status: "ok", durationMs: 4 },
+          { id: 2, name: "bash", args: '{"command":"ls"}', status: "ok", durationMs: 31 },
+        ],
+      },
+      isError: false,
+      timestamp: 1_791_650_008_000,
+    },
+  ],
+  toolResult: {
+    outputAvailability: { complete: true },
+    // `details.calls` as protocol nested calls, with the IDs their live slots had.
+    nestedCalls: {
+      calls: [
+        {
+          id: "call-2/c1",
+          name: "read",
+          status: "ok",
+          arguments: { path: "README.md" },
+          durationMs: 4,
+        },
+        {
+          id: "call-2/c2",
+          name: "bash",
+          status: "ok",
+          arguments: { command: "ls" },
+          durationMs: 31,
+        },
+      ],
+      complete: true,
+    },
+  },
+};
+
 const compactionEntry: ConversationEntryView = {
   id: 20,
   kind: "pi.compaction",
@@ -346,6 +416,49 @@ const CONVERSATION_STREAM_SERVER_MESSAGES = {
     type: "update",
     conversationId: 3,
     entries: [inputCardEntry],
+  },
+  update_script_running: {
+    type: "update",
+    conversationId: 3,
+    entries: [scriptCallEntry],
+    docs: {
+      "pi.live": [
+        ["s", ["run"], { taskId: 50, inputs: [9] }],
+        ["s", ["tools"], [{ callId: "call-2", name: "codemode", taskId: 51, status: "running" }]],
+        [
+          "s",
+          ["nestedCalls"],
+          {
+            // `pi.live.nestedTools` projected per model-issued call: raw slots stay private.
+            "call-2": {
+              calls: [
+                {
+                  id: "call-2/c1",
+                  name: "read",
+                  status: "ok",
+                  arguments: { path: "README.md" },
+                  durationMs: 4,
+                },
+                { id: "call-2/c2", name: "bash", status: "running", arguments: { command: "ls" } },
+              ],
+              complete: true,
+            },
+          },
+        ],
+      ],
+    },
+  },
+  update_script_landing: {
+    type: "update",
+    conversationId: 3,
+    entries: [scriptResultEntry],
+    docs: {
+      "pi.live": [
+        ["d", ["run"]],
+        ["d", ["tools"]],
+        ["d", ["nestedCalls"]],
+      ],
+    },
   },
   older: {
     type: "older",

@@ -24,6 +24,8 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import {
   DurableInputCards,
   DurableUI,
@@ -60,6 +62,8 @@ async function fixture(
   options?: {
     slow?: boolean;
     extensions?: Extension[];
+    /** Extensions whose tools the agent is offered too. */
+    toolExtensions?: Extension[];
     /** Overrides the faux provider's streaming (default: instant). */
     provider?: Parameters<typeof fauxProvider>[0];
   },
@@ -81,7 +85,8 @@ async function fixture(
   await models.refresh({ allowNetwork: false });
   const registry = createRegistry();
   registry.install(CodingTools);
-  for (const extension of options?.extensions ?? []) registry.install(extension);
+  for (const extension of [...(options?.extensions ?? []), ...(options?.toolExtensions ?? [])])
+    registry.install(extension);
   const open = async () => {
     const opened = await Harness.open(
       await openNodeSqliteStorage(join(dir, "stream.sqlite")),
@@ -102,7 +107,10 @@ async function fixture(
       ownership: { kind: "ownerless" },
       agent: {
         model: { provider: "faux", modelId: "faux-1" },
-        tools: [...(CodingTools.tools ?? [])],
+        tools: [
+          ...(CodingTools.tools ?? []),
+          ...(options?.toolExtensions ?? []).flatMap((extension) => extension.tools ?? []),
+        ],
         cwd: dir,
       },
     },
@@ -348,6 +356,90 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     const textOps = client.frames.flatMap(liveTextOps);
     expect(textOps.filter((op) => op[0] === "a").length).toBeGreaterThan(0);
     expect(textOps.filter((op) => op[0] !== "a")).toEqual([]);
+    await expectConverged(f, client);
+  });
+
+  it("lists a code mode script's calls live while it runs and on its result, with the same ids", async () => {
+    const codemode = createCodemodeExtension({ sandbox: new CodemodeSandbox(), models: false });
+    const long = "x".repeat(300);
+    const f = await fixture(
+      [
+        fauxAssistantMessage(
+          [
+            fauxToolCall(
+              "codemode",
+              {
+                code: [
+                  'await tools.bash({ command: "sleep 0.4; echo one" });',
+                  'await tools.bash({ command: "exit 3" });',
+                  `await tools.bash({ command: "echo ${long}" });`,
+                  'return "done";',
+                ].join("\n"),
+              },
+              { id: "call-1" },
+            ),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        fauxAssistantMessage("done"),
+      ],
+      { toolExtensions: [codemode] },
+    );
+    const client = await attach(f);
+    await prompt(f.conversation, "script it");
+    await settle();
+
+    const result = client.entries.find((entry) => entry.kind === "pi.tool-result");
+    const committed = result?.toolResult?.nestedCalls;
+    expect(committed).toEqual({
+      calls: [
+        {
+          id: "call-1/c1",
+          name: "bash",
+          status: "ok",
+          arguments: { command: "sleep 0.4; echo one" },
+          durationMs: expect.any(Number),
+        },
+        {
+          id: "call-1/c2",
+          name: "bash",
+          status: "error",
+          arguments: { command: "exit 3" },
+          durationMs: expect.any(Number),
+          error: expect.any(String),
+        },
+        // Arguments cut for display are no longer JSON: only their size is known.
+        {
+          id: "call-1/c3",
+          name: "bash",
+          status: "ok",
+          argumentsBytes: 200,
+          durationMs: expect.any(Number),
+        },
+      ],
+      complete: true,
+    });
+
+    // While it ran, the call's calls showed live under the same ids, and the raw slots
+    // (arguments, details, usage) never left the server.
+    const replay = new Client();
+    const live: Array<{ calls: Array<{ id: string; status: string }> }> = [];
+    for (const frame of client.frames) {
+      replay.apply(frame);
+      const calls = (
+        replay.live()?.nestedCalls as Record<string, (typeof live)[number]> | undefined
+      )?.["call-1"];
+      if (calls) live.push(calls);
+    }
+    expect(live.some((calls) => calls.calls[0]?.status === "running")).toBe(true);
+    const ids = new Set(committed?.calls.map((call) => call.id));
+    for (const calls of live) for (const call of calls.calls) expect(ids.has(call.id)).toBe(true);
+    expect(replay.live()).not.toHaveProperty("nestedCalls");
+    expect(JSON.stringify(client.frames)).not.toContain("nestedTools");
+
+    // Trace history lists the same calls.
+    const trace = await readDurableTrace(f.harness, f.conversation.id, "full");
+    expect(trace.find((event) => event.type === "toolResult")?.nestedCalls).toEqual(committed);
     await expectConverged(f, client);
   });
 

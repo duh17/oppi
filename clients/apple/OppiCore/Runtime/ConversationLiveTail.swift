@@ -38,6 +38,9 @@ struct TimelineLiveTail: Equatable, Sendable {
     var timestamp: Date?
     var blocks: [Block] = []
     var tools: [Tool] = []
+    /// Calls each running tool call made so far, by its call id (`pi.live.nestedCalls`). The
+    /// committed result lists the same call ids, so its calls replace these in place.
+    var nestedCalls: [String: NestedToolCalls] = [:]
     var isCompacting = false
     var retry: Retry?
 }
@@ -47,11 +50,13 @@ struct TimelineLiveTail: Equatable, Sendable {
 /// decoded once per call and reused while its JSON is unchanged.
 struct ConversationLiveProjector {
     private var views: [String: (raw: JSONValue, view: ConversationToolCallView?)] = [:]
+    private var nested: [String: (raw: JSONValue, calls: NestedToolCalls?)] = [:]
 
     mutating func tail(from live: JSONValue?) -> TimelineLiveTail {
         var tail = TimelineLiveTail()
         guard let live = live?.objectValue else {
             views.removeAll()
+            nested.removeAll()
             return tail
         }
         tail.isRunning = live["run"].map { $0 != .null } ?? false
@@ -83,6 +88,18 @@ struct ConversationLiveProjector {
                 totalBytes: truncated ? output.utf8.count + dropped : nil,
                 details: slot["details"].flatMap { $0 == .null ? nil : $0 }
             ))
+        }
+        let rawNested = live["nestedCalls"]?.objectValue ?? [:]
+        nested = nested.filter { rawNested[$0.key] != nil }
+        for (id, raw) in rawNested {
+            let calls: NestedToolCalls?
+            if let cached = nested[id], cached.raw == raw {
+                calls = cached.calls
+            } else {
+                calls = Self.decode(raw)
+                nested[id] = (raw, calls)
+            }
+            if let calls { tail.nestedCalls[id] = calls }
         }
         tail.isCompacting = !(live["compactions"]?.arrayValue ?? []).isEmpty
         return tail
@@ -135,8 +152,12 @@ struct ConversationLiveProjector {
     private mutating func view(_ id: String, raw: JSONValue?) -> ConversationToolCallView? {
         guard let raw else { return nil }
         if let cached = views[id], cached.raw == raw { return cached.view }
-        let view = (try? JSONEncoder().encode(raw)).flatMap { try? JSONDecoder().decode(ConversationToolCallView.self, from: $0) }
+        let view: ConversationToolCallView? = Self.decode(raw)
         views[id] = (raw, view)
         return view
+    }
+
+    private static func decode<T: Decodable>(_ raw: JSONValue) -> T? {
+        (try? JSONEncoder().encode(raw)).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
     }
 }

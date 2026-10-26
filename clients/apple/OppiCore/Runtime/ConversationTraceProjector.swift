@@ -243,7 +243,8 @@ enum ConversationTraceProjector {
             resultSegments: view?.resultSegments,
             details: details,
             outputPresentation: view?.outputPresentation,
-            outputAvailability: view?.outputAvailability
+            outputAvailability: view?.outputAvailability,
+            nestedCalls: view?.nestedCalls
         )
     }
 

@@ -6,6 +6,7 @@ import type {
   EntryRecord,
   Harness,
 } from "@earendil-works/pi-durable";
+import type { Message, NestedToolCalls as PiNestedToolCalls } from "@earendil-works/pi-ai";
 import { performance } from "node:perf_hooks";
 import {
   buildSessionContext,
@@ -25,6 +26,7 @@ import {
 import { readSessionTraceOutlineFromEntries, type TraceOutlineResult } from "./trace-outline.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
+import { durableNestedCalls } from "./tool-nested-calls.js";
 
 import { readDurableInputCards } from "./durable-input-cards.js";
 
@@ -136,7 +138,7 @@ async function projectEntries(
         : await isRecoveredPartial(entry, harness, records)
     )
       continue;
-    const message = entry.model?.[0];
+    const message = withNestedCalls(entry.model?.[0]);
     const timestamp = new Date(message?.timestamp ?? 0).toISOString();
     const data = entry.data;
     const card =
@@ -192,6 +194,17 @@ async function projectEntries(
     parentId = String(entry.id);
   }
   return entries;
+}
+
+/**
+ * A durable tool result with the nested calls its details list where Pi records them
+ * (`nestedCalls`), so the trace shows them as the conversation stream's `toolResult` does.
+ */
+function withNestedCalls(message: Message | undefined): Message | undefined {
+  if (message?.role !== "toolResult") return message;
+  const nestedCalls = durableNestedCalls(message.toolCallId, message.details);
+  // Statuses stay open strings ("cancelled"), which the trace keeps as the stream does.
+  return nestedCalls ? { ...message, nestedCalls: nestedCalls as PiNestedToolCalls } : message;
 }
 
 async function allEntries(harness: Harness, id: ConversationId): Promise<EntryRecord[]> {

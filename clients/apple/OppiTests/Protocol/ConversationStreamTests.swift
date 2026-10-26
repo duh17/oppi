@@ -10,7 +10,7 @@ struct ConversationStreamTests {
     private static let serverSequence = [
         "snapshot", "update_append", "update_landing", "update_running_tool", "update_output_window",
         "update_queue", "update_partial", "update_hidden", "update_resume", "snapshot_after_compaction",
-        "update_input_card", "older",
+        "update_input_card", "update_script_running", "update_script_landing", "older",
     ]
     /// The live tail of conversation 5, a subagent of 3, on the same socket.
     private static let liveSequence = ["live_snapshot", "live_update"]
@@ -117,14 +117,29 @@ struct ConversationStreamTests {
         try apply("update_input_card")
         #expect(replica.entries.map(\.id) == [20, 11, 12, 21])
 
+        // A script's calls while it runs, then on its result with the same ids.
+        try apply("update_script_running")
+        var live = ConversationLiveProjector()
+        let running = try #require(live.tail(from: replica.docs["pi.live"]).nestedCalls["call-2"])
+        #expect(running.calls.map(\.status) == ["ok", "running"])
+        #expect(running.calls[0].arguments == ["path": "README.md"])
+        try apply("update_script_landing")
+        #expect(live.tail(from: replica.docs["pi.live"]).nestedCalls.isEmpty)
+        let landed = try #require(replica.entries.last?.toolResult?.nestedCalls)
+        #expect(landed.calls.map(\.id) == running.calls.map(\.id))
+        #expect(landed.calls.map(\.status) == ["ok", "ok"] && landed.complete)
+
         try apply("older")
-        #expect(replica.entries.map(\.id) == [8, 9, 10, 20, 11, 12, 21])
+        #expect(replica.entries.map(\.id) == [8, 9, 10, 20, 11, 12, 21, 22, 23])
         #expect(replica.hasOlder == false && replica.oldestEntryId == 8)
 
         // The committed rows, in the full trace's order: the compaction after what it kept.
         let trace = ConversationTraceProjector.traceEvents(from: replica.entries)
-        #expect(trace.map(\.id) == ["8", "call-1", "result-10", "11-text-0", "12", "20", "21"])
-        #expect(trace.map(\.type) == [.user, .toolCall, .toolResult, .assistant, .system, .compaction, .system])
+        #expect(trace.map(\.id) == ["8", "call-1", "result-10", "11-text-0", "12", "20", "21", "call-2", "result-23"])
+        #expect(trace.map(\.type) == [
+            .user, .toolCall, .toolResult, .assistant, .system, .compaction, .system, .toolCall, .toolResult,
+        ])
+        #expect(trace[8].nestedCalls == landed)
         #expect(trace[1].callSegments?.map(\.text) == ["$ ", "ls"])
         #expect(trace[1].outputPresentation?.kind == "terminal")
         #expect(trace[2].output == "README.md\nsrc\n")

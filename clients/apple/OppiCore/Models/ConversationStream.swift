@@ -20,6 +20,8 @@ struct ConversationToolResultView: Codable, Equatable, Sendable {
     var outputAvailability: ToolOutputAvailability?
     /// Display name read from the result's details; replaces the call's.
     var display: ToolDisplay?
+    /// Tool calls the call made, as classic `tool_end` carries them.
+    var nestedCalls: NestedToolCalls?
 }
 
 /// A transcript card, sanitized by the server like trace history.

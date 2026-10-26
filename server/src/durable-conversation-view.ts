@@ -15,6 +15,7 @@ import {
   type InboxState,
   type JsonObject,
   type LiveState,
+  type NestedToolSlot,
   type ToolSlot,
 } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@earendil-works/chord";
@@ -24,6 +25,7 @@ import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
 import { storeUserMessageImages } from "./session-attachments.js";
 import { resolveToolArguments } from "./tool-call-arguments.js";
+import { durableNestedCalls, validatedNestedCalls } from "./tool-nested-calls.js";
 import type {
   ConversationEntryCard,
   ConversationEntryView,
@@ -32,6 +34,7 @@ import type {
   ConversationToolCallView,
   ConversationToolResultView,
   MessageQueueItem,
+  NestedToolCalls,
 } from "./types.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
 
@@ -156,11 +159,13 @@ function renderToolResult(
   );
   const outputPresentation = renderers.outputPresentation(message.toolName, rawDetails);
   const display = resolveToolDisplay(message.toolName, undefined, rawDetails);
+  const nestedCalls = durableNestedCalls(message.toolCallId, rawDetails);
   return {
     ...(resultSegments ? { resultSegments } : {}),
     ...(outputPresentation ? { outputPresentation } : {}),
     outputAvailability: renderers.outputAvailability(rawDetails),
     ...(display ? { display } : {}),
+    ...(nestedCalls ? { nestedCalls } : {}),
   };
 }
 
@@ -281,6 +286,7 @@ class LiveProjection {
   private readonly blocks = new WeakMap<object, object>();
   private readonly messages = new WeakMap<object, ConversationMessageView>();
   private readonly generations = new WeakMap<object, object>();
+  private readonly nested = new WeakMap<object, Record<string, NestedToolCalls>>();
 
   block(block: unknown): unknown {
     if (typeof block !== "object" || block === null) return block;
@@ -309,6 +315,48 @@ class LiveProjection {
       ? { ...source, message: this.message(source.message as Message) }
       : { ...source };
     this.generations.set(generation, view);
+    return view;
+  }
+
+  /**
+   * `pi.live.nestedTools` as the calls each model-issued call made, keyed by its call ID,
+   * in the shape and limits of a result's `nestedCalls`. Calls a nested call made count
+   * toward its model-issued ancestor, as classic Pi records them. Slot IDs are the IDs the
+   * committed result lists, so a landing restates each call in place.
+   */
+  nestedCalls(slots: readonly NestedToolSlot[]): Record<string, NestedToolCalls> {
+    const cached = this.nested.get(slots);
+    if (cached) return cached;
+    // Parents precede their children.
+    const roots = new Map<string, string>();
+    const byRoot = new Map<string, Array<Record<string, unknown>>>();
+    for (const slot of slots) {
+      const root = roots.get(slot.parentCallId) ?? slot.parentCallId;
+      roots.set(slot.callId, root);
+      const status =
+        slot.status !== "done"
+          ? "running"
+          : slot.summary && !slot.summary.isError
+            ? "ok"
+            : // Ended without a summary: its task faulted or was orphaned.
+              "error";
+      const calls = byRoot.get(root) ?? [];
+      calls.push({
+        id: slot.callId,
+        name: slot.name,
+        status,
+        arguments: slot.arguments,
+        durationMs: slot.summary?.durationMs,
+        error: slot.summary?.error,
+      });
+      byRoot.set(root, calls);
+    }
+    const view: Record<string, NestedToolCalls> = {};
+    for (const [root, calls] of byRoot) {
+      const validated = validatedNestedCalls({ calls, complete: true });
+      if (validated) view[root] = validated;
+    }
+    this.nested.set(slots, view);
     return view;
   }
 }
@@ -388,6 +436,8 @@ function queueView(value: InboxState, presenter: DocPresenter): ConversationQueu
 /**
  * `pi.live` plus `toolCalls`: presentation by call id for the streaming answer's tool
  * calls and the running tool round. Slot `details` are sanitized like results.
+ * `nestedTools` leaves as `nestedCalls` (`LiveProjection.nestedCalls`): their raw arguments,
+ * details, and usage stay on the server.
  */
 function liveView(value: LiveState, tools: ToolPresenter, live: LiveProjection): object {
   const toolCalls: Record<string, ConversationToolCallView> = {};
@@ -406,9 +456,14 @@ function liveView(value: LiveState, tools: ToolPresenter, live: LiveProjection):
   }
   // Projected like an entry's messages, so provider replay state (signatures) and the raw
   // streaming `partialJson` stay on the server.
-  const projected: object = value.generation
+  let projected: object = value.generation
     ? { ...value, generation: live.generation(value.generation) }
     : value;
+  if (value.nestedTools) {
+    const { nestedTools: _slots, ...rest } = projected as LiveState;
+    const nestedCalls = live.nestedCalls(value.nestedTools);
+    projected = Object.keys(nestedCalls).length ? { ...rest, nestedCalls } : rest;
+  }
   if (!Object.keys(toolCalls).length && !slots) return projected;
   return {
     ...projected,
