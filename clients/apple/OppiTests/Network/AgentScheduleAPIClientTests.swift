@@ -636,75 +636,44 @@ struct AgentScheduleAPIClientTests {
         #expect(run.status == .completed)
     }
 
-    @Test func controlSessionCreateUsesDeclaredMetadataAndPrompt() async throws {
+    @Test func controlSessionCreatePostsPromptAndLaunchFields() async throws {
         let client = makeClient()
         defer { cleanup() }
 
+        let prompt = ControlSessionStarterPrompt.make(
+            domain: .agents,
+            intent: .revise,
+            targetId: "agent-1",
+            targetName: "Reviewer"
+        )
         TestURLProtocol.handler = { request in
             #expect(request.httpMethod == "POST")
             #expect(request.url?.path == "/control-sessions")
-            let body = try JSONDecoder().decode(APIClient.CreateControlSessionRequest.self, from: requestBodyData(request))
-            #expect(body.domain == .agents)
-            #expect(body.intent == .revise)
-            #expect(body.targetId == "agent-1")
-            #expect(body.targetName == "Reviewer")
-            #expect(body.model == "anthropic/claude-opus-4-8")
-            #expect(body.thinking == .high)
-            #expect(body.prompt?.contains("Canonical target ID: agent-1") == true)
-            #expect(body.launchIdempotencyKey == "control-revision-request-1")
-            return mockResponse(status: 201, json: """
-            {"session":{"id":"control-1","name":"Pi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1","targetName":"Reviewer"}},"prompted":true}
-            """)
-        }
-
-        let response = try await client.createControlSession(.init(
-            domain: .agents,
-            intent: .revise,
-            targetId: "agent-1",
-            targetName: "Reviewer",
-            name: "Revise Reviewer",
-            model: "anthropic/claude-opus-4-8",
-            thinking: .high,
-            prompt: ControlSessionStarterPrompt.make(
-                domain: .agents,
-                intent: .revise,
-                targetId: "agent-1",
-                targetName: "Reviewer"
-            ),
-            launchIdempotencyKey: "control-revision-request-1"
-        ))
-
-        #expect(response.session.control?.domain == .agents)
-        #expect(response.session.workspaceId == nil)
-        #expect(response.prompted == true)
-    }
-
-    @Test func controlSessionCreateCanPersistBeforeStarterPromptDelivery() async throws {
-        let client = makeClient()
-        defer { cleanup() }
-
-        TestURLProtocol.handler = { request in
             let json = try #require(
                 JSONSerialization.jsonObject(with: requestBodyData(request)) as? [String: Any]
             )
-            #expect(json["prompt"] == nil)
-            #expect(json["launchIdempotencyKey"] as? String == "control-create-request-1")
+            #expect(Set(json.keys) == ["prompt", "name", "model", "thinking", "launchIdempotencyKey"])
+            #expect(json["prompt"] as? String == prompt)
+            #expect(json["name"] as? String == "Revise Reviewer")
+            #expect(json["model"] as? String == "anthropic/claude-opus-4-8")
+            #expect(json["thinking"] as? String == "high")
+            #expect(json["launchIdempotencyKey"] as? String == "control-revision-request-1")
             return mockResponse(status: 201, json: """
-            {"session":{"id":"control-1","name":"Pi Control","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"revise","targetId":"agent-1"}}}
+            {"session":{"id":"control-1","name":"Revise Reviewer","status":"ready","createdAt":1000,"lastActivity":1000,"messageCount":1,"tokens":{"input":0,"output":0},"cost":0,"engine":"durable","serverDurable":{"role":"control"}},"prompted":true}
             """)
         }
 
         let response = try await client.createControlSession(.init(
-            domain: .agents,
-            intent: .revise,
-            targetId: "agent-1",
-            targetName: "Reviewer",
+            prompt: prompt,
             name: "Revise Reviewer",
-            launchIdempotencyKey: "control-create-request-1"
+            model: "anthropic/claude-opus-4-8",
+            thinking: .high,
+            launchIdempotencyKey: "control-revision-request-1"
         ))
 
-        #expect(response.session.id == "control-1")
-        #expect(response.prompted == nil)
+        #expect(response.session.usesControlRoutes)
+        #expect(response.session.workspaceId == nil)
+        #expect(response.prompted == true)
     }
 
     @Test func focusedControlOperationsUseControlRouteFamily() async throws {

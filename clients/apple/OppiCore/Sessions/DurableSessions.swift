@@ -5,8 +5,7 @@ import Foundation
 /// New sessions start Classic unless the device also chose Durable by default.
 enum DurableSessions {
     /// Durable applies only when this device opted in and the server advertises
-    /// `capabilities.durableSessions`. Gates the Oppi Control entry, the composer's
-    /// engine pill, and the durable default.
+    /// `capabilities.durableSessions`. Gates the composer's engine pill, and the durable default.
     static func isAvailable(experimentEnabled: Bool, serverOffersDurable: Bool) -> Bool {
         experimentEnabled && serverOffersDurable
     }

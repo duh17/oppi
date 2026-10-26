@@ -1564,36 +1564,26 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
     }
 
+    /// Body of `POST /control-sessions`. The prompt carries the target, request,
+    /// and staged review comments; the server delivers it once per launch key.
     struct CreateControlSessionRequest: Codable, Sendable {
-        let domain: ControlSessionDomain
-        let intent: ControlSessionIntent
-        let targetId: String?
-        let targetName: String?
+        let prompt: String
         let name: String?
         let model: String?
         let thinking: ThinkingLevel?
-        let prompt: String?
         let launchIdempotencyKey: String?
 
         init(
-            domain: ControlSessionDomain,
-            intent: ControlSessionIntent,
-            targetId: String?,
-            targetName: String?,
-            name: String?,
+            prompt: String,
+            name: String? = nil,
             model: String? = nil,
             thinking: ThinkingLevel? = nil,
-            prompt: String? = nil,
             launchIdempotencyKey: String? = nil
         ) {
-            self.domain = domain
-            self.intent = intent
-            self.targetId = targetId
-            self.targetName = targetName
+            self.prompt = prompt
             self.name = name
             self.model = model
             self.thinking = thinking
-            self.prompt = prompt
             self.launchIdempotencyKey = launchIdempotencyKey
         }
     }

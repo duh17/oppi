@@ -78,7 +78,7 @@ struct ServerSettingsRootView: View {
             Section {
                 mobileOutputGuideRow
             } footer: {
-                Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
+                Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions. Oppi Control sessions do not use it. Terminal-owned Mirror sessions are unchanged.")
             }
 
             Section {

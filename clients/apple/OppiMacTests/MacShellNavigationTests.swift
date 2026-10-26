@@ -27,6 +27,12 @@ struct MacShellNavigationTests {
 
         #expect(target.routeScope == .control)
         #expect(target.sessionId == "control-1")
+
+        // A durable control session declares only the role, never `control` metadata.
+        session.control = nil
+        session.serverDurableRole = "control"
+        let durableTarget = try #require(MacSelectedSessionTarget.from(session: session))
+        #expect(durableTarget.routeScope == .control)
         #expect(MacSelectedSessionTarget.from(session: Session(
             id: "orphaned",
             workspaceId: nil,
@@ -234,7 +240,7 @@ struct MacRealWindowSessionToolbarTests {
         )
 
         #expect(presentation.statusTitle == "Done")
-        #expect(presentation.workspaceTitle == "Pi Control")
+        #expect(presentation.workspaceTitle == "Oppi Control")
     }
 
     @Test func contextToolbarUsesTheIOSProgressRingSemantics() {

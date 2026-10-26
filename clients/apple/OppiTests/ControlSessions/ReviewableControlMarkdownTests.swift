@@ -351,9 +351,9 @@ struct ReviewableControlMarkdownTests {
             #expect(request.model == "openai/gpt-5.4")
             #expect(request.thinking == .high)
             #expect(request.prompt == originalCandidate.request.prompt)
-            #expect(request.prompt?.contains("Original request.") == true)
-            #expect(request.prompt?.contains("Original comment.") == true)
-            #expect(request.prompt?.contains("Revised unsent") == false)
+            #expect(request.prompt.contains("Original request.") == true)
+            #expect(request.prompt.contains("Original comment.") == true)
+            #expect(request.prompt.contains("Revised unsent") == false)
         }
         #expect(completion.sentCommentIdsToDispose.isEmpty)
         #expect(completion.shouldClearDraft == false)
@@ -555,7 +555,7 @@ struct ReviewableControlMarkdownTests {
             comments: comments
         )
 
-        let prompt = launch.request.prompt ?? ""
+        let prompt = launch.request.prompt
         let header = [
             "Help the user revise an Oppi Skill.",
             "Canonical target ID: skill-1",
@@ -652,10 +652,10 @@ struct ReviewableControlMarkdownTests {
         #expect(postedRequests.count == 1)
         let posted = try #require(postedRequests.first)
         #expect(posted.launchIdempotencyKey == "atomic-success")
-        #expect(posted.prompt?.contains("User request:\nTighten the instructions.") == true)
-        #expect(posted.prompt?.contains("## Review comments") == true)
-        #expect(posted.prompt?.contains("`\(path)`:8 (file)") == true)
-        #expect(posted.prompt?.contains("> Keep this constraint explicit.") == true)
+        #expect(posted.prompt.contains("User request:\nTighten the instructions.") == true)
+        #expect(posted.prompt.contains("## Review comments") == true)
+        #expect(posted.prompt.contains("`\(path)`:8 (file)") == true)
+        #expect(posted.prompt.contains("> Keep this constraint explicit.") == true)
         #expect(completion.sentCommentIdsToDispose == comments.stagedCommentIds)
         #expect(completion.hasUnsentContentAfterDisposal == false)
         comments.clearSent(ids: completion.sentCommentIdsToDispose)

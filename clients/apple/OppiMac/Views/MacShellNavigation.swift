@@ -7,7 +7,7 @@ struct MacSelectedSessionTarget: Equatable, Sendable {
     let summary: SessionSummary
 
     var routeScope: SessionRouteScope {
-        if summary.control != nil {
+        if summary.usesControlRoutes {
             return .control
         }
         return .workspace(workspaceId)
@@ -19,7 +19,7 @@ struct MacSelectedSessionTarget: Equatable, Sendable {
 
     static func from(session: Session) -> MacSelectedSessionTarget? {
         let summary = SessionSummary(from: session)
-        if summary.control != nil {
+        if summary.usesControlRoutes {
             return MacSelectedSessionTarget(
                 workspaceId: session.workspaceId ?? "",
                 sessionId: session.id,

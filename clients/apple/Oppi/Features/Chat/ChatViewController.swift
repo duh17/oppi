@@ -319,7 +319,9 @@ final class ChatViewController: UIViewController {
     }
 
     var reviewCommentPathFormatting: ReviewCommentPathFormatting {
-        Self.reviewCommentPathFormattingPolicy(controlDomain: session?.control?.domain)
+        // A durable control session carries no domain; it edits host files at their exact paths.
+        if session?.isControlConversation == true { return .verbatim }
+        return Self.reviewCommentPathFormattingPolicy(controlDomain: session?.control?.domain)
     }
 
     var composerDraftKey: ComposerDraftKey? {

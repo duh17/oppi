@@ -6,7 +6,7 @@ import Observation
 /// the server. Every default matches the rich row Oppi has always shown.
 ///
 /// Optional built-in facts keep one fixed order. Status, privacy, context
-/// (workspace, worktree, terminal, Pi Control), questions, unread completion,
+/// (workspace, worktree, terminal, Oppi Control), questions, unread completion,
 /// search snippets, and Thread access are not optional.
 struct SessionRowDisplay: Equatable, Codable, Sendable {
     enum Density: String, Codable, CaseIterable, Identifiable, Sendable {

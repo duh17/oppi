@@ -184,7 +184,7 @@ final class MacWorkspaceSnapshotStore {
 
     static func homeTargets(from summaries: [SessionSummary]) -> [MacSelectedSessionTarget] {
         summaries.compactMap { summary in
-            if summary.control != nil {
+            if summary.usesControlRoutes {
                 return MacSelectedSessionTarget(
                     workspaceId: summary.workspaceId ?? "",
                     sessionId: summary.id,
@@ -468,7 +468,7 @@ final class MacWorkspaceSnapshotStore {
                 sessionId: target.sessionId
             )
             if let session = response.session {
-                if session.control != nil {
+                if session.usesControlRoutes {
                     noteOpenedSession(MacSelectedSessionTarget.from(session: session) ?? target)
                 } else {
                     upsertSession(session, fallbackWorkspaceId: target.workspaceId)
@@ -736,7 +736,7 @@ final class MacWorkspaceSnapshotStore {
             normalized.workspaceId = workspaceId
         }
         syncScreenAwake(for: normalized.session, previousStatus: target(for: normalized.id)?.summary.status)
-        if normalized.control != nil {
+        if normalized.usesControlRoutes {
             noteOpenedSession(
                 MacSelectedSessionTarget(
                     workspaceId: normalized.workspaceId ?? "",

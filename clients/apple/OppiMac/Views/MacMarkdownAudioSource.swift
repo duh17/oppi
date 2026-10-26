@@ -47,7 +47,7 @@ enum MacMarkdownAudioSource {
             try Task.checkCancellation()
             workspaceID = nonEmpty(context.workspaceId)
             worktreeId = context.worktreeId
-            guard workspaceID != nil || context.control != nil else { throw Unavailable.source }
+            guard workspaceID != nil || context.usesControlRoutes else { throw Unavailable.source }
         }
         if useHost, let workspaceID {
             // A POSIX filename from a sandbox is not authority to read the

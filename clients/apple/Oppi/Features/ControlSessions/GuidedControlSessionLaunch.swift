@@ -74,14 +74,10 @@ struct GuidedControlSessionAtomicLaunch {
         )
         return Self(
             request: .init(
-                domain: domain,
-                intent: intent,
-                targetId: targetId,
-                targetName: targetName,
+                prompt: initialPrompt.message,
                 name: sessionName,
                 model: model,
                 thinking: thinking,
-                prompt: initialPrompt.message,
                 launchIdempotencyKey: requestId
             ),
             sourceDraftText: sourceDraftText,

@@ -642,7 +642,7 @@ final class MacCatalogStore {
             frozenControlLaunchDraft = draft
         }
         let response = try await client.createControlSession(request)
-        guard response.session.control != nil else {
+        guard response.session.usesControlRoutes else {
             throw MacControlSessionLaunchError.missingControlMetadata
         }
         let target = MacSelectedSessionTarget.from(session: response.session) ?? MacSelectedSessionTarget(

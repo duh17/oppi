@@ -212,8 +212,8 @@ enum SessionRowPresentationBuilder {
         for session: Session,
         workspaceName: String? = nil
     ) -> String? {
-        if session.control != nil {
-            return "Pi Control"
+        if session.usesControlRoutes {
+            return "Oppi Control"
         }
         return normalizedWorkspaceContext(session.workspaceName ?? workspaceName)
     }

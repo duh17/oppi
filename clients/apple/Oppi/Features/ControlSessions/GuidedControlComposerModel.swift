@@ -41,9 +41,8 @@ struct GuidedControlComposerConfiguration {
 ///
 /// A workspace is optional prompt context, offered only for Agents and
 /// Schedules (see `offersWorkspaceContext`). It never blocks input or Send.
-/// Control sessions stay workspace-less so Pi can inspect and change
-/// server-owned definitions with ordinary host tools, including `bash` and the
-/// installed `oppi` CLI.
+/// Control sessions stay workspace-less. The server gives them the `oppi` tool
+/// (writes confirm on cards) and host bash, file read, edit, and write.
 @MainActor @Observable
 final class GuidedControlComposerModel {
     private(set) var configuration: GuidedControlComposerConfiguration

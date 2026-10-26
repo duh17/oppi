@@ -377,7 +377,10 @@ struct Session: Identifiable, Sendable, Equatable {
     var serverDurableRole: String? = nil
 
     /// Durable control conversation. Distinct from a declared Pi Control session (`control != nil`).
-    var isControlConversation: Bool { serverDurableRole == "control" }
+    var isControlConversation: Bool { Self.isControlRole(serverDurableRole) }
+
+    /// The one definition of the durable control role, shared with `SessionSummary`.
+    static func isControlRole(_ role: String?) -> Bool { role == "control" }
 
     /// Declared Pi Control or the durable control conversation. Does not require
     /// `workspaceId == nil`; the server's extra no-workspace check is not mirrored.
@@ -486,6 +489,8 @@ struct SessionSummary: Sendable, Equatable {
     var ephemeral: Bool?
     var engine: SessionEngine = .classic
     var serverDurableRole: String? = nil
+    /// Same predicate as `Session.usesControlRoutes`: classic Pi Control metadata or the durable control role.
+    var usesControlRoutes: Bool { control != nil || Session.isControlRole(serverDurableRole) }
     var pendingAskCount: Int {
         didSet { hasPendingAskCount = true }
     }

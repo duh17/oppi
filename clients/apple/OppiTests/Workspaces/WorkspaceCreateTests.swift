@@ -438,7 +438,7 @@ final class WorkspaceCreateURLProtocol: URLProtocol, @unchecked Sendable {
         case "/skills":
             body = #"{"skills":[]}"#
         case "/control-sessions":
-            body = #"{"session":{"id":"control-1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0},"prompted":true}"#
+            body = #"{"session":{"id":"control-1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"engine":"durable","serverDurable":{"role":"control"}},"prompted":true}"#
         case "/workspaces":
             body = #"{"workspace":{"id":"w-new","name":"Fresh","skills":[],"createdAt":0,"updatedAt":0}}"#
         default:

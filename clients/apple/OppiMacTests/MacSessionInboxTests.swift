@@ -723,7 +723,7 @@ struct MacSessionInboxRowPresentationTests {
             targetName: nil
         )
         let presentation = MacSessionInboxPresentation.rowPresentation(for: makeTarget(session))
-        #expect(presentation.workspaceContext == "Pi Control")
+        #expect(presentation.workspaceContext == "Oppi Control")
     }
 
     @Test func idleDraftUsesIdleStatusLabel() {
