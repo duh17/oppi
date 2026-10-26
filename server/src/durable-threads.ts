@@ -197,16 +197,13 @@ export class DurableThreads {
     agent: Agent,
   ): Promise<ResolvedSubagent> {
     const { harness } = await host.open();
-    const owned =
-      (await harness.commit((tx) => tx.conversation(parentId), BACKGROUND_CONTEXT))?.owner !==
-      undefined;
     const parentDoc = await harness.snapshot(OppiAgentDoc, parentId, BACKGROUND_CONTEXT);
     const parentRuntime = await harness.snapshot(DurableRuntime, parentId, BACKGROUND_CONTEXT);
     const runtime = parentRuntime?.kind === "sandbox" ? "sandbox" : "host";
-    // A session without the document predates it: top-level ones may spawn, children not.
+    // A parent without the document (created before it existed) does not spawn.
     const grant = childDelegationGrant(
       {
-        maySpawn: parentDoc ? parentDoc.spawn : !owned,
+        maySpawn: parentDoc?.spawn === true,
         grant: parentDoc?.grant === true,
         sandbox: runtime === "sandbox",
       },

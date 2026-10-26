@@ -148,7 +148,7 @@ Durable sessions run on the server's durable engine instead of the classic Pi se
 
 Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the server offers durable sessions, Quick Session shows a **Classic** pill beside the workspace; tap it to start that one session **∞ Durable**. **Start Sessions as Durable** makes durable the default and the pill switches one session to Classic. A saved Agent follows the same default. Incognito sessions are always Classic.
 
-Durable sessions appear in All Sessions with a small **∞** after the title and follow **Settings → Chat → Style**. A durable session has no tree, so Outline lists the timeline and you fork from a message to branch.
+Durable sessions appear in All Sessions with a small **∞** after the title and follow **Settings → Chat → Style**. A durable session has no tree, so Outline lists the timeline and you fork from a message to branch. A fork keeps the session's Agent setup (Extensions, MCP, Skills, and instructions), including a fork at the first message.
 
 A durable session runs only extensions that ship a durable entry ([Durable extensions](extensions.md#durable-extensions)), plus MCP when the Agent selects it. It starts without the rest, including codemode. When a saved Agent selected extensions that have no durable entry (or that `oppi extensions disable` turned off), the session shows a warning that names them. MCP tools load through `tool_search`, the durable stand-in for codemode.
 

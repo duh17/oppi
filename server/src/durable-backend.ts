@@ -177,7 +177,7 @@ async function resolveProjectTrust(
 
 /** What a session runs as. */
 interface LaunchedAs {
-  /** Its `oppi.agent` document; undefined for a conversation bound before the document existed. */
+  /** Its `oppi.agent` document; undefined for a conversation created before the document existed. */
   doc: OppiAgentState | undefined;
   /** It may use `subagent spawn`. */
   spawn: boolean;
@@ -427,10 +427,10 @@ export class DurableBackend implements AgentBackend {
     const { harness, session, host } = options;
     const id = session.serverDurable?.conversationId as ConversationId | undefined;
     if (id !== undefined) {
+      // A bound conversation without the document (one created before it existed) runs as an
+      // unconfigured session and never spawns.
       const doc = await harness.snapshot(OppiAgentDoc, id, BACKGROUND_CONTEXT);
-      if (doc) return { doc, spawn: doc.spawn };
-      const record = await harness.commit((tx) => tx.conversation(id), BACKGROUND_CONTEXT);
-      return { doc: undefined, spawn: record?.owner === undefined };
+      return { doc, spawn: doc?.spawn === true };
     }
     const runtime = target.sandbox ? "sandbox" : "host";
     const grant = session.launch?.allowsNestedDelegation === true;

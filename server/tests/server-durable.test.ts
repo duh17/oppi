@@ -46,6 +46,7 @@ import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
 import { DurableHarness, DurableRuntime, SessionHost } from "../src/durable-harness.js";
+import { OppiAgentDoc } from "../src/durable-agent.js";
 import {
   DURABLE_FAILURE_ENTRY_KIND,
   FailureCardsDoc,
@@ -3267,6 +3268,13 @@ describe("server durable managed runtime", () => {
           const runtime = await tx.doc(DurableRuntime, id);
           runtime.kind = "sandbox";
           runtime.workspaceId = "workspace-1";
+          // The Agent setup the source launched with: Extensions, MCP off, no project context.
+          Object.assign(await tx.doc(OppiAgentDoc, id), {
+            spawn: false,
+            grant: false,
+            extensions: { packages: ["pkg"], mcp: false },
+            projectContext: false,
+          });
         },
       },
       context,
@@ -3302,6 +3310,11 @@ describe("server durable managed runtime", () => {
       thinkingLevel: "high",
       cwd: f.dir,
     });
+    // Both shapes launch as the source: the saved Agent setup is not dropped at the first message.
+    const launched = await harness.snapshot(OppiAgentDoc, source.id, context);
+    expect(launched).toMatchObject({ extensions: { mcp: false }, projectContext: false });
+    expect(await harness.snapshot(OppiAgentDoc, midId, context)).toEqual(launched);
+    expect(await harness.snapshot(OppiAgentDoc, freshId, context)).toEqual(launched);
   });
 
   it("forks at a compaction entry by keeping the summary, not the compacted transcript", async () => {

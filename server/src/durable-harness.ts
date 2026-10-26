@@ -64,7 +64,7 @@ import {
 } from "./durable-extension-loader.js";
 import type { DurableMcp } from "./durable-mcp.js";
 import { DurableAgentController } from "./durable-agent-controller.js";
-import type { ClassicExtensionIndex } from "./durable-agent.js";
+import { OppiAgentDoc, type ClassicExtensionIndex } from "./durable-agent.js";
 import {
   attachConversationStream,
   readOlderConversationEntries,
@@ -1133,7 +1133,7 @@ export class SessionHost {
    * Fork `sourceId` at `entryId` into a new ownerless conversation, as classic fork does with
    * `navigate_tree`: a user message is excluded (the branch point is the visible entry before
    * it), any other entry is included. The first user message has no earlier entry, so the fork
-   * is a fresh conversation carrying the source's stored agent. Resolves `undefined` when the
+   * is a fresh conversation carrying the source's stored agent and `oppi.agent` document. Resolves `undefined` when the
    * entry is not visible from the source. The fork keeps the source's execution runtime:
    * `DurableRuntime` forks as its initial value, which would turn a sandbox conversation into
    * a host one.
@@ -1154,14 +1154,32 @@ export class SessionHost {
     );
     const [chosen, previous] = items;
     if (chosen?.id !== entryId) return undefined;
-    const runtime = await harness.snapshot(DurableRuntime, sourceId, BACKGROUND_CONTEXT);
-    const copyRuntime = async (tx: Tx, id: ConversationId): Promise<void> => {
-      if (!runtime) return;
-      const doc = await tx.doc(DurableRuntime, id);
-      doc.kind = runtime.kind;
-      if (runtime.workspaceId !== undefined) doc.workspaceId = runtime.workspaceId;
-      if (runtime.worktreeId !== undefined) doc.worktreeId = runtime.worktreeId;
+    // What a fork starts with beyond what the engine copies (`pi.agent` as of the branch point,
+    // `oppi.agent` as it is now): the runtime, which forks as its initial value. A fork at the
+    // first message has no entry to branch from, so the new conversation also takes those copies
+    // here. One place, so both shapes launch as their source: its Extensions, MCP, Skills, AGENTS
+    // files, instructions, and delegation.
+    const carried = {
+      runtime: await harness.snapshot(DurableRuntime, sourceId, BACKGROUND_CONTEXT),
+      agent: await harness.snapshot(AgentDoc, sourceId, BACKGROUND_CONTEXT),
+      launch: await harness.snapshot(OppiAgentDoc, sourceId, BACKGROUND_CONTEXT),
     };
+    const carry =
+      (copyEngineDocs: boolean) =>
+      async (tx: Tx, id: ConversationId): Promise<void> => {
+        const { runtime, agent, launch } = carried;
+        if (runtime) {
+          const doc = await tx.doc(DurableRuntime, id);
+          doc.kind = runtime.kind;
+          if (runtime.workspaceId !== undefined) doc.workspaceId = runtime.workspaceId;
+          if (runtime.worktreeId !== undefined) doc.worktreeId = runtime.worktreeId;
+        }
+        if (!copyEngineDocs) return;
+        // The stored selection, by name: resolved objects would drop tools whose extension
+        // (such as MCP) is not attached yet.
+        if (agent) Object.assign(await tx.doc(AgentDoc, id), structuredClone(agent));
+        if (launch) Object.assign(await tx.doc(OppiAgentDoc, id), structuredClone(launch));
+      };
     const ownership = { kind: "ownerless" } as const;
     // A compaction entry carries a user-role summary but is not a user message: branch at it,
     // so the fork keeps the summary instead of the pre-compaction transcript.
@@ -1170,24 +1188,13 @@ export class SessionHost {
     if (branchPoint !== undefined) {
       const fork = await source.fork(
         branchPoint,
-        { ownership, init: copyRuntime },
+        { ownership, init: carry(false) },
         BACKGROUND_CONTEXT,
       );
       return fork.id;
     }
-    const agent = await harness.snapshot(AgentDoc, sourceId, BACKGROUND_CONTEXT);
     const fresh = await harness.createConversation(
-      {
-        ownership,
-        init: async (tx, id) => {
-          await copyRuntime(tx, id);
-          if (!agent) return;
-          // The stored selection, by name: resolved objects would drop tools whose
-          // extension (such as MCP) is not attached yet.
-          const doc = await tx.doc(AgentDoc, id);
-          Object.assign(doc, structuredClone(agent));
-        },
-      },
+      { ownership, init: carry(true) },
       BACKGROUND_CONTEXT,
     );
     return fresh.id;
