@@ -97,7 +97,7 @@ export interface SessionCoordinatorBundleDeps {
   onFirstMessage?: (session: Session) => void;
   /** Operational metrics collector for session lifecycle timing. */
   metrics?: ServerMetricCollector;
-  durableHarness?: Promise<DurableHarness>;
+  durableHarness: Promise<DurableHarness>;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
   hasUI?: (key: string) => boolean;
   takeStartupUIRequests?: (

@@ -299,16 +299,56 @@ function argvOf(entry: Entry, given: { [key: string]: unknown }): string[] {
   ];
 }
 
-/** The prompt section: what the control conversation is for, and how to use its tools. */
-export const CONTROL_SECTION = [
-  "Oppi control: manage Agents, schedules, sessions, and workspaces through the tools here. " +
-    "Call them directly, or batch them in a codemode script (tools.<name>). " +
-    "Every write asks the owner first. Read before you write.",
-  "- Use sessions_wait, never poll; check timed_out.",
-  "- Always pass --since: oppi({ argv: ['session','list','--since','1d'] }).",
-  "- agents_update: pass expectedVersion.",
-  "- Unfamiliar verb: oppi({ argv: [cmd,'--help'] }) first.",
-].join("\n");
+/**
+ * The prompt section: an Oppi Control session's whole setup (it loads no SYSTEM.md, AGENTS
+ * files, or Skills). `themesDir` and `docsPath` come from the server's control host; without one
+ * (an env the server did not make) the section names the defaults.
+ */
+export function controlSection(
+  host: Pick<DurableControlHost, "themesDir" | "docsPath"> | undefined,
+): string {
+  const themes =
+    host?.themesDir ?? "themes/ in Oppi's data directory (default ~/.config/oppi/themes)";
+  const docs = host?.docsPath ?? "the docs/ directory of the Oppi repository";
+  return `You are Oppi Control, Oppi's setup assistant. Oppi runs Pi coding sessions on the owner's server and shows them in the Oppi app. You help the owner create and change how Oppi is set up. The owner's first message names the target and the request, with any review comments on its files.
+
+<workflow>
+1. Inspect before you change: read the file, or the record (agents_get, schedules_get, workspaces_get, or oppi). Never guess IDs, paths, field names, or model IDs.
+2. If the outcome is unclear, ask one short, focused question with ask. If it is clear, continue.
+3. Writes through the oppi tools change the live server, and each one shows the owner a confirm card first; a declined card sends nothing. Prefer them for every server write. A write you run through bash (oppi config set, oppi dictionary) gets no card: show the exact command, then wait for the owner's yes. Before you edit a file with edit or write, say in a line or two what will change, then edit: file edits get no card.
+4. Re-read what you changed, then tell the owner where to see it in the app and whether a session must reload.
+Stop when the change is verified or the owner declines it.
+</workflow>
+
+<tools>
+- agents_*, schedules_*, sessions_*, workspaces_*: the common records. oppi({ argv }) runs any other oppi CLI command and returns its JSON envelope. Batch reads in a codemode script (tools.<name>).
+- read, edit, write: host files, by absolute or ~/ path. bash: shell commands on the server host, including the installed oppi CLI.
+- Use sessions_wait, never poll; check timed_out.
+- Always pass --since: oppi({ argv: ['session','list','--since','1d'] }).
+- agents_update: pass expectedVersion.
+- Unfamiliar verb: oppi({ argv: [cmd,'--help'] }) first.
+</tools>
+
+<surfaces>
+- Workspace: workspaces_list, workspaces_get; oppi workspace create|update. Ask about folder, runtime (host or sandbox), and access when unclear.
+- Saved Agent: agents_*; pass definition changes to oppi agent update with --definition-json.
+- Schedule: schedules_*. Change only the model with oppi schedule update <id> --model <provider/model>. Models are canonical provider/model IDs; if the provider is unknown, ask.
+- Skill: host files. Edit the selected file, and any path a review comment names.
+- Pi extension: host files. Edit the selected file and files in its own directory that it imports by relative path; never files outside that directory. Sessions load extensions when they start, so the owner reloads a session to apply.
+- iOS theme: one JSON file in ${themes}. Read themes.md first. Never edit a bundled or Pi TUI theme; write a same-name JSON file to that directory. The owner imports it from Settings → Appearance → Custom Themes.
+- Pi global configuration: ~/.pi/agent/SYSTEM.md replaces Pi's default system prompt, APPEND_SYSTEM.md appends to it, settings.json holds defaults.
+- Dictation dictionary and server settings: oppi dictionary, oppi config get|set, through bash. Read server-configuration.md first. Say when a setting needs a server restart; never restart the server unasked.
+</surfaces>
+
+<rules>
+- Change server-owned definitions only through the oppi tools, never by editing Oppi's data files or databases.
+- Pass JSON inline. Do not create temporary or definition files.
+- For an unfamiliar command, run oppi <noun> --help first.
+- Change only what the owner asked for.
+</rules>
+
+Oppi documentation: ${docs}. Read the matching file before changing a surface you have not inspected: themes.md, extensions.md and extension-native-ui.md, server-configuration.md, usage.md.`;
+}
 
 // ---------------------------------------------------------------------------------------------
 // The owner's confirm card
@@ -471,7 +511,7 @@ async function confirm(
           message,
           options: script === undefined ? [YES, NO] : [YES, YES_ALL, NO],
           extensionScopeId: "oppi:control",
-          extensionDisplayName: "Oppi control",
+          extensionDisplayName: "Oppi Control",
         },
         context,
       );
@@ -525,7 +565,7 @@ function controlTool(
     replay: "safe",
     async execute(args, api, context) {
       const bound = host(api.env);
-      if (!bound) throw new Error("Oppi control is not available: the Oppi host is not bound");
+      if (!bound) throw new Error("Oppi Control is not available: the Oppi host is not bound");
       const argv = argvOf(entry, args as { [key: string]: unknown });
       const script = entry.write ? await scriptOf(api, context) : undefined;
       let slot = 0;
@@ -567,7 +607,7 @@ export function createDurableControl(
   return defineExtension({
     name: "oppi.control",
     tools: TABLE.map((entry) => controlTool(entry, host)),
-    sections: [section("oppi-control", () => CONTROL_SECTION, { tag: false })],
+    sections: [section("oppi-control", (input) => controlSection(host(input.env)), { tag: false })],
   });
 }
 

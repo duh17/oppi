@@ -20,7 +20,7 @@ oppi config set --help
 - Unknown keys are ignored at startup and reported by `oppi config validate`.
 - Keys marked *restart* below take effect only after `oppi server restart` (or stopping and starting a foreground `oppi serve`).
 
-`oppi server restart` interrupts running sessions, which resume afterward ([Running sessions across a restart](#running-sessions-across-a-restart)). A setup session (Edit with Oppi) runs with host-user authority: inspect the current state before changing configuration, and tell the owner when a restart is required instead of restarting unasked.
+`oppi server restart` interrupts running sessions, which resume afterward ([Running sessions across a restart](#running-sessions-across-a-restart)). An Oppi Control session (Edit with Oppi) runs with host-user authority: inspect the current state before changing configuration, and tell the owner when a restart is required instead of restarting unasked.
 
 Do not put these in config: owner tokens and pairing secrets (use `oppi pair` and `oppi token`), provider credentials (use the app's **Model Providers** screen; a foreground `oppi serve` also reads provider API key environment variables, and a background service reads them only through `runtimeEnv`, which stores them in plain text; see [Onboarding](onboarding.md#connect-a-model-provider)), or per-workspace Agent and Skill content (use Agents, Skills, and workspace flows).
 

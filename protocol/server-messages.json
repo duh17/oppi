@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 70
+    "messageCount": 72
   },
   "messages": {
     "connected": {
@@ -384,6 +384,101 @@
         },
         "parentSessionId": "parent-session-1",
         "engine": "durable"
+      }
+    },
+    "state_control_durable": {
+      "type": "state",
+      "session": {
+        "id": "control-durable-1",
+        "name": "Oppi Control",
+        "status": "ready",
+        "createdAt": 1739750400000,
+        "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 5,
+        "tokens": {
+          "input": 1500,
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
+        },
+        "cost": 0.012,
+        "changeStats": {
+          "mutatingToolCalls": 3,
+          "filesChanged": 6,
+          "changedFiles": [
+            "src/main.ts",
+            "README.md"
+          ],
+          "changedFilesOverflow": 4
+        },
+        "contextTokens": 2300,
+        "contextWindow": 200000,
+        "lastMessage": "I've updated the README with the new API docs.",
+        "thinkingLevel": "high",
+        "launch": {
+          "source": "human",
+          "target": {
+            "server": true,
+            "displayCwd": "Oppi Control"
+          },
+          "status": "accepted",
+          "requestedAt": 1739750399000,
+          "completedAt": 1739750400000
+        },
+        "serverDurable": {
+          "storeId": "control-durable-1",
+          "conversationId": 1,
+          "role": "control"
+        }
+      }
+    },
+    "session_summary_control_durable": {
+      "type": "session_summary",
+      "summary": {
+        "id": "control-durable-1",
+        "name": "Oppi Control",
+        "status": "ready",
+        "createdAt": 1739750400000,
+        "lastActivity": 1739750460000,
+        "programStatus": {
+          "state": "blocked",
+          "kind": "question",
+          "message": "Which database?",
+          "since": 1739750455000
+        },
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "messageCount": 5,
+        "tokens": {
+          "input": 1500,
+          "output": 800,
+          "cacheRead": 250,
+          "cacheWrite": 100
+        },
+        "cost": 0.012,
+        "changeStats": {
+          "mutatingToolCalls": 3,
+          "filesChanged": 6,
+          "changedFiles": [
+            "src/main.ts",
+            "README.md"
+          ],
+          "changedFilesOverflow": 4
+        },
+        "contextTokens": 2300,
+        "contextWindow": 200000,
+        "lastMessage": "I've updated the README with the new API docs.",
+        "thinkingLevel": "high",
+        "engine": "durable",
+        "serverDurable": {
+          "role": "control"
+        }
       }
     },
     "state_icon_default": {

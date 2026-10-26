@@ -480,9 +480,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         liveVoice: voiceReady.has("liveVoice") ? { version: 1 } : undefined,
         // Create requests may ask for engine "durable" (experimental.serverDurable).
         durableSessions: ctx.sessions.durableSessionsAvailable() ? { version: 1 } : undefined,
-        // Experimental: `attach` on a durable session's focused stream sends snapshot/update.
+        // `attach` on a durable session's focused stream sends snapshot/update. Every server
+        // streams durable conversations: Oppi Control sessions are durable without the flag.
         // v2: `attach { mode: "live" }` streams the live tails of its subagents, and `detach`.
-        conversationStream: ctx.sessions.conversationStreamAvailable() ? { version: 2 } : undefined,
+        conversationStream: { version: 2 },
         extensionNativeUI: {
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],

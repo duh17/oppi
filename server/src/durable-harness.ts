@@ -216,14 +216,14 @@ function summarize(loaded: LoadedDurableExtension, builtIn: boolean): DurableExt
   };
 }
 
-/** Selected only by the control conversation, never by default. */
+/** Selected only by Oppi Control sessions, never by default. */
 const CONTROL_EXTENSION = "oppi.control";
 /** Offers `subagent`; a session selects it only when it may spawn. */
 const SESSIONS_EXTENSION = "oppi.sessions";
 /** Offers `notify`; a session selects it only while the server offers it (`offersNotify`). */
 const NOTIFY_EXTENSION = "oppi.notify";
 /**
- * Built-ins no default selection carries: the control conversation's, and `oppi.live-voice`,
+ * Built-ins no default selection carries: Oppi Control's, and `oppi.live-voice`,
  * which `DurableBackend` enrolls only while a Live Voice call is attached.
  */
 const NEVER_DEFAULT = new Set([CONTROL_EXTENSION, LIVE_VOICE_EXTENSION]);
@@ -1397,14 +1397,14 @@ export class DurableHarness {
    */
   onHostRecovered?: (host: SessionHost, failure: unknown) => Promise<void>;
   /**
-   * Runs the control conversation's codemode scripts. A sandbox only holds defaults; each script
+   * Runs Oppi Control sessions' codemode scripts. A sandbox only holds defaults; each script
    * gets its own VM worker, limited so a runaway script fails inside it, not the server.
    */
   private readonly controlSandbox = new CodemodeSandbox({
     memoryLimitBytes: CONTROL_SCRIPT_MEMORY_LIMIT_BYTES,
   });
   /**
-   * pi-durable's own `codemode` for the control conversation: scripts call the control tools as
+   * pi-durable's own `codemode` for Oppi Control sessions: scripts call the control tools as
    * nested calls and resume after a restart without running finished calls again. No `models.*`:
    * control has no use for classifiers or image generation.
    */
@@ -1447,9 +1447,13 @@ export class DurableHarness {
     return this.notifyBinding?.offersNotify(sessionId) ?? false;
   }
 
-  /** The control conversation's exact selection. Never part of `defaultExtensions`. */
+  /** Every Oppi Control session's exact selection. Never part of `defaultExtensions`. */
   get controlExtensions(): readonly Extension[] {
-    return controlConversationExtensions((name) => this.builtIn(name), this.controlCodemode);
+    return controlConversationExtensions(
+      (name) => this.builtIn(name),
+      this.controlCodemode,
+      CodingTools,
+    );
   }
 
   /**
@@ -1490,7 +1494,7 @@ export class DurableHarness {
    * Whether workspace sessions select the durable extension `name`, built-in or from a Pi package
    * (`experimental.durableExtensions.disabled`, read at each use). A disabled extension stays
    * installed, so its pending tasks still find their definition; new sessions leave it out and a
-   * bound one drops it at its next attach. The control conversation keeps its exact selection.
+   * bound one drops it at its next attach. Oppi Control sessions keep their exact selection.
    */
   isExtensionEnabled(name: string): boolean {
     return !this.disabledExtensions().includes(name);
@@ -1586,7 +1590,7 @@ export class DurableHarness {
 
   /**
    * Extensions loaded from Pi packages that a session of this runtime selects next to the
-   * built-ins. The control conversation selects none of them.
+   * built-ins. Oppi Control sessions select none of them.
    */
   packageExtensionsFor(runtime: DurableExtensionRuntime): Extension[] {
     return this.packageExtensions
@@ -1631,7 +1635,7 @@ export class DurableHarness {
     first: boolean,
   ): Promise<DurableExtensionReport> {
     const builtIns = await this.loadBuiltIns(registry, first);
-    // Installed so the control conversation can select it by name. Installing is not
+    // Installed so Oppi Control sessions can select it by name. Installing is not
     // selecting: only `defaultExtensions` is the default selection of other conversations.
     if (first) registry.install(this.controlCodemode);
     const packages = await this.loadPackages(registry);

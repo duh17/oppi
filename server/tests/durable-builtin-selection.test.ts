@@ -267,8 +267,8 @@ const PINNED = {
   },
   control: {
     created: {
-      stored: ["ask", "working-words", "oppi.control", "codemode"],
-      extensions: ["ask", "working-words", "oppi.control", "codemode"],
+      stored: ["ask", "working-words", "oppi.control", "codemode", "coding-tools"],
+      extensions: ["ask", "working-words", "oppi.control", "codemode", "coding-tools"],
       tools: [
         "ask",
         "oppi",
@@ -289,12 +289,16 @@ const PINNED = {
         "workspaces_list",
         "workspaces_get",
         "codemode",
+        "read",
+        "write",
+        "edit",
+        "bash",
       ],
       sections: ["ask-guidelines", "oppi-control", "codemode"],
     },
     reattached: {
-      stored: ["ask", "working-words", "oppi.control", "codemode"],
-      extensions: ["ask", "working-words", "oppi.control", "codemode"],
+      stored: ["ask", "working-words", "oppi.control", "codemode", "coding-tools"],
+      extensions: ["ask", "working-words", "oppi.control", "codemode", "coding-tools"],
       tools: [
         "ask",
         "oppi",
@@ -315,6 +319,10 @@ const PINNED = {
         "workspaces_list",
         "workspaces_get",
         "codemode",
+        "read",
+        "write",
+        "edit",
+        "bash",
       ],
       sections: ["ask-guidelines", "oppi-control", "codemode"],
     },

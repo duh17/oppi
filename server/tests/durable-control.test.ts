@@ -29,7 +29,7 @@ import { createAgentRoutes } from "../src/routes/agents.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createScheduleRoutes } from "../src/routes/schedules.js";
 import type { RouteContext } from "../src/routes/types.js";
-import { CONTROL_SECTION, createDurableControl } from "../extensions/durable/control/durable.js";
+import { controlSection, createDurableControl } from "../extensions/durable/control/durable.js";
 import type { DurableControlHost } from "../src/durable-extension-api.js";
 import { DurableUI, type UIRequest } from "../extensions/durable/durable-ui.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
@@ -159,13 +159,13 @@ async function fixture() {
   await models.setRuntimeApiKey("faux", "test-only-faux-credential");
   await models.refresh({ allowNetwork: false });
   const api = await ownerApi(dir);
-  // Every conversation these tests open stands for the control conversation.
+  // Every conversation these tests open stands for an Oppi Control session.
   const real = new DurableControlCli({
     dataDir: dir,
     sessionIdOf: () => "control-session",
   }).forConversation("control", 1 as ConversationId)!;
   const run = vi.fn((...args: Parameters<DurableControlHost["run"]>) => real.run(...args));
-  const host: DurableControlHost = { run };
+  const host: DurableControlHost = { ...real, run };
   // The server's own codemode for control: its sandbox, memory limit, and options.
   const runtime = new DurableHarness(dir);
   runtimes.push(runtime);
@@ -291,7 +291,6 @@ async function start(steps: FauxResponseStep[], answers: Array<string | undefine
 
 describe("oppi.control tools", () => {
   it("offers every control tool to the model and to codemode scripts, with the control section", async () => {
-    expect(Buffer.byteLength(CONTROL_SECTION)).toBeLessThan(1024);
     const f = await start([]);
     const agent = await f.conversation.agent(context);
     const names = agent.tools.map((tool) => tool.name);
@@ -310,7 +309,9 @@ describe("oppi.control tools", () => {
         ),
       ),
     );
-    expect(rendered).toContain(CONTROL_SECTION);
+    // The section names the bound host's themes directory and docs.
+    expect(rendered).toContain(controlSection(f.host));
+    expect(controlSection(f.host)).toContain(join(f.dir, "themes"));
     // Scripts see the same tools, declared in pi-durable's own codemode section.
     const codemodeSection = rendered.find((text) => text?.includes("agents_create("));
     expect(codemodeSection).toBeDefined();

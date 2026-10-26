@@ -85,7 +85,7 @@ function routeContext(
       listSessions: () => [],
       getDataDir: () => tmpdir(),
     },
-    sessions: { durableSessionsAvailable: () => false, conversationStreamAvailable: () => false },
+    sessions: { durableSessionsAvailable: () => false },
     sessionRuntimes: { getActiveSessionIds: () => new Set() },
     skillRegistry: { list: () => [] },
     getModelCatalog: () => [],

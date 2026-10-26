@@ -1,9 +1,6 @@
 import { safeErrorMessage } from "../log-utils.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
-const UNAVAILABLE =
-  "Durable extensions are not available on this server; enable experimental.serverDurable";
-
 /**
  * Durable extension routes (owner only):
  * - `GET /durable/extensions`: the durable extensions workspace sessions may select, built-ins
@@ -21,8 +18,7 @@ export function createDurableExtensionRoutes(
     if (path === "/durable/extensions" && method === "GET") {
       try {
         const extensions = await ctx.sessions.listDurableExtensions();
-        if (!extensions) helpers.error(res, 409, UNAVAILABLE);
-        else helpers.json(res, { extensions });
+        helpers.json(res, { extensions });
       } catch (error: unknown) {
         helpers.error(res, 500, safeErrorMessage(error));
       }
@@ -57,8 +53,7 @@ export function createDurableExtensionRoutes(
       }
       try {
         const extension = await ctx.sessions.setDurableExtensionEnabled(name, enabled);
-        if (extension === undefined) helpers.error(res, 409, UNAVAILABLE);
-        else if (extension === null)
+        if (extension === null)
           helpers.error(res, 404, `No durable extension named ${name} is loaded`);
         else helpers.json(res, { extension });
       } catch (error: unknown) {
@@ -70,10 +65,6 @@ export function createDurableExtensionRoutes(
     if (path !== "/durable/extensions/reload" || method !== "POST") return false;
     try {
       const report = await ctx.sessions.reloadDurableExtensions();
-      if (!report) {
-        helpers.error(res, 409, UNAVAILABLE);
-        return true;
-      }
       helpers.json(res, report);
     } catch (error: unknown) {
       helpers.error(res, 500, safeErrorMessage(error));

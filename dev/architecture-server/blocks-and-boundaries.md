@@ -38,7 +38,7 @@ The server's supported remote boundary is HTTPS/WSS with per-device P-256 keys a
 
 - `routes/identity.ts` — user, server info, pairing, stats, runtime status, provider-auth helpers.
 - `routes/workspaces.ts` — workspace catalog, CRUD, Git status, worktrees, quick actions, review comments.
-- `routes/sessions.ts` — session HTTP boundary for workspace and declared control scopes: create/import, resume, stop, fork, delete, traces, catch-up, tool output, session files, and diffs. Lifecycle, list, and trace/file policy is delegated to application services.
+- `routes/sessions.ts` — session HTTP boundary for workspace and control (durable Oppi Control and classic Pi Control) scopes: create/import, resume, stop, fork, delete, traces, catch-up, tool output, session files, and diffs. Lifecycle, list, and trace/file policy is delegated to application services.
 - `routes/agents.ts` — saved Agent definitions and saved-Agent session launches.
 - `routes/schedules.ts` — schedule CRUD, manual runs, run history, and pause/resume/archive/restore.
 - `routes/server-resources.ts` — server-global Skill/extension catalogs, server-authored capabilities, contained Skill file reads, enable/disable, and Mobile Output Guide configuration.

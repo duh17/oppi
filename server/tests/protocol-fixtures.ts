@@ -156,6 +156,43 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
     type: "session_summary",
     summary: { ...TEST_SESSION_SUMMARY, engine: "durable" },
   },
+  // A durable Oppi Control session: workspace-less, marked by its role, no `control` metadata.
+  state_control_durable: {
+    type: "state",
+    session: {
+      ...TEST_SESSION,
+      id: "control-durable-1",
+      workspaceId: undefined,
+      workspaceName: undefined,
+      name: "Oppi Control",
+      // What createControlSession writes: a human launch against the server, no agent or parent.
+      launch: {
+        source: "human",
+        target: { server: true, displayCwd: "Oppi Control" },
+        status: "accepted",
+        requestedAt: 1739750399000,
+        completedAt: 1739750400000,
+      },
+      piSessionFile: undefined,
+      piSessionFiles: undefined,
+      serverDurable: { storeId: "control-durable-1", conversationId: 1, role: "control" },
+    },
+  },
+  session_summary_control_durable: {
+    type: "session_summary",
+    summary: {
+      ...TEST_SESSION_SUMMARY,
+      id: "control-durable-1",
+      workspaceId: undefined,
+      workspaceName: undefined,
+      name: "Oppi Control",
+      agentId: undefined,
+      agentIcon: undefined,
+      parentSessionId: undefined,
+      engine: "durable",
+      serverDurable: { role: "control" },
+    },
+  },
   state_icon_default: {
     type: "state",
     session: {
@@ -795,6 +832,8 @@ const SERVER_MESSAGE_ORDER = [
   "session_summary_control",
   "state_durable",
   "session_summary_durable",
+  "state_control_durable",
+  "session_summary_control_durable",
   "state_icon_default",
   "state_icon_emoji",
   "state_icon_genmoji",

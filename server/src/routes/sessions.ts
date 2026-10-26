@@ -7,8 +7,6 @@ import {
 import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
 import {
   type ChatAttachmentRef,
-  type ControlSessionDomain,
-  type ControlSessionIntent,
   type ServerMessage,
   type Session,
   type SessionPromptCacheStatus,
@@ -32,19 +30,6 @@ import {
   interactionKindForCommand,
   recordCallerInteraction,
 } from "../session-interactions.js";
-
-const CONTROL_SESSION_DOMAINS: ReadonlySet<string> = new Set<ControlSessionDomain>([
-  "agents",
-  "extensions",
-  "schedules",
-  "skills",
-  "themes",
-  "workspaces",
-]);
-const CONTROL_SESSION_INTENTS: ReadonlySet<string> = new Set<ControlSessionIntent>([
-  "create",
-  "revise",
-]);
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
@@ -365,11 +350,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
+    // `domain`, `intent`, `targetId`, and `targetName` from apps built for classic Pi Control
+    // are accepted and ignored: every create makes a durable Oppi Control session, and the
+    // client's first message names the target.
     const body = await helpers.parseBody<{
-      domain?: unknown;
-      intent?: unknown;
-      targetId?: unknown;
-      targetName?: unknown;
       name?: unknown;
       model?: unknown;
       thinking?: unknown;
@@ -377,14 +361,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       launchIdempotencyKey?: unknown;
     }>(req);
     if (
-      typeof body.domain !== "string" ||
-      !CONTROL_SESSION_DOMAINS.has(body.domain) ||
-      typeof body.intent !== "string" ||
-      !CONTROL_SESSION_INTENTS.has(body.intent) ||
-      (body.targetId !== undefined &&
-        (typeof body.targetId !== "string" || !body.targetId.trim())) ||
-      (body.targetName !== undefined &&
-        (typeof body.targetName !== "string" || !body.targetName.trim())) ||
       (body.name !== undefined && typeof body.name !== "string") ||
       (body.model !== undefined && (typeof body.model !== "string" || !body.model.trim())) ||
       (body.thinking !== undefined &&
@@ -403,16 +379,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const targetId = body.targetId?.trim();
-    const targetName = body.targetName?.trim();
     try {
       const result = await lifecycle.createControlSession({
-        control: {
-          domain: body.domain as ControlSessionDomain,
-          intent: body.intent as ControlSessionIntent,
-          ...(targetId ? { targetId } : {}),
-          ...(targetName ? { targetName } : {}),
-        },
         name: body.name,
         model: typeof body.model === "string" ? body.model.trim() : undefined,
         thinking: typeof body.thinking === "string" ? body.thinking : undefined,

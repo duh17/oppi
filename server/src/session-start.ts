@@ -54,7 +54,7 @@ export interface SessionStartCoordinatorDeps {
   /** True once the owning SessionManager is closed for server shutdown. */
   isClosed?: () => boolean;
   metrics?: ServerMetricCollector;
-  durableHarness?: Promise<DurableHarness>;
+  durableHarness: Promise<DurableHarness>;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
   hasUI?: (key: string) => boolean;
   liveVoiceExtension?: (sessionId: string) => InlineExtension | undefined;
@@ -93,8 +93,8 @@ export class SessionStartCoordinator {
         // The flag decides whether durable sessions can be created. A bound
         // conversation always resumes on DurableBackend; a durable request that
         // never bound one goes back to the classic SDK backend while it is off.
-        // The control conversation never falls back: it has no classic form, so a flag-off
-        // start fails on the missing harness instead.
+        // A durable Oppi Control session never falls back: it runs on the durable engine on
+        // every server.
         if (
           session.serverDurable &&
           session.serverDurable.conversationId === undefined &&
@@ -113,11 +113,6 @@ export class SessionStartCoordinator {
         const useDurable = usesDurableEngine(session);
         if (useDurable && durableStoreId(session) === undefined) {
           throw new Error(DURABLE_STORE_MISSING);
-        }
-        if (useDurable && !this.deps.durableHarness) {
-          throw new Error(
-            "Server durable session cannot start: the durable harness is unavailable",
-          );
         }
         const durableHarness = useDurable ? await this.deps.durableHarness : undefined;
         const DurableBackend = useDurable

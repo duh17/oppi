@@ -296,7 +296,7 @@ describe("POST /control-sessions", () => {
     expect(mock.storage.saveSession).not.toHaveBeenCalled();
   });
 
-  it("creates a declared workspace-less control session", async () => {
+  it("creates a workspace-less durable Oppi Control session from a classic body", async () => {
     const mock = createMockContext();
 
     expect(
@@ -317,21 +317,46 @@ describe("POST /control-sessions", () => {
       data: {
         prompted: true,
         session: {
-          workspaceId: undefined,
+          name: "Create Schedule",
           model: "anthropic/claude-opus-4-8",
           thinkingLevel: "high",
-          control: { domain: "schedules", intent: "create" },
+          runtime: "oppi",
+          serverDurable: { role: "control" },
           launch: {
-            target: { server: true, displayCwd: "Pi Control" },
+            target: { server: true, displayCwd: "Oppi Control" },
+            modelPolicy: "required",
+            promptDispatch: "delivered",
           },
         },
       },
     });
-    expect(mock.storage.createSession).toHaveBeenCalledWith(
-      "Create Schedule",
-      "anthropic/claude-opus-4-8",
-    );
-    expect(mock.sessions.startSession).toHaveBeenCalledWith(expect.any(String), undefined);
+    const created = (mock.responses[0]?.data as { session: Session }).session;
+    expect(created.workspaceId).toBeUndefined();
+    expect(created.serverDurable?.storeId).toBe(created.id);
+    // The classic fields are accepted and not stored.
+    expect(created).not.toHaveProperty("control");
+    expect(mock.storage.createSession).not.toHaveBeenCalled();
+    expect(mock.sessions.startSession).toHaveBeenCalledWith(created.id, undefined);
+  });
+
+  it("names a create without a name Oppi Control and starts nothing without a prompt", async () => {
+    const mock = createMockContext();
+
+    await dispatchCreate(mock, {});
+
+    expect(mock.errors).toEqual([]);
+    expect(mock.responses[0]).toMatchObject({
+      status: 201,
+      data: {
+        session: {
+          name: "Oppi Control",
+          serverDurable: { role: "control" },
+          launch: { status: "accepted", promptDispatch: "not_sent" },
+        },
+      },
+    });
+    expect(mock.responses[0]?.data).not.toHaveProperty("prompted");
+    expect(mock.sessions.startSession).not.toHaveBeenCalled();
   });
 
   it("immediately serves a newly persisted control session through its trace route", async () => {
@@ -354,11 +379,9 @@ describe("POST /control-sessions", () => {
       const created = mock.responses[0]?.data as { session?: Session } | undefined;
       const sessionId = created?.session?.id;
       expect(sessionId).toBeTypeOf("string");
-      expect(persistentStorage.getSession(sessionId!)?.control).toEqual({
-        domain: "agents",
-        intent: "revise",
-        targetId: "agent-1",
-        targetName: "Reviewer",
+      expect(persistentStorage.getSession(sessionId!)?.serverDurable).toEqual({
+        storeId: sessionId,
+        role: "control",
       });
 
       const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
@@ -379,16 +402,14 @@ describe("POST /control-sessions", () => {
       expect(mock.responses[1]).toMatchObject({
         status: 200,
         data: {
-          session: {
-            id: sessionId,
-            control: { domain: "agents", intent: "revise", targetId: "agent-1" },
-          },
+          session: { id: sessionId, serverDurable: { role: "control" } },
           outline: expect.any(Object),
         },
       });
 
       const freshStorage = new Storage(dataDir);
-      expect(freshStorage.getSession(sessionId!)?.control?.targetName).toBe("Reviewer");
+      expect(freshStorage.getSession(sessionId!)?.serverDurable?.role).toBe("control");
+      expect(freshStorage.getSession(sessionId!)).not.toHaveProperty("control");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
@@ -474,49 +495,31 @@ describe("POST /control-sessions", () => {
   it.each([
     {
       domain: "skills",
+      intent: "revise",
       targetId: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       targetName: "review",
     },
-    { domain: "themes", targetId: "tokyo-night", targetName: "Tokyo Night" },
-  ])("accepts $domain revision control sessions", async ({ domain, targetId, targetName }) => {
+    { domain: "themes", intent: "revise", targetId: "tokyo-night", targetName: "Tokyo Night" },
+    // Values classic validation refused are ignored now too.
+    { domain: "palettes", intent: "delete", targetId: "   ", targetName: "" },
+    { domain: "agents" },
+  ])("accepts the classic body %o as a durable control session", async (fields) => {
     const mock = createMockContext();
 
     await dispatchCreate(mock, {
-      domain,
-      intent: "revise",
-      targetId,
-      targetName,
+      ...fields,
       prompt: "Inspect the selected file and wait for review comments.",
     });
 
     expect(mock.errors).toEqual([]);
     expect(mock.responses[0]).toMatchObject({
       status: 201,
-      data: {
-        session: {
-          workspaceId: undefined,
-          control: { domain, intent: "revise", targetId },
-        },
-      },
+      data: { session: { serverDurable: { role: "control" } } },
     });
+    expect(mock.responses[0]?.data).not.toHaveProperty("session.control");
   });
 
   it.each([
-    { domain: "palettes", intent: "create" },
-    { domain: "themes", intent: "delete" },
-  ])("rejects unknown control domains and intents", async (body) => {
-    const mock = createMockContext();
-
-    await dispatchCreate(mock, body);
-
-    expect(mock.responses).toEqual([]);
-    expect(mock.errors).toEqual([{ status: 400, message: "Invalid control session metadata" }]);
-  });
-
-  it.each([
-    { domain: "agents" },
-    { domain: "agents", intent: "create", targetId: "   " },
-    { domain: "agents", intent: "create", targetName: "" },
     { domain: "agents", intent: "create", name: 42 },
     { domain: "agents", intent: "create", prompt: false },
     { domain: "agents", intent: "create", model: 42 },
@@ -530,7 +533,7 @@ describe("POST /control-sessions", () => {
 
     expect(mock.responses).toEqual([]);
     expect(mock.errors).toEqual([{ status: 400, message: "Invalid control session metadata" }]);
-    expect(mock.storage.createSession).not.toHaveBeenCalled();
+    expect(mock.storage.saveSession).not.toHaveBeenCalled();
   });
 });
 

@@ -11,9 +11,13 @@ import {
 } from "./agent-launch-service.js";
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
-import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
+import {
+  isControlConversation,
+  isControlRouteSession,
+  isDeclaredControlSession,
+  newControlSessionRow,
+} from "./control-session.js";
 import { isPathWithinRoot } from "./git-utils.js";
-import { mintSessionId } from "./id.js";
 import {
   canResumeStoppedMirrorAsOppi,
   promoteStoppedMirrorToOppi,
@@ -39,13 +43,7 @@ import {
 import { resolveInitialChatModel } from "./session-model-selection.js";
 import { durableStoreId, requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { Storage } from "./storage.js";
-import type {
-  ChatAttachmentRef,
-  ControlSessionMetadata,
-  Session,
-  SessionEngine,
-  Workspace,
-} from "./types.js";
+import type { ChatAttachmentRef, Session, SessionEngine, Workspace } from "./types.js";
 import {
   listWorkspaceWorktrees,
   workspaceHasPendingWorktreeClaim,
@@ -268,8 +266,14 @@ export class SessionLifecycleService {
     };
   }
 
+  /**
+   * Create a durable Oppi Control session (`serverDurable.role: "control"`, its own store) on
+   * every server, whether or not `experimental.serverDurable` is on, and deliver its first
+   * prompt when the request has one. The row is saved as `launching` before the start, so a
+   * replay of the same launch key finds it and never delivers the prompt twice. Classic Pi
+   * Control sessions are no longer created; existing ones still resume.
+   */
   async createControlSession(params: {
-    control: ControlSessionMetadata;
     name?: string;
     model?: string;
     thinking?: string;
@@ -283,43 +287,28 @@ export class SessionLifecycleService {
       const existing = this.deps.storage.findSessionByLaunchIdempotencyKey(idempotencyKey);
       if (existing) return this.existingControlLaunch(existing, params.prompt);
     }
-    const sessionName = params.name?.trim() || "Pi Control";
-    const session: Session = idempotencyKey
-      ? {
-          id: mintSessionId(),
-          name: sessionName,
-          status: "ready",
-          createdAt: now,
-          lastActivity: now,
-          ...(requestedModel ? { model: requestedModel } : {}),
-          messageCount: 0,
-          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          cost: 0,
-          runtime: "oppi",
-        }
-      : this.deps.storage.createSession(sessionName, requestedModel);
-    session.workspaceId = undefined;
-    session.worktreeId = undefined;
-    session.runtime = "oppi";
-    session.control = { ...params.control };
-    if (params.thinking) session.thinkingLevel = params.thinking;
-    session.launch = {
-      source: "human",
-      target: { server: true, displayCwd: "Pi Control" },
-      ...(requestedModel ? { model: requestedModel, modelPolicy: "required" } : {}),
-      status: "launching",
-      requestedAt: now,
-      ...(idempotencyKey
-        ? {
-            idempotencyKey,
-            lease: {
-              owner: CONTROL_LAUNCH_LEASE_OWNER,
-              acquiredAt: now,
-              expiresAt: now + CONTROL_LAUNCH_LEASE_TTL_MS,
-            },
-          }
-        : {}),
-    };
+    const session = newControlSessionRow({
+      now,
+      name: params.name?.trim() || "Oppi Control",
+      status: "ready",
+      model: requestedModel,
+      thinking: params.thinking,
+      launch: {
+        ...(requestedModel ? { modelPolicy: "required" as const } : {}),
+        status: "launching",
+        requestedAt: now,
+        ...(idempotencyKey
+          ? {
+              idempotencyKey,
+              lease: {
+                owner: CONTROL_LAUNCH_LEASE_OWNER,
+                acquiredAt: now,
+                expiresAt: now + CONTROL_LAUNCH_LEASE_TTL_MS,
+              },
+            }
+          : {}),
+      },
+    });
     try {
       this.deps.storage.saveSession(session);
     } catch (error) {
@@ -337,7 +326,8 @@ export class SessionLifecycleService {
     existing: Session,
     requestedPrompt: string | undefined,
   ): Promise<CreateWorkspaceSessionResult> {
-    if (!isDeclaredControlSession(existing)) {
+    // A classic row created under this key before control moved to durable still answers it.
+    if (!isControlRouteSession(existing)) {
       throw new SessionLifecycleError(
         "Control-session idempotency key belongs to a different session scope",
         409,
@@ -417,8 +407,9 @@ export class SessionLifecycleService {
     } catch (error: unknown) {
       // SessionManager resolves sendPrompt only after authoritative preflight
       // acceptance. Errors here are therefore safe to persist as retryable.
-      if (isRequiredModelUnavailableError(error)) session.status = "error";
-      session.launch = {
+      const failed = this.liveRow(session);
+      if (isRequiredModelUnavailableError(error)) failed.status = "error";
+      failed.launch = {
         ...launch,
         status: "failed",
         promptDispatch: "not_sent",
@@ -426,9 +417,9 @@ export class SessionLifecycleService {
         completedAt: Date.now(),
         lease: undefined,
       };
-      this.deps.storage.saveSession(session);
+      this.deps.storage.saveSession(failed);
       return {
-        session: this.deps.ensureSessionContextWindow(session),
+        session: this.deps.ensureSessionContextWindow(failed),
         createdSession,
         prompted: false,
         launchKind,
@@ -438,16 +429,17 @@ export class SessionLifecycleService {
     // Do not catch this save with prompt preflight failures. If persistence
     // fails after acceptance, the durable row remains `launching`; recovery
     // must conservatively refuse redispatch because acceptance is ambiguous.
-    session.firstMessage = prompt.slice(0, 200);
-    session.launch = {
+    const started = this.liveRow(session);
+    started.firstMessage = prompt.slice(0, 200);
+    started.launch = {
       ...launch,
       status: "accepted",
       promptDispatch: "delivered",
       completedAt: Date.now(),
       lease: undefined,
     };
-    this.deps.storage.saveSession(session);
-    const summarySession = this.deps.ensureSessionContextWindow(session);
+    this.deps.storage.saveSession(started);
+    const summarySession = this.deps.ensureSessionContextWindow(started);
     return {
       session: summarySession,
       createdSession,
@@ -455,6 +447,19 @@ export class SessionLifecycleService {
       prompted: true,
       launchKind,
     };
+  }
+
+  /**
+   * The row a launch outcome is written to after a start: the runtime's live copy, which later
+   * persists of the running session write back, else the stored row, which carries the
+   * conversation binding the start saved.
+   */
+  private liveRow(session: Session): Session {
+    return (
+      this.deps.sessionRuntimes.getActiveSession(session.id) ??
+      this.deps.storage.getSession(session.id) ??
+      session
+    );
   }
 
   async resumeWorkspaceSession(params: {
@@ -516,10 +521,10 @@ export class SessionLifecycleService {
     };
   }
 
-  /** Attach the control conversation to a runtime. It has no workspace and no `control` metadata. */
+  /** Attach a durable Oppi Control session to a runtime: no workspace, no `control` metadata. */
   async resumeControlConversation(session: Session): Promise<OpenSessionResult> {
     if (session.workspaceId !== undefined || !isControlConversation(session)) {
-      throw new SessionLifecycleError("Session is not the control conversation", 400);
+      throw new SessionLifecycleError("Session is not a durable control session", 400);
     }
     if (this.deps.sessionRuntimes.isSessionConnected(session.id)) {
       const active = this.deps.sessionRuntimes.getActiveSession(session.id);

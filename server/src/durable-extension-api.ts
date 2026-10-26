@@ -60,8 +60,8 @@ export interface OppiDurableHost {
    */
   sessions(env: ExecutionEnv | undefined): DurableSessionsHost | undefined;
   /**
-   * The `oppi` CLI, only when `env` runs the control conversation; undefined for every other
-   * conversation.
+   * The `oppi` CLI, only when `env` runs an Oppi Control session's conversation; undefined for
+   * every other conversation.
    */
   control(env: ExecutionEnv | undefined): DurableControlHost | undefined;
   /**
@@ -300,6 +300,10 @@ export interface DurableControlHost {
       onWrite?: (write: ControlWrite) => Promise<void>;
     },
   ): Promise<{ envelope: ControlJson; wrote: boolean }>;
+  /** This server's directory of the owner's iOS themes: `themes/` in its data directory. */
+  readonly themesDir: string;
+  /** This server's Oppi documentation directory; absent when the install has none. */
+  readonly docsPath?: string;
 }
 
 // --- sandbox tools (`oppi.sandbox-tools`) ----------------------------------------------------

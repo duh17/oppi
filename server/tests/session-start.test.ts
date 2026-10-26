@@ -54,9 +54,10 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     getSession: vi.fn(() => session),
     listSessions: vi.fn(() => [session]),
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
-    getMobileOutputGuideSettings: vi.fn(
-      (): MobileOutputGuideSettingsSnapshot => ({ enabled: false, revision: 0 }),
-    ),
+    getMobileOutputGuideSettings: vi.fn((): MobileOutputGuideSettingsSnapshot => ({
+      enabled: false,
+      revision: 0,
+    })),
   } as unknown as Storage;
 
   const runtimeManager = {
@@ -87,6 +88,8 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     }),
     resetIdleTimer: vi.fn(),
     bootstrapSessionState: vi.fn(async () => {}),
+    // These sessions are classic; nothing awaits the harness.
+    durableHarness: new Promise<never>(() => {}),
     persistedStatuses,
   };
 

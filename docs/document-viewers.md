@@ -123,7 +123,7 @@ The editor has syntax color, line numbers, a current-line band, a status line (L
 
 ## Editing Skill files
 
-The files of an editable Skill (one in `~/.pi/agent/skills` or another top-level Skill directory, not from a package) open in the same editor when the server supports it, with the same save and conflict rules. A Skill that is a single Markdown file edits only that file. The file's **Edit** button opens a menu: **Edit File** types in the editor, and **Edit with Oppi** starts a setup session that revises the Skill with your staged comments ([Edit with Oppi](usage.md#edit-with-oppi)). Package Skills offer only **Edit with Oppi** or stay read-only, as does every Skill on a server without Skill editing. A Skill file that is a symlink, over 1 MiB, or not UTF-8 text is read-only. The Agent definition, Schedule prompt, and Pi `SYSTEM.md` readers use the same pencil for **Edit with Oppi**.
+The files of an editable Skill (one in `~/.pi/agent/skills` or another top-level Skill directory, not from a package) open in the same editor when the server supports it, with the same save and conflict rules. A Skill that is a single Markdown file edits only that file. The file's **Edit** button opens a menu: **Edit File** types in the editor, and **Edit with Oppi** starts an Oppi Control session that revises the Skill with your staged comments ([Edit with Oppi](usage.md#edit-with-oppi)). Package Skills offer only **Edit with Oppi** or stay read-only, as does every Skill on a server without Skill editing. A Skill file that is a symlink, over 1 MiB, or not UTF-8 text is read-only. The Agent definition, Schedule prompt, and Pi `SYSTEM.md` readers use the same pencil for **Edit with Oppi**.
 
 ## Export
 

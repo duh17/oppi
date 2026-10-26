@@ -17,6 +17,7 @@ import { AgentDoc, type ConversationId } from "@earendil-works/pi-durable";
 import {
   ControlConversationError,
   ControlConversationService,
+  ensureControlConversationSession,
 } from "../src/control-conversation-service.js";
 import {
   CONTROL_CONVERSATION_LAUNCH_KEY,
@@ -216,10 +217,9 @@ describe("control conversation marker gates", () => {
 });
 
 describe("control conversation find-or-create service", () => {
-  function serviceFixture(options: { serverDurable?: boolean; resume?: () => Promise<void> } = {}) {
+  function serviceFixture(options: { resume?: () => Promise<void> } = {}) {
     const rows = new Map<string, Session>();
     const storage = {
-      getConfig: () => ({ experimental: { serverDurable: options.serverDurable ?? true } }),
       findSessionByLaunchIdempotencyKey: (key: string) =>
         [...rows.values()].find((row) => row.launch?.idempotencyKey === key),
       getSession: (id: string) => rows.get(id),
@@ -238,16 +238,6 @@ describe("control conversation find-or-create service", () => {
     });
     return { rows, resume, service };
   }
-
-  it("refuses while experimental.serverDurable is off and creates nothing", async () => {
-    const f = serviceFixture({ serverDurable: false });
-    await expect(f.service.open()).rejects.toMatchObject({
-      statusCode: 409,
-      message: expect.stringContaining("experimental.serverDurable"),
-    });
-    expect(f.rows.size).toBe(0);
-    expect(f.resume).not.toHaveBeenCalled();
-  });
 
   it("serializes concurrent first calls into one row and one start order", async () => {
     const order: string[] = [];
@@ -353,7 +343,8 @@ describe("control conversation lifecycle on the durable harness", () => {
       }),
     );
     const storage = new Storage(dir);
-    storage.updateConfig({ experimental: { serverDurable: true } });
+    // Durable Oppi Control runs without experimental.serverDurable.
+    expect(storage.getConfig().experimental?.serverDurable).not.toBe(true);
     return { dir, storage, faux };
   }
 
@@ -385,10 +376,10 @@ describe("control conversation lifecycle on the durable harness", () => {
     return { manager, open };
   }
 
-  it("does not start the boot-created control row on the next process", async () => {
+  it("does not start an unbound control row an earlier server created at boot", async () => {
     const { storage } = await setup();
     const first = await boot(storage);
-    await first.manager.ensureControlConversation();
+    ensureControlConversationSession(storage);
     const row = storage.findSessionByLaunchIdempotencyKey(CONTROL_CONVERSATION_LAUNCH_KEY)!;
     expect(row.status).toBe("stopped");
     expect(first.manager.isActive(row.id)).toBe(false);
@@ -412,7 +403,6 @@ describe("control conversation lifecycle on the durable harness", () => {
       sendFollowUp: vi.fn(),
       reportsLostWork: () => false,
     });
-    await second.manager.ensureControlConversation();
 
     expect(second.manager.isActive(row.id)).toBe(false);
     expect(storage.getSession(row.id)?.status).toBe("stopped");
@@ -454,7 +444,14 @@ describe("control conversation lifecycle on the durable harness", () => {
     const runtime = await owner;
     const { harness } = await (await runtime.openHost(sessionId)).open();
     const agent = await harness.snapshot(AgentDoc, conversationId as ConversationId, context);
-    expect(agent?.extensions).toEqual(["ask", "working-words", "oppi.control", "codemode"]);
+    expect(agent?.extensions).toEqual([
+      "ask",
+      "working-words",
+      "oppi.control",
+      "codemode",
+      "coding-tools",
+    ]);
+    expect(agent?.tools).toEqual(expect.arrayContaining(["read", "bash", "edit", "write"]));
     expect(agent?.extensions).toEqual((await owner).controlExtensions.map((e) => e.name));
     expect(agent?.tools).toEqual(
       controlConversationTools((await owner).controlExtensions).map((tool) => tool.name),
@@ -712,17 +709,5 @@ describe("control conversation lifecycle on the durable harness", () => {
       );
       expect(ws.closeCode).toBe(1008);
     });
-  });
-
-  it("answers 409 while experimental.serverDurable is off", async () => {
-    const { storage } = await setup();
-    storage.updateConfig({ experimental: { serverDurable: false } });
-    const off = await boot(storage);
-    const refused = await off.open();
-    expect(refused.status).toBe(409);
-    expect((refused.body as unknown as { error: string }).error).toContain(
-      "experimental.serverDurable",
-    );
-    expect(storage.listSessions()).toEqual([]);
   });
 });

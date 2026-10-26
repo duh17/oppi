@@ -313,6 +313,8 @@ function makeManagerHarness(status: Session["status"] = "busy", stopTimers?: Ses
     listSessions: () => [],
     getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
     saveSession,
+    // A stop of an inactive session asks whether its row is bound to a durable conversation.
+    getSession: vi.fn(() => undefined),
     getWorkspace: vi.fn(() => undefined),
     clearRestartResume: vi.fn(),
   } as unknown as Storage;

@@ -511,51 +511,41 @@ describe("SessionLifecycleService", () => {
   });
 
   describe("createControlSession", () => {
-    it("creates a workspace-less ordinary Pi session and dispatches its starter prompt", async () => {
-      const createdSession = makeSession({ id: "control-1", workspaceId: undefined });
-      const { service, createSession, saveSession, startSession, sendPrompt } = makeService({
-        forkSession: createdSession,
-      });
+    it("creates a workspace-less durable control session and dispatches its starter prompt", async () => {
+      const { service, createSession, saveSession, startSession, sendPrompt } = makeService();
 
       const result = await service.createControlSession({
-        control: {
-          domain: "agents",
-          intent: "revise",
-          targetId: "release-reviewer",
-          targetName: "Release Reviewer",
-        },
         name: "Revise Release Reviewer",
         prompt: "Help me revise this Agent.",
       });
 
-      expect(createSession).toHaveBeenCalledWith("Revise Release Reviewer", undefined);
+      const id = result.session.id;
+      expect(createSession).not.toHaveBeenCalled();
       expect(saveSession.mock.calls[0]?.[0]).toMatchObject({
-        id: "control-1",
-        workspaceId: undefined,
+        id,
+        name: "Revise Release Reviewer",
         runtime: "oppi",
-        control: {
-          domain: "agents",
-          intent: "revise",
-          targetId: "release-reviewer",
-          targetName: "Release Reviewer",
-        },
+        serverDurable: { storeId: id, role: "control" },
         launch: {
           source: "human",
-          target: { server: true, displayCwd: "Pi Control" },
+          target: { server: true, displayCwd: "Oppi Control" },
+          status: "launching",
         },
       });
-      expect(startSession).toHaveBeenCalledWith("control-1", undefined);
-      expect(sendPrompt).toHaveBeenCalledWith("control-1", "Help me revise this Agent.", {});
+      expect(saveSession.mock.calls[0]?.[0].workspaceId).toBeUndefined();
+      expect(saveSession.mock.calls[0]?.[0]).not.toHaveProperty("control");
+      expect(startSession).toHaveBeenCalledWith(id, undefined);
+      expect(sendPrompt).toHaveBeenCalledWith(id, "Help me revise this Agent.", {});
       expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
         firstMessage: "Help me revise this Agent.",
         launch: { status: "accepted", promptDispatch: "delivered" },
       });
       expect(result.session).toMatchObject({
-        id: "control-1",
         name: "Revise Release Reviewer",
-        workspaceId: undefined,
+        serverDurable: { role: "control" },
         contextWindow: 200_000,
       });
+      expect(result.session.workspaceId).toBeUndefined();
       expect(result.session.launch).not.toHaveProperty("agentId");
       expect(result.session.launch).not.toHaveProperty("agentVersion");
       expect(result.session.launch).not.toHaveProperty("agentIcon");
@@ -568,11 +558,11 @@ describe("SessionLifecycleService", () => {
         id: "control-retry-1",
         workspaceId: undefined,
         runtime: "oppi",
-        control: { domain: "skills", intent: "revise", targetId: "skill-1" },
+        serverDurable: { role: "control" },
         launch: {
           source: "human",
           idempotencyKey: "control-launch-1",
-          target: { server: true, displayCwd: "Pi Control" },
+          target: { server: true, displayCwd: "Oppi Control" },
           status: "failed",
           requestedAt: 1,
           completedAt: 2,
@@ -584,7 +574,6 @@ describe("SessionLifecycleService", () => {
         makeService({ storedSession: persisted });
 
       const result = await service.createControlSession({
-        control: { domain: "skills", intent: "revise", targetId: "skill-1" },
         prompt: "Complete atomic initial prompt",
         idempotencyKey: "control-launch-1",
       });
@@ -612,7 +601,6 @@ describe("SessionLifecycleService", () => {
 
       await expect(
         firstProcess.service.createControlSession({
-          control: { domain: "skills", intent: "revise", targetId: "skill-1" },
           prompt: "Accepted exactly once",
           idempotencyKey: "control-accepted-save-failure",
         }),
@@ -640,7 +628,6 @@ describe("SessionLifecycleService", () => {
 
       await expect(
         restarted.service.createControlSession({
-          control: { domain: "skills", intent: "revise", targetId: "skill-1" },
           prompt: "Accepted exactly once",
           idempotencyKey: "control-accepted-save-failure",
         }),
@@ -659,11 +646,11 @@ describe("SessionLifecycleService", () => {
         id: "control-in-progress",
         workspaceId: undefined,
         runtime: "oppi",
-        control: { domain: "agents", intent: "create" },
+        serverDurable: { role: "control" },
         launch: {
           source: "human",
           idempotencyKey: "control-in-progress-key",
-          target: { server: true, displayCwd: "Pi Control" },
+          target: { server: true, displayCwd: "Oppi Control" },
           status: "launching",
           requestedAt: 1,
           lease: { owner: "other-process", acquiredAt: Date.now(), expiresAt: Date.now() + 60_000 },
@@ -675,7 +662,6 @@ describe("SessionLifecycleService", () => {
 
       await expect(
         service.createControlSession({
-          control: { domain: "agents", intent: "create" },
           prompt: "Do not race this launch",
           idempotencyKey: "control-in-progress-key",
         }),
@@ -689,11 +675,11 @@ describe("SessionLifecycleService", () => {
         id: "control-cas-lost",
         workspaceId: undefined,
         runtime: "oppi",
-        control: { domain: "agents", intent: "create" },
+        serverDurable: { role: "control" },
         launch: {
           source: "human",
           idempotencyKey: "control-cas-lost-key",
-          target: { server: true, displayCwd: "Pi Control" },
+          target: { server: true, displayCwd: "Oppi Control" },
           status: "failed",
           requestedAt: 1,
           completedAt: 2,
@@ -707,7 +693,6 @@ describe("SessionLifecycleService", () => {
 
       await expect(
         service.createControlSession({
-          control: { domain: "agents", intent: "create" },
           prompt: "One contender only",
           idempotencyKey: "control-cas-lost-key",
         }),
@@ -729,11 +714,11 @@ describe("SessionLifecycleService", () => {
         id: "control-contended",
         workspaceId: undefined,
         runtime: "oppi",
-        control: { domain: "skills", intent: "revise", targetId: "skill-1" },
+        serverDurable: { role: "control" },
         launch: {
           source: "human",
           idempotencyKey: "control-contended-key",
-          target: { server: true, displayCwd: "Pi Control" },
+          target: { server: true, displayCwd: "Oppi Control" },
           status: "failed",
           requestedAt: 1,
           completedAt: 2,
@@ -749,14 +734,12 @@ describe("SessionLifecycleService", () => {
       });
 
       const winner = service.createControlSession({
-        control: { domain: "skills", intent: "revise", targetId: "skill-1" },
         prompt: "Dispatch once under contention",
         idempotencyKey: "control-contended-key",
       });
       await promptStarted;
       await expect(
         service.createControlSession({
-          control: { domain: "skills", intent: "revise", targetId: "skill-1" },
           prompt: "Dispatch once under contention",
           idempotencyKey: "control-contended-key",
         }),
@@ -783,7 +766,6 @@ describe("SessionLifecycleService", () => {
       });
 
       const result = await service.createControlSession({
-        control: { domain: "agents", intent: "create" },
         model: "openai-codex/gpt-5.6-sol",
         prompt: "private control prompt",
       });
@@ -805,17 +787,15 @@ describe("SessionLifecycleService", () => {
       });
     });
 
-    it("projects Control Pi without a saved Agent identity", async () => {
+    it("projects Oppi Control without a saved Agent identity", async () => {
       const { service } = makeService({
         forkSession: makeSession({ id: "control-pi", workspaceId: undefined }),
       });
-      const result = await service.createControlSession({
-        control: { domain: "agents", intent: "create" },
-      });
+      const result = await service.createControlSession({});
       const summary = buildSessionSummary(result.session);
 
-      expect(result.session.name).toBe("Pi Control");
-      expect(result.session.launch?.target.displayCwd).toBe("Pi Control");
+      expect(result.session.name).toBe("Oppi Control");
+      expect(result.session.launch?.target.displayCwd).toBe("Oppi Control");
       expect(result.session.launch?.agentId).toBeUndefined();
       expect(summary.agentId).toBeUndefined();
       expect(summary.agentIcon).toBeUndefined();

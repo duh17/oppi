@@ -44,7 +44,7 @@ Oppi renders extension prompts, confirmations, editor requests, status, and widg
 
 The Workspaces tab opens **All Sessions** for the active server. It keeps **Your Turn** and **Working** at the top, groups recent stopped sessions by day, and shows each workspace name. Use the sidebar or drawer to manage saved Agents and schedules, collapse the workspace list, open App Settings, or browse a workspace's sessions, files, and settings.
 
-**Edit with Oppi** (and the create composers for Agents, schedules, themes, and workspaces) opens a **Pi Control** setup session. It uses Oppi's own short prompt, with no global `SYSTEM.md`, `APPEND_SYSTEM.md`, `AGENTS.md`, or Skills, and only `read`, `bash`, `edit`, `write`, and `ask` as tools. It runs as the server host user and uses the installed `oppi` CLI through `bash`. See [Pi Control sessions](docs/extensions.md#pi-control-sessions). You can also use the native forms in the same sheets.
+**Edit with Oppi** (and the create composers for Agents, schedules, themes, and workspaces) opens a new **Oppi Control** session for each request. It runs on the server's durable engine, with or without `experimental.serverDurable`. It uses Oppi's own setup prompt, with no global `SYSTEM.md`, `APPEND_SYSTEM.md`, `AGENTS.md`, or Skills. Its tools are one tool per Oppi action and `oppi` for any other CLI command, each write behind a confirm card, plus `codemode`, `ask`, `read`, `bash`, `edit`, and `write`. It runs as the server host user; commands it runs through `bash` get no card. See [Oppi Control sessions](docs/extensions.md#oppi-control-sessions). You can also use the native forms in the same sheets.
 
 **Quick Session** starts a session without opening a workspace first. Launch it from Oppi, Control Center, the Action Button, Spotlight, Siri, or Shortcuts. The **Live Voice** control starts a new session straight into a Live Voice call, and the Shortcuts **New Session** action picks the mode (Message, Dictation, Live Voice), Agent, workspace, text, and image.
 
@@ -155,7 +155,7 @@ You can manage saved Agents and schedules from the Oppi sidebar or server CLI/AP
 
 Schedules support `at`, `every`, and `cron` triggers. Each schedule can target a workspace, saved Agent, or existing session. Oppi keeps run history for manual and approved automatic runs.
 
-Control sessions pass Agent and schedule changes through size-limited `--definition-json` arguments instead of temporary files. Run `oppi --help` or see [server/README.md](server/README.md) for all commands.
+Oppi Control sessions pass Agent and schedule changes through size-limited `--definition-json` arguments instead of temporary files. Run `oppi --help` or see [server/README.md](server/README.md) for all commands.
 
 ## Mac app shell (experimental)
 

@@ -1,5 +1,8 @@
-import { CONTROL_CONVERSATION_LAUNCH_KEY, isControlConversation } from "./control-session.js";
-import { mintSessionId } from "./id.js";
+import {
+  CONTROL_CONVERSATION_LAUNCH_KEY,
+  isControlConversation,
+  newControlSessionRow,
+} from "./control-session.js";
 import type { SessionLifecycleService } from "./session-lifecycle-service.js";
 import type { Storage } from "./storage.js";
 import type { Session } from "./types.js";
@@ -17,11 +20,7 @@ export class ControlConversationError extends Error {
 export interface ControlConversationDeps {
   storage: Pick<
     Storage,
-    | "deleteSession"
-    | "findSessionByLaunchIdempotencyKey"
-    | "getConfig"
-    | "getSession"
-    | "saveSession"
+    "deleteSession" | "findSessionByLaunchIdempotencyKey" | "getSession" | "saveSession"
   >;
   lifecycle: Pick<SessionLifecycleService, "resumeControlConversation">;
 }
@@ -33,8 +32,9 @@ export interface ControlConversationOpenResult {
 }
 
 /**
- * Find-or-create of the one durable control conversation of this data directory. The row is
- * created at server start when durable is on; `open()` still attaches it on demand.
+ * Find-or-create of the one standing control conversation of this data directory, a durable
+ * Oppi Control session like those `POST /control-sessions` creates, on every server. `open()`
+ * creates the row on first use and attaches it.
  *
  * The Session row is saved under a reserved launch key before anything else, so a crash at
  * any point leaves at most an unbound row that the next call finds and binds. Concurrent
@@ -61,12 +61,6 @@ export class ControlConversationService {
     thinking?: string;
   }): Promise<ControlConversationOpenResult> {
     const { storage, lifecycle } = this.deps;
-    if (storage.getConfig().experimental?.serverDurable !== true) {
-      throw new ControlConversationError(
-        "The control conversation is not available on this server; enable experimental.serverDurable",
-        409,
-      );
-    }
     const ensured = ensureControlConversationSession(storage, options);
     const session = ensured.session;
     const created = ensured.created;
@@ -98,32 +92,20 @@ export function ensureControlConversationSession(
   }
   if (existing) return { session: existing, created: false };
   const now = Date.now();
-  const id = mintSessionId();
-  const session: Session = {
-    id,
+  const session = newControlSessionRow({
+    now,
     name: "Oppi Control",
     status: "stopped",
-    createdAt: now,
-    lastActivity: now,
-    ...(options.model ? { model: options.model } : {}),
-    ...(options.thinking ? { thinkingLevel: options.thinking } : {}),
-    messageCount: 0,
-    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    cost: 0,
-    runtime: "oppi",
-    serverDurable: { storeId: id, role: "control" },
+    model: options.model,
+    thinking: options.thinking,
     launch: {
-      source: "human",
-      target: { server: true, displayCwd: "Oppi Control" },
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.thinking ? { thinkingLevel: options.thinking } : {}),
       idempotencyKey: CONTROL_CONVERSATION_LAUNCH_KEY,
       status: "accepted",
       promptDispatch: "not_sent",
       requestedAt: now,
       completedAt: now,
     },
-  };
+  });
   storage.saveSession(session);
   return { session, created: true };
 }

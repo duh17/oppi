@@ -347,24 +347,29 @@ export class DurableBackend implements AgentBackend {
     const skipped = launched?.doc?.extensions?.skipped;
     if (skipped?.length) recordSkippedExtensionsWarning(session, skipped);
     // Sandboxes see only the workspace, as SDK sandbox sessions: trusted.
-    const projectTrusted = sandbox || (await resolveProjectTrust(hostCwd, agentDir, options));
+    const projectTrusted =
+      sandbox || (!control && (await resolveProjectTrust(hostCwd, agentDir, options)));
     // A sandbox's workspace VM comes first: its Skills and context files are what this VM
     // mounts and reads, whichever session booted it. Before the conversation exists, so a
     // saved Agent selection the VM cannot present still fails the launch before it binds.
     const sandboxEnv = sandbox
       ? await DurableBackend.sandboxEnv(workspace, hostCwd, cwd)
       : undefined;
+    // An Oppi Control session presents no AGENTS files and no Skills, global or project: its
+    // `oppi-control` section is its whole setup, as with `/reload`.
     const loadResources = (): Promise<DurableProjectResources> =>
-      loadDurableProjectResources({
-        hostCwd,
-        agentDir,
-        ...(sandboxEnv ? { sandbox: sandboxEnv } : {}),
-        projectTrusted,
-        ...(launched?.doc?.resources ? { resources: launched.doc.resources } : {}),
-        projectContext: launched?.doc?.projectContext !== false,
-      });
+      control
+        ? Promise.resolve({ contextFiles: [], skills: [] })
+        : loadDurableProjectResources({
+            hostCwd,
+            agentDir,
+            ...(sandboxEnv ? { sandbox: sandboxEnv } : {}),
+            projectTrusted,
+            ...(launched?.doc?.resources ? { resources: launched.doc.resources } : {}),
+            projectContext: launched?.doc?.projectContext !== false,
+          });
     const resources = await loadResources();
-    // The control conversation selects an exact extension list; it gets no MCP tools, and an
+    // An Oppi Control session selects an exact extension list; it gets no MCP tools, and an
     // exact Extension selection without `builtin:mcp` gets none either.
     const mcp =
       control || launched?.doc?.extensions?.mcp === false
@@ -523,7 +528,7 @@ export class DurableBackend implements AgentBackend {
       }
       // Bound conversations store exact extension/tool names. Enroll the native
       // UI ports and this attachment's MCP extension too, without overriding
-      // their launch tool policy. The control conversation instead re-asserts its exact
+      // their launch tool policy. An Oppi Control session instead re-asserts its exact
       // selection, so one created before an extension joined the list picks it up here.
       await conversation.configure(
         control
@@ -560,7 +565,7 @@ export class DurableBackend implements AgentBackend {
         }, BACKGROUND_CONTEXT);
     } else {
       const created = launched?.created;
-      // The control conversation's instructions are its `oppi-control` prompt section.
+      // An Oppi Control session's instructions are its `oppi-control` prompt section.
       const agent: AgentChange = created
         ? {
             ...created.change,
@@ -603,7 +608,7 @@ export class DurableBackend implements AgentBackend {
     if (target.sandboxEnv) options.host.bindSandboxEnv(conversation.id, target.sandboxEnv);
     await syncProjectContext(conversation, resources);
     // Its ticker runs from the registry, not the selection, so turning it off means not starting
-    // it. The control conversation keeps its fixed selection.
+    // it. An Oppi Control session keeps its fixed selection.
     if (control || host.runtime.isExtensionEnabled(WORKING_WORDS_EXTENSION)) {
       const words = host.runtime.installedTask(WORKING_WORDS_TASK);
       await conversation.commit(
@@ -651,7 +656,7 @@ export class DurableBackend implements AgentBackend {
       ]);
       // Last, so nothing after it can fail with the toggle registered. The attach's `{ add }`
       // edit above dropped any `oppi.live-voice` a previous attachment left; this puts it back
-      // when a call is attached now. The control conversation never takes calls.
+      // when a call is attached now. An Oppi Control session never takes calls.
       if (!control)
         backend.detachLiveVoice = host.runtime.boundLiveVoice?.attachRuntime(
           session.id,

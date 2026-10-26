@@ -26,22 +26,23 @@ Oppi adds a lifecycle-journal extension and Pi's built-ins to each managed sessi
 
 Workspace Settings → Skills and Extensions toggles write Pi resource settings: `+path` enables a resource that is otherwise filtered out, `-path` disables one Pi would load, and package resources use the same filtering inside the package entry. Temporary resources cannot be edited from Oppi. Sandbox workspaces also have a `workspace.tools` allowlist for VM-backed tools only.
 
-## Pi Control sessions
+## Oppi Control sessions
 
-A Pi Control session is the workspace-less session Oppi opens for **Edit with Oppi** ([Using Oppi](usage.md#edit-with-oppi)). It uses Oppi's own short setup prompt, which describes Oppi's surfaces and points at these docs. It does not load your global `SYSTEM.md`, `APPEND_SYSTEM.md`, `AGENTS.md`, or Skills.
+An Oppi Control session is the workspace-less session Oppi opens for **Edit with Oppi** and the create composers ([Using Oppi](usage.md#edit-with-oppi)). Each request starts a new one; the target, the request, and any staged review comments are its first message. It runs on the server's durable engine on every server, with or without `experimental.serverDurable`, and opens in the regular chat. A server restart resumes it. The standing control conversation (`oppi control open`, `oppi control send`) is the same kind of session: one per server, created on first use.
 
-- **Tools:** only `read`, `bash`, `edit`, and `write` are active, plus `ask` when an installed extension provides it.
-- **Extensions:** they still load, so provider registrations and `ask` work. Their other tools are not active.
-- **Mobile Output Guide:** applies when it is on ([below](#mobile-output-guide)).
-- **Authority:** the session runs as the server's host user and can run any command through `bash`, including the `oppi` CLI. Its prompt tells it to show each `oppi` write and wait for your yes. That is an instruction to the model, not an enforced confirmation like the durable control conversation's.
+- **Prompt:** Oppi's own setup prompt, which describes Oppi's surfaces and points at these docs. It does not load your global `SYSTEM.md`, `APPEND_SYSTEM.md`, `AGENTS.md`, or Skills, and no project context.
+- **Oppi tools:** one tool per Oppi action (`agents_list`, `agents_create`, `schedules_run`, `sessions_send`, `workspaces_get`, …) and `oppi` for any other CLI command. pi-durable's `codemode` runs scripts that call the same tools as `tools.<name>(…)`; a script resumes after a server restart without rerunning finished calls. Read tools only read.
+- **Confirm cards:** every write through the Oppi tools waits for a confirm card that shows the request and, for an update, a diff against the current record. A direct call offers Yes or No; inside a codemode script the card also offers Yes to all remaining in this script. No setting skips it. A declined card sends nothing.
+- **Host tools:** `read`, `bash`, `edit`, and `write`, as classic Pi Control had, for Skills, extensions, themes, Pi's global configuration, and `oppi config` and `oppi dictionary`. The session runs as the server's host user. These get no card: the prompt tells the session to say what a file edit changes and to show a command that writes and wait for your yes, which is an instruction to the model, not an enforced confirmation. `bash` can run any command, the `oppi` CLI included.
+- **Not loaded:** Pi extensions, MCP servers, package durable extensions, and the Mobile Output Guide. `ask`, `codemode`, and the tools above are the whole set.
 
-The durable control conversation (`oppi control open`, `oppi control send`) is separate and needs `experimental.serverDurable`. It has one tool per Oppi action (`agents_list`, `agents_create`, `schedules_run`, `sessions_send`, … and `oppi` for any CLI command) plus pi-durable's `codemode`, whose scripts call the same tools as `tools.<name>(…)` and resume after a server restart without rerunning finished calls. Read tools only read. Every write waits for a confirm card showing the request and, for an update, a diff: Yes or No for a direct call, plus Yes to all remaining in this script inside a codemode script. No setting skips it. No other durable session gets these tools.
+No other session gets the Oppi tools. Pi Control sessions created before this change keep their classic setup: they stay listed and resume on the classic engine with the classic setup prompt and tools (`read`, `bash`, `edit`, `write`, and `ask` when an extension provides it). Older iOS builds keep working: `POST /control-sessions` accepts their `domain`, `intent`, `targetId`, and `targetName` fields and starts an Oppi Control session. An already-installed Mac app must be rebuilt for **Edit with Oppi**: it requires `control` metadata in the create response, which Oppi Control sessions on the durable engine do not have.
 
 ## Mobile Output Guide
 
 **Server Settings → Mobile Output Guide** tells agents which links and rich content Oppi renders: wiki links to workspace and owner-host files, inline images, audio, video and USDZ, Mermaid diagrams, maps, LaTeX, session links, and document viewers. See [Document viewers](document-viewers.md) and [Attachment rendering](attachment-rendering.md).
 
-- It applies to new and reloaded managed host, sandbox, and Pi Control sessions. It does not prescribe response style, fabricate paths, or expose secrets, and Oppi sends no viewport dimensions.
+- It applies to new and reloaded managed host, sandbox, and classic Pi Control sessions. It does not prescribe response style, fabricate paths, or expose secrets, and Oppi sends no viewport dimensions.
 - It is an append, so a global `SYSTEM.md` replacement does not suppress it. Saved Agent and workspace instructions keep their precedence.
 - It does not change standalone Pi or terminal-owned Mirror sessions. A stopped Mirror session reads the current guide only if you promote it to Oppi-managed.
 
@@ -258,7 +259,7 @@ Durable sessions do not use this channel: their background jobs and subagent rep
 | `background-jobs` | `background_job` | A shell command still running after 15 seconds, or ending in `&`, becomes a job shown in the composer pill, and its output arrives as a follow-up. Polling a running job is blocked. It reports through the [pending wake API](#pending-wake-extension-api) and keeps the final turn open unless `oppi session get` confirms the session does not auto-stop. A job that dies with its process (restart, reload, Stop) is reported once with the next turn and is not rerun. |
 | `browser-automation-video` | A browser tool | Records WebM with `agent-browser`, converts it to H.264 MP4, stores it with `ctx.attachments.addFile()` when available, and returns it in `details.media[]`. |
 
-Oppi loads no `ask` tool of its own. Install or enable an extension named `ask` when a workspace or Pi Control session needs one.
+Oppi loads no `ask` tool of its own. Install or enable an extension named `ask` when a workspace or classic Pi Control session needs one.
 
 ## Tool-row rendering
 
@@ -355,7 +356,7 @@ An extension that shows Oppi UI imports it from `oppi/durable`: `requestUI` for 
 
 - **Where Oppi looks:** enabled user-scope Pi packages, resolved as Pi resolves classic extensions (`~/.pi/agent/extensions/<name>/`, packages from `settings.json` and `pi install`, the same enable and disable settings). Project `.pi/extensions` packages and single-file extensions have no durable entry.
 - **Shared modules:** `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `typebox`, and `oppi/durable` resolve to the server's own copies, so your documents and tasks belong to the server's durable store. Ship the entry and every file it imports in the package's `files`.
-- **Which sessions get it:** every durable session whose runtime the extension lists, next to the built-in tools. The durable control conversation selects none. A name, tool name, or task name another extension already uses is refused, as are an extension with two tools or two sections of one name and a section key pi-durable does not accept. A package that provides one of Oppi's own durable extensions (such as `ask`) is skipped.
+- **Which sessions get it:** every durable session whose runtime the extension lists, next to the built-in tools. Oppi Control sessions select none. A name, tool name, or task name another extension already uses is refused, as are an extension with two tools or two sections of one name and a section key pi-durable does not accept. A package that provides one of Oppi's own durable extensions (such as `ask`) is skipped.
 - **Loading:** when the server opens its durable store, and on `oppi extensions reload`. A package that fails to load or install is reported in the server log and the reload output; the others load, and no user package can keep the durable runtime from opening.
 - **Reload without a restart:** `oppi extensions reload` re-reads every durable entry and the files it imports, Oppi's bundled ones included. An installed extension is replaced in place: a running tool call finishes on its old code, and the next call uses the new code. A package that fails to load keeps its previous code. A package that is gone is uninstalled. A session picks up a newly added extension the next time it attaches (open, resume, or server restart).
 - **Turn one off:** `oppi extensions list` shows every durable extension, Oppi's built-ins (such as `sql-explorer`) included, and whether it is on. `oppi extensions disable <name>` leaves it out of durable sessions without uninstalling it, and `oppi extensions enable <name>` brings it back (stored as `experimental.durableExtensions.disabled`; no restart). New sessions follow at once and an open session the next time it attaches. A saved Agent session that selected a disabled extension starts without it, shows a session warning, and keeps running without it after you enable it again; start the Agent anew to get it.

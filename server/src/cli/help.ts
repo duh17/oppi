@@ -86,11 +86,11 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "agent", summary: "create, inspect, update, archive, and launch saved Agents" },
       {
         name: "control",
-        summary: "open or message the durable control conversation (experimental.serverDurable)",
+        summary: "open or message the standing Oppi Control conversation",
       },
       {
         name: "extensions",
-        summary: "list, enable, disable, or reload durable extensions (experimental.serverDurable)",
+        summary: "list, enable, disable, or reload durable extensions",
       },
       { name: "wait", summary: "poll session state until a condition is true" },
       { name: "token", summary: "rotate the owner bearer token" },
@@ -1970,14 +1970,11 @@ const HELP_TOPICS: HelpTopic[] = [
     summary: "Open or message the one durable control conversation of this server.",
     usage: "oppi control open|send [flags]",
     description: [
-      "The control conversation is a single durable conversation per data directory, created on first use and kept across server restarts. It is not a workspace session. The phone lists it with Pi Control sessions. Use 'oppi session' commands with the printed session id.",
+      "The control conversation is a single durable Oppi Control session per data directory, created on first use and kept across server restarts. It has the same tools and instructions as the Oppi Control sessions the app starts. It is not a workspace session. The phone lists it with Oppi Control sessions. Use 'oppi session' commands with the printed session id.",
     ],
     subcommands: [
       { name: "open", summary: "find or create the conversation and print its ids" },
       { name: "send <text|@->", summary: "find or create the conversation, then send a prompt" },
-    ],
-    notes: [
-      "Requires experimental.serverDurable; the server refuses with a clear error while it is off.",
     ],
     examples: [
       { command: "oppi control open --json" },
@@ -2049,7 +2046,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "reload", summary: "re-read every durable entry and replace the installed code" },
     ],
     notes: [
-      "Requires experimental.serverDurable; the server refuses with HTTP 409 while it has no durable store.",
+      "Works on every server, with or without experimental.serverDurable; extensions load when the server opens its durable store.",
     ],
     examples: [{ command: "oppi extensions list" }, { command: "oppi extensions reload" }],
   },

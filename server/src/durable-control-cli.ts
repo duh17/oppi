@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@earendil-works/chord";
 import type { ControlJson, ControlWrite, DurableControlHost } from "./durable-extension-api.js";
@@ -11,6 +12,7 @@ import {
 } from "./cli/local-api-client.js";
 import { runCli } from "./cli/runner.js";
 import { safeErrorMessage } from "./log-utils.js";
+import { getOppiDocsPath } from "./oppi-docs.js";
 
 /**
  * The only argv this host refuses before `runCli`. Argv classification is NOT the safety
@@ -19,7 +21,8 @@ import { safeErrorMessage } from "./log-utils.js";
  * - flags that read a file of this host (`--definition PATH`, `--instructions-file`, dictionary
  *   `--file`) or stdin (`@-`, `--phrases`): the server's own files and stdin are not the owner's
  * - `--config-file`, and `config set`, which edits the config file directly with no request to gate
- * - `control`: its `send` would prompt the control conversation from inside its own turn
+ * - `control`: its `send` would prompt the standing control conversation, maybe this very one,
+ *   from inside a turn
  * - `status`: it shells out synchronously (`execFileSync`), which would stall the server's event loop
  * - `--idempotency-key=…`, `--request-id=…`, `--turn-id=…`: the CLI does not split on `=`, so that
  *   form is an unknown flag it ignores (`session` commands refuse it). The host cannot tell it from
@@ -141,26 +144,34 @@ function failure(code: string, message: string): ControlJson {
 export interface DurableControlCliDeps {
   dataDir: string;
   /**
-   * The control conversation's Session when `conversationId` of durable store `storeId` is the
-   * control conversation, undefined for any other conversation. Commands are attributed to it.
+   * The Session bound to conversation `conversationId` of durable store `storeId` when it is a
+   * durable Oppi Control session, undefined for any other conversation. Commands are attributed
+   * to it.
    */
   sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
 }
 
-/** Runs the `oppi` CLI inside this server process for the control conversation's tools. */
+/** Runs the `oppi` CLI inside this server process for Oppi Control sessions' tools. */
 export class DurableControlCli {
+  /** Where the installed docs are; they do not move while the server runs. */
+  private readonly docsPath = getOppiDocsPath();
+
   constructor(private readonly deps: DurableControlCliDeps) {}
 
   /**
    * What `oppiHost().control(env)` gives the conversation `conversationId` of store `storeId`:
-   * the CLI when it is the control conversation, undefined for every other conversation.
+   * the CLI when an Oppi Control session is bound to it, undefined for every other conversation.
    */
   forConversation(storeId: string, conversationId: ConversationId): DurableControlHost | undefined {
     if (this.deps.sessionIdOf(storeId, conversationId) === undefined) return undefined;
-    return { run: (argv, options) => this.run(storeId, argv, options) };
+    return {
+      run: (argv, options) => this.run(storeId, argv, options),
+      themesDir: join(this.deps.dataDir, "themes"),
+      ...(this.docsPath ? { docsPath: this.docsPath } : {}),
+    };
   }
 
-  /** Refuses a conversation of `storeId` that is not the control conversation. */
+  /** Refuses a conversation of `storeId` that no Oppi Control session is bound to. */
   async run(
     storeId: string,
     argv: readonly string[],
@@ -171,7 +182,7 @@ export class DurableControlCli {
       return {
         envelope: failure(
           "refused",
-          "The oppi CLI runs only for the control conversation, and this is not it.",
+          "The oppi CLI runs only for Oppi Control sessions, and this is not one.",
         ),
         wrote: false,
       };
