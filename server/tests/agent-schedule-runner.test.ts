@@ -459,7 +459,7 @@ describe("agent schedule runner", () => {
         minute: "2-digit",
       }),
     );
-    // 00:00-02:59 PDT/PST wall clock spans four UTC hours: 12:00 PDT .. 03:00 PST.
+    // 00:00-02:59 PDT/PST wall clock spans four UTC hours: 00:00 PDT .. 03:00 PST.
     expect(localHourMinutes).toEqual([
       "00:00",
       "00:15",
