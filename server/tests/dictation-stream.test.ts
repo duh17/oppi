@@ -26,6 +26,7 @@ type ServerDictationInternals = {
   createDictationManager: () => unknown;
   dictationConfig: { backend?: string; provider?: string; sttEndpoint?: string } | undefined;
   searchIndex: { close: () => void } | null;
+  boundSessionStreamMux: { ctx: { serverDictationAvailable?: boolean } };
 };
 
 describe("isDictationStreamEnabled", () => {
@@ -134,6 +135,35 @@ describe("Server HTTP dictation boot enablement", () => {
       expect(storage.getConfig().asr).toBeUndefined();
       expect(server.dictationConfig).toBeUndefined();
       expect(server.createDictationManager()).toBeUndefined();
+    } finally {
+      server.searchIndex?.close();
+    }
+  });
+
+  // `stream_connected.serverDictationAvailable` is derived from the same asr check that
+  // builds a manager per dictation socket; no idle manager is kept to answer it.
+  it.each([
+    ["no asr", undefined, false],
+    ["an http endpoint", { sttEndpoint: "http://127.0.0.1:7936" }, true],
+    ["provider xai", { provider: "xai" }, true],
+    ["an invalid provider", { provider: "openai", sttEndpoint: "http://127.0.0.1:7936" }, false],
+  ] as const)("reports serverDictationAvailable for %s", (_name, asr, expected) => {
+    const dataDir = tempDir("oppi-stt-available-");
+    writeFileSync(
+      join(dataDir, "config.json"),
+      JSON.stringify({
+        ...Storage.getDefaultConfig(dataDir),
+        host: "127.0.0.1",
+        port: 0,
+        tls: { mode: "disabled" },
+        ...(asr ? { asr } : {}),
+      }),
+    );
+
+    const server = new Server(new Storage(dataDir)) as unknown as ServerDictationInternals;
+    try {
+      expect(server.boundSessionStreamMux.ctx.serverDictationAvailable).toBe(expected);
+      expect(Boolean(server.createDictationManager())).toBe(expected);
     } finally {
       server.searchIndex?.close();
     }

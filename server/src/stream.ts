@@ -70,7 +70,8 @@ export interface StreamContext {
   handleConnectionClosed?: (connectionId: string) => void;
   trackConnection: (ws: WebSocket) => void;
   untrackConnection: (ws: WebSocket) => void;
-  dictationManager?: DictationManager;
+  /** Whether `/dictation/stream` has an STT backend; reported in `stream_connected`. */
+  serverDictationAvailable?: boolean;
   createDictationManager?: () => DictationManager | undefined;
   handleVoiceAudio?: (connectionId: string, pcm: Buffer) => boolean;
   /**
@@ -130,12 +131,11 @@ const PING_INTERVAL_MS = 30_000;
 
 const log = createLogger({ base: { component: "stream" } });
 
-function streamConnectedMessage(ctx: unknown, userName: string): ServerMessage {
-  const streamContext = ctx as { dictationManager?: DictationManager };
+function streamConnectedMessage(ctx: StreamContext, userName: string): ServerMessage {
   return {
     type: "stream_connected",
     userName,
-    serverDictationAvailable: Boolean(streamContext.dictationManager),
+    serverDictationAvailable: Boolean(ctx.serverDictationAvailable),
   };
 }
 

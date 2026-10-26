@@ -1171,7 +1171,7 @@ describe("BoundSessionStreamMux", () => {
   it("includes server dictation availability in the split session bootstrap", async () => {
     const session = makeSession("sess-bound", "w1");
     const { ctx } = createMockContext([session]);
-    ctx.dictationManager = {} as NonNullable<StreamContext["dictationManager"]>;
+    ctx.serverDictationAvailable = true;
 
     const mux = new BoundSessionStreamMux(ctx);
     const ws = new FakeWebSocket();

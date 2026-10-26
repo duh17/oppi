@@ -536,8 +536,7 @@ export class Server {
   private voiceMediaCoordinator!: VoiceCallMediaCoordinator;
   /** Whether each voice feature's backend can serve; behind /server/info voice capabilities. */
   private voiceBackendHealth!: VoiceBackendHealth;
-  // Dictation pipeline capability source for ASR streams
-  private dictationManager: DictationManager | undefined;
+  // Dictation pipeline source for ASR streams; set at boot only when dictation is enabled.
   private dictationConfig: DictationConfig | undefined;
   private uploadGcTimer: ReturnType<typeof setInterval> | null = null;
   /** The upload GC pass in flight; stop() waits for it so nothing writes after stop(). */
@@ -640,7 +639,6 @@ export class Server {
           asr?.sttModel?.trim() ||
           (provider === "xai" ? DEFAULT_XAI_STT_MODEL : DEFAULT_DICTATION_CONFIG.sttModel),
       };
-      this.dictationManager = this.createDictationManager();
     }
     // Same sources each feature uses: dictation and read aloud the loaded config, Live Voice
     // the settings on disk that each call reads.
@@ -695,7 +693,7 @@ export class Server {
         this.voiceCallController.isCallConnection(connectionId),
       trackConnection: (ws: WebSocket) => this.trackConnection(ws),
       untrackConnection: (ws: WebSocket) => this.untrackConnection(ws),
-      dictationManager: this.dictationManager,
+      serverDictationAvailable: this.dictationConfig !== undefined,
       createDictationManager: () => this.createDictationManager(),
     };
 
