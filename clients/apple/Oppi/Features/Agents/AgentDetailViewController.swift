@@ -1,7 +1,7 @@
 import UIKit
 
 /// A saved Agent: its definition, system prompt, Pi session defaults,
-/// resources, launch constraints, and automation. Edit opens the native
+/// resources, launch constraints, and Run (schedule, start). Edit opens the native
 /// editor; the actions menu offers Archive; an active Agent's Start Session
 /// row (under Schedule Recurring Run) opens Quick Session with the Agent, and
 /// it carries the compact Oppi bar to describe a change. Start Session is a
@@ -10,7 +10,7 @@ import UIKit
 /// through `onUpdated`.
 @MainActor
 final class AgentDetailViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case state, definition, prompt, defaults, resources, constraints, automation }
+    private enum Section: Hashable { case state, definition, prompt, defaults, resources, constraints, run }
     private enum Item: Hashable {
         case loading
         case notFound
@@ -238,14 +238,14 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
                 ], toSection: .constraints)
             }
 
-            snapshot.appendSections([.automation])
-            var automation: [Item] = [.schedule]
+            snapshot.appendSections([.run])
+            var run: [Item] = [.schedule]
             // Only an active Agent starts a session, as only it offers Edit.
-            if agent.status == .active { automation.append(.startSession) }
-            automation.append(.caption(connection.workspaceStore.workspaces.isEmpty
+            if agent.status == .active { run.append(.startSession) }
+            run.append(.caption(connection.workspaceStore.workspaces.isEmpty
                 ? "Create or sync a workspace before starting or scheduling this Agent."
                 : "Schedules can run this Agent with a recurring briefing prompt, selected workspace, and repeat time."))
-            snapshot.appendItems(automation, toSection: .automation)
+            snapshot.appendItems(run, toSection: .run)
         } else {
             snapshot.appendSections([.state])
             snapshot.appendItems([isLoading ? .loading : .notFound], toSection: .state)
@@ -321,7 +321,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         case .defaults: "Pi Session Defaults"
         case .resources: "Resources"
         case .constraints: "Launch Constraints"
-        case .automation: "Automation"
+        case .run: "Run"
         }
     }
 
