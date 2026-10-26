@@ -48,13 +48,11 @@ struct SSHTerminalColorTheme: Codable, Equatable, Sendable {
     var background: SSHTerminalRGB?
     var foreground: SSHTerminalRGB?
     var cursor: SSHTerminalRGB?
-    var cursorText: SSHTerminalRGB?
     var selectionBackground: SSHTerminalRGB?
-    var selectionForeground: SSHTerminalRGB?
 
     var isEmpty: Bool {
-        palette.isEmpty && background == nil && foreground == nil && cursor == nil && cursorText == nil
-            && selectionBackground == nil && selectionForeground == nil
+        palette.isEmpty && background == nil && foreground == nil && cursor == nil
+            && selectionBackground == nil
     }
 
     /// Whether the terminal is dark: by its background when the theme sets one,
@@ -70,9 +68,7 @@ struct SSHTerminalColorTheme: Codable, Equatable, Sendable {
         result.background = other.background ?? background
         result.foreground = other.foreground ?? foreground
         result.cursor = other.cursor ?? cursor
-        result.cursorText = other.cursorText ?? cursorText
         result.selectionBackground = other.selectionBackground ?? selectionBackground
-        result.selectionForeground = other.selectionForeground ?? selectionForeground
         return result
     }
 }

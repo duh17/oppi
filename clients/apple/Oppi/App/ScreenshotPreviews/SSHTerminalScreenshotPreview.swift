@@ -425,9 +425,7 @@ private actor PreviewConnection: SSHTerminalConnection {
     background = #1a1b26
     foreground = #c0caf5
     cursor-color = #c0caf5
-    cursor-text = #15161e
     selection-background = #33467c
-    selection-foreground = #c0caf5
     """
     /// A light theme in Ghostty's theme-file format.
     private static let paper = """

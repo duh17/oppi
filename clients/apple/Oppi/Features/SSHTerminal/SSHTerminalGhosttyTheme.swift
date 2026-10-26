@@ -69,9 +69,7 @@ enum SSHTerminalGhosttyConfig {
         case "background": parsed.colors.background = SSHTerminalRGB(hex: value)
         case "foreground": parsed.colors.foreground = SSHTerminalRGB(hex: value)
         case "cursor-color": parsed.colors.cursor = SSHTerminalRGB(hex: value)
-        case "cursor-text": parsed.colors.cursorText = SSHTerminalRGB(hex: value)
         case "selection-background": parsed.colors.selectionBackground = SSHTerminalRGB(hex: value)
-        case "selection-foreground": parsed.colors.selectionForeground = SSHTerminalRGB(hex: value)
         default: break
         }
     }

@@ -29,9 +29,7 @@ struct SSHTerminalGhosttyThemeTests {
         #expect(parsed.colors.background == rgb("#1a1b26"))
         #expect(parsed.colors.foreground == rgb("#c0caf5"))
         #expect(parsed.colors.cursor == SSHTerminalRGB(r: 255, g: 255, b: 255))
-        #expect(parsed.colors.cursorText == rgb("#15161e"))
         #expect(parsed.colors.selectionBackground == rgb("#33467c"))
-        #expect(parsed.colors.selectionForeground == rgb("#c0caf5"))
         #expect(parsed.colors.palette == [1: rgb("#f7768e"), 15: rgb("#c0caf5")])
         #expect(parsed.theme == nil)
     }
