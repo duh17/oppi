@@ -640,7 +640,8 @@ final class AssistantMarkdownSegmentApplier {
                 palette: palette,
                 isOpen: isOpen,
                 themeID: config.themeID,
-                highlightScheduling: highlightScheduling(isOpen: isOpen, config: config)
+                highlightScheduling: highlightScheduling(isOpen: isOpen, config: config),
+                isCompact: config.compactCodeBlocks
             )
             stackView.addArrangedSubview(codeView)
             codeBlockViews[index] = codeView
@@ -982,7 +983,8 @@ final class AssistantMarkdownSegmentApplier {
                             palette: palette,
                             isOpen: isOpen,
                             themeID: config.themeID,
-                            highlightScheduling: highlightScheduling(isOpen: isOpen, config: config)
+                            highlightScheduling: highlightScheduling(isOpen: isOpen, config: config),
+                            isCompact: config.compactCodeBlocks
                         )
                         if isOpen {
                             ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: codeView)

@@ -133,8 +133,8 @@ final class AskCardIntentUITests: XCTestCase {
         saveScreenshot(name: "ask-tall-keyboard-down")
         XCTAssertLessThanOrEqual(
             scroll.frame.height,
-            260 + 1,
-            "Unfocused Ask slot must stay at the expanded cap"
+            380 + 1,
+            "Unfocused Ask slot must stay at its cap"
         )
         XCTAssertGreaterThan(
             scroll.frame.height,

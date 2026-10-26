@@ -112,7 +112,7 @@ struct AskCardTests {
         ```
         """
 
-        let display = AskCard.inlineQuestionDisplay(for: question)
+        let display = AskCard.inlineQuestionDisplay(for: question, encoding: .ask)
 
         #expect(display.summary == "Git push\n\nPushing writes to a remote repository.")
         #expect(display.commandPreview == "git push origin main")
@@ -130,18 +130,226 @@ struct AskCardTests {
         Allow this tool call?
         """
 
-        let display = AskCard.inlineQuestionDisplay(for: question)
+        let display = AskCard.inlineQuestionDisplay(for: question, encoding: .ask)
 
         #expect(display.summary == "Review this command before allowing it.")
         #expect(display.commandPreview == "npm test -- --runInBand")
     }
 
+    @Test("A Command heading inside a fenced block is content, not the Command section")
+    func inlineQuestionDisplayIgnoresCommandHeadingInsideFence() {
+        let question = """
+        Create agent?
+
+        **Instructions**
+        ````text
+        Be helpful.
+        # Command
+        Nothing is created; preview only.
+        ````
+        **Model** sonnet
+
+        ## Command
+
+        npm test
+        """
+
+        let display = AskCard.inlineQuestionDisplay(for: question, encoding: .ask)
+
+        #expect(display.summary.contains("Nothing is created; preview only."))
+        #expect(display.summary.contains("**Model** sonnet"))
+        #expect(display.commandPreview == "npm test")
+
+        let onlyInFence = AskCard.inlineQuestionDisplay(
+            for: "Hi\n\n~~~diff\n+ a\n# Command\n+ b\n~~~\n**Model** x",
+            encoding: .ask
+        )
+        #expect(onlyInFence.commandPreview == nil)
+        #expect(onlyInFence.summary.contains("**Model** x"))
+    }
+
+    @Test("An extension request is shown whole: its # Command line is its own text")
+    func inlineQuestionDisplayKeepsExtensionRequestWhole() throws {
+        let request = ExtensionUIRequest(
+            id: "ext-command",
+            sessionId: "s1",
+            method: "select",
+            title: "Send a message to “Planning”?",
+            options: ["Send Message", "Cancel"],
+            message: "Message (22 characters)\n\n# Command\n\nDetails: POST /sessions/x1/command"
+        )
+        let ask = try #require(request.askRequest)
+        #expect(ask.responseEncoding == .extensionSelect)
+
+        let display = AskCard.inlineQuestionDisplay(
+            for: try #require(ask.questions.first).question,
+            encoding: ask.responseEncoding
+        )
+
+        #expect(display.commandPreview == nil)
+        #expect(display.summary.contains("# Command"))
+        #expect(display.summary.contains("Details: POST /sessions/x1/command"))
+    }
+
     @Test("Inline question display leaves ordinary questions unchanged")
     func inlineQuestionDisplayLeavesOrdinaryQuestionUnchanged() {
-        let display = AskCard.inlineQuestionDisplay(for: "Pick an option")
+        let display = AskCard.inlineQuestionDisplay(for: "Pick an option", encoding: .ask)
 
         #expect(display.summary == "Pick an option")
         #expect(display.commandPreview == nil)
+    }
+
+    @Test("A first plain paragraph leads as the title over a Markdown body")
+    func inlineQuestionPartsSplitsTitleFromBody() {
+        let parts = AskCard.inlineQuestionParts(for: """
+        Change Agent \u{201C}QA reviewer\u{201D}?
+
+        Instructions changed
+
+        **Model** fable-5 \u{2192} sonnet-5-5
+        """)
+
+        #expect(parts.title == "Change Agent \u{201C}QA reviewer\u{201D}?")
+        #expect(parts.body == "Instructions changed\n\n**Model** fable-5 \u{2192} sonnet-5-5")
+    }
+
+    @Test("A lone paragraph is only a title; block syntax up front leaves no title")
+    func inlineQuestionPartsEdges() {
+        #expect(AskCard.inlineQuestionParts(for: "Pick an option") == .init(title: "Pick an option", body: nil))
+        #expect(AskCard.inlineQuestionParts(for: "Line one\nline two") == .init(title: "Line one\nline two", body: nil))
+        for opening in ["- first item", "1. first item", "```diff", "> quoted", "## Heading", "| a | b |"] {
+            let text = "\(opening)\n\nafter"
+            #expect(AskCard.inlineQuestionParts(for: text) == .init(title: nil, body: text), "\(opening)")
+        }
+    }
+
+    // MARK: - Folded Card Fit
+
+    private static func controlReviewRequest(extraMessage: String = "") -> AskRequest {
+        let request = ExtensionUIRequest(
+            id: "control-review",
+            sessionId: "session-1",
+            method: "select",
+            title: "Change Agent \u{201C}QA reviewer\u{201D}?",
+            options: ["Apply Change", "Cancel"],
+            message: """
+            Instructions changed \u{00B7} Model fable-5 \u{2192} sonnet-5-5
+
+            **Instructions**
+            ```diff
+            - Review carefully.
+            + QA-APPLIED-YES
+            ```
+            **Model** fable-5 \u{2192} sonnet-5-5
+            \(extraMessage)
+            Details: PATCH /agents/KQdEFkKi \u{00B7} version 1
+            """
+        )
+        return request.askRequest!
+    }
+
+    private static func foldedCard(_ request: AskRequest, maxHeight: CGFloat, width: CGFloat = 342) -> (AskCardView, height: CGFloat) {
+        let card = AskCardView()
+        card.maxHeight = maxHeight
+        card.apply(AskCardViewState(
+            request: request,
+            page: 0,
+            answers: [:],
+            isSubmitted: false,
+            responseFailed: false,
+            colors: .placeholder,
+            reduceMotion: true
+        ))
+        let height = card.preferredHeight(for: width)
+        card.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        card.layoutIfNeeded()
+        return (card, height)
+    }
+
+    @Test("A long message gives way so every option stays inside the folded card")
+    func longMessageKeepsEveryOptionVisible() {
+        let long = (1...40).map { "Field \($0): a value that adds a line to the message" }.joined(separator: "\n\n")
+        let cap: CGFloat = ComposerInputMetrics.inlineAskCardMaxHeight
+        let (card, height) = Self.foldedCard(Self.controlReviewRequest(extraMessage: long), maxHeight: cap)
+
+        #expect(height <= cap + 0.5, "card \(height) exceeds its cap \(cap)")
+        #expect(card.scrollView.contentSize.height <= card.scrollView.bounds.height + 0.5, "content scrolls: \(card.scrollView.contentSize.height) > \(card.scrollView.bounds.height)")
+        let options = Self.views(in: card, identifierPrefix: "ask.option.")
+        #expect(options.count == 2)
+        for option in options {
+            let frame = option.convert(option.bounds, to: card.scrollView)
+            #expect(frame.maxY <= card.scrollView.bounds.height + 0.5, "\(option.accessibilityIdentifier ?? "") sits below the visible area")
+        }
+    }
+
+    @Test("An extension title with a blank line and Markdown stays the title, verbatim")
+    func extensionTitleStaysWholeAndPlain() throws {
+        let title = "Change **Agent**?\n\n`QA reviewer` inherits"
+        let request = try #require(ExtensionUIRequest(
+            id: "titled", sessionId: "session-1", method: "select", title: title,
+            options: ["Apply", "Cancel"], message: "**Body** line\n\n- one\n- two"
+        ).askRequest)
+        let question = try #require(request.questions.first)
+        let parts = AskCard.inlineQuestionParts(for: question.question, title: question.title)
+
+        #expect(parts.title == title)
+        #expect(parts.titleIsVerbatim)
+        #expect(parts.body == "**Body** line\n\n- one\n- two")
+
+        let (card, _) = Self.foldedCard(request, maxHeight: 380)
+        let labels = Self.labels(in: card).map { $0.attributedText?.string ?? $0.text ?? "" }
+        #expect(labels.contains(title), "title text must render as plain text, Markdown characters intact")
+    }
+
+    @Test("A short message keeps its natural height")
+    func shortMessageIsNotPadded() {
+        let request = ExtensionUIRequest(
+            id: "short", sessionId: "session-1", method: "confirm", title: "Delete the draft?", message: "This cannot be undone."
+        ).askRequest!
+        let (_, capped) = Self.foldedCard(request, maxHeight: ComposerInputMetrics.inlineAskCardMaxHeight)
+        let (_, uncapped) = Self.foldedCard(request, maxHeight: .greatestFiniteMagnitude)
+
+        #expect(capped == uncapped)
+    }
+
+    @Test("Diff blocks color added and removed lines with the theme's diff colors")
+    func diffBlockUsesThemeDiffColors() throws {
+        let themeID = ThemeRuntimeState.currentThemeID()
+        let palette = themeID.palette
+        let markdown = "```diff\n--- a/file\n+++ b/file\n context\n- old line\n+ new line\n```"
+        for compact in [false, true] {
+            let view = AssistantMarkdownContentView()
+            view.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
+            view.apply(configuration: .make(
+                content: markdown,
+                isStreaming: false,
+                themeID: themeID,
+                renderingMode: .export,
+                compactCodeBlocks: compact
+            ))
+            view.layoutIfNeeded()
+            let text = try #require(Self.views(in: view, identifierPrefix: "markdown.codeBlock.text").first as? UITextView)
+            let attributed = text.attributedText ?? NSAttributedString()
+            func color(ofLineStarting prefix: String) throws -> UIColor? {
+                let range = try #require((attributed.string as NSString).range(of: prefix).location != NSNotFound
+                    ? (attributed.string as NSString).range(of: prefix) : nil)
+                return attributed.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? UIColor
+            }
+            #expect(try color(ofLineStarting: "- old") == UIColor(palette.toolDiffRemoved), "compact=\(compact)")
+            #expect(try color(ofLineStarting: "+ new") == UIColor(palette.toolDiffAdded), "compact=\(compact)")
+            let header = Self.views(in: view, identifierPrefix: "markdown.codeBlock.language").first
+            let headerHidden = header.map { label in
+                sequence(first: label, next: { $0.superview }).contains { $0.isHidden }
+            }
+            #expect(headerHidden == compact, "compact=\(compact) header hidden")
+        }
+    }
+
+    private static func views(in view: UIView, identifierPrefix: String) -> [UIView] {
+        view.subviews.flatMap { subview -> [UIView] in
+            let own = (subview.accessibilityIdentifier?.hasPrefix(identifierPrefix) == true) ? [subview] : []
+            return own + views(in: subview, identifierPrefix: identifierPrefix)
+        }
     }
 
     // MARK: - Option Row Sizing

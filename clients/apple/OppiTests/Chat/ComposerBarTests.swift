@@ -1429,7 +1429,8 @@ struct ComposerBarTests {
 
         let scroll = try #require(descendant(in: controller.view, identifier: "chat.ask.scroll") as? UIScrollView)
         let card = try #require(scroll.superview)
-        #expect(card.bounds.height <= ExtensionNativeSurfaceLayout.expandedMaxHeight + 0.5)
+        // The composer is not focused here, so the Ask slot uses its unfocused cap.
+        #expect(card.bounds.height <= ComposerInputMetrics.inlineAskCardMaxHeight + 0.5)
         #expect(card.bounds.height > 120)
         #expect(scroll.isScrollEnabled)
         #expect(scroll.contentSize.height > scroll.bounds.height)

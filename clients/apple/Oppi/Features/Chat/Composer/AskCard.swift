@@ -177,10 +177,16 @@ enum AskCard {
         }
     }
 
-    static func inlineQuestionDisplay(for question: String) -> (summary: String, commandPreview: String?) {
+    /// Splits a `# Command` section off an `ask` tool question, which is written that way. Any other
+    /// request (an extension's select, confirm, or input) is the extension's own Markdown, shown whole.
+    static func inlineQuestionDisplay(
+        for question: String,
+        encoding: AskResponseEncoding
+    ) -> (summary: String, commandPreview: String?) {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard encoding == .ask else { return (trimmed, nil) }
         let lines = trimmed.components(separatedBy: .newlines)
-        guard let headingIndex = lines.firstIndex(where: isCommandSectionHeading) else {
+        guard let headingIndex = commandHeadingIndex(in: lines) else {
             return (trimmed, nil)
         }
 
@@ -196,6 +202,90 @@ enum AskCard {
 
     static func inlineQuestionLineLimit(for category: UIContentSizeCategory) -> Int {
         category.isAccessibilityCategory ? 8 : 6
+    }
+
+    /// Lines a title may take when a Markdown body follows it.
+    static func inlineTitleLineLimit(for category: UIContentSizeCategory) -> Int {
+        category.isAccessibilityCategory ? 5 : 3
+    }
+
+    /// The folded card's question, split into a title line and a Markdown body.
+    struct InlineQuestionParts: Equatable {
+        /// The sender's own title, or the question's first paragraph when it is
+        /// plain text.
+        let title: String?
+        /// Everything after the title, rendered as Markdown.
+        let body: String?
+        /// A sender-supplied title is shown verbatim; a split-off paragraph may
+        /// carry inline Markdown.
+        var titleIsVerbatim = false
+    }
+
+    /// A question's first paragraph leads the card as its title, whatever wrote
+    /// it (an ask question, or a title joined to a message). A first paragraph
+    /// that opens with block syntax (fence, list, heading, quote, table) is
+    /// content, not a title, so the whole text renders as the body.
+    ///
+    /// A question whose sender supplied a separate `title` (an extension request
+    /// with a message) keeps it whole and verbatim, even across blank lines; the
+    /// rest of the text is the body.
+    static func inlineQuestionParts(for summary: String, title ownTitle: String? = nil) -> InlineQuestionParts {
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let ownTitle, !ownTitle.isEmpty, trimmed.hasPrefix(ownTitle) {
+            let body = trimmed.dropFirst(ownTitle.count).trimmingCharacters(in: .whitespacesAndNewlines)
+            return InlineQuestionParts(title: ownTitle, body: body.isEmpty ? nil : body, titleIsVerbatim: true)
+        }
+        guard !trimmed.isEmpty else { return InlineQuestionParts(title: nil, body: nil) }
+        let lines = trimmed.components(separatedBy: .newlines)
+        guard !opensBlockSyntax(lines[0]) else {
+            return InlineQuestionParts(title: nil, body: trimmed)
+        }
+        let paragraphEnd = lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).isEmpty } ?? lines.count
+        let title = lines[..<paragraphEnd]
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .joined(separator: "\n")
+        let body = lines[paragraphEnd...]
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return InlineQuestionParts(title: title, body: body.isEmpty ? nil : body)
+    }
+
+    private static func opensBlockSyntax(_ line: String) -> Bool {
+        if line.hasPrefix("    ") || line.hasPrefix("\t") { return true }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        for marker in ["```", "~~~", "#", ">", "|", "- ", "* ", "+ ", "---", "***"] where trimmed.hasPrefix(marker) {
+            return true
+        }
+        // An ordered list item: digits then "." or ")" and a space.
+        let digits = trimmed.prefix { $0.isASCII && $0.isNumber }
+        let rest = trimmed.dropFirst(digits.count)
+        return !digits.isEmpty && (rest.hasPrefix(". ") || rest.hasPrefix(") "))
+    }
+
+    /// The first `# Command` heading outside a fenced code block. A line that only
+    /// looks like the heading inside a fence (a value in a `text` or `diff` block)
+    /// is content, not a section.
+    private static func commandHeadingIndex(in lines: [String]) -> Int? {
+        var openFence: (character: Character, count: Int)?
+        for (index, line) in lines.enumerated() {
+            let content = line.drop(while: { $0 == " " })
+            if let fence = openFence {
+                let count = content.prefix(while: { $0 == fence.character }).count
+                if count >= fence.count, content.dropFirst(count).allSatisfy(\.isWhitespace) {
+                    openFence = nil
+                }
+                continue
+            }
+            if let character = content.first, character == "`" || character == "~" {
+                let count = content.prefix(while: { $0 == character }).count
+                if count >= 3 {
+                    openFence = (character, count)
+                    continue
+                }
+            }
+            if isCommandSectionHeading(line) { return index }
+        }
+        return nil
     }
 
     private static func isCommandSectionHeading(_ line: String) -> Bool {

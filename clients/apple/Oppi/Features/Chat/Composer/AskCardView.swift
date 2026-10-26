@@ -30,7 +30,8 @@ struct AskCardViewState {
 ///
 /// ```
 /// ╭──────────────────────────────────────╮
-/// │ Question text (≤ 6 lines)        ⤢  │ ┐
+/// │ Title                            ⤢  │ ┐
+/// │ Markdown message, height-capped      │ │
 /// │ [☑ Select multiple]                  │ │ scrolls inside the card
 /// │ ┌ option row, height fits text ┐    │ │ when the slot is capped
 /// │ └──────────────────────────────┘    │ │
@@ -65,7 +66,7 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         insets: NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 8, trailing: 12)
     )
     private let questionRow = UIView()
-    private let questionLabel = UILabel()
+    private let questionPreview = AskQuestionPreviewView()
     private let expandButton = UIButton(type: .system)
     private let selectionPill = AskSelectionModePillView()
     private let commandPreview = AskCommandPreviewView()
@@ -88,6 +89,16 @@ final class AskCardView: UIView, UIScrollViewDelegate {
     private var builtPage: Int?
     private var lastReportedHeight: CGFloat = -1
     private var lastLayoutWidth: CGFloat = 0
+
+    /// Tallest the card may be before its content scrolls. The Markdown message
+    /// gives way first, so a long message never pushes the options out of view.
+    var maxHeight: CGFloat = .greatestFiniteMagnitude {
+        didSet {
+            guard abs(maxHeight - oldValue) > 0.5 else { return }
+            setNeedsLayout()
+            reportHeightIfNeeded()
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -206,15 +217,11 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         return row
     }()
 
-    /// Question text with the expand control in the card's top-trailing
-    /// corner. The control's 44 pt square reaches into the card padding so its
-    /// glyph centers on the first line of text.
+    /// The question with the expand control in the card's top-trailing corner.
+    /// The control's 44 pt square reaches into the card padding so its glyph
+    /// centers on the title's first line.
     private func buildQuestionRow() {
-        questionLabel.font = UIFont.scaled(.subheadline, .medium)
-        questionLabel.adjustsFontForContentSizeCategory = true
-        questionLabel.numberOfLines = 0
-        questionLabel.lineBreakMode = .byTruncatingTail
-        questionLabel.translatesAutoresizingMaskIntoConstraints = false
+        questionPreview.translatesAutoresizingMaskIntoConstraints = false
 
         var config = UIButton.Configuration.plain()
         config.image = UIImage(
@@ -229,18 +236,14 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         expandButton.addAction(UIAction { [weak self] _ in self?.onExpand?() }, for: .touchUpInside)
         expandButton.translatesAutoresizingMaskIntoConstraints = false
 
-        questionRow.addSubview(questionLabel)
+        questionRow.addSubview(questionPreview)
         questionRow.addSubview(expandButton)
         let side = AskCard.quietControlMinimumHitSize
-        let hugsLabel = questionRow.bottomAnchor.constraint(equalTo: questionLabel.bottomAnchor)
-        hugsLabel.priority = .defaultLow
         NSLayoutConstraint.activate([
-            questionLabel.leadingAnchor.constraint(equalTo: questionRow.leadingAnchor),
-            questionLabel.topAnchor.constraint(equalTo: questionRow.topAnchor),
-            questionLabel.trailingAnchor.constraint(equalTo: expandButton.leadingAnchor, constant: 2),
-            questionRow.bottomAnchor.constraint(greaterThanOrEqualTo: questionLabel.bottomAnchor),
-            questionRow.bottomAnchor.constraint(greaterThanOrEqualTo: expandButton.bottomAnchor),
-            hugsLabel,
+            questionPreview.leadingAnchor.constraint(equalTo: questionRow.leadingAnchor),
+            questionPreview.trailingAnchor.constraint(equalTo: questionRow.trailingAnchor),
+            questionPreview.topAnchor.constraint(equalTo: questionRow.topAnchor),
+            questionPreview.bottomAnchor.constraint(equalTo: questionRow.bottomAnchor),
             expandButton.widthAnchor.constraint(equalToConstant: side),
             expandButton.heightAnchor.constraint(equalToConstant: side),
             expandButton.trailingAnchor.constraint(equalTo: questionRow.trailingAnchor, constant: 12),
@@ -331,17 +334,31 @@ final class AskCardView: UIView, UIScrollViewDelegate {
         guard width > 1 else { return 0 }
         let insets = Self.contentInsets
         let contentWidth = width - insets.leading - insets.trailing
-        let content = contentStack.systemLayoutSizeFitting(
-            CGSize(width: contentWidth, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
+        func contentHeight() -> CGFloat {
+            contentStack.systemLayoutSizeFitting(
+                CGSize(width: contentWidth, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
         let footerHeight = footer.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
-        return ceil(insets.top + content + insets.bottom + footerHeight)
+        let chrome = insets.top + insets.bottom + footerHeight
+
+        // Everything but the Markdown message comes first; the message takes
+        // what is left of `maxHeight`, at least two lines, and is cut off
+        // (with a fade) when it does not fit.
+        let natural = questionPreview.naturalBodyHeight(width: contentWidth)
+        questionPreview.bodyHeight = 0
+        let withoutBody = chrome + contentHeight()
+        let room = maxHeight - withoutBody
+        let body = min(natural, max(room, questionPreview.minimumBodyHeight))
+        questionPreview.bodyHeight = body
+        questionPreview.updateTruncation()
+        return ceil(withoutBody + body)
     }
 
     var lastMeasuredHeight: CGFloat { max(lastReportedHeight, 0) }
@@ -427,15 +444,19 @@ final class AskCardView: UIView, UIScrollViewDelegate {
 
     private func applyQuestion(_ question: AskQuestion, state: AskCardViewState) {
         let colors = state.colors
-        let display = AskCard.inlineQuestionDisplay(for: question.question)
+        let display = AskCard.inlineQuestionDisplay(for: question.question, encoding: state.request.responseEncoding)
         let summary = display.summary.isEmpty ? "Review this request." : display.summary
         let category = traitCollection.preferredContentSizeCategory
-        questionLabel.text = summary
-        questionLabel.textColor = colors.fg
-        questionLabel.numberOfLines = AskCard.usesInlineQuestionPreview(summary, contentSizeCategory: category)
-            ? AskCard.inlineQuestionLineLimit(for: category)
-            : 0
-        questionLabel.accessibilityLabel = "Question: \(summary)"
+        let parts = AskCard.inlineQuestionParts(for: summary, title: question.title)
+        let titleLineLimit: Int
+        if parts.body != nil {
+            titleLineLimit = AskCard.inlineTitleLineLimit(for: category)
+        } else {
+            titleLineLimit = AskCard.usesInlineQuestionPreview(summary, contentSizeCategory: category)
+                ? AskCard.inlineQuestionLineLimit(for: category)
+                : 0
+        }
+        questionPreview.apply(parts: parts, titleLineLimit: titleLineLimit, colors: colors)
         expandButton.configuration?.baseForegroundColor = colors.comment
 
         selectionPill.apply(question: question, colors: colors)
@@ -704,6 +725,12 @@ final class AskCardViewController: UIViewController {
         if expanded == nil {
             pageAdvance.invalidate()
         }
+    }
+
+    /// Tallest the slot may be, margins included. The card sizes its Markdown
+    /// message to leave the options in view inside it.
+    var maximumHeight: CGFloat = .greatestFiniteMagnitude {
+        didSet { card.maxHeight = max(0, maximumHeight - Self.margins.top - Self.margins.bottom) }
     }
 
     /// Natural slot height at `width`, margins included.

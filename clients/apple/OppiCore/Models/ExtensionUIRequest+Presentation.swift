@@ -109,7 +109,8 @@ extension ExtensionUIRequest {
                     id: Self.inlineQuestionId,
                     question: resolvedQuestion,
                     options: askOptions,
-                    multiSelect: false
+                    multiSelect: false,
+                    title: prompt.title
                 ),
             ],
             allowCustom: allowCustom,
@@ -126,6 +127,10 @@ extension ExtensionUIRequest {
 
     private struct InlinePromptParts {
         let question: String
+        /// The request's own title, when a message follows it and the title
+        /// survives intact at the start of `question`. Without a message the
+        /// title is the whole prompt, so the card splits it by paragraph.
+        let title: String?
         let optionDescriptions: [String: String]
     }
 
@@ -137,20 +142,31 @@ extension ExtensionUIRequest {
             }
             .joined(separator: "\n\n")
 
+        func parts(question: String, descriptions: [String: String]) -> InlinePromptParts {
+            let ownTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let hasMessage = !(message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+            let keepsTitle = !ownTitle.isEmpty && hasMessage && question.hasPrefix(ownTitle)
+            return InlinePromptParts(
+                question: question,
+                title: keepsTitle ? ownTitle : nil,
+                optionDescriptions: descriptions
+            )
+        }
+
         guard !rawPrompt.isEmpty, !optionLabels.isEmpty else {
-            return InlinePromptParts(question: rawPrompt, optionDescriptions: [:])
+            return parts(question: rawPrompt, descriptions: [:])
         }
 
         let lines = rawPrompt.components(separatedBy: .newlines)
         guard let trailingDescriptions = Self.trailingOptionDescriptions(in: lines, optionLabels: optionLabels) else {
-            return InlinePromptParts(question: rawPrompt, optionDescriptions: [:])
+            return parts(question: rawPrompt, descriptions: [:])
         }
 
-        return InlinePromptParts(
+        return parts(
             question: lines[..<trailingDescriptions.startIndex]
                 .joined(separator: "\n")
                 .trimmingCharacters(in: .whitespacesAndNewlines),
-            optionDescriptions: trailingDescriptions.descriptions
+            descriptions: trailingDescriptions.descriptions
         )
     }
 

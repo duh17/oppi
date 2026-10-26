@@ -130,6 +130,10 @@ struct ScreenshotPreviewView: View {
             AskCardIntentRegressionPreview()
         case "ask-card-tall-scroll":
             AskCardTallScrollPreview()
+        case "ask-card-control-review":
+            AskCardTallScrollPreview(fixture: .controlReview)
+        case "ask-card-control-review-expanded":
+            AskCardTallScrollPreview(fixture: .controlReviewExpanded)
         case "model-providers-quota-inline":
             ModelProvidersScreenshotPreview()
         case "tool-call-document":

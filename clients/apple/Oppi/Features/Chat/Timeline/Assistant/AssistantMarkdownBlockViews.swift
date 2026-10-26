@@ -109,6 +109,13 @@ final class NativeCodeBlockView: UIView {
     }()
 
     private let headerBackground = UIView()
+    /// Compact blocks drop the language/wrap/copy header and tighten padding, so a
+    /// capped preview shows the first lines of code instead of chrome.
+    private var isCompact = false
+    private var codeTopBelowHeader: NSLayoutConstraint?
+    private var codeTopAtEdge: NSLayoutConstraint?
+    private var labelInsetConstraints: [NSLayoutConstraint] = []
+    private var labelHeightInset: NSLayoutConstraint?
     private var currentCode: String = ""
     private var currentLanguage: String?
     private var highlightedText: NSAttributedString?
@@ -190,18 +197,44 @@ final class NativeCodeBlockView: UIView {
             headerStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             headerStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
 
-            codeScrollView.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 6),
             codeScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             codeScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             codeScrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
+            widthConstraint,
+        ])
+
+        let belowHeader = codeScrollView.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 6)
+        let atEdge = codeScrollView.topAnchor.constraint(equalTo: topAnchor)
+        codeTopBelowHeader = belowHeader
+        codeTopAtEdge = atEdge
+        belowHeader.isActive = true
+        let heightInset = codeLabel.heightAnchor.constraint(equalTo: codeScrollView.frameLayoutGuide.heightAnchor, constant: -24)
+        labelHeightInset = heightInset
+        labelInsetConstraints = [
             codeLabel.topAnchor.constraint(equalTo: codeScrollView.contentLayoutGuide.topAnchor, constant: 12),
             codeLabel.leadingAnchor.constraint(equalTo: codeScrollView.contentLayoutGuide.leadingAnchor, constant: 12),
             codeLabel.trailingAnchor.constraint(equalTo: codeScrollView.contentLayoutGuide.trailingAnchor, constant: -12),
             codeLabel.bottomAnchor.constraint(equalTo: codeScrollView.contentLayoutGuide.bottomAnchor, constant: -12),
-            codeLabel.heightAnchor.constraint(equalTo: codeScrollView.frameLayoutGuide.heightAnchor, constant: -24),
-            widthConstraint,
-        ])
+        ]
+        NSLayoutConstraint.activate(labelInsetConstraints + [heightInset])
+    }
+
+    private func setCompact(_ compact: Bool) {
+        guard compact != isCompact else { return }
+        isCompact = compact
+        headerBackground.isHidden = compact
+        headerStack.isHidden = compact
+        codeTopBelowHeader?.isActive = !compact
+        codeTopAtEdge?.isActive = compact
+        let inset: CGFloat = compact ? 8 : 12
+        // top, leading, trailing, bottom
+        let signs: [CGFloat] = [1, 1, -1, -1]
+        for (constraint, sign) in zip(labelInsetConstraints, signs) {
+            constraint.constant = sign * inset
+        }
+        labelHeightInset?.constant = -2 * inset
+        invalidateIntrinsicContentSize()
     }
 
     /// Configure chrome for an embedded async-render placeholder whose code
@@ -264,8 +297,10 @@ final class NativeCodeBlockView: UIView {
         palette: ThemePalette,
         isOpen: Bool,
         themeID: ThemeID = ThemeRuntimeState.currentThemeID(),
-        highlightScheduling: HighlightScheduling = .none
+        highlightScheduling: HighlightScheduling = .none,
+        isCompact compact: Bool = false
     ) {
+        setCompact(compact)
         currentPalette = palette
         currentThemeID = themeID
         backgroundColor = UIColor(palette.bgDark)
@@ -314,8 +349,17 @@ final class NativeCodeBlockView: UIView {
             if !presentPrettyJSONIfEligible(recolor: false) {
                 codeLabel.font = font
                 codeLabel.textColor = UIColor(palette.fg)
-                codeLabel.attributedText = nil
-                codeLabel.text = code
+                if isDiff(language) {
+                    let plain = NSMutableAttributedString(string: code, attributes: [
+                        .font: font,
+                        .foregroundColor: UIColor(palette.fg),
+                    ])
+                    Self.paintDiffLines(in: plain, palette: palette)
+                    codeLabel.attributedText = plain
+                } else {
+                    codeLabel.attributedText = nil
+                    codeLabel.text = code
+                }
             }
             updateMeasuredCodeWidth(NSAttributedString(string: code, attributes: [.font: font]))
         } else {
@@ -326,6 +370,35 @@ final class NativeCodeBlockView: UIView {
         }
 
         scheduleHighlightIfNeeded(scheduling: highlightScheduling)
+    }
+
+    private func isDiff(_ language: String?) -> Bool {
+        language.map { SyntaxLanguage.detect($0) == .diff } ?? false
+    }
+
+    /// Added and removed lines of a `diff` block take the theme's diff colors
+    /// (the ones the edit-tool diff uses), over whatever the highlighter painted.
+    /// File headers (`+++` / `---`) keep the highlighter's colors.
+    private static func paintDiffLines(in text: NSMutableAttributedString, palette: ThemePalette) {
+        let added = UIColor(palette.toolDiffAdded)
+        let removed = UIColor(palette.toolDiffRemoved)
+        let source = text.string as NSString
+        source.enumerateSubstrings(
+            in: NSRange(location: 0, length: source.length),
+            options: [.byLines, .substringNotRequired]
+        ) { _, range, _, _ in
+            guard range.length > 0 else { return }
+            let line = source.substring(with: range)
+            let color: UIColor
+            if line.hasPrefix("+"), !line.hasPrefix("+++") {
+                color = added
+            } else if line.hasPrefix("-"), !line.hasPrefix("---") {
+                color = removed
+            } else {
+                return
+            }
+            text.addAttribute(.foregroundColor, value: color, range: range)
+        }
     }
 
     var hasCurrentHighlight: Bool {
@@ -342,6 +415,9 @@ final class NativeCodeBlockView: UIView {
         let font = AppFont.monoMedium
         let fullRange = NSRange(location: 0, length: mutable.length)
         mutable.addAttribute(.font, value: font, range: fullRange)
+        if isDiff(currentLanguage), let currentPalette {
+            Self.paintDiffLines(in: mutable, palette: currentPalette)
+        }
         highlightedText = mutable
         installedHighlightIdentity = identity
 

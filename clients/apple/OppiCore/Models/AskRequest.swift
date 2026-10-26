@@ -62,15 +62,21 @@ struct AskRequest: Identifiable, Sendable, Equatable, Decodable {
 /// A single question within an ask request.
 struct AskQuestion: Identifiable, Sendable, Equatable, Decodable {
     let id: String
+    /// The full question text, title included.
     let question: String
     let options: [AskOption]
     let multiSelect: Bool
+    /// A heading the sender wrote apart from the rest of `question` (an
+    /// extension request's title). Local to the app: it is not on the wire, so a
+    /// decoded question has none. When set, `question` starts with it verbatim.
+    let title: String?
 
-    init(id: String, question: String, options: [AskOption], multiSelect: Bool) {
+    init(id: String, question: String, options: [AskOption], multiSelect: Bool, title: String? = nil) {
         self.id = id
         self.question = question
         self.options = options
         self.multiSelect = multiSelect
+        self.title = title
     }
 
     init(from decoder: Decoder) throws {
@@ -79,6 +85,7 @@ struct AskQuestion: Identifiable, Sendable, Equatable, Decodable {
         question = try c.decode(String.self, forKey: .question)
         options = try c.decode([AskOption].self, forKey: .options)
         multiSelect = try c.decodeIfPresent(Bool.self, forKey: .multiSelect) ?? false
+        title = nil
     }
 
     private enum CodingKeys: String, CodingKey {

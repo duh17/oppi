@@ -120,11 +120,11 @@ struct AskCardExpandedTests {
     }
 
     private static func questionColor(in sheet: UIViewController) throws -> UIColor {
-        let markdown = try #require(firstSubview(of: AssistantMarkdownContentView.self, in: sheet.view))
-        let text = try #require(allSubviews(in: markdown).compactMap { $0 as? UITextView }.first {
-            ($0.text ?? "").contains("testing approach")
+        // A one-paragraph question is the sheet's title line, not Markdown body.
+        let title = try #require(allSubviews(in: sheet.view).compactMap { $0 as? UILabel }.first {
+            ($0.attributedText?.string ?? "").contains("testing approach")
         })
-        return try #require(text.attributedText.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor)
+        return try #require(title.attributedText?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor)
     }
 
     private static func allSubviews(in view: UIView) -> [UIView] {

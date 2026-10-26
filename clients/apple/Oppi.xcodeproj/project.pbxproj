@@ -430,6 +430,7 @@
 		304A4FD176E0842A48F64917 /* FocusedSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A2A545103E4D66062EFD322 /* FocusedSessionStore.swift */; };
 		308FA99257AD2AB356FA70FF /* StatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE34D58B157E268CF02B3DB9 /* StatusView.swift */; };
 		30996E7B1C73956602E1BA57 /* MacSessionOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00624C1F0E3C40935B64BF71 /* MacSessionOutlineView.swift */; };
+		30ABBB3A58DCDB5CFCBF196A /* AskCardQuestionPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = D28F7F6D3F5AC6714CD819DD /* AskCardQuestionPreview.swift */; };
 		30B1D90B4BA4BB2B47CFE262 /* TypewriterAnimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70BC0FB6D0F35135AEF282C8 /* TypewriterAnimator.swift */; };
 		313229EA909D234A584AEC58 /* FeatureEducationP0TipPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A758568ED42E28E67208225 /* FeatureEducationP0TipPreview.swift */; };
 		313343E4D901905A9293A334 /* SSHTerminalProgressRing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E21558B424BBA2D9A04AA5A /* SSHTerminalProgressRing.swift */; };
@@ -3945,6 +3946,7 @@
 		D266A2948DF1FCDEF64B0A13 /* MermaidMindmapConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidMindmapConformanceTests.swift; sourceTree = "<group>"; };
 		D27150D99B3C650DFFC08F4D /* FileBrowserMotionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserMotionUITests.swift; sourceTree = "<group>"; };
 		D277EA46947AD8CF33855744 /* CascadiaCode-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "CascadiaCode-Bold.ttf"; sourceTree = "<group>"; };
+		D28F7F6D3F5AC6714CD819DD /* AskCardQuestionPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskCardQuestionPreview.swift; sourceTree = "<group>"; };
 		D2AAFFD8B270468690DCB014 /* OrbDisplayPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbDisplayPolicy.swift; sourceTree = "<group>"; };
 		D2BF2316783531F0B1956F5E /* TimelineLifecycleBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineLifecycleBench.swift; sourceTree = "<group>"; };
 		D2C3C70BD59E7E4AACF8F03C /* ClientMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientMessage.swift; sourceTree = "<group>"; };
@@ -6821,6 +6823,7 @@
 			children = (
 				C1943EFBC7980C6E3B18D13E /* AskCard.swift */,
 				FA4ABC7C06CA7707A966A3E3 /* AskCardExpanded.swift */,
+				D28F7F6D3F5AC6714CD819DD /* AskCardQuestionPreview.swift */,
 				0B7A03D104E935131D98FF59 /* AskCardShared.swift */,
 				F4DBF638EE848D66E1568186 /* AskCardView.swift */,
 				0E0183DAF0037D9AC7AA470F /* ChatComposerDraftController.swift */,
@@ -9407,6 +9410,7 @@
 				6AC335BD707C14F6AD663CBF /* AskCard.swift in Sources */,
 				C14FDDC557E8BDC3BC692812 /* AskCardExpanded.swift in Sources */,
 				3D3C2244288E4EAC61FD103A /* AskCardIntentRegressionPreview.swift in Sources */,
+				30ABBB3A58DCDB5CFCBF196A /* AskCardQuestionPreview.swift in Sources */,
 				A406C9F7EAEE4B98F8390329 /* AskCardShared.swift in Sources */,
 				67C10E67349A4D559BE6ED8A /* AskCardView.swift in Sources */,
 				89F3D73055B44E2373A6FCB9 /* AskOppiIntent.swift in Sources */,

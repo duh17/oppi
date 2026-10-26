@@ -82,6 +82,9 @@ final class AssistantMarkdownContentView: UIView {
         /// Timeline-owned thermal/power snapshot. Export and full-screen readers
         /// keep full decorative work; live chat consults StreamingRenderPolicy.
         let resourcePressure: StreamingRenderPolicy.ResourcePressure
+        /// Draws fenced code without its header toolbar and with tight padding, for
+        /// capped previews that need the first lines of code, not chrome.
+        let compactCodeBlocks: Bool
         /// `AppFont.revision` when the configuration was made. Rendered text
         /// bakes fonts in, so a font or Dynamic Type change must re-render.
         let typographyRevision = AppFont.revision
@@ -100,8 +103,10 @@ final class AssistantMarkdownContentView: UIView {
             preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live,
-            resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
+            resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal,
+            compactCodeBlocks: Bool = false
         ) {
+            self.compactCodeBlocks = compactCodeBlocks
             self.content = content
             self.isStreaming = isStreaming
             self.themeID = themeID
@@ -132,7 +137,8 @@ final class AssistantMarkdownContentView: UIView {
             preparationRevision: UInt64 = 0,
             perfSurface: MarkdownStreamingPerf.Surface? = nil,
             renderingMode: ContentRenderingMode = .live,
-            resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
+            resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal,
+            compactCodeBlocks: Bool = false
         ) -> Self {
             Self(
                 content: content,
@@ -148,7 +154,8 @@ final class AssistantMarkdownContentView: UIView {
                 preparationRevision: preparationRevision,
                 perfSurface: perfSurface,
                 renderingMode: renderingMode,
-                resourcePressure: resourcePressure
+                resourcePressure: resourcePressure,
+                compactCodeBlocks: compactCodeBlocks
             )
         }
 
@@ -167,6 +174,7 @@ final class AssistantMarkdownContentView: UIView {
                 && lhs.perfSurface == rhs.perfSurface
                 && lhs.renderingMode == rhs.renderingMode
                 && lhs.resourcePressure == rhs.resourcePressure
+                && lhs.compactCodeBlocks == rhs.compactCodeBlocks
                 && lhs.typographyRevision == rhs.typographyRevision
         }
 

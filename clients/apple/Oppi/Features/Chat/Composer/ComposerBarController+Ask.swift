@@ -96,16 +96,25 @@ extension ComposerBarController {
     func measureAskCard(slotWidth: CGFloat) {
         guard let askCard, slotWidth > 1 else { return }
         askCard.loadViewIfNeeded()
+        askCard.maximumHeight = askViewportCap
         askNaturalHeight = askCard.preferredHeight(for: slotWidth)
+    }
+
+    /// Tallest the Ask slot may be: shorter while the keyboard is up.
+    private var askViewportCap: CGFloat {
+        let focused = isInputFocused && !(host?.content.suppressKeyboard ?? false)
+        return focused
+            ? ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard
+            : ComposerInputMetrics.inlineAskCardMaxHeight
     }
 
     /// `notifyHost` is false while `sizeThatFits` is already measuring the bar.
     func applyAskViewport(notifyHost: Bool = true) {
         let hasAsk = host?.content.askRequest != nil
-        let focused = isInputFocused && !(host?.content.suppressKeyboard ?? false)
-        let cap = focused
-            ? ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard
-            : ExtensionNativeSurfaceLayout.expandedMaxHeight
+        let cap = askViewportCap
+        // The card fits its message to the cap, so set it before reading the
+        // card's natural height.
+        askCard?.maximumHeight = cap
         let natural = hasAsk ? max(askNaturalHeight, 0) : 0
         let slot = min(natural, cap)
         let slotChanged = askHeightConstraint?.constant != slot

@@ -8,6 +8,9 @@ enum ComposerInputMetrics {
     /// Leaves room for a four-line response and the composer action row above
     /// the iPhone keyboard. Longer inline asks scroll within this viewport.
     static let inlineAskCardMaxHeightWithKeyboard: CGFloat = 240
+    /// Without the keyboard there is room for a title, a few lines of the
+    /// message, two or three options, and the action row.
+    static let inlineAskCardMaxHeight: CGFloat = 380
     static let inlineTextMinHeight: CGFloat = 40
 
     static func maxTextHeight(

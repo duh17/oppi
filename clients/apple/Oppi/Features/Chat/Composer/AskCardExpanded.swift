@@ -97,6 +97,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
     private let divider = UIView()
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
+    private let questionTitleLabel = UILabel()
     private let markdownView = AssistantMarkdownContentView()
     private let selectionPillRow = UIView()
     private let selectionPill = AskSelectionModePillView()
@@ -271,9 +272,12 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
             multiSelectDone.bottomAnchor.constraint(equalTo: doneRow.bottomAnchor),
             multiSelectDone.heightAnchor.constraint(equalToConstant: side),
         ])
-        for view in [markdownView, selectionPillRow, optionsStack, doneRow] as [UIView] {
+        questionTitleLabel.numberOfLines = 0
+        questionTitleLabel.adjustsFontForContentSizeCategory = true
+        for view in [questionTitleLabel, markdownView, selectionPillRow, optionsStack, doneRow] as [UIView] {
             contentStack.addArrangedSubview(view)
         }
+        contentStack.setCustomSpacing(10, after: questionTitleLabel)
 
         NSLayoutConstraint.activate([
             contentStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
@@ -490,8 +494,24 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         guard let question = currentQuestion else { return }
         // The markdown view skips an unchanged configuration, so this only
         // re-renders for a new question or a theme change (new palette).
+        // The first plain paragraph leads as a title, split the way the folded card
+        // splits it; the rest is Markdown.
+        let parts = AskCard.inlineQuestionParts(for: question.question, title: question.title)
+        if let title = parts.title {
+            questionTitleLabel.attributedText = AskQuestionPreviewView.titleText(
+                title,
+                verbatim: parts.titleIsVerbatim,
+                font: UIFont.scaled(.body, .semibold),
+                color: colors.fg
+            )
+            questionTitleLabel.accessibilityLabel = "Question: \(title)"
+        } else {
+            questionTitleLabel.attributedText = nil
+        }
+        questionTitleLabel.setHiddenIfChanged(parts.title == nil)
+        markdownView.setHiddenIfChanged(parts.body == nil)
         markdownView.apply(configuration: .make(
-            content: question.question,
+            content: parts.body ?? "",
             isStreaming: false,
             themeID: ThemeRuntimeState.currentThemeID(),
             textSelectionEnabled: true

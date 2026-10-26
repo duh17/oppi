@@ -231,6 +231,47 @@ struct AskRequestTests {
         #expect(ask?.questions.first?.options[1].description == "Block the tool call")
     }
 
+    @Test func extensionTitleIsCarriedSeparatelyOnlyWhenAMessageFollowsIt() {
+        let withMessage = ExtensionUIRequest(
+            id: "a", sessionId: "s1", method: "confirm", title: "Delete?\n\nThe draft", message: "Details"
+        ).inlineAskRequest?.questions.first
+        let titleOnly = ExtensionUIRequest(
+            id: "b", sessionId: "s1", method: "confirm", title: "Delete?\n\nThe draft"
+        ).inlineAskRequest?.questions.first
+
+        #expect(withMessage?.title == "Delete?\n\nThe draft")
+        #expect(withMessage?.question == "Delete?\n\nThe draft\n\nDetails")
+        #expect(titleOnly?.title == nil)
+    }
+
+    @Test func extensionSelectInlineAskKeepsMarkdownMessageWholeUnderItsTitle() {
+        let message = """
+        Instructions changed
+
+        **Instructions**
+        ```diff
+        - Review carefully.
+        + QA-APPLIED-YES
+        ```
+
+        Details: PATCH /agents/KQdEFkKi
+        """
+        let request = ExtensionUIRequest(
+            id: "ext-markdown",
+            sessionId: "s1",
+            method: "select",
+            title: "Change Agent?",
+            options: ["Apply Change", "Cancel"],
+            message: message
+        )
+
+        let question = request.inlineAskRequest?.questions.first
+
+        #expect(question?.question == "Change Agent?\n\n" + message)
+        #expect(question?.options.map(\.value) == ["Apply Change", "Cancel"])
+        #expect(question?.options.compactMap(\.description).isEmpty == true)
+    }
+
     @Test func extensionSelectInlineAskPreservesIndentedOptionLikePromptContent() {
         let request = ExtensionUIRequest(
             id: "ext-permission",
