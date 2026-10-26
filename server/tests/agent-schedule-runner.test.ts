@@ -7,7 +7,7 @@ import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch
 import { AgentScheduleRunner, dueSlotKeysForSchedule } from "../src/agent-schedule-runner.js";
 import type { AgentDefinition } from "../src/agent-launch-service.js";
 import { AgentScheduleStore } from "../src/agent-schedules.js";
-import type { AgentScheduleAction } from "../src/agent-schedules.js";
+import type { AgentSchedule, AgentScheduleAction } from "../src/agent-schedules.js";
 import type { Session, Workspace } from "../src/types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -280,18 +280,33 @@ describe("agent schedule runner", () => {
         resources: { extensionIds: ["extension_stale_after_rename"] },
       },
     };
+    // The runner binds its logger at import time. Pre-commit runs with OPPI_LOG_LEVEL=error,
+    // which would suppress the warn event unless the runner is reloaded at warn level.
+    const previousLogLevel = process.env.OPPI_LOG_LEVEL;
+    process.env.OPPI_LOG_LEVEL = "warn";
+    vi.resetModules();
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const runner = new AgentScheduleRunner({
-      storage: {
-        ...storage(resolvedAgent),
-        getWorkspace: vi.fn(() => ({ ...workspace, hostMount: process.cwd() }) as Workspace),
-      },
-      sessions: { startSession, sendPrompt },
-      ensureSessionContextWindow: (session) => session,
-      nowMs: () => 2_000,
-    });
+    let logged = "";
+    try {
+      const { AgentScheduleRunner: FreshRunner } = await import("../src/agent-schedule-runner.js");
+      const runner = new FreshRunner({
+        storage: {
+          ...storage(resolvedAgent),
+          getWorkspace: vi.fn(() => ({ ...workspace, hostMount: process.cwd() }) as Workspace),
+        },
+        sessions: { startSession, sendPrompt },
+        ensureSessionContextWindow: (session) => session,
+        nowMs: () => 2_000,
+      });
 
-    await runner.runOnce();
+      await runner.runOnce();
+      logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+    } finally {
+      stderr.mockRestore();
+      if (previousLogLevel === undefined) delete process.env.OPPI_LOG_LEVEL;
+      else process.env.OPPI_LOG_LEVEL = previousLogLevel;
+      vi.resetModules();
+    }
 
     expect(startSession).not.toHaveBeenCalled();
     expect(store.listRunSummaries(schedule.id)).toEqual([
@@ -300,8 +315,6 @@ describe("agent schedule runner", () => {
         error: "agent_extensions_unavailable: extension_stale_after_rename",
       }),
     ]);
-    const logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
-    stderr.mockRestore();
     expect(logged).toContain("agent_schedule_runner.dispatch.failed");
     expect(logged).toContain("agent_extensions_unavailable: extension_stale_after_rename");
   });
@@ -407,27 +420,94 @@ describe("agent schedule runner", () => {
     expect(dueSlotKeysForSchedule(schedule, notDue)).toEqual([]);
   });
 
-  it("materializes both repeated fall-back cron slots and skips a spring-forward gap", () => {
-    const fallBack = store.createSchedule(
-      {
-        name: "Repeated local time",
-        trigger: {
-          type: "cron",
-          expression: "30 1 * * *",
-          timeZone: "America/New_York",
-        },
-        action: action(),
-      },
-      Date.parse("2026-10-31T00:00:00Z"),
+  function cronSchedule(expression: string, timeZone: string, createdAt: string) {
+    return store.createSchedule(
+      { name: expression, trigger: { type: "cron", expression, timeZone }, action: action() },
+      Date.parse(createdAt),
     );
-    const firstOccurrence = Date.parse("2026-11-01T05:30:00Z");
-    const secondOccurrence = Date.parse("2026-11-01T06:30:00Z");
+  }
 
-    expect(dueSlotKeysForSchedule(fallBack, firstOccurrence)).toEqual([`cron:${firstOccurrence}`]);
-    expect(dueSlotKeysForSchedule(fallBack, secondOccurrence)).toEqual([
-      `cron:${secondOccurrence}`,
+  // Every cron slot due across [from, to) at one-minute ticks.
+  function dueSlotsBetween(schedule: AgentSchedule, from: string, to: string): string[] {
+    const slots: string[] = [];
+    for (let t = Date.parse(from); t < Date.parse(to); t += 60_000) {
+      slots.push(...dueSlotKeysForSchedule(schedule, t));
+    }
+    return slots;
+  }
+
+  it("runs a repeated fall-back wall-clock minute only on its first occurrence", () => {
+    // 2026-11-01 02:00 PDT -> 01:00 PST: local 01:00-01:59 happens at 08:00Z and again at 09:00Z.
+    const daily = cronSchedule("30 1 * * *", "America/Los_Angeles", "2026-10-31T00:00:00Z");
+    const firstOccurrence = Date.parse("2026-11-01T08:30:00Z");
+    expect(dueSlotKeysForSchedule(daily, firstOccurrence)).toEqual([`cron:${firstOccurrence}`]);
+    expect(dueSlotKeysForSchedule(daily, Date.parse("2026-11-01T09:30:00Z"))).toEqual([]);
+    expect(dueSlotsBetween(daily, "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z")).toEqual([
+      `cron:${firstOccurrence}`,
     ]);
 
+    const quarterHourly = cronSchedule(
+      "*/15 * * * *",
+      "America/Los_Angeles",
+      "2026-10-31T00:00:00Z",
+    );
+    const slots = dueSlotsBetween(quarterHourly, "2026-11-01T07:00:00Z", "2026-11-01T11:00:00Z");
+    const localHourMinutes = slots.map((slot) =>
+      new Date(Number(slot.slice(5))).toLocaleTimeString("en-GB", {
+        timeZone: "America/Los_Angeles",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    );
+    // 00:00-02:59 PDT/PST wall clock spans four UTC hours: 12:00 PDT .. 03:00 PST.
+    expect(localHourMinutes).toEqual([
+      "00:00",
+      "00:15",
+      "00:30",
+      "00:45",
+      "01:00",
+      "01:15",
+      "01:30",
+      "01:45",
+      "02:00",
+      "02:15",
+      "02:30",
+      "02:45",
+    ]);
+    expect(new Set(slots).size).toBe(slots.length);
+  });
+
+  it("leaves non-repeated minutes and zones without DST untouched", () => {
+    const outsideRepeat = cronSchedule("30 3 * * *", "America/Los_Angeles", "2026-10-31T00:00:00Z");
+    const threeThirty = Date.parse("2026-11-01T11:30:00Z");
+    expect(dueSlotKeysForSchedule(outsideRepeat, threeThirty)).toEqual([`cron:${threeThirty}`]);
+
+    const normalDay = cronSchedule("30 1 * * *", "America/Los_Angeles", "2026-10-31T00:00:00Z");
+    const normalDayRun = Date.parse("2026-11-03T09:30:00Z");
+    expect(dueSlotKeysForSchedule(normalDay, normalDayRun)).toEqual([`cron:${normalDayRun}`]);
+
+    const utc = cronSchedule("30 1 * * *", "UTC", "2026-10-31T00:00:00Z");
+    const utcRun = Date.parse("2026-11-01T01:30:00Z");
+    expect(dueSlotKeysForSchedule(utc, utcRun)).toEqual([`cron:${utcRun}`]);
+    expect(dueSlotKeysForSchedule(utc, Date.parse("2026-11-01T02:30:00Z"))).toEqual([]);
+  });
+
+  it("still runs the repeated minute when the schedule was created after its first occurrence", () => {
+    const created = cronSchedule("30 1 * * *", "America/Los_Angeles", "2026-11-01T08:45:00Z");
+    const secondOccurrence = Date.parse("2026-11-01T09:30:00Z");
+    expect(dueSlotKeysForSchedule(created, Date.parse("2026-11-01T08:30:00Z"))).toEqual([]);
+    expect(dueSlotKeysForSchedule(created, secondOccurrence)).toEqual([`cron:${secondOccurrence}`]);
+  });
+
+  it("runs once across a 30-minute fall-back shift", () => {
+    // Lord Howe: 2026-04-05 02:00 +11 -> 01:30 +10:30; local 01:30-01:59 occurs twice.
+    const schedule = cronSchedule("45 1 * * *", "Australia/Lord_Howe", "2026-04-01T00:00:00Z");
+    expect(dueSlotsBetween(schedule, "2026-04-04T12:00:00Z", "2026-04-05T12:00:00Z")).toEqual([
+      `cron:${Date.parse("2026-04-04T14:45:00Z")}`,
+    ]);
+  });
+
+  it("skips a spring-forward gap", () => {
     const springForward = store.createSchedule(
       {
         name: "Missing local time",

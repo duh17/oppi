@@ -1,4 +1,4 @@
-import { cronMatchesNow } from "./agent-schedule-cron.js";
+import { cronMatchesNow, earlierRepeatedWallClockMinute } from "./agent-schedule-cron.js";
 import { atSlotKey, type AgentSchedule, type AgentScheduleTrigger } from "./agent-schedules.js";
 import { recordScheduleRun } from "./schedule-run-metrics.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
@@ -173,5 +173,10 @@ function dueSlotKeys(trigger: AgentScheduleTrigger, createdAt: number, now: numb
   const minuteStart = Math.floor(now / MS_PER_MINUTE) * MS_PER_MINUTE;
   if (createdAt > minuteStart) return [];
   if (!cronMatchesNow(trigger.expression, trigger.timeZone, minuteStart)) return [];
+  // Fall-back repeats a wall-clock hour; run it only on the first occurrence. A schedule
+  // created after the first occurrence never ran that minute, so the repeat still fires.
+  if (earlierRepeatedWallClockMinute(trigger.timeZone, minuteStart, createdAt) !== undefined) {
+    return [];
+  }
   return [`cron:${minuteStart}`];
 }

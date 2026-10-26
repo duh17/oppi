@@ -44,6 +44,38 @@ export function cronMatchesNow(expression: string, timeZone: string, minuteStart
   return dayOfMonthMatches && dayOfWeekMatches;
 }
 
+// DST shifts are 30, 60, or 120 minutes. When the clock falls back by N minutes, the
+// wall-clock minute at UTC instant t also occurred at t - N.
+const DST_FALL_BACK_SHIFT_MINUTES = [30, 60, 120];
+const MS_PER_MINUTE = 60_000;
+
+/**
+ * Returns the UTC start of an earlier occurrence of the same zoned wall-clock minute within
+ * the last DST shift (a repeated fall-back hour), or undefined when the minute is not repeated
+ * or the earlier occurrence is before `notBefore`.
+ */
+export function earlierRepeatedWallClockMinute(
+  timeZone: string,
+  minuteStart: number,
+  notBefore: number,
+): number | undefined {
+  const parts = zonedDateParts(minuteStart, timeZone);
+  for (const shift of DST_FALL_BACK_SHIFT_MINUTES) {
+    const earlier = minuteStart - shift * MS_PER_MINUTE;
+    if (earlier < notBefore) continue;
+    const earlierParts = zonedDateParts(earlier, timeZone);
+    if (
+      earlierParts.minute === parts.minute &&
+      earlierParts.hour === parts.hour &&
+      earlierParts.dayOfMonth === parts.dayOfMonth &&
+      earlierParts.month === parts.month
+    ) {
+      return earlier;
+    }
+  }
+  return undefined;
+}
+
 function parseCronExpression(expression: string): CronSpec {
   const fields = expression.trim().split(/\s+/).filter(Boolean);
   const normalized = fields.length === 6 ? fields.slice(1) : fields;
