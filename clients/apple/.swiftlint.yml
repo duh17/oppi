@@ -3,6 +3,7 @@
 
 included:
   - Oppi
+  - OppiDebugHarness
   - OppiTests
   - Shared
 

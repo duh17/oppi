@@ -153,6 +153,7 @@ const DISPATCHED_UNCONFIRMED = "dispatched-unconfirmed";
 
 export const SOURCE_TREES = [
   "clients/apple/Oppi",
+  "clients/apple/OppiDebugHarness",
   "clients/apple/Shared",
   "clients/apple/OppiCore",
   "clients/apple/OppiE2ETests",
@@ -202,6 +203,7 @@ export const REQUIRED_SOURCE_FILES = [
 ] as const;
 
 export const REQUIRED_SOURCE_DIRS = [
+  "clients/apple/OppiDebugHarness",
   "clients/apple/Shared",
   "clients/apple/OppiCore",
   "clients/apple/OppiE2ETests",

@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Every `SCREENSHOT_SCREEN` a UI or E2E test launches must resolve to a case of
- * the DEBUG preview switch (`ScreenshotPreviewView`) or the screens `OppiApp`
- * routes before it. A deleted or renamed preview otherwise fails only when
+ * the DEBUG preview switch (`ScreenshotPreviewView`) or the screens
+ * `DebugHarnessLaunch` routes before it. A deleted or renamed preview otherwise fails only when
  * that test runs on a simulator: the app shows "Unknown screen" and the test
  * times out. Plain source scan, no simulator.
  *
@@ -15,8 +15,8 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const apple = join(repoRoot, "clients/apple");
-const previewSwitch = join(apple, "Oppi/App/ScreenshotPreviewView.swift");
-const app = join(apple, "Oppi/App/OppiApp.swift");
+const previewSwitch = join(apple, "OppiDebugHarness/ScreenshotPreviewView.swift");
+const harnessLaunch = join(apple, "OppiDebugHarness/DebugHarnessLaunch.swift");
 const testRoots = ["OppiUITests", "OppiE2ETests"].map((dir) => join(apple, dir));
 
 function swiftFiles(root: string): string[] {
@@ -43,8 +43,8 @@ function previewScreens(): Set<string> {
     if (!label) continue;
     for (const name of label[1].matchAll(/"([^"]+)"/g)) screens.add(name[1]);
   }
-  // OppiApp picks this one before ScreenshotPreviewView.
-  for (const match of readFileSync(app, "utf8").matchAll(/ScreenshotPreviewConfig\.screen == "([^"]+)"/g)) {
+  // DebugHarnessLaunch picks this one before ScreenshotPreviewView.
+  for (const match of readFileSync(harnessLaunch, "utf8").matchAll(/ScreenshotPreviewConfig\.screen == "([^"]+)"/g)) {
     screens.add(match[1]);
   }
   return screens;

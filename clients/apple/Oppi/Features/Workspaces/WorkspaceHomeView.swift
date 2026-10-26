@@ -751,21 +751,3 @@ private struct HostSwitcherRailToolbar: ViewModifier {
         }
     }
 }
-
-#if DEBUG
-enum HostSwitcherPreviewData {
-    static let server: PairedServer = {
-        let credentials = ServerCredentials(
-            host: "mac-studio.local",
-            port: 7749,
-            token: "sk_preview",
-            name: "mac-studio",
-            serverFingerprint: "sha256:preview-host"
-        )
-        guard let server = PairedServer(from: credentials, sortOrder: 0) else {
-            preconditionFailure("HostSwitcherPreviewData requires a server fingerprint")
-        }
-        return server
-    }()
-}
-#endif

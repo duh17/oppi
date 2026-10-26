@@ -6,7 +6,12 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_SCHEMES = ["OppiUnitTests", "OppiMac"];
-const DEFAULT_REPORT_INCLUDES = ["Oppi/**/*.swift", "Shared/**/*.swift", "OppiMac/**/*.swift"];
+const DEFAULT_REPORT_INCLUDES = [
+  "Oppi/**/*.swift",
+  "OppiDebugHarness/**/*.swift",
+  "Shared/**/*.swift",
+  "OppiMac/**/*.swift",
+];
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 type Options = {
@@ -46,7 +51,7 @@ Examples:
   bun scripts/periphery-scan.ts
   bun scripts/periphery-scan.ts --strict
   bun scripts/periphery-scan.ts --json --report-include 'Oppi/Core/Services/**/*.swift'
-  bun scripts/periphery-scan.ts -- --retain-files 'Oppi/App/UIHangHarnessView.swift'
+  bun scripts/periphery-scan.ts -- --retain-files 'OppiDebugHarness/UIHangHarnessView.swift'
 `;
   const stream = exitCode === 0 ? process.stdout : process.stderr;
   stream.write(message);

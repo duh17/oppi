@@ -123,6 +123,11 @@ targets:
         type: group
         excludes:
           - "Renderers/Orbs/LICENSE"
+      # Debug harnesses and screenshot previews (and their fixtures). UI and E2E
+      # tests launch the Debug app with harness launch arguments, so the folder
+      # compiles into this target; Release excludes it below.
+      - path: OppiDebugHarness
+        type: group
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi
@@ -143,8 +148,13 @@ targets:
           - "$(SRCROOT)/scripts/OPPIGitCommitGuard.h"
       configs:
         Release:
-          # Only the DEBUG screenshot preview (usdz-rendering) reads this model.
-          EXCLUDED_SOURCE_FILE_NAMES: suzanne-garden.usdz
+          # Debug harnesses, screenshot previews, and their fixtures never ship:
+          # no harness source compiles and no fixture is copied into Release.
+          # Xcode's `*` does not cross `/`, so each folder level needs a pattern;
+          # the iOS architecture check rejects files nested deeper than these.
+          EXCLUDED_SOURCE_FILE_NAMES:
+            - "$(SRCROOT)/OppiDebugHarness/*"
+            - "$(SRCROOT)/OppiDebugHarness/*/*"
           # ~3.8 MB smaller main binary than -O (machine code -17%).
           SWIFT_OPTIMIZATION_LEVEL: "-Osize"
     entitlements:
@@ -262,6 +272,7 @@ targets:
           STAMP_FILE="$DERIVED_FILE_DIR/swiftlint.stamp"
           WATCH_DIRS=(
             "$SRCROOT/Oppi"
+            "$SRCROOT/OppiDebugHarness"
             "$SRCROOT/OppiCore"
             "$SRCROOT/Shared"
             "$SRCROOT/OppiActivityExtension"
@@ -313,6 +324,7 @@ targets:
           ARCH_RULES="$SRCROOT/../../dev/architecture-client.md"
           WATCH_DIRS=(
             "$SRCROOT/Oppi"
+            "$SRCROOT/OppiDebugHarness"
             "$SRCROOT/OppiCore"
             "$SRCROOT/Shared"
             "$SRCROOT/OppiActivityExtension"

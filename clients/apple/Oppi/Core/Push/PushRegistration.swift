@@ -81,7 +81,7 @@ final class PushRegistration {
             return
         }
         // Screenshot previews must not raise the system permission alert.
-        if ScreenshotPreviewConfig.isEnabled { return }
+        if ProcessInfo.processInfo.arguments.contains("--screenshot-preview") { return }
         #endif
         guard let deviceId else { return }
         Task { await register(api: api, serverId: serverId, deviceId: deviceId, relay: relay) }

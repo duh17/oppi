@@ -401,6 +401,17 @@ To add a scenario:
 4. Add one focused XCTest method that calls `runWorkspaceHomeLab(...)`.
 5. Prefer `E2ELabWorkspaceFixture` for normal workspace/session-count state; use `e2eLabAPIJSON(...)` only for custom server setup.
 
+### Debug harnesses
+
+The debug harnesses (UI hang, chat outline, review comment, code block, navigation chrome, and the others), the `--screenshot-preview` screens, and their fixtures live in `clients/apple/OppiDebugHarness/`, not in the app source under `clients/apple/Oppi/`. Only Debug builds compile them:
+
+- `project.yml` adds the folder to the `Oppi` app target, and the target's Release configuration sets `EXCLUDED_SOURCE_FILE_NAMES` to `$(SRCROOT)/OppiDebugHarness/*` and `$(SRCROOT)/OppiDebugHarness/*/*`. No harness source compiles and no fixture (such as `Resources/suzanne-garden.usdz`) is copied into a Release app. Xcode's `*` does not match `/`, so files must stay at most one folder below `OppiDebugHarness/`; the iOS architecture check (`ios-debug-harness-depth`) fails on a deeper file. Each harness file also keeps its `#if DEBUG` wrapper.
+- The app has one hook: `OppiApp.makeRootViewController()` calls `DebugHarnessLaunch.rootViewController(root:)` under `#if DEBUG`. `DebugHarnessLaunch.swift` reads the launch arguments and returns the harness or preview root, or nil for the app. App files do not name other harness types.
+
+Why this design: UI, E2E, and perf tests launch the Debug app as a separate process with launch arguments, so the harness code must be in the Debug app binary. Harnesses use the app's internal types, so a separate module would make much of the app `public`. A separate host app would compile the app sources a second time, and the UI and E2E targets would need it to repeat the app's bundle identifier, entitlements, and embedded extensions. A folder that only the Debug configuration compiles into the same target keeps the same module, the same app, and the same launch arguments.
+
+Add a harness or preview in `OppiDebugHarness/`, and route its launch argument in `DebugHarnessLaunch` or in the `ScreenshotPreviewView` switch. The UIKit structure guard, theme surface guard, screenshot screen guard, SwiftLint, and the iOS architecture rules scan this folder too. Fixture seams that set private state on an app type (for example `ServerStore.replaceServersForPreview` or `SSHPreflightViewController`'s preview initializers) stay in that type's file under `#if DEBUG`, because a separate file cannot reach that state.
+
 ### Screenshot preview UI tests
 
 Mock screenshot-preview surfaces launch the app with `--screenshot-preview` for isolated visual capture and manual QA, not for paired-server workspace behavior.

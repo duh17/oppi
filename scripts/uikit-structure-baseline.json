@@ -7,106 +7,10 @@
     "clients/apple/Oppi/App/AppRootLayer.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/AskCardIntentRegressionPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ChatOutlineColdHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/CodeBlockWrappingHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/CodeGutterAlignmentHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/FeatureEducationP0TipPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/FullScreenReviewCommentHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/HTMLDOMAnnotationHarnessView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/HostFactory.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/NavigationChromeProfileHarnessView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/OppiApp.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviewView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/AudioScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/BuiltInToolFactsPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/ComposerScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/FeatureEducationTipsPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/FullscreenChromePreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/GeoJSONMountRainierPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/LatexRenderingPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/LiveActivityScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/MermaidScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/MetalOrbScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/QuietWorkStripPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/SSHTerminalScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/SessionTimelinePreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/SettingsSweepScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/SyntaxLanguagesPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/USDZRenderingPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/WhatsNewScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/WorkspaceSettingsScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ScreenshotPreviews/WorkspaceShellScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/SemanticPickHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ServerResourcesScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/StreamingFlickerPreviewView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/UIHangHarnessView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/WorkspaceShellRoutes.swift": {
@@ -253,16 +157,10 @@
     "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerViewController.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolCallDocumentPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Extensions/ServerExtensionsView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/FileBrowser/FileBrowserMotionPreviewSupport.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Icons/IconPickerView.swift": {
@@ -422,6 +320,111 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSkillsPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/AskCardIntentRegressionPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ChatOutlineColdHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/CodeBlockWrappingHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/CodeGutterAlignmentHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/DebugHarnessLaunch.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/FeatureEducationP0TipPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/FullScreenReviewCommentHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/HTMLDOMAnnotationHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/NavigationChromeProfileHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviewView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/AudioScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/BuiltInToolFactsPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/ComposerScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/FeatureEducationTipsPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/FileBrowserMotionPreviewSupport.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/FullscreenChromePreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/GeoJSONMountRainierPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/LatexRenderingPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/LiveActivityScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/MermaidScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/MetalOrbScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/QuietWorkStripPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SSHTerminalScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SettingsSweepScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SyntaxLanguagesPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/ToolCallDocumentPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/USDZRenderingPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/WhatsNewScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/WorkspaceSettingsScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ScreenshotPreviews/WorkspaceShellScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/SemanticPickHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/ServerResourcesScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/StreamingFlickerPreviewView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/OppiDebugHarness/UIHangHarnessView.swift": {
       "import SwiftUI": 1
     }
   }

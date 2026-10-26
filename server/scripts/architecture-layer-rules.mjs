@@ -51,6 +51,10 @@ const SERVER_PI_TUI_RUNTIME_CHECK_ALLOWED_FILES = new Set([
 ]);
 
 const APPLE_SHARED_CORE_ROOT = "clients/apple/OppiCore/";
+// Debug harnesses and screenshot previews: compiled into the iOS app target in Debug only,
+// held to the same iOS rules as the app source they render.
+const IOS_DEBUG_HARNESS_ROOT = "clients/apple/OppiDebugHarness/";
+const IOS_APP_SOURCE_ROOTS = ["clients/apple/Oppi/", IOS_DEBUG_HARNESS_ROOT];
 const APPLE_SHARED_CORE_PLATFORM_ADAPTER_PREFIXES = [`${APPLE_SHARED_CORE_ROOT}PlatformAdapters/`];
 const MAC_APP_ROOT = "clients/apple/OppiMac/";
 const MAC_PROJECT_YML = "clients/apple/project.yml";
@@ -113,6 +117,7 @@ function findTestSourcePathUse(stripped) {
 const IOS_VOICE_LIFECYCLE_GUARDED_PREFIXES = [
   "clients/apple/Oppi/App/",
   "clients/apple/Oppi/Features/",
+  IOS_DEBUG_HARNESS_ROOT,
 ];
 const IOS_VOICE_LIFECYCLE_ALLOWED_FILES = new Set([
   "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift",
@@ -1062,7 +1067,7 @@ function makeIosViolation({ rule, file, line, column, reason, remediation }) {
 
 function isAppleClientSwiftFile(filePath) {
   return (
-    (filePath.startsWith("clients/apple/Oppi/") || filePath.startsWith(APPLE_SHARED_CORE_ROOT)) &&
+    [...IOS_APP_SOURCE_ROOTS, APPLE_SHARED_CORE_ROOT].some((root) => filePath.startsWith(root)) &&
     filePath.endsWith(".swift")
   );
 }
@@ -1074,6 +1079,7 @@ function collectIosSwiftFiles(repoRoot, files = undefined) {
 
   return [
     ...listFilesRecursively(path.join(repoRoot, "clients", "apple", "Oppi"), ".swift"),
+    ...listFilesRecursively(path.join(repoRoot, "clients", "apple", "OppiDebugHarness"), ".swift"),
     ...listFilesRecursively(path.join(repoRoot, "clients", "apple", "OppiCore"), ".swift"),
   ]
     .map((absolutePath) => normalizeRepoPath(path.relative(repoRoot, absolutePath)))
@@ -1112,7 +1118,7 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
   const violations = [];
 
   for (const file of candidateFiles) {
-    if (!file.startsWith("clients/apple/Oppi/")) {
+    if (!IOS_APP_SOURCE_ROOTS.some((root) => file.startsWith(root))) {
       continue;
     }
     const parsed = readSwiftSource(repoRoot, file);
@@ -1265,6 +1271,32 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         }),
       );
     }
+  }
+
+  // Release excludes the harness folder with EXCLUDED_SOURCE_FILE_NAMES patterns in project.yml.
+  // Xcode's `*` does not cross `/`, so the patterns cover the folder and one level below it; a
+  // deeper file (source or fixture) would ship in Release.
+  const harnessFiles = files
+    ? files.map(normalizeRepoPath).filter((file) => file.startsWith(IOS_DEBUG_HARNESS_ROOT))
+    : listFilesRecursively(path.join(repoRoot, IOS_DEBUG_HARNESS_ROOT), "").map((absolutePath) =>
+        normalizeRepoPath(path.relative(repoRoot, absolutePath)),
+      );
+  for (const file of harnessFiles.sort()) {
+    if (file.slice(IOS_DEBUG_HARNESS_ROOT.length).split("/").length <= 2) {
+      continue;
+    }
+    violations.push(
+      makeIosViolation({
+        rule: "ios-debug-harness-depth",
+        file,
+        line: 1,
+        column: 1,
+        reason:
+          "Release excludes OppiDebugHarness/* and OppiDebugHarness/*/* only; a file nested deeper would compile or copy into the Release app.",
+        remediation:
+          "Keep harness files at most one folder below OppiDebugHarness, or add a matching EXCLUDED_SOURCE_FILE_NAMES pattern to the Oppi target's Release settings in project.yml.",
+      }),
+    );
   }
 
   // Pool builds use a shared compilation cache with prefix mapping, which compiles #filePath

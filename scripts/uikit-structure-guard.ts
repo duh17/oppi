@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-layer-rules.mjs";
 
 /**
- * UIKit-first ownership guard for the iOS app target (clients/apple/Oppi).
+ * UIKit-first ownership guard for the iOS app target (clients/apple/Oppi and
+ * its Debug-only clients/apple/OppiDebugHarness).
  *
  * UIKit owns iOS app structure, modal presentation, and new views. Two rules:
  *
@@ -34,7 +35,7 @@ type Baseline = Record<string, Counts>;
 type Hit = { file: string; line: number; construct: string };
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const scanRoot = join(repoRoot, "clients/apple/Oppi");
+const scanRoots = ["clients/apple/Oppi", "clients/apple/OppiDebugHarness"].map((dir) => join(repoRoot, dir));
 const baselinePath = join(repoRoot, "scripts/uikit-structure-baseline.json");
 const guide = "dev/architecture-client.md, section \"UIKit and SwiftUI ownership\"";
 
@@ -82,7 +83,7 @@ function walkSwiftFiles(root: string): string[] {
 
 function scan(): Hit[] {
   const hits: Hit[] = [];
-  for (const absFile of walkSwiftFiles(scanRoot)) {
+  for (const absFile of scanRoots.flatMap(walkSwiftFiles)) {
     const file = relative(repoRoot, absFile);
     const stripped = stripSwiftCommentsAndStrings(readFileSync(absFile, "utf8"));
     for (const { name, pattern } of constructs) {

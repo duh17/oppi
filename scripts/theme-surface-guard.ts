@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Theme surface guardrails for the themed iOS app target (clients/apple/Oppi).
+ * Theme surface guardrails for the themed iOS app target (clients/apple/Oppi
+ * and its Debug-only clients/apple/OppiDebugHarness).
  *
  * The Oppi iOS app resolves all UI colors through the runtime theme
  * (Color.theme* accessors and ThemeSurfaceStyle roles). This guard fails when
@@ -47,7 +48,7 @@ type GuardViolation = {
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const appleRoot = join(repoRoot, "clients/apple");
-const scanPaths = ["Oppi"];
+const scanPaths = ["Oppi", "OppiDebugHarness"];
 
 // Preview and harness fixtures freeze system styling on purpose.
 const previewAllowlistGlobs = [
@@ -176,7 +177,7 @@ for (const check of checks) {
 }
 
 if (violations.length === 0) {
-  console.log(`Theme surface guard: passed (${checks.length} checks over clients/apple/Oppi).`);
+  console.log(`Theme surface guard: passed (${checks.length} checks over clients/apple/${scanPaths.join(", ")}).`);
   process.exit(0);
 }
 

@@ -244,18 +244,10 @@ final class OppiApp {
     /// The window's root: a debug harness chosen by launch arguments, else the app.
     func makeRootViewController() -> UIViewController {
 #if DEBUG
-        if ReviewCommentStashHarnessConfig.isEnabled {
-            return ReviewCommentStashHarnessController(root: root)
-        }
-        if let debugHarness {
-            // Harnesses and previews render app screens, the timeline, and
-            // UIKit-hosted SwiftUI without the app's root controller. The
-            // router and HostFactory need the app root above them there too,
-            // and the window needs the theme applied the way the app root does.
-            return HarnessRootViewController(
-                content: HostFactory.content(debugHarness.modifier(AppLockAccessibilityHidden()), root: root),
-                themeStore: root.themeStore
-            )
+        // The one app-side hook into clients/apple/OppiDebugHarness, which
+        // only Debug builds compile (dev/testing/apple.md, "Debug harnesses").
+        if let harness = DebugHarnessLaunch.rootViewController(root: root) {
+            return harness
         }
 #endif
         return AppRootViewController(app: self)
@@ -365,58 +357,6 @@ final class OppiApp {
             }
         }
     }
-
-#if DEBUG
-    /// A harness screen reads the saved top bar layout, and a UI test can leave
-    /// one behind on a simulator that outlives the run: `SCREENSHOT_RESET_TOP_BAR=1`
-    /// puts the device back on the default before any screen reads it. Lazy and
-    /// once per launch, so a later root rebuild cannot wipe a write from the
-    /// same session.
-    private static let resetSavedTopBarForHarness: Void = {
-        guard ProcessInfo.processInfo.environment["SCREENSHOT_RESET_TOP_BAR"] == "1" else { return }
-        AppPreferences.ChatTopBar.reset(in: .standard)
-    }()
-
-    /// The harness or screenshot preview chosen by launch arguments, or nil
-    /// for the app.
-    private var debugHarness: AnyView? {
-        _ = Self.resetSavedTopBarForHarness
-        if HTMLDOMAnnotationHarnessConfig.isEnabled {
-            return AnyView(HTMLDOMAnnotationHarnessView().ignoresSafeArea())
-        }
-        if WikiLineAnchorHarnessConfig.isEnabled {
-            return AnyView(WikiLineAnchorHarnessView().ignoresSafeArea())
-        }
-        if SemanticPickHarnessConfig.isEnabled {
-            return AnyView(SemanticPickHarnessView().ignoresSafeArea())
-        }
-        if FullScreenReviewCommentHarnessConfig.isEnabled {
-            return AnyView(FullScreenReviewCommentHarnessView().ignoresSafeArea())
-        }
-        if CodeGutterAlignmentHarnessConfig.isEnabled {
-            return AnyView(CodeGutterAlignmentHarnessView().ignoresSafeArea())
-        }
-        if CodeBlockWrappingHarnessConfig.isEnabled {
-            return AnyView(CodeBlockWrappingHarnessView().ignoresSafeArea())
-        }
-        if ChatOutlineColdHarnessConfig.isEnabled {
-            return AnyView(ChatOutlineColdHarnessView())
-        }
-        if NavigationChromeProfileConfig.isEnabled {
-            return AnyView(NavigationChromeProfileHarnessView())
-        }
-        if UIHangHarnessConfig.isEnabled {
-            return AnyView(UIHangHarnessView())
-        }
-        if ScreenshotPreviewConfig.isEnabled {
-            if ScreenshotPreviewConfig.screen == "usage" {
-                return AnyView(UsageChromePreview())
-            }
-            return AnyView(ScreenshotPreviewView())
-        }
-        return nil
-    }
-#endif
 
     @MainActor
     private func startApp() async {
