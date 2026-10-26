@@ -48,22 +48,8 @@ describe("Storage.createWorkspace", () => {
     expect(ws.id).toBeTruthy();
     expect(ws.id.length).toBe(8);
     expect(ws.name).toBe("test-workspace");
-    expect("skills" in ws).toBe(false);
-    expect("extensions" in ws).toBe(false);
     expect(ws.createdAt).toBeGreaterThan(0);
     expect(ws.updatedAt).toBe(ws.createdAt);
-  });
-
-  it("drops legacy workspace resource fields from new records", () => {
-    const ws = storage.createWorkspace(createReq({ skills: ["fetch"], extensions: ["memory"] }));
-    const raw = JSON.parse(
-      readFileSync(join(dataDir, "workspaces", `${ws.id}.json`), "utf-8"),
-    ) as Record<string, unknown>;
-
-    expect("skills" in ws).toBe(false);
-    expect("extensions" in ws).toBe(false);
-    expect(raw.skills).toBeUndefined();
-    expect(raw.extensions).toBeUndefined();
   });
 
   it("defaults systemPromptMode to append", () => {
@@ -307,23 +293,6 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.icon).toEqual({ kind: "symbol", name: "magnifyingglass" });
   });
 
-  it("ignores legacy resource updates", () => {
-    const ws = storage.createWorkspace(createReq());
-    const updated = storage.updateWorkspace(ws.id, {
-      skills: ["fetch", "web-browser"],
-      extensions: ["memory"],
-    });
-    const raw = JSON.parse(
-      readFileSync(join(dataDir, "workspaces", `${ws.id}.json`), "utf-8"),
-    ) as Record<string, unknown>;
-
-    expect(updated).toBeDefined();
-    expect("skills" in updated!).toBe(false);
-    expect("extensions" in updated!).toBe(false);
-    expect(raw.skills).toBeUndefined();
-    expect(raw.extensions).toBeUndefined();
-  });
-
   it("updates systemPrompt", () => {
     const ws = storage.createWorkspace(createReq());
     const updated = storage.updateWorkspace(ws.id, { systemPrompt: "Be concise." });
@@ -353,17 +322,16 @@ describe("Storage.updateWorkspace", () => {
     expect(updated!.hostMount).toBe("~/workspace/kypu");
   });
 
-  it("ignores defaultModel in untyped updates", () => {
+  it("refuses defaultModel in untyped updates and saves nothing", () => {
     const ws = storage.createWorkspace(createReq());
-    const updated = storage.updateWorkspace(ws.id, {
-      defaultModel: "anthropic/claude-opus-4-6",
-    } as never);
+    expect(() =>
+      storage.updateWorkspace(ws.id, {
+        defaultModel: "anthropic/claude-opus-4-6",
+      } as never),
+    ).toThrow(/Unknown Workspace field "defaultModel"/);
     const raw = JSON.parse(
       readFileSync(join(dataDir, "workspaces", `${ws.id}.json`), "utf-8"),
     ) as Record<string, unknown>;
-
-    expect(updated).toBeDefined();
-    expect("defaultModel" in updated!).toBe(false);
     expect(raw.defaultModel).toBeUndefined();
   });
 

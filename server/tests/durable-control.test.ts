@@ -1248,7 +1248,9 @@ describe("confirm card text", () => {
       names: { w1: "Work" },
     });
     // The server replaces the whole config, so what the update leaves out is gone, and the card says so.
-    expect(card.message).toContain('**Allowed hosts:** `["github.com"]` → (removed)');
+    expect(card.message).toContain(
+      '**Allowed hosts:** `["github.com"]` → (removed: every host allowed)',
+    );
     expect(card.message).toContain('**MCP servers:** `["fs"]` → (removed)');
     expect(card.message).toContain("(`sandboxConfig.env.LANG`): `C` → (removed)");
     expect(card.message).toContain("(`sandboxConfig.env.bash_env`): `/etc/a` → (removed)");
@@ -1264,7 +1266,52 @@ describe("confirm card text", () => {
       current,
       names: { w1: "Work" },
     });
-    expect(cleared.message).toContain("Sandbox config (`sandboxConfig`) removed");
+    expect(cleared.message).toContain(
+      "Sandbox config (`sandboxConfig`) removed: every host allowed",
+    );
+    expect(cleared.message).toContain("Without an allowed hosts list, every host is allowed.");
+
+    // An empty allow-list is the opposite: no host at all.
+    const none = cardOf({
+      method: "PUT",
+      path: "/workspaces/w1",
+      body: { sandboxConfig: { allowedHosts: [], env: { LANG: "C" }, mcpServers: ["fs"] } },
+      current,
+      names: { w1: "Work" },
+    });
+    expect(none.message).toContain('**Allowed hosts:** `["github.com"]` → `[]` (no host allowed)');
+    expect(none.message).not.toContain("every host allowed");
+
+    // The same without the current record: a config with no hosts list, or none at all, still says so.
+    for (const sandboxConfig of [null, { env: { LANG: "C" } }]) {
+      const unread = cardOf({ method: "PUT", path: "/workspaces/w1", body: { sandboxConfig } });
+      expect(unread.message).toContain(
+        "This replaces the sandbox config without an allowed hosts list: every host is allowed.",
+      );
+    }
+    // A card that already says it in the field does not say it twice.
+    expect(cleared.message).not.toContain("This replaces the sandbox config");
+    expect(card.message).not.toContain("This replaces the sandbox config");
+
+    // An empty or missing tools list allows every tool.
+    const tools = cardOf({
+      method: "PUT",
+      path: "/workspaces/w1",
+      body: { tools: [] },
+      current: { workspace: { id: "w1", name: "Work", tools: ["read", "grep"] } },
+      names: { w1: "Work" },
+    });
+    expect(tools.message).toContain('**Tools:** `["read","grep"]` → `[]` (every tool allowed)');
+    const noTools = cardOf({
+      method: "PUT",
+      path: "/workspaces/w1",
+      body: { tools: null },
+      current: { workspace: { id: "w1", name: "Work", tools: ["read", "grep"] } },
+      names: { w1: "Work" },
+    });
+    expect(noTools.message).toContain(
+      '**Tools:** `["read","grep"]` → (removed: every tool allowed)',
+    );
 
     // An env key can carry text no screen shows: it is marked and counted.
     const smuggled = cardOf({

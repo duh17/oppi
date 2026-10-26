@@ -583,7 +583,7 @@ echo "[e2e] Server exposes required focused stream capabilities"
 WS_RESPONSE=$(curl -fsS "${CURL_TLS_ARGS[@]}" "${E2E_BASE_URL}/workspaces" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${DEVICE_TOKEN}" \
-    -d "{\"name\": \"e2e-workspace\", \"hostMount\": \"/tmp\", \"skills\": []}")
+    -d "{\"name\": \"e2e-workspace\", \"hostMount\": \"/tmp\"}")
 WS_ID=$(echo "$WS_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['workspace']['id'])")
 echo "[e2e] Created workspace: $WS_ID"
 

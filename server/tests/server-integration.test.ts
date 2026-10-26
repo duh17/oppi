@@ -1475,19 +1475,19 @@ describe("workspace lifecycle", () => {
     expect(afterRes.status).toBe(404);
   });
 
-  it("ignores legacy workspace skill updates", async () => {
+  it("refuses the retired workspace skills field instead of ignoring it", async () => {
     const createRes = await post("/workspaces", {
       name: "skill-toggle-workspace",
       skills: ["fetch"],
     });
-    expect(createRes.status).toBe(201);
-    const { workspace } = await createRes.json();
-    expect(workspace.skills).toBeUndefined();
+    expect(createRes.status).toBe(400);
+    expect((await createRes.json()).error).toMatch(/Unknown Workspace field "skills"/);
 
+    const okRes = await post("/workspaces", { name: "skill-toggle-workspace" });
+    const { workspace } = await okRes.json();
     const updateRes = await put(`/workspaces/${workspace.id}`, { skills: ["fetch"] });
-    expect(updateRes.status).toBe(200);
-    const updateBody = await updateRes.json();
-    expect(updateBody.workspace.skills).toBeUndefined();
+    expect(updateRes.status).toBe(400);
+    expect((await updateRes.json()).error).toMatch(/Unknown Workspace field "skills"/);
   });
 });
 

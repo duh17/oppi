@@ -1403,29 +1403,6 @@ describe("workspaces module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "name required" });
   });
 
-  it("passes legacy resource fields through to storage for compatibility", async () => {
-    const ctx = {
-      storage: { createWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })) },
-    } as unknown as RouteContext;
-
-    const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
-    const res = makeResponse();
-
-    const handled = await dispatch({
-      method: "POST",
-      path: "/workspaces",
-      url: new URL("http://localhost/workspaces"),
-      req: makeRequest({ name: "Test", skills: ["fetch"], extensions: ["ask"] }) as never,
-      res: res as never,
-    });
-
-    expect(handled).toBe(true);
-    expect(res.statusCode).toBe(201);
-    expect(ctx.storage.createWorkspace).toHaveBeenCalledWith(
-      expect.objectContaining({ skills: ["fetch"], extensions: ["ask"] }),
-    );
-  });
-
   it("rejects replace systemPromptMode on POST /workspaces", async () => {
     const ctx = {
       skillRegistry: { get: vi.fn() },

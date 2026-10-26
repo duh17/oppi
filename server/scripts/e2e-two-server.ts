@@ -112,7 +112,7 @@ try {
   await run("node", ["--input-type=module", "-e", `
     const response = await fetch(process.env.E2E_BASE_URL + "/workspaces", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + process.env.E2E_ACCESS_TOKEN },
-      body: JSON.stringify({ name: "Offline E2E Workspace", hostMount: "/tmp", skills: [] }),
+      body: JSON.stringify({ name: "Offline E2E Workspace", hostMount: "/tmp" }),
     });
     if (!response.ok) throw Error("Second E2E workspace seed failed: " + response.status + " " + await response.text());
   `], { ...env, NODE_TLS_REJECT_UNAUTHORIZED: "0", E2E_BASE_URL: `https://127.0.0.1:${secondPort}`, E2E_ACCESS_TOKEN: access });

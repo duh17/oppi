@@ -78,7 +78,7 @@ describe("host workspace created with an empty folder", () => {
   });
 
   it("never claims the home folder", () => {
-    const created = storage.createWorkspace({ name: "", hostMount: "" });
+    const created = storage.createWorkspace({ name: "   ", hostMount: "" });
     const cleared = storage.updateWorkspace(created.id, { hostMount: null });
 
     for (const ws of [created, cleared]) {

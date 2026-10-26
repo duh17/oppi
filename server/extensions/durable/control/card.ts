@@ -318,6 +318,7 @@ const LABELS: { [path: string]: string } = {
   "action.type": "Action",
   "action.name": "Session name",
   icon: "Icon",
+  tools: "Tools",
   "sandboxConfig.allowedHosts": "Allowed hosts",
   "sandboxConfig.mcpServers": "MCP servers",
   workspaceId: "Workspace",
@@ -389,6 +390,31 @@ function triggerText(trigger: Obj): string {
     return `cron ${trigger.expression}${zone}`;
   return JSON.stringify(trigger);
 }
+
+const ALLOWED_HOSTS = "sandboxConfig.allowedHosts";
+
+/** Lists that lift a limit when empty or missing, instead of setting one: what each means then. */
+const LIFTS: { [path: string]: { empty: string; gone: string; sentence: string } } = {
+  [ALLOWED_HOSTS]: {
+    empty: "no host allowed",
+    gone: "every host allowed",
+    sentence: "Without an allowed hosts list, every host is allowed.",
+  },
+  tools: {
+    empty: "every tool allowed",
+    gone: "every tool allowed",
+    sentence: "Without a tools list, every tool is allowed.",
+  },
+};
+
+/** What a removed field lifts: a removed allowed hosts list, or a removed config that held one. */
+const liftedBy = (field: Field): (typeof LIFTS)[string] | undefined =>
+  field.removed !== true
+    ? undefined
+    : (own(LIFTS, field.path) ??
+      (field.path === "sandboxConfig" && Array.isArray(record(field.before)?.allowedHosts)
+        ? LIFTS[ALLOWED_HOSTS]
+        : undefined));
 
 /** Fields that hold the id of a record the host may have looked up. */
 const ID_KEYS = new Set(["workspaceId", "agentId", "sessionId"]);
@@ -716,18 +742,27 @@ function render(
   const name = `${label}${keyBrief}`;
   const before = field.before === undefined ? undefined : show(field.path, field.before, names);
   const after = field.after === undefined ? undefined : show(field.path, field.after, names);
+  // What a missing or empty list means: a sandbox with no allowed hosts reaches every host, and an
+  // empty one none; with no tools list every tool is allowed.
+  const lifts = own(LIFTS, field.path);
+  const dropped = liftedBy(field);
+  const emptied =
+    field.removed !== true && lifts && Array.isArray(field.after) && field.after.length === 0
+      ? ` (${lifts.empty})`
+      : "";
+  const effect = dropped ? `: ${dropped.gone}` : "";
   const block = (lines: string[]): string =>
-    `**${label}**${key}\n\n${fenced("diff", lines.join("\n"))}`;
+    `**${label}**${key}\n\n${fenced("diff", lines.join("\n"))}${dropped ? `\n\n${dropped.sentence}` : ""}`;
   // The hidden characters this field shows as markers, once each: its values, and a key shown as sent.
   const hidden = hiddenIn(before ?? "") + hiddenIn(after ?? "") + (made ? hiddenIn(field.path) : 0);
 
   if (field.removed) {
     const old = field.before === undefined ? "" : linesOf(field.before, before ?? "");
     return isLong(before ?? "")
-      ? { summary: `${name} removed`, detail: block(lineDiff(old, "")), hidden }
+      ? { summary: `${name} removed${effect}`, detail: block(lineDiff(old, "")), hidden }
       : {
-          summary: `${name} removed`,
-          detail: `${head} ${before === undefined ? "" : `${code(before)} → `}(removed)`,
+          summary: `${name} removed${effect}`,
+          detail: `${head} ${before === undefined ? "" : `${code(before)} → `}(removed${effect})`,
           hidden,
         };
   }
@@ -744,9 +779,9 @@ function render(
     return {
       summary:
         before === undefined
-          ? `${name} set to ${brief(text)}`
-          : `${name} ${brief(before)} → ${brief(text)}`,
-      detail: `${head} ${before === undefined ? "(not set)" : code(before)} → ${code(text)}`,
+          ? `${name} set to ${brief(text)}${emptied}`
+          : `${name} ${brief(before)} → ${brief(text)}${emptied}`,
+      detail: `${head} ${before === undefined ? "(not set)" : code(before)} → ${code(text)}${emptied}`,
       hidden,
     };
   }
@@ -756,7 +791,11 @@ function render(
       detail: `**${label}**${key}\n\n${fenced("text", linesOf(field.after as JsonValue, text))}`,
       hidden,
     };
-  return { summary: `${name}: ${brief(text)}`, detail: `${head} ${code(text)}`, hidden };
+  return {
+    summary: `${name}: ${brief(text)}${emptied}`,
+    detail: `${head} ${code(text)}${emptied}`,
+    hidden,
+  };
 }
 
 /** The confirm card of `write`: what changes in words, by name, and the technical request last. */
@@ -803,6 +842,18 @@ export function cardOf(write: ControlWrite): WriteCard {
     );
   else if (route.target && nameFor(route.target.id) === undefined)
     warnings.push(`Oppi could not look up this ${noun}'s name, so it is shown by its id${why()}.`);
+  // A body that replaces the sandbox config without a hosts list lifts the host limit, whether or
+  // not the old config was read, and a field above may already say so.
+  const config = body ? own(body, "sandboxConfig") : undefined;
+  if (
+    config !== undefined &&
+    (config === null ||
+      (record(config) && own(record(config) as Obj, "allowedHosts") === undefined)) &&
+    !fields.some((field) => liftedBy(field)?.gone === LIFTS[ALLOWED_HOSTS]?.gone)
+  )
+    warnings.push(
+      "This replaces the sandbox config without an allowed hosts list: every host is allowed.",
+    );
   if (write.method === "PATCH" && !/[?&]expectedVersion=/.test(write.path))
     warnings.push(
       known

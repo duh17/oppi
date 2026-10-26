@@ -13,23 +13,18 @@ export interface CreateWorkspaceRequest extends Omit<
   hostMount?: string;
   /** Omitted: "host". */
   runtime?: WorkspaceMutableConfig["runtime"];
-  /** Ignored compatibility field from older Oppi clients. Pi settings own skill discovery. */
-  skills?: string[];
-  /** Ignored compatibility field from older Oppi clients. Pi settings own extension discovery. */
-  extensions?: string[];
   systemPromptMode?: WorkspaceSystemPromptMode;
 }
 
-type NullableWorkspaceUpdateKey = "description" | "systemPrompt" | "hostMount" | "sandboxConfig";
+type NullableWorkspaceUpdateKey =
+  "description" | "systemPrompt" | "hostMount" | "sandboxConfig" | "tools";
 
 export interface UpdateWorkspaceRequest extends Partial<
   Omit<WorkspaceMutableConfig, NullableWorkspaceUpdateKey>
 > {
-  /** Ignored compatibility field from older Oppi clients. Pi settings own skill discovery. */
-  skills?: string[];
-  /** Ignored compatibility field from older Oppi clients. Pi settings own extension discovery. */
-  extensions?: string[];
   description?: string | null;
+  /** `null` clears the list: every tool is allowed. */
+  tools?: string[] | null;
   icon?: WorkspaceMutableConfig["icon"];
   systemPrompt?: string | null;
   hostMount?: string | null;

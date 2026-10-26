@@ -152,14 +152,22 @@ describe("Sandbox workspace CRUD", () => {
     });
   });
 
-  it("keeps only valid, unique MCP server picks, even without other sandbox settings", () => {
+  it("refuses an invalid MCP server pick instead of dropping it, and stores a valid list once", () => {
     const ws = storage.createWorkspace({
       name: "mcp-picks",
       runtime: "sandbox",
     } as CreateWorkspaceRequest);
-    storage.updateWorkspace(ws.id, {
-      sandboxConfig: { mcpServers: ["echo", "echo", "bad name", "../x", 5, "kypu-2"] } as never,
-    });
+    expect(() =>
+      storage.updateWorkspace(ws.id, {
+        sandboxConfig: { mcpServers: ["echo", "bad name"] },
+      }),
+    ).toThrow(/mcpServers must be an array/);
+    expect(() =>
+      storage.updateWorkspace(ws.id, { sandboxConfig: { mcpServers: ["echo", 5] } as never }),
+    ).toThrow(/mcpServers must be an array/);
+    expect(storage.getWorkspace(ws.id)!.sandboxConfig).toBeUndefined();
+
+    storage.updateWorkspace(ws.id, { sandboxConfig: { mcpServers: ["echo", "echo", "kypu-2"] } });
     expect(storage.getWorkspace(ws.id)!.sandboxConfig).toEqual({ mcpServers: ["echo", "kypu-2"] });
   });
 
