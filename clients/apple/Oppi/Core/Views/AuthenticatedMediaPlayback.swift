@@ -1715,8 +1715,6 @@ final class AuthenticatedMediaPlayerHostController: UIViewController {
     struct Chrome {
         var unavailableTitle: String
         var unavailableSystemImage: String
-        var failureActionTitle: String?
-        var onFailureAction: (() -> Void)?
     }
 
     private(set) var model: AuthenticatedMediaPlayerModel
@@ -1728,7 +1726,6 @@ final class AuthenticatedMediaPlayerHostController: UIViewController {
     private let failureIcon = UIImageView()
     private let failureTitle = UILabel()
     private let failureMessage = UILabel()
-    private let failureAction = AuthenticatedMediaFailureActionView()
     private var chrome = Chrome(
         unavailableTitle: "Media preview unavailable",
         unavailableSystemImage: "play.slash"
@@ -1904,7 +1901,7 @@ final class AuthenticatedMediaPlayerHostController: UIViewController {
         failureMessage.textAlignment = .center
         failureMessage.numberOfLines = 3
 
-        for view in [failureIcon, failureTitle, failureMessage, failureAction] as [UIView] {
+        for view in [failureIcon, failureTitle, failureMessage] as [UIView] {
             failureStack.addArrangedSubview(view)
         }
     }
@@ -1912,64 +1909,6 @@ final class AuthenticatedMediaPlayerHostController: UIViewController {
     private func applyChrome() {
         failureIcon.image = UIImage(systemName: chrome.unavailableSystemImage)
         failureTitle.text = chrome.unavailableTitle
-        if let title = chrome.failureActionTitle, chrome.onFailureAction != nil {
-            failureAction.apply(title: title, target: self, action: #selector(performFailureAction))
-            failureAction.isHidden = false
-        } else {
-            failureAction.isHidden = true
-        }
-    }
-
-    @objc private func performFailureAction() {
-        chrome.onFailureAction?()
-    }
-}
-
-final class AuthenticatedMediaFailureActionView: UIView {
-    private let button = UIButton(type: .system)
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        accessibilityIdentifier = "authenticated-media-failure-action"
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.accessibilityIdentifier = "authenticated-media-failure-action"
-        button.accessibilityTraits = .button
-        button.titleLabel?.adjustsFontForContentSizeCategory = true
-        button.titleLabel?.numberOfLines = 2
-        addSubview(button)
-        NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
-            button.topAnchor.constraint(equalTo: topAnchor),
-            button.bottomAnchor.constraint(equalTo: bottomAnchor),
-            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override var intrinsicContentSize: CGSize {
-        let fitting = button.intrinsicContentSize
-        return CGSize(width: max(44, fitting.width + 16), height: max(44, fitting.height))
-    }
-
-    func apply(title: String, target: Any?, action: Selector) {
-        var configuration = UIButton.Configuration.bordered()
-        configuration.title = title
-        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.font = UIFont.preferredFont(forTextStyle: .caption1)
-            return outgoing
-        }
-        button.configuration = configuration
-        button.accessibilityLabel = title
-        button.removeTarget(nil, action: nil, for: .touchUpInside)
-        button.addTarget(target, action: action, for: .touchUpInside)
-        invalidateIntrinsicContentSize()
     }
 }
 
@@ -2388,12 +2327,6 @@ extension AuthenticatedMediaPlaybackSession {
 }
 
 extension AuthenticatedMediaPlayerModel {
-    func debugForceFailureForTesting(_ message: String) {
-        errorMessage = message
-        isLoading = false
-        player = nil
-    }
-
     func debugInstallStandalonePlayerForTesting(item: AVPlayerItem? = nil) -> AVPlayer {
         let player = AVPlayer(playerItem: item)
         self.player = player

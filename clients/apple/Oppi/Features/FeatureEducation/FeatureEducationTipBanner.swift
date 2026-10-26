@@ -265,8 +265,8 @@ final class FeatureEducationTipBannerView: UIView {
     }
 }
 
-/// UIKit host for one education tip in a banner. Claims through the same
-/// coordinator as the SwiftUI banner, so each tip still shows once. It claims
+/// UIKit host for one education tip in a banner. Claims through
+/// `FeatureEducationTipPresentationCoordinator`, so each tip still shows once. It claims
 /// height (`reservedHeight`) only while the tip is presented.
 @MainActor
 final class FeatureEducationTipHostView: UIView {

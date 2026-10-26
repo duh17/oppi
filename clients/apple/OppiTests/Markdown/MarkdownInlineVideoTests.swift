@@ -2025,51 +2025,6 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
-    @Test("in-player failure control meets the 44pt Dynamic Type contract")
-    func inPlayerFailureControlMeetsHitTarget() async {
-        let model = AuthenticatedMediaPlayerModel()
-        model.debugForceFailureForTesting("Media failed to load")
-        let host = AuthenticatedMediaPlayerHostController(model: model)
-        host.update(
-            model: model,
-            sourceIdentity: dummyMediaSource().identity,
-            chrome: AuthenticatedMediaPlayerHostController.Chrome(
-                unavailableTitle: "Media preview unavailable",
-                unavailableSystemImage: "play.slash",
-                failureActionTitle: "Open video file",
-                onFailureAction: {}
-            ),
-            timedTextLoader: nil
-        )
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        host.view.setNeedsLayout()
-        host.view.layoutIfNeeded()
-        for _ in 0..<10 {
-            if failureControl(in: host.view) != nil { break }
-            await Task.yield()
-            host.view.layoutIfNeeded()
-        }
-
-        let button = failureControl(in: host.view)
-        #expect(button != nil)
-        if let button {
-            #expect(button.bounds.height >= 44)
-            #expect(button.bounds.width >= 44)
-        }
-
-        host.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
-        host.view.setNeedsLayout()
-        host.view.layoutIfNeeded()
-        await Task.yield()
-        if let resized = failureControl(in: host.view) {
-            #expect(resized.bounds.height >= 44)
-        }
-    }
-
-    @MainActor
     private func expectPlayerScrollsWithHost(
         _ video: NativeMarkdownVideoView,
         screenParent: UIViewController
@@ -2133,21 +2088,6 @@ struct MarkdownInlineVideoTests {
             && abs(g1 - g2) < 0.02
             && abs(b1 - b2) < 0.02
             && abs(a1 - a2) < 0.02
-    }
-
-    @MainActor
-    private func failureControl(in root: UIView) -> UIView? {
-        timelineAllViews(in: root).first { view in
-            if view.accessibilityIdentifier == "authenticated-media-failure-action" {
-                return true
-            }
-            if let button = view as? UIButton {
-                return button.currentTitle == "Open video file"
-                    || button.configuration?.title == "Open video file"
-                    || button.accessibilityIdentifier == "authenticated-media-failure-action"
-            }
-            return false
-        }
     }
 }
 

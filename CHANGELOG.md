@@ -106,6 +106,7 @@ Example:
 ### Migration notes
 
 - **Compatibility:** This server no longer supports Builds 55 and older; update the app to Build 56 or later. It stopped sending the older shapes those builds need: user images in session history do not show, because they are stored references these builds cannot read; a session list fails to load in Builds 53 and 54 when a session has a control domain they do not know (`extensions` or `themes`); and Build 55 and older fail to load sessions that have change stats, which no longer carry `addedLines` and `removedLines`.
+- **Compatibility:** The next app build requires the next `oppi-server` (the release after 0.53.0); update the app and the server together. The app no longer sends the `X-Oppi-Capabilities` header, so `oppi-server@0.53.0` treats it as a Build 55 client: user images in session history come back as inline data instead of stored references, and control sessions for extensions and themes show as agents.
 
 ## [0.53.0] - 2026-10-22
 
