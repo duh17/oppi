@@ -17,7 +17,6 @@ import {
 import { buildSessionSummary } from "./session-summary.js";
 import { isControlRouteSession } from "./control-session.js";
 import type { Storage } from "./storage.js";
-import type { WorkspaceStoppedTimeBucketSnapshot } from "./storage/session-dao.js";
 import type { LocalSession, Session, SessionSummary, Workspace } from "./types.js";
 import { resolveWorkspaceWorktree } from "./worktrees.js";
 
@@ -62,7 +61,7 @@ export type SessionListArchiveBucket = {
   itemCount: number;
   managedStoppedCount: number;
   importableLocalCount: number;
-  latestActivity?: number;
+  latestActivity: number;
 };
 
 export interface RecentWorkspaceSessionSummariesResult {
@@ -96,7 +95,7 @@ export interface SessionListServiceDeps {
     | "listSessions"
     | "listStoppedWorkspaceTimeRangeSessionSnapshots"
     | "listWorkspaceTimeRangeSessionSnapshots"
-    | "listWorkspaceStoppedTimeBuckets"
+    | "listWorkspaceStoppedActivityTimes"
     | "listWorkspaces"
   >;
   sessionRuntimes: Pick<
@@ -226,11 +225,10 @@ export class SessionListService {
     const olderImportableSessions = importableSnapshot.sessions
       .filter((session) => session.lastModified < params.beforeMs)
       .sort((lhs, rhs) => rhs.lastModified - lhs.lastModified);
-    const buckets = mergeWorkspaceArchiveBuckets(
-      this.deps.storage.listWorkspaceStoppedTimeBuckets(
+    const buckets = buildOlderHistorySections(
+      this.deps.storage.listWorkspaceStoppedActivityTimes(
         params.workspace.id,
         params.beforeMs,
-        serverNow,
         params.worktreeId,
       ),
       olderImportableSessions,
@@ -578,88 +576,81 @@ function compareStoppedSessionListRows(a: SessionListRow, b: SessionListRow): nu
   return a.id.localeCompare(b.id);
 }
 
-function localBucketForTimestamp(
+/** Older history uses day sections for this long, then month sections. */
+const OLDER_HISTORY_DAY_SECTION_SPAN_MS = 30 * 86_400_000;
+
+/**
+ * The older-history section an activity time belongs to, in the server's local time zone:
+ * its calendar day when at or after `dayCutoffMs`, else its calendar month. Each range runs
+ * to the next local midnight, so a daylight-saving day spans 23 or 25 hours. This is the
+ * only owner of section ids and ranges; Oppi and local Pi sessions both go through it, and
+ * the client opens a section by asking for exactly `[startMs, endMs)`.
+ */
+function olderHistorySection(
   timestampMs: number,
-  nowMs: number,
-): {
-  bucketId: string;
-  bucketKind: "day" | "month";
-  startMs: number;
-  endMs: number;
-} {
+  dayCutoffMs: number,
+): Pick<SessionListArchiveBucket, "bucketId" | "bucketKind" | "startMs" | "endMs"> {
   const date = new Date(timestampMs);
-  const recentDayCutoffMs = nowMs - 30 * 86_400_000;
-  if (timestampMs >= recentDayCutoffMs) {
-    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
+  const y = date.getFullYear();
+  const month = date.getMonth();
+  const mm = String(month + 1).padStart(2, "0");
+  if (timestampMs >= dayCutoffMs) {
+    const day = date.getDate();
     return {
-      bucketId: `day:${y}-${m}-${d}`,
+      bucketId: `day:${y}-${mm}-${String(day).padStart(2, "0")}`,
       bucketKind: "day",
-      startMs: start,
-      endMs: start + 86_400_000,
+      startMs: new Date(y, month, day).getTime(),
+      endMs: new Date(y, month, day + 1).getTime(),
     };
   }
-
-  const start = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
-  const end = new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime();
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
   return {
-    bucketId: `month:${y}-${m}`,
+    bucketId: `month:${y}-${mm}`,
     bucketKind: "month",
-    startMs: start,
-    endMs: end,
+    startMs: new Date(y, month, 1).getTime(),
+    endMs: new Date(y, month + 1, 1).getTime(),
   };
 }
 
-function mergeWorkspaceArchiveBuckets(
-  managedBuckets: WorkspaceStoppedTimeBucketSnapshot[],
+function buildOlderHistorySections(
+  managedStoppedActivityTimes: number[],
   olderImportableSessions: LocalSession[],
   nowMs: number,
 ): SessionListArchiveBucket[] {
-  const merged = new Map<string, SessionListArchiveBucket>();
+  const dayCutoffMs = nowMs - OLDER_HISTORY_DAY_SECTION_SPAN_MS;
+  const sections = new Map<string, SessionListArchiveBucket>();
 
-  for (const bucket of managedBuckets) {
-    merged.set(bucket.bucketId, {
-      bucketId: bucket.bucketId,
-      bucketKind: bucket.bucketKind,
-      startMs: bucket.startMs,
-      endMs: bucket.endMs,
-      itemCount: bucket.itemCount,
-      managedStoppedCount: bucket.itemCount,
-      importableLocalCount: 0,
-      ...(bucket.latestActivity !== undefined ? { latestActivity: bucket.latestActivity } : {}),
-    });
-  }
-
-  for (const session of olderImportableSessions) {
-    const bucket = localBucketForTimestamp(session.lastModified, nowMs);
-    const existing = merged.get(bucket.bucketId);
-    if (existing) {
-      existing.itemCount += 1;
-      existing.importableLocalCount += 1;
-      if (existing.latestActivity === undefined || session.lastModified > existing.latestActivity) {
-        existing.latestActivity = session.lastModified;
-      }
-      continue;
+  function add(activityMs: number, source: "managed" | "importable"): void {
+    const placement = olderHistorySection(activityMs, dayCutoffMs);
+    let section = sections.get(placement.bucketId);
+    if (!section) {
+      section = {
+        ...placement,
+        itemCount: 0,
+        managedStoppedCount: 0,
+        importableLocalCount: 0,
+        latestActivity: activityMs,
+      };
+      sections.set(placement.bucketId, section);
     }
-
-    merged.set(bucket.bucketId, {
-      ...bucket,
-      itemCount: 1,
-      managedStoppedCount: 0,
-      importableLocalCount: 1,
-      latestActivity: session.lastModified,
-    });
+    section.itemCount += 1;
+    if (source === "managed") {
+      section.managedStoppedCount += 1;
+    } else {
+      section.importableLocalCount += 1;
+    }
+    section.latestActivity = Math.max(section.latestActivity, activityMs);
   }
 
-  return Array.from(merged.values()).sort((lhs, rhs) => {
-    const lhsLatest = lhs.latestActivity ?? lhs.startMs;
-    const rhsLatest = rhs.latestActivity ?? rhs.startMs;
-    if (lhsLatest !== rhsLatest) {
-      return rhsLatest - lhsLatest;
+  for (const activityMs of managedStoppedActivityTimes) {
+    add(activityMs, "managed");
+  }
+  for (const session of olderImportableSessions) {
+    add(session.lastModified, "importable");
+  }
+
+  return Array.from(sections.values()).sort((lhs, rhs) => {
+    if (lhs.latestActivity !== rhs.latestActivity) {
+      return rhs.latestActivity - lhs.latestActivity;
     }
     return lhs.bucketId.localeCompare(rhs.bucketId);
   });

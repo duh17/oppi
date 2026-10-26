@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RouteContext, RouteHelpers } from "../src/routes/types.js";
 import type { Session, Workspace, LocalSession } from "../src/types.js";
-import type { WorkspaceStoppedTimeBucketSnapshot } from "../src/storage/session-dao.js";
 
 const localSessionState = vi.hoisted(() => ({
   snapshot: {
@@ -78,7 +77,7 @@ interface MockRouteContext {
     listRecentWorkspaceSessionSnapshots: ReturnType<typeof vi.fn>;
     listWorkspaceTimeRangeSessionSnapshots: ReturnType<typeof vi.fn>;
     listStoppedWorkspaceTimeRangeSessionSnapshots: ReturnType<typeof vi.fn>;
-    listWorkspaceStoppedTimeBuckets: ReturnType<typeof vi.fn>;
+    listWorkspaceStoppedActivityTimes: ReturnType<typeof vi.fn>;
     listSessions: ReturnType<typeof vi.fn>;
     getDataDir: ReturnType<typeof vi.fn>;
   };
@@ -111,14 +110,8 @@ function createMockContext(workspace: Workspace = makeWorkspace()): MockRouteCon
       vi.fn<(workspaceId: string, sinceMs: number, untilMs: number) => Session[]>(),
     listStoppedWorkspaceTimeRangeSessionSnapshots:
       vi.fn<(workspaceId: string, sinceMs: number, untilMs: number) => Session[]>(),
-    listWorkspaceStoppedTimeBuckets:
-      vi.fn<
-        (
-          workspaceId: string,
-          beforeMs: number,
-          nowMs?: number,
-        ) => WorkspaceStoppedTimeBucketSnapshot[]
-      >(),
+    listWorkspaceStoppedActivityTimes:
+      vi.fn<(workspaceId: string, beforeMs: number, worktreeId?: string) => number[]>(),
     listSessions: vi.fn().mockReturnValue([]),
     getDataDir: vi.fn().mockReturnValue("/tmp/oppi-workspace-session-list-tests"),
   };
@@ -362,17 +355,11 @@ describe("workspace session list routes", () => {
 
   it("returns stopped session bucket summaries from the bucket resource", async () => {
     const mock = createMockContext(makeWorkspace({ hostMount: "/tmp" }));
-    const beforeMs = Date.parse("2026-05-13T00:00:00Z");
+    // Local times, so both sessions fall on 2026-05-12 in any server time zone.
+    const beforeMs = new Date(2026, 4, 13).getTime();
 
-    mock.storage.listWorkspaceStoppedTimeBuckets.mockReturnValue([
-      {
-        bucketId: "day:2026-05-12",
-        bucketKind: "day",
-        startMs: Date.parse("2026-05-12T00:00:00Z"),
-        endMs: Date.parse("2026-05-13T00:00:00Z"),
-        itemCount: 1,
-        latestActivity: Date.parse("2026-05-12T18:00:00Z"),
-      },
+    mock.storage.listWorkspaceStoppedActivityTimes.mockReturnValue([
+      new Date(2026, 4, 12, 11).getTime(),
     ]);
     localSessionState.snapshot = {
       lastScannedAt: Date.now(),
@@ -380,7 +367,7 @@ describe("workspace session list routes", () => {
         makeLocalSession({
           path: "/tmp/tui-old.jsonl",
           piSessionId: "tui-old",
-          lastModified: Date.parse("2026-05-12T19:00:00Z"),
+          lastModified: new Date(2026, 4, 12, 12).getTime(),
         }),
         makeLocalSession({
           path: "/tmp/tui-visible.jsonl",
@@ -398,12 +385,6 @@ describe("workspace session list routes", () => {
 
     expect(handled).toBe(true);
     expect(mock.errors).toHaveLength(0);
-    expect(mock.storage.listWorkspaceStoppedTimeBuckets).toHaveBeenCalledWith(
-      "ws-1",
-      beforeMs,
-      Date.now(),
-      "main",
-    );
 
     const response = mock.responses[0]?.data as {
       workspaceId: string;
@@ -788,7 +769,7 @@ describe("workspace session list routes", () => {
     mock.storage.listStoppedWorkspaceTimeRangeSessionSnapshots.mockReturnValue([
       makeSession({ id: "stopped-in-bucket", status: "stopped", lastActivity: sinceMs + 1_000 }),
     ]);
-    mock.storage.listWorkspaceStoppedTimeBuckets.mockReturnValue([]);
+    mock.storage.listWorkspaceStoppedActivityTimes.mockReturnValue([]);
     localSessionState.snapshot = {
       lastScannedAt: Date.now(),
       sessions: [

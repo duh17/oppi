@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { LocalSession, Session, Workspace } from "../src/types.js";
-import type { WorkspaceStoppedTimeBucketSnapshot } from "../src/storage/session-dao.js";
 
 const localSessionState = vi.hoisted(() => ({
   snapshot: {
@@ -20,6 +22,7 @@ vi.mock("../src/local-sessions.js", () => ({
 
 import { discoverLocalSessions } from "../src/local-sessions.js";
 import { SessionListService, type SessionListServiceDeps } from "../src/session-list-service.js";
+import { Storage } from "../src/storage.js";
 
 function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
@@ -62,7 +65,7 @@ function makeService(
     allSessions?: Record<string, Session[]>;
     timeRangeSessions?: Record<string, Session[]>;
     stoppedSessions?: Record<string, Session[]>;
-    stoppedBuckets?: Record<string, WorkspaceStoppedTimeBucketSnapshot[]>;
+    stoppedActivityTimes?: Record<string, number[]>;
     knownSessions?: Session[];
     activeSessions?: Session[];
     pendingCounts?: Record<string, number>;
@@ -93,8 +96,8 @@ function makeService(
       listStoppedWorkspaceTimeRangeSessionSnapshots: vi.fn(
         (workspaceId: string) => options.stoppedSessions?.[workspaceId] ?? [],
       ),
-      listWorkspaceStoppedTimeBuckets: vi.fn(
-        (workspaceId: string) => options.stoppedBuckets?.[workspaceId] ?? [],
+      listWorkspaceStoppedActivityTimes: vi.fn(
+        (workspaceId: string) => options.stoppedActivityTimes?.[workspaceId] ?? [],
       ),
     },
     sessionRuntimes: {
@@ -389,9 +392,10 @@ describe("SessionListService", () => {
   describe("listWorkspaceStoppedSessionBuckets", () => {
     it("merges managed stopped buckets with older importable local sessions", async () => {
       const workspace = makeWorkspace({ hostMount: "~/workspace/oppi" });
-      const beforeMs = Date.parse("2026-05-13T00:00:00Z");
-      const nowMs = Date.parse("2026-05-13T12:00:00Z");
-      const olderLocalActivity = Date.parse("2026-05-12T19:00:00Z");
+      // Local times, so both sessions fall on 2026-05-12 in any server time zone.
+      const beforeMs = new Date(2026, 4, 13).getTime();
+      const nowMs = new Date(2026, 4, 13, 12).getTime();
+      const olderLocalActivity = new Date(2026, 4, 12, 12).getTime();
       localSessionState.snapshot = {
         lastScannedAt: nowMs,
         sessions: [
@@ -407,19 +411,8 @@ describe("SessionListService", () => {
           }),
         ],
       };
-      const { service, deps } = makeService({
-        stoppedBuckets: {
-          "ws-1": [
-            {
-              bucketId: "day:2026-05-12",
-              bucketKind: "day",
-              startMs: Date.parse("2026-05-12T00:00:00Z"),
-              endMs: Date.parse("2026-05-13T00:00:00Z"),
-              itemCount: 1,
-              latestActivity: Date.parse("2026-05-12T18:00:00Z"),
-            },
-          ],
-        },
+      const { service } = makeService({
+        stoppedActivityTimes: { "ws-1": [new Date(2026, 4, 12, 11).getTime()] },
       });
 
       const result = await service.listWorkspaceStoppedSessionBuckets({
@@ -428,12 +421,6 @@ describe("SessionListService", () => {
         nowMs,
       });
 
-      expect(deps.storage.listWorkspaceStoppedTimeBuckets).toHaveBeenCalledWith(
-        "ws-1",
-        beforeMs,
-        nowMs,
-        undefined,
-      );
       expect(discoverLocalSessions).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         workspaceId: "ws-1",
@@ -475,5 +462,127 @@ describe("SessionListService", () => {
         expect(discoverLocalSessions).toHaveBeenCalledTimes(1);
       });
     });
+  });
+});
+
+// Older-history day sections must cover the whole local calendar day: 25 hours when
+// clocks fall back and 23 when they spring forward. Oppi rows (SQLite) and local Pi
+// rows must land in the same section, and opening it must load exactly what it counts.
+describe("older-history day sections across daylight-saving changes", () => {
+  const LA = "America/Los_Angeles";
+  let originalTz: string | undefined;
+  let dataDir: string;
+  let storage: Storage;
+  let service: SessionListService;
+  const workspace = makeWorkspace({ hostMount: "/tmp/oppi-dst-project" });
+
+  beforeEach(() => {
+    originalTz = process.env.TZ;
+    process.env.TZ = LA;
+    dataDir = mkdtempSync(join(tmpdir(), "oppi-dst-sections-"));
+    storage = new Storage(dataDir);
+    service = new SessionListService({
+      storage,
+      sessionRuntimes: {
+        getActiveSessionIds: () => new Set(),
+        getActiveSession: () => undefined,
+        getPendingUIRequestMessages: () => [],
+      },
+      ensureSessionContextWindow: (session) => session,
+    });
+  });
+
+  afterEach(() => {
+    if (originalTz === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTz;
+    }
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  function stopOppiSession(id: string, lastActivity: number): void {
+    storage.saveSession(
+      makeSession({ id, status: "stopped", createdAt: lastActivity, lastActivity }),
+    );
+  }
+
+  function addLocalPiSession(path: string, lastModified: number): void {
+    localSessionState.snapshot.sessions.push(
+      makeLocalSession({ path, piSessionId: path, cwd: workspace.hostMount, lastModified }),
+    );
+  }
+
+  async function openSection(bucket: { startMs: number; endMs: number }, nowMs: number) {
+    const rows = await service.listWorkspaceSessionRows({
+      workspace,
+      statuses: new Set(["stopped"]),
+      timeRange: { sinceMs: bucket.startMs, untilMs: bucket.endMs },
+      nowMs,
+    });
+    return (rows.stopped ?? []).map((row) => row.id).sort();
+  }
+
+  it("keeps the last hour of the 25-hour fall-back day in that day's section", async () => {
+    const nowMs = Date.parse("2026-11-05T12:00:00-08:00");
+    localSessionState.snapshot = { sessions: [], lastScannedAt: nowMs };
+    // 23:30 local on Sun 2026-11-01, after clocks fell back to PST.
+    stopOppiSession("late-oppi", Date.parse("2026-11-01T23:30:00-08:00"));
+    addLocalPiSession("/tmp/late-pi.jsonl", Date.parse("2026-11-01T23:45:00-08:00"));
+    stopOppiSession("next-day-oppi", Date.parse("2026-11-02T00:15:00-08:00"));
+
+    const result = await service.listWorkspaceStoppedSessionBuckets({
+      workspace,
+      beforeMs: Date.parse("2026-11-03T00:00:00-08:00"),
+      nowMs,
+    });
+
+    const fallBack = result.buckets.find((bucket) => bucket.bucketId === "day:2026-11-01");
+    expect(fallBack).toEqual({
+      bucketId: "day:2026-11-01",
+      bucketKind: "day",
+      startMs: Date.parse("2026-11-01T00:00:00-07:00"),
+      endMs: Date.parse("2026-11-02T00:00:00-08:00"),
+      itemCount: 2,
+      managedStoppedCount: 1,
+      importableLocalCount: 1,
+      latestActivity: Date.parse("2026-11-01T23:45:00-08:00"),
+    });
+    expect(fallBack!.endMs - fallBack!.startMs).toBe(25 * 3_600_000);
+    expect(await openSection(fallBack!, nowMs)).toEqual(["/tmp/late-pi.jsonl", "late-oppi"]);
+
+    const nextDay = result.buckets.find((bucket) => bucket.bucketId === "day:2026-11-02");
+    expect(nextDay?.startMs).toBe(fallBack!.endMs);
+    expect(nextDay?.itemCount).toBe(1);
+    expect(await openSection(nextDay!, nowMs)).toEqual(["next-day-oppi"]);
+  });
+
+  it("ends the 23-hour spring-forward day at the next local midnight", async () => {
+    const nowMs = Date.parse("2026-03-12T12:00:00-07:00");
+    localSessionState.snapshot = { sessions: [], lastScannedAt: nowMs };
+    stopOppiSession("late-oppi", Date.parse("2026-03-08T23:30:00-07:00"));
+    addLocalPiSession("/tmp/late-pi.jsonl", Date.parse("2026-03-08T23:40:00-07:00"));
+    stopOppiSession("next-day-oppi", Date.parse("2026-03-09T00:30:00-07:00"));
+
+    const result = await service.listWorkspaceStoppedSessionBuckets({
+      workspace,
+      beforeMs: Date.parse("2026-03-10T00:00:00-07:00"),
+      nowMs,
+    });
+
+    const springForward = result.buckets.find((bucket) => bucket.bucketId === "day:2026-03-08");
+    expect(springForward).toMatchObject({
+      startMs: Date.parse("2026-03-08T00:00:00-08:00"),
+      endMs: Date.parse("2026-03-09T00:00:00-07:00"),
+      itemCount: 2,
+      managedStoppedCount: 1,
+      importableLocalCount: 1,
+    });
+    expect(springForward!.endMs - springForward!.startMs).toBe(23 * 3_600_000);
+    expect(await openSection(springForward!, nowMs)).toEqual(["/tmp/late-pi.jsonl", "late-oppi"]);
+
+    const nextDay = result.buckets.find((bucket) => bucket.bucketId === "day:2026-03-09");
+    expect(nextDay).toMatchObject({ startMs: springForward!.endMs, itemCount: 1 });
+    expect(await openSection(nextDay!, nowMs)).toEqual(["next-day-oppi"]);
   });
 });

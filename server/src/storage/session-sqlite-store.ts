@@ -11,10 +11,7 @@ import {
   createSessionStateSessionsTable,
   runSessionColumnsRecordMigration,
 } from "./session-columns-record-migration.js";
-import type {
-  WorkspaceSessionSummarySnapshot,
-  WorkspaceStoppedTimeBucketSnapshot,
-} from "./session-dao.js";
+import type { WorkspaceSessionSummarySnapshot } from "./session-dao.js";
 import { runSessionStateDeadSchemaCleanup } from "./session-state-cleanup-migration.js";
 import {
   backfillContextTokensFromTrace,
@@ -76,13 +73,6 @@ interface WorkspaceSummaryRow {
   active_count: number;
   stopped_count: number;
   has_error_root: number;
-}
-
-interface WorkspaceStoppedTimeBucketRow {
-  bucket_kind: "day" | "month";
-  bucket_key: string;
-  latest_activity: number | null;
-  item_count: number;
 }
 
 export interface SessionSqliteStoreOptions {
@@ -347,56 +337,29 @@ export class SessionSqliteStore {
     }));
   }
 
-  listWorkspaceStoppedTimeBuckets(
+  /**
+   * Activity times of a workspace's stopped sessions before `beforeMs`, newest first. The
+   * session list service groups them into older-history sections with local Pi sessions.
+   */
+  listWorkspaceStoppedActivityTimes(
     workspaceId: string,
     beforeMs: number,
-    nowMs: number = Date.now(),
     worktreeId?: string,
-  ): WorkspaceStoppedTimeBucketSnapshot[] {
-    const recentDayCutoffMs = nowMs - 30 * 86_400_000;
+  ): number[] {
     const rows = this.db
       .prepare(
-        `SELECT
-           CASE WHEN last_activity >= ? THEN 'day' ELSE 'month' END AS bucket_kind,
-           CASE
-             WHEN last_activity >= ?
-               THEN strftime('%Y-%m-%d', last_activity / 1000.0, 'unixepoch', 'localtime')
-             ELSE strftime('%Y-%m', last_activity / 1000.0, 'unixepoch', 'localtime')
-           END AS bucket_key,
-           MAX(last_activity) AS latest_activity,
-           COUNT(*) AS item_count
+        `SELECT last_activity
          FROM session_state_sessions
          WHERE workspace_id = ?
            AND status = 'stopped'
            AND last_activity < ?
            ${worktreeId ? "AND COALESCE(worktree_id, 'main') = ?" : ""}
-         GROUP BY bucket_kind, bucket_key
-         ORDER BY latest_activity DESC, bucket_key DESC`,
+         ORDER BY last_activity DESC`,
       )
-      .all(
-        recentDayCutoffMs,
-        recentDayCutoffMs,
-        workspaceId,
-        beforeMs,
-        ...(worktreeId ? [worktreeId] : []),
-      ) as WorkspaceStoppedTimeBucketRow[];
-
-    return rows.flatMap((row) => {
-      const range = localBucketRangeMs(row.bucket_kind, row.bucket_key);
-      if (!range) {
-        return [];
-      }
-      return [
-        {
-          bucketId: `${row.bucket_kind}:${row.bucket_key}`,
-          bucketKind: row.bucket_kind,
-          startMs: range.startMs,
-          endMs: range.endMs,
-          itemCount: row.item_count,
-          ...(row.latest_activity !== null ? { latestActivity: row.latest_activity } : {}),
-        },
-      ];
-    });
+      .all(workspaceId, beforeMs, ...(worktreeId ? [worktreeId] : [])) as {
+      last_activity: number;
+    }[];
+    return rows.map((row) => row.last_activity);
   }
 
   deleteSession(sessionId: string): boolean {
@@ -967,34 +930,6 @@ function normalizeTimestamp(value: number | undefined): number | undefined {
     return undefined;
   }
   return Math.floor(value);
-}
-
-function localBucketRangeMs(
-  bucketKind: "day" | "month",
-  bucketKey: string,
-): { startMs: number; endMs: number } | undefined {
-  if (bucketKind === "day") {
-    const match = bucketKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!match) {
-      return undefined;
-    }
-    const [, yearText, monthText, dayText] = match;
-    const start = new Date(
-      Number.parseInt(yearText, 10),
-      Number.parseInt(monthText, 10) - 1,
-      Number.parseInt(dayText, 10),
-    ).getTime();
-    return { startMs: start, endMs: start + 86_400_000 };
-  }
-
-  const match = bucketKey.match(/^(\d{4})-(\d{2})$/);
-  if (!match) {
-    return undefined;
-  }
-  const [, yearText, monthText] = match;
-  const startDate = new Date(Number.parseInt(yearText, 10), Number.parseInt(monthText, 10) - 1, 1);
-  const endDate = new Date(Number.parseInt(yearText, 10), Number.parseInt(monthText, 10), 1);
-  return { startMs: startDate.getTime(), endMs: endDate.getTime() };
 }
 
 function normalizeDeclaredSession(session: Session): Session {

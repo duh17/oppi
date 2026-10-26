@@ -31,10 +31,7 @@ import {
   DEFAULT_DATA_DIR,
   type ConfigValidationResult,
 } from "./storage/config-store.js";
-import type {
-  WorkspaceSessionSummarySnapshot,
-  WorkspaceStoppedTimeBucketSnapshot,
-} from "./storage/session-dao.js";
+import type { WorkspaceSessionSummarySnapshot } from "./storage/session-dao.js";
 import {
   ICON_ASSET_ORPHAN_GRACE_MS,
   IconAssetStore,
@@ -501,18 +498,12 @@ export class Storage {
     return this.sessionStore.listWorkspaceSessionSummarySnapshots();
   }
 
-  listWorkspaceStoppedTimeBuckets(
+  listWorkspaceStoppedActivityTimes(
     workspaceId: string,
     beforeMs: number,
-    nowMs?: number,
     worktreeId?: string,
-  ): WorkspaceStoppedTimeBucketSnapshot[] {
-    return this.sessionStore.listWorkspaceStoppedTimeBuckets(
-      workspaceId,
-      beforeMs,
-      nowMs,
-      worktreeId,
-    );
+  ): number[] {
+    return this.sessionStore.listWorkspaceStoppedActivityTimes(workspaceId, beforeMs, worktreeId);
   }
 
   recordSessionInteraction(

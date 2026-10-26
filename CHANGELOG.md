@@ -101,6 +101,7 @@ Example:
 - **Relay:** The push relay refuses a request body over 8 KiB as soon as it passes that size, including a chunked body with no length, instead of reading all of it first. A body that never ended used to hold a Cloudflare Worker request open.
 - **Client:** A long queued message, such as a subagent's report, no longer stretches the message queue drawer past the screen. The queue scrolls inside the drawer, so its collapse button and **Edit in composer** stay in reach, and a double tap on a queued message opens it full screen as rendered Markdown.
 - **Client:** A thinking trace and a running tool call's output opened full screen keep updating while the reader is open, including after their row has scrolled out of view above it. Before, such a reader froze on the text it opened with, and a finished trace never settled.
+- **Server:** On a day the clocks change, a workspace's older history section covers the whole local day. On a 25-hour day such as Sunday, November 1, sessions from its last hour now open in that day's section; before, they were counted there but never shown. On a 23-hour day the section no longer pulls in the first hour of the next day.
 
 ### Removed
 

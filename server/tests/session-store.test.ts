@@ -575,8 +575,13 @@ describe("workspace session summary snapshots", () => {
   });
 });
 
-describe("workspace stopped time buckets", () => {
-  function bucketSession(id: string, workspaceId: string, lastActivity: number): Session {
+describe("workspace stopped activity times", () => {
+  function stoppedSession(
+    id: string,
+    workspaceId: string,
+    lastActivity: number,
+    overrides: Partial<Session> = {},
+  ): Session {
     return {
       id,
       workspaceId,
@@ -586,25 +591,30 @@ describe("workspace stopped time buckets", () => {
       messageCount: 0,
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       cost: 0,
+      ...overrides,
     };
   }
 
-  it("groups older stopped sessions into day and month buckets", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-buckets-"));
+  it("lists the workspace's stopped sessions before the cutoff, newest first", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-activity-times-"));
 
     try {
-      const now = new Date(2026, 4, 13, 12, 0, 0).getTime();
+      const beforeMs = 10_000;
       const storage = new Storage(dataDir);
-      storage.saveSession(bucketSession("recent-day", "ws-1", now - 10 * 86_400_000));
-      storage.saveSession(bucketSession("old-month-a", "ws-1", now - 60 * 86_400_000));
-      storage.saveSession(bucketSession("old-month-b", "ws-1", now - 65 * 86_400_000));
+      storage.saveSession(stoppedSession("older", "ws-1", 1_000));
+      storage.saveSession(stoppedSession("newer", "ws-1", 9_000));
+      storage.saveSession(stoppedSession("worktree", "ws-1", 5_000, { worktreeId: "wt-a" }));
+      storage.saveSession(stoppedSession("at-cutoff", "ws-1", beforeMs));
+      storage.saveSession(stoppedSession("running", "ws-1", 2_000, { status: "ready" }));
+      storage.saveSession(stoppedSession("other-workspace", "ws-2", 3_000));
 
-      const buckets = storage.listWorkspaceStoppedTimeBuckets("ws-1", now - 3 * 86_400_000, now);
-
-      expect(buckets.map((bucket) => [bucket.bucketKind, bucket.itemCount])).toEqual([
-        ["day", 1],
-        ["month", 2],
+      expect(storage.listWorkspaceStoppedActivityTimes("ws-1", beforeMs)).toEqual([
+        9_000, 5_000, 1_000,
       ]);
+      expect(storage.listWorkspaceStoppedActivityTimes("ws-1", beforeMs, "main")).toEqual([
+        9_000, 1_000,
+      ]);
+      expect(storage.listWorkspaceStoppedActivityTimes("ws-1", beforeMs, "wt-a")).toEqual([5_000]);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
