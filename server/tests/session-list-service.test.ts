@@ -585,4 +585,38 @@ describe("older-history day sections across daylight-saving changes", () => {
     expect(nextDay).toMatchObject({ startMs: springForward!.endMs, itemCount: 1 });
     expect(await openSection(nextDay!, nowMs)).toEqual(["next-day-oppi"]);
   });
+
+  it("never repeats a recent row in a section when the server's time zone differs", async () => {
+    // The server runs in UTC; the phone in Los Angeles asks for older history before its
+    // own midnight (08:00Z), which falls inside the server's day:2026-11-03.
+    process.env.TZ = "UTC";
+    const nowMs = Date.parse("2026-11-05T12:00:00-08:00");
+    const beforeMs = Date.parse("2026-11-03T00:00:00-08:00");
+    localSessionState.snapshot = { sessions: [], lastScannedAt: nowMs };
+    stopOppiSession("older-oppi", Date.parse("2026-11-03T05:00:00Z"));
+    addLocalPiSession("/tmp/older-pi.jsonl", Date.parse("2026-11-03T06:00:00Z"));
+    stopOppiSession("recent-oppi", Date.parse("2026-11-03T10:00:00Z"));
+    addLocalPiSession("/tmp/recent-pi.jsonl", Date.parse("2026-11-03T11:00:00Z"));
+
+    const recent = await service.listWorkspaceSessionRows({
+      workspace,
+      statuses: new Set(["stopped"]),
+      timeRange: { sinceMs: beforeMs, untilMs: nowMs },
+      nowMs,
+    });
+    const { buckets } = await service.listWorkspaceStoppedSessionBuckets({
+      workspace,
+      beforeMs,
+      nowMs,
+    });
+    const opened = await Promise.all(buckets.map((bucket) => openSection(bucket, nowMs)));
+
+    expect((recent.stopped ?? []).map((row) => row.id).sort()).toEqual([
+      "/tmp/recent-pi.jsonl",
+      "recent-oppi",
+    ]);
+    expect(opened.flat().sort()).toEqual(["/tmp/older-pi.jsonl", "older-oppi"]);
+    expect(buckets.map((bucket) => bucket.itemCount)).toEqual(opened.map((ids) => ids.length));
+    expect(buckets.find((bucket) => bucket.bucketId === "day:2026-11-03")?.endMs).toBe(beforeMs);
+  });
 });

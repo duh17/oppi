@@ -232,6 +232,7 @@ export class SessionListService {
         params.worktreeId,
       ),
       olderImportableSessions,
+      params.beforeMs,
       serverNow,
     );
 
@@ -611,9 +612,16 @@ function olderHistorySection(
   };
 }
 
+/**
+ * Older-history sections for sessions before `beforeMs`, the client's recent/older boundary.
+ * A section never reaches past that boundary: when the client's midnight is not the
+ * server's (another time zone, or an older client), the newest section ends at `beforeMs`
+ * so opening it loads exactly what it counts and nothing from the recent list.
+ */
 function buildOlderHistorySections(
   managedStoppedActivityTimes: number[],
   olderImportableSessions: LocalSession[],
+  beforeMs: number,
   nowMs: number,
 ): SessionListArchiveBucket[] {
   const dayCutoffMs = nowMs - OLDER_HISTORY_DAY_SECTION_SPAN_MS;
@@ -625,6 +633,7 @@ function buildOlderHistorySections(
     if (!section) {
       section = {
         ...placement,
+        endMs: Math.min(placement.endMs, beforeMs),
         itemCount: 0,
         managedStoppedCount: 0,
         importableLocalCount: 0,

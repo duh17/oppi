@@ -31,11 +31,14 @@ extension WorkspaceDetailViewController {
         state.loadingArchiveBucketIDs.insert(bucket.id)
         defer { state.loadingArchiveBucketIDs.remove(bucket.id) }
 
+        // A section never reaches into the recent list: the server's day can end after this
+        // phone's midnight (another time zone, or a server that does not clamp sections).
+        let until = min(bucket.endAt, state.recentRangeStart ?? bucket.endAt)
         do {
             let response = try await api.getWorkspaceSessionListBucket(
                 workspaceId: workspaceId,
                 since: bucket.startAt,
-                until: bucket.endAt,
+                until: until,
                 worktreeId: state.selectedWorktreeId
             )
             state.archiveStoppedSessionsByBucketID[bucket.id] = response.sessionSummaries
@@ -43,7 +46,7 @@ extension WorkspaceDetailViewController {
                 .filter { session in
                     session.status == .stopped &&
                         session.lastActivity >= bucket.startAt &&
-                        session.lastActivity < bucket.endAt
+                        session.lastActivity < until
                 }
             state.archiveLocalSessionsByBucketID[bucket.id] = response.importableSessions
         } catch {

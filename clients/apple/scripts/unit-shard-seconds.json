@@ -756,7 +756,7 @@
  "WorkspaceSettingsModelTests": 0.24,
  "WorkspaceSettingsRequestTests": 0,
  "WorkspaceSidebarSessionStatusTests": 0,
- "WorkspaceStoppedSessionExpansionPolicyTests": 0,
+ "WorkspaceStoppedSessionGroupingTests": 0,
  "WorkspaceStoreOfflineTests": 0.01,
  "WorkspaceStoreTests": 0,
  "WorkspaceWikiLinkFileLookupPolicyTests": 0,

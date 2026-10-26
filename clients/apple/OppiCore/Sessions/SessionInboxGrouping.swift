@@ -88,9 +88,9 @@ struct SessionInboxSections<Item> {
     }
 }
 
-/// Your Turn, Working, and every stopped item, each sorted. Lists group the
-/// stopped items their own way: the inbox by recent day, a workspace by day
-/// and month.
+/// Your Turn, Working, and every stopped item, each sorted. Both lists group
+/// recent stopped items by `SessionInboxStoppedDayPolicy`; a workspace adds its
+/// local Pi sessions to those days.
 struct SessionListSplit<Item> {
     var yourTurn: [Item]
     var working: [Item]

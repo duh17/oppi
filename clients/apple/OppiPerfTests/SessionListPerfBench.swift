@@ -11,7 +11,7 @@ import Foundation
 /// - Filtering sessions into active/stopped subsets
 /// - Sorting active sessions by attention + turn-ended date
 /// - Sorting stopped sessions by lastActivity
-/// - Grouping stopped sessions into date buckets (Today, Yesterday, month groups)
+/// - Grouping stopped sessions into recent day groups (`WorkspaceStoppedSessionGrouping`)
 /// - Per-row computation (displayTitle, modelShort, contextPercent, inferContextWindow)
 /// - Permission lookup per active row
 ///
@@ -218,51 +218,21 @@ struct SessionListPerfBench {
         print("METRIC sort_stopped_200=\(Int(us))")
     }
 
-    // --- 6. Group stopped sessions into date buckets ---
+    // --- 6. Group stopped sessions into recent days ---
 
     @Test("METRIC group_stopped_200")
     func groupStopped200() {
-        let sessions = Self.generateSessions(count: 200, activeRatio: 0.0)
+        let entries = SessionListEntries.flat(Self.generateSessions(count: 200, activeRatio: 0.0))
+        let calendar = Calendar.current
+        let rangeStart = SessionInboxStoppedDayPolicy.visibleRangeStart(now: Date(), calendar: calendar)
 
         let us = Self.measureMedianUs {
-            // Mirrors WorkspaceStoppedSessionGrouping.groups
-            // Pre-sort by lastActivity descending (production code receives pre-sorted data)
-            let sorted = sessions.sorted { $0.lastActivity > $1.lastActivity }
-
-            let now = Date()
-            let recentCutoffTs = now.timeIntervalSince1970 - 30 * 86400
-            let tzOffset = Double(TimeZone.current.secondsFromGMT(for: now))
-
-            // Single-pass: group into Int-keyed buckets, track max date per bucket
-            var buckets: [Int: [Session]] = [:]
-            var bucketMaxDate: [Int: Date] = [:]
-            buckets.reserveCapacity(40)
-            bucketMaxDate.reserveCapacity(40)
-
-            for session in sorted {
-                let ts = session.lastActivity.timeIntervalSince1970
-                let key: Int
-                if ts >= recentCutoffTs {
-                    let localTs = ts + tzOffset
-                    key = Int(floor(localTs / 86400))  // day index
-                } else {
-                    let cal = Calendar.current
-                    let comps = cal.dateComponents([.year, .month], from: session.lastActivity)
-                    // Negative keys for month buckets to avoid collision with day indices
-                    key = -(comps.year! * 100 + comps.month!) // swiftlint:disable:this force_unwrapping
-                }
-                buckets[key, default: []].append(session)
-                if bucketMaxDate[key] == nil {
-                    bucketMaxDate[key] = session.lastActivity  // First item is max (pre-sorted)
-                }
-            }
-
-            // Sort buckets by max date descending
-            let sortedBuckets = buckets.sorted { lhs, rhs in
-                (bucketMaxDate[lhs.key] ?? .distantPast) > (bucketMaxDate[rhs.key] ?? .distantPast)
-            }
-            // Items within each bucket are already sorted (from pre-sorted input)
-            _ = sortedBuckets
+            _ = WorkspaceStoppedSessionGrouping.groups(
+                stoppedEntries: entries,
+                localSessions: [],
+                rangeStart: rangeStart,
+                calendar: calendar
+            )
         }
         print("METRIC group_stopped_200=\(Int(us))")
     }
