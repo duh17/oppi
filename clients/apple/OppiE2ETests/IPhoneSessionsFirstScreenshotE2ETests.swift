@@ -533,7 +533,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         let tools = try XCTUnwrap(defaults["tools"] as? [String])
         XCTAssertEqual(tools, ["bash", "edit", "grep", "read", "write"])
 
-        tap(app.buttons["agents.detail.launch"], named: "Agent compose", timeout: 10)
+        tap(app.buttons["agents.detail.launch"], named: "Agent Start Session row", timeout: 10)
         let selectedAgent = app.buttons["quickSession.agentPicker"]
         XCTAssertTrue(selectedAgent.waitForExistence(timeout: 10), "Quick Session did not open")
         XCTAssertTrue(
@@ -571,7 +571,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         tap(app.buttons["agent.nativeEdit.save"], named: "Save native Agent edit")
         XCTAssertTrue(app.navigationBars[agentName].waitForExistence(timeout: 10), "The editor did not close")
 
-        tap(app.buttons["agents.detail.launch"], named: "Agent compose", timeout: 10)
+        tap(app.buttons["agents.detail.launch"], named: "Agent Start Session row", timeout: 10)
         let selectedAgent = app.buttons["quickSession.agentPicker"]
         XCTAssertTrue(selectedAgent.waitForExistence(timeout: 10), "Quick Session did not open")
         XCTAssertTrue(

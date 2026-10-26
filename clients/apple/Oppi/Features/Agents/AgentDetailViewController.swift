@@ -2,9 +2,12 @@ import UIKit
 
 /// A saved Agent: its definition, system prompt, Pi session defaults,
 /// resources, launch constraints, and automation. Edit opens the native
-/// editor; the actions menu offers Archive; Start Session in the bottom bar
-/// opens Quick Session with the Agent; an active Agent carries the compact Oppi
-/// bar to describe a change. Edits go back to the list through `onUpdated`.
+/// editor; the actions menu offers Archive; an active Agent's Start Session
+/// row (under Schedule Recurring Run) opens Quick Session with the Agent, and
+/// it carries the compact Oppi bar to describe a change. Start Session is a
+/// labeled row, not a bottom-bar compose glyph, so it does not read as a third
+/// edit control beside Edit and the change bar. Edits go back to the list
+/// through `onUpdated`.
 @MainActor
 final class AgentDetailViewController: UIViewController, UICollectionViewDelegate {
     private enum Section: Hashable { case state, definition, prompt, defaults, resources, constraints, automation }
@@ -18,6 +21,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         case prompt
         case notice(text: String, systemImage: String, warning: Bool)
         case schedule
+        case startSession
         case caption(String)
     }
 
@@ -30,7 +34,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     private let errorAlert = ControlErrorAlert()
     private let editItem = UIBarButtonItem()
     private let actionsItem = UIBarButtonItem()
-    private let launchItem = UIBarButtonItem()
 
     private let nativeEditor = RouterModalPresenter()
     private let iconPicker = RouterModalPresenter()
@@ -91,12 +94,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         actionsItem.image = UIImage(systemName: "ellipsis.circle")
         actionsItem.accessibilityLabel = "Agent actions"
         actionsItem.accessibilityIdentifier = "agents.detail.actions"
-        // Start Session sits in the bottom bar, trailing with neutral chrome
-        // (as the session inbox's compose).
-        launchItem.primaryAction = UIAction(title: "Start Session", image: UIImage(systemName: "square.and.pencil")) { [weak self] _ in
-            self?.startQuickSession()
-        }
-        launchItem.accessibilityIdentifier = "agents.detail.launch"
         if #available(iOS 27.1, *) {
             editItem.axisBehavior = .verticalPreferred
             actionsItem.axisBehavior = .verticalPreferred
@@ -147,7 +144,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        navigationController?.setToolbarHidden(toolbarItems?.isEmpty ?? true, animated: animated)
+        navigationController?.setToolbarHidden(true, animated: animated)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -188,7 +185,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     private func updateBarItems() {
         guard let agent, agent.status == .active else {
             ControlScreenList.setBarItems(trailing: [], leading: [], on: navigationItem)
-            setToolbarItemsIfChanged([])
             return
         }
         let archive = UIAction(
@@ -201,18 +197,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         archive.accessibilityIdentifier = "agents.detail.archive"
         actionsItem.menu = UIMenu(children: [archive])
         ControlScreenList.setBarItems(trailing: [actionsItem, editItem], leading: [], on: navigationItem)
-        launchItem.isEnabled = !connection.workspaceStore.workspaces.isEmpty && connection.currentServerId != nil
-        launchItem.accessibilityLabel = "Start session with \(agent.name)"
-        launchItem.tintColor = UIColor(palette.fg)
-        setToolbarItemsIfChanged([.flexibleSpace(), launchItem])
-    }
-
-    private func setToolbarItemsIfChanged(_ items: [UIBarButtonItem]) {
-        guard toolbarItems?.elementsEqual(items, by: ===) != true else { return }
-        setToolbarItems(items, animated: false)
-        if navigationController?.topViewController === self {
-            navigationController?.setToolbarHidden(items.isEmpty, animated: false)
-        }
     }
 
     // MARK: - List
@@ -255,12 +239,13 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             }
 
             snapshot.appendSections([.automation])
-            snapshot.appendItems([
-                .schedule,
-                .caption(connection.workspaceStore.workspaces.isEmpty
-                    ? "Create or sync a workspace before starting or scheduling this Agent."
-                    : "Schedules can run this Agent with a recurring briefing prompt, selected workspace, and repeat time."),
-            ], toSection: .automation)
+            var automation: [Item] = [.schedule]
+            // Only an active Agent starts a session, as only it offers Edit.
+            if agent.status == .active { automation.append(.startSession) }
+            automation.append(.caption(connection.workspaceStore.workspaces.isEmpty
+                ? "Create or sync a workspace before starting or scheduling this Agent."
+                : "Schedules can run this Agent with a recurring briefing prompt, selected workspace, and repeat time."))
+            snapshot.appendItems(automation, toSection: .automation)
         } else {
             snapshot.appendSections([.state])
             snapshot.appendItems([isLoading ? .loading : .notFound], toSection: .state)
@@ -451,6 +436,23 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             var content = UIListContentConfiguration.cell()
             content.text = "Schedule Recurring Run"
             content.image = UIImage(systemName: "calendar.badge.clock")
+            let tint = UIColor(palette.blue).withAlphaComponent(enabled ? 1 : 0.4)
+            content.textProperties.color = tint
+            content.imageProperties.tintColor = tint
+            cell.contentConfiguration = content
+        case .startSession:
+            let enabled = !connection.workspaceStore.workspaces.isEmpty && connection.currentServerId != nil
+            ControlScreenList.buttonRow(
+                cell,
+                identifier: "agents.detail.launch",
+                label: "Start Session with \(agent?.name ?? "Agent")",
+                enabled: enabled
+            ) { [weak self] in
+                self?.startQuickSession()
+            }
+            var content = UIListContentConfiguration.cell()
+            content.text = "Start Session"
+            content.image = UIImage(systemName: "plus.bubble")
             let tint = UIColor(palette.blue).withAlphaComponent(enabled ? 1 : 0.4)
             content.textProperties.color = tint
             content.imageProperties.tintColor = tint
