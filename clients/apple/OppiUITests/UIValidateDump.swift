@@ -11,6 +11,8 @@ enum UIValidateDump {
         let compact: String
         let detailed: String
         let element: String
+        /// Why this issue is a known audit false positive; nil for a real finding.
+        var waivedReason: String? = nil
     }
 
     static func renderTree(_ snapshot: XCUIElementSnapshot) -> String {
@@ -25,26 +27,43 @@ enum UIValidateDump {
 
     static func renderAudit(_ issues: [AuditIssue]) -> String {
         var lines = ["# accessibility audit", ""]
-        if issues.isEmpty {
+        let findings = issues.filter { $0.waivedReason == nil }
+        let waived = issues.filter { $0.waivedReason != nil }
+        if findings.isEmpty {
             lines.append("No accessibility audit issues.")
-            lines.append("")
-            return lines.joined(separator: "\n")
         }
-        for issue in issues {
-            var head = "- \(issue.type)"
-            if !issue.element.isEmpty {
-                head += ": \(issue.element)"
-            }
-            lines.append(head)
-            if !issue.compact.isEmpty {
-                lines.append("  \(issue.compact)")
-            }
-            if !issue.detailed.isEmpty, issue.detailed != issue.compact {
-                lines.append("  \(issue.detailed)")
+        for issue in findings {
+            lines.append(contentsOf: renderIssue(issue))
+        }
+        // Waived issues stay visible so a reviewer can still judge them.
+        if !waived.isEmpty {
+            lines.append("")
+            lines.append("## Waived (known audit false positives)")
+            lines.append("")
+            for issue in waived {
+                lines.append(contentsOf: renderIssue(issue))
+                if let reason = issue.waivedReason {
+                    lines.append("  Waived: \(reason)")
+                }
             }
         }
         lines.append("")
         return lines.joined(separator: "\n")
+    }
+
+    private static func renderIssue(_ issue: AuditIssue) -> [String] {
+        var head = "- \(issue.type)"
+        if !issue.element.isEmpty {
+            head += ": \(issue.element)"
+        }
+        var lines = [head]
+        if !issue.compact.isEmpty {
+            lines.append("  \(issue.compact)")
+        }
+        if !issue.detailed.isEmpty, issue.detailed != issue.compact {
+            lines.append("  \(issue.detailed)")
+        }
+        return lines
     }
 
     static func write(
@@ -81,7 +100,8 @@ enum UIValidateDump {
                         type: auditTypeName(issue.auditType),
                         compact: issue.compactDescription,
                         detailed: issue.detailedDescription,
-                        element: describeElement(issue.element)
+                        element: describeElement(issue.element),
+                        waivedReason: waivedReason(for: issue)
                     )
                 )
                 return true
@@ -189,6 +209,16 @@ enum UIValidateDump {
             parts.append("\"\(escape(element.label))\"")
         }
         return parts.joined(separator: " ")
+    }
+
+    /// The audit reports `textClipped` on the system `UISearchTextField` placeholder
+    /// on every `ScreenSearchController` screen, at the default text size too, while
+    /// the screenshots draw it in full at every size. The field is UIKit's own.
+    private static func waivedReason(for issue: XCUIAccessibilityAuditIssue) -> String? {
+        if issue.auditType == .textClipped, issue.element?.elementType == .searchField {
+            return "textClipped on the system search field, which draws its text in full"
+        }
+        return nil
     }
 
     private static func auditTypeName(_ type: XCUIAccessibilityAuditType) -> String {
