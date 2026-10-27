@@ -126,3 +126,101 @@ final class SettingsRowButton: UIButton {
         }
     }
 }
+
+/// A choice row: the title and the current choice (in the accent color, with
+/// the up/down mark a pop-up button shows), and the whole row one button whose
+/// menu lists the choices with a checkmark on the current one. Like
+/// `SettingsIndexRowCell`, the labels paint the row and the button is its one
+/// accessible element, so a tap, a VoiceOver activation, and `app.buttons[id]`
+/// all open the menu. At accessibility text sizes the choice stacks under the
+/// title instead of sharing its line.
+final class SettingsMenuRowCell: UICollectionViewListCell {
+    private let button = SettingsRowButton(type: .system)
+    private let stack = UIStackView()
+    private let titleLabel = UILabel()
+    private let valueLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        for label in [titleLabel, valueLabel] {
+            label.font = .preferredFont(forTextStyle: .body)
+            label.adjustsFontForContentSizeCategory = true
+            label.numberOfLines = 0
+        }
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        valueLabel.setContentHuggingPriority(.required, for: .horizontal)
+        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        stack.addArrangedSubview(titleLabel)
+        stack.addArrangedSubview(valueLabel)
+        stack.spacing = 8
+        for view in [stack, button] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(view)
+        }
+        // The system highlight is the cell's own, as in `SettingsIndexRowCell`.
+        button.onHighlight = { [weak self] in self?.isHighlighted = $0 }
+        button.showsMenuAsPrimaryAction = true
+        accessibilityElements = [button]
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            button.topAnchor.constraint(equalTo: contentView.topAnchor),
+            button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+        arrangeForTextSize()
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
+            self.arrangeForTextSize()
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private func arrangeForTextSize() {
+        let stacked = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+        stack.axis = stacked ? .vertical : .horizontal
+        stack.alignment = stacked ? .leading : .center
+        valueLabel.textAlignment = stacked ? .natural : .right
+        invalidateIntrinsicContentSize()
+    }
+
+    func configure(
+        title: String,
+        identifier: String,
+        options: [(title: String, selected: Bool, action: () -> Void)]
+    ) {
+        let palette = ThemeRuntimeState.currentPalette()
+        let current = options.first(where: \.selected)?.title
+        let tint = UIColor(palette.blue)
+        titleLabel.text = title
+        titleLabel.textColor = UIColor(palette.fg)
+        let symbol = UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
+        let mark = NSTextAttachment(image: UIImage(systemName: "chevron.up.chevron.down", withConfiguration: symbol)?.withTintColor(tint, renderingMode: .alwaysOriginal) ?? UIImage())
+        let value = NSMutableAttributedString(string: (current ?? "") + " ")
+        value.append(NSAttributedString(attachment: mark))
+        value.addAttribute(.foregroundColor, value: tint, range: NSRange(location: 0, length: value.length))
+        valueLabel.attributedText = value
+        button.accessibilityIdentifier = identifier
+        button.accessibilityLabel = title
+        button.accessibilityValue = current
+        button.menu = UIMenu(children: options.map { option in
+            UIAction(title: option.title, state: option.selected ? .on : .off) { _ in option.action() }
+        })
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        button.menu = nil
+        button.accessibilityIdentifier = nil
+        button.accessibilityLabel = nil
+        button.accessibilityValue = nil
+        titleLabel.text = nil
+        valueLabel.attributedText = nil
+        isHighlighted = false
+    }
+}

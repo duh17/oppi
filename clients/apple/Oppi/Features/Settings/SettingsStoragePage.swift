@@ -62,6 +62,7 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
             content.text = String(localized: "Clear Local Cache")
             content.textProperties.color = UIColor(palette.red).withAlphaComponent(isClearing ? 0.5 : 1)
             cell.accessibilityIdentifier = "settings.storage.clearCache"
+            if isClearing { cell.accessibilityTraits.insert(.notEnabled) }
         }
         cell.contentConfiguration = content
     }
@@ -86,8 +87,8 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
         })
         sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
         // On iPad the sheet is a popover from the row that opened it.
-        if let popover = sheet.popoverPresentationController,
-           let row = dataSource?.indexPath(for: .clearCache).flatMap(collectionView.cellForItem(at:)) {
+        if let popover = sheet.popoverPresentationController {
+            let row: UIView = dataSource?.indexPath(for: .clearCache).flatMap(collectionView.cellForItem(at:)) ?? collectionView
             popover.sourceView = row
             popover.sourceRect = row.bounds
         }

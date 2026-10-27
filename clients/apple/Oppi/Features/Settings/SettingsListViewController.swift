@@ -108,11 +108,6 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         SSHTerminalSettingsList.pin(collectionView, in: view)
         installDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
-        // A text size change re-reads the page: rows that switch layout at
-        // accessibility sizes put the size in their inputs.
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
-            self.setNeedsUpdateProperties()
-        }
         setNeedsUpdateProperties()
     }
 
@@ -152,13 +147,15 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
             AnyHashable([AnyHashable(themeID), inputs(of: item)])
         }
-        snapshot.reconfigureItems(changed.filter(shown.contains))
         // Headings are not rows: a section whose header or footer text moved is
-        // reloaded so its supplementary view is configured again.
+        // reloaded so its supplementary view is configured again. Its rows are
+        // rebuilt by the reload, so they are not also reconfigured.
         let retitled = sections.filter { section in
             guard let old = previous[section.id] else { return false }
             return old.header != section.header || old.footer != section.footer
         }
+        let reloaded = Set(retitled.flatMap(\.items))
+        snapshot.reconfigureItems(changed.filter { shown.contains($0) && !reloaded.contains($0) })
         snapshot.reloadSections(retitled.map(\.id))
         dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
     }
@@ -169,7 +166,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         cell.contentConfiguration = nil
         cell.accessories = []
         cell.accessibilityIdentifier = nil
-        cell.accessibilityTraits.remove(.button)
+        cell.accessibilityTraits.remove([.button, .notEnabled])
         configure(cell, item: item)
         if isSelectable(item) { cell.accessibilityTraits.insert(.button) }
     }

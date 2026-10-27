@@ -131,7 +131,7 @@ UIKit owns every iOS view and all app structure (decided 2026-10-15). The target
 - `TerminalMirrorIndicatorUIView`: the pi-tui mirror mark (session rows, chat title).
 - `HostSwitcherModel`: the single owner of the server list, connection retry, and switching.
 - `ChangedRows`: reconfigure only the rows whose inputs changed, so an open menu survives a redraw.
-- `SettingsListViewController`, `SettingsIndexRowCell`: the base of a UIKit settings page (themed inset-grouped list, section model with header and footer text, `ChangedRows` redraws, refresh on return, tap and VoiceOver activation through one `select(_:)`) and the shared index row with an optional icon. General, Storage & About, and the App Settings root use them; Chat, Editor, and Experiments still carry their own copy.
+- `SettingsListViewController`, `SettingsIndexRowCell`: the base of a UIKit settings page (themed inset-grouped list, section model with header and footer text, `ChangedRows` redraws, refresh on return, tap and VoiceOver activation through one `select(_:)`) and the shared index row with an optional icon. `SettingsMenuRowCell` is a choice row whose whole row is a menu button. General, Storage & About, and the App Settings root use the base; `SettingsIndexRowCell` is also used by Workspace Settings and Tailscale; Chat, Editor, and Experiments still carry their own copy of the list code.
 - `SessionListCollection`, `SessionListBottomBar`: both session lists' collection view, rows, swipes, menus, refresh, search, and bottom bar.
 - `FloatingProgressPanel`: the floating progress panel (workspace list, review).
 - `WorkspaceQuickActionLauncher`: start a session for a quick action and push its chat (context bar, commit detail, review file).

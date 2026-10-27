@@ -329,12 +329,9 @@ extension UICellAccessory {
         return .customView(configuration: .init(customView: toggle, placement: .trailing()))
     }
 
-    /// A trailing pop-up button showing the current choice. `label` names the
-    /// button for VoiceOver where the row's text is not enough on its own; the
-    /// selected choice is then its value, so VoiceOver reads both.
+    /// A trailing pop-up button showing the current choice.
     static func settingsPopUpMenu(
         identifier: String,
-        label: String? = nil,
         isEnabled: Bool = true,
         options: [(title: String, selected: Bool, action: () -> Void)]
     ) -> UICellAccessory {
@@ -343,10 +340,6 @@ extension UICellAccessory {
         button.showsMenuAsPrimaryAction = true
         button.changesSelectionAsPrimaryAction = true
         button.accessibilityIdentifier = identifier
-        if let label {
-            button.accessibilityLabel = label
-            button.accessibilityValue = options.first(where: \.selected)?.title
-        }
         button.menu = UIMenu(children: options.map { option in
             UIAction(title: option.title, state: option.selected ? .on : .off) { _ in option.action() }
         })
