@@ -6,7 +6,7 @@ import SwiftUI
 // sidebar, a workspace's sessions, a session's chat
 // (`ChatRouteViewController`), Files (`FileBrowserViewController`), a linked
 // file (`WorkspaceLinkedFileViewController`), a Skill file
-// (`ServerSkillFileViewController`), Extensions
+// (`ServerSkillFileViewController`), Skills (`ServerSkillsViewController`), Extensions
 // (`ServerExtensionsViewController`) and an Extension's detail
 // (`ServerExtensionDetailViewController`), SSH Terminal's host list,
 // Schedules, Agents, MCP Servers (`McpServersViewController`), App Settings
@@ -48,6 +48,9 @@ enum ShellRouteScreens {
                 root: root,
                 showsSidebarToggle: placement == .splitDetailRoot
             )
+        }
+        if case .utility(.skills) = route {
+            return ServerSkillsViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
         }
         if case .utility(.appSettings) = route {
             return SettingsRootViewController(root: root)
@@ -132,6 +135,10 @@ enum ShellRouteScreens {
         }
         if let metrics = screen as? ServerMetricsViewController {
             metrics.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let list = screen as? ServerSkillsViewController {
+            list.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
         if let list = screen as? ServerExtensionsViewController {
@@ -358,12 +365,11 @@ private struct WorkspaceUtilityDestinationView: View {
 
     var body: some View {
         switch target {
-        case .schedules, .agents, .extensions:
+        case .schedules, .agents, .skills, .extensions:
             // The shell hosts these routes as ScheduleListViewController,
-            // AgentListViewController, and ServerExtensionsViewController.
+            // AgentListViewController, ServerSkillsViewController, and
+            // ServerExtensionsViewController.
             EmptyView()
-        case .skills:
-            ServerSkillsView()
         case .mcpServers:
             // The shell hosts this route as McpServersViewController.
             EmptyView()

@@ -11,7 +11,7 @@ import SwiftUI
 /// `mcp`, `mcp-workspace`,
 /// `mcp-detail`, `mcp-add`, `mcp-sign-in`, `quick-comments`, `quick-comment-editor`,
 /// `auto-title`, `theme-import`, `dictionary`, `dictionary-workspace`,
-/// `skills`, `skill-detail`, `extensions`, `extensions-offline` (the catalog
+/// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `workspace-create`, `workspace-create-configure`.
@@ -263,8 +263,8 @@ struct SettingsSweepScreenshotPreview: View {
             Text("Pairing approval host")
                 .modifier(PairingApprovalPromptHost(root: root, controller: PairingApprovalController()))
         // Shell routes the router hosts directly: search lives in its bar.
-        case "skills":
-            RouterPreviewStack(root: root) { ServerSkillsView() }
+        case "skills", "skills-offline":
+            RouterPreviewControllerStack(root: root) { ServerSkillsViewController(root: root) }
                 .ignoresSafeArea()
         case "extensions", "extensions-offline", "extensions-builtin-only":
             RouterPreviewControllerStack(root: root) { ServerExtensionsViewController(root: root) }
@@ -589,6 +589,7 @@ struct SettingsSweepScreenshotPreview: View {
             // `skill-file-edit`: the server edits Skill files, read through the Skill.
             "/server/info": Data(#"{"name":"mac-studio","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"mac-studio","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":1,"modelCount":0}}"#.utf8),
             "PUT /files/current": Data(#"{"etag":"\"sha256-\#(String(repeating: "b", count: 64))\"","size":1,"mtimeMs":1}"#.utf8),
+            "/server/resources/skills": json(ServerSkillsCatalog(skills: skills)),
             "/server/resources/skills/release": json(ServerSkillDetail(
                 summary: skills[0],
                 skillMarkdown: "# Release\n\nReview release readiness.",
@@ -619,6 +620,10 @@ struct SettingsSweepScreenshotPreview: View {
         // The catalog request answers 404, so a sync fails.
         if page == "extensions-offline" || page == "extensions-unavailable" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/extensions"] = nil
+        }
+        // `skills-offline`: the refresh fails and the seeded catalog shows as cached.
+        if page == "skills-offline" {
+            SettingsSweepFixtureURLProtocol.routes["/server/resources/skills"] = nil
         }
     }
 }
