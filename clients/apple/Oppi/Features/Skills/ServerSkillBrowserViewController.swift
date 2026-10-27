@@ -129,11 +129,11 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
                 show(.empty)
                 return
             }
-            footerText = detail.summary.editable
-                ? "Open a file to select text, stage comments, and revise it in an Oppi session."
-                : "Files are read-only and come from \(detail.summary.provenance.label)."
             show(.tree)
             applyTree(tree)
+            updateFooter(detail.summary.editable
+                ? "Open a file to select text, stage comments, and revise it in an Oppi session."
+                : "Files are read-only and come from \(detail.summary.provenance.label).")
         } else {
             title = String(localized: "Skill Files")
             show(error.map(Shown.unavailable) ?? .loading)
@@ -216,6 +216,23 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
             snapshot.reconfigureItems(snapshot.itemIdentifiers)
             dataSource.apply(snapshot, animatingDifferences: false)
         }
+    }
+
+    /// The footer depends on the Skill's summary, not on its files, so it
+    /// redraws on its own: the shown footer is reconfigured, and one still
+    /// off screen reads the new text when it is made.
+    private func updateFooter(_ text: String) {
+        guard text != footerText else { return }
+        footerText = text
+        let footer = collectionView.supplementaryView(
+            forElementKind: UICollectionView.elementKindSectionFooter,
+            at: IndexPath(item: 0, section: 0)
+        ) as? UICollectionViewListCell
+        guard let footer else { return }
+        var content = UIListContentConfiguration.footer()
+        content.text = text
+        footer.contentConfiguration = content
+        collectionView.collectionViewLayout.invalidateLayout()
     }
 
     private func installDataSource() {
