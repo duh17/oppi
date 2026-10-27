@@ -170,7 +170,7 @@ final class SkillFileViewController: UIViewController {
     private func load() {
         loadTask?.cancel()
         guard let api = connection.apiClient else {
-            phase = .failed(String(localized: "Not connected"))
+            if !isShowingFile { phase = .failed(String(localized: "Not connected")) }
             return
         }
         let skillName = skillName
@@ -185,7 +185,9 @@ final class SkillFileViewController: UIViewController {
             } catch {
                 guard !Task.isCancelled else { return }
                 logger.error("Failed to load \(skillName)/\(filePath): \(error.localizedDescription)")
-                self?.phase = .failed(error.localizedDescription)
+                // A refetch that fails keeps the file already on screen.
+                guard let self, !isShowingFile else { return }
+                phase = .failed(error.localizedDescription)
             }
         }
     }

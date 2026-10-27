@@ -84,6 +84,11 @@ final class SkillDetailViewController: UIViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil
         )
+        // A live text-size change draws the file rows again.
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
+            self.renderedDetailFiles = nil
+            self.setNeedsUpdateProperties()
+        }
         setNeedsUpdateProperties()
     }
 

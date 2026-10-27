@@ -322,6 +322,13 @@ final class RouterModalSitesUITests: XCTestCase {
         XCTAssertTrue(enabled.waitForExistence(timeout: 5), "A skill must show its switch")
         XCTAssertEqual(enabled.value as? String, "1")
         XCTAssertEqual(disabled.value as? String, "0")
+        // The controls keep their own size at the trailing edge, wide iPad row
+        // included: the info button never takes the row's spare width.
+        let info = list.buttons["workspace.edit.skill.agents-md.detail"]
+        XCTAssertTrue(info.exists, "A skill must show its info button")
+        XCTAssertLessThanOrEqual(info.frame.width, 60, "The info button must not stretch")
+        XCTAssertLessThanOrEqual(info.frame.minX - enabled.frame.maxX, 16, "The switch must sit beside the info button")
+        XCTAssertEqual(enabled.frame.minX, disabled.frame.minX, accuracy: 1, "The switches must form one column")
         attachScreenshot("workspace-skills-page")
 
         enabled.tap()
@@ -331,7 +338,7 @@ final class RouterModalSitesUITests: XCTestCase {
         )
         XCTAssertEqual(enabled.value as? String, "1", "A refused write must put the switch back")
 
-        list.buttons["workspace.edit.skill.agents-md.detail"].tap()
+        info.tap()
         XCTAssertTrue(app.navigationBars["agents-md"].waitForExistence(timeout: 5), "The info button did not push the skill")
         XCTAssertTrue(app.staticTexts["Failed to load"].waitForExistence(timeout: 5), "A detail with no server must say it failed")
         attachScreenshot("workspace-skill-detail-offline")

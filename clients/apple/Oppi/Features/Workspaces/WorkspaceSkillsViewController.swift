@@ -94,7 +94,6 @@ final class WorkspaceSkillsViewController: SettingsListViewController<
                 AnyHashable(model.isPending(.skills, path: skill.path)),
                 AnyHashable(model.canTogglePiResources),
                 AnyHashable(toggleRevision),
-                AnyHashable(usesAccessibilitySize),
             ])
         case .error:
             return AnyHashable(model.skillsError)
@@ -107,10 +106,6 @@ final class WorkspaceSkillsViewController: SettingsListViewController<
 
     private func isEnabled(_ skill: SkillInfo) -> Bool {
         model.displayedEnabled(.skills, path: skill.path, server: skill.enabled)
-    }
-
-    private var usesAccessibilitySize: Bool {
-        collectionView.traitCollection.preferredContentSizeCategory.isAccessibilityCategory
     }
 
     private lazy var skillRow = UICollectionView.CellRegistration<WorkspaceSkillRowCell, Item> { [weak self] cell, _, item in
@@ -164,7 +159,6 @@ final class WorkspaceSkillsViewController: SettingsListViewController<
             isEnabled: isEnabled(skill),
             isPending: model.isPending(.skills, path: path),
             canToggle: model.canTogglePiResources,
-            stacksControls: usesAccessibilitySize,
             palette: ThemeRuntimeState.currentPalette(),
             onToggle: { [weak self] enabled in
                 guard let self else { return }
@@ -230,8 +224,16 @@ private final class WorkspaceSkillRowCell: UICollectionViewListCell {
         descriptionLabel.adjustsFontForContentSizeCategory = true
         descriptionLabel.numberOfLines = 2
         nameLabel.setContentCompressionResistancePriority(.required, for: .vertical)
-        controls.setContentHuggingPriority(.required, for: .horizontal)
-        controls.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // The controls keep their own size: the switch and the info button
+        // never take the row's spare width, so the text does.
+        for control in [toggle, infoButton] {
+            control.setContentHuggingPriority(.required, for: .horizontal)
+            control.setContentHuggingPriority(.required, for: .vertical)
+            control.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        text.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        nameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        descriptionLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spinner.hidesWhenStopped = true
         toggle.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -249,7 +251,9 @@ private final class WorkspaceSkillRowCell: UICollectionViewListCell {
             text.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
             text.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
             text.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
-            controls.leadingAnchor.constraint(equalTo: text.trailingAnchor, constant: 8),
+            // An inequality: the controls keep their own width at the trailing
+            // edge and the text takes the rest, never the other way around.
+            controls.leadingAnchor.constraint(greaterThanOrEqualTo: text.trailingAnchor, constant: 8),
             controls.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
             controls.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             controls.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor),
@@ -260,6 +264,17 @@ private final class WorkspaceSkillRowCell: UICollectionViewListCell {
         // the skill's name and description, the button opens its detail.
         isAccessibilityElement = false
         accessibilityElements = [toggle, infoButton]
+        arrangeForTextSize()
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
+            self.arrangeForTextSize()
+        }
+    }
+
+    /// At accessibility sizes the controls stack, so the text keeps the row's
+    /// width. A live text-size change restacks them.
+    private func arrangeForTextSize() {
+        controls.axis = traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? .vertical : .horizontal
+        setNeedsLayout()
     }
 
     @available(*, unavailable)
@@ -270,7 +285,6 @@ private final class WorkspaceSkillRowCell: UICollectionViewListCell {
         isEnabled: Bool,
         isPending: Bool,
         canToggle: Bool,
-        stacksControls: Bool,
         palette: ThemePalette,
         onToggle: @escaping (Bool) -> Void,
         onShowDetail: @escaping () -> Void
@@ -281,14 +295,12 @@ private final class WorkspaceSkillRowCell: UICollectionViewListCell {
         nameLabel.textColor = UIColor(isEnabled ? palette.fg : palette.comment)
         descriptionLabel.text = skill.description
         descriptionLabel.textColor = UIColor(palette.comment)
-        controls.axis = stacksControls ? .vertical : .horizontal
         if isPending { spinner.startAnimating() } else { spinner.stopAnimating() }
         spinner.isHidden = !isPending
         toggle.isOn = isEnabled
         toggle.isEnabled = !isPending && canToggle
         toggle.accessibilityIdentifier = "workspace.edit.skill.\(skill.name)"
-        toggle.accessibilityLabel = skill.name
-        toggle.accessibilityHint = skill.description
+        toggle.accessibilityLabel = "\(skill.name), \(skill.description)"
         infoButton.tintColor = UIColor(palette.comment)
         infoButton.accessibilityLabel = String(localized: "View \(skill.name) details")
         infoButton.accessibilityIdentifier = "workspace.edit.skill.\(skill.name).detail"
