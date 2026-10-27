@@ -133,12 +133,14 @@ final class SettingsRowButton: UIButton {
 /// `SettingsIndexRowCell`, the labels paint the row and the button is its one
 /// accessible element, so a tap, a VoiceOver activation, and `app.buttons[id]`
 /// all open the menu. At accessibility text sizes the choice stacks under the
-/// title instead of sharing its line.
+/// title instead of sharing its line. The title uses the system label color,
+/// as the title of a plain `valueCell` row on the same page does.
 final class SettingsMenuRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
     private let stack = UIStackView()
     private let titleLabel = UILabel()
     private let valueLabel = UILabel()
+    private let chevron = UIImageView(image: UIImage(systemName: "chevron.up.chevron.down"))
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -147,11 +149,20 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
             label.adjustsFontForContentSizeCategory = true
             label.numberOfLines = 0
         }
+        titleLabel.textColor = .label
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         valueLabel.setContentHuggingPriority(.required, for: .horizontal)
         valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // A symbol with a text style follows Dynamic Type on its own.
+        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let value = UIStackView(arrangedSubviews: [valueLabel, chevron])
+        value.spacing = 4
+        value.alignment = .center
+        value.setContentHuggingPriority(.required, for: .horizontal)
         stack.addArrangedSubview(titleLabel)
-        stack.addArrangedSubview(valueLabel)
+        stack.addArrangedSubview(value)
         stack.spacing = 8
         for view in [stack, button] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -185,8 +196,6 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
         let stacked = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
         stack.axis = stacked ? .vertical : .horizontal
         stack.alignment = stacked ? .leading : .center
-        valueLabel.textAlignment = stacked ? .natural : .right
-        invalidateIntrinsicContentSize()
     }
 
     func configure(
@@ -194,17 +203,12 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
         identifier: String,
         options: [(title: String, selected: Bool, action: () -> Void)]
     ) {
-        let palette = ThemeRuntimeState.currentPalette()
+        let tint = UIColor(ThemeRuntimeState.currentPalette().blue)
         let current = options.first(where: \.selected)?.title
-        let tint = UIColor(palette.blue)
         titleLabel.text = title
-        titleLabel.textColor = UIColor(palette.fg)
-        let symbol = UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
-        let mark = NSTextAttachment(image: UIImage(systemName: "chevron.up.chevron.down", withConfiguration: symbol)?.withTintColor(tint, renderingMode: .alwaysOriginal) ?? UIImage())
-        let value = NSMutableAttributedString(string: (current ?? "") + " ")
-        value.append(NSAttributedString(attachment: mark))
-        value.addAttribute(.foregroundColor, value: tint, range: NSRange(location: 0, length: value.length))
-        valueLabel.attributedText = value
+        valueLabel.text = current
+        valueLabel.textColor = tint
+        chevron.tintColor = tint
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = current
@@ -220,7 +224,7 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
         button.accessibilityLabel = nil
         button.accessibilityValue = nil
         titleLabel.text = nil
-        valueLabel.attributedText = nil
+        valueLabel.text = nil
         isHighlighted = false
     }
 }
