@@ -10,6 +10,16 @@ import UIKit
 @MainActor
 @Suite("UIKit router and host factory")
 struct RouterHostFactoryTests {
+    /// A pushed reader that hides the navigation bar for its own chrome once it
+    /// is the top screen, as the file viewers do from their updates. The stack
+    /// shows the bar for each incoming screen first, so this runs after that.
+    private final class BarHidingReaderViewController: UIViewController {
+        override func viewIsAppearing(_ animated: Bool) {
+            super.viewIsAppearing(animated)
+            navigationController?.setNavigationBarHidden(true, animated: false)
+        }
+    }
+
     @Test("a screen pushed through the navigator gets the app services, and finish() pops it")
     func pushedScreenGetsAppServicesAndFinishPops() async throws {
         let root = makeTestAppRoot()
@@ -124,12 +134,10 @@ struct RouterHostFactoryTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 2
         })
-        let skills = try #require(shellStack.topViewController as? HostedScreenController)
+        let skills = try #require(shellStack.topViewController as? ServerSkillsViewController)
 
-        // A file reader hides the bar for its own chrome, as a Skill file did.
-        skills.navigator.push {
-            Text("Reader").toolbarVisibility(.hidden, for: .navigationBar)
-        }
+        // A reader hides the bar for its own chrome, as a Skill file did.
+        Router.push(BarHidingReaderViewController(), from: skills)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.isNavigationBarHidden
         })
