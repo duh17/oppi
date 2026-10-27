@@ -148,11 +148,11 @@ struct WorkspaceSettingsScreenshotPreview: View {
             SkillDetailPreviewHost(root: root, connection: connection, serverId: Self.serverId)
         case "extensions": leaf { WorkspaceExtensionsPage(model: model) }
         case "mcp":
-            leaf {
-                if workspace.runtime == .sandbox {
-                    WorkspaceSandboxMcpPage(model: model)
-                } else {
-                    McpServersView(scopeId: workspace.id)
+            if workspace.runtime == .sandbox {
+                leaf { WorkspaceSandboxMcpPage(model: model) }
+            } else {
+                RouterPreviewControllerStack(root: root) {
+                    McpServersViewController(scopeId: workspace.id, root: root)
                 }
             }
         case "network": leaf { WorkspaceNetworkAccessPage(model: model) }

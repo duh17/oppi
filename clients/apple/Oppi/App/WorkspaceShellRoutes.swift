@@ -9,8 +9,9 @@ import SwiftUI
 // (`ServerSkillFileViewController`), Extensions
 // (`ServerExtensionsViewController`) and an Extension's detail
 // (`ServerExtensionDetailViewController`), SSH Terminal's host list,
-// Schedules, Agents, App Settings (`SettingsRootViewController`), Workspace
-// Settings (`WorkspaceSettingsViewController`), Model Providers
+// Schedules, Agents, MCP Servers (`McpServersViewController`), App Settings
+// (`SettingsRootViewController`), Workspace Settings
+// (`WorkspaceSettingsViewController`), Model Providers
 // (`ModelProvidersViewController`), and Server Metrics
 // (`ServerMetricsViewController`) are UIKit screens.
 
@@ -40,6 +41,13 @@ enum ShellRouteScreens {
         }
         if case .utility(.agents) = route {
             return AgentListViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
+        }
+        if case .utility(.mcpServers) = route {
+            return McpServersViewController(
+                scopeId: McpScopeSnapshot.globalId,
+                root: root,
+                showsSidebarToggle: placement == .splitDetailRoot
+            )
         }
         if case .utility(.appSettings) = route {
             return SettingsRootViewController(root: root)
@@ -127,6 +135,10 @@ enum ShellRouteScreens {
             return
         }
         if let list = screen as? ServerExtensionsViewController {
+            list.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let list = screen as? McpServersViewController {
             list.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
@@ -353,7 +365,8 @@ private struct WorkspaceUtilityDestinationView: View {
         case .skills:
             ServerSkillsView()
         case .mcpServers:
-            McpServersView(scopeId: McpScopeSnapshot.globalId)
+            // The shell hosts this route as McpServersViewController.
+            EmptyView()
         case .sshTerminal:
             // The shell hosts this route as SSHTerminalHostListViewController.
             EmptyView()

@@ -411,6 +411,17 @@ final class RouterRoutesUITests: XCTestCase {
         }
 
         revealSidebar(isSplit: isSplit)
+        app.buttons["workspace.mcpServers.open"].tap()
+        XCTAssertTrue(app.navigationBars["MCP Servers"].waitForExistence(timeout: 5), "MCP Servers did not open in the UIKit bar")
+        XCTAssertTrue(app.buttons["mcp.add"].exists, "MCP Servers has no Add button")
+        attachScreenshot("shell-mcp-servers")
+        assertRunning()
+        if !isSplit {
+            app.buttons["BackButton"].tap()
+            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop MCP Servers")
+        }
+
+        revealSidebar(isSplit: isSplit)
         app.buttons["workspace.open.oppi"].tap()
         let openSettings = app.buttons["workspace.edit.open"].firstMatch
         XCTAssertTrue(openSettings.waitForExistence(timeout: 10), "The workspace did not show")

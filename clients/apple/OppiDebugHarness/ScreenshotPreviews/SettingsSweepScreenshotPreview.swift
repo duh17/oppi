@@ -9,7 +9,7 @@ import SwiftUI
 /// `ssh-preflight-installing`, `ssh-preflight-install-failed`, `ssh-preflight-mismatch`,
 /// `ssh-hosts`, `ssh-hosts-empty` (the list with no saved host), `ssh-setup`,
 /// `mcp`, `mcp-workspace`,
-/// `mcp-detail`, `mcp-add`, `quick-comments`, `quick-comment-editor`,
+/// `mcp-detail`, `mcp-add`, `mcp-sign-in`, `quick-comments`, `quick-comment-editor`,
 /// `auto-title`, `theme-import`, `dictionary`, `dictionary-workspace`,
 /// `skills`, `skill-detail`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
@@ -91,6 +91,27 @@ struct SettingsSweepScreenshotPreview: View {
             mcpServer("notes", config: McpServerConfig(url: "https://notes.example.com/mcp"), state: "disabled", tools: [], exposure: .hidden, enabled: false),
         ],
         inherited: nil, errors: []
+    )
+
+    /// A host workspace's own `.pi/mcp.json`, with the global servers it inherits.
+    static let mcpWorkspaceId = "preview-ws"
+    static let mcpWorkspace = McpScopeSnapshot(
+        id: mcpWorkspaceId, title: "oppi-dev", kind: "project", projectTrust: .trusted,
+        servers: [
+            mcpServer("project-db", config: McpServerConfig(command: "uvx", args: ["mcp-server-sqlite"]), state: "connected", tools: ["query", "list_tables"], exposure: .codemode),
+            mcpServer("staging-api", config: McpServerConfig(url: "https://staging.example.com/mcp"), state: "failed", tools: [], exposure: .deferred),
+        ],
+        inherited: [
+            mcpServer("github", config: McpServerConfig(url: "https://api.github.com/mcp"), state: "connected", tools: ["search_issues", "get_pull_request"], exposure: .deferred, oauth: true),
+        ],
+        errors: []
+    )
+
+    static let mcpSignInFlow = McpAuthFlowSnapshot(
+        flowId: "mcp-flow", scopeId: McpScopeSnapshot.globalId, serverName: "github",
+        launchMode: .phoneBrowser, status: .awaitingManualCode,
+        auth: .init(url: "https://github.com/login/oauth", instructions: nil), error: nil,
+        createdAt: 1, updatedAt: 1, expiresAt: 9_999_999_999_999
     )
 
     private static func mcpServer(
@@ -246,6 +267,42 @@ struct SettingsSweepScreenshotPreview: View {
                 RouterPreviewControllerStack(root: root) { ServerExtensionsViewController(root: root) }
                     .ignoresSafeArea()
             }
+        case "mcp", "mcp-workspace":
+            RouterPreviewControllerStack(root: root) { [root, page] in
+                McpServersViewController(
+                    scopeId: page == "mcp" ? McpScopeSnapshot.globalId : Self.mcpWorkspaceId,
+                    root: root
+                )
+            }
+            .ignoresSafeArea()
+        case "mcp-detail":
+            RouterPreviewControllerStack(root: root) { [root, client, server] in
+                McpServerDetailViewController(
+                    scope: Self.mcpGlobal, entry: Self.mcpGlobal.servers[0],
+                    client: client, serverId: server.id, serverName: server.name,
+                    signIn: McpSignInOwner(), root: root
+                )
+            }
+            .ignoresSafeArea()
+        case "mcp-sign-in":
+            // The sign-in sheet's content, as the root of a stack.
+            RouterPreviewControllerStack(root: root) { [root, client, server] in
+                let owner = McpSignInOwner()
+                let attempt = ProviderAuthFlowAttempt(
+                    flow: Self.mcpSignInFlow.providerPresentation, client: McpFlowClient(client: client),
+                    serverId: server.id, serverName: server.name, providerName: "github"
+                )
+                owner.adopt(attempt, scopeId: McpScopeSnapshot.globalId)
+                return McpSignInViewController(attempt: attempt, owner: owner, root: root)
+            }
+            .ignoresSafeArea()
+        case "mcp-add":
+            RouterPreviewControllerStack(root: root) { [root, client, server] in
+                McpAddServerViewController(
+                    client: client, scope: Self.mcpGlobal, serverName: server.name, root: root, onAdded: {}
+                )
+            }
+            .ignoresSafeArea()
         case "ssh-hosts", "ssh-hosts-empty":
             RouterPreviewControllerStack(root: root) { SSHTerminalHostListViewController() }
                 .ignoresSafeArea()
@@ -352,17 +409,6 @@ struct SettingsSweepScreenshotPreview: View {
     @ViewBuilder
     private var pushedPage: some View {
         switch page {
-        case "mcp": McpServersView(scopeId: McpScopeSnapshot.globalId)
-        case "mcp-detail":
-            McpServerDetailView(
-                scope: Self.mcpGlobal, entry: Self.mcpGlobal.servers[0],
-                client: client, serverId: server.id, serverName: server.name,
-                signIn: McpSignInOwner()
-            )
-        case "mcp-add":
-            McpAddServerView(
-                client: client, scope: Self.mcpGlobal, serverName: server.name, onAdded: {}
-            )
         case "quick-comments": QuickCommentsSettingsView()
         case "quick-comment-editor":
             QuickCommentEditorView(
@@ -521,6 +567,7 @@ struct SettingsSweepScreenshotPreview: View {
             "/dictation/dictionary/global": Data(#"{"revision":3,"phrases":["Oppi","Tailscale","Herdr","Kypu","SwiftUI","Nerd Font Symbols Mono Extended Family Name That Is Long Enough To Wrap Past The Row"],"provider":"xai"}"#.utf8),
             "/dictation/dictionary/workspaces/preview-ws": Data(#"{"revision":1,"phrases":["oppi-dev","WorkspaceStore"],"provider":null}"#.utf8),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),
+            "/mcp/scopes/\(mcpWorkspaceId)/servers": json(McpServersResponse(scope: mcpWorkspace, activeSignIn: nil)),
             "/server/resources/pi/system-prompt": json(systemPrompt),
             "/server/resources/pi/default-tools": json(PiDefaultToolsSnapshot(defaultTools: ["+codemode"])),
             "/server/resources/extensions": json(ServerExtensionCatalog(

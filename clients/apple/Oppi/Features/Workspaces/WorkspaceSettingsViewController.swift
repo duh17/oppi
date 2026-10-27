@@ -685,14 +685,13 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         case .mcpServers:
             // A host workspace manages its own `.pi/mcp.json`; a sandbox picks
             // from the global servers.
-            navigator.push {
-                if model.isSandbox {
+            if model.isSandbox {
+                navigator.push {
                     WorkspaceSandboxMcpPage(model: model)
                         .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-                } else {
-                    McpServersView(scopeId: workspaceId)
-                        .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
                 }
+            } else {
+                Router.push(McpServersViewController(scopeId: workspaceId, root: root), from: self)
             }
         case .dictionary:
             navigator.push {
