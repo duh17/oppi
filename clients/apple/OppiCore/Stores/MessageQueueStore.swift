@@ -1,14 +1,21 @@
 import Foundation
 
 struct MessageQueueStoreMetricEvent: Equatable, Sendable {
-    enum Name: String, Equatable, Sendable {
-        case staleDrop
-        case startMiss
+    /// Which queue frame revealed the stale queue.
+    enum StaleSource: String, Equatable, Sendable {
+        case queueState = "queue_state"
+        case queueItemStarted = "queue_item_started"
     }
 
-    let name: Name
+    enum Detail: Equatable, Sendable {
+        /// The client dropped a queue update older than the queue it holds.
+        case staleDrop(source: StaleSource, incomingVersion: Int, currentVersion: Int)
+        /// A queue item started that the client never saw queued.
+        case startMiss(kind: MessageQueueKind, queueVersion: Int)
+    }
+
     let sessionId: String
-    let tags: [String: String]
+    let detail: Detail
 }
 
 struct MessageQueueStoreTelemetry: Sendable {
@@ -101,13 +108,12 @@ final class MessageQueueStore {
         guard !isConversationQueue(sessionId) else { return }
         if let current = queuesBySessionId[sessionId], state.version < current.version {
             recordQueueEventMetric(
-                .staleDrop,
-                sessionId: sessionId,
-                tags: [
-                    "source": "queue_state",
-                    "incoming_version": String(state.version),
-                    "current_version": String(current.version),
-                ]
+                .staleDrop(
+                    source: .queueState,
+                    incomingVersion: state.version,
+                    currentVersion: current.version
+                ),
+                sessionId: sessionId
             )
             return
         }
@@ -200,13 +206,12 @@ final class MessageQueueStore {
         var state = queuesBySessionId[sessionId] ?? .empty
         guard queueVersion >= state.version else {
             recordQueueEventMetric(
-                .staleDrop,
-                sessionId: sessionId,
-                tags: [
-                    "source": "queue_item_started",
-                    "incoming_version": String(queueVersion),
-                    "current_version": String(state.version),
-                ]
+                .staleDrop(
+                    source: .queueItemStarted,
+                    incomingVersion: queueVersion,
+                    currentVersion: state.version
+                ),
+                sessionId: sessionId
             )
             return
         }
@@ -221,12 +226,8 @@ final class MessageQueueStore {
 
         if !removed {
             recordQueueEventMetric(
-                .startMiss,
-                sessionId: sessionId,
-                tags: [
-                    "kind": kind.rawValue,
-                    "queue_version": String(queueVersion),
-                ]
+                .startMiss(kind: kind, queueVersion: queueVersion),
+                sessionId: sessionId
             )
         }
 
@@ -235,15 +236,10 @@ final class MessageQueueStore {
     }
 
     private func recordQueueEventMetric(
-        _ name: MessageQueueStoreMetricEvent.Name,
-        sessionId: String,
-        tags: [String: String]
+        _ detail: MessageQueueStoreMetricEvent.Detail,
+        sessionId: String
     ) {
-        telemetry.record(MessageQueueStoreMetricEvent(
-            name: name,
-            sessionId: sessionId,
-            tags: tags
-        ))
+        telemetry.record(MessageQueueStoreMetricEvent(sessionId: sessionId, detail: detail))
     }
 
     @discardableResult

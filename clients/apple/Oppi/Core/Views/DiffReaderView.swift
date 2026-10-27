@@ -465,16 +465,24 @@ final class DiffReaderView: UIView {
         reportSession()
     }
 
-    /// One low-volume line per reader visit: how long the first chunk took and
-    /// how scrolling went, so device smoothness is measurable from client logs.
+    /// One event per reader visit: how long the first chunk took and how
+    /// scrolling went, so device smoothness is measurable from telemetry.
     private func reportSession() {
         guard let index, let openMilliseconds else { return }
-        var metadata = scrollSampler.metadata()
-        metadata["openMs"] = String(Int(openMilliseconds.rounded()))
-        metadata["lines"] = String(index.renderedLineCount)
-        metadata["chunks"] = String(index.chunks.count)
-        metadata["contentWidthPt"] = String(Int(contentWidth))
-        ClientLog.info("DiffReader", "Diff reader session", metadata: metadata)
+        let scroll = scrollSampler.stats()
+        Telemetry.record(
+            AppDiffReaderSession(
+                openMs: openMilliseconds.rounded(),
+                lines: index.renderedLineCount,
+                chunks: index.chunks.count,
+                contentWidthPoints: Int(contentWidth),
+                scrollFrames: scroll.frames,
+                hitches: scroll.hitches,
+                hitchRatio: scroll.hitchRatio,
+                worstFrameMs: scroll.worstFrameMs
+            )
+        )
+        ClientLog.info("DiffReader", "Diff reader session")
         scrollSampler.reset()
     }
 
@@ -891,15 +899,14 @@ private final class DiffReaderScrollSampler: NSObject {
         worstFrameMilliseconds = 0
     }
 
-    func metadata() -> [String: String] {
-        [
-            "scrollFrames": String(frames),
-            "hitches": String(hitches),
-            "hitchMsPerSecond": scrollMilliseconds > 0
-                ? String(format: "%.1f", hitchMilliseconds / (scrollMilliseconds / 1_000))
-                : "0",
-            "worstFrameMs": String(format: "%.1f", worstFrameMilliseconds),
-        ]
+    /// Frames and hitches since the last reset. `hitchRatio` is hitch time over scroll time.
+    func stats() -> (frames: Int, hitches: Int, hitchRatio: Double, worstFrameMs: Double) {
+        (
+            frames,
+            hitches,
+            scrollMilliseconds > 0 ? hitchMilliseconds / scrollMilliseconds : 0,
+            worstFrameMilliseconds
+        )
     }
 
     @objc private func tick(_ link: CADisplayLink) {

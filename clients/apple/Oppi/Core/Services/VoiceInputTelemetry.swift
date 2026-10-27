@@ -1,54 +1,219 @@
 import Foundation
 
-enum VoiceMetricPhase: String, Sendable {
-    case prewarm
-    case modelReady = "model_ready"
-    case transcriberCreate = "transcriber_create"
-    case analyzerStart = "analyzer_start"
-    case audioStart = "audio_start"
-    case audioSession = "audio_session"
-    case total
-    case firstResult = "first_result"
+/// Which speech-to-text backend a take uses. Identifies the backend by catalog
+/// tag values; never the server host.
+struct VoiceProviderTelemetry: Sendable, Equatable {
+    var sttProvider: String?
+    var sttProviderKind: TelemetryTag.SttProviderKind?
+    var sttBackend: String?
+    var sttModel: String?
 }
 
-struct VoiceMetricAnnotation: Sendable {
-    let engine: String
+/// The AVAudioSession route a take recorded through. Port types only: never
+/// Bluetooth names or hardware identifiers.
+struct VoiceAudioRouteTelemetry: Sendable, Equatable {
+    var category: String?
+    var mode: String?
+    var inputs: String?
+    var outputs: String?
+    var sampleRate: Int?
+    /// Capture fell back to the built-in microphone after the first engine failed.
+    var builtInFallback = false
+
+    init() {}
+
+    /// From `DictationAudioEngineHelper.sessionRouteMetadata()`. Port lists are
+    /// joined with `/`: a name tag cannot hold a comma.
+    init(routeMetadata: [String: String]) {
+        category = routeMetadata["category"]
+        mode = routeMetadata["mode"]
+        inputs = routeMetadata["input_ports"].flatMap(Self.portList)
+        outputs = routeMetadata["output_ports"].flatMap(Self.portList)
+        sampleRate = routeMetadata["session_hz"].flatMap(Double.init).map { Int($0.rounded()) }
+    }
+
+    /// The route as of `routeMetadata`, keeping the fallback flag: a rebuild
+    /// re-reads the route but the take still fell back earlier.
+    func refreshed(from routeMetadata: [String: String]) -> Self {
+        var route = Self(routeMetadata: routeMetadata)
+        route.builtInFallback = builtInFallback
+        return route
+    }
+
+    private static func portList(_ commaSeparated: String) -> String? {
+        let ports = commaSeparated.split(separator: ",").map(String.init)
+        return ports.isEmpty ? nil : ports.joined(separator: "/")
+    }
+}
+
+/// Phase durations of one dictation start, in milliseconds.
+struct VoiceSetupTimings: Sendable, Equatable {
+    var modelReadyMs = 0
+    var transcriberCreateMs = 0
+    var analyzerStartMs = 0
+    var audioSessionMs = 0
+    var audioStartMs = 0
+    var totalMs = 0
+}
+
+/// Everything one dictation take reports about itself: engine, locale, what
+/// started it, and (once setup finishes) the model path, STT backend, and audio
+/// route. Each method builds one catalog event with these facts attached, so
+/// every event of a take carries the same tags and none is dropped.
+struct VoiceTakeTelemetry: Sendable, Equatable {
+    let voiceEngine: TelemetryTag.VoiceEngine
     let locale: String
-    let source: String
+    /// What started the take (`composer_mic`, `quick_session`, …).
+    let trigger: String
+    var modelPath: TelemetryTag.ModelPath?
+    var provider = VoiceProviderTelemetry()
+    var route = VoiceAudioRouteTelemetry()
 
-    func tags(
-        phase: VoiceMetricPhase? = nil,
-        status: String? = nil,
-        extra: [String: String] = [:]
-    ) -> [String: String] {
-        var tags: [String: String] = [
-            "engine": engine,
-            "locale": locale,
-            "ui_locale": locale,
-            "source": source,
-        ]
+    init(voiceEngine: TelemetryTag.VoiceEngine, locale: String, trigger: String) {
+        self.voiceEngine = voiceEngine
+        self.locale = locale
+        self.trigger = trigger
+    }
 
-        if let phase {
-            tags["phase"] = phase.rawValue
-        }
-        if let status {
-            tags["status"] = status
-        }
+    func prewarmEvent(
+        durationMs: Int,
+        status: AppDictationPrewarm.Status,
+        errorKind: TelemetryTag.ErrorKind? = nil
+    ) -> AppDictationPrewarm {
+        AppDictationPrewarm(
+            durationMs: Double(max(0, durationMs)),
+            voiceEngine: voiceEngine,
+            locale: locale,
+            trigger: trigger,
+            status: status,
+            errorKind: errorKind
+        )
+    }
 
-        for (key, value) in extra {
-            guard !key.isEmpty else { continue }
-            tags[key] = value
-        }
+    /// One event for the whole start. A failed or cancelled start has only its
+    /// total; `phases` is the per-phase breakdown of a successful one.
+    func setupEvent(
+        timings: VoiceSetupTimings,
+        includesPhases: Bool,
+        status: AppDictationSetup.Status,
+        errorKind: TelemetryTag.ErrorKind? = nil
+    ) -> AppDictationSetup {
+        AppDictationSetup(
+            totalMs: Double(max(0, timings.totalMs)),
+            modelReadyMs: includesPhases ? Double(max(0, timings.modelReadyMs)) : nil,
+            transcriberCreateMs: includesPhases ? Double(max(0, timings.transcriberCreateMs)) : nil,
+            analyzerStartMs: includesPhases ? Double(max(0, timings.analyzerStartMs)) : nil,
+            audioSessionMs: includesPhases ? Double(max(0, timings.audioSessionMs)) : nil,
+            audioStartMs: includesPhases ? Double(max(0, timings.audioStartMs)) : nil,
+            audioSampleRate: route.sampleRate,
+            voiceEngine: voiceEngine,
+            locale: locale,
+            trigger: trigger,
+            modelPath: modelPath,
+            sttProvider: provider.sttProvider,
+            sttProviderKind: provider.sttProviderKind,
+            sttBackend: provider.sttBackend,
+            sttModel: provider.sttModel,
+            audioCategory: route.category,
+            audioMode: route.mode,
+            audioInputs: route.inputs,
+            audioOutputs: route.outputs,
+            audioRoute: route.builtInFallback ? .builtInFallback : nil,
+            status: status,
+            errorKind: errorKind
+        )
+    }
 
-        return tags
+    func firstResultEvent(latencyMs: Int, resultType: String) -> AppDictationFirstResult {
+        AppDictationFirstResult(
+            durationMs: Double(max(0, latencyMs)),
+            voiceEngine: voiceEngine,
+            locale: locale,
+            trigger: trigger,
+            modelPath: modelPath,
+            sttProvider: provider.sttProvider,
+            sttProviderKind: provider.sttProviderKind,
+            sttBackend: provider.sttBackend,
+            sttModel: provider.sttModel,
+            audioCategory: route.category,
+            audioMode: route.mode,
+            audioInputs: route.inputs,
+            audioOutputs: route.outputs,
+            audioRoute: route.builtInFallback ? .builtInFallback : nil,
+            resultType: resultType
+        )
+    }
+
+    func endEvent(
+        finalizeMs: Int,
+        sessionMs: Int,
+        audioDurationMs: Int,
+        resultUpdates: Int,
+        previewFinalDeltaRatio: Double,
+        inputLevelPeakRatio: Double
+    ) -> AppDictationEnd {
+        AppDictationEnd(
+            finalizeMs: Double(max(0, finalizeMs)),
+            sessionMs: Double(max(0, sessionMs)),
+            audioDurationMs: Double(max(0, audioDurationMs)),
+            resultUpdates: max(0, resultUpdates),
+            previewFinalDeltaRatio: previewFinalDeltaRatio,
+            inputLevelPeakRatio: inputLevelPeakRatio,
+            voiceEngine: voiceEngine,
+            locale: locale,
+            trigger: trigger,
+            modelPath: modelPath,
+            sttProvider: provider.sttProvider,
+            sttProviderKind: provider.sttProviderKind,
+            sttBackend: provider.sttBackend,
+            sttModel: provider.sttModel,
+            audioCategory: route.category,
+            audioMode: route.mode,
+            audioInputs: route.inputs,
+            audioOutputs: route.outputs,
+            audioRoute: route.builtInFallback ? .builtInFallback : nil
+        )
+    }
+
+    func captureErrorEvent(errorKind: TelemetryTag.ErrorKind) -> AppDictationCaptureError {
+        AppDictationCaptureError(
+            voiceEngine: voiceEngine,
+            locale: locale,
+            trigger: trigger,
+            modelPath: modelPath,
+            sttProvider: provider.sttProvider,
+            sttProviderKind: provider.sttProviderKind,
+            sttBackend: provider.sttBackend,
+            sttModel: provider.sttModel,
+            audioCategory: route.category,
+            audioMode: route.mode,
+            audioInputs: route.inputs,
+            audioOutputs: route.outputs,
+            audioRoute: route.builtInFallback ? .builtInFallback : nil,
+            errorKind: errorKind
+        )
+    }
+
+    func cancelEvent() -> AppDictationCancel {
+        AppDictationCancel(
+            voiceEngine: voiceEngine,
+            locale: locale,
+            trigger: trigger,
+            modelPath: modelPath,
+            sttProvider: provider.sttProvider,
+            sttProviderKind: provider.sttProviderKind,
+            sttBackend: provider.sttBackend,
+            sttModel: provider.sttModel,
+            audioCategory: route.category,
+            audioMode: route.mode,
+            audioInputs: route.inputs,
+            audioOutputs: route.outputs,
+            audioRoute: route.builtInFallback ? .builtInFallback : nil
+        )
     }
 }
 
 enum VoiceInputTelemetry {
-#if DEBUG
-    nonisolated(unsafe) static var _recordMetricForTesting: ((ChatMetricName, Double, ChatMetricUnit, [String: String]) -> Void)?
-#endif
-
     static func userFacingMessage(for error: Error) -> String {
         if let voiceError = error as? VoiceInputError,
            let description = voiceError.errorDescription,
@@ -63,109 +228,5 @@ enum VoiceInputTelemetry {
         }
 
         return error.localizedDescription
-    }
-
-    static func metricErrorKind(for error: Error) -> String {
-        if let voiceError = error as? VoiceInputError {
-            return voiceError.telemetryCategory
-        }
-
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .timedOut:
-                return "timeout"
-            case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
-                return "network"
-            case .cancelled:
-                return "cancelled"
-            default:
-                return "url_error"
-            }
-        }
-
-        if error is DecodingError {
-            return "decode"
-        }
-
-        return "other"
-    }
-
-    static func recordMetric(
-        _ metric: ChatMetricName,
-        valueMs: Int,
-        annotation: VoiceMetricAnnotation,
-        sessionId: String? = nil,
-        phase: VoiceMetricPhase? = nil,
-        status: String? = nil,
-        extraTags: [String: String] = [:]
-    ) {
-        let tags = annotation.tags(phase: phase, status: status, extra: extraTags)
-        let clampedValue = max(0, valueMs)
-
-#if DEBUG
-        _recordMetricForTesting?(metric, Double(clampedValue), .ms, tags)
-#endif
-
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: metric,
-                value: Double(clampedValue),
-                unit: .ms,
-                sessionId: sessionId,
-                tags: tags
-            )
-        }
-    }
-
-    static func recordCountMetric(
-        _ metric: ChatMetricName,
-        value: Int,
-        annotation: VoiceMetricAnnotation,
-        sessionId: String? = nil,
-        status: String? = nil,
-        extraTags: [String: String] = [:]
-    ) {
-        let tags = annotation.tags(status: status, extra: extraTags)
-        let clampedValue = max(0, value)
-
-#if DEBUG
-        _recordMetricForTesting?(metric, Double(clampedValue), .count, tags)
-#endif
-
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: metric,
-                value: Double(clampedValue),
-                unit: .count,
-                sessionId: sessionId,
-                tags: tags
-            )
-        }
-    }
-
-    static func recordRatioMetric(
-        _ metric: ChatMetricName,
-        value: Double,
-        annotation: VoiceMetricAnnotation,
-        sessionId: String? = nil,
-        status: String? = nil,
-        extraTags: [String: String] = [:]
-    ) {
-        let tags = annotation.tags(status: status, extra: extraTags)
-        let clampedValue = max(0, value)
-
-#if DEBUG
-        _recordMetricForTesting?(metric, clampedValue, .ratio, tags)
-#endif
-
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: metric,
-                value: clampedValue,
-                unit: .ratio,
-                sessionId: sessionId,
-                tags: tags
-            )
-        }
     }
 }

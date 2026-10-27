@@ -23,44 +23,25 @@ struct ClientLogUploadEntry: Codable, Sendable, Equatable {
     let workspaceId: String?
 }
 
-struct ClientLogUploadRequest: Codable, Sendable, Equatable {
-    let generatedAt: Int64
+/// The `client` envelope of a client-log upload; the server shares one shape
+/// across events, client logs, and MetricKit. `deviceModel` is the hardware
+/// identifier (`iPhone17,1`).
+struct ClientLogUploadClient: Codable, Sendable, Equatable {
+    let kind: AppleClientKind
     let appVersion: String
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
     let gitCommit: String?
-    let clientKind: AppleClientKind
     let appInstanceId: String
     let bootId: String
+}
+
+struct ClientLogUploadRequest: Codable, Sendable, Equatable {
+    let generatedAt: Int64
+    let client: ClientLogUploadClient
     let droppedCount: Int?
     let entries: [ClientLogUploadEntry]
-
-    init(
-        generatedAt: Int64,
-        appVersion: String,
-        buildNumber: String,
-        osVersion: String,
-        deviceModel: String,
-        gitCommit: String? = nil,
-        clientKind: AppleClientKind,
-        appInstanceId: String,
-        bootId: String,
-        droppedCount: Int?,
-        entries: [ClientLogUploadEntry]
-    ) {
-        self.generatedAt = generatedAt
-        self.appVersion = appVersion
-        self.buildNumber = buildNumber
-        self.osVersion = osVersion
-        self.deviceModel = deviceModel
-        self.gitCommit = gitCommit
-        self.clientKind = clientKind
-        self.appInstanceId = appInstanceId
-        self.bootId = bootId
-        self.droppedCount = droppedCount
-        self.entries = entries
-    }
 }
 
 struct ClientLogUploadMetadata: Sendable, Equatable {

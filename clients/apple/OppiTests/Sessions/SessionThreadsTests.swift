@@ -458,7 +458,7 @@ struct SessionThreadLoadTests {
         await gate.open()
 
         #expect(fetch?.snapshot == nil)
-        #expect(fetch?.failure?.errorKind == "timeout")
+        #expect(fetch?.failure?.errorKind == .timeout)
         #expect(await fetch?.agentNames?.value?["a"] == "Ada")
     }
 
@@ -473,7 +473,7 @@ struct SessionThreadLoadTests {
         )
 
         #expect(fetch.failure?.localizedDescription == "thread down")
-        #expect(fetch.failure?.errorKind == "other")
+        #expect(fetch.failure?.errorKind == .other)
         #expect(fetch.agentNames != nil)
         #expect(await fetch.agentNames?.value == nil)
     }
@@ -489,23 +489,6 @@ struct SessionThreadLoadTests {
 
         #expect(fetch.snapshot?.rootSessionId == "root")
         #expect(fetch.agentNames == nil)
-    }
-
-    @Test func threadLoadTagsStayBounded() {
-        #expect(ChatSessionTelemetry.threadLoadTags(phase: "refresh", status: "ok", errorKind: "network") == [
-            "phase": "refresh",
-            "status": "ok",
-        ])
-        #expect(ChatSessionTelemetry.threadLoadTags(phase: "initial", status: "error", errorKind: "timeout") == [
-            "phase": "initial",
-            "status": "error",
-            "error_kind": "timeout",
-        ])
-        #expect(ChatSessionTelemetry.threadLoadTags(phase: "session-id", status: "failed", errorKind: " ") == [
-            "phase": "initial",
-            "status": "error",
-            "error_kind": "other",
-        ])
     }
 }
 

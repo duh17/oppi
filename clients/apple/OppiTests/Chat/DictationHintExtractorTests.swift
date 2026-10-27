@@ -236,8 +236,7 @@ struct DictationHintWiringTests {
             await prepareGate.wait()
             return VoiceProviderPreparation(
                 audioFormat: nil,
-                pathTag: "mock",
-                setupMetricTags: [:]
+                modelPath: .cold
             )
         }
         classicProvider.makeSessionHandler = { _, _ in session }
@@ -423,8 +422,7 @@ struct DictationHintWiringTests {
             await prepareGate.wait()
             return VoiceProviderPreparation(
                 audioFormat: nil,
-                pathTag: "mock",
-                setupMetricTags: [:]
+                modelPath: .cold
             )
         }
         classicProvider.makeSessionHandler = { _, _ in session }
@@ -678,8 +676,7 @@ struct DictationHintWiringTests {
             await prepareGate.wait()
             return VoiceProviderPreparation(
                 audioFormat: nil,
-                pathTag: "mock",
-                setupMetricTags: [:]
+                modelPath: .cold
             )
         }
         classicProvider.makeSessionHandler = { _, _ in session }

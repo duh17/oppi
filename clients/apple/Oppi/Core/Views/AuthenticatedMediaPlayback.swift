@@ -900,69 +900,57 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
 }
 
 enum MediaPlaybackTelemetry {
-    static func mediaKind(mimeType: String?, sourceFileExtension: String?) -> String {
+    static func mediaKind(mimeType: String?, sourceFileExtension: String?) -> TelemetryTag.MediaKind {
         let normalizedMime = mimeType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-        if normalizedMime.hasPrefix("video/") { return "video" }
-        if normalizedMime.hasPrefix("audio/") { return "audio" }
-        if normalizedMime.hasPrefix("image/") { return "image" }
+        if normalizedMime.hasPrefix("video/") { return .video }
+        if normalizedMime.hasPrefix("audio/") { return .audio }
+        if normalizedMime.hasPrefix("image/") { return .image }
 
         let ext = sourceFileExtension?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-        if ["mp4", "mov", "webm", "mkv"].contains(ext) { return "video" }
-        if ["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "opus"].contains(ext) { return "audio" }
-        if ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"].contains(ext) { return "image" }
-        return "unknown"
+        if ["mp4", "mov", "webm", "mkv"].contains(ext) { return .video }
+        if ["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "opus"].contains(ext) { return .audio }
+        if ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"].contains(ext) { return .image }
+        return .unknown
     }
 
     static func recordStart(
         startedNs: UInt64,
-        kind: String,
+        kind: TelemetryTag.MediaKind,
         source: String,
         mode: String,
         sessionId: String?
     ) {
-        let durationMs = Double((DispatchTime.now().uptimeNanoseconds &- startedNs) / 1_000_000)
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .mediaPlaybackStartMs,
-                value: durationMs,
-                unit: .ms,
-                sessionId: sessionId,
-                tags: [
-                    "kind": kind,
-                    "source": source,
-                    "mode": mode,
-                    "status": "ok",
-                ]
-            )
-        }
+        Telemetry.record(
+            AppMediaPlaybackStart(
+                durationMs: Double((DispatchTime.now().uptimeNanoseconds &- startedNs) / 1_000_000),
+                mediaKind: kind,
+                playbackSource: source,
+                playbackMode: mode
+            ),
+            sessionId: sessionId
+        )
     }
 
     static func recordError(
-        kind: String,
+        kind: TelemetryTag.MediaKind,
         source: String,
-        phase: String,
+        phase: AppMediaPlaybackError.Phase,
         error: Error?,
         sessionId: String?
     ) {
-        let errorKind = error.map { Self.errorKind($0) } ?? "other"
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .mediaPlaybackError,
-                value: 1,
-                unit: .count,
-                sessionId: sessionId,
-                tags: [
-                    "kind": kind,
-                    "source": source,
-                    "phase": phase,
-                    "error_kind": errorKind,
-                ]
-            )
-        }
+        Telemetry.record(
+            AppMediaPlaybackError(
+                mediaKind: kind,
+                playbackSource: source,
+                phase: phase,
+                errorKind: error.map(Self.errorKind) ?? .other
+            ),
+            sessionId: sessionId
+        )
     }
 
     static func logError(
-        kind: String,
+        kind: TelemetryTag.MediaKind,
         source: String,
         mode: String,
         phase: String,
@@ -983,20 +971,20 @@ enum MediaPlaybackTelemetry {
     }
 
     static func clientLogMetadata(
-        kind: String,
+        kind: TelemetryTag.MediaKind,
         source: String,
         phase: String,
         error: Error? = nil,
         extra: [String: String] = [:]
     ) -> [String: String] {
         var metadata: [String: String] = [
-            "kind": kind,
+            "kind": kind.rawValue,
             "source": source,
             "phase": phase,
         ]
         if let error {
             metadata.merge(ClientLog.networkErrorMetadata(error)) { current, _ in current }
-            metadata["error_kind"] = Self.errorKind(error)
+            metadata["error_kind"] = Self.errorKind(error).rawValue
         }
         for (key, value) in extra {
             metadata[key] = value
@@ -1004,27 +992,25 @@ enum MediaPlaybackTelemetry {
         return metadata
     }
 
-    private static func errorKind(_ error: Error) -> String {
+    private static func errorKind(_ error: Error) -> TelemetryTag.ErrorKind {
         let nsError = error as NSError
         if nsError.domain == NSURLErrorDomain {
             switch nsError.code {
             case NSURLErrorTimedOut:
-                return "timeout"
+                return .timeout
             case NSURLErrorCancelled:
-                return "cancelled"
-            case NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost, NSURLErrorNotConnectedToInternet:
-                return "network"
+                return .cancelled
             default:
-                return "network"
+                return .network
             }
         }
         if nsError.domain == AVFoundationErrorDomain {
-            return "avfoundation"
+            return .avfoundation
         }
         if nsError.domain == "dev.chenda.oppi.authenticated-media" {
-            return "http"
+            return .httpStatus
         }
-        return "other"
+        return .other
     }
 }
 
@@ -1128,7 +1114,7 @@ final class AuthenticatedMediaPlaybackSession {
         ))
     }
 
-    private func observeStalls(kind: String) {
+    private func observeStalls(kind: TelemetryTag.MediaKind) {
         timeControlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
             Task { @MainActor in
                 self?.handleTimeControlChange(player.timeControlStatus, kind: kind)
@@ -1164,7 +1150,7 @@ final class AuthenticatedMediaPlaybackSession {
         }
     }
 
-    private func handleTimeControlChange(_ status: AVPlayer.TimeControlStatus, kind: String) {
+    private func handleTimeControlChange(_ status: AVPlayer.TimeControlStatus, kind: TelemetryTag.MediaKind) {
         if status == .playing || status == .waitingToPlayAtSpecifiedRate {
             guard MediaPlaybackAudioSession.prepareSharedSession() else {
                 player.pause()
@@ -1179,12 +1165,12 @@ final class AuthenticatedMediaPlaybackSession {
         logStall(kind: kind, reason: player.reasonForWaitingToPlay?.rawValue ?? "waiting")
     }
 
-    private func handleBufferEmpty(_ isEmpty: Bool, kind: String) {
+    private func handleBufferEmpty(_ isEmpty: Bool, kind: TelemetryTag.MediaKind) {
         guard hasStartedPlaying, isEmpty else { return }
         logStall(kind: kind, reason: "playback_buffer_empty")
     }
 
-    private func logStall(kind: String, reason: String) {
+    private func logStall(kind: TelemetryTag.MediaKind, reason: String) {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastStallLogAt >= 2 else { return }
         lastStallLogAt = now
@@ -1192,7 +1178,7 @@ final class AuthenticatedMediaPlaybackSession {
             "MediaPlayback",
             "Media playback stalled",
             metadata: [
-                "kind": kind,
+                "kind": kind.rawValue,
                 "reason": reason,
                 "time_control": String(describing: player.timeControlStatus),
             ]
@@ -1200,7 +1186,7 @@ final class AuthenticatedMediaPlaybackSession {
         MediaPlaybackTelemetry.recordError(
             kind: kind,
             source: "authenticated_media",
-            phase: "stall",
+            phase: .stall,
             error: nil,
             sessionId: nil
         )
@@ -1526,7 +1512,7 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
                         MediaPlaybackTelemetry.recordError(
                             kind: mediaKind,
                             source: telemetrySource,
-                            phase: "player_item",
+                            phase: .playerItem,
                             error: item.error,
                             sessionId: telemetrySessionId
                         )
@@ -1550,7 +1536,7 @@ final class AuthenticatedMediaPlayerModel: ObservableObject {
                         MediaPlaybackTelemetry.recordError(
                             kind: mediaKind,
                             source: telemetrySource,
-                            phase: "player_state",
+                            phase: .playerState,
                             error: nil,
                             sessionId: telemetrySessionId
                         )
@@ -1966,7 +1952,7 @@ final class AuthenticatedMediaPlayerViewController: AVPlayerViewController {
                         MediaPlaybackTelemetry.recordError(
                             kind: mediaKind,
                             source: telemetrySource,
-                            phase: "player_item",
+                            phase: .playerItem,
                             error: item.error,
                             sessionId: telemetrySessionId
                         )
@@ -1986,7 +1972,7 @@ final class AuthenticatedMediaPlayerViewController: AVPlayerViewController {
                         MediaPlaybackTelemetry.recordError(
                             kind: mediaKind,
                             source: telemetrySource,
-                            phase: "player_state",
+                            phase: .playerState,
                             error: nil,
                             sessionId: telemetrySessionId
                         )

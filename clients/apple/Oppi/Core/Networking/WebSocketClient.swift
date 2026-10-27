@@ -556,7 +556,7 @@ final class WebSocketClient {
         metadata["status"] = String(describing: status)
         metadata["connectionID"] = String(connectionID)
         metadata["transportPath"] = preferredEndpoint?.transportPath.rawValue ?? ConnectionTransportPath.paired.rawValue
-        metadata.merge(NetworkPathTelemetry.tags(selection: preferredEndpoint, socksGeneration: tailnetRoute.generation)) { current, _ in current }
+        metadata.merge(NetworkPathTelemetry.tags(selection: preferredEndpoint, socksGeneration: tailnetRoute.generation).logMetadata) { current, _ in current }
         metadata["streamRole"] = diagnosticRole
         if let diagnosticSessionId {
             metadata["sessionId"] = diagnosticSessionId

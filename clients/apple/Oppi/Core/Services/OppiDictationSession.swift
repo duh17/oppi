@@ -300,10 +300,10 @@ final class OppiDictationSession: VoiceTranscriptionSession {
                     case .ready(let info):
                         ready = true
                         if let info {
-                            eventContinuation.yield(.providerMetricTags([
-                                "stt_backend": info.sttProvider,
-                                "model": info.sttModel,
-                            ]))
+                            eventContinuation.yield(.sttResolved(
+                                backend: info.sttProvider,
+                                model: info.sttModel
+                            ))
                         }
                         for chunk in preReadyChunks { try await send(chunk) }
                         preReadyChunks.removeAll()

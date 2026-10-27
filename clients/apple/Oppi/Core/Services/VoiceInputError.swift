@@ -16,22 +16,22 @@ enum VoiceInputError: LocalizedError {
     case remoteDecodeFailed
     case internalError(String)
 
-    var telemetryCategory: String {
+    var telemetryKind: TelemetryTag.ErrorKind {
         switch self {
         case .captureBufferOverflow:
-            "capture_buffer_overflow"
+            .captureBufferOverflow
         case .remoteRequestTimedOut:
-            "timeout"
+            .timeout
         case .remoteNetwork:
-            "network"
+            .network
         case .remoteBadResponseStatus:
-            "http_status"
+            .httpStatus
         case .remoteInvalidResponse, .remoteDecodeFailed:
-            "decode"
+            .decode
         case .serverNotConnected, .serverAsrUnavailable:
-            "misconfigured"
+            .misconfigured
         case .captureBusy, .microphoneHeldByLiveVoice, .audioCaptureUnavailable, .microphonePermissionDenied, .localeNotSupported, .internalError:
-            "other"
+            .other
         }
     }
 

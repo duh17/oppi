@@ -410,7 +410,7 @@ final class IOSChatSessionRuntimeAdapter:
     }
 
     func emitTimelineSessionEnded(sessionId: String) {
-        ChatTimelinePerf.emitJankRate(sessionId: sessionId, phase: "session_end")
+        ChatTimelinePerf.emitJankRate(sessionId: sessionId)
     }
 
     func currentMemoryFootprintMB() -> Int? {
@@ -418,76 +418,15 @@ final class IOSChatSessionRuntimeAdapter:
     }
 
     func recordTelemetry(_ event: ChatSessionRuntimeTelemetry, sessionId: String) {
-        switch event {
-        case .cacheLoad(let durationMs, let hit, let eventCount):
-            ChatSessionTelemetry.recordCacheLoad(
-                durationMs: durationMs,
-                sessionId: sessionId,
-                hit: hit,
-                eventCount: eventCount
-            )
-        case .reducerLoad(let durationMs, let source, let eventCount, let itemCount):
-            ChatSessionTelemetry.recordReducerLoad(
-                durationMs: durationMs,
-                sessionId: sessionId,
-                source: source,
-                eventCount: eventCount,
-                itemCount: itemCount
-            )
-        case .catchUp(let durationMs, let result):
-            ChatSessionTelemetry.recordCatchup(
-                durationMs: durationMs,
-                sessionId: sessionId,
-                result: result
-            )
-        case .catchUpRingMiss(let missed):
-            ChatSessionTelemetry.recordCatchupRingMiss(
-                sessionId: sessionId,
-                missed: missed
-            )
-        case .sessionLoad(let durationMs, let workspaceId, let path, let itemCount):
-            ChatSessionTelemetry.recordSessionLoad(
-                durationMs: durationMs,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                path: path,
-                itemCount: itemCount
-            )
-        case .freshContentLag(let durationMs, let workspaceId, let reason, let cached, let transport):
-            ChatSessionTelemetry.recordFreshContentLag(
-                durationMs: durationMs,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                reason: reason,
-                cached: cached,
-                transport: transport
-            )
-        case .sessionSwitch(let durationMs, let cached):
-            ChatSessionTelemetry.recordSessionSwitch(
-                durationMs: durationMs,
-                sessionId: sessionId,
-                cached: cached
-            )
-        case .timeToFirstToken(let durationMs, let tags):
-            ChatSessionTelemetry.recordTTFT(
-                durationMs: durationMs,
-                sessionId: sessionId,
-                tags: tags
-            )
-        case .traceFetch(let durationMs, let workspaceId, let status, let eventCount, let errorKind):
-            ChatSessionTelemetry.recordTraceFetch(
-                durationMs: durationMs,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                status: status,
-                traceEventCount: eventCount,
-                errorKind: errorKind
-            )
+        guard let mapped = ChatSessionTelemetry.event(for: event) else {
+            assertionFailure("Runtime telemetry value is not in the catalog: \(event)")
+            return
         }
+        Telemetry.record(mapped.event, sessionId: sessionId, workspaceId: mapped.workspaceId)
     }
 
     func telemetryErrorKind(for error: any Error) -> String {
-        ChatSessionTelemetry.metricErrorKind(for: error)
+        TelemetryErrorKind.classify(error).rawValue
     }
 
     func recordLog(

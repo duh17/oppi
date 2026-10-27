@@ -178,6 +178,20 @@ Each stored event, from either origin, is one JSONL line:
 
 App events carry `client`; server events do not. An aggregated server record carries the window's sum or max in `fields` and the last event's `ts`; its count of events is not stored, so a catalog event that needs one declares a count field (`server.ws_message_sent.messages`).
 
+### Apple client recording
+
+The iOS app records one way: `Telemetry.record(AppTimelineApply(durationMs: 6, items: 40, changed: 2), sessionId:, workspaceId:)` (`clients/apple/Oppi/Core/Telemetry/Telemetry.swift`). Call sites pass a generated event struct; none passes a unit, builds a `[String: String]`, or caps tags. `record`:
+
+1. applies the catalog `emit` rules, so a call site does not repeat a duration floor (the catalog is the only place a threshold lives);
+2. drops an event with a non-finite field, because one NaN would fail JSON encoding for the whole upload batch;
+3. hands the event to `TelemetryEventUploader`, which keeps up to 1000 events, uploads batches of 50 to `POST /telemetry/events` when a batch fills or 10 s after the first buffered event, and keeps a batch when the upload fails. The server's per-reason drop counts are logged (`TelemetryUpload` category) and the dropped events are not resent.
+
+Ambient state comes from one provider, `TelemetryContext`: `screen`, `stream_state`, `agents`, and `voice`. Every event that carries any of them (`app.device_resources`, `app.memory_warning`, `app.foreground`, the main-thread stall events) reads it there, and an unknown value is `unknown`, never absent. `sessionId` and `workspaceId` are passed to `record` by the code that knows them.
+
+`TelemetryErrorKind.classify` is the one mapping from a thrown error to the catalog `error_kind` vocabulary (network failures, HTTP statuses, decode, cancellation, and the app's own error types). Swift type names, error text, and numeric codes never become tag values. Values the shared runtime reports (`OppiCore`, which the Mac target also compiles) are the catalog's snake_case strings; the iOS adapter maps them to generated types and refuses a value the catalog does not declare.
+
+The client-log and MetricKit uploads carry the same `client` envelope as events (`TelemetryClientIdentity`; the simulator reports the device it emulates). A log line that used to carry numbers (memory warning, foreground footprint, main-thread stall, Live Voice call playback, diff reader session, HTTPS candidate) is now an event; the log line keeps only its message. `protocol/telemetry-events-upload.json` is also encoded by `TelemetryEventsUploadContractTests`, which fails on any byte difference.
+
 ## Event taxonomy
 
 Use this split when reading dashboards or telemetry reviews. The catalog `group` of each event places it in a review group (UX Responsiveness, Connection Reliability, Rendering Smoothness, Attention and Media UX, Dictation UX, Dictation Backend, Session List, Device, Server, Agent Workload, Server Operations).
@@ -393,7 +407,7 @@ Before adding an event, answer these questions in the code review:
 Implementation rules:
 
 - Declare the event in `server/src/telemetry/catalog.ts` first: fields with units, tags (reuse a vocabulary key with the same meaning, or add a key with one meaning), `group`, and any `emit`, `storage`, and `slo`.
-- `app.*` events: run `bun server/scripts/generate-telemetry-catalog.ts` and record the generated struct from the client. Server events: call `ServerTelemetry.record` with the catalog types.
+- `app.*` events: run `bun server/scripts/generate-telemetry-catalog.ts` and record the generated struct with `Telemetry.record`. Server events: call `ServerTelemetry.record` with the catalog types.
 - `cd server && npm run check` runs `scripts/check-telemetry.ts`; fix every invariant it reports and commit the regenerated Swift.
 - Prefer log lines for raw platform error details such as `NSURLErrorDomain`, HTTP status, or WebSocket close reason; events carry bounded counts, durations, and ratios.
 - Update tests when an event's behavior changes; do not pin event names or wording.

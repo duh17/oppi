@@ -570,6 +570,9 @@ extension ChatViewController {
     }
 
     private func handleScenePhaseChange() {
+        if AppScenePhase.shared.isBackground {
+            sessionManager.cancelLoadMeasurements()
+        }
         if AppScenePhase.shared.pausesTimelinePresentation {
             // The timeline stays mounted while the scene cannot present a
             // frame. Keep transport and shared session status alive, but make

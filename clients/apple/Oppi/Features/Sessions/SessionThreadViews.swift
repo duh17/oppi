@@ -301,7 +301,7 @@ struct SessionThreadDetailView: View {
 enum SessionThreadLoad {
     struct Failure: Sendable, Equatable {
         var localizedDescription: String
-        var errorKind: String
+        var errorKind: TelemetryTag.ErrorKind
     }
 
     struct Fetch: Sendable {
@@ -324,7 +324,7 @@ enum SessionThreadLoad {
                 snapshot: nil,
                 failure: Failure(
                     localizedDescription: error.localizedDescription,
-                    errorKind: ChatSessionTelemetry.metricErrorKind(for: error)
+                    errorKind: TelemetryErrorKind.classify(error)
                 ),
                 agentNames: names
             )
@@ -470,7 +470,7 @@ private struct SessionThreadDetailContentView: View {
 
     private func load() async {
         let startedAtMs = Date.nowMs()
-        let phase = snapshot == nil ? "initial" : "refresh"
+        let phase: AppThreadLoad.Phase = snapshot == nil ? .initial : .refresh
         // No client yet: the screen shows Connecting, and the keyed task loads on install.
         guard let api = connection?.apiClient else { return }
         loadGeneration += 1
@@ -506,7 +506,7 @@ private struct SessionThreadDetailContentView: View {
             recordThreadLoad(
                 startedAtMs: startedAtMs,
                 phase: phase,
-                status: "ok",
+                status: .ok,
                 workspaceId: workspaceId(in: fetched)
             )
         } else if let failure = fetch.failure {
@@ -518,7 +518,7 @@ private struct SessionThreadDetailContentView: View {
             recordThreadLoad(
                 startedAtMs: startedAtMs,
                 phase: phase,
-                status: "error",
+                status: .error,
                 errorKind: failure.errorKind,
                 workspaceId: workspaceId(in: snapshot)
             )
@@ -545,18 +545,20 @@ private struct SessionThreadDetailContentView: View {
 
     private func recordThreadLoad(
         startedAtMs: Int64,
-        phase: String,
-        status: String,
-        errorKind: String? = nil,
+        phase: AppThreadLoad.Phase,
+        status: AppThreadLoad.Status,
+        errorKind: TelemetryTag.ErrorKind? = nil,
         workspaceId: String?
     ) {
-        ChatSessionTelemetry.recordThreadLoad(
-            durationMs: Date.nowMs() - startedAtMs,
+        Telemetry.record(
+            AppThreadLoad(
+                durationMs: Double(max(0, Date.nowMs() - startedAtMs)),
+                phase: phase,
+                status: status,
+                errorKind: errorKind
+            ),
             sessionId: target.rootSessionId,
-            workspaceId: workspaceId,
-            phase: phase,
-            status: status,
-            errorKind: errorKind
+            workspaceId: workspaceId
         )
     }
 

@@ -130,20 +130,20 @@ final class SessionStreamCoordinator {
         }
 
         let wsStatus = connection.wsClient?.status
-        let transport = connection.transportPath.rawValue
+        let transport = connection.transportPath
         connection.connectStream()
 
         let streamOpenStart = ContinuousClock.now
-        let statusBeforeWait = statusTag(connection.wsClient?.status)
-        let waitOutcome: String
+        let stateBeforeWait = connectionState(connection.wsClient?.status)
+        let waitResult: AppWsWait.Result
         if connection.wsClient?.status == .connected {
-            waitOutcome = "already_connected"
+            waitResult = .alreadyConnected
         } else if await connection.waitForConnectedStream(
             timeout: connection._connectedStreamWaitTimeoutForTesting ?? .seconds(10)
         ) {
-            waitOutcome = "connected"
+            waitResult = .connected
         } else {
-            waitOutcome = "timeout"
+            waitResult = .timeout
         }
 
         if connection.focusedSessionStreamEndpointIsUnsupported() {
@@ -152,18 +152,22 @@ final class SessionStreamCoordinator {
         }
 
         let streamOpenMs = Int((ContinuousClock.now - streamOpenStart) / .milliseconds(1))
-        var waitTags = NetworkPathTelemetry.tags(selection: connection.endpointSelection)
-        waitTags["transport"] = transport
-        waitTags["status_before"] = statusBeforeWait
-        waitTags["outcome"] = waitOutcome
-        recordMetric(
-            .wsWaitForConnectedMs,
-            value: streamOpenMs,
-            sessionId: sessionId,
-            tags: waitTags
+        let route = NetworkPathTelemetry.tags(selection: connection.endpointSelection)
+        Telemetry.record(
+            AppWsWait(
+                durationMs: Double(streamOpenMs),
+                socksGeneration: route.socksGeneration,
+                route: route.route,
+                hostKind: route.hostKind,
+                pathType: route.pathType,
+                transport: AppWsWait.Transport(rawValue: transport.rawValue),
+                connectionState: stateBeforeWait,
+                result: waitResult
+            ),
+            sessionId: sessionId
         )
 
-        guard waitOutcome != "timeout", !Task.isCancelled else {
+        guard waitResult != .timeout, !Task.isCancelled else {
             streamCoordinatorLogger.warning(
                 "streamSession(\(sessionId, privacy: .public)): transport not connected; deferring queue sync until stream_connected"
             )
@@ -176,7 +180,7 @@ final class SessionStreamCoordinator {
         // handler cancels; the cancelled waiter is not a failed refresh.
         // An already-connected socket will not emit another stream_connected,
         // so that path still schedules here.
-        if waitOutcome == "already_connected" {
+        if waitResult == .alreadyConnected {
             transition(to: .queueSync(sessionId: sessionId, phase: .initial), event: .transportReady)
             scheduleQueueSync(connection: connection, sessionId: sessionId, transport: transport)
         }
@@ -184,7 +188,7 @@ final class SessionStreamCoordinator {
         let totalMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
         let endpointHostKind = connection.streamEndpointHostKindForMetrics()
         streamCoordinatorLogger.info(
-            "streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms total=\(totalMs)ms transport=\(transport, privacy: .public) hostKind=\(endpointHostKind, privacy: .public)"
+            "streamSession(\(sessionId, privacy: .public)): wsStatus=\(String(describing: wsStatus), privacy: .public) streamOpen=\(streamOpenMs)ms total=\(totalMs)ms transport=\(transport.rawValue, privacy: .public) hostKind=\(endpointHostKind, privacy: .public)"
         )
 
         ClientLog.info("StreamSession", "\(sessionId.prefix(8))", metadata: [
@@ -193,7 +197,7 @@ final class SessionStreamCoordinator {
             "queueSyncMs": "0",
             "queueSyncStatus": "async",
             "totalMs": String(totalMs),
-            "transport": transport,
+            "transport": transport.rawValue,
             "streamEndpoint": connection.focusedSessionStreamEndpointKind,
             "endpointHostKind": endpointHostKind,
             "connectMs": String(streamOpenMs),
@@ -213,7 +217,7 @@ final class SessionStreamCoordinator {
         scheduleQueueSync(
             connection: connection,
             sessionId: focusedSessionId,
-            transport: connection.transportPath.rawValue
+            transport: connection.transportPath
         )
     }
 
@@ -265,7 +269,7 @@ final class SessionStreamCoordinator {
     private func scheduleQueueSync(
         connection: ServerConnection,
         sessionId: String,
-        transport: String
+        transport: ConnectionTransportPath
     ) {
         connection.cancelDeferredQueueSync()
 
@@ -312,7 +316,7 @@ final class SessionStreamCoordinator {
     private func performQueueSyncAttempt(
         connection: ServerConnection,
         sessionId: String,
-        transport: String,
+        transport: ConnectionTransportPath,
         timeout: Duration,
         phase: QueueSyncPhase
     ) async -> Bool {
@@ -328,53 +332,25 @@ final class SessionStreamCoordinator {
             )
         }
 
-        let queueSyncMs = Int((ContinuousClock.now - queueSyncStart) / .milliseconds(1))
-        let metricTags = MessageSender.queueSyncMetricTags(
+        let queueSyncMs = Double((ContinuousClock.now - queueSyncStart) / .milliseconds(1))
+        let event = MessageSender.queueSyncEvent(
+            durationMs: queueSyncMs,
             transport: transport,
-            phase: phase.rawValue,
+            phase: phase,
             error: queueSyncError
         )
-        let metricStatus = metricTags["status"] ?? "error"
-        let metricSessionId = sessionId
+        Telemetry.record(event, sessionId: sessionId)
 
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .queueSyncMs,
-                value: Double(queueSyncMs),
-                unit: .ms,
-                sessionId: metricSessionId,
-                tags: metricTags
-            )
-        }
-
-        return metricStatus == "ok"
+        return event.status == .ok
     }
 
-    private func recordMetric(
-        _ metric: ChatMetricName,
-        value: Int,
-        unit: ChatMetricUnit = .ms,
-        sessionId: String?,
-        tags: [String: String]
-    ) {
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: metric,
-                value: Double(value),
-                unit: unit,
-                sessionId: sessionId,
-                tags: tags
-            )
-        }
-    }
-
-    private func statusTag(_ status: WebSocketClient.Status?) -> String {
+    private func connectionState(_ status: WebSocketClient.Status?) -> TelemetryTag.ConnectionState {
         switch status {
-        case .connected: "connected"
-        case .connecting: "connecting"
-        case .disconnected: "disconnected"
-        case .reconnecting: "reconnecting"
-        case nil: "none"
+        case .connected: .connected
+        case .connecting: .connecting
+        case .disconnected: .disconnected
+        case .reconnecting: .reconnecting
+        case nil: .noStream
         }
     }
 

@@ -2364,23 +2364,25 @@ actor APIClient: ClientLogUploading {
         _ = try await post("/telemetry/metrickit", body: body)
     }
 
-    /// Upload chat performance metric samples for baseline tracking.
-    /// Sorted-keys encoder for chat metric uploads.
-    /// Produces deterministic tag JSON (e.g. `{"expanded":"0","tool":"edit"}`)
-    /// regardless of dictionary insertion order, eliminating phantom cardinality.
-    private static let chatMetricsEncoder: JSONEncoder = {
+    /// Sorted-keys encoder for telemetry uploads: the same event always
+    /// encodes to the same bytes, whatever the dictionary insertion order.
+    static let telemetryEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         return encoder
     }()
 
-    func uploadChatMetrics(request body: ChatMetricUploadRequest) async throws {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-        _ = try await post(
-            "/telemetry/chat-metrics",
+    /// Upload catalog events. The response counts events the server refused, by reason.
+    func uploadTelemetryEvents(request body: TelemetryEventUploadRequest) async throws -> TelemetryEventUploadResponse {
+        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+            return TelemetryEventUploadResponse(ok: true, accepted: 0, dropped: [:])
+        }
+        let data = try await post(
+            "/telemetry/events",
             body: body,
-            encoder: Self.chatMetricsEncoder
+            encoder: Self.telemetryEncoder
         )
+        return try JSONDecoder().decode(TelemetryEventUploadResponse.self, from: data)
     }
 
     func uploadClientLogs(request body: ClientLogUploadRequest) async throws {
@@ -2388,7 +2390,7 @@ actor APIClient: ClientLogUploading {
         _ = try await post(
             "/telemetry/client-logs",
             body: body,
-            encoder: Self.chatMetricsEncoder
+            encoder: Self.telemetryEncoder
         )
     }
 

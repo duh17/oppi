@@ -288,35 +288,21 @@ extension ServerConnection {
         sessionUsageMetricSnapshots[session.id] = snapshot
         sessionUsageMetricLastEmittedAt[session.id] = now
 
-        let sessionId = session.id
-        let workspaceId = session.workspaceId
-        let tags: [String: String] = [
-            "provider": snapshot.provider,
-            "model": snapshot.model,
-        ]
-
-        let samples: [(ChatMetricName, Double)] = [
-            (.sessionMessageCount, Double(snapshot.messageCount)),
-            (.sessionInputTokens, Double(snapshot.inputTokens)),
-            (.sessionOutputTokens, Double(snapshot.outputTokens)),
-            (.sessionMutatingToolCalls, Double(snapshot.mutatingToolCalls)),
-            (.sessionFilesChanged, Double(snapshot.filesChanged)),
-            (.sessionContextTokens, Double(snapshot.contextTokens)),
-            (.sessionContextWindow, Double(snapshot.contextWindow)),
-        ]
-
-        Task.detached(priority: .utility) {
-            for (metric, value) in samples {
-                await ChatMetricsService.shared.record(
-                    metric: metric,
-                    value: value,
-                    unit: .count,
-                    sessionId: sessionId,
-                    workspaceId: workspaceId,
-                    tags: tags
-                )
-            }
-        }
+        Telemetry.record(
+            AppSessionUsage(
+                messageCount: snapshot.messageCount,
+                inputTokens: snapshot.inputTokens,
+                outputTokens: snapshot.outputTokens,
+                mutatingToolCalls: snapshot.mutatingToolCalls,
+                filesChanged: snapshot.filesChanged,
+                contextTokens: snapshot.contextTokens,
+                contextWindow: snapshot.contextWindow,
+                provider: snapshot.provider,
+                model: snapshot.model
+            ),
+            sessionId: session.id,
+            workspaceId: session.workspaceId
+        )
     }
 
     func shouldEmitSessionUsageMetrics(

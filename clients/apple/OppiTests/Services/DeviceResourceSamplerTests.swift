@@ -26,31 +26,12 @@ struct DeviceResourceSamplerTests {
         #expect(sink.isFinite)
     }
 
-    @Test("App-state tags keep agent activity and voice capture apart")
-    @MainActor
-    func appStateTagsSeparateAgentsAndVoice() {
-        let screenAwake = ScreenAwakeController(
-            timeoutProvider: { nil },
-            idleTimerSetter: { _ in },
-            sleepFunction: { _ in }
-        )
-
-        screenAwake.setVoiceInputActive(true)
-        var tags = DeviceResourceSampler.appStateTags(context: nil, screenAwake: screenAwake)
-        #expect(tags["voice"] == "on")
-        #expect(tags["agents"] == "idle")
-        #expect(tags["screen"] == "unknown")
-        #expect(tags["stream"] == "unknown")
-
-        screenAwake.setVoiceInputActive(false)
-        screenAwake.setSessionActivity(true, sessionId: "s1")
-        tags = DeviceResourceSampler.appStateTags(context: nil, screenAwake: screenAwake)
-        #expect(tags["voice"] == "off")
-        #expect(tags["agents"] == "running")
-
-        screenAwake.clearSessionActivity(sessionId: "s1")
-        tags = DeviceResourceSampler.appStateTags(context: nil, screenAwake: screenAwake)
-        #expect(tags["agents"] == "idle")
+    @Test("Thermal state maps to its 0-3 severity")
+    func thermalStateSeverity() {
+        #expect(DeviceResourceSampler.thermalStateValue(.nominal) == 0)
+        #expect(DeviceResourceSampler.thermalStateValue(.fair) == 1)
+        #expect(DeviceResourceSampler.thermalStateValue(.serious) == 2)
+        #expect(DeviceResourceSampler.thermalStateValue(.critical) == 3)
     }
 
     private static func threadCPUSeconds() -> Double {

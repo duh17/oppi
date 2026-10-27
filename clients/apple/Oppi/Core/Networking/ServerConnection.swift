@@ -743,7 +743,6 @@ final class ServerConnection {
                     NetworkPathTelemetry.recordHandshake(
                         selection: candidate,
                         durationMs: handshakeMs,
-                        success: true,
                         socksGeneration: route.generation
                     )
                     guard transportConfigurationGeneration == configurationGeneration else { return false }
@@ -785,7 +784,6 @@ final class ServerConnection {
                     NetworkPathTelemetry.recordHandshake(
                         selection: candidate,
                         durationMs: handshakeMs,
-                        success: false,
                         error: error,
                         socksGeneration: route.generation
                     )
@@ -1859,26 +1857,15 @@ final class ServerConnection {
 
         guard resolved, let receivedAtMs = meta?.receivedAtMs else { return }
         let lagMs = max(0, Date.nowMs() - receivedAtMs)
-        guard shouldRecordCommandResolveLag(command: command, success: success, lagMs: Int(lagMs)) else { return }
-        let transport = meta?.transportPath.rawValue ?? transportPath.rawValue
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .commandResolveLagMs,
-                value: Double(lagMs),
-                unit: .ms,
-                tags: [
-                    "command": command,
-                    "transport": transport,
-                    "success": success ? "true" : "false",
-                ]
+        let transport = meta?.transportPath ?? transportPath
+        Telemetry.record(
+            AppCommandResolveLag(
+                lagMs: Double(lagMs),
+                command: command,
+                transport: AppCommandResolveLag.Transport(rawValue: transport.rawValue) ?? .paired,
+                status: success ? .ok : .error
             )
-        }
-    }
-
-    private func shouldRecordCommandResolveLag(command: String, success: Bool, lagMs: Int) -> Bool {
-        if !success { return true }
-        guard command == "get_queue" else { return true }
-        return lagMs >= 50
+        )
     }
 
     /// Handle focused session stream reconnection.
@@ -2931,10 +2918,6 @@ final class ServerConnection {
             focusedSessionStore.clear()
             sessionStore.setViewingSession(nil)
         }
-    }
-
-    func telemetryErrorKind(from error: Error) -> String {
-        MessageSender.telemetryErrorKind(from: error)
     }
 
     func makeDictationStreamClient() -> DictationStreamClient? {

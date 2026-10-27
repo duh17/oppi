@@ -166,7 +166,7 @@ After pairing, Oppi uses authenticated HTTPS/WSS. Automatic routing evaluates ve
 
 Public release builds upload no Oppi diagnostics until you enable **Settings → Privacy & Security → Send Diagnostics**. The destination is the currently paired Oppi server, and no external crash-reporting service is linked in public iOS builds.
 
-Diagnostics can include bounded MetricKit summaries, crash, hang, CPU, disk, and app-launch information, app and OS/build details, resource samples, connection and lifecycle outcomes, low-cardinality session, workspace, and app-instance identifiers, and redacted client logs. They exclude prompt text, assistant output, tool arguments, command output, dictation transcript text, relay URLs and hosts, IP addresses, tokens, tickets, node IDs, endpoint IDs, secrets, credentials, raw URLs, and local file paths.
+Diagnostics can include bounded MetricKit summaries, crash, hang, CPU, disk, and app-launch information, app and OS/build details, the device's hardware model identifier (for example `iPhone17,1`), resource samples, connection and lifecycle outcomes, low-cardinality session, workspace, and app-instance identifiers, and redacted client logs. They exclude prompt text, assistant output, tool arguments, command output, dictation transcript text, relay URLs and hosts, IP addresses, tokens, tickets, node IDs, endpoint IDs, secrets, credentials, raw URLs, and local file paths.
 
 | Diagnostic data | Default retention | Operator override |
 | --- | ---: | --- |

@@ -164,13 +164,8 @@ struct MessageQueueStoreTests {
         #expect(store.queue(for: "s1").version == 10)
         #expect(recorder.events == [
             MessageQueueStoreMetricEvent(
-                name: .staleDrop,
                 sessionId: "s1",
-                tags: [
-                    "source": "queue_state",
-                    "incoming_version": "9",
-                    "current_version": "10",
-                ]
+                detail: .staleDrop(source: .queueState, incomingVersion: 9, currentVersion: 10)
             )
         ])
     }
@@ -192,12 +187,8 @@ struct MessageQueueStoreTests {
 
         #expect(recorder.events == [
             MessageQueueStoreMetricEvent(
-                name: .startMiss,
                 sessionId: "s1",
-                tags: [
-                    "kind": "follow_up",
-                    "queue_version": "10",
-                ]
+                detail: .startMiss(kind: .followUp, queueVersion: 10)
             )
         ])
     }

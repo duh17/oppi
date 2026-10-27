@@ -925,7 +925,7 @@ final class AskCardViewController: UIViewController {
         submission.submit(requestID: request.id, deliver: { [weak self] complete in
             guard let self else { return }
             self.recordResponseMetric(
-                outcome: submittedAnswers.isEmpty ? "empty" : "answered",
+                result: submittedAnswers.isEmpty ? .empty : .answered,
                 surface: surface,
                 submittedAnswers: submittedAnswers
             )
@@ -942,7 +942,7 @@ final class AskCardViewController: UIViewController {
         pageAdvance.invalidate()
         submission.submit(requestID: request.id, deliver: { [weak self] complete in
             guard let self else { return }
-            self.recordResponseMetric(outcome: "ignored", surface: surface, submittedAnswers: [:])
+            self.recordResponseMetric(result: .ignored, surface: surface, submittedAnswers: [:])
             self.onIgnoreAll?(complete)
             FeatureEducationTips.markPromptAnswered()
         }, completion: { [weak self] _ in
@@ -1002,31 +1002,23 @@ final class AskCardViewController: UIViewController {
     }
 
     private func recordResponseMetric(
-        outcome: String,
+        result: AppAskResponse.Result,
         surface: String,
         submittedAnswers: [String: AskAnswer]
     ) {
         guard !didRecordResponseMetric, let request else { return }
         didRecordResponseMetric = true
         let startedNs = presentedAtNs == 0 ? AskCard.timestampNs() : presentedAtNs
-        let durationMs = Double((AskCard.timestampNs() &- startedNs) / 1_000_000)
-        let tags = AskCard.responseMetricTags(
-            request: request,
-            answers: submittedAnswers,
-            outcome: outcome,
-            surface: surface
+        Telemetry.record(
+            AskCard.responseEvent(
+                request: request,
+                answers: submittedAnswers,
+                result: result,
+                surface: surface,
+                durationMs: Double((AskCard.timestampNs() &- startedNs) / 1_000_000)
+            ),
+            sessionId: request.sessionId,
+            workspaceId: request.workspaceId
         )
-        let sessionId = request.sessionId
-        let workspaceId = request.workspaceId
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .askResponseMs,
-                value: durationMs,
-                unit: .ms,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                tags: tags
-            )
-        }
     }
 }

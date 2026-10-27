@@ -8,7 +8,7 @@ import os
 /// - body evaluation rate (store churn indicator)
 /// - aggregate per-row computation latency
 ///
-/// Lightweight: all telemetry is fire-and-forget via ChatMetricsService.
+/// Lightweight: all telemetry is fire-and-forget via `Telemetry.record`.
 /// Cooldown prevents flooding during rapid store updates.
 @MainActor
 enum SessionListPerf {
@@ -59,31 +59,14 @@ enum SessionListPerf {
         guard nowNs &- lastComputeEmitNs >= emitCooldownNs else { return }
         lastComputeEmitNs = nowNs
 
-        let wid = workspaceId
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .sessionListComputeMs,
-                value: Double(durationMs),
-                unit: .ms,
-                workspaceId: wid,
-                tags: [
-                    "active_count": String(activeCount),
-                    "stopped_count": String(stoppedCount),
-                ]
-            )
-        }
-
-        if durationMs >= 8 {
-            ClientLog.error(
-                "SessionListPerf",
-                "Slow viewData compute",
-                metadata: [
-                    "durationMs": String(durationMs),
-                    "activeCount": String(activeCount),
-                    "stoppedCount": String(stoppedCount),
-                ]
-            )
-        }
+        Telemetry.record(
+            AppSessionListCompute(
+                durationMs: Double(durationMs),
+                activeSessions: activeCount,
+                stoppedSessions: stoppedCount
+            ),
+            workspaceId: workspaceId
+        )
     }
 
     // MARK: - Per-row computation
@@ -102,27 +85,10 @@ enum SessionListPerf {
 
         signposter.emitEvent("row.compute")
 
-        let wid = workspaceId
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .sessionListRowComputeMs,
-                value: Double(durationMs),
-                unit: .ms,
-                workspaceId: wid,
-                tags: ["row_count": String(rowCount)]
-            )
-        }
-
-        if durationMs >= 4 {
-            ClientLog.error(
-                "SessionListPerf",
-                "Slow row compute",
-                metadata: [
-                    "durationMs": String(durationMs),
-                    "rowCount": String(rowCount),
-                ]
-            )
-        }
+        Telemetry.record(
+            AppSessionListRowCompute(durationMs: Double(durationMs), rows: rowCount),
+            workspaceId: workspaceId
+        )
     }
 
     // MARK: - Body evaluation rate
@@ -142,26 +108,7 @@ enum SessionListPerf {
         bodyWindowStartNs = nowNs
         bodyWindowCount = 0
 
-        let wid = workspaceId
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .sessionListBodyRate,
-                value: Double(count),
-                unit: .count,
-                workspaceId: wid
-            )
-        }
-
-        // Flag excessive churn: > 20 evaluations per 5s window
-        if count > 20 {
-            ClientLog.error(
-                "SessionListPerf",
-                "High body evaluation rate",
-                metadata: [
-                    "count_per_5s": String(count),
-                ]
-            )
-        }
+        Telemetry.record(AppSessionListBodyRate(evaluations: count), workspaceId: workspaceId)
     }
 
     // MARK: - Reset

@@ -74,7 +74,6 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
         transport = client
         messageStream = client.connect()
 #endif
-        let transportTag = "dictation_stream"
         stopDictationRouting()
         activeTransport = transport
 
@@ -108,12 +107,8 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
 
         return VoiceProviderPreparation(
             audioFormat: nil,
-            pathTag: "dictation_audio_ws",
-            setupMetricTags: Self.metricTags(
-                host: credentials.host,
-                serverInfo: nil,
-                transport: transportTag
-            )
+            modelPath: .dictationAudioWs,
+            provider: Self.providerTelemetry()
         )
     }
 
@@ -210,23 +205,17 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
         }
     }
 
-    // MARK: - Metric Tags
+    // MARK: - Telemetry
 
-    private static func metricTags(
-        host: String,
-        serverInfo: DictationProviderInfo?,
-        transport: String
-    ) -> [String: String] {
-        [
-            "dictation_mode": "server",
-            "host": host,
-            "provider_id": "oppi_server_dictation",
-            "provider_kind": "local_server",
-            "stt_backend": serverInfo?.sttProvider ?? "unknown",
-            "model": serverInfo?.sttModel ?? "unknown",
-            "transport": transport,
-            "live_preview": "1",
-        ]
+    /// The backend is resolved once the server reports readiness, so setup
+    /// reports `unknown` and `.sttResolved` fills in the real values later.
+    private static func providerTelemetry() -> VoiceProviderTelemetry {
+        VoiceProviderTelemetry(
+            sttProvider: "oppi_server_dictation",
+            sttProviderKind: .localServer,
+            sttBackend: TelemetryName.fallback,
+            sttModel: TelemetryName.fallback
+        )
     }
 
     func makeSession(

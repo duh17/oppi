@@ -95,11 +95,6 @@ enum WebSocketRecoveryPolicy {
         }
     }
 
-    /// Retry telemetry must remain low-cardinality even though the internal counter is unbounded.
-    nonisolated static func reconnectAttemptTag(_ attempt: Int) -> String {
-        attempt >= 7 ? "7_plus" : String(max(0, attempt))
-    }
-
     nonisolated static func isRecoverableReceiveError(
         _ error: Error,
         closeCode: URLSessionWebSocketTask.CloseCode

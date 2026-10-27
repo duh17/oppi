@@ -38,6 +38,15 @@ final class ChatSessionManager {
         case noGap
         case applied
         case fullReloadScheduled
+
+        /// The `app.fresh_content_lag` reason for a reconnect that ended this way.
+        var freshContentLagReason: String {
+            switch self {
+            case .noGap: "reconnect_no_gap"
+            case .applied: "reconnect_applied"
+            case .fullReloadScheduled: "reconnect_full_reload_scheduled"
+            }
+        }
     }
 
     private enum SessionStreamInput {
@@ -301,20 +310,21 @@ final class ChatSessionManager {
         TraceSignature(eventCount: trace.count, lastEventId: trace.last?.id)
     }
 
-    private static func modelTags(for session: Session?) -> [String: String] {
+    /// The session's `provider/model` split for the first-token event; `unknown` when absent.
+    private static func modelRoute(for session: Session?) -> (provider: String, model: String) {
         guard let rawModel = session?.model?.trimmingCharacters(in: .whitespacesAndNewlines),
               !rawModel.isEmpty else {
-            return ["provider": "unknown", "model": "unknown"]
+            return ("unknown", "unknown")
         }
 
         let parts = rawModel.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2 else {
-            return ["provider": "unknown", "model": rawModel]
+            return ("unknown", rawModel)
         }
-        return [
-            "provider": parts[0].isEmpty ? "unknown" : String(parts[0]),
-            "model": parts[1].isEmpty ? "unknown" : String(parts[1]),
-        ]
+        return (
+            parts[0].isEmpty ? "unknown" : String(parts[0]),
+            parts[1].isEmpty ? "unknown" : String(parts[1])
+        )
     }
 
     private static func queuedMessageTimelineText(
@@ -1239,7 +1249,7 @@ final class ChatSessionManager {
                     case .fullReloadScheduled:
                         log.error("WS reconnected — full history reload scheduled for \(self.sessionId)")
                     }
-                    telemetry.recordFreshContentLagIfNeeded(reason: "reconnect_\(outcome)")
+                    telemetry.recordFreshContentLagIfNeeded(reason: outcome.freshContentLagReason)
                 } else {
                     log.warning("WS reconnected without currentSeq for \(self.sessionId) — falling back to full history reload")
                     scheduleHistoryReload(
@@ -1267,7 +1277,8 @@ final class ChatSessionManager {
             if case .turnAck(let command, _, let stage, _, _) = message,
                stage == .dispatched,
                command == "prompt" || command == "steer" || command == "follow_up" {
-                telemetry.startTTFT(modelTags: Self.modelTags(for: effectsStatePort.session(id: sessionId)))
+                let route = Self.modelRoute(for: effectsStatePort.session(id: sessionId))
+                telemetry.startTTFT(provider: route.provider, model: route.model)
             }
 
             if case .agentEnd = message {
@@ -1463,7 +1474,14 @@ final class ChatSessionManager {
         lastSnapshotFlushAt = Date()
     }
 
+    /// The app went to the background: a load still waiting for its first
+    /// content would report the suspension as load time.
+    func cancelLoadMeasurements() {
+        telemetry.cancelLoadMeasurements()
+    }
+
     func cleanup() {
+        telemetry.cancelLoadMeasurements()
         wantsAutoReconnect = false
         onReconnect = nil
         connectLoopTask?.cancel()
@@ -1818,12 +1836,9 @@ final class ChatSessionManager {
                     generation: generation,
                     cachedSignature: nil
                 )
-                effectsStatePort.recordTelemetry(.catchUpRingMiss(true), sessionId: sessionId)
                 recordCatchupMs("ring_miss")
                 return .fullReloadScheduled
             }
-
-            effectsStatePort.recordTelemetry(.catchUpRingMiss(false), sessionId: sessionId)
 
             var appliedCatchUp = false
             for event in response.events {
@@ -2365,7 +2380,7 @@ final class ChatSessionManager {
                     effectsStatePort.recordTelemetry(
                         .reducerLoad(
                             durationMs: reducerDurationMs,
-                            source: usedFirstMessageFallback ? "history_first_message_fallback" : (usedReplay ? "history+replay" : "history"),
+                            source: usedFirstMessageFallback ? "history_first_message_fallback" : (usedReplay ? "history_replay" : "history"),
                             eventCount: timelineTrace.count,
                             itemCount: reducer.items.count
                         ),

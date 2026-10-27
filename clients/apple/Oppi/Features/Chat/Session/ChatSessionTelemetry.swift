@@ -1,12 +1,10 @@
 import CoreFoundation
 import Foundation
 
-/// Fire-and-forget telemetry helpers for chat runtime and nearby product flows.
-///
-/// Each method captures Sendable arguments and dispatches to
-/// `ChatMetricsService.shared` on a utility-priority detached task.
-/// This keeps feature code free of repetitive telemetry blocks that
-/// obscure the actual control flow.
+/// Chat runtime telemetry for the iOS client: process-start timing and the
+/// mapping from the shared runtime's telemetry events to catalog events.
+/// OppiCore (which the Mac target also compiles) stays free of generated
+/// catalog types; this is the one place its vocabulary becomes catalog values.
 enum ChatSessionTelemetry {
 
     /// Process start timestamp for app launch metric.
@@ -19,267 +17,69 @@ enum ChatSessionTelemetry {
         _ = processStartTime
     }
 
-    // MARK: - Timing helpers
-
     static func nowMs() -> Int64 { Date.nowMs() }
 
-    // MARK: - Connect / transport
+    /// The catalog event for a shared-runtime event, with its workspace when it
+    /// has one. Nil when the runtime emitted a value the catalog does not
+    /// declare; the runtime's vocabulary is the catalog's snake_case values, so
+    /// that is a bug the mapping test catches.
+    static func event(
+        for runtimeEvent: ChatSessionRuntimeTelemetry
+    ) -> (event: any TelemetryEvent, workspaceId: String?)? {
+        switch runtimeEvent {
+        case .cacheLoad(let durationMs, let hit, let eventCount):
+            return (AppCacheLoad(durationMs: Double(durationMs), hit: hit, events: eventCount), nil)
 
-    static func recordCacheLoad(
-        durationMs: Int64,
-        sessionId: String,
-        hit: Bool,
-        eventCount: Int
-    ) {
-        emit(
-            .cacheLoadMs, Double(durationMs), .ms,
-            sessionId: sessionId,
-            tags: ["hit": hit ? "1" : "0", "events": String(eventCount)]
-        )
-    }
+        case .reducerLoad(let durationMs, let source, let eventCount, let itemCount):
+            guard let loadSource = TelemetryTag.LoadSource(rawValue: source) else { return nil }
+            return (
+                AppReducerLoad(
+                    durationMs: Double(durationMs),
+                    events: eventCount,
+                    items: itemCount,
+                    loadSource: loadSource
+                ),
+                nil
+            )
 
-    static func recordReducerLoad(
-        durationMs: Int64,
-        sessionId: String,
-        source: String,
-        eventCount: Int,
-        itemCount: Int
-    ) {
-        emit(
-            .reducerLoadMs, Double(durationMs), .ms,
-            sessionId: sessionId,
-            tags: ["source": source, "events": String(eventCount), "items": String(itemCount)]
-        )
-    }
+        case .catchUp(let durationMs, let result):
+            guard let result = AppCatchup.Result(rawValue: result) else { return nil }
+            return (AppCatchup(durationMs: Double(durationMs), result: result), nil)
 
-    static func recordTTFT(
-        durationMs: Int64,
-        sessionId: String,
-        tags: [String: String]
-    ) {
-        emit(.ttftMs, Double(durationMs), .ms, sessionId: sessionId, tags: tags)
-    }
+        case .sessionLoad(let durationMs, let workspaceId, let path, let itemCount):
+            guard let loadPath = AppSessionLoad.LoadPath(rawValue: path) else { return nil }
+            return (
+                AppSessionLoad(durationMs: Double(durationMs), items: itemCount, loadPath: loadPath),
+                workspaceId
+            )
 
-    static func recordFreshContentLag(
-        durationMs: Int64,
-        sessionId: String,
-        workspaceId: String?,
-        reason: String,
-        cached: Bool,
-        transport: String
-    ) {
-        emit(
-            .freshContentLagMs, Double(durationMs), .ms,
-            sessionId: sessionId,
-            workspaceId: workspaceId,
-            tags: ["reason": reason, "cache": cached ? "1" : "0", "transport": transport]
-        )
-    }
+        case .freshContentLag(let durationMs, let workspaceId, let reason, let cached, let transport):
+            guard let reason = AppFreshContentLag.Reason(rawValue: reason) else { return nil }
+            return (
+                AppFreshContentLag(
+                    durationMs: Double(durationMs),
+                    cached: cached,
+                    reason: reason,
+                    transport: AppFreshContentLag.Transport(rawValue: transport)
+                ),
+                workspaceId
+            )
 
-    // MARK: - Catch-up
+        case .sessionSwitch(let durationMs, let cached):
+            return (AppSessionSwitch(durationMs: Double(durationMs), cached: cached), nil)
 
-    static func recordCatchup(
-        durationMs: Int64,
-        sessionId: String,
-        result: String
-    ) {
-        emit(.catchupMs, Double(durationMs), .ms, sessionId: sessionId, tags: ["result": result])
-    }
+        case .timeToFirstToken(let durationMs, let provider, let model):
+            return (AppTtft(durationMs: Double(durationMs), provider: provider, model: model), nil)
 
-    static func recordCatchupRingMiss(
-        sessionId: String,
-        missed: Bool
-    ) {
-        emit(.catchupRingMiss, missed ? 1 : 0, .count, sessionId: sessionId)
-    }
-
-    // MARK: - Session load (vital)
-
-    static func recordSessionLoad(
-        durationMs: Int64,
-        sessionId: String,
-        workspaceId: String?,
-        path: String,
-        itemCount: Int
-    ) {
-        emit(
-            .sessionLoadMs, Double(durationMs), .ms,
-            sessionId: sessionId,
-            workspaceId: workspaceId,
-            tags: ["path": path, "items": String(itemCount)]
-        )
-    }
-
-    // MARK: - History reload
-
-    static func recordTraceFetch(
-        durationMs: Int64,
-        sessionId: String,
-        workspaceId: String?,
-        status: String,
-        traceEventCount: Int? = nil,
-        errorKind: String? = nil
-    ) {
-        var tags = ["status": status]
-        if let traceEventCount {
-            tags["trace_events"] = String(traceEventCount)
-        }
-        if let errorKind {
-            tags["error_kind"] = errorKind
-        }
-        emit(
-            .traceFetchMs, Double(durationMs), .ms,
-            sessionId: sessionId,
-            workspaceId: workspaceId,
-            tags: tags
-        )
-    }
-
-    // MARK: - App Launch
-
-    // MARK: - Session Switch
-
-    static func recordSessionSwitch(
-        durationMs: Int64,
-        sessionId: String,
-        cached: Bool
-    ) {
-        emit(
-            .sessionSwitchMs, Double(durationMs), .ms,
-            sessionId: sessionId,
-            tags: ["cached": cached ? "1" : "0"]
-        )
-    }
-
-    /// Thread detail load. Same recorder as other screen-load timings.
-    /// `phase` is `initial` or `refresh`; failures also carry `error_kind`.
-    static func recordThreadLoad(
-        durationMs: Int64,
-        sessionId: String,
-        workspaceId: String?,
-        phase: String,
-        status: String,
-        errorKind: String? = nil
-    ) {
-        recordTimingMetric(
-            .threadLoadMs,
-            durationMs: durationMs,
-            sessionId: sessionId,
-            workspaceId: workspaceId,
-            tags: threadLoadTags(phase: phase, status: status, errorKind: errorKind)
-        )
-    }
-
-    static func threadLoadTags(phase: String, status: String, errorKind: String?) -> [String: String] {
-        let phaseTag = phase == "refresh" ? "refresh" : "initial"
-        let statusTag = status == "ok" ? "ok" : "error"
-        var tags = ["phase": phaseTag, "status": statusTag]
-        if statusTag == "error" {
-            let kind = errorKind?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            tags["error_kind"] = kind.isEmpty ? "other" : kind
-        }
-        return tags
-    }
-
-    // MARK: - Shared helpers
-
-    static func recordTimingMetric(
-        _ metric: ChatMetricName,
-        durationMs: Int64,
-        sessionId: String? = nil,
-        workspaceId: String? = nil,
-        tags: [String: String] = [:]
-    ) {
-        emit(
-            metric,
-            Double(max(0, durationMs)),
-            .ms,
-            sessionId: sessionId,
-            workspaceId: workspaceId,
-            tags: tags
-        )
-    }
-
-    static func recordCountMetric(
-        _ metric: ChatMetricName,
-        value: Int = 1,
-        sessionId: String? = nil,
-        workspaceId: String? = nil,
-        tags: [String: String] = [:]
-    ) {
-        emit(
-            metric,
-            Double(max(0, value)),
-            .count,
-            sessionId: sessionId,
-            workspaceId: workspaceId,
-            tags: tags
-        )
-    }
-
-    static func metricErrorKind(for error: Error) -> String {
-        if error is CancellationError {
-            return "cancelled"
-        }
-
-        if let quickSessionError = error as? QuickSessionError {
-            switch quickSessionError {
-            case .noConnection:
-                return "no_connection"
-            case .noWorkspace:
-                return "no_workspace"
-            case .agentLaunchFailed:
-                return "agent_launch_failed"
-            }
-        }
-
-        if let shareSessionError = error as? ShareSessionRequestError {
-            switch shareSessionError {
-            case .timedOut:
-                return "timeout"
-            case .failed:
-                return "request_failed"
-            }
-        }
-
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .timedOut:
-                return "timeout"
-            case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
-                return "network"
-            case .cancelled:
-                return "cancelled"
-            default:
-                return "url_error"
-            }
-        }
-
-        if error is DecodingError {
-            return "decode"
-        }
-
-        return "other"
-    }
-
-    // MARK: - Private
-
-    private static func emit(
-        _ metric: ChatMetricName,
-        _ value: Double,
-        _ unit: ChatMetricUnit,
-        sessionId: String? = nil,
-        workspaceId: String? = nil,
-        tags: [String: String] = [:]
-    ) {
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: metric,
-                value: value,
-                unit: unit,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                tags: tags
+        case .traceFetch(let durationMs, let workspaceId, let status, let eventCount, let errorKind):
+            return (
+                AppTraceFetch(
+                    durationMs: Double(durationMs),
+                    traceEvents: eventCount,
+                    status: status == "ok" ? .ok : .error,
+                    errorKind: errorKind.flatMap(TelemetryTag.ErrorKind.init(rawValue:))
+                ),
+                workspaceId
             )
         }
     }

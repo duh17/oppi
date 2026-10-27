@@ -38,19 +38,21 @@ struct VoiceProviderPreparation {
     /// Concrete locale selected by a provider after matching the requested locale
     /// against its supported model inventory.
     let transcriptionLocale: Locale?
-    let pathTag: String
-    let setupMetricTags: [String: String]
+    /// How the model or stream was obtained, for telemetry.
+    let modelPath: TelemetryTag.ModelPath
+    /// The STT backend, as far as it is known before the session is ready.
+    let provider: VoiceProviderTelemetry
 
     init(
         audioFormat: AVAudioFormat?,
         transcriptionLocale: Locale? = nil,
-        pathTag: String,
-        setupMetricTags: [String: String]
+        modelPath: TelemetryTag.ModelPath,
+        provider: VoiceProviderTelemetry = VoiceProviderTelemetry()
     ) {
         self.audioFormat = audioFormat
         self.transcriptionLocale = transcriptionLocale
-        self.pathTag = pathTag
-        self.setupMetricTags = setupMetricTags
+        self.modelPath = modelPath
+        self.provider = provider
     }
 }
 
@@ -70,9 +72,9 @@ enum VoiceSessionEvent: Sendable {
         committedText: String? = nil,
         activeText: String? = nil
     )
-    /// Backend metadata resolved after async readiness. Used to update
-    /// metric tags that were unknown at setup time (stt_backend, model).
-    case providerMetricTags([String: String])
+    /// The STT backend and model the server resolved after async readiness;
+    /// unknown at setup time, so later events of the take carry the real values.
+    case sttResolved(backend: String, model: String)
 }
 
 @MainActor

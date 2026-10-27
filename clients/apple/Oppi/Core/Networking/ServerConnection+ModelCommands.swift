@@ -210,8 +210,31 @@ extension ServerConnection {
     ) async throws -> ShareSessionPrepareResult? {
         let startedAtMs = ChatSessionTelemetry.nowMs()
         let policy = redactionPolicy?.normalized
+        let reported = (policy ?? .recommended).normalized
         let sessionId = focusedSessionId
         let workspaceId = sessionId.flatMap { sessionStore.workspaceId(for: $0) }
+        func record(parsed: ShareSessionPrepareResult?, failure: ShareSessionRequestError?) {
+            Telemetry.record(
+                AppSharePrepare(
+                    durationMs: Double(max(0, ChatSessionTelemetry.nowMs() - startedAtMs)),
+                    findings: parsed.map { $0.findings.count },
+                    replacements: parsed.map { $0.redaction?.totalReplacements ?? 0 },
+                    blocked: parsed?.blocked,
+                    canPublish: parsed?.canPublish,
+                    redactEmails: reported.emails,
+                    redactPhones: reported.phones,
+                    redactUserPaths: reported.userPaths,
+                    redactIpAddresses: reported.ipAddresses,
+                    redactJwtBearer: reported.jwtAndBearer,
+                    redactNames: reported.namesHeuristic,
+                    redactSkills: reported.skills,
+                    status: failure == nil ? .ok : .error,
+                    errorKind: failure.map(TelemetryErrorKind.classify)
+                ),
+                sessionId: sessionId,
+                workspaceId: workspaceId
+            )
+        }
 
         do {
             let data = try await sendCommandAwaitingResult(command: "share_session") { requestId in
@@ -222,40 +245,11 @@ extension ServerConnection {
                 )
             }
             let parsed = Self.parseShareSessionPrepareResult(from: data)
-            var tags = Self.shareTelemetryTags(policy: policy)
-            tags["status"] = "ok"
-            if let parsed {
-                tags["blocked"] = parsed.blocked ? "1" : "0"
-                tags["can_publish"] = parsed.canPublish ? "1" : "0"
-                tags["findings"] = String(parsed.findings.count)
-                tags["replacements"] = String(parsed.redaction?.totalReplacements ?? 0)
-            }
-            ChatSessionTelemetry.recordTimingMetric(
-                .sharePrepareMs,
-                durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs),
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                tags: tags
-            )
+            record(parsed: parsed, failure: nil)
             return parsed
         } catch let commandError as CommandRequestError {
             let normalized = Self.normalizeShareSessionError(commandError)
-            var tags = Self.shareTelemetryTags(policy: policy)
-            tags["status"] = "error"
-            tags["error_kind"] = ChatSessionTelemetry.metricErrorKind(for: normalized)
-            ChatSessionTelemetry.recordTimingMetric(
-                .sharePrepareMs,
-                durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs),
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                tags: tags
-            )
-            ChatSessionTelemetry.recordCountMetric(
-                .shareError,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                tags: ["action": "prepare", "error_kind": ChatSessionTelemetry.metricErrorKind(for: normalized)]
-            )
+            record(parsed: nil, failure: normalized)
             throw normalized
         }
     }
@@ -265,8 +259,29 @@ extension ServerConnection {
     ) async throws -> SharedSessionPublishResult? {
         let startedAtMs = ChatSessionTelemetry.nowMs()
         let policy = redactionPolicy?.normalized
+        let reported = (policy ?? .recommended).normalized
         let sessionId = focusedSessionId
         let workspaceId = sessionId.flatMap { sessionStore.workspaceId(for: $0) }
+        func record(parsed: SharedSessionPublishResult?, failure: ShareSessionRequestError?) {
+            Telemetry.record(
+                AppSharePublish(
+                    durationMs: Double(max(0, ChatSessionTelemetry.nowMs() - startedAtMs)),
+                    findings: parsed.map { $0.redaction?.findings.count ?? 0 },
+                    replacements: parsed.map { $0.redaction?.totalReplacements ?? 0 },
+                    redactEmails: reported.emails,
+                    redactPhones: reported.phones,
+                    redactUserPaths: reported.userPaths,
+                    redactIpAddresses: reported.ipAddresses,
+                    redactJwtBearer: reported.jwtAndBearer,
+                    redactNames: reported.namesHeuristic,
+                    redactSkills: reported.skills,
+                    status: failure == nil ? .ok : .error,
+                    errorKind: failure.map(TelemetryErrorKind.classify)
+                ),
+                sessionId: sessionId,
+                workspaceId: workspaceId
+            )
+        }
 
         do {
             let data = try await sendCommandAwaitingResult(command: "share_session") { requestId in
@@ -277,38 +292,11 @@ extension ServerConnection {
                 )
             }
             let parsed = Self.parseShareSessionPublishResult(from: data)
-            var tags = Self.shareTelemetryTags(policy: policy)
-            tags["status"] = "ok"
-            if let parsed {
-                tags["findings"] = String(parsed.redaction?.findings.count ?? 0)
-                tags["replacements"] = String(parsed.redaction?.totalReplacements ?? 0)
-            }
-            ChatSessionTelemetry.recordTimingMetric(
-                .sharePublishMs,
-                durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs),
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                tags: tags
-            )
+            record(parsed: parsed, failure: nil)
             return parsed
         } catch let commandError as CommandRequestError {
             let normalized = Self.normalizeShareSessionError(commandError)
-            var tags = Self.shareTelemetryTags(policy: policy)
-            tags["status"] = "error"
-            tags["error_kind"] = ChatSessionTelemetry.metricErrorKind(for: normalized)
-            ChatSessionTelemetry.recordTimingMetric(
-                .sharePublishMs,
-                durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs),
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                tags: tags
-            )
-            ChatSessionTelemetry.recordCountMetric(
-                .shareError,
-                sessionId: sessionId,
-                workspaceId: workspaceId,
-                tags: ["action": "publish", "error_kind": ChatSessionTelemetry.metricErrorKind(for: normalized)]
-            )
+            record(parsed: nil, failure: normalized)
             throw normalized
         }
     }
@@ -342,19 +330,6 @@ extension ServerConnection {
         } catch {
             chatState.slashCommandsRequestId = nil
         }
-    }
-
-    static func shareTelemetryTags(policy: ShareSessionRedactionPolicy?) -> [String: String] {
-        let normalized = (policy ?? .recommended).normalized
-        return [
-            "emails": normalized.emails ? "1" : "0",
-            "phones": normalized.phones ? "1" : "0",
-            "user_paths": normalized.userPaths ? "1" : "0",
-            "ip_addresses": normalized.ipAddresses ? "1" : "0",
-            "jwt_bearer": normalized.jwtAndBearer ? "1" : "0",
-            "names": normalized.namesHeuristic ? "1" : "0",
-            "skills": normalized.skills ? "1" : "0",
-        ]
     }
 
     static func normalizeShareSessionError(_ error: CommandRequestError) -> ShareSessionRequestError {

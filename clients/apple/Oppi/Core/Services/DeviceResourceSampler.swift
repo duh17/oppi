@@ -8,9 +8,9 @@ private let samplerLog = Logger(subsystem: AppIdentifiers.subsystem, category: "
 /// Samples CPU, memory, and thermal metrics every 10 seconds while the app is
 /// foregrounded. All sampling and uploads are gated by `TelemetrySettings`.
 ///
-/// CPU and memory-footprint samples carry the app state at sample time
-/// (`screen`, `stream`, `agents`, `voice`) so a spike can be traced to what
-/// was on screen. Available-memory and thermal samples stay untagged.
+/// One `app.device_resources` event per tick carries the app state at sample
+/// time (`screen`, `stream_state`, `agents`, `voice`) from `TelemetryContext`,
+/// so a spike can be traced to what was on screen.
 @MainActor
 final class DeviceResourceSampler {
     static let shared = DeviceResourceSampler()
@@ -109,74 +109,45 @@ final class DeviceResourceSampler {
             return
         }
 
-        let appStateTags = Self.appStateTags(
-            context: MetricKitCrashContextStore.snapshot(),
-            screenAwake: ScreenAwakeController.shared
-        )
+        let context = TelemetryContext.current()
 
-        // CPU (needs delta from previous sample)
+        // CPU needs a delta from the previous sample; the first tick after a
+        // resume has none and reports no CPU.
         let currentCPU = readCPUSample()
+        var cpuPct: Double?
         if let prev = previousCPUSample, let cur = currentCPU {
             let wallDelta = prev.timestamp.duration(to: cur.timestamp)
             let wallSeconds = Double(wallDelta.components.seconds)
                 + Double(wallDelta.components.attoseconds) / 1e18
             if wallSeconds > 0 {
-                let cpuPct = ((cur.cpuSeconds - prev.cpuSeconds) / wallSeconds) * 100.0
-                await ChatMetricsService.shared.record(
-                    metric: .deviceCpuPct,
-                    value: cpuPct,
-                    unit: .count,
-                    tags: appStateTags
-                )
+                cpuPct = ((cur.cpuSeconds - prev.cpuSeconds) / wallSeconds) * 100.0
             }
         }
         previousCPUSample = currentCPU
 
-        // Memory footprint
-        if let footprintMB = readMemoryFootprintMB() {
-            await ChatMetricsService.shared.record(
-                metric: .deviceMemoryMb,
-                value: footprintMB,
-                unit: .count,
-                tags: appStateTags
+        Telemetry.record(
+            AppDeviceResources(
+                cpuPct: cpuPct,
+                memoryMb: readMemoryFootprintMB(),
+                memoryAvailableMb: Double(os_proc_available_memory()) / (1024 * 1024),
+                thermalState: Self.thermalStateValue(ProcessInfo.processInfo.thermalState),
+                screen: context.screen,
+                streamState: context.streamState,
+                agents: context.agents,
+                voice: context.voice
             )
-        }
-
-        // Available memory (headroom before jetsam)
-        let availableMB = Double(os_proc_available_memory()) / (1024 * 1024)
-        await ChatMetricsService.shared.record(
-            metric: .deviceMemoryAvailableMb,
-            value: availableMB,
-            unit: .count
         )
+    }
 
-        // Thermal state
-        let thermalValue: Double = switch ProcessInfo.processInfo.thermalState {
+    /// 0 nominal, 1 fair, 2 serious, 3 critical.
+    nonisolated static func thermalStateValue(_ state: ProcessInfo.ThermalState) -> Int {
+        switch state {
         case .nominal: 0
         case .fair: 1
         case .serious: 2
         case .critical: 3
         @unknown default: 0
         }
-        await ChatMetricsService.shared.record(
-            metric: .deviceThermalState,
-            value: thermalValue,
-            unit: .count
-        )
-    }
-
-    /// App state when a CPU or memory-footprint sample is taken. A 10 s window
-    /// that spans a change is tagged with the state at its end.
-    static func appStateTags(
-        context: MetricKitCrashContext?,
-        screenAwake: ScreenAwakeController
-    ) -> [String: String] {
-        [
-            "screen": context?.screen ?? "unknown",
-            "stream": context?.streamState ?? "unknown",
-            "agents": screenAwake.hasRunningSession ? "running" : "idle",
-            "voice": screenAwake.isVoiceInputActive ? "on" : "off",
-        ]
     }
 
     // MARK: - System API helpers

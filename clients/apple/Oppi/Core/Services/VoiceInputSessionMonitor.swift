@@ -123,7 +123,7 @@ final class VoiceInputSessionMonitor {
             return "final"
         case .replaceFinalTranscript(_, let snap, _, _):
             return snap ? "final" : "preview"
-        case .providerMetricTags:
+        case .sttResolved:
             return nil
         }
     }

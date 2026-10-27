@@ -63,11 +63,10 @@ enum ChatSessionRuntimeTelemetry: Sendable {
     case cacheLoad(durationMs: Int64, hit: Bool, eventCount: Int)
     case reducerLoad(durationMs: Int64, source: String, eventCount: Int, itemCount: Int)
     case catchUp(durationMs: Int64, result: String)
-    case catchUpRingMiss(Bool)
     case sessionLoad(durationMs: Int64, workspaceId: String?, path: String, itemCount: Int)
     case freshContentLag(durationMs: Int64, workspaceId: String?, reason: String, cached: Bool, transport: String)
     case sessionSwitch(durationMs: Int64, cached: Bool)
-    case timeToFirstToken(durationMs: Int64, tags: [String: String])
+    case timeToFirstToken(durationMs: Int64, provider: String, model: String)
     case traceFetch(durationMs: Int64, workspaceId: String?, status: String, eventCount: Int?, errorKind: String?)
 }
 

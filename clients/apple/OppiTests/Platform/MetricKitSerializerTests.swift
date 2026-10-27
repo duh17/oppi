@@ -158,6 +158,25 @@ struct MetricKitSerializerTests {
         #expect(metadata["lastTimelinePayloadLargestEventBytes"] == "14500000")
     }
 
+    @Test func coalescerWindowIsOneEventWithAllThreeCounts() async {
+        let capture = TelemetryCapture()
+        await capture.run {
+            await DeltaCoalescerTelemetry.appMetrics.recordFlushWindow(
+                DeltaCoalescerFlushWindow(
+                    sessionId: "session-coalescer",
+                    eventCount: 3,
+                    byteCount: 1_024,
+                    flushCount: 2
+                )
+            )
+        }
+
+        let windows = capture.events(named: "app.coalescer_window")
+        #expect(windows.count == 1)
+        #expect(windows.first?.fields == ["flushes": 2, "events": 3, "payload_bytes": 1_024])
+        #expect(windows.first?.sessionId == "session-coalescer")
+    }
+
     @Test func appCoalescerTelemetryRecordsFlushesAndCrashBreadcrumbs() async {
         MetricKitCrashContextStore.clearForTesting()
         MetricKitCrashContextStore.record(

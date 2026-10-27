@@ -617,18 +617,21 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         echoCancellation: Bool,
         recoveries: Int
     ) {
-        ClientLog.info("LiveVoice", "Call playback", metadata: [
-            "chunks": String(stats.chunks),
-            "received_ms": String(stats.receivedFrames * 1000 / LiveVoicePlaybackScheduler.sampleRate),
-            "max_gap_ms": String(stats.maxGapMs),
-            "underruns": String(stats.underruns),
-            "flushes": String(stats.flushes),
-            "min_prime_ms": String(stats.minPrimeMs),
-            "final_prime_ms": String(primeMs),
-            "max_lag_ms": String(stats.maxLagMs),
-            "echo_cancellation": String(echoCancellation),
-            "audio_restarts": String(recoveries),
-        ], flush: true)
+        Telemetry.record(
+            AppLiveVoiceCallPlayback(
+                chunks: stats.chunks,
+                receivedMs: Double(stats.receivedFrames * 1000 / LiveVoicePlaybackScheduler.sampleRate),
+                maxGapMs: Double(stats.maxGapMs),
+                underruns: stats.underruns,
+                flushes: stats.flushes,
+                minPrimeMs: Double(stats.minPrimeMs),
+                finalPrimeMs: Double(primeMs),
+                maxLagMs: Double(stats.maxLagMs),
+                audioRestarts: recoveries,
+                echoCancellation: echoCancellation
+            )
+        )
+        ClientLog.info("LiveVoice", "Call playback", flush: true)
     }
 
     private func activateSession() throws {

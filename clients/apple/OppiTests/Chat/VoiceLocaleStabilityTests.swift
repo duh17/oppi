@@ -293,7 +293,7 @@ struct VoiceLocaleStabilityTests {
         let classicProvider = MockVoiceProvider(id: .appleClassicDictation, engine: .classicDictation)
         classicProvider.prepareSessionHandler = { _ in
             await gate.wait()
-            return VoiceProviderPreparation(audioFormat: nil, pathTag: "gate", setupMetricTags: [:])
+            return VoiceProviderPreparation(audioFormat: nil, modelPath: .cold)
         }
         classicProvider.makeSessionHandler = { _, _ in MockVoiceSession() }
 

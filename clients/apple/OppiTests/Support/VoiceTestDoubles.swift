@@ -101,8 +101,7 @@ final class MockVoiceProvider: VoiceTranscriptionProvider {
 
         let preparation = VoiceProviderPreparation(
             audioFormat: nil,
-            pathTag: "mock",
-            setupMetricTags: [:]
+            modelPath: .cold
         )
         lastPreparation = preparation
         return preparation

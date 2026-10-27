@@ -274,7 +274,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         do {
             try play(fileURL: fileURL, itemID: itemID, mode: mode, startedAtMs: startedAtMs)
         } catch {
-            reportPlaybackFailure(itemID: itemID, source: "file", phase: "start", error: error)
+            reportPlaybackFailure(itemID: itemID, source: "file", phase: .start, error: error)
         }
     }
 
@@ -290,7 +290,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         do {
             try play(data: data, itemID: itemID, mode: mode, startedAtMs: startedAtMs)
         } catch {
-            reportPlaybackFailure(itemID: itemID, source: "data", phase: "start", error: error)
+            reportPlaybackFailure(itemID: itemID, source: "data", phase: .start, error: error)
         }
     }
 
@@ -319,7 +319,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 startedAtMs: startedAtMs
             )
         } catch {
-            reportPlaybackFailure(itemID: itemID, source: "media", phase: "start", error: error)
+            reportPlaybackFailure(itemID: itemID, source: "media", phase: .start, error: error)
         }
     }
 
@@ -426,7 +426,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 try audioSession.setCategory(.playback, mode: .default)
                 try audioSession.setActive(true)
             } catch {
-                recordVoicePlaybackError(source: "resume", phase: "activate", error: error)
+                recordVoicePlaybackError(source: "resume", phase: .activate, error: error)
                 ClientLog.warning("AudioPlayer", "Could not activate playback session on resume", metadata: [
                     "error_domain": (error as NSError).domain,
                     "error_code": String((error as NSError).code),
@@ -722,7 +722,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             finishAudioStreamIfDrained(id: itemID)
         } catch {
             guard !Task.isCancelled, loadingItemID == itemID || streamID == itemID else { return }
-            reportPlaybackFailure(itemID: itemID, source: "speech", phase: streamID == itemID ? "stream" : "load", error: error)
+            reportPlaybackFailure(itemID: itemID, source: "speech", phase: streamID == itemID ? .stream : .load, error: error)
             stopAudioStream(clearState: true)
         }
     }
@@ -772,7 +772,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
         guard stream.mimeType == "audio/pcm; codecs=s16le" else {
             if stream.event == .error {
-                recordVoicePlaybackError(source: "stream_unknown", phase: "stream", errorKind: "unsupported_mime")
+                recordVoicePlaybackError(source: "stream_unknown", phase: .stream, errorKind: .unsupportedMime)
                 logger.error("Audio stream \(stream.id, privacy: .public) failed: \(stream.text ?? "unknown", privacy: .public)")
             }
             return
@@ -793,7 +793,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             streamReceivedDone = true
             finishAudioStreamIfDrained(id: stream.id)
         case .error:
-            recordVoicePlaybackError(source: "stream_pcm", phase: "stream", errorKind: "remote_error")
+            recordVoicePlaybackError(source: "stream_pcm", phase: .stream, errorKind: .remoteError)
             logger.error("Audio stream \(stream.id, privacy: .public) failed: \(stream.text ?? "unknown", privacy: .public)")
             stopAudioStream(clearState: true)
         }
@@ -924,7 +924,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                         durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs)
                     )
                 case .failed:
-                    self.reportPlaybackFailure(itemID: itemID, source: "media", phase: "load", error: item.error)
+                    self.reportPlaybackFailure(itemID: itemID, source: "media", phase: .load, error: item.error)
                     self.stopMediaPlaybackSession()
                     self.deactivatePlaybackAudioSessionIfPossible()
                     self.setPlaybackState(playing: nil, loading: nil)
@@ -1003,7 +1003,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             markVoiceReplyAutoplayed(itemID: stream.id)
             toggleDataPlayback(data: data, itemID: Self.streamingPlaybackItemID(for: stream.id), mode: "autoplay")
         case .error:
-            recordVoicePlaybackError(source: "stream_wav", phase: "stream", errorKind: "remote_error")
+            recordVoicePlaybackError(source: "stream_wav", phase: .stream, errorKind: .remoteError)
             logger.error("Audio stream \(stream.id, privacy: .public) failed: \(stream.text ?? "unknown", privacy: .public)")
             stopAudioStream(clearState: true)
         case .metadata:
@@ -1014,7 +1014,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private func startAudioStream(id: String, sessionId: String?, sampleRate: Double, channels: AVAudioChannelCount) {
         let startedAtMs = ChatSessionTelemetry.nowMs()
         guard Self.isPlayableStreamFormat(sampleRate: sampleRate, channels: channels) else {
-            recordVoicePlaybackError(source: "stream_pcm", phase: "start", errorKind: "invalid_format")
+            recordVoicePlaybackError(source: "stream_pcm", phase: .start, errorKind: .invalidFormat)
             logger.error("Ignoring invalid audio stream format: \(sampleRate)Hz \(channels)ch")
             return
         }
@@ -1030,7 +1030,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             markVoiceReplyAutoplayed(itemID: id)
             recordVoicePlaybackStart(source: "stream_pcm", mode: "autoplay", durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         } catch {
-            recordVoicePlaybackError(source: "stream_pcm", phase: "start", error: error)
+            recordVoicePlaybackError(source: "stream_pcm", phase: .start, error: error)
             logger.error("Audio stream start failed: \(error.localizedDescription)")
             stopAudioStream(clearState: true)
         }
@@ -1102,13 +1102,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
 
         guard data.count <= 384 * 1024 else {
-            recordVoicePlaybackError(source: "stream_pcm", phase: "chunk", errorKind: "oversized_chunk")
+            recordVoicePlaybackError(source: "stream_pcm", phase: .chunk, errorKind: .oversizedChunk)
             logger.error("Ignoring oversized audio stream chunk: \(data.count) bytes")
             return
         }
 
         guard let buffer = LiveVoiceCaptureEngineHelper.pcm16LEBuffer(data: data, format: format) else {
-            recordVoicePlaybackError(source: "stream_pcm", phase: "chunk", errorKind: "decode")
+            recordVoicePlaybackError(source: "stream_pcm", phase: .chunk, errorKind: .decode)
             logger.error("Failed to decode audio stream PCM chunk")
             return
         }
@@ -1151,18 +1151,16 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     private func recordVoicePlaybackStart(source: String, mode: String, durationMs: Int64) {
-        ChatSessionTelemetry.recordTimingMetric(
-            .voicePlaybackStartMs,
-            durationMs: durationMs,
-            tags: [
-                "source": source,
-                "mode": mode,
-                "status": "ok",
-            ]
+        Telemetry.record(
+            AppVoicePlaybackStart(
+                durationMs: Double(max(0, durationMs)),
+                playbackSource: source,
+                playbackMode: mode
+            )
         )
     }
 
-    private func reportPlaybackFailure(itemID: String, source: String, phase: String, error: Error?) {
+    private func reportPlaybackFailure(itemID: String, source: String, phase: AppVoicePlaybackError.Phase, error: Error?) {
         recordVoicePlaybackError(source: source, phase: phase, error: error)
         let nsError = error as NSError?
         let underlying = nsError?.userInfo[NSUnderlyingErrorKey] as? NSError
@@ -1172,10 +1170,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 ?? nsError?.localizedDescription
                 ?? String(localized: "The audio could not be loaded.")
         )
-        logger.error("Audio \(source, privacy: .public) playback failed (\(phase, privacy: .public)): \(nsError?.localizedDescription ?? "unknown")")
+        logger.error("Audio \(source, privacy: .public) playback failed (\(phase.rawValue, privacy: .public)): \(nsError?.localizedDescription ?? "unknown")")
         ClientLog.warning("AudioPlayer", "Audio playback failed", metadata: [
             "source": source,
-            "phase": phase,
+            "phase": phase.rawValue,
             "error_domain": nsError?.domain ?? "",
             "error_code": nsError.map { String($0.code) } ?? "",
             "underlying_domain": underlying?.domain ?? "",
@@ -1185,17 +1183,16 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     private func recordVoicePlaybackError(
         source: String,
-        phase: String,
+        phase: AppVoicePlaybackError.Phase,
         error: Error? = nil,
-        errorKind: String? = nil
+        errorKind: TelemetryTag.ErrorKind? = nil
     ) {
-        ChatSessionTelemetry.recordCountMetric(
-            .voicePlaybackError,
-            tags: [
-                "source": source,
-                "phase": phase,
-                "error_kind": errorKind ?? error.map(ChatSessionTelemetry.metricErrorKind(for:)) ?? "other",
-            ]
+        Telemetry.record(
+            AppVoicePlaybackError(
+                playbackSource: source,
+                phase: phase,
+                errorKind: errorKind ?? error.map(TelemetryErrorKind.classify) ?? .other
+            )
         )
     }
 

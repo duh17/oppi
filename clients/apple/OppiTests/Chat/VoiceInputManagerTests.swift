@@ -280,33 +280,31 @@ struct VoiceInputManagerTests {
             systemAccess: access
         )
         manager.setPlaybackInterrupter(playback)
-        var totals: [[String: String]] = []
-        var routePhases = 0
-        VoiceInputTelemetry._recordMetricForTesting = { metric, _, _, tags in
-            if metric == .dictationSetupMs { totals.append(tags) }
-            if metric == .voiceSetupMs, tags["phase"] == "audio_session" { routePhases += 1 }
-        }
-        defer { VoiceInputTelemetry._recordMetricForTesting = nil }
+        let capture = TelemetryCapture()
         let credentials = ServerCredentials(host: "example.test", port: 443, token: "test", name: "test")
-        for take in 0..<2 {
-            manager.loadPreferences()
-            _ = manager.activateConversationComposer(
-                serverId: "server", sessionId: "session", credentials: credentials, connection: nil
-            )
-            playback.isPlaybackActiveForCapture = take == 1
-            try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
-            #expect(manager.isRecording)
-            #expect(access.lastInAppPlaybackActive == (take == 1))
-            #expect(manager.captureFailure == nil)
-            await manager.cancelRecording()
+        try await capture.run {
+            for take in 0..<2 {
+                manager.loadPreferences()
+                _ = manager.activateConversationComposer(
+                    serverId: "server", sessionId: "session", credentials: credentials, connection: nil
+                )
+                playback.isPlaybackActiveForCapture = take == 1
+                try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+                #expect(manager.isRecording)
+                #expect(access.lastInAppPlaybackActive == (take == 1))
+                #expect(manager.captureFailure == nil)
+                await manager.cancelRecording()
+            }
         }
+        // One setup event per take, with the per-phase breakdown inside it.
+        let setups = capture.events(named: "app.dictation_setup")
         #expect(resolutions == 1 && modelPreparations == 1)
-        #expect(totals.map { $0["path"] } == ["cold", "warm_cache"])
-        #expect(totals.allSatisfy { $0["provider_id"] == "apple_modern_speech" })
-        #expect(routePhases == 2)
+        #expect(setups.map { $0.tags?["model_path"] } == ["cold", "warm_cache"])
+        #expect(setups.allSatisfy { $0.tags?["stt_provider"] == "apple_modern_speech" })
+        #expect(setups.allSatisfy { $0.fields["audio_session_ms"] != nil })
         #expect(access.activateAudioSessionCallCount == 2)
         #expect(access.activateBuiltInAudioSessionCallCount == 0)
-        let paths = totals.compactMap { $0["path"] }
+        let paths = setups.compactMap { $0.tags?["model_path"] }
         print("Activation evidence: paths=\(paths) locale_resolutions=\(resolutions) model_preparations=\(modelPreparations) current_route_activations=\(access.activateAudioSessionCallCount)")
     }
 
@@ -2199,7 +2197,7 @@ struct VoiceInputManagerTests {
 
         classicProvider.prepareSessionHandler = { _ in
             await gate.wait()
-            return VoiceProviderPreparation(audioFormat: nil, pathTag: "gate", setupMetricTags: [:])
+            return VoiceProviderPreparation(audioFormat: nil, modelPath: .cold)
         }
         classicProvider.makeSessionHandler = { _, _ in session }
 
@@ -2956,8 +2954,7 @@ struct VoiceInputManagerTests {
             }
             return VoiceProviderPreparation(
                 audioFormat: nil,
-                pathTag: "mock",
-                setupMetricTags: [:]
+                modelPath: .cold
             )
         }
         classicProvider.makeSessionHandler = { _, _ in sessionB }
@@ -3033,8 +3030,7 @@ struct VoiceInputManagerTests {
             }
             return VoiceProviderPreparation(
                 audioFormat: nil,
-                pathTag: "mock",
-                setupMetricTags: [:]
+                modelPath: .cold
             )
         }
         classicProvider.makeSessionHandler = { _, _ in

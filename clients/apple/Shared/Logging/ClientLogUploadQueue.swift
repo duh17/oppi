@@ -175,14 +175,16 @@ actor ClientLogUploadQueue {
 
             let request = ClientLogUploadRequest(
                 generatedAt: nowMs(),
-                appVersion: metadata.appVersion,
-                buildNumber: metadata.buildNumber,
-                osVersion: metadata.osVersion,
-                deviceModel: metadata.deviceModel,
-                gitCommit: metadata.gitCommit,
-                clientKind: clientKind,
-                appInstanceId: appInstanceId,
-                bootId: bootId,
+                client: ClientLogUploadClient(
+                    kind: clientKind,
+                    appVersion: metadata.appVersion,
+                    buildNumber: metadata.buildNumber,
+                    osVersion: metadata.osVersion,
+                    deviceModel: metadata.deviceModel,
+                    gitCommit: metadata.gitCommit,
+                    appInstanceId: appInstanceId,
+                    bootId: bootId
+                ),
                 droppedCount: batchDroppedCount > 0 ? batchDroppedCount : nil,
                 entries: batch
             )

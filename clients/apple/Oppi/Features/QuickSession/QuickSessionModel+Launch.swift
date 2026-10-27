@@ -103,18 +103,33 @@ extension QuickSessionModel {
         error = nil
 
         let telemetryStartedAtMs = ChatSessionTelemetry.nowMs()
-        let telemetryTags = [
-            "source": "sheet",
-            "selection": selectedWorkspaceSelectionSource,
-            "has_message": trimmed.isEmpty ? "0" : "1",
-            "has_attachments": pendingAttachments.isEmpty ? "0" : "1",
-            "has_repo_refs": pendingRepoPointers.isEmpty ? "0" : "1",
-            "has_model": modelId == nil ? "0" : "1",
-            "has_agent": selectedAgentId == nil ? "0" : "1",
-            "worktree": plan.worktreeId == WorkspaceWorktree.mainId ? "main" : "other",
-            "engine": engine.rawValue,
-            "incognito": launchesIncognito ? "1" : "0",
-        ]
+        let hasMessage = !trimmed.isEmpty
+        let hasAttachments = !pendingAttachments.isEmpty
+        let hasRepoRefs = !pendingRepoPointers.isEmpty
+        let hasAgent = selectedAgentId != nil
+        let isMainWorktree = plan.worktreeId == WorkspaceWorktree.mainId
+        let workspaceSelection = selectedWorkspaceSelectionSource
+        let launchedIncognito = launchesIncognito
+        func recordCreate(workspaceId: String, failure: Error?) {
+            Telemetry.record(
+                AppQuickSessionCreate(
+                    durationMs: Double(max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs)),
+                    hasMessage: hasMessage,
+                    hasModel: modelId != nil,
+                    hasAttachments: hasAttachments,
+                    hasRepoRefs: hasRepoRefs,
+                    hasAgent: hasAgent,
+                    incognito: launchedIncognito,
+                    originSurface: .sheet,
+                    workspaceSelection: workspaceSelection,
+                    worktree: isMainWorktree ? .main : .other,
+                    sessionEngine: TelemetryTag.SessionEngine(rawValue: engine.rawValue),
+                    status: failure == nil ? .ok : .error,
+                    errorKind: failure.map(TelemetryErrorKind.classify)
+                ),
+                workspaceId: workspaceId
+            )
+        }
 
         // Capture references before dismiss tears Quick Session down.
         let nav = navigation
@@ -277,12 +292,7 @@ extension QuickSessionModel {
                 if shouldRememberAgentSelection {
                     AppPreferences.QuickSession.saveAgentId(selectedAgentId)
                 }
-                ChatSessionTelemetry.recordTimingMetric(
-                    .quickSessionCreateMs,
-                    durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),
-                    workspaceId: workspace.id,
-                    tags: telemetryTags.merging(["status": "ok"]) { _, new in new }
-                )
+                recordCreate(workspaceId: workspace.id, failure: nil)
                 logger.notice("Quick session created: \(session.id, privacy: .public) in workspace \(workspace.name, privacy: .public)")
 
                 // Single atomic write — QuickSessionPresentation unpacks it on dismiss.
@@ -303,25 +313,7 @@ extension QuickSessionModel {
                 if let failure = error as? AgentLaunchFailureResponse {
                     launchFailure = failure
                 }
-                let errorKind = ChatSessionTelemetry.metricErrorKind(for: error)
-                ChatSessionTelemetry.recordTimingMetric(
-                    .quickSessionCreateMs,
-                    durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),
-                    workspaceId: workspace.id,
-                    tags: telemetryTags.merging([
-                        "status": "error",
-                        "error_kind": errorKind,
-                    ]) { _, new in new }
-                )
-                ChatSessionTelemetry.recordCountMetric(
-                    .quickSessionError,
-                    workspaceId: workspace.id,
-                    tags: [
-                        "source": "sheet",
-                        "selection": selectedWorkspaceSelectionSource,
-                        "error_kind": errorKind,
-                    ]
-                )
+                recordCreate(workspaceId: workspace.id, failure: error)
                 self.error = error.localizedDescription
                 isCreating = false
                 logger.error("Quick session creation failed: \(error.localizedDescription, privacy: .public)")

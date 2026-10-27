@@ -35,7 +35,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
 
         let client = allowed ? currentAPIClient : nil
         Task {
-            await ChatMetricsService.shared.setUploadClient(client)
+            await TelemetryEventUploader.shared.setUploadClient(client)
         }
         ClientLogUploadService.configureUploader(client)
 
@@ -46,7 +46,6 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         collectPastDiagnosticPayloadsIfAllowed(reason: "preference_change")
         Task {
             await uploader.setClient(client)
-            await uploader.setMetadata(Self.makeMetadata())
             await uploader.flushIfNeeded()
         }
     }
@@ -58,7 +57,7 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         currentAPIClient = client
 
         Task {
-            await ChatMetricsService.shared.setUploadClient(client)
+            await TelemetryEventUploader.shared.setUploadClient(client)
         }
         ClientLogUploadService.configureUploader(client)
 
@@ -70,7 +69,6 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
         collectPastDiagnosticPayloadsIfAllowed(reason: "set_upload_client")
         Task {
             await uploader.setClient(client)
-            await uploader.setMetadata(Self.makeMetadata())
             await uploader.flushIfNeeded()
         }
     }
@@ -187,24 +185,6 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
             }
             ClientLog.error("MetricKit", "Crash diagnostic payload queued", metadata: metadata, flush: true)
         }
-    }
-
-    fileprivate static func makeMetadata() -> MetricKitUploadMetadata {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-        let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
-        let model = Self.deviceModel()
-        return MetricKitUploadMetadata(
-            appVersion: version,
-            buildNumber: build,
-            osVersion: osVersion,
-            deviceModel: model,
-            gitCommit: AppBuildIdentity.gitCommit
-        )
-    }
-
-    private static func deviceModel() -> String {
-        "iPhone"
     }
 
 }
@@ -380,17 +360,8 @@ final class MainThreadLagWatchdog: @unchecked Sendable {
     }
 }
 
-private struct MetricKitUploadMetadata: Sendable {
-    let appVersion: String
-    let buildNumber: String
-    let osVersion: String
-    let deviceModel: String
-    let gitCommit: String?
-}
-
 private actor MetricKitUploadQueue {
     private var apiClient: APIClient?
-    private var metadata: MetricKitUploadMetadata?
     private var backlog: [MetricKitPayloadItem] = []
     private var uploading = false
 
@@ -399,10 +370,6 @@ private actor MetricKitUploadQueue {
 
     func setClient(_ client: APIClient?) {
         apiClient = client
-    }
-
-    func setMetadata(_ metadata: MetricKitUploadMetadata) {
-        self.metadata = metadata
     }
 
     func enqueue(payloads: [MetricKitPayloadItem]) {
@@ -448,11 +415,6 @@ private actor MetricKitUploadQueue {
         uploading = true
         defer { uploading = false }
 
-        guard let metadata else {
-            metricKitLog.debug("Skipping upload: missing metadata")
-            return
-        }
-
         guard let apiClient else {
             metricKitLog.debug("Skipping upload: no API client")
             return
@@ -468,14 +430,7 @@ private actor MetricKitUploadQueue {
 
             let request = MetricKitUploadRequest(
                 generatedAt: Date.nowMs(),
-                appVersion: metadata.appVersion,
-                buildNumber: metadata.buildNumber,
-                osVersion: metadata.osVersion,
-                deviceModel: metadata.deviceModel,
-                gitCommit: metadata.gitCommit,
-                clientKind: .ios,
-                appInstanceId: ClientLogUploadService.appInstanceId,
-                bootId: ClientLogUploadService.bootId,
+                client: TelemetryClientIdentity.current,
                 payloads: batch
             )
 
@@ -1134,162 +1089,4 @@ private enum MetricKitPayloadSerializer {
         }
         return ["type": fallbackType, "error": "json_parse_failed"]
     }
-}
-
-actor ChatMetricsService {
-    static let shared = ChatMetricsService()
-
-    private var apiClient: APIClient?
-    private var metadata: MetricKitUploadMetadata?
-    private var backlog: [ChatMetricSample] = []
-    private var flushing = false
-    private var flushTask: Task<Void, Never>?
-
-    private let maxPending = 1_000
-    private let maxBatchSize = 50
-    private let flushInterval: Duration = .seconds(10)
-
-    private init() {}
-
-    func setUploadClient(_ client: APIClient?) {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
-            apiClient = nil
-            backlog.removeAll(keepingCapacity: true)
-            flushTask?.cancel()
-            flushTask = nil
-            return
-        }
-
-        apiClient = client
-        if metadata == nil {
-            metadata = MetricKitService.makeMetadata()
-        }
-
-        guard client != nil else {
-            return
-        }
-
-        flushIfNeeded()
-    }
-
-    func record(
-        metric: ChatMetricName,
-        value: Double,
-        unit: ChatMetricUnit,
-        sessionId: String? = nil,
-        workspaceId: String? = nil,
-        tags: [String: String] = [:],
-        timestampMs: Int64 = Date.nowMs()
-    ) {
-        guard value.isFinite else { return }
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-
-        var trimmedTags: [String: String]? = nil
-        if !tags.isEmpty {
-            var out: [String: String] = [:]
-            out.reserveCapacity(min(tags.count, 16))
-            for (key, tagValue) in tags {
-                if out.count >= 16 { break }
-                let cleanKey = String(key.prefix(96))
-                guard !cleanKey.isEmpty else { continue }
-                out[cleanKey] = String(tagValue.prefix(256))
-            }
-            if !out.isEmpty {
-                trimmedTags = out
-            }
-        }
-
-        let sample = ChatMetricSample(
-            ts: timestampMs,
-            metric: metric,
-            value: value,
-            unit: unit,
-            sessionId: sessionId.flatMap { $0.isEmpty ? nil : String($0.prefix(96)) },
-            workspaceId: workspaceId.flatMap { $0.isEmpty ? nil : String($0.prefix(96)) },
-            tags: trimmedTags
-        )
-
-        backlog.append(sample)
-        if backlog.count > maxPending {
-            backlog.removeFirst(backlog.count - maxPending)
-        }
-
-        if backlog.count >= maxBatchSize {
-            flushIfNeeded()
-        } else {
-            scheduleFlushTimerIfNeeded()
-        }
-    }
-
-    func flushIfNeeded() {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
-        guard !flushing else { return }
-        guard !backlog.isEmpty else { return }
-
-        Task { [weak self] in
-            await self?.flushLoop()
-        }
-    }
-
-    private func flushLoop() async {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
-            backlog.removeAll(keepingCapacity: true)
-            return
-        }
-
-        guard !flushing else { return }
-        flushing = true
-        defer { flushing = false }
-
-        flushTask?.cancel()
-        flushTask = nil
-
-        guard let metadata else {
-            return
-        }
-
-        guard let apiClient else {
-            scheduleFlushTimerIfNeeded()
-            return
-        }
-
-        while !backlog.isEmpty {
-            let batch = Array(backlog.prefix(maxBatchSize))
-            backlog.removeFirst(min(maxBatchSize, backlog.count))
-
-            let request = ChatMetricUploadRequest(
-                generatedAt: Date.nowMs(),
-                appVersion: metadata.appVersion,
-                buildNumber: metadata.buildNumber,
-                osVersion: metadata.osVersion,
-                deviceModel: metadata.deviceModel,
-                gitCommit: metadata.gitCommit,
-                samples: batch
-            )
-
-            do {
-                try await apiClient.uploadChatMetrics(request: request)
-            } catch {
-                backlog = batch + backlog
-                scheduleFlushTimerIfNeeded()
-                return
-            }
-        }
-    }
-
-    private func scheduleFlushTimerIfNeeded() {
-        guard flushTask == nil else { return }
-
-        flushTask = Task { [weak self] in
-            try? await Task.sleep(for: self?.flushInterval ?? .seconds(10))
-            guard !Task.isCancelled else { return }
-            await self?.flushTaskFired()
-        }
-    }
-
-    private func flushTaskFired() {
-        flushTask = nil
-        flushIfNeeded()
-    }
-
 }

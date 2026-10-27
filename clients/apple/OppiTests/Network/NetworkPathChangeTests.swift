@@ -237,13 +237,6 @@ struct PathChangeReconnectDelaySanityTests {
             )
         )
     }
-
-    @Test func reconnectAttemptTelemetryTagHasBoundedCardinality() {
-        #expect(WebSocketRecoveryPolicy.reconnectAttemptTag(0) == "0")
-        #expect(WebSocketRecoveryPolicy.reconnectAttemptTag(6) == "6")
-        #expect(WebSocketRecoveryPolicy.reconnectAttemptTag(7) == "7_plus")
-        #expect(WebSocketRecoveryPolicy.reconnectAttemptTag(Int.max) == "7_plus")
-    }
 }
 
 // MARK: - ConnectionCoordinator Path Change Integration Tests

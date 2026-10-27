@@ -370,10 +370,10 @@ private func timelineHeaderElement(in root: UIView, identifier: String) -> ToolT
 struct ToolTimelineRowContentViewTests {
 
     @Test func mediaPlaybackTelemetryClassifiesKindWithoutContent() {
-        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: "video/mp4", sourceFileExtension: nil) == "video")
-        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: nil, sourceFileExtension: "wav") == "audio")
-        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: "application/octet-stream", sourceFileExtension: "PNG") == "image")
-        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: nil, sourceFileExtension: nil) == "unknown")
+        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: "video/mp4", sourceFileExtension: nil) == .video)
+        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: nil, sourceFileExtension: "wav") == .audio)
+        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: "application/octet-stream", sourceFileExtension: "PNG") == .image)
+        #expect(MediaPlaybackTelemetry.mediaKind(mimeType: nil, sourceFileExtension: nil) == .unknown)
     }
 
     @MainActor

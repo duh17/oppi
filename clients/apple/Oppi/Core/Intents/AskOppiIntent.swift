@@ -97,12 +97,21 @@ struct AskOppiIntent: AppIntent {
         }
 
         let telemetryStartedAtMs = ChatSessionTelemetry.nowMs()
-        let telemetryTags = [
-            "source": "intent",
-            "selection": workspaceSelectionSource,
-            "has_message": message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "0" : "1",
-            "has_model": model == nil ? "0" : "1",
-        ]
+        let hasMessage = !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        func recordCreate(status: AppQuickSessionCreate.Status, errorKind: TelemetryTag.ErrorKind?) {
+            Telemetry.record(
+                AppQuickSessionCreate(
+                    durationMs: Double(max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs)),
+                    hasMessage: hasMessage,
+                    hasModel: model != nil,
+                    originSurface: .intent,
+                    workspaceSelection: workspaceSelectionSource,
+                    status: status,
+                    errorKind: errorKind
+                ),
+                workspaceId: targetWorkspaceId
+            )
+        }
 
         do {
             let response = try await api.createWorkspaceSession(
@@ -113,51 +122,20 @@ struct AskOppiIntent: AppIntent {
             )
             let prompted = response.prompted ?? false
             let sessionName = response.session.name ?? response.session.id
-            ChatSessionTelemetry.recordTimingMetric(
-                .quickSessionCreateMs,
-                durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),
-                workspaceId: targetWorkspaceId,
-                tags: telemetryTags.merging([
-                    "status": prompted ? "ok" : "error",
-                    "delivery": prompted ? "prompted" : "created_only",
-                ]) { _, new in new }
+            // An intent whose prompt was not delivered created a session nobody is working in.
+            recordCreate(
+                status: prompted ? .ok : .error,
+                errorKind: prompted ? nil : .promptDelivery
             )
             if prompted {
                 logger.error("Quick dispatch succeeded: session=\(response.session.id)")
                 return "Session started: \(sessionName)"
             }
 
-            ChatSessionTelemetry.recordCountMetric(
-                .quickSessionError,
-                workspaceId: targetWorkspaceId,
-                tags: [
-                    "source": "intent",
-                    "selection": workspaceSelectionSource,
-                    "error_kind": "prompt_delivery",
-                ]
-            )
             logger.warning("Session created but prompt delivery failed: \(response.session.id)")
             return "Session created but agent failed to start. Open Oppi to retry."
         } catch {
-            let errorKind = ChatSessionTelemetry.metricErrorKind(for: error)
-            ChatSessionTelemetry.recordTimingMetric(
-                .quickSessionCreateMs,
-                durationMs: max(0, ChatSessionTelemetry.nowMs() - telemetryStartedAtMs),
-                workspaceId: targetWorkspaceId,
-                tags: telemetryTags.merging([
-                    "status": "error",
-                    "error_kind": errorKind,
-                ]) { _, new in new }
-            )
-            ChatSessionTelemetry.recordCountMetric(
-                .quickSessionError,
-                workspaceId: targetWorkspaceId,
-                tags: [
-                    "source": "intent",
-                    "selection": workspaceSelectionSource,
-                    "error_kind": errorKind,
-                ]
-            )
+            recordCreate(status: .error, errorKind: TelemetryErrorKind.classify(error))
             logger.error("Quick dispatch failed: \(error)")
             return "Failed to create session: \(error.localizedDescription)"
         }

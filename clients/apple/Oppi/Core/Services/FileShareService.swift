@@ -335,22 +335,13 @@ enum FileShareService {
         case .source:
             result = renderSource(content)
         }
-        let durationMs = ChatTimelinePerf.elapsedMs(since: startNs)
-        if durationMs >= 1 {
-            let formatTag = exportFormatTag(format)
-            let contentTag = contentTypeTag(content)
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .shareExportMs,
-                    value: Double(durationMs),
-                    unit: .ms,
-                    tags: [
-                        "format": formatTag,
-                        "content_type": contentTag,
-                    ]
-                )
-            }
-        }
+        Telemetry.record(
+            AppShareExport(
+                durationMs: Double(ChatTimelinePerf.elapsedMs(since: startNs)),
+                exportFormat: exportFormatTag(format),
+                contentType: contentTypeTag(content)
+            )
+        )
         return result
     }
 

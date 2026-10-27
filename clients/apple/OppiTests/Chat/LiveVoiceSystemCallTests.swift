@@ -180,7 +180,7 @@ struct LiveVoiceSystemCallTests {
         await call.controller.end()
         #expect(await waitForMainActorCondition { call.endRequested(id) })
 
-        #expect(call.system.endLeftoverCalls(phase: "dictation_start") == 1)
+        #expect(call.system.endLeftoverCalls(phase: .dictationStart) == 1)
         #expect(call.telephony.reports.last == .ended(id, .remoteEnded))
         #expect(call.telephony.listed.isEmpty)
     }
@@ -191,7 +191,7 @@ struct LiveVoiceSystemCallTests {
         try await call.start()
         let liveId = try #require(call.system.callId)
 
-        #expect(call.system.endLeftoverCalls(phase: "call_start") == 0)
+        #expect(call.system.endLeftoverCalls(phase: .callStart) == 0)
         #expect(call.controller.isLive)
         #expect(call.telephony.listed == [liveId])
         #expect(!call.telephony.reports.contains { if case .ended = $0 { true } else { false } })

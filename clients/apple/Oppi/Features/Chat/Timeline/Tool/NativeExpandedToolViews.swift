@@ -809,7 +809,7 @@ final class NativeExpandedVideoAttachmentView: UIView {
         MediaPlaybackTelemetry.recordError(
             kind: kind,
             source: "tool_video_attachment",
-            phase: "source",
+            phase: .source,
             error: error,
             sessionId: sessionId
         )

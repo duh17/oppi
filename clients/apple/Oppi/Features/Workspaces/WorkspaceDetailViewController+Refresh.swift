@@ -209,12 +209,13 @@ extension WorkspaceDetailViewController {
 
     // MARK: Load telemetry
 
-    func beginWorkspaceLoadIfNeeded(path: String) {
+    func beginWorkspaceLoadIfNeeded(path: AppWorkspaceLoad.LoadPath) {
         guard state.workspaceLoad == nil, let connection else { return }
         state.workspaceLoad = WorkspaceLoadMeasurement(
             startedAtMs: Date.nowMs(),
             path: path,
-            hadImmediateContent: !workspaceSessions(connection).isEmpty || !state.localSessions.isEmpty
+            hadImmediateContent: !workspaceSessions(connection).isEmpty || !state.localSessions.isEmpty,
+            backgroundEpoch: AppScenePhase.shared.backgroundEpoch
         )
     }
 
@@ -230,12 +231,14 @@ extension WorkspaceDetailViewController {
         if !workspaceLoad.hadImmediateContent, state.isRefreshingWorkspaceData {
             return
         }
-        ChatSessionTelemetry.recordTimingMetric(
-            .workspaceLoadMs,
-            durationMs: Date.nowMs() - workspaceLoad.startedAtMs,
-            workspaceId: workspaceId,
-            tags: ["path": workspaceLoad.path]
+        defer { state.workspaceLoad = nil }
+        guard workspaceLoad.backgroundEpoch == AppScenePhase.shared.backgroundEpoch else { return }
+        Telemetry.record(
+            AppWorkspaceLoad(
+                durationMs: Double(max(0, Date.nowMs() - workspaceLoad.startedAtMs)),
+                loadPath: workspaceLoad.path
+            ),
+            workspaceId: workspaceId
         )
-        state.workspaceLoad = nil
     }
 }

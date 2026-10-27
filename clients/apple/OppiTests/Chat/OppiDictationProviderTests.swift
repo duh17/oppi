@@ -404,8 +404,7 @@ struct OppiDictationProviderTests {
         )
         let preparation = VoiceProviderPreparation(
             audioFormat: nil,
-            pathTag: "test",
-            setupMetricTags: [:]
+            modelPath: .cold
         )
 
         #expect(throws: VoiceInputError.self) {
@@ -617,7 +616,7 @@ struct OppiDictationProviderLifecycleTests {
         _ = installTestDictationTransport(on: provider)
         let preparation = try await provider.prepareSession(context: context)
 
-        #expect(preparation.setupMetricTags["transport"] == "dictation_stream")
+        #expect(preparation.modelPath == .dictationAudioWs)
         provider.invalidateCache()
     }
 
@@ -680,13 +679,10 @@ struct OppiDictationProviderLifecycleTests {
         _ = installTestDictationTransport(on: provider)
 
         let preparation = try await provider.prepareSession(context: context)
-        #expect(preparation.pathTag == "dictation_audio_ws")
+        #expect(preparation.modelPath == .dictationAudioWs)
         #expect(preparation.audioFormat == nil)
-        #expect(preparation.setupMetricTags["dictation_mode"] == "server")
-        #expect(preparation.setupMetricTags["transport"] == "dictation_stream")
-        #expect(preparation.setupMetricTags["host"] == "localhost")
-        #expect(preparation.setupMetricTags["provider_id"] == "oppi_server_dictation")
-        #expect(preparation.setupMetricTags["provider_kind"] == "local_server")
+        #expect(preparation.provider.sttProvider == "oppi_server_dictation")
+        #expect(preparation.provider.sttProviderKind == .localServer)
 
         // Cleanup
         provider.invalidateCache()
@@ -824,7 +820,7 @@ struct OppiDictationProviderLifecycleTests {
 
     // MARK: - metricTags
 
-    @Test func metricTagsIncludeUnknownWhenNoServerInfo() async throws {
+    @Test func backendIsUnknownUntilTheServerReportsReadiness() async throws {
         let (context, _) = Self.makeContextWithConnection()
         let provider = OppiDictationProvider()
 
@@ -832,9 +828,8 @@ struct OppiDictationProviderLifecycleTests {
         let preparation = try await provider.prepareSession(context: context)
 
         // At setup time, stt_backend and model are unknown
-        #expect(preparation.setupMetricTags["stt_backend"] == "unknown")
-        #expect(preparation.setupMetricTags["model"] == "unknown")
-        #expect(preparation.setupMetricTags["live_preview"] == "1")
+        #expect(preparation.provider.sttBackend == "unknown")
+        #expect(preparation.provider.sttModel == "unknown")
 
         provider.invalidateCache()
     }
@@ -1031,7 +1026,7 @@ struct OppiDictationSessionMessageListenerTests {
         // dictationReady should not produce any VoiceSessionEvent transcript
         let transcriptEvents = events.filter {
             if case .replaceFinalTranscript("Done", _, _, _) = $0 { return false }
-            if case .providerMetricTags = $0 { return false }
+            if case .sttResolved = $0 { return false }
             return true
         }
         #expect(transcriptEvents.isEmpty)
@@ -1409,7 +1404,7 @@ struct OppiDictationSessionAudioDrainTests {
         #expect(error != nil)
     }
 
-    @Test func providerMetricTagsEmittedWhenInfoAvailable() async {
+    @Test func resolvedBackendEmittedWhenInfoAvailable() async {
         let transport = TestDictationTransport()
         transport.onSendAudio = { _ in }
 
@@ -1429,7 +1424,7 @@ struct OppiDictationSessionAudioDrainTests {
                 for try await event in session.events {
                     events.append(event)
                     // Collect the metric tag event then stop
-                    if case .providerMetricTags = event { break }
+                    if case .sttResolved = event { break }
                 }
             } catch {}
             return events
@@ -1445,13 +1440,13 @@ struct OppiDictationSessionAudioDrainTests {
 
         let events = await collectTask.value
         let metricEvents = events.filter {
-            if case .providerMetricTags = $0 { return true }
+            if case .sttResolved = $0 { return true }
             return false
         }
         #expect(metricEvents.count == 1)
-        if case .providerMetricTags(let tags) = metricEvents.first {
-            #expect(tags["stt_backend"] == "mlx-server")
-            #expect(tags["model"] == "Qwen3-ASR")
+        if case .sttResolved(let backend, let model) = metricEvents.first {
+            #expect(backend == "mlx-server")
+            #expect(model == "Qwen3-ASR")
         }
     }
 
@@ -1482,7 +1477,7 @@ struct OppiDictationSessionAudioDrainTests {
         var metricTagCount = 0
         do {
             for try await event in session.events {
-                if case .providerMetricTags = event {
+                if case .sttResolved = event {
                     metricTagCount += 1
                 }
             }
@@ -1839,8 +1834,8 @@ extension VoiceSessionEvent: @retroactive Equatable {
                 && snapA == snapB
                 && committedA == committedB
                 && activeA == activeB
-        case (.providerMetricTags(let a), .providerMetricTags(let b)):
-            return a == b
+        case (.sttResolved(let backendA, let modelA), .sttResolved(let backendB, let modelB)):
+            return backendA == backendB && modelA == modelB
         default:
             return false
         }

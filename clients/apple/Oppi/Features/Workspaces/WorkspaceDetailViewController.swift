@@ -480,14 +480,14 @@ final class WorkspaceDetailViewController: UIViewController {
         }
         pollingTask = Task { [weak self] in
             guard let self else { return }
-            beginWorkspaceLoadIfNeeded(path: state.hasPresentedWorkspaceOnce ? "return_from_chat" : "open")
+            beginWorkspaceLoadIfNeeded(path: state.hasPresentedWorkspaceOnce ? .returnFromChat : .open)
             await refreshWorkspaceData()
             await runWorkspaceRefreshPolling()
         }
     }
 
     private func handleViewAppear(_ connection: ServerConnection) {
-        let path = state.hasPresentedWorkspaceOnce ? "return_from_chat" : "open"
+        let path: AppWorkspaceLoad.LoadPath = state.hasPresentedWorkspaceOnce ? .returnFromChat : .open
         beginWorkspaceLoadIfNeeded(path: path)
         state.hasPresentedWorkspaceOnce = true
         refreshGitStatus()
@@ -671,8 +671,11 @@ extension WorkspaceDetailViewController {
 
     struct WorkspaceLoadMeasurement {
         let startedAtMs: Int64
-        let path: String
+        let path: AppWorkspaceLoad.LoadPath
         let hadImmediateContent: Bool
+        /// `AppScenePhase.backgroundEpoch` at the start: a load that outlives a
+        /// backgrounding measures suspension, so it is dropped.
+        let backgroundEpoch: Int
     }
 
     /// What the hosted screen kept in `@State`, fresh for each mount.

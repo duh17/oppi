@@ -94,9 +94,6 @@ struct VoiceStartupPerfBench {
     /// This is the user-facing latency we want to minimize.
     /// Cancel happens in setup of next iteration, excluded from timing.
     @Test func startRecordingWarm() async throws {
-        // Suppress telemetry test hook to avoid interference
-        VoiceInputTelemetry._recordMetricForTesting = nil
-
         let (manager, _) = Self.makeManager()
 
         let us = await Self.measureMedianUsAsync(
@@ -116,7 +113,6 @@ struct VoiceStartupPerfBench {
 
     /// stopRecording / cancelRecording overhead (cleanup path).
     @Test func cancelRecordingOverhead() async throws {
-        VoiceInputTelemetry._recordMetricForTesting = nil
         let (manager, _) = Self.makeManager()
 
         let us = await Self.measureMedianUsAsync(
@@ -134,7 +130,6 @@ struct VoiceStartupPerfBench {
 
     /// Prewarm orchestration overhead with mock provider.
     @Test func prewarmOverhead() async throws {
-        VoiceInputTelemetry._recordMetricForTesting = nil
         let (manager, _) = Self.makeManager()
 
         let us = await Self.measureMedianUsAsync {
@@ -144,58 +139,31 @@ struct VoiceStartupPerfBench {
         print("METRIC prewarm_us=\(Int(us))")
     }
 
-    /// Cost of 5 recordVoiceMetric calls (what happens during startup).
-    @Test func telemetry5xRecord() async throws {
-        let annotation = VoiceMetricAnnotation(
-            engine: "dictation", locale: "en-US", source: "bench"
+    /// Cost of building and recording the one dictation setup event (what startup emits).
+    @Test func setupEventRecord() {
+        let take = VoiceTakeTelemetry(voiceEngine: .dictation, locale: "en-US", trigger: "bench")
+        let timings = VoiceSetupTimings(
+            modelReadyMs: 10, transcriberCreateMs: 12, analyzerStartMs: 15,
+            audioSessionMs: 20, audioStartMs: 25, totalMs: 67
         )
-        var captureCount = 0
-        VoiceInputTelemetry._recordMetricForTesting = { _, _, _, _ in
-            captureCount += 1
-        }
-        defer { VoiceInputTelemetry._recordMetricForTesting = nil }
 
         let us = Self.measureMedianUs {
-            VoiceInputTelemetry.recordMetric(
-                .voiceSetupMs, valueMs: 42, annotation: annotation,
-                phase: .modelReady, status: "ok", extraTags: ["path": "warm_cache"]
-            )
-            VoiceInputTelemetry.recordMetric(
-                .voiceSetupMs, valueMs: 5, annotation: annotation,
-                phase: .transcriberCreate, status: "ok", extraTags: ["path": "warm_cache"]
-            )
-            VoiceInputTelemetry.recordMetric(
-                .voiceSetupMs, valueMs: 12, annotation: annotation,
-                phase: .analyzerStart, status: "ok", extraTags: ["path": "warm_cache"]
-            )
-            VoiceInputTelemetry.recordMetric(
-                .voiceSetupMs, valueMs: 8, annotation: annotation,
-                phase: .audioStart, status: "ok", extraTags: ["path": "warm_cache"]
-            )
-            VoiceInputTelemetry.recordMetric(
-                .voiceSetupMs, valueMs: 67, annotation: annotation,
-                phase: .total, status: "ok", extraTags: ["path": "warm_cache"]
-            )
+            Telemetry.record(take.setupEvent(timings: timings, includesPhases: true, status: .ok))
         }
-        print("METRIC telemetry_5x_us=\(Int(us))")
+        print("METRIC setup_event_record_us=\(Int(us))")
     }
 
-    /// Cost of building VoiceMetricAnnotation tags dictionary.
-    @Test func tagsBuild() {
-        let annotation = VoiceMetricAnnotation(
-            engine: "dictation", locale: "en-US", source: "bench"
+    /// Cost of building the event's wire payload (fields and tags dictionaries).
+    @Test func eventPayloadBuild() {
+        let take = VoiceTakeTelemetry(voiceEngine: .dictation, locale: "en-US", trigger: "bench")
+        let event = take.setupEvent(
+            timings: VoiceSetupTimings(totalMs: 67), includesPhases: true, status: .ok
         )
 
         let us = Self.measureMedianUs {
-            for _ in 0 ..< 5 {
-                _ = annotation.tags(
-                    phase: .modelReady,
-                    status: "ok",
-                    extra: ["path": "warm_cache"]
-                )
-            }
+            _ = TelemetryEventPayload(event, ts: Date.nowMs())
         }
-        print("METRIC tags_build_5x_us=\(Int(us))")
+        print("METRIC event_payload_build_us=\(Int(us))")
     }
 
     /// Route resolution for on-device mode (no remote probe).
@@ -239,7 +207,6 @@ struct VoiceStartupPerfBench {
 
     /// SessionMonitor.bind() overhead (creates 2 Tasks).
     @Test func monitorBind() async {
-        VoiceInputTelemetry._recordMetricForTesting = nil
 
         let us = await Self.measureMedianUsAsync {
             let monitor = VoiceInputSessionMonitor()
@@ -255,33 +222,6 @@ struct VoiceStartupPerfBench {
             monitor.teardown()
         }
         print("METRIC monitor_bind_us=\(Int(us))")
-    }
-
-    /// ChatMetricSample construction cost (what ChatMetricsService.record does).
-    @Test func sampleConstruction() {
-        let tags: [String: String] = [
-            "engine": "dictation",
-            "locale": "en-US",
-            "source": "bench",
-            "phase": "model_ready",
-            "status": "ok",
-            "path": "warm_cache",
-        ]
-
-        let us = Self.measureMedianUs {
-            for _ in 0 ..< 5 {
-                _ = ChatMetricSample(
-                    ts: Date.nowMs(),
-                    metric: .voiceSetupMs,
-                    value: 42.0,
-                    unit: .ms,
-                    sessionId: nil,
-                    workspaceId: nil,
-                    tags: tags
-                )
-            }
-        }
-        print("METRIC sample_construction_5x_us=\(Int(us))")
     }
 }
 

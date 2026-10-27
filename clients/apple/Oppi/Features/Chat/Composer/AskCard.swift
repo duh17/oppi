@@ -119,16 +119,16 @@ enum AskCard {
         DispatchTime.now().uptimeNanoseconds
     }
 
-    static func responseMetricTags(
+    /// The `app.ask_response` event for one card outcome. Counts only; no question or answer text.
+    static func responseEvent(
         request: AskRequest,
         answers: [String: AskAnswer],
-        outcome: String,
-        surface: String
-    ) -> [String: String] {
+        result: AppAskResponse.Result,
+        surface: String,
+        durationMs: Double
+    ) -> AppAskResponse {
         let questionCount = request.questions.count
         let answeredCount = answers.count
-        let ignoredCount = max(0, questionCount - answeredCount)
-        let multiSelectQuestionCount = request.questions.filter(\.multiSelect).count
         let selectedCount = answers.values.reduce(0) { count, answer in
             switch answer {
             case .single:
@@ -144,36 +144,27 @@ enum AskCard {
             return false
         }
 
-        return [
-            "outcome": outcome,
-            "surface": surface,
-            "question_count": countBucket(questionCount),
-            "answered_count": countBucket(answeredCount),
-            "ignored_count": countBucket(ignoredCount),
-            "multi_select": multiSelectQuestionCount > 0 ? "1" : "0",
-            "multi_select_count": countBucket(multiSelectQuestionCount),
-            "custom": hasCustomAnswer ? "1" : "0",
-            "allow_custom": request.allowCustom ? "1" : "0",
-            "selected_count": countBucket(selectedCount),
-            "response_encoding": responseEncodingTag(request.responseEncoding),
-        ]
+        return AppAskResponse(
+            durationMs: durationMs,
+            questions: questionCount,
+            answered: answeredCount,
+            ignored: max(0, questionCount - answeredCount),
+            multiSelectQuestions: request.questions.filter(\.multiSelect).count,
+            selected: selectedCount,
+            custom: hasCustomAnswer,
+            allowCustom: request.allowCustom,
+            result: result,
+            surface: surface,
+            responseEncoding: responseEncoding(request.responseEncoding)
+        )
     }
 
-    private static func countBucket(_ count: Int) -> String {
-        switch count {
-        case ..<0: return "0"
-        case 0...5: return String(count)
-        case 6...10: return "6-10"
-        default: return "11+"
-        }
-    }
-
-    private static func responseEncodingTag(_ encoding: AskResponseEncoding) -> String {
+    private static func responseEncoding(_ encoding: AskResponseEncoding) -> TelemetryTag.ResponseEncoding {
         switch encoding {
-        case .ask: return "ask"
-        case .extensionSelect: return "select"
-        case .extensionConfirm: return "confirm"
-        case .extensionInput: return "input"
+        case .ask: .ask
+        case .extensionSelect: .select
+        case .extensionConfirm: .confirm
+        case .extensionInput: .input
         }
     }
 

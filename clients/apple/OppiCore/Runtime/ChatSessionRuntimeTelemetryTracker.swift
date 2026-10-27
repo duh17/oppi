@@ -4,7 +4,8 @@ import Foundation
 final class ChatSessionRuntimeTelemetryTracker {
     private struct TTFTContext {
         let startedAtMs: Int64
-        let tags: [String: String]
+        let provider: String
+        let model: String
     }
 
     private let effects: any ChatSessionEffectsStatePort
@@ -26,6 +27,19 @@ final class ChatSessionRuntimeTelemetryTracker {
 
     static func nowMs() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1_000)
+    }
+
+    /// Drops the open switch, load, and freshness measurements. A visit that was
+    /// abandoned or backgrounded before its first content measures the time
+    /// the app sat idle (a suspended app once reported a 1.08 h session switch),
+    /// not the load.
+    func cancelLoadMeasurements() {
+        sessionSwitchStartMs = nil
+        sessionSwitchRecorded = true
+        sessionLoadStartMs = nil
+        sessionLoadRecorded = true
+        freshContentLagStartMs = nil
+        freshContentLagRecorded = true
     }
 
     func startSessionLoad() {
@@ -94,9 +108,9 @@ final class ChatSessionRuntimeTelemetryTracker {
         )
     }
 
-    func startTTFT(modelTags: [String: String]) {
+    func startTTFT(provider: String, model: String) {
         guard pendingTTFTContext == nil else { return }
-        pendingTTFTContext = TTFTContext(startedAtMs: Self.nowMs(), tags: modelTags)
+        pendingTTFTContext = TTFTContext(startedAtMs: Self.nowMs(), provider: provider, model: model)
     }
 
     func completeTTFTIfNeeded(signal: ServerMessage) {
@@ -111,7 +125,8 @@ final class ChatSessionRuntimeTelemetryTracker {
         effects.recordTelemetry(
             .timeToFirstToken(
                 durationMs: max(0, Self.nowMs() - context.startedAtMs),
-                tags: context.tags
+                provider: context.provider,
+                model: context.model
             ),
             sessionId: sessionId
         )

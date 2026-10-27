@@ -141,12 +141,6 @@ enum ClientLogUploadService {
         // User-driven navigation breadcrumbs. A handful per minute, flushed
         // so a later crash still has the route that preceded it.
         "Navigation",
-        // One "Diff reader session" line per review diff visit: open time,
-        // scroll frames, hitches. Device smoothness evidence for the reader.
-        "DiffReader",
-        // One "Call playback" line per stretch of a Live Voice call's audio (a call the
-        // system holds or suspends logs one per stretch): jitter, underruns, and the adaptive
-        // prime, the evidence that tunes the playback buffer.
         "LiveVoice",
     ]
 
@@ -175,16 +169,13 @@ enum ClientLogUploadService {
     }
 
     private static func makeMetadata() -> ClientLogUploadMetadata {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-        let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
-
+        let client = TelemetryClientIdentity.current
         return ClientLogUploadMetadata(
-            appVersion: version,
-            buildNumber: build,
-            osVersion: osVersion,
-            deviceModel: "iPhone",
-            gitCommit: AppBuildIdentity.gitCommit
+            appVersion: client.appVersion ?? "unknown",
+            buildNumber: client.buildNumber ?? "unknown",
+            osVersion: client.osVersion ?? "unknown",
+            deviceModel: client.deviceModel ?? "unknown",
+            gitCommit: client.gitCommit
         )
     }
 }

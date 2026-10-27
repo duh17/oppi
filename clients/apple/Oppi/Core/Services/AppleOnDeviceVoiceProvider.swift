@@ -77,12 +77,12 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
             return VoiceProviderPreparation(
                 audioFormat: cachedFormat,
                 transcriptionLocale: locale,
-                pathTag: "warm_cache",
-                setupMetricTags: Self.metricTags(for: engine, locale: locale)
+                modelPath: .warmCache,
+                provider: Self.providerTelemetry(for: engine)
             )
         }
         if prewarmTask != nil, prewarmModelKey != key { cancelPreparation() }
-        let path = prewarmTask == nil ? "cold" : "join_prewarm"
+        let path: TelemetryTag.ModelPath = prewarmTask == nil ? .cold : .joinPrewarm
         if prewarmTask == nil {
             preparationGeneration += 1
             prewarmModelKey = key
@@ -109,8 +109,8 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
             return VoiceProviderPreparation(
                 audioFormat: ready.format,
                 transcriptionLocale: ready.locale,
-                pathTag: path,
-                setupMetricTags: Self.metricTags(for: engine, locale: ready.locale)
+                modelPath: path,
+                provider: Self.providerTelemetry(for: engine)
             )
         } catch {
             if preparationGeneration == generation {
@@ -157,33 +157,26 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
         "\(engine.rawValue)::\(localeID)"
     }
 
-    private static func metricTags(
-        for engine: VoiceInputManager.TranscriptionEngine,
-        locale: Locale
-    ) -> [String: String] {
+    private static func providerTelemetry(
+        for engine: VoiceInputManager.TranscriptionEngine
+    ) -> VoiceProviderTelemetry {
         switch engine {
         case .modernSpeech:
-            return [
-                "provider_id": "apple_modern_speech",
-                "provider_kind": "on_device",
-                "stt_backend": "apple_speech",
-                "model": "SpeechTranscriber",
-                "transport": "local",
-                "live_preview": "1",
-                "transcription_locale": locale.identifier(.bcp47),
-            ]
+            return VoiceProviderTelemetry(
+                sttProvider: "apple_modern_speech",
+                sttProviderKind: .onDevice,
+                sttBackend: "apple_speech",
+                sttModel: "SpeechTranscriber"
+            )
         case .classicDictation:
-            return [
-                "provider_id": "apple_classic_dictation",
-                "provider_kind": "on_device",
-                "stt_backend": "apple_dictation",
-                "model": "DictationTranscriber",
-                "transport": "local",
-                "live_preview": "1",
-                "transcription_locale": locale.identifier(.bcp47),
-            ]
+            return VoiceProviderTelemetry(
+                sttProvider: "apple_classic_dictation",
+                sttProviderKind: .onDevice,
+                sttBackend: "apple_dictation",
+                sttModel: "DictationTranscriber"
+            )
         case .serverDictation:
-            return [:]
+            return VoiceProviderTelemetry()
         }
     }
 

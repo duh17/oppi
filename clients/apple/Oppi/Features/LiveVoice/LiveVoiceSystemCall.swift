@@ -143,7 +143,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
         key: LiveVoiceCallCenter.CallKey,
         run: @MainActor () async -> Void
     ) async {
-        endLeftoverCalls(phase: "call_start")
+        endLeftoverCalls(phase: .callStart)
         if let stale = active {
             // The last call ended and its watch has not caught up yet.
             finish(stale)
@@ -309,7 +309,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
         let delay = leftoverCheckDelay
         Task { [weak self] in
             try? await Task.sleep(for: delay)
-            self?.endLeftoverCalls(phase: "call_end")
+            self?.endLeftoverCalls(phase: .callEnd)
         }
     }
 
@@ -322,7 +322,7 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
     /// right after End cannot inherit it, but is not logged or counted: iOS still lists a call
     /// while it performs an ordinary hang-up. Returns how many it ended.
     @discardableResult
-    func endLeftoverCalls(phase: String) -> Int {
+    func endLeftoverCalls(phase: AppLiveVoiceLeftoverCall.Phase) -> Int {
         // No provider yet means no call was ever placed: do not create one just to look.
         guard let telephonyInstance, !placedCallIds.isEmpty else { return 0 }
         let listed = telephonyInstance.unendedCallIds()
@@ -342,18 +342,12 @@ final class LiveVoiceSystemCall: LiveVoiceTelephonyEvents {
         }
         guard !stuck.isEmpty else { return leftovers.count }
         ClientLog.warning("LiveVoice", "Ended a leftover CallKit call", metadata: [
-            "phase": phase,
+            "phase": phase.rawValue,
             "count": String(stuck.count),
         ], flush: true)
-        let count = Double(stuck.count)
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .liveVoiceLeftoverCall,
-                value: count,
-                unit: .count,
-                tags: ["phase": phase]
-            )
-        }
+        Telemetry.record(
+            AppLiveVoiceLeftoverCall(calls: stuck.count, phase: phase)
+        )
         return leftovers.count
     }
 

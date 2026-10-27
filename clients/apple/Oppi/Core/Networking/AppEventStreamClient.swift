@@ -100,7 +100,7 @@ final class AppEventStreamClient {
     /// terminal, so a server that keeps rejecting freshly-issued tokens cannot
     /// recurse into an unbounded refresh/reconnect loop.
     private var didForceRefreshForConnection = false
-    private let routeTags: [String: String]
+    private let routeTags: NetworkRouteSnapshot
     let tailnetRoute: TailnetTransportRoute.Snapshot
 
     init(
@@ -283,7 +283,7 @@ final class AppEventStreamClient {
     ) {
         receiveTask = Task { [weak self] in
             var shouldAttemptReconnect = true
-            var reconnectReason = "receive_error"
+            var reconnectReason = AppAppEventStreamReconnect.Reason.receiveError
             var reconnectCloseCode: String?
             while !Task.isCancelled {
                 do {
@@ -333,7 +333,7 @@ final class AppEventStreamClient {
                     }
 
                     let statusCode = (ws.response() as? HTTPURLResponse)?.statusCode
-                    reconnectReason = "receive_error"
+                    reconnectReason = .receiveError
                     reconnectCloseCode = String(ws.closeCode().rawValue)
                     if let self, self.refreshTokenProvider != nil,
                        statusCode == 401 || WebSocketRecoveryPolicy.isAuthExpiredCloseCode(ws.closeCode()) {
@@ -348,7 +348,7 @@ final class AppEventStreamClient {
                         }
                     } else if let statusCode, WebSocketRecoveryPolicy.isNonRetryableHandshakeStatus(statusCode) {
                         shouldAttemptReconnect = false
-                        reconnectReason = "handshake_http"
+                        reconnectReason = .handshakeHttp
                         appEventClientLogger.error("App event stream handshake rejected with HTTP \(statusCode, privacy: .public)")
                         await MainActor.run { [weak self] in
                             self?.logStreamError(
@@ -359,7 +359,7 @@ final class AppEventStreamClient {
                         }
                     } else if WebSocketRecoveryPolicy.isTerminalReceiveFailure(error, closeCode: ws.closeCode()) {
                         shouldAttemptReconnect = false
-                        reconnectReason = "protocol_close"
+                        reconnectReason = .protocolClose
                         appEventClientLogger.error("App event stream terminal close code \(ws.closeCode().rawValue, privacy: .public)")
                         await MainActor.run { [weak self] in
                             self?.logStreamError(
@@ -369,7 +369,7 @@ final class AppEventStreamClient {
                             )
                         }
                     } else if WebSocketRecoveryPolicy.isRecoverableReceiveError(error, closeCode: ws.closeCode()) {
-                        reconnectReason = "recoverable_receive"
+                        reconnectReason = .recoverableReceive
                         appEventClientLogger.info("App event stream recoverable close: \(String(describing: error), privacy: .public)")
                     } else {
                         appEventClientLogger.warning("App event stream receive error: \(String(describing: error), privacy: .public)")
@@ -436,7 +436,7 @@ final class AppEventStreamClient {
                         "result": result == .timedOut ? "timeout" : "callback_error",
                     ]
                 )
-                self.attemptReconnect(reason: "ping_watchdog")
+                self.attemptReconnect(reason: .pingWatchdog)
                 break
             }
         }
@@ -445,63 +445,47 @@ final class AppEventStreamClient {
     private func recordConnectMetric(snapshotRequired: Bool) {
         guard let startedNs = openStartedNs else { return }
         openStartedNs = nil
-        let durationMs = Double((DispatchTime.now().uptimeNanoseconds &- startedNs) / 1_000_000)
-        let attempt = reconnectAttempt
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .appEventStreamConnectMs,
-                value: durationMs,
-                unit: .ms,
-                tags: [
-                    "status": "ok",
-                    "attempt": WebSocketRecoveryPolicy.reconnectAttemptTag(attempt),
-                    "snapshot_required": snapshotRequired ? "1" : "0",
-                ]
+        Telemetry.record(
+            AppAppEventStreamConnect(
+                durationMs: Double((DispatchTime.now().uptimeNanoseconds &- startedNs) / 1_000_000),
+                attempt: reconnectAttempt,
+                snapshotRequired: snapshotRequired
             )
-        }
+        )
     }
 
     private func recordDecodeErrorMetric(error: Error) {
-        let errorKind = streamErrorKind(error)
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .appEventStreamDecodeError,
-                value: 1,
-                unit: .count,
-                tags: ["error_kind": errorKind]
-            )
-        }
+        Telemetry.record(AppAppEventStreamDecodeError(errorKind: streamErrorKind(error)))
     }
 
-    private func recordReconnectMetric(status: String, reason: String, attempt: Int, closeCode: String?) {
-        var tags = [
-            "status": status,
-            "reason": reason,
-            "attempt": WebSocketRecoveryPolicy.reconnectAttemptTag(attempt),
-        ]
-        tags.merge(routeTags) { current, _ in current }
-        if let closeCode {
-            tags["close_code"] = closeCode
-        }
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .appEventStreamReconnect,
-                value: 1,
-                unit: .count,
-                tags: tags
+    private func recordReconnectMetric(
+        reason: AppAppEventStreamReconnect.Reason,
+        attempt: Int,
+        closeCode: String?
+    ) {
+        Telemetry.record(
+            AppAppEventStreamReconnect(
+                attempt: attempt,
+                socksGeneration: routeTags.socksGeneration,
+                route: routeTags.route,
+                hostKind: routeTags.hostKind,
+                pathType: routeTags.pathType,
+                transport: routeTags.transport(as: AppAppEventStreamReconnect.Transport.self),
+                reason: reason,
+                closeCode: closeCode
             )
-        }
+        )
     }
 
-    private func streamErrorKind(_ error: Error) -> String {
-        if error is DecodingError { return "decode" }
+    private func streamErrorKind(_ error: Error) -> AppAppEventStreamDecodeError.ErrorKind {
+        if error is DecodingError { return .decode }
         let nsError = error as NSError
-        if nsError.domain == NSURLErrorDomain { return "network" }
-        return "other"
+        if nsError.domain == NSURLErrorDomain { return .network }
+        return .other
     }
 
     private func streamLogMetadata(extra: [String: String] = [:]) -> [String: String] {
-        var metadata: [String: String] = routeTags
+        var metadata: [String: String] = routeTags.logMetadata
         if let diagnosticRemoteIdentity {
             metadata["remoteIdentity"] = diagnosticRemoteIdentity
         } else {
@@ -551,7 +535,7 @@ final class AppEventStreamClient {
                 if !current.isEmpty, current != token {
                     // Sibling already minted. Reconnect without spending the one mint.
                     token = current
-                    attemptReconnect(reason: "auth_current_token")
+                    attemptReconnect(reason: .authCurrentToken)
                     return true
                 }
             }
@@ -563,7 +547,7 @@ final class AppEventStreamClient {
             }
             token = refreshed
             didForceRefreshForConnection = true
-            attemptReconnect(reason: "auth_refresh")
+            attemptReconnect(reason: .authRefresh)
             return true
         } catch {
             logStreamError(
@@ -574,7 +558,7 @@ final class AppEventStreamClient {
         }
     }
 
-    private func attemptReconnect(reason: String, closeCode: String? = nil) {
+    private func attemptReconnect(reason: AppAppEventStreamReconnect.Reason, closeCode: String? = nil) {
         guard status != .disconnected else { return }
 
         var attempt = 0
@@ -587,7 +571,7 @@ final class AppEventStreamClient {
         // state can remain stranded after the transport itself becomes reachable again.
         let nextAttempt = WebSocketRecoveryPolicy.nextReconnectAttempt(after: attempt)
         reconnectAttempt = nextAttempt
-        recordReconnectMetric(status: "scheduled", reason: reason, attempt: nextAttempt, closeCode: closeCode)
+        recordReconnectMetric(reason: reason, attempt: nextAttempt, closeCode: closeCode)
         status = .reconnecting(attempt: nextAttempt)
         let delay = reconnectDelay(nextAttempt)
         if WebSocketRecoveryPolicy.shouldReportUnhealthyReconnect(attempt: nextAttempt),

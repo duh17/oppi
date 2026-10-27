@@ -116,20 +116,15 @@ enum MarkdownStreamingPerf {
 
         let totalMs = Int(totalNs / 1_000_000)
 
-        // Emit to telemetry for all streaming cycles above noise floor.
-        if isStreaming, totalMs >= 1 {
-            let surfaceTag = surface.rawValue
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .markdownStreamingMs,
-                    value: Double(totalMs),
-                    unit: .ms,
-                    tags: [
-                        "surface": surfaceTag,
-                        "segments": String(segmentCount),
-                    ]
+        // Streaming cycles only; the catalog emit policy drops the noise floor.
+        if isStreaming {
+            Telemetry.record(
+                AppMarkdownStreaming(
+                    durationMs: Double(totalMs),
+                    segments: segmentCount,
+                    surface: surface.rawValue
                 )
-            }
+            )
         }
 
         guard totalMs >= slowThresholdMs else { return }

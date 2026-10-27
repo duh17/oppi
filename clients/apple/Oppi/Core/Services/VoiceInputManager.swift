@@ -113,6 +113,14 @@ final class VoiceInputManager {
             case .serverDictation: return "server"
             }
         }
+
+        var telemetryEngine: TelemetryTag.VoiceEngine {
+            switch self {
+            case .modernSpeech: .speech
+            case .classicDictation: .dictation
+            case .serverDictation: .server
+            }
+        }
     }
 
     typealias EngineMode = AppPreferences.Voice.EngineMode
@@ -631,8 +639,8 @@ final class VoiceInputManager {
 
     // MARK: - Dictation Telemetry State
 
-    private var activeMetricAnnotation: VoiceMetricAnnotation?
-    private var activeDictationMetricTags: [String: String] = [:]
+    /// What the current take reports about itself; grows as setup learns the model path, STT backend, and route.
+    private var activeTake: VoiceTakeTelemetry?
     private var dictationSessionStart: ContinuousClock.Instant?
     private var recordingStart: ContinuousClock.Instant?
     private var resultUpdateCount = 0
@@ -953,11 +961,7 @@ final class VoiceInputManager {
         let locale = Self.resolvedLocale(keyboardLanguage: keyboardLanguage)
         let localeID = locale.identifier(.bcp47)
         let engine = await effectiveEngine(for: locale, connection: serverConnection)
-        let metricAnnotation = VoiceMetricAnnotation(
-            engine: engine.logName,
-            locale: localeID,
-            source: source
-        )
+        let take = VoiceTakeTelemetry(voiceEngine: engine.telemetryEngine, locale: localeID, trigger: source)
         let prewarmStart = ContinuousClock.now
         guard state == .idle else { return }
 
@@ -971,34 +975,25 @@ final class VoiceInputManager {
                 )
             )
 
-            let durationMs = prewarmStart.elapsedMs()
-            recordVoiceMetric(
-                .voicePrewarmMs,
-                valueMs: durationMs,
-                annotation: metricAnnotation,
-                phase: .prewarm,
-                status: "ok"
+            Telemetry.record(
+                take.prewarmEvent(durationMs: prewarmStart.elapsedMs(), status: .ok),
+                sessionId: activeSessionId
             )
             logger.info("Pre-warmed \(engine.logName) model (locale: \(localeID))")
         } catch is CancellationError {
-            let durationMs = prewarmStart.elapsedMs()
-            recordVoiceMetric(
-                .voicePrewarmMs,
-                valueMs: durationMs,
-                annotation: metricAnnotation,
-                phase: .prewarm,
-                status: "cancelled"
+            Telemetry.record(
+                take.prewarmEvent(durationMs: prewarmStart.elapsedMs(), status: .cancelled),
+                sessionId: activeSessionId
             )
             logger.info("Pre-warm cancelled for \(engine.logName) (locale: \(localeID))")
         } catch {
-            let durationMs = prewarmStart.elapsedMs()
-            recordVoiceMetric(
-                .voicePrewarmMs,
-                valueMs: durationMs,
-                annotation: metricAnnotation,
-                phase: .prewarm,
-                status: "error",
-                extraTags: ["error": String(describing: type(of: error))]
+            Telemetry.record(
+                take.prewarmEvent(
+                    durationMs: prewarmStart.elapsedMs(),
+                    status: .error,
+                    errorKind: TelemetryErrorKind.classify(error)
+                ),
+                sessionId: activeSessionId
             )
             logger.warning("Pre-warm failed: \(error.localizedDescription)")
         }
@@ -1052,7 +1047,7 @@ final class VoiceInputManager {
         try validateStartAdmission()
         // A CallKit call iOS still lists after its Live Voice call ended keeps a Bluetooth
         // headset in call mode, and this take would record near-silence through it.
-        liveVoiceCalls?.systemCall.endLeftoverCalls(phase: "dictation_start")
+        liveVoiceCalls?.systemCall.endLeftoverCalls(phase: .dictationStart)
         captureFailure = nil
         captureFailureHandler = onCaptureFailure
         nextStartRequestID += 1
@@ -1081,8 +1076,7 @@ final class VoiceInputManager {
         captureRecoveryAudioBeganAt = nil
         pendingCaptureRebuild = false
         activeCaptureRebuildID = nil
-        activeMetricAnnotation = nil
-        activeDictationMetricTags = [:]
+        activeTake = nil
         dictationSessionStart = nil
         recordingStart = nil
         resultUpdateCount = 0
@@ -1144,12 +1138,8 @@ final class VoiceInputManager {
             ownsOperation = false
             throw CancellationError()
         }
-        let metricAnnotation = VoiceMetricAnnotation(
-            engine: engine.logName,
-            locale: localeID,
-            source: source
-        )
-        activeMetricAnnotation = metricAnnotation
+        let take = VoiceTakeTelemetry(voiceEngine: engine.telemetryEngine, locale: localeID, trigger: source)
+        activeTake = take
 
         let context = VoiceProviderContext(
             locale: locale,
@@ -1161,7 +1151,7 @@ final class VoiceInputManager {
                 sendToServer: frozenTake.sendToServer, provider: frozenTake.provider
             )
         )
-        var modelPathTag = "warm_cache"
+        var modelPath = TelemetryTag.ModelPath.warmCache
 
         do {
             let provider = try provider(for: engine)
@@ -1174,8 +1164,7 @@ final class VoiceInputManager {
                 locale: locale,
                 provider: provider,
                 context: context,
-                metricAnnotation: metricAnnotation,
-                modelPathTag: &modelPathTag
+                modelPath: &modelPath
             )
 
             state = .recording
@@ -1184,18 +1173,19 @@ final class VoiceInputManager {
             #endif
 
             // Emit telemetry AFTER state transition — off the critical path
-            emitStartupTelemetry(timings, annotation: metricAnnotation)
-            logger.error("Voice setup: recording started in \(timings.totalMs)ms total (engine: \(engine.logName), locale: \(localeID))")
+            emitStartupTelemetry(timings)
+            logger.error("Voice setup: recording started in \(timings.phases.totalMs)ms total (engine: \(engine.logName), locale: \(localeID))")
             return
         } catch is CancellationError {
-            let totalMs = startTime.elapsedMs()
-            recordVoiceMetric(
-                .voiceSetupMs,
-                valueMs: totalMs,
-                annotation: metricAnnotation,
-                phase: .total,
-                status: "cancelled",
-                extraTags: ["path": modelPathTag]
+            var failedTake = take
+            failedTake.modelPath = modelPath
+            Telemetry.record(
+                failedTake.setupEvent(
+                    timings: VoiceSetupTimings(totalMs: startTime.elapsedMs()),
+                    includesPhases: false,
+                    status: .cancelled
+                ),
+                sessionId: activeSessionId
             )
             logger.info("Voice setup cancelled")
             if activeStartRequestID == requestID {
@@ -1212,7 +1202,7 @@ final class VoiceInputManager {
         } catch {
             let totalMs = startTime.elapsedMs()
             let userFacingMessage = userFacingErrorMessage(for: error)
-            let errorKind = Self.metricErrorKind(for: error)
+            let errorKind = TelemetryErrorKind.classify(error)
             let failure = error as NSError
             ClientLog.error("VoiceInput", "Dictation start failed", metadata: [
                 "phase": "setup",
@@ -1221,27 +1211,16 @@ final class VoiceInputManager {
                 "errorDomain": failure.domain,
                 "errorCode": String(failure.code),
             ])
-            recordVoiceMetric(
-                .voiceSetupMs,
-                valueMs: totalMs,
-                annotation: metricAnnotation,
-                phase: .total,
-                status: "error",
-                extraTags: [
-                    "path": modelPathTag,
-                    "error": String(describing: type(of: error)),
-                    "error_kind": errorKind,
-                ]
-            )
-            recordDictationCountMetric(
-                .dictationError,
-                value: 1,
-                annotation: metricAnnotation,
-                status: "error",
-                extraTags: [
-                    "phase": "setup",
-                    "error_kind": errorKind,
-                ]
+            var failedTake = take
+            failedTake.modelPath = modelPath
+            Telemetry.record(
+                failedTake.setupEvent(
+                    timings: VoiceSetupTimings(totalMs: totalMs),
+                    includesPhases: false,
+                    status: .error,
+                    errorKind: errorKind
+                ),
+                sessionId: activeSessionId
             )
             if engine == .serverDictation {
                 logger.error(
@@ -1353,43 +1332,21 @@ final class VoiceInputManager {
 
     /// Captured during startProviderRecording, emitted after state = .recording.
     private struct StartupTimings {
-        var modelReadyMs: Int = 0
-        var transcriberCreateMs: Int = 0
-        var analyzerStartMs: Int = 0
-        var audioStartMs: Int = 0
-        var audioSessionMs: Int = 0
-        var totalMs: Int = 0
-        var pathTag: String = "warm_cache"
-        var providerTags: [String: String] = [:]
+        var phases = VoiceSetupTimings()
+        var modelPath: TelemetryTag.ModelPath = .warmCache
+        var provider = VoiceProviderTelemetry()
+        var route = VoiceAudioRouteTelemetry()
     }
 
-    private func emitStartupTelemetry(
-        _ timings: StartupTimings,
-        annotation: VoiceMetricAnnotation
-    ) {
-        // Build merged tags once (deferred — not on hot path).
-        var tags = ["path": timings.pathTag]
-        for (k, v) in timings.providerTags { tags[k] = v }
-        activeDictationMetricTags = tags
-
-        recordVoiceMetric(.voiceSetupMs, valueMs: timings.modelReadyMs,
-                          annotation: annotation, phase: .modelReady, status: "ok", extraTags: tags)
-        recordVoiceMetric(.voiceSetupMs, valueMs: timings.transcriberCreateMs,
-                          annotation: annotation, phase: .transcriberCreate, status: "ok", extraTags: tags)
-        recordVoiceMetric(.voiceSetupMs, valueMs: timings.analyzerStartMs,
-                          annotation: annotation, phase: .analyzerStart, status: "ok", extraTags: tags)
-        recordVoiceMetric(.voiceSetupMs, valueMs: timings.audioSessionMs,
-                          annotation: annotation, phase: .audioSession, status: "ok", extraTags: tags)
-        recordVoiceMetric(.voiceSetupMs, valueMs: timings.audioStartMs,
-                          annotation: annotation, phase: .audioStart, status: "ok", extraTags: tags)
-        recordVoiceMetric(.voiceSetupMs, valueMs: timings.totalMs,
-                          annotation: annotation, phase: .total, status: "ok", extraTags: tags)
-        recordDictationMetric(
-            .dictationSetupMs,
-            valueMs: timings.totalMs,
-            annotation: annotation,
-            status: "ok",
-            extraTags: tags
+    private func emitStartupTelemetry(_ timings: StartupTimings) {
+        guard var take = activeTake else { return }
+        take.modelPath = timings.modelPath
+        take.provider = timings.provider
+        take.route = timings.route
+        activeTake = take
+        Telemetry.record(
+            take.setupEvent(timings: timings.phases, includesPhases: true, status: .ok),
+            sessionId: activeSessionId
         )
     }
 
@@ -1401,8 +1358,7 @@ final class VoiceInputManager {
         locale: Locale,
         provider: any VoiceTranscriptionProvider,
         context: VoiceProviderContext,
-        metricAnnotation: VoiceMetricAnnotation,
-        modelPathTag: inout String
+        modelPath: inout TelemetryTag.ModelPath
     ) async throws -> StartupTimings {
         var timings = StartupTimings()
 
@@ -1410,22 +1366,22 @@ final class VoiceInputManager {
         var preparation = try await provider.prepareSession(context: context)
         try ensureStartRequestActive(requestID)
 
-        modelPathTag = preparation.pathTag
-        timings.pathTag = modelPathTag
-        timings.providerTags = preparation.setupMetricTags
-        timings.modelReadyMs = modelPhaseStart.elapsedMs()
+        modelPath = preparation.modelPath
+        timings.modelPath = preparation.modelPath
+        timings.provider = preparation.provider
+        timings.phases.modelReadyMs = modelPhaseStart.elapsedMs()
 
         let transcriberStart = ContinuousClock.now
         var session = try provider.makeSession(context: context, preparation: preparation)
         activeLanguageLabel = Self.languageLabel(for: locale)
-        timings.transcriberCreateMs = transcriberStart.elapsedMs()
+        timings.phases.transcriberCreateMs = transcriberStart.elapsedMs()
 
         try ensureStartRequestActive(requestID)
-        bindSessionMonitor(session, metricAnnotation: metricAnnotation)
+        bindSessionMonitor(session)
 
         let audioSessionStart = ContinuousClock.now
         try setupAudioSession()
-        timings.audioSessionMs = audioSessionStart.elapsedMs()
+        timings.phases.audioSessionMs = audioSessionStart.elapsedMs()
         let sessionTimings: VoiceSessionStartTimings
         do {
             sessionTimings = try await session.start()
@@ -1465,33 +1421,30 @@ final class VoiceInputManager {
                 provider.cancelPreparation()
                 preparation = try await provider.prepareSession(context: context)
                 try ensureStartRequestActive(requestID)
-                modelPathTag = preparation.pathTag
-                timings.pathTag = preparation.pathTag
-                timings.providerTags = preparation.setupMetricTags
+                modelPath = preparation.modelPath
+                timings.modelPath = preparation.modelPath
+                timings.provider = preparation.provider
             }
-            timings.providerTags["audio_route"] = "built_in_fallback"
+            timings.route.builtInFallback = true
             session = try provider.makeSession(context: context, preparation: preparation)
-            bindSessionMonitor(session, metricAnnotation: metricAnnotation)
+            bindSessionMonitor(session)
             sessionTimings = try await session.start()
         }
         try ensureStartRequestActive(requestID)
 
-        timings.analyzerStartMs = sessionTimings.analyzerStartMs
-        timings.audioStartMs = sessionTimings.audioStartMs
-        timings.totalMs = startTime.elapsedMs()
+        timings.phases.analyzerStartMs = sessionTimings.analyzerStartMs
+        timings.phases.audioStartMs = sessionTimings.audioStartMs
+        timings.phases.totalMs = startTime.elapsedMs()
         recordingStart = ContinuousClock.now
         lastCaptureAudioAt = recordingStart
-        for (key, value) in DictationAudioEngineHelper.sessionRouteMetadata() {
-            timings.providerTags[key] = value
-        }
+        timings.route = timings.route.refreshed(
+            from: DictationAudioEngineHelper.sessionRouteMetadata()
+        )
 
         return timings
     }
 
-    private func bindSessionMonitor(
-        _ session: any VoiceTranscriptionSession,
-        metricAnnotation: VoiceMetricAnnotation
-    ) {
+    private func bindSessionMonitor(_ session: any VoiceTranscriptionSession) {
         let requestID = activeStartRequestID
         sessionMonitor.bind(
             session: session,
@@ -1508,25 +1461,16 @@ final class VoiceInputManager {
                 }
             },
             onEvent: { [weak self] event in
-                self?.applySessionEvent(event, annotation: metricAnnotation)
+                self?.applySessionEvent(event)
             },
             onFirstTranscript: { [weak self] latencyMs, resultType in
                 guard let self else { return }
-                self.recordVoiceMetric(
-                    .voiceFirstResultMs,
-                    valueMs: latencyMs,
-                    annotation: metricAnnotation,
-                    phase: .firstResult,
-                    status: "ok",
-                    extraTags: ["result_type": resultType]
-                )
-                self.recordDictationMetric(
-                    .dictationFirstResultMs,
-                    valueMs: latencyMs,
-                    annotation: metricAnnotation,
-                    status: "ok",
-                    extraTags: ["result_type": resultType]
-                )
+                if let take = self.activeTake {
+                    Telemetry.record(
+                        take.firstResultEvent(latencyMs: latencyMs, resultType: resultType),
+                        sessionId: self.activeSessionId
+                    )
+                }
                 logger.error("Voice latency: first result in \(latencyMs)ms (type: \(resultType))")
             },
             onError: { [weak self] error in
@@ -1534,7 +1478,7 @@ final class VoiceInputManager {
                 // Must run before the monitor's results task completes, for
                 // analyzer/transport errors as well as overflow. An async latch
                 // lets Stop publish incomplete text before it observes failure.
-                self.failCaptureForSessionError(error, annotation: metricAnnotation)
+                self.failCaptureForSessionError(error)
             }
         )
     }
@@ -1616,7 +1560,7 @@ final class VoiceInputManager {
             await failActiveCaptureForDeadPipeline(
                 previousHadBluetooth: previousHadBluetooth,
                 reason: reason,
-                errorKind: "bluetooth_route_lost"
+                errorKind: .bluetoothRouteLost
             )
             return
         }
@@ -1675,7 +1619,7 @@ final class VoiceInputManager {
             await failActiveCaptureForDeadPipeline(
                 previousHadBluetooth: previousHadBluetooth,
                 reason: reason,
-                errorKind: "capture_pipeline_dead"
+                errorKind: .capturePipelineDead
             )
             return
         }
@@ -1697,16 +1641,16 @@ final class VoiceInputManager {
             metadata.merge(DictationAudioEngineHelper.sessionRouteMetadata()) { _, new in new }
             metadata["status"] = "ok"
             ClientLog.info("VoiceInput", "Capture rebuilt onto current microphone", metadata: metadata)
-            for (key, value) in DictationAudioEngineHelper.sessionRouteMetadata() {
-                activeDictationMetricTags[key] = value
-            }
+            activeTake?.route = (activeTake?.route ?? VoiceAudioRouteTelemetry()).refreshed(
+                from: DictationAudioEngineHelper.sessionRouteMetadata()
+            )
             startCaptureHealthWatch()
         } catch is CancellationError {
             guard activeStartRequestID == takeID, nextStartRequestID == generation else { return }
             await failActiveCaptureForDeadPipeline(
                 previousHadBluetooth: previousHadBluetooth,
                 reason: reason,
-                errorKind: "capture_pipeline_dead"
+                errorKind: .capturePipelineDead
             )
         } catch {
             guard activeStartRequestID == takeID, nextStartRequestID == generation else { return }
@@ -1718,7 +1662,7 @@ final class VoiceInputManager {
             await failActiveCaptureForDeadPipeline(
                 previousHadBluetooth: previousHadBluetooth,
                 reason: reason,
-                errorKind: trigger == "stall" ? "capture_pipeline_dead" : "bluetooth_route_lost"
+                errorKind: trigger == "stall" ? .capturePipelineDead : .bluetoothRouteLost
             )
         }
     }
@@ -1726,10 +1670,10 @@ final class VoiceInputManager {
     private func failActiveCaptureForDeadPipeline(
         previousHadBluetooth: Bool,
         reason: AVAudioSession.RouteChangeReason?,
-        errorKind: String
+        errorKind: TelemetryTag.ErrorKind
     ) async {
         guard state == .recording || state == .preparingModel else { return }
-        logger.warning("Dictation capture pipeline dead; failing the take (\(errorKind, privacy: .public))")
+        logger.warning("Dictation capture pipeline dead; failing the take (\(errorKind.rawValue, privacy: .public))")
         let failedTake = currentCaptureTakeIdentity()
         let failedSource = activeRecordingSource
         let failureGeneration = nextStartRequestID
@@ -1749,11 +1693,8 @@ final class VoiceInputManager {
         if let activeEngine {
             try? provider(for: activeEngine).cancelPreparation()
         }
-        if let annotation = activeMetricAnnotation {
-            recordDictationCountMetric(
-                .dictationError, value: 1, annotation: annotation, status: "error",
-                extraTags: ["phase": "capture", "error_kind": errorKind]
-            )
+        if let take = activeTake {
+            Telemetry.record(take.captureErrorEvent(errorKind: errorKind), sessionId: activeSessionId)
         }
         await sessionMonitor.cancel()
         guard nextStartRequestID == failureGeneration, state == .processing else { return }
@@ -1827,10 +1768,7 @@ final class VoiceInputManager {
     }
     #endif
 
-    private func applySessionEvent(
-        _ event: VoiceSessionEvent,
-        annotation: VoiceMetricAnnotation
-    ) {
+    private func applySessionEvent(_ event: VoiceSessionEvent) {
         switch event {
         case .partialTranscript(let text):
             replaceTranscriptState.reset()
@@ -1890,12 +1828,11 @@ final class VoiceInputManager {
             markTranscriptPresentationChanged()
             logger.debug("Finalized replace: \(text.count) chars\(snap ? " (snap)" : "")")
 
-        case .providerMetricTags(let tags):
-            // Merge backend metadata (stt_backend, model) resolved after readiness.
-            // Subsequent metrics (finalize, session, audio_duration) get the real values.
-            for (key, value) in tags {
-                activeDictationMetricTags[key] = value
-            }
+        case .sttResolved(let backend, let model):
+            // The backend and model resolved after readiness. The take's later
+            // events (first result, end) carry the real values.
+            activeTake?.provider.sttBackend = backend
+            activeTake?.provider.sttModel = model
         }
     }
 
@@ -1918,8 +1855,7 @@ final class VoiceInputManager {
         activeEngine = nil
         activeRecordingSource = nil
         clearActiveStartIdentity()
-        activeMetricAnnotation = nil
-        activeDictationMetricTags = [:]
+        activeTake = nil
         dictationSessionStart = nil
         recordingStart = nil
         resultUpdateCount = 0
@@ -1938,7 +1874,7 @@ final class VoiceInputManager {
         return true
     }
 
-    private func failCaptureForSessionError(_ error: Error, annotation: VoiceMetricAnnotation) {
+    private func failCaptureForSessionError(_ error: Error) {
         // The public dismiss identity intentionally excludes `.processing`;
         // fatal errors must still identify the take while Stop is finalizing it.
         guard let requestID = activeStartRequestID, let generation = activeStartComposerGeneration,
@@ -1961,15 +1897,15 @@ final class VoiceInputManager {
         if wasPreparing, let activeEngine {
             try? provider(for: activeEngine).cancelPreparation()
         }
-        recordDictationCountMetric(
-            .dictationError, value: 1, annotation: annotation, status: "error",
-            extraTags: ["phase": "capture", "error_kind": Self.metricErrorKind(for: error)]
-        )
+        let errorKind = TelemetryErrorKind.classify(error)
+        if let take = activeTake {
+            Telemetry.record(take.captureErrorEvent(errorKind: errorKind), sessionId: activeSessionId)
+        }
         var metadata = DictationAudioEngineHelper.sessionRouteMetadata()
-        metadata["engine"] = annotation.engine
+        metadata["engine"] = activeTake?.voiceEngine.rawValue ?? "unknown"
         metadata["source"] = source
         metadata["during_stop"] = String(stopOwnsDrain)
-        metadata["error_kind"] = Self.metricErrorKind(for: error)
+        metadata["error_kind"] = errorKind.rawValue
         metadata["error_domain"] = (error as NSError).domain
         metadata["error_code"] = String((error as NSError).code)
         ClientLog.error("VoiceInput", "Dictation take discarded after fatal session error", metadata: metadata)
@@ -2241,88 +2177,6 @@ final class VoiceInputManager {
         VoiceInputTelemetry.userFacingMessage(for: error)
     }
 
-    private static func metricErrorKind(for error: Error) -> String {
-        VoiceInputTelemetry.metricErrorKind(for: error)
-    }
-
-    private func recordVoiceMetric(
-        _ metric: ChatMetricName,
-        valueMs: Int,
-        annotation: VoiceMetricAnnotation,
-        phase: VoiceMetricPhase? = nil,
-        status: String? = nil,
-        extraTags: [String: String] = [:]
-    ) {
-        VoiceInputTelemetry.recordMetric(
-            metric,
-            valueMs: valueMs,
-            annotation: annotation,
-            sessionId: activeSessionId,
-            phase: phase,
-            status: status,
-            extraTags: extraTags
-        )
-    }
-
-    private func recordDictationMetric(
-        _ metric: ChatMetricName,
-        valueMs: Int,
-        annotation: VoiceMetricAnnotation,
-        status: String? = nil,
-        extraTags: [String: String] = [:]
-    ) {
-        VoiceInputTelemetry.recordMetric(
-            metric,
-            valueMs: valueMs,
-            annotation: annotation,
-            sessionId: activeSessionId,
-            status: status,
-            extraTags: mergedDictationMetricTags(extraTags)
-        )
-    }
-
-    private func recordDictationCountMetric(
-        _ metric: ChatMetricName,
-        value: Int,
-        annotation: VoiceMetricAnnotation,
-        status: String? = nil,
-        extraTags: [String: String] = [:]
-    ) {
-        VoiceInputTelemetry.recordCountMetric(
-            metric,
-            value: value,
-            annotation: annotation,
-            sessionId: activeSessionId,
-            status: status,
-            extraTags: mergedDictationMetricTags(extraTags)
-        )
-    }
-
-    private func recordDictationRatioMetric(
-        _ metric: ChatMetricName,
-        value: Double,
-        annotation: VoiceMetricAnnotation,
-        status: String? = nil,
-        extraTags: [String: String] = [:]
-    ) {
-        VoiceInputTelemetry.recordRatioMetric(
-            metric,
-            value: value,
-            annotation: annotation,
-            sessionId: activeSessionId,
-            status: status,
-            extraTags: mergedDictationMetricTags(extraTags)
-        )
-    }
-
-    private func mergedDictationMetricTags(_ extraTags: [String: String]) -> [String: String] {
-        var tags = activeDictationMetricTags
-        for (key, value) in extraTags {
-            tags[key] = value
-        }
-        return tags
-    }
-
     private func emitDictationStopTelemetry(
         finalizeMs: Int,
         sessionMs: Int,
@@ -2330,54 +2184,23 @@ final class VoiceInputManager {
         previewTranscript: String,
         finalTranscript: String
     ) {
-        guard let annotation = activeMetricAnnotation else { return }
-
-        recordDictationMetric(
-            .dictationFinalizeMs,
-            valueMs: finalizeMs,
-            annotation: annotation,
-            status: "ok"
-        )
-        recordDictationMetric(
-            .dictationSessionMs,
-            valueMs: sessionMs,
-            annotation: annotation,
-            status: "ok"
-        )
-        recordDictationMetric(
-            .dictationAudioDurationMs,
-            valueMs: audioDurationMs,
-            annotation: annotation,
-            status: "ok"
-        )
-        recordDictationCountMetric(
-            .dictationResultUpdates,
-            value: resultUpdateCount,
-            annotation: annotation,
-            status: "ok"
-        )
-        recordDictationRatioMetric(
-            .dictationPreviewFinalDelta,
-            value: Self.previewFinalDelta(preview: previewTranscript, final: finalTranscript),
-            annotation: annotation,
-            status: "ok"
-        )
-        recordDictationRatioMetric(
-            .dictationInputLevelPeak,
-            value: Double(inputLevelPeak),
-            annotation: annotation,
-            status: "ok"
+        guard let take = activeTake else { return }
+        Telemetry.record(
+            take.endEvent(
+                finalizeMs: finalizeMs,
+                sessionMs: sessionMs,
+                audioDurationMs: audioDurationMs,
+                resultUpdates: resultUpdateCount,
+                previewFinalDeltaRatio: Self.previewFinalDelta(preview: previewTranscript, final: finalTranscript),
+                inputLevelPeakRatio: Double(inputLevelPeak)
+            ),
+            sessionId: activeSessionId
         )
     }
 
     private func emitDictationCancelTelemetry() {
-        guard let annotation = activeMetricAnnotation else { return }
-        recordDictationCountMetric(
-            .dictationCancel,
-            value: 1,
-            annotation: annotation,
-            status: "cancelled"
-        )
+        guard let take = activeTake else { return }
+        Telemetry.record(take.cancelEvent(), sessionId: activeSessionId)
     }
 
     private static func previewFinalDelta(preview: String, final: String) -> Double {

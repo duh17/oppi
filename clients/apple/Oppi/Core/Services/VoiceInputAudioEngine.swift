@@ -225,10 +225,6 @@ final class AnalyzerInputBuffer: AsyncSequence, @unchecked Sendable {
             "recoveries": String(recoveries),
         ]
         diagnostic(tags)
-        events.yield(.providerMetricTags([
-            "analyzer_input_peak_ms": tags["peak_buffered_ms"] ?? "0",
-            "analyzer_pressure_recoveries": String(recoveries),
-        ]))
     }
 
     private static func copyPCM(_ buffer: AVAudioPCMBuffer) throws -> AVAudioPCMBuffer {

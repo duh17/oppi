@@ -615,11 +615,14 @@ final class OppiApp {
         case .active:
             mainThreadLagWatchdog.start()
             // Footprint telemetry on foreground — helps diagnose jetsam kills.
-            let footprint = AppDiagnosticsService.currentFootprintMB()
-            ClientLog.info("Memory", "Foreground", metadata: [
-                "footprintMB": footprint.map(String.init) ?? "n/a",
-                "reconnect": shouldReconnect ? "true" : "false",
-            ])
+            Telemetry.record(
+                AppForeground(
+                    footprintMb: AppDiagnosticsService.currentFootprintMB().map(Double.init),
+                    reconnect: shouldReconnect,
+                    screen: TelemetryContext.currentScreen
+                )
+            )
+            ClientLog.info("Memory", "Foreground")
 
             // Pick up Live Activities started, ended, or dismissed while backgrounded.
             LiveActivityManager.shared.recoverIfNeeded()
@@ -751,51 +754,49 @@ final class OppiApp {
             """
         )
 
-        var warningMetadata: [String: String] = [
-            "footprintBeforeMB": footprintBefore.map(String.init) ?? "n/a",
-            "footprintAfterMB": footprintAfter.map(String.init) ?? "n/a",
-            "cacheEntries": String(cacheEntries),
-            "cacheBytes": String(cacheBytes),
-            "screen": diagnosticScreenLabel(),
-        ]
-        if let sessionId = diagnosticVisibleSessionId() {
-            warningMetadata["sessionId"] = sessionId
-        }
-        ClientLog.error("Memory", "Memory warning", metadata: warningMetadata)
+        Telemetry.record(
+            AppMemoryWarning(
+                footprintBeforeMb: footprintBefore.map(Double.init),
+                footprintAfterMb: footprintAfter.map(Double.init),
+                cacheEntries: cacheEntries,
+                cacheBytes: cacheBytes,
+                screen: TelemetryContext.currentScreen
+            ),
+            sessionId: diagnosticVisibleSessionId()
+        )
+        ClientLog.error("Memory", "Memory warning")
     }
 
     private func configureWatchdogHooks() {
         mainThreadLagWatchdog.onStall = { context in
-            var metadata = MetricKitCrashContextStore.recordMainThreadStall(
+            MetricKitCrashContextStore.recordMainThreadStall(
                 thresholdMs: context.thresholdMs,
                 footprintMB: context.footprintMB,
                 sequence: context.sequence
             )
-            metadata["sequence"] = String(context.sequence)
-            metadata["thresholdMs"] = String(context.thresholdMs)
-            metadata["detectedAtMs"] = String(context.detectedAtMs)
-            metadata["footprintMB"] = context.footprintMB.map(String.init) ?? "n/a"
-            ClientLog.error(
-                "Diagnostics",
-                "Main-thread stall detected",
-                metadata: metadata,
-                flush: true
+            Telemetry.record(
+                AppMainThreadStallDetected(
+                    thresholdMs: Double(context.thresholdMs),
+                    footprintMb: context.footprintMB.map(Double.init),
+                    sequence: context.sequence,
+                    screen: TelemetryContext.currentScreen
+                )
             )
+            ClientLog.error("Diagnostics", "Main-thread stall detected", flush: true)
         }
         mainThreadLagWatchdog.onRecovery = { context in
-            var metadata = MetricKitCrashContextStore.recordMainThreadStallRecovery(
+            MetricKitCrashContextStore.recordMainThreadStallRecovery(
                 sequence: context.sequence,
                 durationMs: context.durationMs
             )
-            metadata["sequence"] = String(context.sequence)
-            metadata["durationMs"] = String(context.durationMs)
-            metadata["recoveredAtMs"] = String(context.recoveredAtMs)
-            ClientLog.info(
-                "Diagnostics",
-                "Main-thread stall recovered",
-                metadata: metadata,
-                flush: true
+            Telemetry.record(
+                AppMainThreadStallRecovered(
+                    durationMs: Double(context.durationMs),
+                    sequence: context.sequence,
+                    screen: TelemetryContext.currentScreen
+                )
             )
+            ClientLog.info("Diagnostics", "Main-thread stall recovered", flush: true)
         }
     }
 

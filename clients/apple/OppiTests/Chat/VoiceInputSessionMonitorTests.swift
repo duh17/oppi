@@ -27,7 +27,7 @@ struct VoiceInputSessionMonitorTests {
         )
 
         session.yieldAudioLevel(0.25)
-        session.yieldEvent(.providerMetricTags(["stt_backend": "test"]))
+        session.yieldEvent(.sttResolved(backend: "test", model: "test"))
         session.yieldEvent(.partialTranscript("hel"))
         session.yieldEvent(.appendFinalTranscript("hello"))
 
@@ -57,7 +57,7 @@ struct VoiceInputSessionMonitorTests {
             }
         )
 
-        session.yieldEvent(.providerMetricTags(["stt_backend": "test"]))
+        session.yieldEvent(.sttResolved(backend: "test", model: "test"))
         session.yieldEvent(.replaceFinalTranscript("one"))
         session.yieldEvent(.partialTranscript("two"))
 

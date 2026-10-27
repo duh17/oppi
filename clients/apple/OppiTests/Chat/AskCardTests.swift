@@ -440,30 +440,46 @@ struct AskCardTests {
         #expect(AskCard.clampedPage(4, for: multi) == 1)
     }
 
-    // MARK: - Telemetry Tags
+    // MARK: - Telemetry
 
-    @Test("Ask response telemetry tags are bounded and content-free")
-    func askResponseTelemetryTagsAreBoundedAndContentFree() {
+    @Test("Ask response event counts answers and carries no question or answer text")
+    func askResponseEventIsBoundedAndContentFree() {
         let request = Self.multiQuestionRequest()
-        let tags = AskCard.responseMetricTags(
+        let event = AskCard.responseEvent(
             request: request,
             answers: [
                 "approach": .single("unit"),
                 "frameworks": .multi(["jest", "vitest"]),
             ],
-            outcome: "answered",
-            surface: "inline"
+            result: .answered,
+            surface: "inline",
+            durationMs: 1_500
         )
 
-        #expect(tags["outcome"] == "answered")
-        #expect(tags["surface"] == "inline")
-        #expect(tags["question_count"] == "2")
-        #expect(tags["answered_count"] == "2")
-        #expect(tags["ignored_count"] == "0")
-        #expect(tags["multi_select"] == "1")
-        #expect(tags["selected_count"] == "3")
-        #expect(tags.values.contains("unit") == false)
-        #expect(tags.values.contains("jest") == false)
+        #expect(event.fieldValues["questions"] == 2)
+        #expect(event.fieldValues["answered"] == 2)
+        #expect(event.fieldValues["ignored"] == 0)
+        #expect(event.fieldValues["multi_select_questions"] == 1)
+        #expect(event.fieldValues["selected"] == 3)
+        #expect(event.tagValues["result"] == "answered")
+        #expect(event.tagValues["surface"] == "inline")
+        #expect(event.tagValues.values.contains("unit") == false)
+        #expect(event.tagValues.values.contains("jest") == false)
+    }
+
+    @Test("An ignored card counts every question as ignored")
+    func ignoredCardCountsEveryQuestion() {
+        let event = AskCard.responseEvent(
+            request: Self.multiQuestionRequest(),
+            answers: [:],
+            result: .ignored,
+            surface: "expanded",
+            durationMs: 100
+        )
+
+        #expect(event.fieldValues["answered"] == 0)
+        #expect(event.fieldValues["ignored"] == 2)
+        #expect(event.tagValues["result"] == "ignored")
     }
 
     // MARK: - Delayed auto-advance

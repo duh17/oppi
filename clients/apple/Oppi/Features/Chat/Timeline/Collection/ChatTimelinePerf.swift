@@ -73,9 +73,12 @@ enum ChatTimelinePerf {
     private static var hostUpdateUIViewCount = 0
     private static var controllerOwnedApplyCount = 0
 
-    // MARK: - Jank tracking (chat.jank_pct)
+    // MARK: - Jank tracking (app.timeline_jank)
 
-    /// Number of collection apply cycles where elapsed > 16ms (frame budget).
+    /// One 120 Hz frame. An apply cycle that takes longer misses a ProMotion frame.
+    private static let frameBudgetNs: UInt64 = 8_333_333
+
+    /// Number of collection apply cycles that exceeded the frame budget.
     private static var hitchCount = 0
     /// Total collection apply cycles counted since last jank rate emission.
     private static var totalApplyCycles = 0
@@ -193,7 +196,8 @@ enum ChatTimelinePerf {
     static func endCollectionApply(_ token: IntervalToken) {
         signposter.endInterval(token.name, token.state)
 
-        let durationMs = elapsedMs(since: token.startNs)
+        let elapsedNs = DispatchTime.now().uptimeNanoseconds &- token.startNs
+        let durationMs = Int(elapsedNs / 1_000_000)
         applyLastMs = durationMs
         applyMaxMs = max(applyMaxMs, durationMs)
 
@@ -206,28 +210,21 @@ enum ChatTimelinePerf {
         // are background artifacts, not real rendering cost.
         guard durationMs < suspensionCeilingMs else { return }
 
-        // Jank tracking: count every valid apply cycle and flag hitches (> 16ms).
+        // Jank tracking: count every valid apply cycle and flag hitches.
         totalApplyCycles += 1
-        if durationMs > 16 {
+        if elapsedNs > frameBudgetNs {
             hitchCount += 1
         }
 
-        // Emit to telemetry only when above noise floor (skip the 99% that are 0-1ms).
-        if durationMs >= 4 {
-            let applySid = resolvedSessionId(token.sessionId)
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .timelineApplyMs,
-                    value: Double(durationMs),
-                    unit: .ms,
-                    sessionId: applySid,
-                    tags: [
-                        "items": String(token.itemCount),
-                        "changed": String(token.changedCount),
-                    ]
-                )
-            }
-        }
+        // The catalog emit policy drops the noise floor and suspension artifacts.
+        Telemetry.record(
+            AppTimelineApply(
+                durationMs: Double(durationMs),
+                items: token.itemCount,
+                changed: token.changedCount
+            ),
+            sessionId: resolvedSessionId(token.sessionId)
+        )
 
         guard durationMs >= slowApplyThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
@@ -270,19 +267,10 @@ enum ChatTimelinePerf {
 
         guard durationMs < suspensionCeilingMs else { return }
 
-        // Emit to telemetry only when above noise floor.
-        if durationMs >= 2 {
-            let layoutSid = resolvedSessionId(token.sessionId)
-            Task.detached(priority: .utility) {
-                await ChatMetricsService.shared.record(
-                    metric: .timelineLayoutMs,
-                    value: Double(durationMs),
-                    unit: .ms,
-                    sessionId: layoutSid,
-                    tags: ["items": String(token.itemCount)]
-                )
-            }
-        }
+        Telemetry.record(
+            AppTimelineLayout(durationMs: Double(durationMs), items: token.itemCount),
+            sessionId: resolvedSessionId(token.sessionId)
+        )
 
         guard durationMs >= slowLayoutThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
@@ -325,28 +313,19 @@ enum ChatTimelinePerf {
         // Discard suspension-inflated samples (same rationale as apply/layout).
         guard durationMs < suspensionCeilingMs else { return }
 
-        // Only emit to telemetry for non-trivial configures (≥1ms).
-        // Sub-millisecond configures are the common case and the Task.detached
-        // allocation adds overhead that exceeds the measurement itself.
-        guard durationMs >= 1 else { return }
-
-        let sid = resolvedSessionId(sessionId)
-        Task.detached(priority: .utility) {
-            var tags: [String: String] = ["row_type": rowType]
-            if let ctx = toolContext {
-                tags["tool"] = ctx.tool
-                tags["expanded"] = ctx.isExpanded ? "1" : "0"
-                tags["content_type"] = ctx.contentType
-                tags["output_bytes"] = outputBytesBucket(ctx.outputBytes)
-            }
-            await ChatMetricsService.shared.record(
-                metric: .cellConfigureMs,
-                value: Double(durationMs),
-                unit: .ms,
-                sessionId: sid,
-                tags: tags
-            )
-        }
+        // Sub-millisecond configures are the common case; the catalog emit policy
+        // drops them before any task is spawned.
+        Telemetry.record(
+            AppCellConfigure(
+                durationMs: Double(durationMs),
+                expanded: toolContext?.isExpanded,
+                rowType: rowType,
+                tool: toolContext?.tool,
+                contentType: toolContext?.contentType,
+                outputSize: toolContext.map { TelemetryTag.OutputSize(bytes: $0.outputBytes) }
+            ),
+            sessionId: resolvedSessionId(sessionId)
+        )
 
         guard durationMs >= slowCellThresholdMs else { return }
 
@@ -384,27 +363,17 @@ enum ChatTimelinePerf {
         // Discard suspension-inflated samples.
         guard durationMs < suspensionCeilingMs else { return }
 
-        // Keep signposts for every render strategy, but skip zero-millisecond
-        // telemetry rows. They are common, add upload/task overhead, and do not
-        // help diagnose user-visible render cost.
-        guard durationMs >= 1 else { return }
-
-        let sid = resolvedSessionId(sessionId)
-        Task.detached(priority: .utility) {
-            var tags = [
-                "mode": mode,
-                "input_bytes": outputBytesBucket(inputBytes),
-            ]
-            if let language { tags["language"] = language }
-
-            await ChatMetricsService.shared.record(
-                metric: .renderStrategyMs,
-                value: Double(durationMs),
-                unit: .ms,
-                sessionId: sid,
-                tags: tags
-            )
-        }
+        // Signposts fire for every render strategy; the catalog emit policy drops
+        // zero-millisecond telemetry rows.
+        Telemetry.record(
+            AppRenderStrategy(
+                durationMs: Double(durationMs),
+                renderMode: mode,
+                inputSize: TelemetryTag.InputSize(bytes: inputBytes),
+                language: language
+            ),
+            sessionId: resolvedSessionId(sessionId)
+        )
 
         guard durationMs >= slowRenderThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
@@ -431,21 +400,14 @@ enum ChatTimelinePerf {
     ) {
         signposter.emitEvent("toolrow.measure")
 
-        guard durationMs > 0 else { return }
-
-        let sid = resolvedSessionId(sessionId)
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .renderStrategyMs,
-                value: Double(durationMs),
-                unit: .ms,
-                sessionId: sid,
-                tags: [
-                    "mode": "measurement.\(name)",
-                    "input_bytes": outputBytesBucket(inputBytes),
-                ]
-            )
-        }
+        Telemetry.record(
+            AppToolRowMeasure(
+                durationMs: Double(durationMs),
+                measure: name,
+                inputSize: TelemetryTag.InputSize(bytes: inputBytes)
+            ),
+            sessionId: resolvedSessionId(sessionId)
+        )
 
         guard durationMs >= slowMeasurementThresholdMs else { return }
         guard shouldEmitSlowLog() else { return }
@@ -459,16 +421,6 @@ enum ChatTimelinePerf {
                 "inputBytes": String(inputBytes),
             ]
         )
-    }
-
-    nonisolated private static func outputBytesBucket(_ bytes: Int) -> String {
-        switch bytes {
-        case ..<1_000: return "<1KB"
-        case ..<10_000: return "1-10KB"
-        case ..<50_000: return "10-50KB"
-        case ..<200_000: return "50-200KB"
-        default: return "200KB+"
-        }
     }
 
     static func recordScrollCommand(
@@ -532,12 +484,10 @@ enum ChatTimelinePerf {
 
     // MARK: - Jank Rate Emission
 
-    /// Compute and emit `chat.jank_pct` — percentage of collection-apply cycles
-    /// that exceeded the 16ms frame budget. Resets counters after emission.
-    ///
-    /// Call periodically during streaming (e.g. every 30s) and on session end.
-    /// The `phase` tag distinguishes streaming vs idle vs session-end context.
-    static func emitJankRate(sessionId: String?, phase: String) {
+    /// Compute and emit `app.timeline_jank`: the share of collection-apply
+    /// cycles that exceeded the 120 Hz frame budget. Resets counters after
+    /// emission. Called when a session ends.
+    static func emitJankRate(sessionId: String?) {
         guard totalApplyCycles > 0 else { return }
         let pct = Double(hitchCount) / Double(totalApplyCycles) * 100.0
         let cycles = totalApplyCycles
@@ -545,19 +495,10 @@ enum ChatTimelinePerf {
         hitchCount = 0
         totalApplyCycles = 0
 
-        Task.detached(priority: .utility) {
-            await ChatMetricsService.shared.record(
-                metric: .jankPct,
-                value: pct,
-                unit: .ratio,
-                sessionId: sessionId,
-                tags: [
-                    "phase": phase,
-                    "cycles": String(cycles),
-                    "hitches": String(hitches),
-                ]
-            )
-        }
+        Telemetry.record(
+            AppTimelineJank(jankPct: pct, cycles: cycles, hitches: hitches),
+            sessionId: sessionId
+        )
     }
 
     private static func shouldEmitSlowLog(nowNs: UInt64 = DispatchTime.now().uptimeNanoseconds) -> Bool {

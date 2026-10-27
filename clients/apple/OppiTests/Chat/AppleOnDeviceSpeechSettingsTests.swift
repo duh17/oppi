@@ -51,7 +51,7 @@ struct AppleOnDeviceSpeechSettingsTests {
         events.continuation.finish() // successful analyzer completion cannot win
         var failure: Error?
         do { for try await _ in events.stream {} } catch { failure = error }
-        #expect(VoiceInputTelemetry.metricErrorKind(for: try #require(failure)) == "capture_buffer_overflow")
+        #expect(TelemetryErrorKind.classify(try #require(failure)) == .captureBufferOverflow)
         #expect(failure?.localizedDescription == "Dictation couldn’t continue. Please try again.")
     }
 
@@ -281,15 +281,15 @@ struct AppleOnDevicePreparationTests {
         })
         let context = VoiceProviderContext(locale: Locale(identifier: "en-GB"), source: "test")
         let cold = try await provider.prepareSession(context: context)
-        #expect(cold.pathTag == "cold")
+        #expect(cold.modelPath == .cold)
         provider.cancelPreparation() // cancelling a completed take must retain readiness
         let warm = try await provider.prepareSession(context: context)
-        #expect(warm.pathTag == "warm_cache")
+        #expect(warm.modelPath == .warmCache)
         #expect(warm.audioFormat == format)
         #expect(warm.transcriptionLocale?.identifier(.bcp47) == "en-US")
         #expect(resolutions == 1 && preparations == 1)
         provider.invalidateCache()
-        #expect(try await provider.prepareSession(context: context).pathTag == "cold")
+        #expect(try await provider.prepareSession(context: context).modelPath == .cold)
         #expect(resolutions == 2 && preparations == 2)
     }
 
@@ -304,8 +304,8 @@ struct AppleOnDevicePreparationTests {
         let english = VoiceProviderContext(locale: Locale(identifier: "en-US"), source: "test")
         let chinese = VoiceProviderContext(locale: Locale(identifier: "zh-CN"), source: "test")
         try await provider.prewarm(context: english)
-        #expect(try await provider.prepareSession(context: english).pathTag == "warm_cache")
-        #expect(try await provider.prepareSession(context: chinese).pathTag == "cold")
+        #expect(try await provider.prepareSession(context: english).modelPath == .warmCache)
+        #expect(try await provider.prepareSession(context: chinese).modelPath == .cold)
         #expect(locales == ["en-US", "zh-CN"])
     }
 
@@ -329,8 +329,8 @@ struct AppleOnDevicePreparationTests {
         await #expect(throws: CancellationError.self) { try await old.value }
         #expect(!provider._testModelReady)
         await newGate.open()
-        #expect(try await replacement.value.pathTag == "cold")
-        #expect(try await provider.prepareSession(context: context).pathTag == "warm_cache")
+        #expect(try await replacement.value.modelPath == .cold)
+        #expect(try await provider.prepareSession(context: context).modelPath == .warmCache)
         #expect(calls == 2)
     }
 }
