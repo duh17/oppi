@@ -3,16 +3,8 @@ import OSLog
 
 private let uploaderLog = Logger(subsystem: AppIdentifiers.subsystem, category: "TelemetryUpload")
 
-/// What `TelemetryEventUploader` needs from the server connection: one POST of
-/// catalog events. `nil` means the server accepted the upload (a 2xx) but its
-/// body could not be read, so no drop counts are known.
-protocol TelemetryEventUploading: Sendable {
-    func uploadTelemetryEvents(request: TelemetryEventUploadRequest) async throws -> TelemetryEventUploadResponse?
-}
-
-extension APIClient: TelemetryEventUploading {}
-
 /// Buffers catalog events and uploads them to `POST /telemetry/events`.
+/// `uploadTelemetryEvents` returns `nil` for a 2xx whose body cannot be read.
 ///
 /// Holds at most 1000 events, sends batches of 50, and flushes 10 s after the
 /// first buffered event or as soon as a batch is full. A failed upload (no 2xx)
@@ -22,7 +14,7 @@ extension APIClient: TelemetryEventUploading {}
 actor TelemetryEventUploader {
     static let shared = TelemetryEventUploader()
 
-    private var uploader: (any TelemetryEventUploading)?
+    private var apiClient: APIClient?
     private var backlog: [TelemetryEventPayload] = []
     private var flushing = false
     private var flushTask: Task<Void, Never>?
@@ -47,16 +39,16 @@ actor TelemetryEventUploader {
         self.flushInterval = flushInterval
     }
 
-    func setUploadClient(_ client: (any TelemetryEventUploading)?) {
+    func setUploadClient(_ client: APIClient?) {
         guard isUploadAllowed() else {
-            uploader = nil
+            apiClient = nil
             backlog.removeAll(keepingCapacity: true)
             flushTask?.cancel()
             flushTask = nil
             return
         }
 
-        uploader = client
+        apiClient = client
         guard client != nil else { return }
         flushIfNeeded()
     }
@@ -103,7 +95,7 @@ actor TelemetryEventUploader {
         flushTask?.cancel()
         flushTask = nil
 
-        guard let uploader else {
+        guard let apiClient else {
             scheduleFlushTimerIfNeeded()
             return
         }
@@ -119,7 +111,7 @@ actor TelemetryEventUploader {
             )
 
             do {
-                if let response = try await uploader.uploadTelemetryEvents(request: request),
+                if let response = try await apiClient.uploadTelemetryEvents(request: request),
                    !response.dropped.isEmpty {
                     onDrops(response, batch.count)
                 }

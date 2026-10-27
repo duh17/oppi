@@ -6,6 +6,7 @@
 
 import {
   EVENT_DEFS,
+  NAME_LOCATION_RULES,
   NAME_TAG_FALLBACK,
   NAME_TAG_PATTERN,
   TAG_DEFS,
@@ -26,26 +27,21 @@ export interface ValidatedEvent {
 export type ValidationResult =
   { ok: true; event: ValidatedEvent } | { ok: false; reason: TelemetryDropReason };
 
-const PRIVATE_HOST_SUFFIX = /\.(local|lan|internal|localdomain|ts\.net|home\.arpa)$/i;
-const IPV4 = /^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/;
-const HOST_PORT = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+:\d{2,5}$/;
-const USER_AT_HOST = /^[^@]+@[^@]*\.[A-Za-z]{2,}$/;
+const LOCATION_RULES = NAME_LOCATION_RULES.map((rule) => ({
+  regex: new RegExp(rule.source, rule.ignoreCase ? "i" : ""),
+  exemptForRoute: rule.exemptForRoute === true,
+}));
 
 /**
  * True when a name looks like a URL, host, address, or filesystem path rather
  * than an identifier. A tag source is not trusted to be a vocabulary: a
  * configured endpoint or an unregistered client string must not reach storage as
- * a "name". The Swift twin in `TelemetryName` applies the same rules.
+ * a "name". The rules are `NAME_LOCATION_RULES` in the catalog, and the
+ * generated Swift (`TelemetryName`) applies the same data.
  */
 export function looksLikeLocation(value: string, allowRoute = false): boolean {
-  if (value.includes("://") || value.startsWith("~")) return true;
-  if (value.startsWith("/") && !allowRoute) return true;
-  if (/(^|[^A-Za-z0-9])localhost([^A-Za-z0-9]|$)/i.test(value)) return true;
-  return (
-    PRIVATE_HOST_SUFFIX.test(value) ||
-    IPV4.test(value) ||
-    HOST_PORT.test(value) ||
-    USER_AT_HOST.test(value)
+  return LOCATION_RULES.some(
+    (rule) => !(allowRoute && rule.exemptForRoute) && rule.regex.test(value),
   );
 }
 

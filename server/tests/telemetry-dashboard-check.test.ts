@@ -78,6 +78,53 @@ describe("dashboard SQL against the catalog", () => {
     ]);
   });
 
+  it("rejects a stale value in a simple CASE <tag> WHEN 'x' on a direct read and an alias", () => {
+    const direct = `SELECT CASE json_extract(tags_json, '$.status')
+        WHEN 'ok' THEN 1 WHEN 'success' THEN 2 ELSE 0 END
+      FROM events WHERE name = 'app.thread_load'`;
+    expect(sqlCatalogViolations("panel", direct)).toEqual([
+      'panel: tag "status" is compared with "success", which app.thread_load never has',
+    ]);
+
+    const aliased = `WITH t AS (SELECT json_extract(tags_json, '$.status') AS status
+        FROM events WHERE name = 'app.thread_load')
+      SELECT CASE status WHEN 'error' THEN 1 WHEN 'failed' THEN 2 END FROM t`;
+    expect(sqlCatalogViolations("panel", aliased)).toEqual([
+      'panel: tag "status" is compared with "failed", which app.thread_load never has',
+    ]);
+  });
+
+  it("rejects a stale value with the literal on the left", () => {
+    const direct = `SELECT 1 FROM events WHERE name = 'app.thread_load'
+      AND 'failed' = json_extract(tags_json, '$.status')
+      AND 'ok' = COALESCE(json_extract(tags_json, '$.status'), '')`;
+    expect(sqlCatalogViolations("panel", direct)).toEqual([
+      'panel: tag "status" is compared with "failed", which app.thread_load never has',
+    ]);
+
+    const aliased = `WITH t AS (SELECT json_extract(tags_json, '$.status') AS status
+        FROM events WHERE name = 'app.thread_load')
+      SELECT COUNT(*) FROM t WHERE 'failed' != status AND 'ok' <> t.status`;
+    expect(sqlCatalogViolations("panel", aliased)).toEqual([
+      'panel: tag "status" is compared with "failed", which app.thread_load never has',
+    ]);
+  });
+
+  it("follows an alias written without AS", () => {
+    const stale = `WITH t AS (SELECT json_extract(tags_json, '$.status') status,
+          COALESCE(json_extract(tags_json, '$.error_kind'), 'none') kind
+        FROM events WHERE name = 'app.thread_load')
+      SELECT COUNT(*) FROM t WHERE status = 'failed' AND kind = 'none' AND kind = 'exploded'`;
+    expect(sqlCatalogViolations("panel", stale)).toEqual([
+      'panel: tag "status" is compared with "failed", which app.thread_load never has',
+      'panel: tag "error_kind" is compared with "exploded", which app.thread_load never has',
+    ]);
+
+    const keyword = `SELECT json_extract(tags_json, '$.status') FROM events
+      WHERE name = 'app.thread_load' ORDER BY json_extract(tags_json, '$.status') DESC`;
+    expect(sqlCatalogViolations("panel", keyword)).toEqual([]);
+  });
+
   it("matches LIKE literals against the values the event has", () => {
     const stale = `SELECT 1 FROM events WHERE name = 'app.catchup'
       AND json_extract(tags_json, '$.result') LIKE 'cache%'`;

@@ -25,8 +25,6 @@ protocol TelemetryEvent: Sendable {
 enum TelemetryName {
     static let fallback = "unknown"
 
-    private static let privateHostSuffixes = [".local", ".lan", ".internal", ".localdomain", ".ts.net", ".home.arpa"]
-
     static func sanitize(_ value: String) -> String {
         let bytes = value.utf8
         guard (1...128).contains(bytes.count), bytes.allSatisfy(isAllowed) else { return fallback }
@@ -42,29 +40,34 @@ enum TelemetryName {
         }
     }
 
-    /// A value an endpoint, address, or filesystem path would produce. The app
+    /// A value an endpoint, address, or filesystem path would produce. The rules are
+    /// the catalog's `NAME_LOCATION_RULES`, the same data the server applies. The app
     /// has no route templates, so a leading `/` is a path here.
     static func looksLikeLocation(_ value: String) -> Bool {
-        if value.hasPrefix("/") || value.hasPrefix("~") || value.contains("://") { return true }
-        let lower = value.lowercased()
-        if lower.contains("localhost") { return true }
-        if privateHostSuffixes.contains(where: lower.hasSuffix) { return true }
-        if let at = value.firstIndex(of: "@") {
-            let host = value[value.index(after: at)...]
-            if host.contains("."), host.contains(where: { $0.isLetter }) { return true }
-        }
-        let withoutPort: Substring
-        if let colon = value.lastIndex(of: ":") {
-            let port = value[value.index(after: colon)...]
-            let hostPart = value[..<colon]
-            if (2...5).contains(port.count), port.allSatisfy({ $0.isNumber }), hostPart.contains(".") { return true }
-            withoutPort = hostPart
-        } else {
-            withoutPort = value[...]
-        }
-        let octets = withoutPort.split(separator: ".", omittingEmptySubsequences: false)
-        return octets.count == 4 && octets.allSatisfy { (1...3).contains($0.count) && $0.allSatisfy { $0.isNumber } }
+        let range = NSRange(value.startIndex..., in: value)
+        return locationRules.contains { $0.firstMatch(in: value, range: range) != nil }
     }
+
+    private static let locationRules: [NSRegularExpression] = [
+        // url_scheme: A URL (`https://host`).
+        try! NSRegularExpression(pattern: "://", options: []),
+        // home_path: A home-relative path (`~/models`).
+        try! NSRegularExpression(pattern: "^~", options: []),
+        // absolute_path: An absolute path (`/Users/me/models`); a route template may start with `/`.
+        try! NSRegularExpression(pattern: "^/", options: []),
+        // localhost: `localhost` as a whole word.
+        try! NSRegularExpression(pattern: "(^|[^A-Za-z0-9])localhost($|[^A-Za-z0-9])", options: [.caseInsensitive]),
+        // private_host_suffix: A private or tailnet host name (`mac-studio.tail1234.ts.net`).
+        try! NSRegularExpression(pattern: "\\.(local|lan|internal|localdomain|ts\\.net|home\\.arpa)$", options: [.caseInsensitive]),
+        // ipv4: An IPv4 address, with an optional port.
+        try! NSRegularExpression(pattern: "^\\d{1,3}(\\.\\d{1,3}){3}(:\\d+)?$", options: []),
+        // ipv6: An IPv6 address (`fd7a:115c:a1e0::53`, `::1`): two or more colons, hex digits only.
+        try! NSRegularExpression(pattern: "^(?=([^:]*:){2})[0-9A-Fa-f:.]+$", options: []),
+        // host_port: A host with an alphabetic top-level domain and a port (`stt.example.com:7936`).
+        try! NSRegularExpression(pattern: "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}:\\d{2,5}$", options: []),
+        // user_at_host: `user@host.tld`; a leading `@` scope (`@cf/meta/llama`) has no user.
+        try! NSRegularExpression(pattern: "^[^@]+@[^@]*\\.[A-Za-z]{2,}$", options: []),
+    ]
 }
 
 /// One event in a `POST /telemetry/events` upload.

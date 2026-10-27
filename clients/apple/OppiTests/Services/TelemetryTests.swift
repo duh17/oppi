@@ -87,25 +87,31 @@ struct TelemetryTests {
         #expect(AppMemoryWarning(cacheEntries: 1, cacheBytes: 1, screen: "chat").tagValues["screen"] == "chat")
     }
 
-    /// The server's `looksLikeLocation` applies the same rules; a configured
-    /// endpoint must not become a tag value on either side.
-    @Test(arguments: [
-        "http://mac-studio.tail1234.ts.net:7936", "mac-studio.tail1234.ts.net", "Mac-Studio.local",
-        "stt.build-box.internal", "nas.lan", "192.168.68.66", "192.168.68.66:7936",
-        "stt.example.com:7936", "localhost", "localhost:7936", "dev@box.example.com",
-        "/Users/duh/models/parakeet", "~/models/parakeet", "has space", "",
-    ])
-    func hostsUrlsAndPathsBecomeUnknown(value: String) {
-        #expect(TelemetryName.sanitize(value) == "unknown")
+    /// One accept/reject list (`protocol/telemetry-name-tags.json`) for the server
+    /// sanitizer and this one; both apply the catalog's `NAME_LOCATION_RULES`.
+    private struct NameTagFixture: Decodable {
+        let accept: [String]
+        let reject: [String]
     }
 
-    @Test(arguments: [
-        "claude-opus-4@20250514", "qwen3:32b", "llama3:8", "meta-llama/llama-3.1-8b-instruct:free",
-        "gpt-4.1", "mcp__github__create_issue", "queueSync.initial", "streaming", "xai",
-        "AVAudioSessionCategoryPlayAndRecord", "BluetoothHFP/MicrophoneBuiltIn",
-    ])
-    func identifiersSurviveSanitizing(value: String) {
-        #expect(TelemetryName.sanitize(value) == value)
+    private static func nameTagFixture() throws -> NameTagFixture {
+        try JSONDecoder().decode(NameTagFixture.self, from: ProtocolFixtures.data("telemetry-name-tags.json"))
+    }
+
+    @Test func hostsUrlsAndPathsBecomeUnknown() throws {
+        let fixture = try Self.nameTagFixture()
+        #expect(!fixture.reject.isEmpty)
+        for value in fixture.reject {
+            #expect(TelemetryName.sanitize(value) == "unknown", "\(value)")
+        }
+    }
+
+    @Test func identifiersSurviveSanitizing() throws {
+        let fixture = try Self.nameTagFixture()
+        #expect(!fixture.accept.isEmpty)
+        for value in fixture.accept {
+            #expect(TelemetryName.sanitize(value) == value, "\(value)")
+        }
     }
 
     @Test func sizeBucketsUseTheServersEdges() {

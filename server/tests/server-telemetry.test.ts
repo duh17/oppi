@@ -231,22 +231,56 @@ describe("TelemetryEventWriter", () => {
     ]);
   });
 
-  it("keeps writing server.resources after ops events fill the daily cap", () => {
-    setEnv("OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES", "400");
-    const writer = new TelemetryEventWriter(dir);
-    for (let i = 0; i < 20; i += 1) writer.write("server", [record("server.ws_ping_timeout")]);
-    const resources = record("server.resources");
-    writer.write("server", [resources, record("server.session_create")]);
-    writer.write("server", [resources]);
-
+  describe("daily byte cap", () => {
     const today = new Date().toISOString().slice(0, 10);
-    const names = readFileSync(join(dir, `server-events-${today}.jsonl`), "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => (JSON.parse(line) as TelemetryEventRecord).name);
-    expect(names.filter((name) => name === "server.resources")).toHaveLength(2);
-    // The cap still holds for everything else: far fewer than 20 + 1 ops lines fit in 400 bytes.
-    expect(names.filter((name) => name !== "server.resources").length).toBeLessThan(10);
+    const names = (): string[] =>
+      readFileSync(join(dir, `server-events-${today}.jsonl`), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as TelemetryEventRecord).name);
+    const opsLines = (): number => names().filter((name) => name !== "server.resources").length;
+
+    /** How many ops events a fresh file holds under the cap, with no resource samples at all. */
+    const opsThatFit = (cap: number): number => {
+      setEnv("OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES", String(cap));
+      const baselineDir = join(dir, "baseline");
+      const writer = new TelemetryEventWriter(baselineDir);
+      for (let i = 0; i < 50; i += 1) writer.write("server", [record("server.ws_ping_timeout")]);
+      return readFileSync(join(baselineDir, `server-events-${today}.jsonl`), "utf8")
+        .trim()
+        .split("\n").length;
+    };
+
+    it("never holds server.resources to the cap", () => {
+      setEnv("OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES", "400");
+      const writer = new TelemetryEventWriter(dir);
+      for (let i = 0; i < 20; i += 1) writer.write("server", [record("server.ws_ping_timeout")]);
+      writer.write("server", [record("server.resources"), record("server.session_create")]);
+      writer.write("server", [record("server.resources")]);
+
+      expect(names().filter((name) => name === "server.resources")).toHaveLength(2);
+    });
+
+    it("does not let resource samples consume the ops budget, within a process or across a restart", () => {
+      const fits = opsThatFit(400);
+      expect(fits).toBeGreaterThan(1);
+      expect(fits).toBeLessThan(50);
+
+      setEnv("OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES", "400");
+      const first = new TelemetryEventWriter(dir);
+      // Resource samples first: they must not shrink what ops events may use.
+      for (let i = 0; i < 30; i += 1) first.write("server", [record("server.resources")]);
+      for (let i = 0; i < Math.floor(fits / 2); i += 1) {
+        first.write("server", [record("server.ws_ping_timeout")]);
+      }
+      // A restarted process sees the file as it is, resources and ops mixed.
+      const restarted = new TelemetryEventWriter(dir);
+      for (let i = 0; i < 50; i += 1) restarted.write("server", [record("server.ws_ping_timeout")]);
+      for (let i = 0; i < 30; i += 1) restarted.write("server", [record("server.resources")]);
+
+      expect(opsLines()).toBe(fits);
+      expect(names().filter((name) => name === "server.resources")).toHaveLength(60);
+    });
   });
 
   it("prunes expired server event files and every pre-v2 server prefix on the server retention", () => {

@@ -1,0 +1,54 @@
+{
+  "description": "Values the telemetry `name` tag sanitizer keeps (accept) or stores as `unknown` (reject). One list for both sides: server/tests/telemetry-name-tags.test.ts and OppiTests TelemetryTests read it. Rejections are values shaped like a URL, host, address, or path; bare or public host names and relative paths cannot be told from identifiers, so tag sources must stay bounded.",
+  "accept": [
+    "claude-opus-4@20250514",
+    "@cf/meta/llama-3.1-8b-instruct",
+    "qwen3:32b",
+    "qwen2.5:72",
+    "llama3:8",
+    "anthropic.claude-v2:0",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "gpt-4.1",
+    "mcp__cloudflare_api",
+    "mcp__github__create_issue",
+    "queueSync.initial",
+    "streaming",
+    "xai",
+    "AVAudioSessionCategoryPlayAndRecord",
+    "BluetoothHFP/MicrophoneBuiltIn"
+  ],
+  "reject": [
+    "http://mac-studio.tail1234.ts.net:7936",
+    "https://example.com",
+    "mac-studio.tail1234.ts.net",
+    "Mac-Studio.local",
+    "stt.build-box.internal",
+    "nas.lan",
+    "nas.home.arpa",
+    "192.168.68.66",
+    "192.168.68.66:7936",
+    "stt.example.com:7936",
+    "stt.example.co.uk:8443",
+    "localhost",
+    "LOCALHOST:7936",
+    "dev@box.example.com",
+    "fd7a:115c:a1e0::53",
+    "::1",
+    "2001:db8::1",
+    "FE80::1:2",
+    "/Users/duh/models/parakeet",
+    "~/models/parakeet",
+    "has space",
+    ""
+  ],
+  "routeAccept": [
+    "/workspaces/:workspaceId",
+    "/sessions/:sessionId/trace"
+  ],
+  "routeReject": [
+    "http://evil.example/x",
+    "stt.example.com:7936",
+    "fd7a:115c:a1e0::53"
+  ]
+}

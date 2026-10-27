@@ -74,6 +74,70 @@ export const NAME_TAG_PATTERN = new RegExp(
 );
 export const NAME_TAG_FALLBACK = "unknown";
 
+/**
+ * One reason a `name` value is stored as `unknown` although its characters are
+ * allowed: it looks like a location (URL, host, address, path) rather than an
+ * identifier. The rules are data so the server (`validate.ts`) and the
+ * generated Swift (`TelemetryName`) apply exactly the same ones: `source` is a
+ * regular expression in the syntax JavaScript and ICU share (no lookbehind, no
+ * inline flags). The check is defence in depth: a bare or public hostname
+ * (`stt-box`, `example.com`) or a relative path is indistinguishable from an
+ * identifier, so a source of `name` tags must still be bounded to constants or
+ * enum-like values.
+ */
+export interface NameLocationRule {
+  readonly id: string;
+  readonly source: string;
+  readonly ignoreCase?: true;
+  /** A route template (`route` tags) may match this rule, as `/workspaces/:workspaceId` does. */
+  readonly exemptForRoute?: true;
+  readonly description: string;
+}
+
+export const NAME_LOCATION_RULES: readonly NameLocationRule[] = [
+  { id: "url_scheme", source: "://", description: "A URL (`https://host`)." },
+  { id: "home_path", source: "^~", description: "A home-relative path (`~/models`)." },
+  {
+    id: "absolute_path",
+    source: "^/",
+    exemptForRoute: true,
+    description: "An absolute path (`/Users/me/models`); a route template may start with `/`.",
+  },
+  {
+    id: "localhost",
+    source: "(^|[^A-Za-z0-9])localhost($|[^A-Za-z0-9])",
+    ignoreCase: true,
+    description: "`localhost` as a whole word.",
+  },
+  {
+    id: "private_host_suffix",
+    source: "\\.(local|lan|internal|localdomain|ts\\.net|home\\.arpa)$",
+    ignoreCase: true,
+    description: "A private or tailnet host name (`mac-studio.tail1234.ts.net`).",
+  },
+  {
+    id: "ipv4",
+    source: "^\\d{1,3}(\\.\\d{1,3}){3}(:\\d+)?$",
+    description: "An IPv4 address, with an optional port.",
+  },
+  {
+    id: "ipv6",
+    source: "^(?=([^:]*:){2})[0-9A-Fa-f:.]+$",
+    description:
+      "An IPv6 address (`fd7a:115c:a1e0::53`, `::1`): two or more colons, hex digits only.",
+  },
+  {
+    id: "host_port",
+    source: "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}:\\d{2,5}$",
+    description: "A host with an alphabetic top-level domain and a port (`stt.example.com:7936`).",
+  },
+  {
+    id: "user_at_host",
+    source: "^[^@]+@[^@]*\\.[A-Za-z]{2,}$",
+    description: "`user@host.tld`; a leading `@` scope (`@cf/meta/llama`) has no user.",
+  },
+];
+
 export interface TagUse {
   readonly required?: true;
   /** Narrowed subset of an enum tag's vocabulary. */

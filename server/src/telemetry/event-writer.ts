@@ -11,20 +11,22 @@
  * | server | OPPI_SERVER_METRICS_RETENTION_DAYS (30)    | OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES   |
  *
  * The daily cap bounds event volume, not resource history: `server.resources`
- * (one small record every 30 s, about 2 MB a day) is written outside the cap, so
- * a busy day of ops events cannot starve the Server Metrics page of samples.
+ * (one small record every 30 s, about 2 MB a day) is neither held to the cap nor
+ * counted against it. The writer tracks the bytes of every other event in a file
+ * itself (seeded from the file the first time a process writes to it), so a busy
+ * day of ops events cannot starve the Server Metrics page of samples, and
+ * resource samples cannot eat the ops budget.
  *
  * Pruning also removes the pre-v2 files (`chat-metrics-`, `server-ops-metrics-`,
  * `server-metrics-`) on their successor's retention so they age out. Nothing
  * reads or writes those files any more.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
 import {
-  appendJsonlLineWithByteLimit,
   dateString,
   jsonlMaxBytesFromEnv,
   pruneOldJsonlFiles,
@@ -37,6 +39,16 @@ const FILE_SUFFIX = ".jsonl";
 
 /** Events written whatever the daily cap says: the Server Metrics history reads them. */
 const CAP_EXEMPT_EVENTS: ReadonlySet<string> = new Set(["server.resources"]);
+
+/** True for a stored line of a cap-exempt event. */
+function isCapExemptLine(line: string): boolean {
+  try {
+    const name = (JSON.parse(line) as { name?: unknown }).name;
+    return typeof name === "string" && CAP_EXEMPT_EVENTS.has(name);
+  } catch {
+    return false;
+  }
+}
 
 const ORIGIN_FILES = {
   app: {
@@ -77,6 +89,8 @@ export interface TelemetryEventSink {
 
 export class TelemetryEventWriter implements TelemetryEventSink {
   private readonly cappedFiles = new Set<string>();
+  /** Bytes of cap-counted events per daily file, for this process's view of the file. */
+  private readonly cappedBytes = new Map<string, number>();
 
   constructor(private readonly telemetryDir: string) {}
 
@@ -95,10 +109,12 @@ export class TelemetryEventWriter implements TelemetryEventSink {
         if (CAP_EXEMPT_EVENTS.has(record.name)) exemptLines += line;
         else lines += line;
       }
-      if (exemptLines) appendJsonlLineWithByteLimit(filePath, exemptLines, null);
-      const maxBytes = jsonlMaxBytesFromEnv(ORIGIN_FILES[origin].maxBytesEnv);
-      if (lines && !appendJsonlLineWithByteLimit(filePath, lines, maxBytes)) {
-        this.warnDailyCapOnce(filePath, maxBytes);
+      if (exemptLines) appendFileSync(filePath, exemptLines, { encoding: "utf8", mode: 0o600 });
+      if (lines) {
+        const maxBytes = jsonlMaxBytesFromEnv(ORIGIN_FILES[origin].maxBytesEnv);
+        if (!this.appendCounted(filePath, lines, maxBytes)) {
+          this.warnDailyCapOnce(filePath, maxBytes);
+        }
       }
       this.prune(origin);
     } catch (err) {
@@ -107,6 +123,34 @@ export class TelemetryEventWriter implements TelemetryEventSink {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /** Append cap-counted lines unless they would push the file's counted bytes past `maxBytes`. */
+  private appendCounted(filePath: string, lines: string, maxBytes: number | null): boolean {
+    const lineBytes = Buffer.byteLength(lines, "utf8");
+    if (maxBytes !== null) {
+      const counted = this.countedBytes(filePath);
+      if (lineBytes > maxBytes || counted + lineBytes > maxBytes) return false;
+    }
+    appendFileSync(filePath, lines, { encoding: "utf8", mode: 0o600 });
+    if (this.cappedBytes.has(filePath)) {
+      this.cappedBytes.set(filePath, (this.cappedBytes.get(filePath) ?? 0) + lineBytes);
+    }
+    return true;
+  }
+
+  /** Bytes of the file's cap-counted lines; reads an existing file once per process. */
+  private countedBytes(filePath: string): number {
+    const known = this.cappedBytes.get(filePath);
+    if (known !== undefined) return known;
+    let counted = 0;
+    if (existsSync(filePath)) {
+      for (const line of readFileSync(filePath, "utf8").split("\n")) {
+        if (line && !isCapExemptLine(line)) counted += Buffer.byteLength(line, "utf8") + 1;
+      }
+    }
+    this.cappedBytes.set(filePath, counted);
+    return counted;
   }
 
   /** Remove an origin's event files, and its legacy files, past retention. */

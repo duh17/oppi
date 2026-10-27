@@ -323,15 +323,23 @@ const REVIEW_SCRIPT_PATH = join(serverRoot, "scripts/telemetry-review.ts");
 const JSON_KEY = /json_extract\(\s*(fields_json|tags_json)\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)/g;
 const NAME_EQUALS = /\bname\s*(?:=|!=|<>)\s*'([^']*)'/g;
 const NAME_IN = /\bname\s+(?:NOT\s+)?IN\s*\(([^)]*)\)/gi;
-const TAG_READ = String.raw`json_extract\(\s*tags_json\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)`;
+const TAG_READ = String.raw`json_extract\(\s*tags_json\s*,\s*'\$\.(?<key>[A-Za-z0-9_]+)'\s*\)`;
 /** What closes a COALESCE/NULLIF/TRIM around a tag read: parentheses and default literals. */
 const TAG_WRAPPER = String.raw`(?:\s*(?:\)|,\s*'[^']*'|,\s*\d+))*`;
-const TAG_READ_PREFIX = `${TAG_READ}${TAG_WRAPPER}`;
-const COMPARISON = String.raw`\s*(=|!=|<>|NOT\s+IN|IN|NOT\s+LIKE|LIKE)\s*(\([^)]*\)|'[^']*')`;
-/** A tag read compared directly with a literal or literal list. */
-const TAG_COMPARE = new RegExp(`${TAG_READ_PREFIX}${COMPARISON}`, "gi");
-/** `<tag read> AS alias`: a CTE or subquery column that carries a tag under another name. */
-const TAG_ALIAS = new RegExp(`${TAG_READ}(${TAG_WRAPPER})\\s+AS\\s+([A-Za-z_][A-Za-z0-9_]*)`, "gi");
+/** Function calls that open a wrapped tag read: `COALESCE(NULLIF(TRIM(json_extract(...` */
+const FUNCTION_OPENERS = String.raw`(?:[A-Za-z_]+\(\s*)*`;
+const COMPARISON = String.raw`\s*(?<op>=|!=|<>|NOT\s+IN|IN|NOT\s+LIKE|LIKE)\s*(?<lits>\([^)]*\)|'[^']*')`;
+/** `<tag read> [AS] alias`: a CTE or subquery column that carries a tag under another name. */
+const TAG_ALIAS = new RegExp(
+  `${TAG_READ}(?<wrapper>${TAG_WRAPPER})\\s+(?:AS\\s+)?(?<alias>[A-Za-z_][A-Za-z0-9_]*)`,
+  "gi",
+);
+/** Words that can follow a tag read and are not a column alias. */
+const NOT_ALIASES = new Set(
+  `select from where and or not in is like glob regexp match between group order by having limit offset
+  union intersect except then else end when case as asc desc null on join left right inner outer cross
+  using window over filter collate escape isnull notnull cast within returning`.split(/\s+/),
+);
 
 const quoted = (text: string): string[] => [...text.matchAll(/'([^']*)'/g)].map((m) => m[1]!);
 
@@ -414,52 +422,91 @@ interface TagComparison {
 /** SQLite `LIKE` (case-insensitive for ASCII; `%` any run, `_` one character) against one value. */
 function likeMatches(pattern: string, value: string): boolean {
   const source = [...pattern]
-    .map((char) => (char === "%" ? ".*" : char === "_" ? "." : char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+    .map((char) =>
+      char === "%" ? ".*" : char === "_" ? "." : char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    )
     .join("");
   return new RegExp(`^${source}$`, "is").test(value);
 }
 
 /**
- * Every comparison of a tag with literals: `json_extract(tags_json, '$.k') = 'x'`,
- * and the same through an alias a CTE or subquery gave the tag
- * (`json_extract(...) AS k` then `WHERE k = 'x'` or `CASE WHEN k IN (...)`).
- * An alias that names two different tags in one text is ambiguous and skipped.
+ * A way SQL names a tag: the `json_extract` read itself (possibly wrapped in
+ * COALESCE/NULLIF/TRIM), or an alias a CTE or subquery gave it.
+ */
+interface Operand {
+  source: string;
+  keyOf: (groups: Record<string, string | undefined>) => string;
+  synthetic: string[];
+}
+
+/**
+ * Every comparison of a tag with literals, however the SQL names the tag:
+ *   - `<tag> = 'x'`, `<tag> IN ('x', 'y')`, `<tag> LIKE 'x%'`;
+ *   - `'x' = <tag>` (literal on the left);
+ *   - `CASE <tag> WHEN 'x' THEN ... WHEN 'y' THEN ... END`;
+ * where `<tag>` is `json_extract(tags_json, '$.k')` or an alias
+ * (`json_extract(...) AS k`, or the same without `AS`) used in a later
+ * `WHERE k = 'x'` or `CASE WHEN k IN (...)`. An alias that names two different
+ * tags in one text is ambiguous and skipped.
  */
 function tagComparisons(sql: string): TagComparison[] {
-  const found: TagComparison[] = [];
-  for (const match of sql.matchAll(TAG_COMPARE)) {
-    found.push({
-      key: match[1]!,
-      operator: match[2]!,
-      literals: quoted(match[3]!),
+  const operands: Operand[] = [
+    {
+      source: `${FUNCTION_OPENERS}${TAG_READ}${TAG_WRAPPER}`,
+      keyOf: (groups) => groups.key!,
       synthetic: [],
-    });
-  }
+    },
+  ];
 
   const aliasKeys = new Map<string, Set<string>>();
   const aliasDefaults = new Map<string, string[]>();
   for (const match of sql.matchAll(TAG_ALIAS)) {
-    const alias = match[3]!.toLowerCase();
+    const alias = match.groups!.alias!.toLowerCase();
+    if (NOT_ALIASES.has(alias)) continue;
     const keys = aliasKeys.get(alias) ?? new Set<string>();
-    keys.add(match[1]!);
+    keys.add(match.groups!.key!);
     aliasKeys.set(alias, keys);
-    aliasDefaults.set(alias, [...(aliasDefaults.get(alias) ?? []), ...quoted(match[2]!)]);
+    aliasDefaults.set(alias, [
+      ...(aliasDefaults.get(alias) ?? []),
+      ...quoted(match.groups!.wrapper ?? ""),
+    ]);
   }
   for (const [alias, keys] of aliasKeys) {
     if (keys.size !== 1) continue;
     const [key] = [...keys];
-    const compare = new RegExp(
-      `(?<![A-Za-z0-9_'"$])(?:[A-Za-z_][A-Za-z0-9_]*\\.)?${alias}\\b${COMPARISON}`,
-      "gi",
-    );
-    for (const match of sql.matchAll(compare)) {
-      // `json_extract(...) AS alias = ...` is not a comparison; an alias read is.
-      found.push({
-        key: key!,
-        operator: match[1]!,
-        literals: quoted(match[2]!),
-        synthetic: aliasDefaults.get(alias) ?? [],
-      });
+    operands.push({
+      source: `(?<![A-Za-z0-9_'"$.])(?:[A-Za-z_][A-Za-z0-9_]*\\.)?${alias}\\b`,
+      keyOf: () => key!,
+      synthetic: aliasDefaults.get(alias) ?? [],
+    });
+  }
+
+  const found: TagComparison[] = [];
+  for (const operand of operands) {
+    const add = (
+      groups: Record<string, string | undefined>,
+      operator: string,
+      literals: string[],
+    ): void => {
+      found.push({ key: operand.keyOf(groups), operator, literals, synthetic: operand.synthetic });
+    };
+
+    for (const match of sql.matchAll(new RegExp(`${operand.source}${COMPARISON}`, "gi"))) {
+      add(match.groups ?? {}, match.groups!.op!, quoted(match.groups!.lits!));
+    }
+
+    for (const match of sql.matchAll(
+      new RegExp(`'(?<lit>[^']*)'\\s*(?<op>=|!=|<>)\\s*${operand.source}`, "gi"),
+    )) {
+      add(match.groups ?? {}, match.groups!.op!, [match.groups!.lit!]);
+    }
+
+    for (const match of sql.matchAll(new RegExp(`\\bCASE\\s+${operand.source}`, "gi"))) {
+      const rest = sql.slice(match.index + match[0].length);
+      const end = rest.search(/\bEND\b/i);
+      const span = end === -1 ? rest : rest.slice(0, end);
+      const literals = [...span.matchAll(/\bWHEN\s+'([^']*)'/gi)].map((m) => m[1]!);
+      if (literals.length > 0) add(match.groups ?? {}, "=", literals);
     }
   }
   return found;
