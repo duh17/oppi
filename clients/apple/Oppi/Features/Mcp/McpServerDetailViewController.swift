@@ -247,9 +247,9 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
         let name = entry.name
         switch item {
         case .status:
-            value(cell, "Status", entry.stateLabel)
+            cell.contentConfiguration = McpRowContent.value("Status", entry.stateLabel)
         case .transport:
-            value(cell, "Transport", entry.transportLabel)
+            cell.contentConfiguration = McpRowContent.value("Transport", entry.transportLabel)
         case .url:
             let url = entry.config.url ?? ""
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
@@ -263,7 +263,7 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
                 return text
             }
         case .cwd:
-            value(cell, "Working Directory", entry.config.cwd ?? "")
+            cell.contentConfiguration = McpRowContent.value("Working Directory", entry.config.cwd ?? "")
         case .trustNote:
             let note = trustNote
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
@@ -362,15 +362,6 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
         content.text = text
         if let color { content.textProperties.color = color }
         return content
-    }
-
-    /// A title and its value, as the Storage page draws them: the system
-    /// value cell breaks between words, and stacks at accessibility sizes.
-    private func value(_ cell: UICollectionViewListCell, _ title: String, _ value: String) {
-        var content = UIListContentConfiguration.valueCell()
-        content.text = title
-        content.secondaryText = value
-        cell.contentConfiguration = content
     }
 
     /// A header or environment reference: its name, and its value or `[redacted]`.

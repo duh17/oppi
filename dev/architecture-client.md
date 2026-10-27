@@ -136,7 +136,7 @@ UIKit owns every iOS view and all app structure (decided 2026-10-15). The target
 - `SessionListCollection`, `SessionListBottomBar`: both session lists' collection view, rows, swipes, menus, refresh, search, and bottom bar.
 - `FloatingProgressPanel`: the floating progress panel (workspace list, review).
 - `WorkspaceQuickActionLauncher`: start a session for a quick action and push its chat (context bar, commit detail, review file).
-- `ServerCatalogServerRowCell`, `ServerCatalogStateCell`: a server-global catalog list's selected-server row (passive, or one button that opens the server menu) and its loading, empty, and failed states (Extensions).
+- `ServerCatalogServerRowCell`, `ServerCatalogStateCell`, `ServerCatalogServerMenu`: a server-global catalog list's selected-server row (passive, or one button that opens the server menu), its loading, empty, and failed states, and the one menu builder (every paired server with the shown one checked, then Usage; a choice asks for the server's lock, then `switchToServerReady`, then runs the screen's own `onSwitched`). Extensions and MCP Servers use them.
 - `McpSignInPresenter`: presents the MCP sign-in sheet for `McpSignInOwner`'s attempt from whichever MCP screen is in the window (the list, or a server's detail that covers it), so one sheet is up and it closes with the owner.
 
 ### Remaining SwiftUI

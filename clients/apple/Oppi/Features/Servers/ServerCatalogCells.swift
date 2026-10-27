@@ -215,3 +215,63 @@ final class ServerCatalogStateCell: UICollectionViewListCell {
         reset()
     }
 }
+
+/// The menu a catalog list's server row opens (`ServerCatalogServerRowCell`):
+/// every paired server, the shown one checked, each titled with its name and,
+/// unless connected, its connection state ("Name — state", the state also the
+/// action's accessibility value); then Usage for the shown server. Choosing a
+/// server asks for its lock, then makes it the active one once its connection
+/// is ready, as the SwiftUI `ServerCatalogServerRow` did. The menu is rebuilt
+/// each time it opens, so it lists current states.
+@MainActor
+enum ServerCatalogServerMenu {
+    /// - Parameters:
+    ///   - shownServerId: the server the list shows, read each time the menu opens.
+    ///   - onSwitched: runs after the chosen server is active. A screen's own
+    ///     follow-up (clearing its search, loading its catalog) goes here.
+    static func make(
+        coordinator: ConnectionCoordinator,
+        navigation: AppNavigation,
+        shownServerId: @escaping @MainActor () -> String?,
+        onSwitched: @escaping @MainActor (PairedServer) -> Void = { _ in }
+    ) -> UIMenu {
+        UIMenu(children: [UIDeferredMenuElement.uncached { completion in
+            completion(elements(
+                coordinator: coordinator, navigation: navigation,
+                shownServerId: shownServerId(), onSwitched: onSwitched
+            ))
+        }])
+    }
+
+    private static func elements(
+        coordinator: ConnectionCoordinator,
+        navigation: AppNavigation,
+        shownServerId: String?,
+        onSwitched: @escaping @MainActor (PairedServer) -> Void
+    ) -> [UIMenuElement] {
+        let servers: [UIMenuElement] = coordinator.serverStore.servers.map { server in
+            let state = HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
+            let title = state == .connected ? server.name : "\(server.name) — \(state.title)"
+            let symbol = server.id == shownServerId ? "checkmark.circle.fill" : server.resolvedBadgeIcon.symbolName
+            let action = UIAction(title: title, image: UIImage(systemName: symbol)) { _ in
+                Task { @MainActor in
+                    guard await ScopedLockService.shared.authorize(.server(server.id)),
+                          await coordinator.switchToServerReady(server) else { return }
+                    onSwitched(server)
+                }
+            }
+            action.accessibilityValue = state.title
+            return action
+        }
+        var elements: [UIMenuElement] = [UIMenu(options: .displayInline, children: servers)]
+        if let shownServerId {
+            let usage = HostSwitcherDestination.usage
+            let action = UIAction(title: usage.menuTitle, image: UIImage(systemName: usage.systemImage)) { _ in
+                navigation.openHostSwitcherDestination(usage, serverId: shownServerId)
+            }
+            action.accessibilityIdentifier = usage.accessibilityIdentifier
+            elements.append(UIMenu(options: .displayInline, children: [action]))
+        }
+        return elements
+    }
+}

@@ -294,10 +294,10 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
         switch item {
         case .host:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = Self.valueContent("Host", serverName)
+            cell.contentConfiguration = McpRowContent.value("Host", serverName)
         case .scope:
             ControlScreenList.staticRow(cell, identifier: "mcp.add.scope")
-            cell.contentConfiguration = Self.valueContent("Scope", scope.title)
+            cell.contentConfiguration = McpRowContent.value("Scope", scope.title)
         case .exposure:
             break
         case .error:
@@ -313,15 +313,6 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
         default:
             break
         }
-    }
-
-    /// A title and its value, as the Storage page draws them: the system
-    /// value cell breaks between words and stacks at accessibility sizes.
-    private static func valueContent(_ title: String, _ value: String) -> UIListContentConfiguration {
-        var content = UIListContentConfiguration.valueCell()
-        content.text = title
-        content.secondaryText = value
-        return content
     }
 
     private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {

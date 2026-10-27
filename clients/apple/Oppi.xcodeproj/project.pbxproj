@@ -730,6 +730,7 @@
 		53EDEB4F28B2732F05AC95A9 /* FuzzyMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E0843A5FB36A83E7AA0940 /* FuzzyMatch.swift */; };
 		543E26D526DBB446AF78D342 /* QuickSessionModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76EDC243034FF18BF55765A5 /* QuickSessionModelPicker.swift */; };
 		544F423D65BF1D698A0B78E2 /* VoiceInputError.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5ADACAB6BD406DA001130B7 /* VoiceInputError.swift */; };
+		5455B873A52BFA1164480430 /* McpRowContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B44D9EE51735E94211197ED7 /* McpRowContent.swift */; };
 		547A95690AFC7838C20098F1 /* NavigationSwipeGesturePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6698289848C2AE90BD46FBA3 /* NavigationSwipeGesturePolicyTests.swift */; };
 		549ACF8D290F92AE23863BCC /* MessageQueueComposerRestoreContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9E771F88E8BBFCB93D157FE /* MessageQueueComposerRestoreContent.swift */; };
 		54DA3561FCC6D84F38C04ED9 /* ToolOutputSidecar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5D599D59063ADF624DDFA8 /* ToolOutputSidecar.swift */; };
@@ -3730,6 +3731,7 @@
 		B3DDE684AF0DB167CD74B181 /* SessionStatusPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStatusPresentationTests.swift; sourceTree = "<group>"; };
 		B3E6429A82D28FC7D608745E /* ToolRowAudioArtifactE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowAudioArtifactE2ETests.swift; sourceTree = "<group>"; };
 		B3FD2EAE6117D634A836F3BD /* TLSPinningTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TLSPinningTests.swift; sourceTree = "<group>"; };
+		B44D9EE51735E94211197ED7 /* McpRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpRowContent.swift; sourceTree = "<group>"; };
 		B45C4DF1354F2DFACFDFF2A8 /* SSHTerminalRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalRegistry.swift; sourceTree = "<group>"; };
 		B488362E8AD725D3820A3F0F /* SSHTerminalSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalSetupView.swift; sourceTree = "<group>"; };
 		B4908AD06AE12591790D6345 /* MacPDFPreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacPDFPreviewTests.swift; sourceTree = "<group>"; };
@@ -7304,6 +7306,7 @@
 			isa = PBXGroup;
 			children = (
 				1CA66487285CB30D8BF88370 /* McpAddServerViewController.swift */,
+				B44D9EE51735E94211197ED7 /* McpRowContent.swift */,
 				22BCF464C1CC7C1B5F0442A1 /* McpServerDetailViewController.swift */,
 				54168235EDF48D7A00BC0684 /* McpServersModel.swift */,
 				0F9119F134884FB8BA83FAAF /* McpServersViewController.swift */,
@@ -9766,6 +9769,7 @@
 				523F82C3F01145660545C389 /* MathNode.swift in Sources */,
 				AAB1B25C19575A162A0F403D /* MathSymbolTable.swift in Sources */,
 				66DD825DD9331CA83056512A /* McpAddServerViewController.swift in Sources */,
+				5455B873A52BFA1164480430 /* McpRowContent.swift in Sources */,
 				6CE6300A44C5FB0D83FBD1E4 /* McpServerDetailViewController.swift in Sources */,
 				A5BE2C24D5754D5E44FE1F0C /* McpServers.swift in Sources */,
 				95D9E55E155961BAE1A62556 /* McpServersModel.swift in Sources */,

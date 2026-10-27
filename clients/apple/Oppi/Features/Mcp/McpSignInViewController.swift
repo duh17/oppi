@@ -199,10 +199,10 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
         switch item {
         case .host:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = Self.valueContent("Host", attempt.serverName)
+            cell.contentConfiguration = McpRowContent.value("Host", attempt.serverName)
         case .status:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = Self.valueContent(
+            cell.contentConfiguration = McpRowContent.value(
                 "Status", ProviderAuthFlowPresentation.statusText(attempt.flow.status)
             )
         case .finishing:
@@ -264,15 +264,6 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
         cell.contentConfiguration = ControlViewContent {
             ControlRowViews.selectableText(text ?? "", style: style, color: color)
         }
-    }
-
-    /// A title and its value, as the Storage page draws them: the system
-    /// value cell breaks between words and stacks at accessibility sizes.
-    private static func valueContent(_ title: String, _ value: String) -> UIListContentConfiguration {
-        var content = UIListContentConfiguration.valueCell()
-        content.text = title
-        content.secondaryText = value
-        return content
     }
 
     private static func actionContent(_ title: String, color: UIColor) -> UIListContentConfiguration {

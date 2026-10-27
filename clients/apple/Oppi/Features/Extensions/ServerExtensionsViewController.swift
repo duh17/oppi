@@ -378,50 +378,21 @@ final class ServerExtensionsViewController: UIViewController, UICollectionViewDe
         startRefresh(serverId: serverId)
     }
 
-    /// The server row's menu: every paired server (the shown one checked),
-    /// then Usage. Built each time it opens, so it lists current states.
+    /// The server row's menu (`ServerCatalogServerMenu`); after a switch the
+    /// list clears its search and loads the new server's catalog.
     private func serverMenu() -> UIMenu {
-        UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
-            completion(self?.serverMenuElements() ?? [])
-        }])
-    }
-
-    private func serverMenuElements() -> [UIMenuElement] {
-        let coordinator = coordinator
-        let selectedId = state?.server?.id
-        let servers: [UIMenuElement] = coordinator.serverStore.servers.map { server in
-            let connectionState = HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
-            let title = connectionState == .connected ? server.name : "\(server.name) — \(connectionState.title)"
-            let symbol = server.id == selectedId ? "checkmark.circle.fill" : server.resolvedBadgeIcon.symbolName
-            let action = UIAction(title: title, image: UIImage(systemName: symbol)) { [weak self] _ in
-                self?.switchServer(to: server)
+        ServerCatalogServerMenu.make(
+            coordinator: coordinator,
+            navigation: root.navigation,
+            shownServerId: { [weak self] in self?.state?.server?.id },
+            onSwitched: { [weak self] server in
+                guard let self else { return }
+                searchText = ""
+                search.setText("")
+                refreshedServerId = server.id
+                startRefresh(serverId: server.id)
             }
-            action.accessibilityValue = connectionState.title
-            return action
-        }
-        var elements: [UIMenuElement] = [UIMenu(options: .displayInline, children: servers)]
-        if let selectedId {
-            let usage = HostSwitcherDestination.usage
-            let action = UIAction(title: usage.menuTitle, image: UIImage(systemName: usage.systemImage)) { [weak self] _ in
-                self?.root.navigation.openHostSwitcherDestination(usage, serverId: selectedId)
-            }
-            action.accessibilityIdentifier = usage.accessibilityIdentifier
-            elements.append(UIMenu(options: .displayInline, children: [action]))
-        }
-        return elements
-    }
-
-    /// A locked server asks first; the catalog loads once the server is ready.
-    private func switchServer(to server: PairedServer) {
-        Task { [weak self] in
-            guard await ScopedLockService.shared.authorize(.server(server.id)),
-                  let self,
-                  await coordinator.switchToServerReady(server) else { return }
-            searchText = ""
-            search.setText("")
-            refreshedServerId = server.id
-            startRefresh(serverId: server.id)
-        }
+        )
     }
 
     // MARK: - Data

@@ -350,7 +350,12 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
                 server: server,
                 state: hostState,
                 palette: palette,
-                menu: state.serverCount > 1 ? hostMenu(current: server) : nil
+                menu: state.serverCount > 1
+                    ? ServerCatalogServerMenu.make(
+                        coordinator: coordinator, navigation: root.navigation,
+                        shownServerId: { [weak self] in self?.state.server?.id }
+                    )
+                    : nil
             )
         }
         let message = UICollectionView.CellRegistration<ServerCatalogStateCell, Item> { [weak self] cell, _, item in
@@ -546,45 +551,6 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
             )
             return ControlRowViews.stack([title, detail, status], spacing: 4)
         }
-    }
-
-    // MARK: - Host row
-
-    /// Built each time it opens, so the connection words are current. A
-    /// choice asks for the server's lock, then makes it the active one once its
-    /// connection is ready (what the SwiftUI `ServerCatalogServerRow` did).
-    private func hostMenu(current: PairedServer) -> UIMenu {
-        UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
-            guard let self else { return completion([]) }
-            let coordinator = coordinator
-            let servers = coordinator.serverStore.servers.map { server in
-                let state = HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
-                let action = UIAction(
-                    title: state == .connected ? server.name : "\(server.name) — \(state.title)",
-                    image: UIImage(systemName: server.id == current.id
-                        ? "checkmark.circle.fill"
-                        : server.resolvedBadgeIcon.symbolName)
-                ) { _ in
-                    Task { @MainActor in
-                        guard await ScopedLockService.shared.authorize(.server(server.id)) else { return }
-                        await coordinator.switchToServerReady(server)
-                    }
-                }
-                action.accessibilityValue = state.title
-                return action
-            }
-            let usage = UIAction(
-                title: HostSwitcherDestination.usage.menuTitle,
-                image: UIImage(systemName: HostSwitcherDestination.usage.systemImage)
-            ) { [weak self] _ in
-                self?.root.navigation.openHostSwitcherDestination(.usage, serverId: current.id)
-            }
-            usage.accessibilityIdentifier = HostSwitcherDestination.usage.accessibilityIdentifier
-            completion([
-                UIMenu(options: .displayInline, children: servers),
-                UIMenu(options: .displayInline, children: [usage]),
-            ])
-        }])
     }
 }
 
