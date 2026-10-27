@@ -38,7 +38,8 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
         var presentation: ServerSkillListPresentation
         var skills: [String: ServerSkillSummary]
         var serverStates: [String: ServerBadgeConnectionState]
-        var usesAccessibilityText: Bool
+        /// The symbol in a row's state line is sized when the row is made.
+        var contentSize: UIContentSizeCategory
         var themeID: ThemeID
     }
 
@@ -164,7 +165,7 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
                 servers.map { ($0.id, HostSwitcherBadgeState.make(for: $0, coordinator: coordinator)) },
                 uniquingKeysWith: { first, _ in first }
             ),
-            usesAccessibilityText: traitCollection.preferredContentSizeCategory.isAccessibilityCategory,
+            contentSize: traitCollection.preferredContentSizeCategory,
             themeID: root.themeStore.activeThemeID
         )
         applySnapshot()
@@ -269,7 +270,7 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
             let skill = state.skills[id]
             inputs = [
                 skill?.name, skill?.description, skill?.provenance.label, skill?.packageName,
-                skill?.state, state.usesAccessibilityText,
+                skill?.state, state.contentSize,
             ]
         }
         return [AnyHashable(state.themeID), AnyHashable(inputs)]
@@ -291,7 +292,7 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
             var content = UIListContentConfiguration.cell()
             content.text = "Showing cached settings for \(state?.server?.name ?? "this server"). Pull to retry."
             content.image = UIImage(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-            content.textProperties.font = .scaled(.subheadline)
+            content.textProperties.font = .preferredFont(forTextStyle: .subheadline)
             content.textProperties.adjustsFontForContentSizeCategory = true
             content.textProperties.color = UIColor(palette.orange)
             content.imageProperties.tintColor = UIColor(palette.orange)
@@ -393,58 +394,50 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
         ) { [weak self] in
             self?.open(skill)
         }
-        let usesAccessibilityText = state.usesAccessibilityText
-        cell.contentConfiguration = ControlViewContent(insets: .init(top: 8, leading: 0, bottom: 8, trailing: 0)) {
-            Self.row(skill, palette: palette, unlimitedDescription: usesAccessibilityText)
-        }
+        cell.contentConfiguration = Self.rowContent(skill, palette: palette)
         cell.accessories = [.disclosureIndicator()]
     }
 
     // MARK: - Rows
 
-    /// The icon beside the name, description, package, provenance, and state.
-    private static func row(
-        _ skill: ServerSkillSummary,
-        palette: ThemePalette,
-        unlimitedDescription: Bool
-    ) -> UIView {
-        let icon = UIImageView(image: .scaledSymbol("sparkles.rectangle.stack", style: .title3))
-        icon.tintColor = UIColor(palette.blue)
-        icon.contentMode = .center
-        icon.setContentHuggingPriority(.required, for: .horizontal)
-        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
-        // At least 28 pt; the scaled symbol takes more at accessibility sizes.
-        icon.widthAnchor.constraint(greaterThanOrEqualToConstant: 28).isActive = true
-        icon.heightAnchor.constraint(greaterThanOrEqualToConstant: 28).isActive = true
+    /// The Skill's icon beside its name, with its description, package,
+    /// source, and state as the secondary text. The text styles and sizes are
+    /// the list kit's.
+    private static func rowContent(_ skill: ServerSkillSummary, palette: ThemePalette) -> UIListContentConfiguration {
+        var content = UIListContentConfiguration.subtitleCell()
+        content.text = skill.name
+        content.textProperties.color = UIColor(palette.fg)
+        content.image = UIImage(systemName: "sparkles.rectangle.stack")
+        content.imageProperties.tintColor = UIColor(palette.blue)
 
-        var texts = [ControlRowViews.label(skill.name, style: .body, weight: .semibold, color: UIColor(palette.fg))]
-        if !skill.description.isEmpty {
-            texts.append(ControlRowViews.label(
-                skill.description,
-                style: .subheadline,
-                color: UIColor(palette.comment),
-                lines: unlimitedDescription ? 0 : 2
+        let comment = UIColor(palette.comment)
+        let secondary = NSMutableAttributedString()
+        func addLine(_ text: String, color: UIColor) {
+            if secondary.length > 0 { secondary.append(NSAttributedString(string: "\n")) }
+            secondary.append(NSAttributedString(string: text, attributes: [.foregroundColor: color]))
+        }
+        if !skill.description.isEmpty { addLine(skill.description, color: comment) }
+        if let packageName = skill.packageName { addLine(packageName, color: comment) }
+        addLine(skill.provenance.label, color: comment)
+
+        // The state, led by its symbol (orange when the Skill needs attention).
+        let isIssue = skill.state == .error || skill.state == .unknown
+        // The symbol takes the size of the secondary text it leads.
+        let secondaryFont = UIListContentConfiguration.subtitleCell().secondaryTextProperties.font
+        let stateColor = UIColor(isIssue ? palette.orange : palette.comment)
+        let symbol = isIssue ? "exclamationmark.triangle.fill" : (skill.state == .enabled ? "checkmark.circle" : "minus.circle")
+        if let image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: secondaryFont))?
+            .withTintColor(stateColor, renderingMode: .alwaysOriginal) {
+            secondary.append(NSAttributedString(string: "\n"))
+            secondary.append(NSAttributedString(attachment: NSTextAttachment(image: image)))
+            secondary.append(NSAttributedString(
+                string: " " + ServerSkillListPresentation.stateLabel(for: skill.state),
+                attributes: [.foregroundColor: stateColor]
             ))
         }
-        if let packageName = skill.packageName {
-            texts.append(ControlRowViews.label(packageName, style: .caption1, color: UIColor(palette.comment)))
-        }
-        texts.append(ControlRowViews.label(skill.provenance.label, style: .caption1, color: UIColor(palette.comment)))
-
-        let isIssue = skill.state == .error || skill.state == .unknown
-        texts.append(ControlRowViews.symbolLabel(
-            ServerSkillListPresentation.stateLabel(for: skill.state),
-            systemImage: isIssue ? "exclamationmark.triangle.fill" : (skill.state == .enabled ? "checkmark.circle" : "minus.circle"),
-            style: .caption1,
-            weight: .medium,
-            color: UIColor(isIssue ? palette.orange : palette.comment)
-        ))
-        return ControlRowViews.stack(
-            [icon, ControlRowViews.stack(texts, spacing: 4, alignment: .leading)],
-            axis: .horizontal,
-            spacing: 12,
-            alignment: .top
-        )
+        content.secondaryAttributedText = secondary
+        content.secondaryTextProperties.numberOfLines = 0
+        return content
     }
 
     // MARK: - Actions

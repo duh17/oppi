@@ -330,15 +330,19 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
         switch item {
         case .title:
             ControlScreenList.staticRow(cell, identifier: "skills.detail.title")
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 12, leading: 0, bottom: 12, trailing: 0)) {
-                var views = [ControlRowViews.label(
-                    summary.name, style: .title2, weight: .bold, color: UIColor(palette.fg)
-                )]
-                if !summary.description.isEmpty {
-                    views.append(ControlRowViews.label(summary.description, style: .body, color: UIColor(palette.comment)))
-                }
-                return ControlRowViews.stack(views, spacing: 6)
+            var content = UIListContentConfiguration.subtitleCell()
+            content.text = summary.name
+            // Bold title2, still a text style, so it scales with the setting.
+            let title2 = UIFont.preferredFont(forTextStyle: .title2)
+            content.textProperties.font = title2.fontDescriptor.withSymbolicTraits(.traitBold)
+                .map { UIFont(descriptor: $0, size: 0) } ?? title2
+            content.textProperties.color = UIColor(palette.fg)
+            if !summary.description.isEmpty {
+                content.secondaryText = summary.description
+                content.secondaryTextProperties.font = .preferredFont(forTextStyle: .body)
+                content.secondaryTextProperties.color = UIColor(palette.comment)
             }
+            cell.contentConfiguration = content
         case .enabled:
             ControlScreenList.staticRow(cell)
             var content = UIListContentConfiguration.cell()
@@ -375,14 +379,10 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
         case .mutationError:
             ControlScreenList.staticRow(cell, identifier: "skills.detail.mutationError")
             let message = "Couldn’t \(mutationVerb ?? "update") \(summary.name) on \(state.serverName). \(state.mutationError ?? "")"
-            cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.symbolLabel(
-                    message,
-                    systemImage: "exclamationmark.triangle.fill",
-                    style: .footnote,
-                    color: UIColor(palette.orange)
-                )
-            }
+            cell.contentConfiguration = Self.noteContent(
+                message, systemImage: "exclamationmark.triangle.fill",
+                color: UIColor(palette.orange), imageColor: UIColor(palette.orange)
+            )
         case .detail(let title):
             ControlScreenList.staticRow(cell, identifier: "skills.detail.source.\(title.lowercased())")
             let value = switch title {
@@ -391,39 +391,40 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             case "Scope": "Server default"
             default: summary.editable ? "Editable" : "Read-only"
             }
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                ControlRowViews.valueRow(title, value, palette: palette, style: .body)
-            }
+            var content = UIListContentConfiguration.valueCell()
+            content.text = title
+            content.textProperties.color = UIColor(palette.comment)
+            content.secondaryText = value
+            content.secondaryTextProperties.color = UIColor(palette.fg)
+            cell.contentConfiguration = content
+            // One element, so a path reads as a label and its value.
+            cell.isAccessibilityElement = true
+            cell.accessibilityLabel = title
+            cell.accessibilityValue = value
         case .status:
             ControlScreenList.staticRow(cell, identifier: "skills.detail.status")
             let hasError = summary.state == .error || summary.state == .unknown
             let label = hasError ? "Error" : "Loaded"
-            cell.contentConfiguration = ControlViewContent {
-                let row = ControlRowViews.symbolLabel(
-                    label,
-                    systemImage: hasError ? "exclamationmark.triangle.fill" : "checkmark.circle",
-                    style: .body,
-                    color: UIColor(palette.fg)
-                )
-                row.accessibilityLabel = label
-                return row
-            }
+            var content = UIListContentConfiguration.cell()
+            content.text = label
+            content.textProperties.color = UIColor(palette.fg)
+            content.image = UIImage(systemName: hasError ? "exclamationmark.triangle.fill" : "checkmark.circle")
+            content.imageProperties.tintColor = UIColor(palette.fg)
+            cell.contentConfiguration = content
         case .loadError:
             ControlScreenList.staticRow(cell, identifier: "skills.detail.loadError")
             let error = summary.loadError ?? state.loadError ?? ""
-            cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(error, style: .footnote, color: UIColor(palette.orange))
-            }
+            var content = UIListContentConfiguration.cell()
+            content.text = error
+            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
+            content.textProperties.color = UIColor(palette.orange)
+            cell.contentConfiguration = content
         case .warning(let warning):
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.symbolLabel(
-                    warning,
-                    systemImage: "exclamationmark.circle",
-                    style: .footnote,
-                    color: UIColor(palette.fg)
-                )
-            }
+            cell.contentConfiguration = Self.noteContent(
+                warning, systemImage: "exclamationmark.circle",
+                color: UIColor(palette.fg), imageColor: UIColor(palette.fg)
+            )
         case .retry:
             ControlScreenList.buttonRow(cell, identifier: "skills.detail.retry", label: "Retry") { [weak self] in
                 self?.startLoad()
@@ -447,22 +448,32 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             ) { [weak self] in
                 self?.openBrowser()
             }
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                let icon = UIImageView(image: .scaledSymbol("folder", style: .body))
-                icon.tintColor = UIColor(palette.blue)
-                icon.setContentHuggingPriority(.required, for: .horizontal)
-                let title = ControlRowViews.label("Browse Files", style: .body, color: UIColor(palette.fg))
-                let value = ControlRowViews.label("\(count)", style: .body, color: UIColor(palette.comment), lines: 1)
-                value.setContentHuggingPriority(.required, for: .horizontal)
-                return ControlRowViews.stack(
-                    [icon, title, ControlRowViews.spacer(), value],
-                    axis: .horizontal,
-                    spacing: 8,
-                    alignment: .center
-                )
-            }
+            var content = UIListContentConfiguration.valueCell()
+            content.text = "Browse Files"
+            content.textProperties.color = UIColor(palette.fg)
+            content.secondaryText = "\(count)"
+            content.secondaryTextProperties.color = UIColor(palette.comment)
+            content.image = UIImage(systemName: "folder")
+            content.imageProperties.tintColor = UIColor(palette.blue)
+            cell.contentConfiguration = content
             cell.accessories = [.disclosureIndicator()]
         }
+    }
+
+    /// A footnote with a symbol: a warning, or a failed save.
+    private static func noteContent(
+        _ text: String,
+        systemImage: String,
+        color: UIColor,
+        imageColor: UIColor
+    ) -> UIListContentConfiguration {
+        var content = UIListContentConfiguration.cell()
+        content.text = text
+        content.textProperties.font = .preferredFont(forTextStyle: .footnote)
+        content.textProperties.color = color
+        content.image = UIImage(systemName: systemImage)
+        content.imageProperties.tintColor = imageColor
+        return content
     }
 
     // MARK: - Data
