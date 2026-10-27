@@ -2,11 +2,12 @@ import UIKit
 
 /// Custom Themes: the server's themes. Tap one to import and apply it, edit
 /// one with an Oppi control session (swipe or touch and hold), or describe a
-/// new one in the guided composer, as Agents and Schedules do.
+/// new one in the guided composer, as Agents and Schedules do. An import is a
+/// copy saved on this device.
 @MainActor
-final class ThemeImportViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case state, themes }
-    private enum Item: Hashable {
+final class ThemeImportViewController: SettingsListViewController<ThemeImportViewController.Section, ThemeImportViewController.Item> {
+    enum Section: Hashable, Sendable { case state, themes }
+    enum Item: Hashable, Sendable {
         case loading
         case failed
         case empty
@@ -14,8 +15,6 @@ final class ThemeImportViewController: UIViewController, UICollectionViewDelegat
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ControlScreenList.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private let refreshControl = UIRefreshControl()
     private let composer: GuidedControlComposerController
     private let revisionSheet = RouterModalPresenter()
@@ -47,32 +46,21 @@ final class ThemeImportViewController: UIViewController, UICollectionViewDelegat
             ),
             root: root
         )
-        super.init(nibName: nil, bundle: nil)
+        super.init(title: "Custom Themes", listIdentifier: "themes.list", scope: .device, footers: true)
         traitOverrides.appRootEnvironment = root
-        title = "Custom Themes"
         navigationItem.largeTitleDisplayMode = .never
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
+    private var palette: ThemePalette { ThemeRuntimeState.currentPalette() }
 
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(ControlScreenList.layout(
-            appearance: .insetGrouped,
-            footers: true,
-            trailingSwipe: { [weak self] in self?.swipeActions(at: $0) }
-        ), animated: false)
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "themes.list"
+        collectionView.keyboardDismissMode = .interactive
+        collectionView.alwaysBounceVertical = true
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        SSHTerminalSettingsList.pin(collectionView, in: view)
-        installDataSource()
         composer.install(in: self)
         revisionSheet.anchor = self
     }
@@ -101,9 +89,7 @@ final class ThemeImportViewController: UIViewController, UICollectionViewDelegat
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         composer.setScreenError(remoteThemes.isEmpty ? nil : error, identifier: "themes.error")
-        applySnapshot()
         let revising = revisingTheme
         revisionSheet.update(
             id: revising.map { AnyHashable($0.id) },
@@ -131,67 +117,64 @@ final class ThemeImportViewController: UIViewController, UICollectionViewDelegat
 
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        if remoteThemes.isEmpty {
-            snapshot.appendSections([.state])
+    override func sections() -> [SettingsSectionModel<Section, Item>] {
+        guard !remoteThemes.isEmpty else {
             let state: Item = isLoading ? .loading : (error != nil ? .failed : .empty)
-            snapshot.appendItems([state], toSection: .state)
-        } else {
-            snapshot.appendSections([.themes])
-            snapshot.appendItems(remoteThemes.map { .theme($0.filename) }, toSection: .themes)
+            return [SettingsSectionModel(.state, items: [state])]
         }
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
+        return [SettingsSectionModel(
+            .themes,
+            footer: "Tap a theme to import and apply it. Swipe or touch and hold to edit it with Oppi.",
+            items: remoteThemes.map { .theme($0.filename) }
+        )]
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            if self?.dataSource?.sectionIdentifier(for: indexPath.section) == .themes {
-                content.text = "Tap a theme to import and apply it. Swipe or touch and hold to edit it with Oppi."
-            }
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .loading, .empty: return AnyHashable(0)
+        case .failed: return AnyHashable(error)
+        case .theme(let filename):
+            guard let summary = remoteThemes.first(where: { $0.filename == filename }) else { return AnyHashable(0) }
+            return AnyHashable([
+                AnyHashable(summary.name),
+                AnyHashable(summary.colorScheme),
+                AnyHashable(importingName == filename),
+                AnyHashable(CustomThemeStore.load(name: summary.name) != nil),
+            ])
         }
     }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
-        let palette = palette
+    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
         switch item {
         case .loading:
-            ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Fetching themes…")
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            cell.configure(.loading("Fetching themes…"))
         case .failed:
-            ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.unavailable(
-                "Unable to Load Themes",
-                systemImage: "exclamationmark.triangle",
-                description: error,
-                palette: palette
-            )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
-        case .empty:
-            ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.unavailable(
-                "No Custom Themes",
-                systemImage: "paintpalette",
-                description: "Describe a theme below and Oppi writes it to your server.",
-                palette: palette
-            )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            cell.configure(.failure("Unable to load themes. \(self?.error ?? "")", retry: { [weak self] in self?.refresh() }))
+        default:
+            cell.configure(.message("No custom themes yet. Describe a theme below and Oppi writes it to your server."))
+        }
+    }
+
+    private lazy var themeRow = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        self?.configureTheme(cell, item: item)
+    }
+
+    override func prepareRegistrations() {
+        _ = (stateRow, themeRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        if case .theme = item {
+            return collectionView.dequeueConfiguredReusableCell(using: themeRow, for: indexPath, item: item)
+        }
+        return collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
+    }
+
+    private func configureTheme(_ cell: SidebarListCell, item: Item) {
+        let palette = palette
+        switch item {
+        case .loading, .failed, .empty:
+            break
         case .theme(let filename):
             guard let summary = remoteThemes.first(where: { $0.filename == filename }) else { return }
             let isImported = CustomThemeStore.load(name: summary.name) != nil
@@ -204,12 +187,10 @@ final class ThemeImportViewController: UIViewController, UICollectionViewDelegat
             ) { [weak self] in
                 self?.startImport(summary)
             }
-            var content = UIListContentConfiguration.subtitleCell()
+            var content = content(.subtitle)
             content.text = summary.name
-            content.textProperties.color = UIColor(palette.fg)
             content.secondaryText = summary.colorScheme
             content.secondaryTextProperties.font = .preferredFont(forTextStyle: .caption1)
-            content.secondaryTextProperties.color = UIColor(palette.comment)
             content.textToSecondaryTextVerticalPadding = 2
             cell.contentConfiguration = content
             if importingName == filename {
@@ -225,13 +206,9 @@ final class ThemeImportViewController: UIViewController, UICollectionViewDelegat
         }
     }
 
-    private func summary(at indexPath: IndexPath) -> RemoteThemeSummary? {
-        guard case .theme(let filename) = dataSource?.itemIdentifier(for: indexPath) else { return nil }
-        return remoteThemes.first { $0.filename == filename }
-    }
-
-    private func swipeActions(at indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        guard let summary = summary(at: indexPath) else { return nil }
+    override func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? {
+        guard case .theme(let filename) = item,
+              let summary = remoteThemes.first(where: { $0.filename == filename }) else { return nil }
         var actions: [UIContextualAction] = []
         if CustomThemeStore.load(name: summary.name) != nil {
             let delete = UIContextualAction(style: .destructive, title: "Delete from Device") { [weak self] _, _, done in

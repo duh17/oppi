@@ -2,85 +2,65 @@ import UIKit
 
 /// Settings > Editor: keybindings, display, indentation, typing, and the
 /// keyboard bar. Values are `CodeEditorPreferences.shared`, which an open
-/// editor observes, so changes apply without reopening the file.
-final class SettingsEditorViewController: UIViewController, UICollectionViewDelegate {
-    private let preferences: CodeEditorPreferences
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var appliedThemeID: ThemeID?
-    private var changedRows = ChangedRows<Item>()
-
-    private enum Section: Hashable { case keyboard, display, indentation, typing }
-    private enum Item: Hashable {
+/// editor observes, so changes apply without reopening the file. Everything
+/// here is saved on this device.
+final class SettingsEditorViewController: SettingsListViewController<SettingsEditorViewController.Section, SettingsEditorViewController.Item> {
+    enum Section: Hashable, Sendable { case keyboard, display, indentation, typing }
+    enum Item: Hashable, Sendable {
         case keybindings, keyBar, customizeKeyBar
         case syntax, lineNumbers, currentLine, wrap
         case detectIndentation, indentWith, tabWidth
         case closeBrackets
     }
 
+    private let preferences: CodeEditorPreferences
+
     init(preferences: CodeEditorPreferences = .shared) {
         self.preferences = preferences
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.headerMode = .supplementary
-        config.footerMode = .supplementary
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
-        title = String(localized: "Editor")
-        navigationItem.largeTitleDisplayMode = .inline
+        super.init(
+            title: String(localized: "Editor"),
+            listIdentifier: "settings.editor.list",
+            scope: .device,
+            headers: true,
+            footers: true
+        )
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "settings.editor.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
-        installDataSource()
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
-        setNeedsUpdateProperties()
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
-
-    override func updateProperties() {
-        super.updateProperties()
-        let themeID = ThemeRuntimeState.currentThemeID()
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
+    override func sections() -> [SettingsSectionModel<Section, Item>] {
         // Read every value so any change re-runs this pass.
         _ = (preferences.keybindings, preferences.showsKeyBar, preferences.keyBarKeys, preferences.highlightsSyntax)
         _ = (preferences.showsLineNumbers, preferences.highlightsCurrentLine, preferences.wrapsLines)
         _ = (preferences.detectsIndentation, preferences.indentsWithTabs, preferences.tabWidth, preferences.closesBrackets)
-        applySnapshot()
-    }
-
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.keyboard, .display, .indentation, .typing])
-        snapshot.appendItems([.keybindings, .keyBar] + (preferences.showsKeyBar ? [.customizeKeyBar] : []), toSection: .keyboard)
-        snapshot.appendItems([.syntax, .lineNumbers, .currentLine, .wrap], toSection: .display)
-        snapshot.appendItems([.detectIndentation, .indentWith, .tabWidth], toSection: .indentation)
-        snapshot.appendItems([.closeBrackets], toSection: .typing)
-        let themeID = ThemeRuntimeState.currentThemeID()
-        let shown = Set(dataSource.snapshot().itemIdentifiers)
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
-            AnyHashable([AnyHashable(themeID), inputs(of: item)])
-        }
-        snapshot.reconfigureItems(changed.filter(shown.contains))
-        dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
+        return [
+            SettingsSectionModel(
+                .keyboard,
+                header: String(localized: "Keyboard"),
+                footer: String(localized: "Vim starts in Normal mode: type commands, press i to insert, and Esc (or the esc key in the bar) to go back. ⌘ shortcuts work in both. Hold ⌘ on a hardware keyboard to see them."),
+                items: [.keybindings, .keyBar] + (preferences.showsKeyBar ? [.customizeKeyBar] : [])
+            ),
+            SettingsSectionModel(
+                .display,
+                header: String(localized: "Display"),
+                footer: String(localized: "The editor uses your code font and size from Text."),
+                items: [.syntax, .lineNumbers, .currentLine, .wrap]
+            ),
+            SettingsSectionModel(
+                .indentation,
+                header: String(localized: "Indentation"),
+                footer: String(localized: "With Detect From File, Tab and Return follow the tabs or spaces the file already uses."),
+                items: [.detectIndentation, .indentWith, .tabWidth]
+            ),
+            SettingsSectionModel(
+                .typing,
+                header: String(localized: "Typing"),
+                footer: String(localized: "Typing an opening bracket or quote adds its closer, and Backspace removes an empty pair."),
+                items: [.closeBrackets]
+            ),
+        ]
     }
 
     /// The preference values a row is drawn from.
-    private func inputs(of item: Item) -> AnyHashable {
+    override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .keybindings: AnyHashable(preferences.keybindings)
         case .keyBar: AnyHashable(preferences.showsKeyBar)
@@ -96,227 +76,115 @@ final class SettingsEditorViewController: UIViewController, UICollectionViewDele
         }
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.section(at: indexPath).map(Self.header)
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.section(at: indexPath).flatMap(Self.footer)
-            content.textProperties.numberOfLines = 0
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
-    }
-
-    private func section(at indexPath: IndexPath) -> Section? {
-        dataSource?.sectionIdentifier(for: indexPath.section)
-    }
-
-    private static func header(_ section: Section) -> String {
-        switch section {
-        case .keyboard: String(localized: "Keyboard")
-        case .display: String(localized: "Display")
-        case .indentation: String(localized: "Indentation")
-        case .typing: String(localized: "Typing")
-        }
-    }
-
-    private static func footer(_ section: Section) -> String? {
-        switch section {
-        case .keyboard:
-            String(localized: "Vim starts in Normal mode: type commands, press i to insert, and Esc (or the esc key in the bar) to go back. ⌘ shortcuts work in both. Hold ⌘ on a hardware keyboard to see them.")
-        case .display:
-            String(localized: "The editor uses your code font and size from Text.")
-        case .indentation:
-            String(localized: "With Detect From File, Tab and Return follow the tabs or spaces the file already uses.")
-        case .typing:
-            String(localized: "Typing an opening bracket or quote adds its closer, and Backspace removes an empty pair.")
-        }
-    }
-
     // MARK: - Cells
 
-    private func configure(_ cell: UICollectionViewListCell, item: Item) {
-        var content = UIListContentConfiguration.valueCell()
-        cell.accessories = []
-        cell.accessibilityIdentifier = "settings.editor.\(item)"
+    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
         switch item {
         case .keybindings:
-            content.text = String(localized: "Keybindings")
-            cell.accessories = [.settingsPopUpMenu(
+            cell.configure(
+                title: String(localized: "Keybindings"),
                 identifier: "settings.editor.keybindings.menu",
                 options: CodeEditorKeybindings.allCases.map { keybindings in
                     (keybindings.label, keybindings == preferences.keybindings, { [weak self] in self?.preferences.keybindings = keybindings })
                 }
-            )]
-        case .keyBar:
-            content.text = String(localized: "Keyboard Bar")
-            cell.accessories = [.settingsToggle(preferences.showsKeyBar) { [weak self] in self?.preferences.showsKeyBar = $0 }]
-        case .customizeKeyBar:
-            content.text = String(localized: "Customize Keys")
-            content.secondaryText = String(localized: "\(preferences.keyBarKeys.count) keys")
-            cell.accessories = [.disclosureIndicator()]
-            cell.accessibilityIdentifier = "settings.editor.keyBar.customize"
-            cell.accessibilityTraits.insert(.button)
-        case .syntax:
-            content.text = String(localized: "Syntax Highlighting")
-            cell.accessories = [.settingsToggle(preferences.highlightsSyntax) { [weak self] in self?.preferences.highlightsSyntax = $0 }]
-        case .lineNumbers:
-            content.text = String(localized: "Line Numbers")
-            cell.accessories = [.settingsToggle(preferences.showsLineNumbers) { [weak self] in self?.preferences.showsLineNumbers = $0 }]
-        case .currentLine:
-            content.text = String(localized: "Highlight Current Line")
-            cell.accessories = [.settingsToggle(preferences.highlightsCurrentLine) { [weak self] in self?.preferences.highlightsCurrentLine = $0 }]
-        case .wrap:
-            content.text = String(localized: "Wrap Lines")
-            cell.accessories = [.settingsToggle(preferences.wrapsLines) { [weak self] in self?.preferences.wrapsLines = $0 }]
-        case .detectIndentation:
-            content.text = String(localized: "Detect From File")
-            cell.accessories = [.settingsToggle(preferences.detectsIndentation) { [weak self] in self?.preferences.detectsIndentation = $0 }]
+            )
         case .indentWith:
-            content.text = String(localized: "Indent With")
-            cell.accessories = [.settingsPopUpMenu(
+            cell.configure(
+                title: String(localized: "Indent With"),
                 identifier: "settings.editor.indentWith.menu",
                 options: [
                     (String(localized: "Spaces"), !preferences.indentsWithTabs, { [weak self] in self?.preferences.indentsWithTabs = false }),
                     (String(localized: "Tabs"), preferences.indentsWithTabs, { [weak self] in self?.preferences.indentsWithTabs = true }),
                 ]
-            )]
-        case .tabWidth:
-            content.text = String(localized: "Tab Width")
-            cell.accessories = [.settingsPopUpMenu(
+            )
+        default:
+            cell.configure(
+                title: String(localized: "Tab Width"),
                 identifier: "settings.editor.tabWidth.menu",
                 options: CodeEditorPreferences.tabWidths.map { width in
                     (String(width), width == preferences.tabWidth, { [weak self] in self?.preferences.tabWidth = width })
                 }
-            )]
-        case .closeBrackets:
-            content.text = String(localized: "Close Brackets and Quotes")
-            cell.accessories = [.settingsToggle(preferences.closesBrackets) { [weak self] in self?.preferences.closesBrackets = $0 }]
+            )
         }
-        cell.contentConfiguration = content
     }
 
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        dataSource?.itemIdentifier(for: indexPath) == .customizeKeyBar
+    private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        cell.configure(
+            title: String(localized: "Customize Keys"),
+            systemImage: nil,
+            value: String(localized: "\(preferences.keyBarKeys.count) keys"),
+            identifier: "settings.editor.keyBar.customize"
+        ) { [weak self] in
+            guard let self else { return }
+            navigationController?.pushViewController(SettingsEditorKeyBarViewController(preferences: preferences), animated: true)
+        }
     }
 
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        guard dataSource?.itemIdentifier(for: indexPath) == .customizeKeyBar else { return }
-        navigationController?.pushViewController(SettingsEditorKeyBarViewController(preferences: preferences), animated: true)
+    override func prepareRegistrations() {
+        _ = (menuRow, indexRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .keybindings, .indentWith, .tabWidth:
+            collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
+        case .customizeKeyBar:
+            collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
+        default:
+            super.dequeue(item, at: indexPath)
+        }
+    }
+
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        cell.accessibilityIdentifier = "settings.editor.\(item)"
+        switch item {
+        case .keyBar:
+            toggleRow(cell, title: String(localized: "Keyboard Bar"), isOn: preferences.showsKeyBar) { [weak self] in self?.preferences.showsKeyBar = $0 }
+        case .syntax:
+            toggleRow(cell, title: String(localized: "Syntax Highlighting"), isOn: preferences.highlightsSyntax) { [weak self] in self?.preferences.highlightsSyntax = $0 }
+        case .lineNumbers:
+            toggleRow(cell, title: String(localized: "Line Numbers"), isOn: preferences.showsLineNumbers) { [weak self] in self?.preferences.showsLineNumbers = $0 }
+        case .currentLine:
+            toggleRow(cell, title: String(localized: "Highlight Current Line"), isOn: preferences.highlightsCurrentLine) { [weak self] in self?.preferences.highlightsCurrentLine = $0 }
+        case .wrap:
+            toggleRow(cell, title: String(localized: "Wrap Lines"), isOn: preferences.wrapsLines) { [weak self] in self?.preferences.wrapsLines = $0 }
+        case .detectIndentation:
+            toggleRow(cell, title: String(localized: "Detect From File"), isOn: preferences.detectsIndentation) { [weak self] in self?.preferences.detectsIndentation = $0 }
+        case .closeBrackets:
+            toggleRow(cell, title: String(localized: "Close Brackets and Quotes"), isOn: preferences.closesBrackets) { [weak self] in self?.preferences.closesBrackets = $0 }
+        case .keybindings, .customizeKeyBar, .indentWith, .tabWidth:
+            break
+        }
     }
 }
 
 /// Choose and order the keyboard bar's keys. Shown keys reorder with their
 /// handles and leave with the remove control; More Keys adds one.
-final class SettingsEditorKeyBarViewController: UIViewController, UICollectionViewDelegate {
-    private let preferences: CodeEditorPreferences
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, String>?
-    private var appliedThemeID: ThemeID?
+final class SettingsEditorKeyBarViewController: SettingsListViewController<SettingsEditorKeyBarViewController.Section, String> {
+    enum Section: Hashable, Sendable { case shown, more }
 
-    private enum Section: Hashable { case shown, more }
+    private let preferences: CodeEditorPreferences
 
     init(preferences: CodeEditorPreferences) {
         self.preferences = preferences
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.headerMode = .supplementary
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
-        title = String(localized: "Keyboard Bar")
-        navigationItem.largeTitleDisplayMode = .inline
+        super.init(
+            title: String(localized: "Keyboard Bar"),
+            listIdentifier: "settings.editor.keyBar.list",
+            scope: .device,
+            headers: true
+        )
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
         collectionView.isEditing = true
-        collectionView.accessibilityIdentifier = "settings.editor.keyBar.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         let reset = UIBarButtonItem(title: String(localized: "Reset"), primaryAction: UIAction { [weak self] _ in
             self?.preferences.resetKeyBar()
         })
         reset.accessibilityIdentifier = "settings.editor.keyBar.reset"
         navigationItem.rightBarButtonItem = reset
-        installDataSource()
-        setNeedsUpdateProperties()
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
-
-    override func updateProperties() {
-        super.updateProperties()
-        let themeID = ThemeRuntimeState.currentThemeID()
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
-        applySnapshot(preferences.keyBarKeys)
-    }
-
-    private func applySnapshot(_ shown: [CodeEditorBarKey]) {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, String>()
-        snapshot.appendSections([.shown, .more])
-        snapshot.appendItems(shown.map(\.id), toSection: .shown)
-        snapshot.appendItems(CodeEditorBarKey.catalog.filter { !shown.contains($0) }.map(\.id), toSection: .more)
-        dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
-    }
-
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<UICollectionViewListCell, String> { [weak self] cell, indexPath, id in
-            guard let self, let key = CodeEditorBarKey(id: id) else { return }
-            var content = cell.defaultContentConfiguration()
-            content.text = key.label
-            if let systemImage = key.systemImage {
-                content.image = UIImage(systemName: systemImage)
-            } else if case .symbol = key {
-                content.text = key.title
-            } else {
-                content.secondaryText = key.title
-            }
-            cell.contentConfiguration = content
-            cell.accessibilityIdentifier = "settings.editor.keyBar.\(id)"
-            let shown = self.dataSource?.sectionIdentifier(for: indexPath.section) == .shown
-            cell.accessories = shown
-                ? [.delete(displayed: .always) { [weak self] in self?.remove(key) }, .reorder(displayed: .always)]
-                : [.insert(displayed: .always) { [weak self] in self?.add(key) }]
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section) == .shown
-                ? String(localized: "In the Bar")
-                : String(localized: "More Keys")
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, id in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: id)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-        }
         dataSource?.reorderingHandlers.canReorderItem = { [weak self] id in
             self?.preferences.keyBarKeys.contains { $0.id == id } ?? false
         }
@@ -325,16 +193,40 @@ final class SettingsEditorKeyBarViewController: UIViewController, UICollectionVi
         }
     }
 
-    /// Keys reorder only within the bar's section.
-    func collectionView(
-        _ collectionView: UICollectionView,
-        targetIndexPathForMoveOfItemFromOriginalIndexPath originalIndexPath: IndexPath,
-        atCurrentIndexPath currentIndexPath: IndexPath,
-        toProposedIndexPath proposedIndexPath: IndexPath
-    ) -> IndexPath {
-        guard proposedIndexPath.section != originalIndexPath.section else { return proposedIndexPath }
-        let count = collectionView.numberOfItems(inSection: originalIndexPath.section)
-        return IndexPath(item: max(0, count - 1), section: originalIndexPath.section)
+    override func sections() -> [SettingsSectionModel<Section, String>] {
+        let shown = preferences.keyBarKeys
+        return [
+            SettingsSectionModel(.shown, header: String(localized: "In the Bar"), items: shown.map(\.id)),
+            SettingsSectionModel(
+                .more,
+                header: String(localized: "More Keys"),
+                items: CodeEditorBarKey.catalog.filter { !shown.contains($0) }.map(\.id)
+            ),
+        ]
+    }
+
+    /// Whether the key is in the bar decides its accessories.
+    override func inputs(of id: String) -> AnyHashable {
+        AnyHashable(preferences.keyBarKeys.contains { $0.id == id })
+    }
+
+    override func configure(_ cell: UICollectionViewListCell, item id: String) {
+        guard let key = CodeEditorBarKey(id: id) else { return }
+        var content = content(.plain)
+        content.text = key.label
+        if let systemImage = key.systemImage {
+            content.image = UIImage(systemName: systemImage)
+        } else if case .symbol = key {
+            content.text = key.title
+        } else {
+            content.secondaryText = key.title
+        }
+        cell.contentConfiguration = content
+        cell.accessibilityIdentifier = "settings.editor.keyBar.\(id)"
+        let shown = preferences.keyBarKeys.contains(key)
+        cell.accessories = shown
+            ? [.delete(displayed: .always) { [weak self] in self?.remove(key) }, .reorder(displayed: .always)]
+            : [.insert(displayed: .always) { [weak self] in self?.add(key) }]
     }
 
     private func remove(_ key: CodeEditorBarKey) {

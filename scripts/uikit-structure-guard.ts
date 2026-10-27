@@ -19,6 +19,11 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *  - `import SwiftUI` is a ratchet: a file's count fails the guard when it
  *    exceeds uikit-structure-baseline.json (files absent from the baseline
  *    have baseline 0). Decreases pass.
+ *  - `SettingsListStyle.pin(` and `SettingsListStyle.applyTheme(` are a ratchet
+ *    of the same kind: a settings list that pins and themes itself carries its
+ *    own copy of what `SettingsListViewController` (the settings kit's base)
+ *    does. The base itself is exempt. A new settings page subclasses the base
+ *    and calls neither, so a new file has baseline 0.
  *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
@@ -29,7 +34,7 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *                                                   regeneration only)
  */
 
-type Construct = { name: string; pattern: RegExp; disallowed: boolean };
+type Construct = { name: string; pattern: RegExp; disallowed: boolean; exemptFiles?: string[] };
 type Counts = Record<string, number>;
 type Baseline = Record<string, Counts>;
 type Hit = { file: string; line: number; construct: string };
@@ -38,6 +43,8 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const scanRoots = ["clients/apple/Oppi", "clients/apple/OppiDebugHarness"].map((dir) => join(repoRoot, dir));
 const baselinePath = join(repoRoot, "scripts/uikit-structure-baseline.json");
 const guide = "dev/architecture-client.md, section \"UIKit and SwiftUI ownership\"";
+const settingsGuide = "dev/architecture-client.md, section \"Settings pages\"";
+const settingsBase = "clients/apple/Oppi/Features/Settings/SettingsListViewController.swift";
 
 const constructs: Construct[] = [
   { name: "NavigationStack", pattern: /\bNavigationStack\b/g, disallowed: true },
@@ -52,6 +59,19 @@ const constructs: Construct[] = [
   // A subclass or stored type reaches a hosting controller without the call form.
   { name: "UIHostingController<", pattern: /\bUIHostingController\s*</g, disallowed: true },
   { name: "import SwiftUI", pattern: /^[ \t]*(?:@\w+[ \t]+)*import[ \t]+SwiftUI\b/gm, disallowed: false },
+  // Settings-list theming outside the kit's base: see "Settings pages" in the guide.
+  {
+    name: "SettingsListStyle.pin(",
+    pattern: /\bSettingsListStyle\s*\.\s*pin\s*\(/g,
+    disallowed: false,
+    exemptFiles: [settingsBase],
+  },
+  {
+    name: "SettingsListStyle.applyTheme(",
+    pattern: /\bSettingsListStyle\s*\.\s*applyTheme\s*\(/g,
+    disallowed: false,
+    exemptFiles: [settingsBase],
+  },
 ];
 
 /**
@@ -86,7 +106,8 @@ function scan(): Hit[] {
   for (const absFile of scanRoots.flatMap(walkSwiftFiles)) {
     const file = relative(repoRoot, absFile);
     const stripped = stripSwiftCommentsAndStrings(readFileSync(absFile, "utf8"));
-    for (const { name, pattern } of constructs) {
+    for (const { name, pattern, exemptFiles } of constructs) {
+      if (exemptFiles?.includes(file)) continue;
       for (const match of stripped.matchAll(pattern)) {
         const start = match.index + (match[0].length - match[0].trimStart().length);
         const line = stripped.slice(0, start).split("\n").length;
@@ -154,7 +175,7 @@ for (const [file, counts] of Object.entries(current)) {
 }
 
 if (failures.length === 0) {
-  console.log("UIKit structure guard: PASS — no disallowed SwiftUI structure constructs, import SwiftUI within baseline.");
+  console.log("UIKit structure guard: PASS — no disallowed SwiftUI structure constructs, import SwiftUI and settings-list theming within baseline.");
   process.exit(0);
 }
 
@@ -171,5 +192,9 @@ UIHostingController< (a subclass or stored type) have no baseline: an exception 
 the guard's allowed list. A new \`import SwiftUI\` raises that file's baseline,
 which also needs approval; \`bun scripts/uikit-structure-guard.ts --update\`
 lowers it after a migration. After a rename or move, --update is fine when the
-baseline diff only moves entries.`);
+baseline diff only moves entries.
+
+SettingsListStyle.pin( and SettingsListStyle.applyTheme( outside the settings
+base mean a settings list is theming itself. Subclass SettingsListViewController
+instead; see ${settingsGuide}.`);
 process.exit(1);

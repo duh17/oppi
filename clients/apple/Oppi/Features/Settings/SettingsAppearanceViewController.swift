@@ -17,7 +17,7 @@ final class SettingsAppearanceViewController: SettingsListViewController<Setting
 
     init(root: AppRootEnvironment) {
         self.root = root
-        super.init(title: String(localized: "Appearance"), listIdentifier: "settings.appearance.list", footers: true)
+        super.init(title: String(localized: "Appearance"), listIdentifier: "settings.appearance.list", scope: .device, footers: true)
         traitOverrides.appRootEnvironment = root
     }
 
@@ -70,8 +70,6 @@ final class SettingsAppearanceViewController: SettingsListViewController<Setting
                 title: slot.title,
                 systemImage: nil,
                 value: slot.themeID(in: themeStore).displayName,
-                showsDisclosure: true,
-                titleColor: .label,
                 identifier: slot.rowIdentifier
             ) { [weak self] in self?.openGallery(slot) }
         case .customThemes:
@@ -79,8 +77,6 @@ final class SettingsAppearanceViewController: SettingsListViewController<Setting
                 title: String(localized: "Custom Themes"),
                 systemImage: nil,
                 value: nil,
-                showsDisclosure: true,
-                titleColor: .label,
                 identifier: "settings.appearance.customThemes"
             ) { [weak self] in self?.openCustomThemes() }
         case .source:

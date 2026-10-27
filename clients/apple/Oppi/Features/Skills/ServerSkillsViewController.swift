@@ -91,7 +91,7 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
         collectionView.accessibilityIdentifier = "skills.list"
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
         search.install(on: self, alwaysVisible: false)
         search.onTextChange = { [weak self] text in
@@ -299,33 +299,27 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "skills.cachedWarning"
         }
-        let message = UICollectionView.CellRegistration<ServerCatalogStateCell, Item> { [weak self] cell, _, item in
-            guard let self else { return }
-            let palette = palette
+        let message = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
             switch item {
             case .loading:
-                cell.configureLoading("Loading skills…", palette: palette)
+                cell.configure(.loading("Loading skills…"), identifier: "skills.loading")
             case .unavailable:
-                cell.configureMessage(
-                    systemImage: "exclamationmark.triangle.fill",
-                    title: "Skills Unavailable",
-                    detail: "The selected server has no cached Skills catalog.",
-                    palette: palette,
-                    retry: (identifier: "skills.retry", action: { [weak self] in self?.retry() })
+                cell.configure(
+                    .failure(
+                        "Skills are unavailable. The selected server has no cached Skills catalog.",
+                        retry: { [weak self] in self?.retry() }
+                    ),
+                    identifier: "skills.retry"
                 )
             case .noResults:
-                cell.configureMessage(
-                    systemImage: "magnifyingglass",
-                    title: "No Results",
-                    detail: "No skills match “\(state?.presentation.query ?? "")”.",
-                    palette: palette
+                cell.configure(
+                    .message("No skills match “\(self?.state?.presentation.query ?? "")”."),
+                    identifier: "skills.noResults"
                 )
             default:
-                cell.configureMessage(
-                    systemImage: "sparkles.rectangle.stack",
-                    title: "No Skills Found",
-                    detail: "Pi did not resolve any skills on \(state?.server?.name ?? "this server").",
-                    palette: palette
+                cell.configure(
+                    .message("No skills found. Pi did not resolve any skills on \(self?.state?.server?.name ?? "this server")."),
+                    identifier: "skills.noSkills"
                 )
             }
         }

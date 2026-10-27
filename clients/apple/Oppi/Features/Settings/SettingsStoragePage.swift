@@ -12,7 +12,7 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
     private var isClearing = false
 
     init() {
-        super.init(title: String(localized: "Storage & About"), listIdentifier: "settings.storage.list", footers: true)
+        super.init(title: String(localized: "Storage & About"), listIdentifier: "settings.storage.list", scope: .device, footers: true)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -46,9 +46,34 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
         }
     }
 
+    private lazy var actionRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        cell.configure(
+            title: String(localized: "Clear Local Cache"),
+            tint: .destructive,
+            identifier: "settings.storage.clearCache",
+            isBusy: isClearing,
+            confirmation: .init(
+                title: String(localized: "Clear Local Cache?"),
+                message: String(localized: "Oppi downloads it from your servers again when needed."),
+                actionTitle: String(localized: "Clear Local Cache")
+            )
+        ) { [weak self] in self?.clear() }
+    }
+
+    override func prepareRegistrations() {
+        _ = actionRow
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        item == .clearCache
+            ? collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
+            : super.dequeue(item, at: indexPath)
+    }
+
+    /// The version and the cache size: read-only facts.
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
-        var content = UIListContentConfiguration.valueCell()
-        let palette = ThemeRuntimeState.currentPalette()
+        var content = content(.info)
         switch item {
         case .version:
             content.text = String(localized: "Version")
@@ -59,41 +84,16 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
             content.secondaryText = cacheSizeText ?? String(localized: "Calculating…")
             cell.accessibilityIdentifier = "settings.storage.cacheSize"
         case .clearCache:
-            content.text = String(localized: "Clear Local Cache")
-            content.textProperties.color = UIColor(palette.red).withAlphaComponent(isClearing ? 0.5 : 1)
-            cell.accessibilityIdentifier = "settings.storage.clearCache"
-            if isClearing { cell.accessibilityTraits.insert(.notEnabled) }
+            break
         }
         cell.contentConfiguration = content
     }
 
-    override func isSelectable(_ item: Item) -> Bool { item == .clearCache && !isClearing }
-
-    override func select(_ item: Item) {
-        if item == .clearCache { confirmClear() }
+    override func copyText(of item: Item) -> String? {
+        item == .version ? Self.appVersionLabel : nil
     }
 
     // MARK: - Clear Local Cache
-
-    private func confirmClear() {
-        guard !isClearing, presentedViewController == nil else { return }
-        let sheet = UIAlertController(
-            title: String(localized: "Clear Local Cache?"),
-            message: String(localized: "Oppi downloads it from your servers again when needed."),
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: String(localized: "Clear Local Cache"), style: .destructive) { [weak self] _ in
-            self?.clear()
-        })
-        sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-        // On iPad the sheet is a popover from the row that opened it.
-        if let popover = sheet.popoverPresentationController {
-            let row: UIView = dataSource?.indexPath(for: .clearCache).flatMap(collectionView.cellForItem(at:)) ?? collectionView
-            popover.sourceView = row
-            popover.sourceRect = row.bounds
-        }
-        present(sheet, animated: true)
-    }
 
     private func clear() {
         guard !isClearing else { return }

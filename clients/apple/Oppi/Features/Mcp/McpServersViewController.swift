@@ -115,7 +115,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
                 self?.refreshControl.endRefreshing()
             }
         }, for: .valueChanged)
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
 
         addItem.title = "Add MCP Server"
@@ -358,17 +358,11 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
                     : nil
             )
         }
-        let message = UICollectionView.CellRegistration<ServerCatalogStateCell, Item> { [weak self] cell, _, item in
-            guard let self else { return }
+        let message = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { cell, _, item in
             if item == .loading {
-                cell.configureLoading("Probing MCP servers…", palette: palette)
+                cell.configure(.loading("Probing MCP servers…"))
             } else {
-                cell.configureMessage(
-                    systemImage: "server.rack",
-                    title: "MCP Servers Unavailable",
-                    detail: "Connect to a paired server to manage MCP.",
-                    palette: palette
-                )
+                cell.configure(.message("MCP servers are unavailable. Connect to a paired server to manage MCP."))
             }
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in

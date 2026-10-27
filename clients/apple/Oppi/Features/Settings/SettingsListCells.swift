@@ -1,10 +1,11 @@
 import UIKit
 
-/// A settings index row: an optional theme-blue symbol, a Title Case title,
-/// an optional current-value summary, and the system disclosure chevron. The
-/// whole row is one button, so a tap, a VoiceOver activation, and
-/// `app.buttons[id]` all run the row's push. Without a symbol the title starts
-/// at the row's margin.
+/// A settings navigation row: an optional accent symbol, a Title Case title in
+/// the theme's title color, an optional current-value summary, and the system
+/// disclosure chevron. The whole row is one button, so a tap, a VoiceOver
+/// activation, and `app.buttons[id]` all run the row's push. Without a symbol
+/// the title starts at the row's margin. A long value wraps in the row's right
+/// 60%, so a summary can name several things.
 final class SettingsIndexRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
     private let iconView = UIImageView()
@@ -33,7 +34,7 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         valueLabel.adjustsFontForContentSizeCategory = true
         valueLabel.textAlignment = .right
         valueLabel.setContentHuggingPriority(.required, for: .horizontal)
-        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        valueLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         button.accessibilityTraits = .button
         // The labels paint the row; the button above them is its one accessible
         // element, so the row reads as a single control.
@@ -52,7 +53,10 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -8),
             valueLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            valueLabel.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 12),
+            valueLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
             valueLabel.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            valueLabel.widthAnchor.constraint(lessThanOrEqualTo: contentView.layoutMarginsGuide.widthAnchor, multiplier: 0.6),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
@@ -70,23 +74,26 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         title: String,
         systemImage: String?,
         value: String?,
-        showsDisclosure: Bool,
-        titleColor: UIColor,
         identifier: String,
         action: @escaping () -> Void
     ) {
-        let palette = ThemeRuntimeState.currentPalette()
+        let style = SettingsStyle.current
         iconView.image = systemImage.flatMap { UIImage(systemName: $0) }
         iconView.isHidden = systemImage == nil
         titleAfterIcon?.isActive = systemImage != nil
         titleAtMargin?.isActive = systemImage == nil
-        iconView.tintColor = UIColor(palette.blue)
+        iconView.tintColor = style.accent
         titleLabel.text = title
-        titleLabel.textColor = titleColor
+        titleLabel.textColor = style.title
         valueLabel.text = value
-        valueLabel.textColor = UIColor(palette.comment)
+        valueLabel.textColor = style.value
         valueLabel.isHidden = value == nil
-        accessories = showsDisclosure ? [.disclosureIndicator()] : []
+        // A short value stays on the title's line. A label that may wrap
+        // takes its widest width in Auto Layout and squeezes the title, so
+        // only a value too long for one line is allowed to.
+        let lineWidth = ((value ?? "") as NSString).size(withAttributes: [.font: valueLabel.font as Any]).width
+        valueLabel.numberOfLines = lineWidth > 160 ? 0 : 1
+        accessories = [.disclosureIndicator()]
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = value
@@ -133,14 +140,13 @@ final class SettingsRowButton: UIButton {
     }
 }
 
-/// A choice row: the title and the current choice (in the accent color, with
-/// the up/down mark a pop-up button shows), and the whole row one button whose
-/// menu lists the choices with a checkmark on the current one. Like
-/// `SettingsIndexRowCell`, the labels paint the row and the button is its one
-/// accessible element, so a tap, a VoiceOver activation, and `app.buttons[id]`
-/// all open the menu. At accessibility text sizes the choice stacks under the
-/// title instead of sharing its line. The title uses the system label color,
-/// as the title of a plain `valueCell` row on the same page does.
+/// A choice row: the title in the theme's title color and the current choice
+/// (in the accent color, with the up/down mark a pop-up button shows), and the
+/// whole row one button whose menu lists the choices with a checkmark on the
+/// current one. Like `SettingsIndexRowCell`, the labels paint the row and the
+/// button is its one accessible element, so a tap, a VoiceOver activation, and
+/// `app.buttons[id]` all open the menu. At accessibility text sizes the choice
+/// stacks under the title instead of sharing its line.
 final class SettingsMenuRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
     private let stack = UIStackView()
@@ -155,7 +161,6 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
             label.adjustsFontForContentSizeCategory = true
             label.numberOfLines = 0
         }
-        titleLabel.textColor = .label
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         valueLabel.setContentHuggingPriority(.required, for: .horizontal)
         valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -204,17 +209,23 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
         stack.alignment = stacked ? .leading : .center
     }
 
+    /// A disabled row keeps its current choice visible and cannot open its menu.
     func configure(
         title: String,
         identifier: String,
+        isEnabled: Bool = true,
         options: [(title: String, selected: Bool, action: () -> Void)]
     ) {
-        let tint = UIColor(ThemeRuntimeState.currentPalette().blue)
+        let style = SettingsStyle.current
         let current = options.first(where: \.selected)?.title
         titleLabel.text = title
+        titleLabel.textColor = style.title
         valueLabel.text = current
-        valueLabel.textColor = tint
-        chevron.tintColor = tint
+        valueLabel.textColor = style.accent
+        chevron.tintColor = style.accent
+        for view in [titleLabel, valueLabel, chevron] { view.alpha = isEnabled ? 1 : 0.4 }
+        button.isEnabled = isEnabled
+        button.accessibilityTraits = isEnabled ? .button : [.button, .notEnabled]
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = current

@@ -287,33 +287,28 @@ final class ServerExtensionsViewController: UIViewController, UICollectionViewDe
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "extensions.cachedWarning"
         }
-        let message = UICollectionView.CellRegistration<ServerCatalogStateCell, Item> { [weak self] cell, _, item in
+        let message = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
             guard let self else { return }
-            let palette = palette
             switch item {
             case .firstLoad:
-                cell.configureLoading("Loading extensions…", palette: palette)
+                cell.configure(.loading("Loading extensions…"), identifier: "extensions.loading")
             case .unavailable:
-                cell.configureMessage(
-                    systemImage: "exclamationmark.triangle.fill",
-                    title: "Extensions Unavailable",
-                    detail: "The selected server has no cached Extensions catalog.",
-                    palette: palette,
-                    retry: (identifier: "extensions.retry", action: { [weak self] in self?.retry() })
+                cell.configure(
+                    .failure(
+                        "Extensions are unavailable. The selected server has no cached Extensions catalog.",
+                        retry: { [weak self] in self?.retry() }
+                    ),
+                    identifier: "extensions.retry"
                 )
             case .noResults:
-                cell.configureMessage(
-                    systemImage: "magnifyingglass",
-                    title: "No Results",
-                    detail: "No extensions match “\(state?.presentation.query ?? "")”.",
-                    palette: palette
+                cell.configure(
+                    .message("No extensions match “\(state?.presentation.query ?? "")”."),
+                    identifier: "extensions.noResults"
                 )
             default:
-                cell.configureMessage(
-                    systemImage: "puzzlepiece.extension",
-                    title: "No Pi Extensions Found",
-                    detail: "Configure Pi extensions in ~/.pi/agent/extensions or Pi user settings.",
-                    palette: palette
+                cell.configure(
+                    .message("No Pi extensions found. Configure Pi extensions in ~/.pi/agent/extensions or Pi user settings."),
+                    identifier: "extensions.noPi"
                 )
             }
         }

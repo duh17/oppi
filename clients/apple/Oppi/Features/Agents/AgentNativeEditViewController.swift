@@ -458,7 +458,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
         let themeID = ThemeRuntimeState.currentThemeID()
         if appliedThemeID != themeID {
             appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
         // Everything a row shows is read here, so any change re-runs this pass.
         _ = (draft.name, draft.description, draft.usesCustomInstructions, draft.instructionMode, draft.instructionText)

@@ -48,9 +48,9 @@ final class ServerExtensionsListUITests: XCTestCase {
         XCTAssertFalse(app.buttons["extensions.row.oppi-ask"].exists)
 
         search.clearAndTypeText("no-matching-extension")
-        XCTAssertTrue(app.staticTexts["No Results"].waitForExistence(timeout: 5))
-        XCTAssertTrue(
-            app.staticTexts["No extensions match “no-matching-extension”."].exists,
+        XCTAssertTrue(app.staticTexts["extensions.noResults"].waitForExistence(timeout: 5))
+        XCTAssertEqual(
+            app.staticTexts["extensions.noResults"].label, "No extensions match “no-matching-extension”.",
             "The empty state names the query"
         )
         attachScreenshot("extensions-no-results")
@@ -70,15 +70,14 @@ final class ServerExtensionsListUITests: XCTestCase {
 
     func testUnavailableCatalogShowsRetry() {
         launch(page: "extensions-unavailable")
-        XCTAssertTrue(app.staticTexts["Extensions Unavailable"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.buttons["extensions.retry"].exists, "A failed first load offers Retry")
+        XCTAssertTrue(app.buttons["extensions.retry"].waitForExistence(timeout: 20), "A failed first load offers Retry")
         XCTAssertFalse(app.buttons["extensions.row.workflow"].exists)
         attachScreenshot("extensions-unavailable")
     }
 
     func testCatalogWithoutPiExtensionsSaysSo() {
         launch(page: "extensions-builtin-only")
-        XCTAssertTrue(app.staticTexts["No Pi Extensions Found"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["extensions.noPi"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["extensions.row.oppi-ask"].exists, "Built-in extensions still list")
         attachScreenshot("extensions-no-pi")
     }

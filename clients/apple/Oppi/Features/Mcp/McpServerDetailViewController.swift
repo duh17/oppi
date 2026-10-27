@@ -66,7 +66,7 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
         self.serverName = serverName
         self.signIn = signIn
         self.root = root
-        super.init(title: entry.name, listIdentifier: "mcp.detail.list", headers: true, footers: true)
+        super.init(title: entry.name, listIdentifier: "mcp.detail.list", scope: .server(serverName), headers: true, footers: true)
         traitOverrides.appRootEnvironment = root
     }
 

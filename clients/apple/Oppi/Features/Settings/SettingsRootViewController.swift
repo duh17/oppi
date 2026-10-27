@@ -39,7 +39,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         // App Settings is the root of its pages, so it keeps the large title
         // the shell used to give it. `applyTitleDisplayMode` drops it where the
         // system puts the bar on a vertical edge.
-        super.init(title: String(localized: "Settings"), listIdentifier: "settings.list", headers: true, largeTitle: true)
+        super.init(title: String(localized: "Settings"), listIdentifier: "settings.list", scope: .device, headers: true, largeTitle: true)
         traitOverrides.appRootEnvironment = root
     }
 
@@ -144,15 +144,21 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
 
     private lazy var row = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
-        let palette = ThemeRuntimeState.currentPalette()
         cell.configure(
             title: title(of: item),
             systemImage: systemImage(of: item),
             value: value(of: item),
-            showsDisclosure: item != .addServer,
-            // An action row, not a destination: it reads in the accent
-            // color the Add Server button always had.
-            titleColor: item == .addServer ? UIColor(palette.blue) : UIColor(palette.fg),
+            identifier: accessibilityIdentifier(of: item)
+        ) { [weak self] in self?.open(item) }
+    }
+
+    /// Add Server does something rather than open a page, so it is an action
+    /// row in the accent color the button always had.
+    private lazy var addServerRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        cell.configure(
+            title: title(of: item),
+            systemImage: systemImage(of: item),
             identifier: accessibilityIdentifier(of: item)
         ) { [weak self] in self?.open(item) }
     }
@@ -170,13 +176,15 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
     }
 
     override func prepareRegistrations() {
-        _ = (row, serverRow)
+        _ = (row, serverRow, addServerRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
         case .server:
             collectionView.dequeueConfiguredReusableCell(using: serverRow, for: indexPath, item: item)
+        case .addServer:
+            collectionView.dequeueConfiguredReusableCell(using: addServerRow, for: indexPath, item: item)
         default:
             collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
         }

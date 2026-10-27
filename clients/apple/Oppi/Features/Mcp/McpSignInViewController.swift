@@ -66,7 +66,7 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
         )
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "mcp.auth.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
     }
 

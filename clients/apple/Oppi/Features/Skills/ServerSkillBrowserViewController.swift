@@ -84,7 +84,7 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
         )
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "skills.files.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
     }
 

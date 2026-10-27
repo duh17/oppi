@@ -34,6 +34,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     init(showsSidebarToggle: Bool = false) {
         self.showsSidebarToggle = showsSidebarToggle
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        // Clear, so the theme's background shows behind the cards.
+        config.backgroundColor = .clear
         config.headerMode = .none
         config.footerMode = .none
         config.trailingSwipeActionsConfigurationProvider = { indexPath in
@@ -51,6 +53,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     override func viewDidLoad() {
         super.viewDidLoad()
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        // Clear, so the theme's background shows behind the cards.
+        config.backgroundColor = .clear
         config.headerMode = .none
         config.footerMode = .none
         config.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
@@ -60,7 +64,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         collectionView.delegate = self
         collectionView.keyboardDismissMode = .interactive
         collectionView.accessibilityIdentifier = "sshTerminal.hostList"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installBarItems()
         installDataSource()
         chrome = SSHTerminalConnectChrome(
@@ -101,7 +105,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         let themeID = sshTerminalThemeID
         if lastThemeID != themeID {
             lastThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
         if !session.showsTerminal, let id = editAfterTerminal {
             editAfterTerminal = nil

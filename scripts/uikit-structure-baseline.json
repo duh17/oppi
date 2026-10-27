@@ -127,6 +127,9 @@
     "clients/apple/Oppi/Features/Agents/AgentNativeEditPages.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Agents/AgentNativeEditViewController.swift": {
+      "SettingsListStyle.applyTheme(": 1
+    },
     "clients/apple/Oppi/Features/Chat/ChatViewController+Leaves.swift": {
       "import SwiftUI": 1
     },
@@ -148,6 +151,9 @@
     "clients/apple/Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
+      "SettingsListStyle.pin(": 1
+    },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
       "import SwiftUI": 1
     },
@@ -162,6 +168,31 @@
     },
     "clients/apple/Oppi/Features/Icons/IconPickerView.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpAddServerViewController.swift": {
+      "SettingsListStyle.pin(": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpServersViewController.swift": {
+      "SettingsListStyle.pin(": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpSignInViewController.swift": {
+      "SettingsListStyle.pin(": 1
+    },
+    "clients/apple/Oppi/Features/Onboarding/ManualEntryViewController.swift": {
+      "SettingsListStyle.pin(": 1,
+      "SettingsListStyle.applyTheme(": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalColorPickerViewController.swift": {
+      "SettingsListStyle.pin(": 1,
+      "SettingsListStyle.applyTheme(": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalHostListView.swift": {
+      "SettingsListStyle.pin(": 1,
+      "SettingsListStyle.applyTheme(": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSetupView.swift": {
+      "SettingsListStyle.pin(": 1,
+      "SettingsListStyle.applyTheme(": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleHostedScreens.swift": {
       "import SwiftUI": 1
@@ -229,6 +260,10 @@
     "clients/apple/Oppi/Features/Settings/QuickCommentsSettingsView.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Settings/SSHPreflightViewController.swift": {
+      "SettingsListStyle.pin(": 1,
+      "SettingsListStyle.applyTheme(": 1
+    },
     "clients/apple/Oppi/Features/Settings/ScopedLockToggle.swift": {
       "import SwiftUI": 1
     },
@@ -243,6 +278,19 @@
     },
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/ThemeGalleryViewController.swift": {
+      "SettingsListStyle.pin(": 1,
+      "SettingsListStyle.applyTheme(": 1
+    },
+    "clients/apple/Oppi/Features/Skills/ServerSkillBrowserViewController.swift": {
+      "SettingsListStyle.pin(": 1
+    },
+    "clients/apple/Oppi/Features/Skills/ServerSkillDetailViewController.swift": {
+      "SettingsListStyle.pin(": 1
+    },
+    "clients/apple/Oppi/Features/Skills/ServerSkillsViewController.swift": {
+      "SettingsListStyle.pin(": 1
     },
     "clients/apple/Oppi/Features/Workspaces/SessionInboxComposeChrome.swift": {
       "import SwiftUI": 1
@@ -273,6 +321,10 @@
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSandboxMcpPage.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsViewController.swift": {
+      "SettingsListStyle.pin(": 1,
+      "SettingsListStyle.applyTheme(": 1
     },
     "clients/apple/OppiDebugHarness/AskCardIntentRegressionPreview.swift": {
       "import SwiftUI": 1

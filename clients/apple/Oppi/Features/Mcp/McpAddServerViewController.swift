@@ -103,7 +103,7 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
         )
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "mcp.add.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
 
         cancelItem.primaryAction = UIAction { [weak self] _ in

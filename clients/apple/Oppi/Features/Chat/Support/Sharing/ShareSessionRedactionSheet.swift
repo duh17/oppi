@@ -168,7 +168,7 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
         _ = (rowRegistration, headerRegistration, footerRegistration)
         list.dataSource = self
         list.delegate = self
-        SSHTerminalSettingsList.pin(list, in: view)
+        SettingsListStyle.pin(list, in: view)
         navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
             self?.onCancel()
         })

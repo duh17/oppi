@@ -6,10 +6,10 @@ import UIKit
 /// Each online machine that can host Oppi is probed for Oppi's `/health`
 /// while the screen is visible. A visit starts the probes over, so a result
 /// never outlives the visit that produced it; there is no polling timer.
-final class TailnetSettingsViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case status, peers, setup, disconnect }
+final class TailnetSettingsViewController: SettingsListViewController<TailnetSettingsViewController.Section, TailnetSettingsViewController.Item> {
+    enum Section: Hashable, Sendable { case status, peers, setup, disconnect }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case status, thisDevice
         case connect, starting, signIn, waitingForLink, tryAgain
         case noPeers, peer(String), pairingWait(String)
@@ -49,20 +49,18 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
     private var previewProbes: [String: TailnetPeerProbe]?
     #endif
 
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var appliedThemeID: ThemeID?
-
     init(coordinator: ConnectionCoordinator, onPaired: (() -> Void)? = nil, onClose: (() -> Void)? = nil) {
         self.coordinator = coordinator
         self.onPaired = onPaired
         self.onClose = onClose
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.headerMode = .supplementary
-        config.footerMode = .supplementary
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
-        title = String(localized: "Tailscale")
+        // The node is this device's own, so everything on the page is saved here.
+        super.init(
+            title: String(localized: "Tailscale"),
+            listIdentifier: "tailnet.list",
+            scope: .device,
+            headers: true,
+            footers: true
+        )
         navigationItem.largeTitleDisplayMode = .never
     }
 
@@ -73,18 +71,8 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
     }
     #endif
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "tailnet.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
         let refresh = UIRefreshControl()
         refresh.addAction(UIAction { [weak self] action in
             guard let self, let control = action.sender as? UIRefreshControl else { return }
@@ -101,9 +89,6 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
                 primaryAction: UIAction { [weak self] _ in self?.onClose?() }
             )
         }
-        installDataSource()
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
-        setNeedsUpdateProperties()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -122,19 +107,11 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
         probeTask = nil
     }
 
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
-
     override func updateProperties() {
-        super.updateProperties()
-        let themeID = ThemeRuntimeState.currentThemeID()
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
         // Read the node and the paired servers here so a change redraws.
         _ = (tailnet.state, tailnet.snapshot, coordinator.serverStore.servers)
         startProbesIfNeeded()
-        applySnapshot()
+        super.updateProperties()
     }
 
     // MARK: - Machines
@@ -206,13 +183,10 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
         probeRefresh += 1
     }
 
-    // MARK: - Snapshot
+    // MARK: - Rows
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
+    override func sections() -> [SettingsSectionModel<Section, Item>] {
         let state = tailnet.state
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.status])
         var statusItems: [Item] = [.status]
         if state == .running, tailnet.snapshot?.selfDNSName != nil { statusItems.append(.thisDevice) }
         switch state {
@@ -222,125 +196,129 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
         case .needsMachineAuth, .running: break
         case .failed: statusItems.append(.tryAgain)
         }
-        snapshot.appendItems(statusItems, toSection: .status)
-
+        var sections: [SettingsSectionModel<Section, Item>] = [SettingsSectionModel(.status, header: String(localized: "Tailscale"), footer: footer(.status), items: statusItems)]
         if state == .running {
-            snapshot.appendSections([.peers])
             let peers = visiblePeers
             var items: [Item] = []
             for peer in peers {
                 items.append(.peer(peer.id))
                 if pairingPeerID == peer.id, pairingWaitExpiresAt != nil { items.append(.pairingWait(peer.id)) }
             }
-            snapshot.appendItems(peers.isEmpty ? [.noPeers] : items, toSection: .peers)
+            sections.append(SettingsSectionModel(
+                .peers,
+                header: String(localized: "Online Machines"),
+                footer: footer(.peers),
+                items: peers.isEmpty ? [.noPeers] : items
+            ))
         }
-        snapshot.appendSections([.setup])
-        snapshot.appendItems([.setUpMachine], toSection: .setup)
+        sections.append(SettingsSectionModel(.setup, footer: footer(.setup), items: [.setUpMachine]))
         if state != .off {
-            snapshot.appendSections([.disconnect])
-            snapshot.appendItems([.disconnect], toSection: .disconnect)
+            sections.append(SettingsSectionModel(.disconnect, items: [.disconnect]))
         }
-        // Rows already shown are reconfigured in place, never reloaded, so
-        // VoiceOver focus stays on its row while probes and pairing update.
-        let shown = Set(dataSource.snapshot().itemIdentifiers)
-        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter(shown.contains))
-        dataSource.apply(snapshot, animatingDifferences: false)
-        SetupListSupplementaries.refresh(collectionView) { [weak self] view, kind, indexPath in
-            self?.configureSupplementary(view, kind: kind, at: indexPath)
+        return sections
+    }
+
+    /// Everything a row paints or captures, so a row redraws in place when a
+    /// probe, a pairing, or the node changes it, and VoiceOver keeps its focus.
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .status:
+            return AnyHashable(Self.statusLabel(tailnet.state))
+        case .thisDevice:
+            return AnyHashable(tailnet.snapshot?.selfDNSName ?? "")
+        case .peer(let id):
+            guard let peer = visiblePeers.first(where: { $0.id == id }) else { return AnyHashable("missing") }
+            return AnyHashable([
+                AnyHashable(peer.displayName),
+                AnyHashable(peer.dnsName),
+                AnyHashable(peer.tailscaleIPs),
+                AnyHashable(String(describing: status(of: peer))),
+                AnyHashable(pairingPeerID),
+                AnyHashable(pairingWaitExpiresAt == nil),
+                AnyHashable(tailnet.state == .running),
+            ])
+        case .pairingWait:
+            return AnyHashable(pairingWaitExpiresAt)
+        case .connect, .starting, .signIn, .waitingForLink, .tryAgain, .noPeers, .setUpMachine, .disconnect:
+            return AnyHashable(0)
         }
     }
 
     private var palette: ThemePalette { ThemeRuntimeState.currentPalette() }
 
-    private func installDataSource() {
-        let value = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            self?.configureValue(cell, item: item)
-        }
-        let action = UICollectionView.CellRegistration<SSHTerminalActionCell, Item> { [weak self] cell, _, item in
-            self?.configureAction(cell, item: item)
-        }
-        let row = UICollectionView.CellRegistration<SetupRowCell, Item> { [weak self] cell, _, item in
-            guard let self, let model = setupRow(item) else { return }
-            cell.configure(model)
-        }
-        let wait = UICollectionView.CellRegistration<PairingWaitRowCell, Item> { [weak self] cell, _, _ in
-            guard let self, let expiresAt = pairingWaitExpiresAt else { return }
-            cell.configure(
-                expiresAt: expiresAt, colors: ComposerThemeColors(palette: palette)
-            ) { [weak self] in self?.cancelPairing() }
-        }
-        let index = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            cell.configure(
-                title: String(localized: "Set Up a Mac or Linux Computer"),
-                systemImage: "laptopcomputer.and.arrow.down",
-                value: nil,
-                showsDisclosure: true,
-                titleColor: UIColor(palette.fg),
-                identifier: "tailnet.checkMachine"
-            ) { [weak self] in self?.openSetup(peer: nil) }
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, kind, indexPath in
-            self?.configureSupplementary(view, kind: kind, at: indexPath)
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, kind, indexPath in
-            self?.configureSupplementary(view, kind: kind, at: indexPath)
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            switch item {
-            case .status, .thisDevice:
-                collectionView.dequeueConfiguredReusableCell(using: value, for: indexPath, item: item)
-            case .connect, .signIn, .tryAgain, .disconnect:
-                collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
-            case .pairingWait:
-                collectionView.dequeueConfiguredReusableCell(using: wait, for: indexPath, item: item)
-            case .setUpMachine:
-                collectionView.dequeueConfiguredReusableCell(using: index, for: indexPath, item: item)
-            default:
-                collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            if kind == UICollectionView.elementKindSectionHeader {
-                return collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-            }
-            return collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+    private lazy var actionRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
+        self?.configureAction(cell, item: item)
+    }
+
+    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { cell, _, item in
+        switch item {
+        case .starting:
+            cell.configure(.loading(String(localized: "Starting\u{2026}")))
+        case .waitingForLink:
+            cell.configure(.loading(String(localized: "Waiting for sign-in link\u{2026}")))
+        default:
+            cell.configure(.message(String(localized: "No other machines are online.")))
         }
     }
 
-    private func configureSupplementary(_ view: UICollectionViewListCell, kind: String, at indexPath: IndexPath) {
-        let section = dataSource?.sectionIdentifier(for: indexPath.section)
-        var content: UIListContentConfiguration
-        if kind == UICollectionView.elementKindSectionHeader {
-            content = .header()
-            switch section {
-            case .status:
-                content.text = String(localized: "Tailscale")
-                content.image = UIImage(named: "tailscale")
-                content.imageProperties.maximumSize = CGSize(width: 16, height: 16)
-                content.imageProperties.tintColor = .secondaryLabel
-            case .peers:
-                content.text = String(localized: "Online Machines")
-            default:
-                content.text = nil
-            }
-        } else {
-            content = .footer()
-            content.textProperties.numberOfLines = 0
-            if let section {
-                content.text = footer(section)
-                if section == .status, case .failed = tailnet.state {
-                    content.textProperties.color = UIColor(palette.red)
-                }
-            }
-        }
-        view.contentConfiguration = content
+    private lazy var setupRowCell = UICollectionView.CellRegistration<SetupRowCell, Item> { [weak self] cell, _, item in
+        guard let self, let model = setupRow(item) else { return }
+        cell.configure(model)
     }
 
-    private func configureValue(_ cell: UICollectionViewListCell, item: Item) {
-        var content = UIListContentConfiguration.valueCell()
-        content.textProperties.color = UIColor(palette.fg)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+    private lazy var waitRow = UICollectionView.CellRegistration<PairingWaitRowCell, Item> { [weak self] cell, _, _ in
+        guard let self, let expiresAt = pairingWaitExpiresAt else { return }
+        cell.configure(
+            expiresAt: expiresAt, colors: ComposerThemeColors(palette: palette)
+        ) { [weak self] in self?.cancelPairing() }
+    }
+
+    private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
+        cell.configure(
+            title: String(localized: "Set Up a Mac or Linux Computer"),
+            systemImage: "laptopcomputer.and.arrow.down",
+            value: nil,
+            identifier: "tailnet.checkMachine"
+        ) { [weak self] in self?.openSetup(peer: nil) }
+    }
+
+    override func prepareRegistrations() {
+        _ = (actionRow, stateRow, setupRowCell, waitRow, indexRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .status, .thisDevice:
+            super.dequeue(item, at: indexPath)
+        case .connect, .signIn, .tryAgain, .disconnect:
+            collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
+        case .starting, .waitingForLink, .noPeers:
+            collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
+        case .pairingWait:
+            collectionView.dequeueConfiguredReusableCell(using: waitRow, for: indexPath, item: item)
+        case .setUpMachine:
+            collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
+        case .peer:
+            collectionView.dequeueConfiguredReusableCell(using: setupRowCell, for: indexPath, item: item)
+        }
+    }
+
+    override func decorate(header content: inout UIListContentConfiguration, section: Section) {
+        guard section == .status else { return }
+        content.image = UIImage(named: "tailscale")
+        content.imageProperties.maximumSize = CGSize(width: 16, height: 16)
+        content.imageProperties.tintColor = .secondaryLabel
+    }
+
+    override func decorate(footer content: inout UIListContentConfiguration, section: Section) {
+        if section == .status, case .failed = tailnet.state {
+            content.textProperties.color = SettingsStyle.current.destructive
+        }
+    }
+
+    /// The node's status and this device's name: read-only facts.
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        var content = content(.info)
         switch item {
         case .status:
             content.text = String(localized: "Status")
@@ -349,36 +327,54 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
         case .thisDevice:
             content.text = String(localized: "This Device")
             content.secondaryText = tailnet.snapshot?.selfDNSName
-            cell.accessibilityIdentifier = nil
         default:
             break
         }
         cell.contentConfiguration = content
     }
 
-    private func configureAction(_ cell: SSHTerminalActionCell, item: Item) {
-        let blue = UIColor(palette.blue)
+    /// Machine names and this device's name can be copied, as their text was
+    /// selectable before.
+    override func copyText(of item: Item) -> String? {
+        switch item {
+        case .thisDevice: tailnet.snapshot?.selfDNSName
+        case .peer(let id):
+            visiblePeers.first { $0.id == id }.map { $0.dnsName.isEmpty ? $0.tailscaleIPs.first ?? "" : $0.dnsName }
+        default: nil
+        }
+    }
+
+    private func configureAction(_ cell: SettingsActionRowCell, item: Item) {
         switch item {
         case .connect:
-            cell.configure(title: String(localized: "Connect to Tailscale"), identifier: "tailnet.connect", color: blue) { [weak self] in
+            cell.configure(title: String(localized: "Connect to Tailscale"), identifier: "tailnet.connect") { [weak self] in
                 self?.tailnet.connect()
             }
         case .signIn:
             cell.configure(
-                title: String(localized: "Sign In to Tailscale"), identifier: "tailnet.signIn", color: blue,
-                image: "person.badge.key"
+                title: String(localized: "Sign In to Tailscale"), systemImage: "person.badge.key", identifier: "tailnet.signIn"
             ) { [weak self] in
                 guard let self, case .needsLogin(let url?) = tailnet.state else { return }
                 InAppBrowserPresenter.present(url: url)
             }
         case .tryAgain:
-            cell.configure(title: String(localized: "Try Again"), identifier: "tailnet.tryAgain", color: blue) { [weak self] in
+            cell.configure(title: String(localized: "Try Again"), identifier: "tailnet.tryAgain") { [weak self] in
                 guard let self else { return }
                 Task { await self.tailnet.restart() }
             }
         case .disconnect:
-            cell.configure(title: String(localized: "Disconnect"), identifier: "tailnet.disconnect", color: UIColor(palette.red)) { [weak self] in
-                self?.confirmDisconnect()
+            cell.configure(
+                title: String(localized: "Disconnect"),
+                tint: .destructive,
+                identifier: "tailnet.disconnect",
+                confirmation: .init(
+                    title: String(localized: "Disconnect from Tailscale?"),
+                    message: String(localized: "Paired *.ts.net servers stop connecting until you connect again."),
+                    actionTitle: String(localized: "Disconnect")
+                )
+            ) { [weak self] in
+                guard let self else { return }
+                Task { await self.tailnet.disconnect() }
             }
         default:
             break
@@ -386,20 +382,8 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
     }
 
     private func setupRow(_ item: Item) -> SetupRow? {
-        let comment = UIColor(palette.comment)
-        switch item {
-        case .starting:
-            return SetupRow(leading: .spinner, title: String(localized: "Starting\u{2026}"), titleColor: comment)
-        case .waitingForLink:
-            return SetupRow(leading: .spinner, title: String(localized: "Waiting for sign-in link\u{2026}"), titleColor: comment)
-        case .noPeers:
-            return SetupRow(title: String(localized: "No other machines are online."), titleColor: comment)
-        case .peer(let id):
-            guard let peer = visiblePeers.first(where: { $0.id == id }) else { return nil }
-            return peerRow(peer)
-        default:
-            return nil
-        }
+        guard case .peer(let id) = item, let peer = visiblePeers.first(where: { $0.id == id }) else { return nil }
+        return peerRow(peer)
     }
 
     private func peerRow(_ peer: TailnetPeer) -> SetupRow {
@@ -474,25 +458,6 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
         guard let server = coordinator.serverStore.servers.first(where: { peer.hasHost($0.host) }),
               let root = HostFactory.root(near: self) else { return }
         ScreenNavigator.forUIKitScreen(self, root: root).push { ServerSettingsRootView(server: server) }
-    }
-
-    private func confirmDisconnect() {
-        let sheet = UIAlertController(
-            title: String(localized: "Disconnect from Tailscale?"),
-            message: String(localized: "Paired *.ts.net servers stop connecting until you connect again."),
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: String(localized: "Disconnect"), style: .destructive) { [weak self] _ in
-            guard let self else { return }
-            Task { await self.tailnet.disconnect() }
-        })
-        sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
-            popover.permittedArrowDirections = []
-        }
-        present(sheet, animated: true)
     }
 
     private func startPairing(with peer: TailnetPeer) {
@@ -576,35 +541,6 @@ final class TailnetSettingsViewController: UIViewController, UICollectionViewDel
         case .running: String(localized: "Connected")
         case .failed: String(localized: "Error")
         }
-    }
-
-    // MARK: - Selection and copy
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        false
-    }
-
-    /// Machine names and this device's name can be copied, as their text was
-    /// selectable before.
-    func collectionView(
-        _ collectionView: UICollectionView,
-        contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
-        point: CGPoint
-    ) -> UIContextMenuConfiguration? {
-        guard let indexPath = indexPaths.first, let item = dataSource?.itemIdentifier(for: indexPath) else { return nil }
-        let text: String?
-        switch item {
-        case .thisDevice: text = tailnet.snapshot?.selfDNSName
-        case .peer(let id):
-            text = visiblePeers.first { $0.id == id }.map { $0.dnsName.isEmpty ? $0.tailscaleIPs.first ?? "" : $0.dnsName }
-        default: text = nil
-        }
-        guard let text, !text.isEmpty else { return nil }
-        return UIContextMenuConfiguration(actionProvider: { _ in
-            UIMenu(children: [UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
-                UIPasteboard.general.string = text
-            }])
-        })
     }
 }
 

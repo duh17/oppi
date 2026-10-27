@@ -12,7 +12,7 @@ final class SettingsGeneralViewController: SettingsListViewController<SettingsGe
     private typealias Choice = (title: String, selected: Bool, action: () -> Void)
 
     init() {
-        super.init(title: String(localized: "General"), listIdentifier: "settings.general.list", footers: true)
+        super.init(title: String(localized: "General"), listIdentifier: "settings.general.list", scope: .device, footers: true)
     }
 
     override func sections() -> [SettingsSectionModel<Section, Item>] {
@@ -62,18 +62,15 @@ final class SettingsGeneralViewController: SettingsListViewController<SettingsGe
 
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
         guard item == .haptics else { return }
-        var content = UIListContentConfiguration.valueCell()
-        let title = String(localized: "Haptic Feedback")
-        content.text = title
-        cell.contentConfiguration = content
-        cell.accessories = [.settingsToggle(
-            AppPreferences.Interaction.isHapticFeedbackEnabled,
-            identifier: "settings.general.haptics",
-            label: title
+        toggleRow(
+            cell,
+            title: String(localized: "Haptic Feedback"),
+            isOn: AppPreferences.Interaction.isHapticFeedbackEnabled,
+            identifier: "settings.general.haptics"
         ) { [weak self] enabled in
             AppPreferences.Interaction.setHapticFeedbackEnabled(enabled)
             self?.setNeedsUpdateProperties()
-        }]
+        }
     }
 
     private func choiceRow(_ item: Item) -> (title: String, identifier: String, options: [Choice])? {

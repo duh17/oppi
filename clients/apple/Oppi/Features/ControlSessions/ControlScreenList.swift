@@ -50,7 +50,7 @@ enum ControlScreenList {
     }
 
     /// The list across the whole screen. Settings-style pages keep the
-    /// readable form width instead (`SSHTerminalSettingsList.pin`).
+    /// readable form width instead (`SettingsListStyle.pin`).
     static func pinFullWidth(_ collectionView: UICollectionView, in view: UIView) {
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(collectionView)

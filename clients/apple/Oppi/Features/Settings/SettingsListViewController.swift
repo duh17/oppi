@@ -3,25 +3,33 @@ import UIKit
 /// One section of a settings page: its rows, and the header and footer text
 /// the section shows. A page returns these from `sections()` and the base list
 /// owns the snapshot, the headings, and the redraw.
+///
+/// `scope` is where the section's settings are kept, when that differs from
+/// the page's own scope. The base puts one sentence about it in front of the
+/// footer, so a page that mixes scopes says which rows are which.
 struct SettingsSectionModel<Section: Hashable & Sendable, Item: Hashable & Sendable> {
     var id: Section
     var header: String?
     var footer: String?
+    var scope: SettingsScope?
     var items: [Item]
 
-    init(_ id: Section, header: String? = nil, footer: String? = nil, items: [Item]) {
+    init(_ id: Section, header: String? = nil, footer: String? = nil, scope: SettingsScope? = nil, items: [Item]) {
         self.id = id
         self.header = header
         self.footer = footer
+        self.scope = scope
         self.items = items
     }
 }
 
 /// The base of a settings page: a themed inset-grouped list with section
 /// headers and footers, rows redrawn only when their inputs change, and a
-/// refresh each time the page comes back on screen.
+/// refresh each time the page comes back on screen. The list's own background
+/// is clear, so the theme's `bg` shows behind the cards.
 ///
-/// A page subclasses it, names its `Section` and `Item` types, and overrides:
+/// A page subclasses it, names its `Section` and `Item` types, says its
+/// scope (where the page's settings are kept), and overrides:
 /// - `sections()`: the sections and rows now. It runs inside
 ///   `updateProperties()`, so every `@Observable` store it reads re-runs the
 ///   page when it changes. Preferences that are not observable call
@@ -30,35 +38,58 @@ struct SettingsSectionModel<Section: Hashable & Sendable, Item: Hashable & Senda
 /// - `inputs(of:)`: the values a row is drawn from. Only rows whose inputs
 ///   changed are reconfigured, so a pass triggered by an open pop-up menu or by
 ///   another row leaves that menu alone. The theme is added for every row.
-/// - `configure(_:item:)`: a plain list cell, or `dequeue(_:at:)` for pages
-///   with their own cell classes.
+/// - `configure(_:item:)`: a plain list cell (`content(_:)` fills its title in
+///   the theme's title color, `toggleRow` makes a switch row), or
+///   `dequeue(_:at:)` for pages with their own cell classes: the kit's
+///   `SettingsIndexRowCell`, `SettingsMenuRowCell`, `SettingsActionRowCell`,
+///   and `SettingsStateRowCell`.
 /// - `isSelectable(_:)` and `select(_:)`: the rows that act when tapped. A
 ///   selectable row carries the button trait, and VoiceOver activation selects
 ///   it, so touch and accessibility run the same `select(_:)`.
+/// - `copyText(of:)`: the text a long press on an info row copies.
+/// - `trailingSwipeActions(for:)`, `decorate(header:section:)`,
+///   `decorate(footer:section:)`: swipe actions, and an icon or tone on a
+///   section heading.
+///
+/// The kit is presentational: a page keeps its own data and saves it itself.
 @MainActor
 class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & Sendable>: UIViewController, UICollectionViewDelegate {
-    let collectionView: UICollectionView
+    private(set) lazy var collectionView: UICollectionView = {
+        var config = SettingsListStyle.layoutConfiguration(headers: showsHeaders, footers: showsFooters)
+        config.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
+            guard let self, let item = dataSource?.itemIdentifier(for: indexPath) else { return nil }
+            return trailingSwipeActions(for: item)
+        }
+        return UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
+    }()
     private(set) var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
+    /// Where the page's settings are kept. A section says its scope only when
+    /// it differs from this.
+    let pageScope: SettingsScope
+    private let showsHeaders: Bool
+    private let showsFooters: Bool
     private var appliedThemeID: ThemeID?
     private var changedRows = ChangedRows<Item>()
     private var models: [Section: SettingsSectionModel<Section, Item>] = [:]
 
     /// - Parameters:
     ///   - listIdentifier: the list's accessibility identifier, `settings.<page>.list`.
+    ///   - scope: where the page's settings are kept. Every page says it.
     ///   - headers: whether sections can show a header.
-    ///   - footers: whether sections can show a footer.
+    ///   - footers: whether sections can show a footer. A page with a section
+    ///     scope needs them, since the scope sentence is part of the footer.
     ///   - largeTitle: a page that roots its stack keeps the large title.
     init(
         title: String,
         listIdentifier: String,
+        scope: SettingsScope,
         headers: Bool = false,
         footers: Bool = false,
         largeTitle: Bool = false
     ) {
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        if headers { config.headerMode = .supplementary }
-        if footers { config.footerMode = .supplementary }
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
+        pageScope = scope
+        showsHeaders = headers
+        showsFooters = footers
         super.init(nibName: nil, bundle: nil)
         self.title = title
         navigationItem.largeTitleDisplayMode = largeTitle ? .always : .inline
@@ -100,12 +131,49 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     /// Runs when a selectable row is tapped or activated.
     func select(_ item: Item) {}
 
+    /// The text a long press on `item` copies: an info row's value. `nil`
+    /// leaves the row without a menu.
+    func copyText(of item: Item) -> String? { nil }
+
+    /// The swipe actions at a row's trailing edge.
+    func trailingSwipeActions(for item: Item) -> UISwipeActionsConfiguration? { nil }
+
+    /// Adjusts a section's header after the base filled its text: an icon.
+    func decorate(header content: inout UIListContentConfiguration, section: Section) {}
+
+    /// Adjusts a section's footer after the base filled its text: a tone.
+    func decorate(footer content: inout UIListContentConfiguration, section: Section) {}
+
+    // MARK: - Row helpers
+
+    /// A plain list row's content: the title in the theme's title color, and
+    /// the value in its value color. `.info` is a read-only fact.
+    func content(_ kind: SettingsStyle.Content) -> UIListContentConfiguration {
+        SettingsStyle.content(kind)
+    }
+
+    /// Makes `cell` a switch row: the title, and a trailing switch. `identifier`
+    /// is the switch's, which is what `app.switches[id]` finds.
+    func toggleRow(
+        _ cell: UICollectionViewListCell,
+        title: String,
+        isOn: Bool,
+        identifier: String? = nil,
+        isEnabled: Bool = true,
+        onChange: @escaping (Bool) -> Void
+    ) {
+        var content = content(.plain)
+        content.text = title
+        cell.contentConfiguration = content
+        cell.accessories = [.settingsToggle(isOn, identifier: identifier, label: title, isEnabled: isEnabled, onChange: onChange)]
+    }
+
     // MARK: - Lifecycle
 
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.delegate = self
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         setNeedsUpdateProperties()
@@ -125,7 +193,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         let themeID = ThemeRuntimeState.currentThemeID()
         if appliedThemeID != themeID {
             appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
         applySnapshot(sections(), themeID: themeID)
     }
@@ -134,7 +202,6 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
 
     private func applySnapshot(_ sections: [SettingsSectionModel<Section, Item>], themeID: ThemeID) {
         guard let dataSource else { return }
-        let previous = models
         models = Dictionary(uniqueKeysWithValues: sections.map { ($0.id, $0) })
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
         for section in sections {
@@ -147,17 +214,14 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
             AnyHashable([AnyHashable(themeID), inputs(of: item)])
         }
-        // Headings are not rows: a section whose header or footer text moved is
-        // reloaded so its supplementary view is configured again. Its rows are
-        // rebuilt by the reload, so they are not also reconfigured.
-        let retitled = sections.filter { section in
-            guard let old = previous[section.id] else { return false }
-            return old.header != section.header || old.footer != section.footer
-        }
-        let reloaded = Set(retitled.flatMap(\.items))
-        snapshot.reconfigureItems(changed.filter { shown.contains($0) && !reloaded.contains($0) })
-        snapshot.reloadSections(retitled.map(\.id))
+        snapshot.reconfigureItems(changed.filter(shown.contains))
         dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
+        // Headings are not rows, so a reconfigure does not reach them. They are
+        // redrawn in place: reloading the section would rebuild its rows and
+        // move VoiceOver focus off the one the person is on.
+        SetupListSupplementaries.refresh(collectionView) { [weak self] view, kind, indexPath in
+            self?.configureSupplementary(view, kind: kind, at: indexPath)
+        }
     }
 
     private lazy var plainCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
@@ -174,16 +238,11 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     private func installDataSource() {
         _ = plainCell
         prepareRegistrations()
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.model(at: indexPath)?.header
-            view.contentConfiguration = content
+        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, kind, indexPath in
+            self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.model(at: indexPath)?.footer
-            content.textProperties.numberOfLines = 0
-            view.contentConfiguration = content
+        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, kind, indexPath in
+            self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] _, indexPath, item in
             self?.dequeue(item, at: indexPath)
@@ -195,8 +254,23 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         }
     }
 
-    private func model(at indexPath: IndexPath) -> SettingsSectionModel<Section, Item>? {
-        dataSource?.sectionIdentifier(for: indexPath.section).flatMap { models[$0] }
+    private func configureSupplementary(_ view: UICollectionViewListCell, kind: String, at indexPath: IndexPath) {
+        guard let section = dataSource?.sectionIdentifier(for: indexPath.section), let model = models[section] else {
+            view.contentConfiguration = nil
+            return
+        }
+        if kind == UICollectionView.elementKindSectionHeader {
+            var content = UIListContentConfiguration.header()
+            content.text = model.header
+            decorate(header: &content, section: section)
+            view.contentConfiguration = content
+        } else {
+            var content = UIListContentConfiguration.footer()
+            content.text = SettingsScope.footer(model.footer, scope: model.scope, pageScope: pageScope)
+            content.textProperties.numberOfLines = 0
+            decorate(footer: &content, section: section)
+            view.contentConfiguration = content
+        }
     }
 
     // MARK: - UICollectionViewDelegate
@@ -209,5 +283,33 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         collectionView.deselectItem(at: indexPath, animated: true)
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
         select(item)
+    }
+
+    /// Long press on an info row copies its value.
+    func collectionView(
+        _ collectionView: UICollectionView,
+        contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard let indexPath = indexPaths.first,
+              let item = dataSource?.itemIdentifier(for: indexPath),
+              let text = copyText(of: item), !text.isEmpty else { return nil }
+        return UIContextMenuConfiguration(actionProvider: { _ in
+            UIMenu(children: [UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in
+                UIPasteboard.general.string = text
+            }])
+        })
+    }
+
+    /// A row dragged by its handle stays in its own section.
+    func collectionView(
+        _ collectionView: UICollectionView,
+        targetIndexPathForMoveOfItemFromOriginalIndexPath originalIndexPath: IndexPath,
+        atCurrentIndexPath currentIndexPath: IndexPath,
+        toProposedIndexPath proposedIndexPath: IndexPath
+    ) -> IndexPath {
+        guard proposedIndexPath.section != originalIndexPath.section else { return proposedIndexPath }
+        let count = collectionView.numberOfItems(inSection: originalIndexPath.section)
+        return IndexPath(item: max(0, count - 1), section: originalIndexPath.section)
     }
 }

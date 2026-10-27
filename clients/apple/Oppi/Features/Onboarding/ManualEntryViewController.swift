@@ -95,7 +95,7 @@ final class ManualEntryViewController: UIViewController, UICollectionViewDelegat
         super.viewDidLoad()
         collectionView.delegate = self
         collectionView.keyboardDismissMode = .interactive
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
         applySnapshot()
         updateConnectItem()
@@ -107,7 +107,7 @@ final class ManualEntryViewController: UIViewController, UICollectionViewDelegat
         let themeID = root.themeStore.activeThemeID
         guard lastThemeID != themeID else { return }
         lastThemeID = themeID
-        SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+        SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         if var snapshot = dataSource?.snapshot() {
             snapshot.reconfigureItems(snapshot.itemIdentifiers)
             dataSource?.apply(snapshot, animatingDifferences: false)

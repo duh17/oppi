@@ -130,13 +130,13 @@ UIKit owns every iOS view and all app structure (decided 2026-10-15). The target
 - `PlainRowButton`, `ChangedFileRow`: a whole-row button and a changed-file row (context bar and Git panel, commit detail).
 - `TerminalMirrorIndicatorUIView`: the pi-tui mirror mark (session rows, chat title).
 - `HostSwitcherModel`: the single owner of the server list, connection retry, and switching.
-- `ChangedRows`: reconfigure only the rows whose inputs changed, so an open menu survives a redraw.
-- `SettingsListViewController`, `SettingsIndexRowCell`: the base of a UIKit settings page (themed inset-grouped list, section model with header and footer text, `ChangedRows` redraws, refresh on return, tap and VoiceOver activation through one `select(_:)`) and the shared index row with an optional icon. `SettingsMenuRowCell` is a choice row whose whole row is a menu button. General, Storage & About, Appearance (`SettingsAppearanceViewController`), and the App Settings root use the base; `SettingsIndexRowCell` is also used by Workspace Settings and Tailscale; Chat, Editor, and Experiments still carry their own copy of the list code.
+- `ChangedRows` (`SettingsListStyle.swift`): reconfigure only the rows whose inputs changed, so an open menu survives a redraw.
+- The settings kit (`Features/Settings`; rules in [Settings pages](#settings-pages)): `SettingsListViewController` (the page base), `SettingsStyle`, `SettingsScope`, `SettingsListStyle`, and the row cells `SettingsIndexRowCell`, `SettingsMenuRowCell`, `SettingsActionRowCell`, `SettingsStateRowCell`, and `SettingsSegmentedRowCell`. The App Settings root, General, Appearance, Chat (and Top Bar), Editor (and Keyboard Bar), Experiments, Storage & About, Tailscale, Custom Themes, and workspace Skills use the base; Workspace Settings and the SSH lists still carry their own list code and use the kit's cells and `SettingsListStyle`.
 - `ThemeGalleryViewController`, `ThemeCardCell`: the theme gallery Appearance's Theme, Light Theme and Dark Theme rows push (`ThemeSlot` names which choice a row edits). Its own grid, not a list: one card per theme (`ThemeID.pickerThemes(matching:)`, Built-in then Imported), two columns in a wide container, drawn from `ThemeID.palette`, the palette the app paints with (built-ins are contrast-resolved by `ThemeContrast.resolve`; a custom theme keeps its JSON colors as written, and `CustomThemeStore.palette(name:)` does not adjust them). A card is one `SettingsRowButton` overlay (`settings.appearance.theme.<theme raw value>`) over decorative views, so a tap and VoiceOver activation choose the theme and the app re-themes with the gallery still open.
 - `SessionListCollection`, `SessionListBottomBar`: both session lists' collection view, rows, swipes, menus, refresh, search, and bottom bar.
 - `FloatingProgressPanel`: the floating progress panel (workspace list, review).
 - `WorkspaceQuickActionLauncher`: start a session for a quick action and push its chat (context bar, commit detail, review file).
-- `ServerCatalogServerRowCell`, `ServerCatalogStateCell`, `ServerCatalogServerMenu`: a server-global catalog list's selected-server row (passive, or one button that opens the server menu), its loading, empty, and failed states, and the one menu builder (every paired server with the shown one checked, then Usage; a choice asks for the server's lock, then `switchToServerReady`, then runs the screen's own `onSwitched`). Extensions and MCP Servers use them.
+- `ServerCatalogServerRowCell`, `ServerCatalogServerMenu`: a server-global catalog list's selected-server row (passive, or one button that opens the server menu), the one menu builder (every paired server with the shown one checked, then Usage; a choice asks for the server's lock, then `switchToServerReady`, then runs the screen's own `onSwitched`). Extensions and MCP Servers use them; their loading, empty, and failed states are `SettingsStateRowCell`.
 - `McpSignInPresenter`: presents the MCP sign-in sheet for `McpSignInOwner`'s attempt from whichever MCP screen is in the window (the list, or a server's detail that covers it), so one sheet is up and it closes with the owner.
 
 ### Remaining SwiftUI
@@ -197,6 +197,82 @@ New Mac views are AppKit by default. Existing SwiftUI Mac code stays until a sep
 A workspace's bar has its own Terminal item (`workspace.terminal.open`, beside Config in both shapes) and both entry points end at `SSHTerminalFolderEntry.open`, which needs the paired server's host and a folder it can resolve (an absolute path, or the server's `~` form, expanded on the host). It matches saved hosts with `SSHTerminalHostMatch` (case-insensitive, trailing dot ignored) and takes them in this order: an exact host name, then a bare short name matched against its FQDN; within one kind, a host whose Run on Connect command starts a multiplexer comes before one with no command, then one running anything else, then the first saved. It pushes `SSHTerminalFolderViewController` to connect, or pushes the Add Host form prefilled with the server's host and nothing invented for the username, which continues into the folder terminal once saved. Where the folder opens is the host's Run on Connect command's first word, matched by name (`SSHTerminalMultiplexerKind.detected(in:)`: `herdr`, `/Users/me/.local/bin/herdr`, `herdr --attach` are Herdr; `tmux`, `tmux new -A -s main` are tmux; anything else or nothing is no multiplexer, and the folder terminal is the plain login shell it always was). Two placements cover both, so a new multiplexer is one more case in the kind and one more type conforming to `SSHTerminalMultiplexer`, never a second copy of the flow: `.hostTerminal` reuses the host's own terminal — the one its Run on Connect command opened — and drives the multiplexer over that terminal's side exec channel (`HerdrMultiplexer`: read the host's `$HOME` and the folder's physical path (`pwd -P`) and `herdr api snapshot` in one side command, focus the workspace that already has a pane whose cwd is the folder in either spelling, else `herdr workspace create --cwd … --label … --focus`, or `herdr worktree open --path … --label … --focus` for a chat's git worktree); `.folderTerminal` starts a terminal of its own for the folder, whose command is the multiplexer's attach command (`TmuxMultiplexer`: `tmux new -A -s <session> -c <folder>`, the session named after the workspace and worktree plus a stable folder hash, with `.` and `:` — tmux target syntax — replaced by `-` and `#` doubled so tmux keeps it literal; the command enters the folder itself instead of passing `-c`, because tmux expands formats in its arguments and starts in the home folder when it cannot enter the one it was given). `SSHTerminalFolderEntry.prepare(session:profile:target:)` is the one place that turns a target and a profile into those three cases, and both the folder screen and the Add Host form go through it. Nothing is typed into a running program: a `.hostTerminal` open runs only CLI calls, and its refusal shows as a terminal notice while the person stays in the host's terminal. A Herdr focus moves the Herdr session's focus, so other clients attached to that session follow it. `SSHTerminalRegistry` keys terminals by `SSHTerminalIdentity` — `(profileID, folder)` — so a tmux folder terminal and the host's own terminal (login shell or Run on Connect) coexist, and editing or deleting the host still ends every terminal of that host, and so does the background grace. A `.hostTerminal` folder therefore lands in the host's existing terminal rather than a second one. `SSHTerminalConnectSession.folder` makes the remote command `SSHTerminalFolderCommand.command(folder:)`, or `folderTerminalCommand` when the multiplexer supplies one: `sh -c` with the script as one quoted word, which changes directory, reports a missing folder and exits non-zero instead of opening a shell elsewhere, then `exec`s the remote login shell so fish, zsh, and bash all work. The folder is never shell code: the *remote login shell* parses that word first, and fish reads `\'` inside single quotes as an escaped quote, so the word contains no `'`, `\'`, or `\\`. `SSHTerminalRemoteShell` owns that rule for every command the folder flow generates — the plain shell, the tmux attach, and Herdr's create and worktree calls: `octalEncoded` turns every byte of a value into `\NNN` and the inner `sh` rebuilds it with `printf` into a variable; surrounding whitespace is trimmed the way the server resolves a mount, so a folder ending in a newline opens the trimmed folder, and a sentinel byte plus `${p%x}` keeps command substitution from eating a trailing newline a caller might pass. The `~` form becomes `"$HOME"/"$(printf …)"`, and Herdr, whose CLI takes a path, gets the absolute path built from that same `$HOME`.
 
 Terminal colors come from the host's Ghostty config. `SSHTerminalColorLoader` (`Features/SSHTerminal/SSHTerminalColors.swift`) runs three bounded side commands from `SSHTerminalGhosttyRemote` (config files with one level of `config-file`, one theme file by name or path, the theme list), each one `SSHTerminalRemoteShell.word` with the theme name octal-encoded; `SSHTerminalGhosttyConfig` parses only the color keys on the device, with byte, line, and line-length caps, and the config's explicit values overlay the theme file's. The per-host choice (host theme, Oppi theme, or a named theme) and the last read live in `SSHTerminalColorStore` (`Core/Networking`), keyed by host id and kept out of `SSHTerminalProfile` so a color change never reconciles or closes an open terminal. The terminal view controller reads the choice from the store, seeds the loader from the cache so the first frame is already colored, and refreshes over the side channel on each connect and when the app's light/dark appearance changes; `SSHTerminalGridView.applyTheme(_:colors:)` (`Features/SSHTerminal/SSHTerminalSurface.swift`) hands the palette, default colors, and cursor to libghostty (`SSHTerminalEngine.setColors`) and the selection color to the selection overlay, so programs' OSC 4/10/11 changes still land on top.
+
+## Settings pages
+
+A UIKit settings page is built from the settings kit in `clients/apple/Oppi/Features/Settings`. The kit is presentational: a page keeps its own data, reads it in `sections()`, and saves it itself. The kit standardizes the look, the row kinds, the states, and where a setting is saved. It has no bound value sources and no generic save path. `scripts/uikit-structure-guard.ts` counts `SettingsListStyle.pin(` and `SettingsListStyle.applyTheme(` outside the base as a ratchet (`scripts/uikit-structure-baseline.json`): a settings list that pins and themes itself is a page that should subclass the base, and the count only goes down. A new settings page subclasses `SettingsListViewController` and calls neither.
+
+### The pieces
+
+- **`SettingsListViewController<Section, Item>`** (the page base): a themed inset-grouped list whose own background is clear, so the theme's `bg` shows behind the cards. It pins the list at the readable form width, repaints on a theme change, redraws only the rows whose `inputs(of:)` changed, refreshes when the page comes back on screen, and redraws section headers and footers in place. A page gives `title`, `listIdentifier` (`settings.<page>.list`), and `scope`, and overrides `sections()` (it runs inside `updateProperties()`, so every `@Observable` store it reads re-runs the page), `inputs(of:)`, `configure(_:item:)` or `dequeue(_:at:)`, `isSelectable(_:)`/`select(_:)`, and where needed `copyText(of:)`, `trailingSwipeActions(for:)`, and `decorate(header:section:)`/`decorate(footer:section:)`. Editing pages (reorder handles) set `collectionView.isEditing` and the data source's `reorderingHandlers` in `viewDidLoad()`; a drag stays inside its section.
+- **`SettingsStyle`** (`SettingsListStyle.swift`): the tokens a page draws with. Title is the theme `fg`, value is `comment`, accent is `blue`, destructive is `red`, warning is `orange`, page is `bg`, and the card is the system secondary grouped background. `content(_:)` on the base (and `SettingsStyle.content(_:)`) returns a prefilled `UIListContentConfiguration`: `.plain`, `.info`, or `.subtitle`.
+- **`SettingsScope`** and `SettingsSectionModel.scope` (below).
+- **`SettingsListStyle`**: `pin` and `applyTheme` (the base calls them; a list that is not on the base still does), `layoutConfiguration(headers:footers:)` (a clear-background list layout), the `settingsToggle` and `settingsPopUpMenu` cell accessories, and `ChangedRows`.
+
+### Row kinds
+
+Pick the row kind by what the row does, not by how it looks.
+
+| Kind | Use it for | Built with |
+|---|---|---|
+| Navigate | Opens another page. Title, optional accent symbol, optional value, chevron. A long value wraps. | `SettingsIndexRowCell` |
+| Choice | Picks one of a few values. The whole row is a menu button showing the current choice. A disabled row shows its choice and cannot open. | `SettingsMenuRowCell` |
+| Toggle | An on/off setting. | `toggleRow(_:title:isOn:identifier:onChange:)` on the base (a plain cell plus `.settingsToggle`) |
+| Action | Does something now: connect, copy, save, remove, delete. Accent or destructive tint, optional symbol, optional spinner while it runs, optional confirmation (an alert, or an action sheet that anchors to the row as a popover on iPad). | `SettingsActionRowCell` |
+| State | A list that is loading, empty, or failed: `.loading(text)`, `.message(text)`, `.failure(text, retry:)`. One style; "Retry" is the one retry label. | `SettingsStateRowCell` |
+| Info | A read-only fact. Long press copies its value through `copyText(of:)`. | `content(.info)` in a plain cell |
+
+`SettingsSegmentedRowCell` is the exception for a choice: use it only where the choice reshapes a live preview on the same page (Chat's Style and Work Strip). Every other choice is a menu row, whatever the number of options.
+
+The row cells that carry one control (index, menu, action, state) share one pattern: their own labels paint the row, an overlay `SettingsRowButton` is the row's only accessibility element and carries the identifier, `setTapAction` sets its action, and the cell forwards `accessibilityActivate`. A `contentConfiguration` cell cannot do this: XCUITest types it as a Cell, so `app.buttons[id]` would not find it. Peer and step rows of the Tailscale and SSH setup lists (`SetupRowCell`) keep their own vocabulary: several lines, a badge or a spinner, and an inline button.
+
+### One title colour
+
+A row title is the theme `fg`. A page never picks `.label`, `secondaryLabel`, or a one-off color for a title; use `content(_:)`, the kit cells (they read `SettingsStyle`), or `SettingsStyle.current.title`. A value is `comment`, an action is `blue` (or `red` when destructive), and a problem the person can still fix is `orange`.
+
+### Scope sentences
+
+`SettingsScope` says where a setting is kept:
+
+| Scope | Sentence a differing section shows |
+|---|---|
+| `device` | "Saved on this device." |
+| `server(name)` | "Applies to every device on <server>." |
+| `workspace(name)` | "Applies to this workspace." |
+| `deviceOnServer(name)` | "For this device, kept on <server>." |
+
+Every page declares its default scope in `init`. A section whose `scope:` differs from the page's gets that one sentence in front of its footer (`SettingsScope.footer(_:scope:pageScope:)`); a section with no `scope:`, or the page's own, shows only its footer. No badges or icons. Say a scope only where a page really mixes scopes; do not tag every section. A page that does needs `footers: true`. The sentence always says "this device", never "this iPhone" or "this iPad".
+
+### Saving
+
+- **A single control saves immediately.** A switch, a menu, or a segmented control writes its value when it changes; the page asks for a redraw (`setNeedsUpdateProperties()`) if the store is not observable.
+- **Save/Cancel drafts** only for fields that validate together (a host form, a workspace's details) or for heavy, visible saves. A draft page validates before it saves and shows why a save was refused.
+- **A server save** shows the new value disabled while it is in flight, reverts to the previous value with the reason if it fails, and reloads the server's value on a 409 conflict.
+- `RemoteSetting` (a value with `loading`, `saving`, `failed`, and `unavailable` states) and a `remoteRow` on the base arrive in slice 2 with Sessions and Auto-Name. Until then a page that saves to a server does it by hand to the same rules.
+
+### Identifiers
+
+Identifiers that exist stay as they are (`settings.chatStyle`, `settings.sessionRows`, and `settings.row.*` are pinned in UI tests). A new row's identifier is `settings.<page>.<row>`, `server.<page>.<row>`, or `workspace.<page>.<row>`. The identifier goes on the row's button (index, menu, action, state) or on the control (a switch, a segmented control), not on the cell.
+
+### Words
+
+One glossary for every settings string.
+
+| Thing | Use | Stop using |
+|---|---|---|
+| Paired Oppi server | server | "host", and "computer" outside setup |
+| Machine before pairing | computer (Set Up a Computer only) | |
+| SSH saved target | host (SSH only) | |
+| Network allow-list | Allowed Hosts | "host pattern" |
+| Oppi folder thing | workspace | "project" (except Pi project settings and Project Trust) |
+| This phone or iPad | this device | "this iPhone" |
+| Pi | only when naming Pi's own files, versions, or settings | Pi as a synonym for session or agent |
+| Model actor, run | agent, session | |
+| Skills, Extensions, MCP Servers | those names | "Tools list" |
+| Dictation phrases | Dictation Dictionary | bare "Dictionary" |
+| Terminal feature | SSH Terminal | "SSH Hosts" |
+| Device key | This Device's Key | "This Device's SSH Identity" |
+| Verbs | Remove = unpair from this device; Delete = destroy; Revoke = end a device's access; Forget = drop local trust only | "Forget This Workspace" for a server delete |
 
 ## Terminal tool output
 

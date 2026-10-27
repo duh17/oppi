@@ -38,7 +38,7 @@ final class ServerSkillsUITests: XCTestCase {
         XCTAssertTrue(waitFor(!release.exists), "Search must narrow the list")
         search.clearText()
         search.typeText("no-matching-skill")
-        XCTAssertTrue(app.staticTexts["No Results"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["skills.noResults"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["skills.row.deep-research"].exists)
         assertRunning()
     }

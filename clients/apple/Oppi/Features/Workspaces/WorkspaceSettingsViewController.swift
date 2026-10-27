@@ -134,6 +134,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
 
     private static func makeCollectionView() -> UICollectionView {
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        // Clear, so the theme's background shows behind the cards.
+        config.backgroundColor = .clear
         config.footerMode = .supplementary
         return UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
     }
@@ -162,7 +164,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         super.viewDidLoad()
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "workspace.edit.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         if #available(iOS 27.1, *) {
@@ -202,7 +204,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         let themeID = ThemeRuntimeState.currentThemeID()
         if appliedThemeID != themeID {
             appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
@@ -449,14 +451,11 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         }
         let index = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, item in
             guard let self else { return }
-            let palette = ThemeRuntimeState.currentPalette()
             let row = indexRow(item)
             cell.configure(
                 title: row.title,
                 systemImage: row.systemImage,
                 value: row.value,
-                showsDisclosure: true,
-                titleColor: UIColor(palette.fg),
                 identifier: row.identifier
             ) { [weak self] in self?.perform(item) }
         }
@@ -466,7 +465,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         let info = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             self?.configureInfo(cell, item: item)
         }
-        let action = UICollectionView.CellRegistration<SSHTerminalActionCell, Item> { [weak self] cell, _, item in
+        let action = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
             self?.configureAction(cell, item: item)
         }
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
@@ -593,15 +592,14 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         }
     }
 
-    private func configureAction(_ cell: SSHTerminalActionCell, item: Item) {
-        let palette = ThemeRuntimeState.currentPalette()
+    private func configureAction(_ cell: SettingsActionRowCell, item: Item) {
         cell.configure(
             title: String(localized: "Delete Workspace"),
+            systemImage: "trash",
+            tint: .destructive,
             identifier: "workspace.edit.delete",
-            color: UIColor(palette.red),
             // A queued write could otherwise land after the delete.
-            enabled: canDelete,
-            image: "trash"
+            isEnabled: canDelete
         ) { [weak self] in self?.perform(.delete) }
     }
 

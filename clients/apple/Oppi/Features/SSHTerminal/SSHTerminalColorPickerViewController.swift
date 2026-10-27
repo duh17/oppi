@@ -39,6 +39,8 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
         self.onSelect = onSelect
         themes = channel == nil ? .offline : .loading
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        // Clear, so the theme's background shows behind the cards.
+        config.backgroundColor = .clear
         config.footerMode = .supplementary
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
         super.init(nibName: nil, bundle: nil)
@@ -54,7 +56,7 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.delegate = self
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
         let search = UISearchController(searchResultsController: nil)
         search.searchResultsUpdater = self
@@ -74,7 +76,7 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
         let themeID = sshTerminalThemeID
         if lastThemeID != themeID {
             lastThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
             applySnapshot(reconfigure: true)
         }
     }

@@ -101,6 +101,8 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         self.onPaired = onPaired
         selection = initialPeer?.dialHost ?? ""
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        // Clear, so the theme's background shows behind the cards.
+        config.backgroundColor = .clear
         config.headerMode = .supplementary
         config.footerMode = .supplementary
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
@@ -148,7 +150,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         collectionView.delegate = self
         collectionView.keyboardDismissMode = .interactive
         collectionView.accessibilityIdentifier = "sshPreflight.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         tailnet.startIfEnabled()
@@ -172,7 +174,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         let themeID = ThemeRuntimeState.currentThemeID()
         if appliedThemeID != themeID {
             appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
         // Read here so a change to the online machines or the node redraws.
         _ = (tailnet.state, tailnet.onlinePeers)
@@ -345,7 +347,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
             self?.configureField(cell, item: item)
         }
-        let action = UICollectionView.CellRegistration<SSHTerminalActionCell, Item> { [weak self] cell, _, item in
+        let action = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
             self?.configureAction(cell, item: item)
         }
         let row = UICollectionView.CellRegistration<SetupRowCell, Item> { [weak self] cell, _, item in
@@ -354,6 +356,9 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         }
         let value = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             self?.configureValue(cell, item: item)
+        }
+        let machine = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+            self?.configureMachine(cell)
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, kind, indexPath in
             self?.configureSupplementary(view, kind: kind, at: indexPath)
@@ -367,7 +372,9 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
                 collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
             case .checkButton, .trustKey, .forgetKey, .pair, .install, .installCancel, .installRetry:
                 collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
-            case .machine, .signedInAs:
+            case .machine:
+                collectionView.dequeueConfiguredReusableCell(using: machine, for: indexPath, item: item)
+            case .signedInAs:
                 collectionView.dequeueConfiguredReusableCell(using: value, for: indexPath, item: item)
             default:
                 collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
@@ -423,42 +430,47 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    private func configureAction(_ cell: SSHTerminalActionCell, item: Item) {
-        let blue = UIColor(palette.blue)
-        let red = UIColor(palette.red)
+    private func configureAction(_ cell: SettingsActionRowCell, item: Item) {
         switch item {
         case .checkButton:
-            cell.configure(title: String(localized: "Check"), identifier: "sshPreflight.check", color: blue, enabled: canCheck) { [weak self] in
+            cell.configure(title: String(localized: "Check"), identifier: "sshPreflight.check", isEnabled: canCheck) { [weak self] in
                 self?.check()
             }
         case .trustKey:
-            cell.configure(title: String(localized: "Trust Key and Check"), identifier: "sshPreflight.trustKey", color: blue, enabled: canCheck) { [weak self] in
+            cell.configure(title: String(localized: "Trust Key and Check"), identifier: "sshPreflight.trustKey", isEnabled: canCheck) { [weak self] in
                 guard let self, case .failed(.unknownHostKey(let key), let address) = phase else { return }
                 check(trusting: key, address: address)
             }
         case .forgetKey:
-            cell.configure(title: String(localized: "Forget Trusted Key"), identifier: "sshPreflight.forgetKey", color: red) { [weak self] in
-                self?.confirmForget()
-            }
+            cell.configure(
+                title: String(localized: "Forget Trusted Key"),
+                tint: .destructive,
+                identifier: "sshPreflight.forgetKey",
+                confirmation: .init(
+                    title: String(localized: "Forget the trusted host key?"),
+                    message: String(localized: "Independently verify why the host key changed before forgetting it."),
+                    actionTitle: String(localized: "Forget Trusted Key")
+                )
+            ) { [weak self] in self?.forgetKey() }
         case .pair:
-            cell.configure(title: String(localized: "Pair"), identifier: "sshPreflight.pair", color: blue, enabled: !isBusy && canSignIn) { [weak self] in
+            cell.configure(title: String(localized: "Pair"), identifier: "sshPreflight.pair", isEnabled: !isBusy && canSignIn) { [weak self] in
                 guard let self, let (_, address) = currentReport else { return }
                 pair(address: address)
             }
         case .install:
             cell.configure(
-                title: String(localized: "Install & Start Oppi"), identifier: "sshPreflight.install", color: blue,
-                enabled: !isBusy && canSignIn, image: "arrow.down.circle"
+                title: String(localized: "Install & Start Oppi"), systemImage: "arrow.down.circle", identifier: "sshPreflight.install",
+                isEnabled: !isBusy && canSignIn
             ) { [weak self] in
                 guard let self, let (_, address) = currentReport else { return }
                 startInstall(address: address)
             }
         case .installCancel:
-            cell.configure(title: String(localized: "Cancel Setup"), identifier: "sshPreflight.install.cancel", color: red) { [weak self] in
+            cell.configure(title: String(localized: "Cancel Setup"), tint: .destructive, identifier: "sshPreflight.install.cancel") { [weak self] in
                 self?.cancel()
             }
         case .installRetry:
-            cell.configure(title: String(localized: "Try Again"), identifier: "sshPreflight.install.retry", color: blue, enabled: !isBusy && canSignIn) { [weak self] in
+            cell.configure(title: String(localized: "Try Again"), identifier: "sshPreflight.install.retry", isEnabled: !isBusy && canSignIn) { [weak self] in
                 guard let self, let (_, address) = currentReport else { return }
                 startInstall(address: address)
             }
@@ -467,26 +479,25 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         }
     }
 
+    private func configureMachine(_ cell: SettingsMenuRowCell) {
+        let peers = setupPeers
+        var options: [(title: String, selected: Bool, action: () -> Void)] = peers.map { peer in
+            (peer.displayName, selection == peer.dialHost, { [weak self] in self?.selection = peer.dialHost })
+        }
+        // A preselected machine that left the online list stays choosable.
+        if selection != Self.manualSelection, !selection.isEmpty, !peers.contains(where: { $0.dialHost == selection }) {
+            options.insert((selection, true, {}), at: 0)
+        }
+        options.append((String(localized: "Other\u{2026}"), selection == Self.manualSelection, { [weak self] in
+            self?.selection = Self.manualSelection
+        }))
+        cell.configure(title: String(localized: "Computer"), identifier: "sshPreflight.machine", isEnabled: !isBusy, options: options)
+    }
+
     private func configureValue(_ cell: UICollectionViewListCell, item: Item) {
-        var content = UIListContentConfiguration.valueCell()
-        content.textProperties.color = UIColor(palette.fg)
-        content.secondaryTextProperties.color = UIColor(palette.comment)
+        var content = SettingsStyle.content(.info)
         cell.accessories = []
         switch item {
-        case .machine:
-            content.text = String(localized: "Computer")
-            let peers = setupPeers
-            var options: [(title: String, selected: Bool, action: () -> Void)] = peers.map { peer in
-                (peer.displayName, selection == peer.dialHost, { [weak self] in self?.selection = peer.dialHost })
-            }
-            // A preselected machine that left the online list stays choosable.
-            if selection != Self.manualSelection, !selection.isEmpty, !peers.contains(where: { $0.dialHost == selection }) {
-                options.insert((selection, true, {}), at: 0)
-            }
-            options.append((String(localized: "Other\u{2026}"), selection == Self.manualSelection, { [weak self] in
-                self?.selection = Self.manualSelection
-            }))
-            cell.accessories = [.settingsPopUpMenu(identifier: "sshPreflight.machine", isEnabled: !isBusy, options: options)]
         case .signedInAs:
             content.text = String(localized: "Signed In As")
             content.secondaryText = currentReport?.0.user
@@ -944,28 +955,14 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    private func confirmForget() {
+    private func forgetKey() {
         guard case .failed(_, let address) = phase else { return }
-        let sheet = UIAlertController(
-            title: String(localized: "Forget the trusted host key?"),
-            message: String(localized: "Independently verify why the host key changed before forgetting it."),
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: String(localized: "Forget Trusted Key"), style: .destructive) { [weak self] _ in
-            do {
-                try SSHKnownHosts().forget(host: address.host, port: address.port)
-                self?.phase = .idle
-            } catch {
-                self?.phase = .failed(.handshakeFailed(error.localizedDescription), address)
-            }
-        })
-        sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
-            popover.permittedArrowDirections = []
+        do {
+            try SSHKnownHosts().forget(host: address.host, port: address.port)
+            phase = .idle
+        } catch {
+            phase = .failed(.handshakeFailed(error.localizedDescription), address)
         }
-        present(sheet, animated: true)
     }
 
     /// `ssh-ed25519` → `ed25519`, `ecdsa-sha2-nistp256` → `ecdsa`.

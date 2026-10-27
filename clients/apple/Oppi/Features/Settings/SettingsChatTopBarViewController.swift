@@ -8,87 +8,27 @@ import UIKit
 /// The order holds every action, hidden ones included, so a hidden button
 /// returns to the place it left. Terminal keeps its row in every chat: a chat
 /// without a workspace folder only leaves it out of that chat's bar.
-final class SettingsChatTopBarViewController: UIViewController, UICollectionViewDelegate {
-    private let defaults: UserDefaults
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, ChatTopBarAction>?
-    private var appliedThemeID: ThemeID?
-    private var changedRows = ChangedRows<ChatTopBarAction>()
+final class SettingsChatTopBarViewController: SettingsListViewController<SettingsChatTopBarViewController.Section, ChatTopBarAction> {
+    enum Section: Hashable, Sendable { case buttons }
 
-    private enum Section: Hashable { case buttons }
+    private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.footerMode = .supplementary
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
-        title = String(localized: "Top Bar")
-        navigationItem.largeTitleDisplayMode = .inline
+        super.init(
+            title: String(localized: "Top Bar"),
+            listIdentifier: "settings.chat.topBar.list",
+            scope: .device,
+            footers: true
+        )
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         // The chat's "Chat tools are in the menu" hint points here; reaching
         // the page is done.
         FeatureEducationTips.markTopBarMoreToolsFound()
-        collectionView.delegate = self
         collectionView.isEditing = true
-        collectionView.accessibilityIdentifier = "settings.chat.topBar.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
-        installDataSource()
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
-        setNeedsUpdateProperties()
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
-
-    override func updateProperties() {
-        super.updateProperties()
-        let themeID = ThemeRuntimeState.currentThemeID()
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
-        applySnapshot()
-    }
-
-    private var layout: ChatTopBarLayout { AppPreferences.ChatTopBar.layout(in: defaults) }
-
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, ChatTopBarAction>()
-        snapshot.appendSections([.buttons])
-        snapshot.appendItems(layout.order, toSection: .buttons)
-        let shown = Set(dataSource.snapshot().itemIdentifiers)
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { AnyHashable(layout.isShown($0)) }
-        snapshot.reconfigureItems(changed.filter(shown.contains))
-        dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
-    }
-
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<UICollectionViewListCell, ChatTopBarAction> { [weak self] cell, _, action in
-            self?.configure(cell, action: action)
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, _ in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.footer
-            content.textProperties.numberOfLines = 0
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, action in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: action)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
         dataSource?.reorderingHandlers.canReorderItem = { _ in true }
         dataSource?.reorderingHandlers.didReorder = { [weak self] transaction in
             guard let self else { return }
@@ -101,8 +41,22 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
         }
     }
 
-    private func configure(_ cell: UICollectionViewListCell, action: ChatTopBarAction) {
-        var content = cell.defaultContentConfiguration()
+    private var layout: ChatTopBarLayout { AppPreferences.ChatTopBar.layout(in: defaults) }
+
+    override func sections() -> [SettingsSectionModel<Section, ChatTopBarAction>] {
+        [SettingsSectionModel(
+            .buttons,
+            footer: String(localized: "A button turned off moves into the … menu, which always stays last. Terminal also needs a workspace folder on the server."),
+            items: layout.order
+        )]
+    }
+
+    override func inputs(of action: ChatTopBarAction) -> AnyHashable {
+        AnyHashable(layout.isShown(action))
+    }
+
+    override func configure(_ cell: UICollectionViewListCell, item action: ChatTopBarAction) {
+        var content = content(.plain)
         content.text = action.label
         content.image = action.image(textStyle: .body)
         // The symbol column's width for every row, so a label beside the Git
@@ -121,15 +75,5 @@ final class SettingsChatTopBarViewController: UIViewController, UICollectionView
             // Always editing, so the handle is part of the row, not a mode.
             .reorder(displayed: .always),
         ]
-    }
-
-    private var footer: String {
-        String(localized: "A button turned off moves into the … menu, which always stays last. Terminal also needs a workspace folder on the server.")
-    }
-
-    /// Rows are switched and dragged, never selected: editing mode stays on for
-    /// the reorder handles, and a selected row would read as a choice.
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        false
     }
 }

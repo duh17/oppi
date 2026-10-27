@@ -3,44 +3,30 @@ import UIKit
 /// Settings > Chat: the busy animation, the chat style and its work strip,
 /// the Top Bar page, and Quick Comments. Values are
 /// `AppPreferences.ChatDisplay` / `.ChatTopBar`, which open chats observe, so a
-/// change reaches them without reopening the chat.
-final class SettingsChatViewController: UIViewController, UICollectionViewDelegate {
-    private let defaults: UserDefaults
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var appliedThemeID: ThemeID?
-    private var changedRows = ChangedRows<Item>()
-
-    private enum Section: Hashable { case busy, style, topBar, comments }
-    private enum Item: Hashable {
+/// change reaches them without reopening the chat. Everything here is saved on
+/// this device.
+final class SettingsChatViewController: SettingsListViewController<SettingsChatViewController.Section, SettingsChatViewController.Item> {
+    enum Section: Hashable, Sendable { case busy, style, topBar, comments }
+    enum Item: Hashable, Sendable {
         case spinnerStyle, spinnerPreview
         case chatStyle, workStripStyle, workStripPreview, conversationPreview
         case topBar
         case quickComments
     }
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.headerMode = .supplementary
-        config.footerMode = .supplementary
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
-        title = String(localized: "Chat")
-        navigationItem.largeTitleDisplayMode = .inline
+    init() {
+        super.init(
+            title: String(localized: "Chat"),
+            listIdentifier: "settings.chat.list",
+            scope: .device,
+            headers: true,
+            footers: true
+        )
         navigationItem.backBarButtonItem = UIBarButtonItem(title: String(localized: "Chat"))
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "settings.chat.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
-        installDataSource()
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         // The Top Bar page is pushed above this one and writes the layout; the
         // Top Bar row's summary has to follow it while this page is behind.
         NotificationCenter.default.addObserver(
@@ -49,28 +35,63 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
             name: AppPreferences.ChatTopBar.didChangeNotification,
             object: nil
         )
-        setNeedsUpdateProperties()
     }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
 
     @objc private func topBarDidChange() { setNeedsUpdateProperties() }
 
-    override func updateProperties() {
-        super.updateProperties()
-        let themeID = ThemeRuntimeState.currentThemeID()
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
+    private var chatStyle: AppPreferences.ChatDisplay.Style { AppPreferences.ChatDisplay.style }
+    private var topBarLayout: ChatTopBarLayout { AppPreferences.ChatTopBar.layout }
+
+    /// Which buttons the Top Bar page has on, in the bar's order.
+    private var topBarSummary: String {
+        let labels = topBarLayout.order.filter(topBarLayout.isShown).map(\.label)
+        return labels.isEmpty
+            ? String(localized: "Only the … menu")
+            : labels.joined(separator: ", ")
+    }
+
+    // MARK: - Rows
+
+    override func sections() -> [SettingsSectionModel<Section, Item>] {
         // Read every value so any change re-runs this pass.
         _ = (AppPreferences.Appearance.spinnerStyle, AppPreferences.ChatDisplay.style)
         _ = (AppPreferences.ChatDisplay.workStripStyle, AppPreferences.ChatTopBar.layout)
-        applySnapshot()
+        var style: [Item] = [.chatStyle]
+        switch chatStyle {
+        case .full: break
+        case .compact: style.append(contentsOf: [.workStripStyle, .workStripPreview])
+        case .chat: style.append(.conversationPreview)
+        }
+        return [
+            SettingsSectionModel(
+                .busy,
+                footer: String(localized: "The spinner shown while a turn is running."),
+                items: [.spinnerStyle, .spinnerPreview]
+            ),
+            SettingsSectionModel(.style, header: String(localized: "Style"), footer: Self.styleFooter(chatStyle), items: style),
+            SettingsSectionModel(
+                .topBar,
+                footer: String(localized: "The buttons a chat shows beside the session title. A button turned off moves into the … menu."),
+                items: [.topBar]
+            ),
+            SettingsSectionModel(
+                .comments,
+                footer: String(localized: "Edit the quick comments shown after selecting text and choosing Comment."),
+                items: [.quickComments]
+            ),
+        ]
+    }
+
+    /// The preference values a row is drawn from.
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .spinnerStyle, .spinnerPreview: AnyHashable(AppPreferences.Appearance.spinnerStyle.rawValue)
+        case .chatStyle: AnyHashable(chatStyle.rawValue)
+        case .workStripStyle, .workStripPreview: AnyHashable(AppPreferences.ChatDisplay.workStripStyle.rawValue)
+        case .conversationPreview: AnyHashable(chatStyle.rawValue)
+        case .topBar: AnyHashable(topBarLayout)
+        case .quickComments: AnyHashable("")
+        }
     }
 
     /// Two steps in nine seconds, so the conversation pill reads like a real
@@ -87,121 +108,6 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
         intervalEndedAt: Date(timeIntervalSince1970: 9)
     )
 
-    private var chatStyle: AppPreferences.ChatDisplay.Style { AppPreferences.ChatDisplay.style }
-    private var topBarLayout: ChatTopBarLayout { AppPreferences.ChatTopBar.layout }
-
-    /// Which buttons the Top Bar page has on, in the bar's order.
-    private var topBarSummary: String {
-        let labels = topBarLayout.order.filter(topBarLayout.isShown).map(\.label)
-        return labels.isEmpty
-            ? String(localized: "Only the … menu")
-            : labels.joined(separator: ", ")
-    }
-
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.busy, .style, .topBar, .comments])
-        snapshot.appendItems([.spinnerStyle, .spinnerPreview], toSection: .busy)
-        var style: [Item] = [.chatStyle]
-        switch chatStyle {
-        case .full: break
-        case .compact: style.append(contentsOf: [.workStripStyle, .workStripPreview])
-        case .chat: style.append(.conversationPreview)
-        }
-        snapshot.appendItems(style, toSection: .style)
-        snapshot.appendItems([.topBar], toSection: .topBar)
-        snapshot.appendItems([.quickComments], toSection: .comments)
-        let themeID = ThemeRuntimeState.currentThemeID()
-        let shown = Set(dataSource.snapshot().itemIdentifiers)
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
-            AnyHashable([AnyHashable(themeID), inputs(of: item)])
-        }
-        snapshot.reconfigureItems(changed.filter(shown.contains))
-        dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
-    }
-
-    /// The preference values a row is drawn from.
-    private func inputs(of item: Item) -> AnyHashable {
-        switch item {
-        case .spinnerStyle, .spinnerPreview: AnyHashable(AppPreferences.Appearance.spinnerStyle.rawValue)
-        case .chatStyle: AnyHashable(chatStyle.rawValue)
-        case .workStripStyle, .workStripPreview: AnyHashable(AppPreferences.ChatDisplay.workStripStyle.rawValue)
-        case .conversationPreview: AnyHashable(chatStyle.rawValue)
-        case .topBar: AnyHashable(topBarLayout)
-        case .quickComments: AnyHashable("")
-        }
-    }
-
-    private func installDataSource() {
-        let menu = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
-            self?.configureMenuRow(cell, item: item)
-        }
-        let segmented = UICollectionView.CellRegistration<SettingsSegmentedRowCell, Item> { [weak self] cell, _, item in
-            self?.configureSegmentedRow(cell, item: item)
-        }
-        let preview = UICollectionView.CellRegistration<SettingsWorkPreviewCell, Item> { [weak self] cell, _, item in
-            self?.configurePreview(cell, item: item)
-        }
-        let action = UICollectionView.CellRegistration<SettingsButtonRowCell, Item> { [weak self] cell, _, item in
-            self?.configureButtonRow(cell, item: item)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.section(at: indexPath).flatMap(Self.header)
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.section(at: indexPath).flatMap { self?.footer($0) }
-            content.textProperties.numberOfLines = 0
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            switch item {
-            case .chatStyle, .workStripStyle:
-                collectionView.dequeueConfiguredReusableCell(using: segmented, for: indexPath, item: item)
-            case .spinnerPreview, .workStripPreview, .conversationPreview:
-                collectionView.dequeueConfiguredReusableCell(using: preview, for: indexPath, item: item)
-            case .quickComments, .topBar:
-                collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
-            default:
-                collectionView.dequeueConfiguredReusableCell(using: menu, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
-    }
-
-    private func section(at indexPath: IndexPath) -> Section? {
-        dataSource?.sectionIdentifier(for: indexPath.section)
-    }
-
-    private static func header(_ section: Section) -> String? {
-        switch section {
-        case .busy: nil
-        case .style: String(localized: "Style")
-        case .topBar: nil
-        case .comments: nil
-        }
-    }
-
-    private func footer(_ section: Section) -> String? {
-        switch section {
-        case .busy:
-            String(localized: "The spinner shown while a turn is running.")
-        case .style:
-            Self.styleFooter(chatStyle)
-        case .topBar:
-            String(localized: "The buttons a chat shows beside the session title. A button turned off moves into the … menu.")
-        case .comments:
-            String(localized: "Edit the quick comments shown after selecting text and choosing Comment.")
-        }
-    }
-
     /// What the chat style does, written for the style that is selected.
     static func styleFooter(_ style: AppPreferences.ChatDisplay.Style) -> String {
         switch style {
@@ -216,40 +122,71 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
 
     // MARK: - Cells
 
-    /// The spinner and the style: a title and a pop-up menu of the choices,
-    /// like the rest of Settings.
-    private func configureMenuRow(_ cell: UICollectionViewListCell, item: Item) {
-        var content = UIListContentConfiguration.valueCell()
-        cell.contentConfiguration = nil
-        cell.accessories = []
-        cell.accessibilityIdentifier = nil
+    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { cell, _, _ in
+        cell.configure(
+            title: String(localized: "Busy Animation"),
+            identifier: "settings.spinnerStyle",
+            options: SpinnerStyle.allCases.map { style in
+                (style.displayName, style == AppPreferences.Appearance.spinnerStyle, { [weak self] in
+                    AppPreferences.Appearance.setSpinnerStyle(style)
+                    self?.setNeedsUpdateProperties()
+                })
+            }
+        )
+    }
+
+    private lazy var segmentedRow = UICollectionView.CellRegistration<SettingsSegmentedRowCell, Item> { [weak self] cell, _, item in
+        self?.configureSegmentedRow(cell, item: item)
+    }
+
+    private lazy var previewRow = UICollectionView.CellRegistration<SettingsWorkPreviewCell, Item> { [weak self] cell, _, item in
+        self?.configurePreview(cell, item: item)
+    }
+
+    private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        switch item {
+        case .topBar:
+            cell.configure(
+                title: String(localized: "Top Bar"),
+                systemImage: nil,
+                value: topBarSummary,
+                identifier: "settings.chat.topBar"
+            ) { [weak self] in self?.openTopBarSettings() }
+        default:
+            cell.configure(
+                title: String(localized: "Quick Comments"),
+                systemImage: nil,
+                value: nil,
+                identifier: "settings.chat.quickComments"
+            ) { [weak self] in self?.openQuickComments() }
+        }
+    }
+
+    override func prepareRegistrations() {
+        _ = (menuRow, segmentedRow, previewRow, indexRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
         case .spinnerStyle:
-            content.text = String(localized: "Busy Animation")
-            cell.accessories = [.settingsPopUpMenu(
-                identifier: "settings.spinnerStyle",
-                options: SpinnerStyle.allCases.map { style in
-                    (style.displayName, style == AppPreferences.Appearance.spinnerStyle, { [weak self] in
-                        AppPreferences.Appearance.setSpinnerStyle(style)
-                        self?.setNeedsUpdateProperties()
-                    })
-                }
-            )]
-        default:
-            break
+            collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
+        case .chatStyle, .workStripStyle:
+            collectionView.dequeueConfiguredReusableCell(using: segmentedRow, for: indexPath, item: item)
+        case .spinnerPreview, .workStripPreview, .conversationPreview:
+            collectionView.dequeueConfiguredReusableCell(using: previewRow, for: indexPath, item: item)
+        case .topBar, .quickComments:
+            collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
         }
-        cell.contentConfiguration = content
     }
 
     private func configureSegmentedRow(_ cell: SettingsSegmentedRowCell, item: Item) {
-        let palette = ThemeRuntimeState.currentPalette()
         switch item {
         case .chatStyle:
             cell.configure(
                 title: String(localized: "Style"),
                 identifier: "settings.chatStyle",
-                options: AppPreferences.ChatDisplay.Style.allCases.map { ($0.label, $0 == chatStyle) },
-                textColor: UIColor(palette.fg)
+                options: AppPreferences.ChatDisplay.Style.allCases.map { ($0.label, $0 == chatStyle) }
             ) { [weak self] index in
                 let style = AppPreferences.ChatDisplay.Style.allCases[index]
                 AppPreferences.ChatDisplay.setStyle(style)
@@ -260,8 +197,7 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
             cell.configure(
                 title: String(localized: "Work Strip"),
                 identifier: "settings.workStripStyle",
-                options: AppPreferences.ChatDisplay.WorkStripStyle.allCases.map { ($0.label, $0 == current) },
-                textColor: UIColor(palette.fg)
+                options: AppPreferences.ChatDisplay.WorkStripStyle.allCases.map { ($0.label, $0 == current) }
             ) { [weak self] index in
                 let style = AppPreferences.ChatDisplay.WorkStripStyle.allCases[index]
                 AppPreferences.ChatDisplay.setWorkStripStyle(style)
@@ -275,17 +211,17 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
     /// The real work strip and conversation pill, so the preview cannot drift
     /// from the timeline's geometry.
     private func configurePreview(_ cell: SettingsWorkPreviewCell, item: Item) {
-        let palette = ThemeRuntimeState.currentPalette()
+        let value = SettingsStyle.current.value
         switch item {
         case .spinnerPreview:
-            cell.configureSpinner(labelColor: UIColor(palette.comment))
+            cell.configureSpinner(labelColor: value)
         case .workStripPreview:
             cell.configureWorkLine(
                 WorkStripPreviewCard.sampleWorkLine,
                 style: AppPreferences.ChatDisplay.workStripStyle,
                 caption: String(localized: "Live Preview"),
                 symbol: "rectangle.compress.vertical",
-                labelColor: UIColor(palette.comment)
+                labelColor: value
             )
         case .conversationPreview:
             cell.configureWorkLine(
@@ -293,30 +229,8 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
                 chromeStyle: .conversation,
                 caption: String(localized: "Preview"),
                 symbol: "bubble.left.and.text.bubble.right",
-                labelColor: UIColor(palette.comment)
+                labelColor: value
             )
-        default:
-            break
-        }
-    }
-
-    private func configureButtonRow(_ cell: SettingsButtonRowCell, item: Item) {
-        let palette = ThemeRuntimeState.currentPalette()
-        switch item {
-        case .topBar:
-            cell.configure(
-                title: String(localized: "Top Bar"),
-                value: topBarSummary,
-                valueColor: UIColor(palette.comment),
-                identifier: "settings.chat.topBar",
-                color: UIColor(palette.fg)
-            ) { [weak self] in self?.openTopBarSettings() }
-        case .quickComments:
-            cell.configure(
-                title: String(localized: "Quick Comments"),
-                identifier: "settings.chat.quickComments",
-                color: UIColor(palette.fg)
-            ) { [weak self] in self?.openQuickComments() }
         default:
             break
         }
@@ -336,32 +250,12 @@ final class SettingsChatViewController: UIViewController, UICollectionViewDelega
             from: self
         )
     }
-
-    /// The two rows that push a page select like rows, so the whole row and its
-    /// chevron take the tap; a segmented or pop-up row keeps its control's own
-    /// touches and does not select.
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        switch dataSource?.itemIdentifier(for: indexPath) {
-        case .topBar, .quickComments: true
-        default: false
-        }
-    }
-
-    /// The same owner action the row's button runs, so a tap on the chevron and
-    /// a tap on the title cannot diverge.
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        switch dataSource?.itemIdentifier(for: indexPath) {
-        case .topBar: openTopBarSettings()
-        case .quickComments: openQuickComments()
-        default: break
-        }
-    }
 }
 
 /// A settings row with a title and a segmented control. The control carries the
 /// settings identifier, so `app.segmentedControls["settings.chatStyle"]` finds
-/// the same control the old SwiftUI picker was.
+/// the same control the old SwiftUI picker was. Only for a choice that reshapes
+/// a live preview on the same page; every other choice is a `SettingsMenuRowCell`.
 final class SettingsSegmentedRowCell: UICollectionViewListCell {
     private let titleLabel = UILabel()
     private let control = UISegmentedControl()
@@ -399,12 +293,11 @@ final class SettingsSegmentedRowCell: UICollectionViewListCell {
         title: String,
         identifier: String,
         options: [(title: String, selected: Bool)],
-        textColor: UIColor,
         onChange: @escaping (Int) -> Void
     ) {
         self.onChange = onChange
         titleLabel.text = title
-        titleLabel.textColor = textColor
+        titleLabel.textColor = SettingsStyle.current.title
         control.accessibilityIdentifier = identifier
         if control.numberOfSegments != options.count {
             control.removeAllSegments()
@@ -419,74 +312,6 @@ final class SettingsSegmentedRowCell: UICollectionViewListCell {
         if let selected = options.firstIndex(where: \.selected) {
             control.selectedSegmentIndex = selected
         }
-    }
-}
-
-/// A settings row that is a real UIButton, so a tap, a VoiceOver activation,
-/// and `app.buttons[id]` all reach the same row. A disclosure chevron says it
-/// pushes a page.
-final class SettingsButtonRowCell: UICollectionViewListCell {
-    private let button = UIButton(type: .system)
-    private var tapAction: UIAction?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.contentHorizontalAlignment = .leading
-        contentView.addSubview(button)
-        NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            button.topAnchor.constraint(equalTo: contentView.topAnchor),
-            button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-        ])
-        accessibilityElements = [button]
-        accessories = [.disclosureIndicator()]
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    /// `value` is a second line under the title, for a row that summarizes what
-    /// its page holds. It reads in `valueColor`, the theme's secondary text
-    /// color, so the title stays the row's one strong line.
-    func configure(
-        title: String,
-        value: String? = nil,
-        valueColor: UIColor = .secondaryLabel,
-        identifier: String,
-        color: UIColor,
-        action: @escaping () -> Void
-    ) {
-        var configuration = UIButton.Configuration.plain()
-        configuration.title = title
-        configuration.subtitle = value
-        configuration.titleAlignment = .leading
-        configuration.baseForegroundColor = color
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0)
-        configuration.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-            var outgoing = incoming
-            outgoing.foregroundColor = valueColor
-            return outgoing
-        }
-        button.configuration = configuration
-        button.accessibilityIdentifier = identifier
-        button.accessibilityValue = value
-        if let tapAction { button.removeAction(tapAction, for: .touchUpInside) }
-        let tap = UIAction { _ in action() }
-        tapAction = tap
-        button.addAction(tap, for: .touchUpInside)
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        if let tapAction {
-            button.removeAction(tapAction, for: .touchUpInside)
-            self.tapAction = nil
-        }
-        button.accessibilityIdentifier = nil
-        button.accessibilityValue = nil
     }
 }
 

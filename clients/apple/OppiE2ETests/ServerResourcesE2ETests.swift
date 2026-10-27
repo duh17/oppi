@@ -21,7 +21,7 @@ final class ServerResourcesE2ETests: E2ETestCase {
         XCTAssertTrue(search.waitForExistence(timeout: 5), "Skills search field did not render")
         search.tap()
         search.typeText("no-matching-e2e-skill")
-        XCTAssertTrue(app.staticTexts["No Results"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["skills.noResults"].waitForExistence(timeout: 5))
         try saveLabScreenshot(name: "iphone-server-resources-skills-no-results-e2e")
     }
 
@@ -34,7 +34,7 @@ final class ServerResourcesE2ETests: E2ETestCase {
         XCTAssertTrue(app.navigationBars["Extensions"].waitForExistence(timeout: 10))
         assertServerScope()
         XCTAssertTrue(
-            app.staticTexts["No Pi Extensions Found"].waitForExistence(timeout: 15),
+            app.staticTexts["extensions.noPi"].waitForExistence(timeout: 15),
             "The server's empty extension catalog did not load"
         )
         XCTAssertTrue(app.searchFields["Search extensions"].exists)

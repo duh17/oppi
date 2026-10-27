@@ -90,7 +90,7 @@ final class ThemeGalleryViewController: UIViewController {
         super.viewDidLoad()
         collectionView.accessibilityIdentifier = "settings.appearance.gallery"
         collectionView.allowsSelection = false
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         setNeedsUpdateProperties()
@@ -103,7 +103,7 @@ final class ThemeGalleryViewController: UIViewController {
         let appThemeID = ThemeRuntimeState.currentThemeID()
         if appliedAppThemeID != appThemeID {
             appliedAppThemeID = appThemeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: appThemeID)
+            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: appThemeID)
         }
         // Reading the store here re-runs this pass on a choice made anywhere,
         // including the tap on a card.

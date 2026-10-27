@@ -107,7 +107,7 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
         )
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "skills.detail.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
     }
 

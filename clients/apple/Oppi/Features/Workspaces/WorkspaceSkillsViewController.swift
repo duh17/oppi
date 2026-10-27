@@ -35,6 +35,7 @@ final class WorkspaceSkillsViewController: SettingsListViewController<
         super.init(
             title: String(localized: "Skills"),
             listIdentifier: "workspace.edit.skills.list",
+            scope: .workspace(model.workspace.name),
             footers: true
         )
         traitOverrides.appRootEnvironment = root
@@ -113,42 +114,28 @@ final class WorkspaceSkillsViewController: SettingsListViewController<
         configureSkill(cell, skill: skill)
     }
 
+    /// Loading, empty, and the inline error: read-only rows.
+    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        switch item {
+        case .loading:
+            cell.configure(.loading(String(localized: "Loading skills\u{2026}")))
+        case .error:
+            cell.configure(.failure(model.skillsError ?? "", retry: nil), identifier: "workspace.edit.skills.error")
+        default:
+            cell.configure(.message(String(localized: "No Pi skills discovered for this folder yet.")))
+        }
+    }
+
     override func prepareRegistrations() {
-        _ = skillRow
+        _ = (skillRow, stateRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         if case .skill = item {
             return collectionView.dequeueConfiguredReusableCell(using: skillRow, for: indexPath, item: item)
         }
-        return super.dequeue(item, at: indexPath)
-    }
-
-    override func configure(_ cell: UICollectionViewListCell, item: Item) {
-        configureMessage(cell, item: item)
-    }
-
-    /// Loading, empty, and the inline error: read-only rows.
-    private func configureMessage(_ cell: UICollectionViewListCell, item: Item) {
-        let palette = ThemeRuntimeState.currentPalette()
-        var content = UIListContentConfiguration.cell()
-        content.textProperties.numberOfLines = 0
-        cell.isAccessibilityElement = true
-        switch item {
-        case .loading:
-            content.text = String(localized: "Loading skills\u{2026}")
-            content.textProperties.color = UIColor(palette.comment)
-        case .error:
-            content.text = model.skillsError
-            content.textProperties.font = .preferredFont(forTextStyle: .caption2)
-            content.textProperties.color = UIColor(palette.orange)
-            cell.accessibilityIdentifier = "workspace.edit.skills.error"
-        default:
-            content.text = String(localized: "No Pi skills discovered for this folder yet.")
-            content.textProperties.color = UIColor(palette.comment)
-        }
-        cell.accessibilityLabel = content.text
-        cell.contentConfiguration = content
+        return collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
     }
 
     private func configureSkill(_ cell: WorkspaceSkillRowCell, skill: SkillInfo) {

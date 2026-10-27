@@ -50,6 +50,8 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         portText = String(stored.port)
         colorChoice = SSHTerminalColorStore().choice(for: stored.id)
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        // Clear, so the theme's background shows behind the cards.
+        config.backgroundColor = .clear
         config.headerMode = .supplementary
         config.footerMode = .supplementary
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
@@ -71,7 +73,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         super.viewDidLoad()
         collectionView.delegate = self
         collectionView.keyboardDismissMode = .interactive
-        SSHTerminalSettingsList.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
         chrome = SSHTerminalConnectChrome(
             host: self,
@@ -115,7 +117,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         let themeID = sshTerminalThemeID
         if lastThemeID != themeID {
             lastThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
+            SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
         applySnapshot()
         updateConnectBarItem()
@@ -136,8 +138,20 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
             self?.configureField(cell, item: item)
         }
-        let action = UICollectionView.CellRegistration<SSHTerminalActionCell, Item> { [weak self] cell, _, item in
+        let action = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
             self?.configureAction(cell, item: item)
+        }
+        let menu = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+            self?.configureAuthentication(cell)
+        }
+        let index = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
+            guard let self else { return }
+            cell.configure(
+                title: "Terminal Colors",
+                systemImage: nil,
+                value: colorSummary,
+                identifier: "sshTerminal.colors"
+            ) { [weak self] in self?.presentColorPicker() }
         }
         let list = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
             self?.configureList(cell, item: item)
@@ -157,7 +171,11 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             switch item {
             case .host, .port, .username, .startup, .sudoPassword:
                 collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            case .authentication, .colors, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword:
+            case .authentication:
+                collectionView.dequeueConfiguredReusableCell(using: menu, for: indexPath, item: item)
+            case .colors:
+                collectionView.dequeueConfiguredReusableCell(using: index, for: indexPath, item: item)
+            case .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword:
                 collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
             default:
                 collectionView.dequeueConfiguredReusableCell(using: list, for: indexPath, item: item)
@@ -224,90 +242,63 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         }
     }
 
-    private func configureAction(_ cell: SSHTerminalActionCell, item: Item) {
-        let palette = sshTerminalThemeID.palette
+    private func configureAuthentication(_ cell: SettingsMenuRowCell) {
+        cell.configure(
+            title: "Sign In",
+            identifier: "sshTerminal.authentication",
+            isEnabled: !session.connecting,
+            options: [
+                ("Password", profile.authentication == .password, { [weak self] in
+                    self?.profile.authentication = .password
+                    self?.loadIdentityIfSelected()
+                }),
+                ("This Device’s Key", profile.authentication == .deviceKey, { [weak self] in
+                    self?.profile.authentication = .deviceKey
+                    self?.loadIdentityIfSelected()
+                }),
+            ]
+        )
+    }
+
+    private func configureAction(_ cell: SettingsActionRowCell, item: Item) {
         switch item {
-        case .authentication:
-            cell.configure(
-                title: "Sign In",
-                identifier: "sshTerminal.authentication",
-                color: UIColor(palette.fg),
-                enabled: !session.connecting,
-                subtitle: profile.authentication == .password ? "Password" : "This Device’s Key",
-                menu: UIMenu(title: "Sign In", children: [
-                    UIAction(
-                        title: "Password",
-                        state: profile.authentication == .password ? .on : .off
-                    ) { [weak self] _ in
-                        self?.profile.authentication = .password
-                        self?.loadIdentityIfSelected()
-                    },
-                    UIAction(
-                        title: "This Device’s Key",
-                        state: profile.authentication == .deviceKey ? .on : .off
-                    ) { [weak self] _ in
-                        self?.profile.authentication = .deviceKey
-                        self?.loadIdentityIfSelected()
-                    },
-                ])
-            )
-            cell.accessories = [.disclosureIndicator()]
         case .removeSudoPassword:
             cell.configure(
                 title: "Remove Saved Sudo Password",
+                tint: .destructive,
                 identifier: "sshTerminal.removeSudoPassword",
-                color: UIColor(palette.red),
-                enabled: !session.connecting,
-                action: { [weak self] in self?.removeSavedSudoPassword() }
-            )
-        case .colors:
-            cell.configure(
-                title: "Terminal Colors",
-                identifier: "sshTerminal.colors",
-                color: UIColor(palette.fg),
-                subtitle: colorSummary,
-                action: { [weak self] in self?.presentColorPicker() }
-            )
-            cell.accessories = [.disclosureIndicator()]
+                isEnabled: !session.connecting
+            ) { [weak self] in self?.removeSavedSudoPassword() }
         case .copyKey:
             cell.configure(
                 title: copied ? "Copied Public Key" : "Copy Public Key",
-                identifier: "sshTerminal.copyKey",
-                color: UIColor(palette.blue),
-                image: copied ? "checkmark" : "doc.on.doc",
-                action: { [weak self] in self?.copyPublicKey() }
-            )
+                systemImage: copied ? "checkmark" : "doc.on.doc",
+                identifier: "sshTerminal.copyKey"
+            ) { [weak self] in self?.copyPublicKey() }
         case .replaceKey:
             cell.configure(
                 title: "Device passcode changed — create a new key",
                 identifier: "sshTerminal.replaceKey",
-                color: UIColor(palette.blue),
-                enabled: !session.connecting,
-                action: { [weak self] in self?.loadIdentityIfSelected(createReplacement: true) }
-            )
+                isEnabled: !session.connecting
+            ) { [weak self] in self?.loadIdentityIfSelected(createReplacement: true) }
         case .connect:
             cell.configure(
                 title: "Connect",
                 identifier: "sshTerminal.connect.list",
-                color: UIColor(palette.blue),
-                enabled: canConnect && !session.connecting,
-                action: { [weak self] in self?.connect() }
-            )
+                isEnabled: canConnect && !session.connecting
+            ) { [weak self] in self?.connect() }
         case .saveHost:
             cell.configure(
                 title: "Save Host",
                 identifier: "sshTerminal.saveHost",
-                color: UIColor(palette.blue),
-                enabled: canConnect && !session.connecting,
-                action: { [weak self] in self?.saveHost() }
-            )
+                isEnabled: canConnect && !session.connecting
+            ) { [weak self] in self?.saveHost() }
         case .deleteHost:
             cell.configure(
                 title: "Delete Host",
-                identifier: "sshTerminal.deleteHost",
-                color: UIColor(palette.red),
-                action: { [weak self] in self?.confirmDelete() }
-            )
+                tint: .destructive,
+                identifier: "sshTerminal.deleteHost"
+            ) { [weak self] in self?.confirmDelete() }
         default:
             break
         }
@@ -321,15 +312,6 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         content.textProperties.color = UIColor(palette.fg)
         content.secondaryTextProperties.color = UIColor(palette.comment)
         switch item {
-        case .authentication:
-            content = UIListContentConfiguration.valueCell()
-            content.text = "Sign In"
-            content.textProperties.color = UIColor(palette.fg)
-            content.secondaryText = profile.authentication == .password ? "Password" : "This Device’s Key"
-            content.secondaryTextProperties.color = UIColor(palette.comment)
-            cell.accessories = [.disclosureIndicator()]
-            cell.accessibilityIdentifier = "sshTerminal.authentication"
-            cell.accessibilityTraits.insert(.button)
         case .savePassword:
             content = UIListContentConfiguration.valueCell()
             content.text = "Save Password"
@@ -479,8 +461,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }
         switch item {
-        case .authentication, .colors, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .removeSudoPassword,
-             .trustUnknown, .trustMismatch:
+        case .trustUnknown, .trustMismatch:
             return true
         default:
             return false
@@ -491,50 +472,11 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         collectionView.deselectItem(at: indexPath, animated: true)
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
         switch item {
-        case .authentication:
-            guard !session.connecting else { return }
-            presentAuthenticationPicker()
-        case .colors:
-            presentColorPicker()
-        case .copyKey:
-            copyPublicKey()
-        case .replaceKey:
-            guard !session.connecting else { return }
-            loadIdentityIfSelected(createReplacement: true)
-        case .connect:
-            connect()
-        case .saveHost:
-            saveHost()
-        case .deleteHost:
-            confirmDelete()
-        case .removeSudoPassword:
-            removeSavedSudoPassword()
         case .trustUnknown, .trustMismatch:
             chrome?.reopenTrust()
         default:
             break
         }
-    }
-
-    private func presentAuthenticationPicker() {
-        let sheet = UIAlertController(title: "Sign In", message: nil, preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "Password", style: .default) { [weak self] _ in
-            self?.profile.authentication = .password
-            self?.loadIdentityIfSelected()
-            self?.applySnapshot()
-        })
-        sheet.addAction(UIAlertAction(title: "This Device’s Key", style: .default) { [weak self] _ in
-            self?.profile.authentication = .deviceKey
-            self?.loadIdentityIfSelected()
-            self?.applySnapshot()
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
-            popover.permittedArrowDirections = []
-        }
-        present(sheet, animated: true)
     }
 
     /// What the host's last read found, or what was chosen.
