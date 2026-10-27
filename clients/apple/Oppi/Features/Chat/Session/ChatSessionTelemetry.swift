@@ -31,7 +31,7 @@ enum ChatSessionTelemetry {
             return (AppCacheLoad(durationMs: Double(durationMs), hit: hit, events: eventCount), nil)
 
         case .reducerLoad(let durationMs, let source, let eventCount, let itemCount):
-            guard let loadSource = TelemetryTag.LoadSource(rawValue: source) else { return nil }
+            guard let loadSource = TelemetryTag.LoadSource(rawValue: source.rawValue) else { return nil }
             return (
                 AppReducerLoad(
                     durationMs: Double(durationMs),
@@ -43,18 +43,18 @@ enum ChatSessionTelemetry {
             )
 
         case .catchUp(let durationMs, let result):
-            guard let result = AppCatchup.Result(rawValue: result) else { return nil }
+            guard let result = AppCatchup.Result(rawValue: result.rawValue) else { return nil }
             return (AppCatchup(durationMs: Double(durationMs), result: result), nil)
 
         case .sessionLoad(let durationMs, let workspaceId, let path, let itemCount):
-            guard let loadPath = AppSessionLoad.LoadPath(rawValue: path) else { return nil }
+            guard let loadPath = AppSessionLoad.LoadPath(rawValue: path.rawValue) else { return nil }
             return (
                 AppSessionLoad(durationMs: Double(durationMs), items: itemCount, loadPath: loadPath),
                 workspaceId
             )
 
         case .freshContentLag(let durationMs, let workspaceId, let reason, let cached, let transport):
-            guard let reason = AppFreshContentLag.Reason(rawValue: reason) else { return nil }
+            guard let reason = AppFreshContentLag.Reason(rawValue: reason.rawValue) else { return nil }
             return (
                 AppFreshContentLag(
                     durationMs: Double(durationMs),

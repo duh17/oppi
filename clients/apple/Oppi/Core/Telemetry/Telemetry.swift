@@ -21,12 +21,17 @@ enum Telemetry {
         workspaceId: String? = nil,
         timestampMs: Int64 = Date.nowMs()
     ) {
+        // The generated policy reads the struct's typed members, so a dropped
+        // event (most cell configures and applies) costs no dictionary,
+        // sanitizing, or string building.
         guard event.passesEmitPolicy else { return }
+        let fields = event.fieldValues
         // One non-finite field fails JSON encoding for the whole upload batch.
-        guard event.fieldValues.values.allSatisfy(\.isFinite) else { return }
+        guard fields.values.allSatisfy(\.isFinite) else { return }
 
         let payload = TelemetryEventPayload(
             event,
+            fields: fields,
             ts: timestampMs,
             sessionId: Self.cleanID(sessionId),
             workspaceId: Self.cleanID(workspaceId)

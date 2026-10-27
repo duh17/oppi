@@ -23,7 +23,7 @@ import {
   NAME_TAG_PUNCTUATION,
   TAG_DEFS,
   fieldSpec,
-  type EmitRule,
+  type EventDef,
   type FieldUnit,
   type TagDef,
 } from "../src/telemetry/catalog.ts";
@@ -191,21 +191,55 @@ function globalTagEnum(key: string, def: TagDef): string {
   return out;
 }
 
-function emitRuleLiteral(rule: EmitRule): string {
-  const where = rule.where
-    ? `[${Object.entries(rule.where)
-        .map(([key, values]) => `${swiftString(key)}: [${values.map(swiftString).join(", ")}]`)
-        .join(", ")}]`
-    : "[:]";
-  const min = rule.min === undefined ? "nil" : swiftNumber(rule.min);
-  const max = rule.max === undefined ? "nil" : swiftNumber(rule.max);
-  return `TelemetryEmitRule(field: ${swiftString(rule.field)}, min: ${min}, max: ${max}, matching: ${where})`;
+/**
+ * `passesEmitPolicy` for one event: the catalog's emit rules as comparisons on
+ * the struct's own typed members, so the drop decision needs no dictionary,
+ * sanitizing, or string building. A rule whose field is absent does not apply;
+ * a `where` tag that is absent does not match.
+ */
+function emitPolicyBody(def: EventDef, members: Map<string, TagMember>): string {
+  const rules = def.emit ?? [];
+  if (rules.length === 0) return "        true\n";
+  let out = "";
+  for (const rule of rules) {
+    const raw = def.fields[rule.field];
+    if (raw === undefined) throw new Error(`emit rule field ${rule.field} is not declared`);
+    const spec = fieldSpec(raw);
+    const name = identifier(rule.field);
+    const optional = spec.optional === true;
+    const conditions: string[] = [];
+    if (optional) conditions.push(`let ${name}`);
+    for (const [key, values] of Object.entries(rule.where ?? {})) {
+      const tag = members.get(key);
+      if (!tag) throw new Error(`emit rule tag ${key} is not declared`);
+      const expr = tag.enumLike ? `${tag.name}${tag.optional ? "?" : ""}.rawValue` : tag.name;
+      conditions.push(
+        values.length === 1
+          ? `${expr} == ${swiftString(values[0]!)}`
+          : `[${values.map(swiftString).join(", ")}].contains(${tag.optional ? `${expr} ?? ""` : expr})`,
+      );
+    }
+    const value = fieldSwiftType(spec.unit) === "Double" ? name : `Double(${name})`;
+    const bounds: string[] = [];
+    if (rule.min !== undefined) bounds.push(`${value} < ${swiftNumber(rule.min)}`);
+    if (rule.max !== undefined) bounds.push(`${value} >= ${swiftNumber(rule.max)}`);
+    conditions.push(bounds.length === 1 ? bounds[0]! : `${bounds.join(" || ")}`);
+    out += `        if ${conditions.join(", ")} { return false }\n`;
+  }
+  return `${out}        return true\n`;
 }
 
 interface Member {
   name: string;
   type: string;
   optional: boolean;
+}
+
+/** A tag member as the emit policy reads it: enum-like members compare by raw value. */
+interface TagMember {
+  name: string;
+  optional: boolean;
+  enumLike: boolean;
 }
 
 function eventStruct(eventName: string): string {
@@ -215,6 +249,7 @@ function eventStruct(eventName: string): string {
   const members: Member[] = [];
   const fieldLines: string[] = [];
   const tagLines: string[] = [];
+  const tagMembers = new Map<string, TagMember>();
 
   for (const [key, raw] of Object.entries(def.fields)) {
     const spec = fieldSpec(raw);
@@ -250,6 +285,7 @@ function eventStruct(eventName: string): string {
     }
     const optional = use.required !== true;
     members.push({ name, type, optional });
+    tagMembers.set(key, { name, optional, enumLike: tagDef.kind !== "name" });
     if (optional) {
       tagLines.push(`        if let ${name} { values[${swiftString(key)}] = ${valueExpr(name)} }`);
     } else {
@@ -260,11 +296,6 @@ function eventStruct(eventName: string): string {
   let out = docComment(def.description, "");
   out += `struct ${structName}: TelemetryEvent {\n`;
   out += `    static let name = ${swiftString(eventName)}\n`;
-  const rules = def.emit ?? [];
-  out +=
-    rules.length === 0
-      ? `    static let emitRules: [TelemetryEmitRule] = []\n`
-      : `    static let emitRules: [TelemetryEmitRule] = [\n${rules.map((rule) => `        ${emitRuleLiteral(rule)},\n`).join("")}    ]\n`;
   if (nested.length > 0) out += `\n${nested.join("\n")}`;
   if (members.length > 0) {
     out += "\n";
@@ -293,7 +324,7 @@ function eventStruct(eventName: string): string {
   } else {
     out += `        var values: [String: Double] = [:]\n${fieldLines.join("\n")}\n        return values\n`;
   }
-  out += `    }\n\n    var tagValues: [String: String] {\n`;
+  out += `    }\n\n    var passesEmitPolicy: Bool {\n${emitPolicyBody(def, tagMembers)}    }\n\n    var tagValues: [String: String] {\n`;
   if (tagLines.length === 0) {
     out += `        [:]\n`;
   } else {
@@ -322,55 +353,26 @@ import Foundation
 /// wire \`fields\` and \`tags\`; the server validates both against the catalog.
 protocol TelemetryEvent: Sendable {
     static var name: String { get }
-    /// Bounds outside which the event is not recorded. Ingest applies them too.
-    static var emitRules: [TelemetryEmitRule] { get }
+    /// False when the catalog emit policy drops this event. Generated per event
+    /// from the struct's typed members, so a dropped event costs no allocation.
+    var passesEmitPolicy: Bool { get }
     var fieldValues: [String: Double] { get }
     var tagValues: [String: String] { get }
 }
 
-extension TelemetryEvent {
-    /// False when the catalog emit policy drops this event.
-    var passesEmitPolicy: Bool {
-        TelemetryEmitRule.allows(Self.emitRules, fields: fieldValues, tags: tagValues)
-    }
-}
-
-/// Drop the event when \`field\` is present and outside \`[min, max)\`. A rule
-/// applies only when every \`matching\` tag has one of the listed values.
-struct TelemetryEmitRule: Sendable {
-    let field: String
-    let min: Double?
-    let max: Double?
-    let matching: [String: [String]]
-
-    static func allows(
-        _ rules: [Self],
-        fields: [String: Double],
-        tags: [String: String]
-    ) -> Bool {
-        for rule in rules {
-            guard let value = fields[rule.field] else { continue }
-            let applies = rule.matching.allSatisfy { key, values in
-                tags[key].map(values.contains) ?? false
-            }
-            guard applies else { continue }
-            if let min = rule.min, value < min { return false }
-            if let max = rule.max, value >= max { return false }
-        }
-        return true
-    }
-}
-
 /// Open-but-bounded tag values (tool, model, screen, …) as the server stores
-/// them: ASCII letters, digits, and \`${NAME_TAG_PUNCTUATION}\`, 1 to ${NAME_TAG_MAX_LENGTH} characters;
-/// anything else becomes \`${NAME_TAG_FALLBACK}\`.
+/// them: ASCII letters, digits, and \`${NAME_TAG_PUNCTUATION}\`, 1 to ${NAME_TAG_MAX_LENGTH} characters, and
+/// nothing shaped like a URL, host, address, or path. Anything else becomes
+/// \`${NAME_TAG_FALLBACK}\`. The server applies the same rules (\`looksLikeLocation\`).
 enum TelemetryName {
     static let fallback = ${swiftString(NAME_TAG_FALLBACK)}
+
+    private static let privateHostSuffixes = [".local", ".lan", ".internal", ".localdomain", ".ts.net", ".home.arpa"]
 
     static func sanitize(_ value: String) -> String {
         let bytes = value.utf8
         guard (1...${NAME_TAG_MAX_LENGTH}).contains(bytes.count), bytes.allSatisfy(isAllowed) else { return fallback }
-        return value
+        return looksLikeLocation(value) ? fallback : value
     }
 
     private static func isAllowed(_ byte: UInt8) -> Bool {
@@ -380,6 +382,30 @@ enum TelemetryName {
         default:
             false
         }
+    }
+
+    /// A value an endpoint, address, or filesystem path would produce. The app
+    /// has no route templates, so a leading \`/\` is a path here.
+    static func looksLikeLocation(_ value: String) -> Bool {
+        if value.hasPrefix("/") || value.hasPrefix("~") || value.contains("://") { return true }
+        let lower = value.lowercased()
+        if lower.contains("localhost") { return true }
+        if privateHostSuffixes.contains(where: lower.hasSuffix) { return true }
+        if let at = value.firstIndex(of: "@") {
+            let host = value[value.index(after: at)...]
+            if host.contains("."), host.contains(where: { $0.isLetter }) { return true }
+        }
+        let withoutPort: Substring
+        if let colon = value.lastIndex(of: ":") {
+            let port = value[value.index(after: colon)...]
+            let hostPart = value[..<colon]
+            if (2...5).contains(port.count), port.allSatisfy({ $0.isNumber }), hostPart.contains(".") { return true }
+            withoutPort = hostPart
+        } else {
+            withoutPort = value[...]
+        }
+        let octets = withoutPort.split(separator: ".", omittingEmptySubsequences: false)
+        return octets.count == 4 && octets.allSatisfy { (1...3).contains($0.count) && $0.allSatisfy { $0.isNumber } }
     }
 }
 
@@ -392,10 +418,17 @@ struct TelemetryEventPayload: Encodable, Sendable {
     let sessionId: String?
     let workspaceId: String?
 
-    init(_ event: some TelemetryEvent, ts: Int64, sessionId: String? = nil, workspaceId: String? = nil) {
+    /// \`fields\` is the event's \`fieldValues\` when the caller already computed them.
+    init(
+        _ event: some TelemetryEvent,
+        fields: [String: Double]? = nil,
+        ts: Int64,
+        sessionId: String? = nil,
+        workspaceId: String? = nil
+    ) {
         self.ts = ts
         name = type(of: event).name
-        fields = event.fieldValues
+        self.fields = fields ?? event.fieldValues
         let tagValues = event.tagValues
         tags = tagValues.isEmpty ? nil : tagValues
         self.sessionId = sessionId

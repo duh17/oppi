@@ -1862,7 +1862,7 @@ final class ServerConnection {
             AppCommandResolveLag(
                 lagMs: Double(lagMs),
                 command: command,
-                transport: AppCommandResolveLag.Transport(rawValue: transport.rawValue) ?? .paired,
+                transport: transport.commandResolveLagTransport,
                 status: success ? .ok : .error
             )
         )

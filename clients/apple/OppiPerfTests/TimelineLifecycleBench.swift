@@ -89,8 +89,8 @@ struct TimelineLifecycleBench {
         print("METRIC end_settle_us=\(fmt(endSettleUs))")
 
         // Unified vital metrics (same names as production telemetry)
-        print("METRIC chat.session_load_ms=\(fmt(loadMs))")
-        print("METRIC chat.jank_pct=\(fmt(jankPct))")
+        print("METRIC app.session_load.duration_ms=\(fmt(loadMs))")
+        print("METRIC app.timeline_jank.jank_pct=\(fmt(jankPct))")
 
         // Raw jank counters (median across runs)
         let jankHitches = allJankHitches.sorted()[allJankHitches.count / 2]
@@ -171,7 +171,8 @@ struct TimelineLifecycleBench {
 
         // Reset production jank counters so we measure only the streaming phase.
         // ChatTimelinePerf.endCollectionApply() increments hitchCount when
-        // dataSource.apply() alone exceeds 16ms — same measurement as production.
+        // dataSource.apply() alone exceeds the 120 Hz frame budget (8.3 ms) — same
+        // measurement as production.
         ChatTimelinePerf.resetJankCounters()
 
         for flush in 0 ..< flushCount {
@@ -200,8 +201,8 @@ struct TimelineLifecycleBench {
         let streamingMaxUs = Double(streamingTimings.last ?? 0) / 1000.0
 
         // Read jank from production counters (ChatTimelinePerf.endCollectionApply).
-        // This measures only dataSource.apply() duration > 16ms — identical to
-        // what production reports via chat.jank_pct. Unlike the old wall-clock
+        // This measures only dataSource.apply() duration > 8.3 ms — identical to
+        // what production reports via app.timeline_jank. Unlike the old wall-clock
         // measurement which included reduce + layout + scroll overhead.
         let jankSnap = ChatTimelinePerf.jankSnapshot()
         let streamingJankPct = jankSnap.pct

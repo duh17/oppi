@@ -394,8 +394,8 @@ final class MessageSender {
                 sendMs: Double(sendElapsed / .milliseconds(1)),
                 roundtripMs: roundtripElapsed.map { Double($0 / .milliseconds(1)) },
                 command: command,
-                transport: AppCommand.Transport(rawValue: transport.rawValue) ?? .paired,
-                status: AppCommand.Status(rawValue: classification.outcome.rawValue) ?? .error,
+                transport: transport.commandTransport,
+                status: classification.outcome.commandStatus,
                 errorKind: classification.errorKind
             ),
             sessionId: sessionIdOverride ?? targetSessionId
@@ -925,9 +925,9 @@ final class MessageSender {
         let classification = error.map(CommandMetricClassification.recorded(for:)) ?? .success
         return AppQueueSync(
             durationMs: durationMs,
-            transport: AppQueueSync.Transport(rawValue: transport.rawValue) ?? .paired,
+            transport: transport.queueSyncTransport,
             phase: phase == .initial ? .initial : .deferred,
-            status: AppQueueSync.Status(rawValue: classification.outcome.rawValue) ?? .error,
+            status: classification.outcome.queueSyncStatus,
             errorKind: classification.errorKind
         )
     }
@@ -947,7 +947,7 @@ final class MessageSender {
             AppMessageQueueAck(
                 durationMs: elapsedMs,
                 intent: intent,
-                transport: AppMessageQueueAck.Transport(rawValue: transport.rawValue) ?? .paired,
+                transport: transport.messageQueueAckTransport,
                 status: status,
                 errorKind: errorKind
             ),

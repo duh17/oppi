@@ -104,7 +104,7 @@ Retention defaults:
 | Client logs   |           14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS`   |
 | Server events |           30 days | `OPPI_SERVER_METRICS_RETENTION_DAYS` |
 
-Daily byte caps (unset means no cap): `OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES` for each uploaded file, `OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES` for server events. Pre-catalog files (`chat-metrics-*`, `server-ops-metrics-*`, `server-metrics-*`) are no longer written or read; the retention pass prunes them on their successor's retention so they age out.
+Daily byte caps (unset means no cap): `OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES` for each uploaded file, `OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES` for server events. `server.resources` (about 2 MB a day) is written outside the server cap so ops events cannot starve the Server Metrics page. Pre-catalog files (`chat-metrics-*`, `server-ops-metrics-*`, `server-metrics-*`) are no longer written or read; the retention pass prunes them on their successor's retention so they age out.
 
 ## Server resource sampling and the Server Metrics page
 
@@ -138,7 +138,7 @@ In the event the host block becomes `host_cpu_pct`, `host_cpu_cores`, `host_cpu_
 - One logical event is one record. Values measured together are fields of one event (`server.http_request {duration_ms, response_bytes}`), not sibling samples.
 - Field units: `ms`, `count`, `bytes`, `mb`, `pct` (0–100), `ratio` (0–1), `usd_micros`, `bool` (0 or 1). Field names end with the unit suffix (`_ms`, `_bytes`, `_mb`, `_pct`, `_ratio`, `_usd_micros`); `count` and `bool` fields have none. A field may be optional (a phase that did not run); an absent field is never written as 0.
 - Numbers are never tags: counts and sizes are fields. IDs are never tags: `sessionId` and `workspaceId` are record fields.
-- `emit` rules drop an event whose field is outside `[min, max)`, optionally only when its tags match. The generated Swift applies them before recording; ingest applies them again.
+- `emit` rules drop an event whose field is outside `[min, max)`, optionally only when its tags match. The generated Swift applies them before recording, as comparisons on each struct's own typed members (`passesEmitPolicy`), so a dropped event costs no dictionary, sanitizing, or string building; ingest applies them again.
 - `slo` sets a TM99 threshold on one field, optionally only over events whose tags match (`where`), for example `app.trace_fetch.duration_ms` over `status=ok`. Rendering SLOs use the 120 Hz frame budget (8.3 ms).
 - Removed events are deleted from the catalog, not retired.
 
@@ -148,7 +148,7 @@ Each tag key has exactly one meaning and one kind, declared in the catalog's `TA
 
 - `enum`: a closed value list; an event may narrow it to a subset (the generated Swift gets a nested enum for that event).
 - `bucket`: named size classes with shared edges (`output_size`, `input_size`: `under_1kb` … `over_200kb`); the generated Swift buckets the measured value.
-- `name`: an open but bounded identifier (tool, model, provider, command, screen, route pattern, …) of 1 to 128 ASCII letters, digits, and `._/:@-`; anything else is stored as `unknown`.
+- `name`: an open but bounded identifier (tool, model, provider, command, screen, route pattern, …) of 1 to 128 ASCII letters, digits, and `._/:@-`; anything else is stored as `unknown`, and so is anything shaped like a URL, host, address, or path: `://`, a leading `~` or `/` (only `path_pattern`, a normalized route template, may start with `/`), `localhost`, a private host suffix (`.local`, `.lan`, `.internal`, `.localdomain`, `.ts.net`, `.home.arpa`), an IPv4 address, `host.tld:port`, or `user@host.tld`. A configured endpoint or an untrusted client string therefore cannot reach storage as a "name"; `looksLikeLocation` (server) and `TelemetryName` (generated Swift) apply the same rules. A source that must tell backends apart reports a constant or a bounded enum, never the host (the streaming STT provider is `streaming`).
 
 Shared meanings:
 
@@ -183,13 +183,13 @@ App events carry `client`; server events do not. An aggregated server record car
 
 The iOS app records one way: `Telemetry.record(AppTimelineApply(durationMs: 6, items: 40, changed: 2), sessionId:, workspaceId:)` (`clients/apple/Oppi/Core/Telemetry/Telemetry.swift`). Call sites pass a generated event struct; none passes a unit, builds a `[String: String]`, or caps tags. `record`:
 
-1. applies the catalog `emit` rules, so a call site does not repeat a duration floor (the catalog is the only place a threshold lives);
+1. applies the catalog `emit` rules first, before it builds any dictionary, so a call site does not repeat a duration floor (the catalog is the only place a threshold lives);
 2. drops an event with a non-finite field, because one NaN would fail JSON encoding for the whole upload batch;
-3. hands the event to `TelemetryEventUploader`, which keeps up to 1000 events, uploads batches of 50 to `POST /telemetry/events` when a batch fills or 10 s after the first buffered event, and keeps a batch when the upload fails. The server's per-reason drop counts are logged (`TelemetryUpload` category) and the dropped events are not resent.
+3. hands the event to `TelemetryEventUploader`, which keeps up to 1000 events, uploads batches of 50 to `POST /telemetry/events` when a batch fills or 10 s after the first buffered event, and keeps a batch when the upload fails (no 2xx). A 2xx never requeues, even when its body cannot be read: the accepted events are stored. The server's per-reason drop counts are logged (`TelemetryUpload` category) and the dropped events are not resent. The server logs `telemetry_events.dropped` once per reason and client build, so a build that emits a stale name or tag shows up in `server.log`.
 
 Ambient state comes from one provider, `TelemetryContext`: `screen`, `stream_state`, `agents`, and `voice`. Every event that carries any of them (`app.device_resources`, `app.memory_warning`, `app.foreground`, the main-thread stall events) reads it there, and an unknown value is `unknown`, never absent. `sessionId` and `workspaceId` are passed to `record` by the code that knows them.
 
-`TelemetryErrorKind.classify` is the one mapping from a thrown error to the catalog `error_kind` vocabulary (network failures, HTTP statuses, decode, cancellation, and the app's own error types). Swift type names, error text, and numeric codes never become tag values. Values the shared runtime reports (`OppiCore`, which the Mac target also compiles) are the catalog's snake_case strings; the iOS adapter maps them to generated types and refuses a value the catalog does not declare.
+`TelemetryErrorKind.classify` is the one mapping from a thrown error to the catalog `error_kind` vocabulary (network failures, HTTP statuses, decode, cancellation, and the app's own error types). Swift type names, error text, and numeric codes never become tag values. The shared runtime (`OppiCore`, which the Mac target also compiles) names its vocabulary with enums whose raw values are catalog values (`ChatSessionRuntimeTelemetry.FreshnessReason`, `LoadPath`, `ReducerSource`, `CatchUpResult`); the iOS adapter maps them to generated types, and a test iterates every case so one without a catalog counterpart fails.
 
 The client-log and MetricKit uploads carry the same `client` envelope as events (`TelemetryClientIdentity`; the simulator reports the device it emulates). A log line that used to carry numbers (memory warning, foreground footprint, main-thread stall, Live Voice call playback, diff reader session, HTTPS candidate) is now an event; the log line keeps only its message. `protocol/telemetry-events-upload.json` is also encoded by `TelemetryEventsUploadContractTests`, which fails on any byte difference.
 

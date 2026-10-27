@@ -46,8 +46,10 @@ export interface BucketEdge {
 /**
  * - `enum`: closed value set; events may narrow it.
  * - `bucket`: a number mapped to a named bucket; both sides share the edges.
- * - `name`: open but bounded identifier matching `NAME_TAG_PATTERN`; anything
- *   else is stored as `unknown`.
+ * - `name`: open but bounded identifier matching `NAME_TAG_PATTERN` that does
+ *   not look like a host, URL, or path (`looksLikeLocation`); anything else is
+ *   stored as `unknown`. `route` lets a value start with `/` (a normalized
+ *   route template such as `/workspaces/:workspaceId`); no other key may.
  */
 export type TagDef =
   | { readonly kind: "enum"; readonly values: readonly string[]; readonly description: string }
@@ -57,7 +59,7 @@ export type TagDef =
       readonly buckets: readonly BucketEdge[];
       readonly description: string;
     }
-  | { readonly kind: "name"; readonly description: string };
+  | { readonly kind: "name"; readonly description: string; readonly route?: true };
 
 /**
  * Characters a `name` tag value may use besides ASCII letters and digits.
@@ -420,6 +422,7 @@ const TAGS = {
   method: { kind: "name", description: "HTTP method." },
   path_pattern: {
     kind: "name",
+    route: true,
     description:
       "Normalized HTTP route pattern (`/workspaces/:workspaceId`), or `unregistered`. Never a raw path.",
   },

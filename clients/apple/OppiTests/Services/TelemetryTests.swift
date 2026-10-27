@@ -87,6 +87,27 @@ struct TelemetryTests {
         #expect(AppMemoryWarning(cacheEntries: 1, cacheBytes: 1, screen: "chat").tagValues["screen"] == "chat")
     }
 
+    /// The server's `looksLikeLocation` applies the same rules; a configured
+    /// endpoint must not become a tag value on either side.
+    @Test(arguments: [
+        "http://mac-studio.tail1234.ts.net:7936", "mac-studio.tail1234.ts.net", "Mac-Studio.local",
+        "stt.build-box.internal", "nas.lan", "192.168.68.66", "192.168.68.66:7936",
+        "stt.example.com:7936", "localhost", "localhost:7936", "dev@box.example.com",
+        "/Users/duh/models/parakeet", "~/models/parakeet", "has space", "",
+    ])
+    func hostsUrlsAndPathsBecomeUnknown(value: String) {
+        #expect(TelemetryName.sanitize(value) == "unknown")
+    }
+
+    @Test(arguments: [
+        "claude-opus-4@20250514", "qwen3:32b", "llama3:8", "meta-llama/llama-3.1-8b-instruct:free",
+        "gpt-4.1", "mcp__github__create_issue", "queueSync.initial", "streaming", "xai",
+        "AVAudioSessionCategoryPlayAndRecord", "BluetoothHFP/MicrophoneBuiltIn",
+    ])
+    func identifiersSurviveSanitizing(value: String) {
+        #expect(TelemetryName.sanitize(value) == value)
+    }
+
     @Test func sizeBucketsUseTheServersEdges() {
         #expect(TelemetryTag.OutputSize(bytes: 999) == .under1kb)
         #expect(TelemetryTag.OutputSize(bytes: 1_000) == .under10kb)
@@ -164,16 +185,11 @@ struct TelemetryTests {
 
     // MARK: - Runtime events
 
-    /// The shared runtime (also compiled by Mac) emits catalog snake_case
-    /// strings; the iOS mapping must accept every one it can emit.
-    @Test func everyRuntimeVocabularyValueMapsToACatalogEvent() {
-        let freshLagReasons = [
-            "cache_hit", "conversation_stream", "reconnect_conversation_stream", "reconnect_no_gap",
-            "reconnect_applied", "reconnect_full_reload_scheduled", "stream_seq", "history_empty",
-            "history_applied_empty", "history_deferred_to_live", "history_unchanged",
-            "history_applied", "history_replayed", "history_first_message_fallback",
-        ]
-        for reason in freshLagReasons {
+    /// The shared runtime (also compiled by Mac) names its telemetry vocabulary
+    /// with enums whose raw values are catalog values. A case added there without
+    /// a catalog counterpart fails here instead of being dropped in production.
+    @Test func everyRuntimeVocabularyCaseMapsToACatalogEvent() {
+        for reason in ChatSessionRuntimeTelemetry.FreshnessReason.allCases {
             let mapped = ChatSessionTelemetry.event(
                 for: .freshContentLag(durationMs: 5, workspaceId: "w", reason: reason, cached: false, transport: "lan")
             )
@@ -181,36 +197,24 @@ struct TelemetryTests {
             #expect(mapped?.workspaceId == "w")
         }
 
-        for path in ["cache_hit", "cache_miss", "full_reload", "first_message_fallback", "conversation_stream"] {
+        for path in ChatSessionRuntimeTelemetry.LoadPath.allCases {
             let mapped = ChatSessionTelemetry.event(
                 for: .sessionLoad(durationMs: 5, workspaceId: nil, path: path, itemCount: 3)
             )
             #expect(mapped?.event is AppSessionLoad, "path \(path)")
         }
 
-        for source in ["cache", "history", "history_replay", "history_first_message_fallback"] {
+        for source in ChatSessionRuntimeTelemetry.ReducerSource.allCases {
             let mapped = ChatSessionTelemetry.event(
                 for: .reducerLoad(durationMs: 5, source: source, eventCount: 2, itemCount: 3)
             )
             #expect(mapped?.event is AppReducerLoad, "source \(source)")
         }
 
-        for result in [
-            "missing_epoch_baseline", "missing_epoch", "seq_regression", "epoch_baseline", "epoch_changed",
-            "no_gap", "fetch_failed", "not_live", "epoch_mismatch", "ring_miss", "applied",
-        ] {
+        for result in ChatSessionRuntimeTelemetry.CatchUpResult.allCases {
             let mapped = ChatSessionTelemetry.event(for: .catchUp(durationMs: 5, result: result))
             #expect(mapped?.event is AppCatchup, "result \(result)")
         }
-    }
-
-    @Test func runtimeValuesOutsideTheCatalogAreRejectedNotGuessed() {
-        #expect(ChatSessionTelemetry.event(
-            for: .freshContentLag(durationMs: 5, workspaceId: nil, reason: "reconnect_noGap", cached: false, transport: "lan")
-        ) == nil)
-        #expect(ChatSessionTelemetry.event(
-            for: .reducerLoad(durationMs: 5, source: "history+replay", eventCount: 1, itemCount: 1)
-        ) == nil)
     }
 
     @Test func traceFetchFailureCarriesItsErrorKind() throws {

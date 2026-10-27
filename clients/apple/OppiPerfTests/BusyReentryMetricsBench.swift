@@ -604,6 +604,6 @@ struct BusyReentryMetricsBenchTests {
         """)
 
         // Unified vital metrics (same names as production telemetry)
-        print("METRIC chat.catchup_ms=\(String(format: "%.1f", Double(metrics.timeToCorrectMs)))")
+        print("METRIC app.catchup.duration_ms=\(String(format: "%.1f", Double(metrics.timeToCorrectMs)))")
     }
 }

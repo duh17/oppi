@@ -9,12 +9,12 @@ import Testing
 @MainActor
 struct ChatSessionLoadTelemetryTests {
 
-    /// Connects a session with no cache, holds its trace fetch open for
-    /// `fetchDelay`, runs `duringLoad` meanwhile, and returns what was recorded.
+    /// Connects a session with no cache, holds its trace fetch open until
+    /// `duringLoad` has run, then lets it finish and returns what was recorded.
     private func recordLoad(
-        fetchDelay: Duration = .milliseconds(150),
         duringLoad: @MainActor (ChatSessionManager) -> Void = { _ in }
     ) async -> TelemetryCapture {
+        let gate = FetchGate()
         let sessionId = "load-telemetry-\(UUID().uuidString)"
         await TimelineCache.shared.removeTrace(sessionId)
         let manager = ChatSessionManager(sessionId: sessionId)
@@ -22,7 +22,7 @@ struct ChatSessionLoadTelemetryTests {
         manager._streamSessionForTesting = { _ in streams.makeStream() }
         manager._loadCatchUpForTesting = { _, _ in nil }
         manager._fetchSessionTraceForTesting = { _, _ in
-            try await Task.sleep(for: fetchDelay)
+            await gate.wait()
             return (
                 makeTestSession(id: sessionId, workspaceId: "w1", status: .ready),
                 [TraceEvent(
@@ -51,11 +51,12 @@ struct ChatSessionLoadTelemetryTests {
             #expect(await streams.waitForCreated(1))
             streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, workspaceId: "w1")))
             duringLoad(manager)
+            await gate.open()
+            // The reducer load, and every measurement it ends, run in one main-actor
+            // turn: once the timeline has items, the load's telemetry has been decided.
             #expect(await waitForTestCondition(timeoutMs: 2_000) {
-                await MainActor.run { manager.entryState == .streaming }
+                await MainActor.run { !manager.reducer.items.isEmpty }
             })
-            // Let the fetch finish and its telemetry run.
-            try? await Task.sleep(for: fetchDelay + .milliseconds(150))
             streams.finish(index: 0)
             await connectTask.value
         }
@@ -87,5 +88,22 @@ struct ChatSessionLoadTelemetryTests {
         }
 
         #expect(capture.events.map(\.name) == ["app.session_switch"])
+    }
+}
+
+/// Holds a trace fetch until the test opens it.
+private actor FetchGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        for waiter in waiters { waiter.resume() }
+        waiters = []
     }
 }

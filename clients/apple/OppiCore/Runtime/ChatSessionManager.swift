@@ -40,11 +40,11 @@ final class ChatSessionManager {
         case fullReloadScheduled
 
         /// The `app.fresh_content_lag` reason for a reconnect that ended this way.
-        var freshContentLagReason: String {
+        var freshContentLagReason: ChatSessionRuntimeTelemetry.FreshnessReason {
             switch self {
-            case .noGap: "reconnect_no_gap"
-            case .applied: "reconnect_applied"
-            case .fullReloadScheduled: "reconnect_full_reload_scheduled"
+            case .noGap: .reconnectNoGap
+            case .applied: .reconnectApplied
+            case .fullReloadScheduled: .reconnectFullReloadScheduled
             }
         }
     }
@@ -1065,7 +1065,7 @@ final class ChatSessionManager {
                 effectsStatePort.recordTelemetry(
                     .reducerLoad(
                         durationMs: reducerLoadDurationMs,
-                        source: "cache",
+                        source: .cache,
                         eventCount: cached.eventCount,
                         itemCount: reducer.items.count
                     ),
@@ -1090,7 +1090,7 @@ final class ChatSessionManager {
                 // Background history refresh may run later but the user is no
                 // longer staring at an empty screen.
                 telemetry.recordFreshContentLagIfNeeded(
-                    reason: "cache_hit",
+                    reason: .cacheHit,
                     workspaceId: resolveWorkspaceId()
                 )
             } else {
@@ -1099,7 +1099,7 @@ final class ChatSessionManager {
 
             needsInitialScroll = true
             telemetry.recordSessionLoadIfNeeded(
-                path: "cache_hit",
+                path: .cacheHit,
                 itemCount: reducer.items.count,
                 workspaceId: resolveWorkspaceId()
             )
@@ -1233,7 +1233,7 @@ final class ChatSessionManager {
             if case .connected(let session) = message {
                 if startConversationStreamIfOffered(for: session, meta: inboundMeta) {
                     log.warning("WS reconnected — conversation stream resumed for \(self.sessionId)")
-                    telemetry.recordFreshContentLagIfNeeded(reason: "reconnect_conversation_stream")
+                    telemetry.recordFreshContentLagIfNeeded(reason: .reconnectConversationStream)
                 } else if let currentSeq = inboundMeta?.currentSeq {
                     let outcome = await performCatchUpIfNeeded(
                         currentSeq: currentSeq,
@@ -1269,7 +1269,7 @@ final class ChatSessionManager {
                 )
                 guard accepted else { return }
 
-                telemetry.recordFreshContentLagIfNeeded(reason: "stream_seq")
+                telemetry.recordFreshContentLagIfNeeded(reason: .streamSeq)
                 let updatedSeq = focusedStreamPort.lastSeenSeq(sessionId: sessionId)
                 focusedStreamPort.persistSeq(updatedSeq, sessionId: sessionId)
             }
@@ -1700,7 +1700,7 @@ final class ChatSessionManager {
 
         let catchupStartMs = ChatSessionRuntimeTelemetryTracker.nowMs()
 
-        let recordCatchupMs = { (result: String) in
+        let recordCatchupMs = { (result: ChatSessionRuntimeTelemetry.CatchUpResult) in
             let durationMs = max(
                 0,
                 ChatSessionRuntimeTelemetryTracker.nowMs() - catchupStartMs
@@ -1717,14 +1717,14 @@ final class ChatSessionManager {
             focusedStreamPort.persistSeq(currentSeq, sessionId: sessionId)
             focusedStreamPort.persistEpoch(nil, sessionId: sessionId)
             if case .awaitingConnected = entryState {
-                recordCatchupMs("missing_epoch_baseline")
+                recordCatchupMs(.missingEpochBaseline)
                 return .noGap
             }
             scheduleHistoryReload(
                 generation: generation,
                 cachedSignature: nil
             )
-            recordCatchupMs("missing_epoch")
+            recordCatchupMs(.missingEpoch)
             return .fullReloadScheduled
         }
 
@@ -1743,7 +1743,7 @@ final class ChatSessionManager {
                 generation: generation,
                 cachedSignature: nil
             )
-            recordCatchupMs("seq_regression")
+            recordCatchupMs(.seqRegression)
             return .fullReloadScheduled
 
         case .epochChanged(let resetTo), .missingEpoch(let resetTo):
@@ -1751,7 +1751,7 @@ final class ChatSessionManager {
             focusedStreamPort.persistEpoch(runtimeEpoch, sessionId: sessionId)
             if case .awaitingConnected = entryState {
                 log.warning("Runtime epoch baseline for \(self.sessionId): currentSeq=\(currentSeq) epoch=\(runtimeEpoch ?? "none", privacy: .public) — first connect history reload remains authoritative")
-                recordCatchupMs("epoch_baseline")
+                recordCatchupMs(.epochBaseline)
                 return .noGap
             }
             log.warning("Runtime epoch repair for \(self.sessionId): currentSeq=\(currentSeq) epoch=\(runtimeEpoch ?? "none", privacy: .public) — scheduling history reload")
@@ -1759,12 +1759,12 @@ final class ChatSessionManager {
                 generation: generation,
                 cachedSignature: nil
             )
-            recordCatchupMs(runtimeEpoch == nil ? "missing_epoch" : "epoch_changed")
+            recordCatchupMs(runtimeEpoch == nil ? .missingEpoch : .epochChanged)
             return .fullReloadScheduled
 
         case .noGap:
             focusedStreamPort.persistEpoch(runtimeEpoch, sessionId: sessionId)
-            recordCatchupMs("no_gap")
+            recordCatchupMs(.noGap)
             return .noGap
 
         case .fetchSince(let since):
@@ -1790,7 +1790,7 @@ final class ChatSessionManager {
                     generation: generation,
                     cachedSignature: nil
                 )
-                recordCatchupMs("fetch_failed")
+                recordCatchupMs(.fetchFailed)
                 return .fullReloadScheduled
             }
 
@@ -1801,7 +1801,7 @@ final class ChatSessionManager {
                     generation: generation,
                     cachedSignature: nil
                 )
-                recordCatchupMs("not_live")
+                recordCatchupMs(.notLive)
                 return .fullReloadScheduled
             }
 
@@ -1817,7 +1817,7 @@ final class ChatSessionManager {
                     generation: generation,
                     cachedSignature: nil
                 )
-                recordCatchupMs("epoch_mismatch")
+                recordCatchupMs(.epochMismatch)
                 return .fullReloadScheduled
             }
 
@@ -1836,7 +1836,7 @@ final class ChatSessionManager {
                     generation: generation,
                     cachedSignature: nil
                 )
-                recordCatchupMs("ring_miss")
+                recordCatchupMs(.ringMiss)
                 return .fullReloadScheduled
             }
 
@@ -1881,7 +1881,7 @@ final class ChatSessionManager {
                 sessionId: sessionId
             )
 
-            recordCatchupMs(appliedCatchUp ? "applied" : "no_gap")
+            recordCatchupMs(appliedCatchUp ? .applied : .noGap)
             return appliedCatchUp ? .applied : .noGap
         }
     }
@@ -2049,11 +2049,11 @@ final class ChatSessionManager {
             return
         }
         followChildTails()
-        telemetry.recordFreshContentLagIfNeeded(reason: "conversation_stream", workspaceId: resolveWorkspaceId())
+        telemetry.recordFreshContentLagIfNeeded(reason: .conversationStream, workspaceId: resolveWorkspaceId())
         guard isSnapshot else { return }
         needsInitialScroll = true
         telemetry.recordSessionLoadIfNeeded(
-            path: "conversation_stream",
+            path: .conversationStream,
             itemCount: reducer.items.count,
             workspaceId: resolveWorkspaceId()
         )
@@ -2322,7 +2322,7 @@ final class ChatSessionManager {
             )
             let freshSignature = Self.traceSignature(for: timelineTrace)
             let usedFirstMessageFallback = trace.isEmpty && !timelineTrace.isEmpty
-            var freshnessReason = "history_empty"
+            var freshnessReason = ChatSessionRuntimeTelemetry.FreshnessReason.historyEmpty
 
             if timelineTrace.isEmpty, !allowFirstMessageFallback {
                 let usedReplay = replayID.map { reducer.isReplayBuffering(id: $0) } ?? false
@@ -2332,10 +2332,10 @@ final class ChatSessionManager {
                     reducer.loadSession([], preserveOrphans: false)
                 }
                 needsInitialScroll = true
-                freshnessReason = "history_applied_empty"
+                freshnessReason = .historyAppliedEmpty
             } else if timelineTrace.isEmpty, allowFirstMessageFallback, sessionIsLive {
                 needsInitialScroll = true
-                freshnessReason = "history_deferred_to_live"
+                freshnessReason = .historyDeferredToLive
             }
 
             if !timelineTrace.isEmpty {
@@ -2350,7 +2350,7 @@ final class ChatSessionManager {
                     if let replayID {
                         reducer.discardHistoryReplayBuffer(id: replayID)
                     }
-                    freshnessReason = "history_unchanged"
+                    freshnessReason = .historyUnchanged
                 } else {
                     // Apply the fresh trace. If live events arrived via WS during
                     // the fetch, the replay buffer preserves them and re-applies
@@ -2380,7 +2380,7 @@ final class ChatSessionManager {
                     effectsStatePort.recordTelemetry(
                         .reducerLoad(
                             durationMs: reducerDurationMs,
-                            source: usedFirstMessageFallback ? "history_first_message_fallback" : (usedReplay ? "history_replay" : "history"),
+                            source: usedFirstMessageFallback ? .historyFirstMessageFallback : (usedReplay ? .historyReplay : .history),
                             eventCount: timelineTrace.count,
                             itemCount: reducer.items.count
                         ),
@@ -2389,7 +2389,7 @@ final class ChatSessionManager {
 
                     needsInitialScroll = true
                     telemetry.recordSessionLoadIfNeeded(
-                        path: usedFirstMessageFallback ? "first_message_fallback" : (usedReplay ? "full_reload" : "cache_miss"),
+                        path: usedFirstMessageFallback ? .firstMessageFallback : (usedReplay ? .fullReload : .cacheMiss),
                         itemCount: reducer.items.count,
                         workspaceId: workspaceId
                     )
@@ -2409,9 +2409,9 @@ final class ChatSessionManager {
                         ]
                     )
                     freshnessReason = if usedFirstMessageFallback {
-                        "history_first_message_fallback"
+                        .historyFirstMessageFallback
                     } else {
-                        usedReplay ? "history_replayed" : "history_applied"
+                        usedReplay ? .historyReplayed : .historyApplied
                     }
                 }
             }

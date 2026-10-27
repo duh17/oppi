@@ -1641,9 +1641,10 @@ final class VoiceInputManager {
             metadata.merge(DictationAudioEngineHelper.sessionRouteMetadata()) { _, new in new }
             metadata["status"] = "ok"
             ClientLog.info("VoiceInput", "Capture rebuilt onto current microphone", metadata: metadata)
-            activeTake?.route = (activeTake?.route ?? VoiceAudioRouteTelemetry()).refreshed(
-                from: DictationAudioEngineHelper.sessionRouteMetadata()
-            )
+            if var take = activeTake {
+                take.route = take.route.refreshed(from: DictationAudioEngineHelper.sessionRouteMetadata())
+                activeTake = take
+            }
             startCaptureHealthWatch()
         } catch is CancellationError {
             guard activeStartRequestID == takeID, nextStartRequestID == generation else { return }

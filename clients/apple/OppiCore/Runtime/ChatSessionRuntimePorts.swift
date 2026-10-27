@@ -60,11 +60,61 @@ struct ChatSessionStoreUpdateResult: Sendable {
 }
 
 enum ChatSessionRuntimeTelemetry: Sendable {
+    /// Where the reducer rebuilt its state from. Raw values are the catalog's `load_source` values.
+    enum ReducerSource: String, CaseIterable, Sendable {
+        case cache
+        case history
+        case historyReplay = "history_replay"
+        case historyFirstMessageFallback = "history_first_message_fallback"
+    }
+
+    /// How a session load resolved. Raw values are the catalog's `load_path` values.
+    enum LoadPath: String, CaseIterable, Sendable {
+        case cacheHit = "cache_hit"
+        case cacheMiss = "cache_miss"
+        case fullReload = "full_reload"
+        case firstMessageFallback = "first_message_fallback"
+        case conversationStream = "conversation_stream"
+    }
+
+    /// How a catch-up resolved. Raw values are the catalog's catch-up `result` values.
+    enum CatchUpResult: String, CaseIterable, Sendable {
+        case missingEpochBaseline = "missing_epoch_baseline"
+        case missingEpoch = "missing_epoch"
+        case seqRegression = "seq_regression"
+        case epochBaseline = "epoch_baseline"
+        case epochChanged = "epoch_changed"
+        case noGap = "no_gap"
+        case fetchFailed = "fetch_failed"
+        case notLive = "not_live"
+        case epochMismatch = "epoch_mismatch"
+        case ringMiss = "ring_miss"
+        case applied
+    }
+
+    /// What made content fresh. Raw values are the catalog's fresh-content `reason` values.
+    enum FreshnessReason: String, CaseIterable, Sendable {
+        case cacheHit = "cache_hit"
+        case conversationStream = "conversation_stream"
+        case reconnectConversationStream = "reconnect_conversation_stream"
+        case reconnectNoGap = "reconnect_no_gap"
+        case reconnectApplied = "reconnect_applied"
+        case reconnectFullReloadScheduled = "reconnect_full_reload_scheduled"
+        case streamSeq = "stream_seq"
+        case historyEmpty = "history_empty"
+        case historyAppliedEmpty = "history_applied_empty"
+        case historyDeferredToLive = "history_deferred_to_live"
+        case historyUnchanged = "history_unchanged"
+        case historyApplied = "history_applied"
+        case historyReplayed = "history_replayed"
+        case historyFirstMessageFallback = "history_first_message_fallback"
+    }
+
     case cacheLoad(durationMs: Int64, hit: Bool, eventCount: Int)
-    case reducerLoad(durationMs: Int64, source: String, eventCount: Int, itemCount: Int)
-    case catchUp(durationMs: Int64, result: String)
-    case sessionLoad(durationMs: Int64, workspaceId: String?, path: String, itemCount: Int)
-    case freshContentLag(durationMs: Int64, workspaceId: String?, reason: String, cached: Bool, transport: String)
+    case reducerLoad(durationMs: Int64, source: ReducerSource, eventCount: Int, itemCount: Int)
+    case catchUp(durationMs: Int64, result: CatchUpResult)
+    case sessionLoad(durationMs: Int64, workspaceId: String?, path: LoadPath, itemCount: Int)
+    case freshContentLag(durationMs: Int64, workspaceId: String?, reason: FreshnessReason, cached: Bool, transport: String)
     case sessionSwitch(durationMs: Int64, cached: Bool)
     case timeToFirstToken(durationMs: Int64, provider: String, model: String)
     case traceFetch(durationMs: Int64, workspaceId: String?, status: String, eventCount: Int?, errorKind: String?)

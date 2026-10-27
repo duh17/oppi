@@ -511,7 +511,7 @@ final class MacChatSessionRuntimeAdapter:
             var metadata = [
                 "sessionId": sessionId,
                 "durationMs": String(durationMs),
-                "reason": reason,
+                "reason": reason.rawValue,
                 "cached": cached ? "1" : "0",
                 "transport": transport,
             ]

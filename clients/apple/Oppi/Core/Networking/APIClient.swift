@@ -2372,17 +2372,17 @@ actor APIClient: ClientLogUploading {
         return encoder
     }()
 
-    /// Upload catalog events. The response counts events the server refused, by reason.
-    func uploadTelemetryEvents(request body: TelemetryEventUploadRequest) async throws -> TelemetryEventUploadResponse {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
-            return TelemetryEventUploadResponse(ok: true, accepted: 0, dropped: [:])
-        }
+    /// Upload catalog events; the caller (`TelemetryEventUploader`) owns the
+    /// diagnostics gate. Throws unless the server answers 2xx. The response counts
+    /// events the server refused, by reason; it is `nil` when a 2xx body cannot be
+    /// read, which must not read as a failed upload: the accepted events are stored.
+    func uploadTelemetryEvents(request body: TelemetryEventUploadRequest) async throws -> TelemetryEventUploadResponse? {
         let data = try await post(
             "/telemetry/events",
             body: body,
             encoder: Self.telemetryEncoder
         )
-        return try JSONDecoder().decode(TelemetryEventUploadResponse.self, from: data)
+        return try? JSONDecoder().decode(TelemetryEventUploadResponse.self, from: data)
     }
 
     func uploadClientLogs(request body: ClientLogUploadRequest) async throws {

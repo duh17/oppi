@@ -11,55 +11,26 @@ import Foundation
 /// wire `fields` and `tags`; the server validates both against the catalog.
 protocol TelemetryEvent: Sendable {
     static var name: String { get }
-    /// Bounds outside which the event is not recorded. Ingest applies them too.
-    static var emitRules: [TelemetryEmitRule] { get }
+    /// False when the catalog emit policy drops this event. Generated per event
+    /// from the struct's typed members, so a dropped event costs no allocation.
+    var passesEmitPolicy: Bool { get }
     var fieldValues: [String: Double] { get }
     var tagValues: [String: String] { get }
 }
 
-extension TelemetryEvent {
-    /// False when the catalog emit policy drops this event.
-    var passesEmitPolicy: Bool {
-        TelemetryEmitRule.allows(Self.emitRules, fields: fieldValues, tags: tagValues)
-    }
-}
-
-/// Drop the event when `field` is present and outside `[min, max)`. A rule
-/// applies only when every `matching` tag has one of the listed values.
-struct TelemetryEmitRule: Sendable {
-    let field: String
-    let min: Double?
-    let max: Double?
-    let matching: [String: [String]]
-
-    static func allows(
-        _ rules: [Self],
-        fields: [String: Double],
-        tags: [String: String]
-    ) -> Bool {
-        for rule in rules {
-            guard let value = fields[rule.field] else { continue }
-            let applies = rule.matching.allSatisfy { key, values in
-                tags[key].map(values.contains) ?? false
-            }
-            guard applies else { continue }
-            if let min = rule.min, value < min { return false }
-            if let max = rule.max, value >= max { return false }
-        }
-        return true
-    }
-}
-
 /// Open-but-bounded tag values (tool, model, screen, …) as the server stores
-/// them: ASCII letters, digits, and `._/:@-`, 1 to 128 characters;
-/// anything else becomes `unknown`.
+/// them: ASCII letters, digits, and `._/:@-`, 1 to 128 characters, and
+/// nothing shaped like a URL, host, address, or path. Anything else becomes
+/// `unknown`. The server applies the same rules (`looksLikeLocation`).
 enum TelemetryName {
     static let fallback = "unknown"
+
+    private static let privateHostSuffixes = [".local", ".lan", ".internal", ".localdomain", ".ts.net", ".home.arpa"]
 
     static func sanitize(_ value: String) -> String {
         let bytes = value.utf8
         guard (1...128).contains(bytes.count), bytes.allSatisfy(isAllowed) else { return fallback }
-        return value
+        return looksLikeLocation(value) ? fallback : value
     }
 
     private static func isAllowed(_ byte: UInt8) -> Bool {
@@ -69,6 +40,30 @@ enum TelemetryName {
         default:
             false
         }
+    }
+
+    /// A value an endpoint, address, or filesystem path would produce. The app
+    /// has no route templates, so a leading `/` is a path here.
+    static func looksLikeLocation(_ value: String) -> Bool {
+        if value.hasPrefix("/") || value.hasPrefix("~") || value.contains("://") { return true }
+        let lower = value.lowercased()
+        if lower.contains("localhost") { return true }
+        if privateHostSuffixes.contains(where: lower.hasSuffix) { return true }
+        if let at = value.firstIndex(of: "@") {
+            let host = value[value.index(after: at)...]
+            if host.contains("."), host.contains(where: { $0.isLetter }) { return true }
+        }
+        let withoutPort: Substring
+        if let colon = value.lastIndex(of: ":") {
+            let port = value[value.index(after: colon)...]
+            let hostPart = value[..<colon]
+            if (2...5).contains(port.count), port.allSatisfy({ $0.isNumber }), hostPart.contains(".") { return true }
+            withoutPort = hostPart
+        } else {
+            withoutPort = value[...]
+        }
+        let octets = withoutPort.split(separator: ".", omittingEmptySubsequences: false)
+        return octets.count == 4 && octets.allSatisfy { (1...3).contains($0.count) && $0.allSatisfy { $0.isNumber } }
     }
 }
 
@@ -81,10 +76,17 @@ struct TelemetryEventPayload: Encodable, Sendable {
     let sessionId: String?
     let workspaceId: String?
 
-    init(_ event: some TelemetryEvent, ts: Int64, sessionId: String? = nil, workspaceId: String? = nil) {
+    /// `fields` is the event's `fieldValues` when the caller already computed them.
+    init(
+        _ event: some TelemetryEvent,
+        fields: [String: Double]? = nil,
+        ts: Int64,
+        sessionId: String? = nil,
+        workspaceId: String? = nil
+    ) {
         self.ts = ts
         name = type(of: event).name
-        fields = event.fieldValues
+        self.fields = fields ?? event.fieldValues
         let tagValues = event.tagValues
         tags = tagValues.isEmpty ? nil : tagValues
         self.sessionId = sessionId
@@ -509,7 +511,6 @@ enum TelemetryTag {
 /// How long did the user wait for the first assistant token of a turn?
 struct AppTtft: TelemetryEvent {
     static let name = "app.ttft"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let durationMs: Double
     let provider: String?
@@ -531,6 +532,10 @@ struct AppTtft: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let provider { values["provider"] = TelemetryName.sanitize(provider) }
@@ -542,7 +547,6 @@ struct AppTtft: TelemetryEvent {
 /// How long did catch-up take when (re)subscribing, and how did it resolve?
 struct AppCatchup: TelemetryEvent {
     static let name = "app.catchup"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Result: String, Sendable, CaseIterable {
         case missingEpochBaseline = "missing_epoch_baseline"
@@ -575,6 +579,10 @@ struct AppCatchup: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["result"] = result.rawValue
@@ -585,7 +593,6 @@ struct AppCatchup: TelemetryEvent {
 /// How long did loading the cached timeline take?
 struct AppCacheLoad: TelemetryEvent {
     static let name = "app.cache_load"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let durationMs: Double
     let hit: Bool
@@ -609,6 +616,10 @@ struct AppCacheLoad: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -617,7 +628,6 @@ struct AppCacheLoad: TelemetryEvent {
 /// How long did rebuilding the timeline reducer take?
 struct AppReducerLoad: TelemetryEvent {
     static let name = "app.reducer_load"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let durationMs: Double
     let events: Int
@@ -644,6 +654,10 @@ struct AppReducerLoad: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["load_source"] = loadSource.rawValue
@@ -654,7 +668,6 @@ struct AppReducerLoad: TelemetryEvent {
 /// How long from selecting a session until its content was visible?
 struct AppSessionLoad: TelemetryEvent {
     static let name = "app.session_load"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum LoadPath: String, Sendable, CaseIterable {
         case cacheHit = "cache_hit"
@@ -685,6 +698,10 @@ struct AppSessionLoad: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["load_path"] = loadPath.rawValue
@@ -695,7 +712,6 @@ struct AppSessionLoad: TelemetryEvent {
 /// How long until the timeline showed fresh content after connecting?
 struct AppFreshContentLag: TelemetryEvent {
     static let name = "app.fresh_content_lag"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Reason: String, Sendable, CaseIterable {
         case cacheHit = "cache_hit"
@@ -744,6 +760,10 @@ struct AppFreshContentLag: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["reason"] = reason.rawValue
@@ -755,9 +775,6 @@ struct AppFreshContentLag: TelemetryEvent {
 /// How long from tapping a session row until chat content was visible?
 struct AppSessionSwitch: TelemetryEvent {
     static let name = "app.session_switch"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: nil, max: 60000, matching: [:]),
-    ]
 
     let durationMs: Double
     let cached: Bool
@@ -777,6 +794,11 @@ struct AppSessionSwitch: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs >= 60000 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -785,7 +807,6 @@ struct AppSessionSwitch: TelemetryEvent {
 /// How long did fetching and decoding a trace page take?
 struct AppTraceFetch: TelemetryEvent {
     static let name = "app.trace_fetch"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Status: String, Sendable, CaseIterable {
         case ok
@@ -816,6 +837,10 @@ struct AppTraceFetch: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["status"] = status.rawValue
@@ -827,7 +852,6 @@ struct AppTraceFetch: TelemetryEvent {
 /// How long from opening a thread until its snapshot was applied or failed?
 struct AppThreadLoad: TelemetryEvent {
     static let name = "app.thread_load"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Phase: String, Sendable, CaseIterable {
         case initial
@@ -862,6 +886,10 @@ struct AppThreadLoad: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["phase"] = phase.rawValue
@@ -874,9 +902,6 @@ struct AppThreadLoad: TelemetryEvent {
 /// How long until the workspace screen was usable?
 struct AppWorkspaceLoad: TelemetryEvent {
     static let name = "app.workspace_load"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: nil, max: 60000, matching: [:]),
-    ]
 
     enum LoadPath: String, Sendable, CaseIterable {
         case open
@@ -900,6 +925,11 @@ struct AppWorkspaceLoad: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs >= 60000 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["load_path"] = loadPath.rawValue
@@ -910,7 +940,6 @@ struct AppWorkspaceLoad: TelemetryEvent {
 /// How long did the client wait for the focused session stream to connect?
 struct AppWsWait: TelemetryEvent {
     static let name = "app.ws_wait"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Transport: String, Sendable, CaseIterable {
         case paired
@@ -960,6 +989,10 @@ struct AppWsWait: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let route { values["route"] = route.rawValue }
@@ -975,7 +1008,6 @@ struct AppWsWait: TelemetryEvent {
 /// How long did an HTTPS candidate handshake take on each route?
 struct AppNetworkHandshake: TelemetryEvent {
     static let name = "app.network_handshake"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Transport: String, Sendable, CaseIterable {
         case paired
@@ -1024,6 +1056,10 @@ struct AppNetworkHandshake: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let route { values["route"] = route.rawValue }
@@ -1039,9 +1075,6 @@ struct AppNetworkHandshake: TelemetryEvent {
 /// What is the client WebSocket ping round-trip time on each route?
 struct AppWsPing: TelemetryEvent {
     static let name = "app.ws_ping"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "rtt_ms", min: 0, max: nil, matching: [:]),
-    ]
 
     enum Transport: String, Sendable, CaseIterable {
         case paired
@@ -1079,6 +1112,11 @@ struct AppWsPing: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if rttMs < 0 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let route { values["route"] = route.rawValue }
@@ -1092,9 +1130,6 @@ struct AppWsPing: TelemetryEvent {
 /// How long did a session command take to send and to resolve? Fire-and-forget commands have no round trip.
 struct AppCommand: TelemetryEvent {
     static let name = "app.command"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "roundtrip_ms", min: 500, max: nil, matching: ["command": ["get_queue"], "status": ["ok"]]),
-    ]
 
     enum Transport: String, Sendable, CaseIterable {
         case paired
@@ -1138,6 +1173,11 @@ struct AppCommand: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if let roundtripMs, command == "get_queue", status.rawValue == "ok", roundtripMs < 500 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["command"] = TelemetryName.sanitize(command)
@@ -1151,9 +1191,6 @@ struct AppCommand: TelemetryEvent {
 /// How long from a command_result frame arriving to its waiter resolving?
 struct AppCommandResolveLag: TelemetryEvent {
     static let name = "app.command_resolve_lag"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "lag_ms", min: 50, max: nil, matching: ["command": ["get_queue"], "status": ["ok"]]),
-    ]
 
     enum Transport: String, Sendable, CaseIterable {
         case paired
@@ -1189,6 +1226,11 @@ struct AppCommandResolveLag: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if command == "get_queue", status.rawValue == "ok", lagMs < 50 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["command"] = TelemetryName.sanitize(command)
@@ -1201,7 +1243,6 @@ struct AppCommandResolveLag: TelemetryEvent {
 /// How long did refreshing the queued steer/follow-up snapshot take?
 struct AppQueueSync: TelemetryEvent {
     static let name = "app.queue_sync"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Transport: String, Sendable, CaseIterable {
         case paired
@@ -1246,6 +1287,10 @@ struct AppQueueSync: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["transport"] = transport.rawValue
@@ -1259,7 +1304,6 @@ struct AppQueueSync: TelemetryEvent {
 /// How long from a busy send to server acknowledgement? A turn that already ended prompts it normally.
 struct AppMessageQueueAck: TelemetryEvent {
     static let name = "app.message_queue_ack"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Transport: String, Sendable, CaseIterable {
         case paired
@@ -1298,6 +1342,10 @@ struct AppMessageQueueAck: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["intent"] = intent.rawValue
@@ -1311,7 +1359,6 @@ struct AppMessageQueueAck: TelemetryEvent {
 /// Did the client drop a queue update because its queue state was stale?
 struct AppMessageQueueStaleDrop: TelemetryEvent {
     static let name = "app.message_queue_stale_drop"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let incomingVersion: Int
     let currentVersion: Int
@@ -1334,6 +1381,10 @@ struct AppMessageQueueStaleDrop: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["queue_event"] = queueEvent.rawValue
@@ -1344,7 +1395,6 @@ struct AppMessageQueueStaleDrop: TelemetryEvent {
 /// Did a queue item start that the client never saw queued?
 struct AppMessageQueueStartMiss: TelemetryEvent {
     static let name = "app.message_queue_start_miss"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let queueVersion: Int
     let intent: TelemetryTag.Intent
@@ -1363,6 +1413,10 @@ struct AppMessageQueueStartMiss: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["intent"] = intent.rawValue
@@ -1373,7 +1427,6 @@ struct AppMessageQueueStartMiss: TelemetryEvent {
 /// How long until global app updates, attention cards, and list events were live?
 struct AppAppEventStreamConnect: TelemetryEvent {
     static let name = "app.app_event_stream_connect"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let durationMs: Double
     let attempt: Int
@@ -1397,6 +1450,10 @@ struct AppAppEventStreamConnect: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -1405,7 +1462,6 @@ struct AppAppEventStreamConnect: TelemetryEvent {
 /// Why and how often did the global app-event stream schedule a reconnect?
 struct AppAppEventStreamReconnect: TelemetryEvent {
     static let name = "app.app_event_stream_reconnect"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Transport: String, Sendable, CaseIterable {
         case paired
@@ -1459,6 +1515,10 @@ struct AppAppEventStreamReconnect: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let route { values["route"] = route.rawValue }
@@ -1474,7 +1534,6 @@ struct AppAppEventStreamReconnect: TelemetryEvent {
 /// Did a global app-event stream frame fail to decode?
 struct AppAppEventStreamDecodeError: TelemetryEvent {
     static let name = "app.app_event_stream_decode_error"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum ErrorKind: String, Sendable, CaseIterable {
         case decode
@@ -1494,6 +1553,10 @@ struct AppAppEventStreamDecodeError: TelemetryEvent {
         [:]
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["error_kind"] = errorKind.rawValue
@@ -1504,9 +1567,6 @@ struct AppAppEventStreamDecodeError: TelemetryEvent {
 /// How long did a timeline snapshot apply take during streaming?
 struct AppTimelineApply: TelemetryEvent {
     static let name = "app.timeline_apply"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: 4, max: 5000, matching: [:]),
-    ]
 
     let durationMs: Double
     let items: Int
@@ -1530,6 +1590,11 @@ struct AppTimelineApply: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs < 4 || durationMs >= 5000 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -1538,9 +1603,6 @@ struct AppTimelineApply: TelemetryEvent {
 /// How long did timeline layout take during streaming?
 struct AppTimelineLayout: TelemetryEvent {
     static let name = "app.timeline_layout"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: 2, max: 5000, matching: [:]),
-    ]
 
     let durationMs: Double
     let items: Int
@@ -1560,6 +1622,11 @@ struct AppTimelineLayout: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs < 2 || durationMs >= 5000 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -1568,9 +1635,6 @@ struct AppTimelineLayout: TelemetryEvent {
 /// How long did configuring a timeline row take, especially large tool output?
 struct AppCellConfigure: TelemetryEvent {
     static let name = "app.cell_configure"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: 1, max: 5000, matching: [:]),
-    ]
 
     let durationMs: Double
     let expanded: Bool?
@@ -1602,6 +1666,11 @@ struct AppCellConfigure: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs < 1 || durationMs >= 5000 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["row_type"] = TelemetryName.sanitize(rowType)
@@ -1615,9 +1684,6 @@ struct AppCellConfigure: TelemetryEvent {
 /// How long did highlighting, ANSI parsing, or diff building take for a tool row?
 struct AppRenderStrategy: TelemetryEvent {
     static let name = "app.render_strategy"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: 1, max: 5000, matching: [:]),
-    ]
 
     let durationMs: Double
     let renderMode: String
@@ -1642,6 +1708,11 @@ struct AppRenderStrategy: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs < 1 || durationMs >= 5000 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["render_mode"] = TelemetryName.sanitize(renderMode)
@@ -1654,9 +1725,6 @@ struct AppRenderStrategy: TelemetryEvent {
 /// How long did measuring a tool row's width or viewport take?
 struct AppToolRowMeasure: TelemetryEvent {
     static let name = "app.tool_row_measure"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: 1, max: nil, matching: [:]),
-    ]
 
     let durationMs: Double
     let measure: String
@@ -1678,6 +1746,11 @@ struct AppToolRowMeasure: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs < 1 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["measure"] = TelemetryName.sanitize(measure)
@@ -1689,9 +1762,6 @@ struct AppToolRowMeasure: TelemetryEvent {
 /// How long did one streaming markdown parse, build, and apply cycle take?
 struct AppMarkdownStreaming: TelemetryEvent {
     static let name = "app.markdown_streaming"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: 1, max: nil, matching: [:]),
-    ]
 
     let durationMs: Double
     let segments: Int
@@ -1714,6 +1784,11 @@ struct AppMarkdownStreaming: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs < 1 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["surface"] = TelemetryName.sanitize(surface)
@@ -1724,9 +1799,6 @@ struct AppMarkdownStreaming: TelemetryEvent {
 /// What share of timeline apply cycles in a session missed the frame budget?
 struct AppTimelineJank: TelemetryEvent {
     static let name = "app.timeline_jank"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "cycles", min: 1, max: nil, matching: [:]),
-    ]
 
     let jankPct: Double
     let cycles: Int
@@ -1750,6 +1822,11 @@ struct AppTimelineJank: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if Double(cycles) < 1 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -1758,7 +1835,6 @@ struct AppTimelineJank: TelemetryEvent {
 /// How much stream traffic did the delta coalescer flush per window of 200 flushes (or a non-trivial partial drain)?
 struct AppCoalescerWindow: TelemetryEvent {
     static let name = "app.coalescer_window"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let flushes: Int
     let events: Int
@@ -1782,6 +1858,10 @@ struct AppCoalescerWindow: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -1790,7 +1870,6 @@ struct AppCoalescerWindow: TelemetryEvent {
 /// How fast did a review diff open and how smoothly did it scroll?
 struct AppDiffReaderSession: TelemetryEvent {
     static let name = "app.diff_reader_session"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let openMs: Double
     let lines: Int
@@ -1834,6 +1913,10 @@ struct AppDiffReaderSession: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -1842,9 +1925,6 @@ struct AppDiffReaderSession: TelemetryEvent {
 /// How long did computing the session list view data take?
 struct AppSessionListCompute: TelemetryEvent {
     static let name = "app.session_list_compute"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: 1, max: nil, matching: [:]),
-    ]
 
     let durationMs: Double
     let activeSessions: Int
@@ -1868,6 +1948,11 @@ struct AppSessionListCompute: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs < 1 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -1876,9 +1961,6 @@ struct AppSessionListCompute: TelemetryEvent {
 /// How long did computing the visible session rows take?
 struct AppSessionListRowCompute: TelemetryEvent {
     static let name = "app.session_list_row_compute"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: 1, max: nil, matching: [:]),
-    ]
 
     let durationMs: Double
     let rows: Int
@@ -1898,6 +1980,11 @@ struct AppSessionListRowCompute: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs < 1 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -1906,7 +1993,6 @@ struct AppSessionListRowCompute: TelemetryEvent {
 /// How often did the session list body re-evaluate in a 5 s window (store churn)?
 struct AppSessionListBodyRate: TelemetryEvent {
     static let name = "app.session_list_body_rate"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let evaluations: Int
 
@@ -1922,6 +2008,10 @@ struct AppSessionListBodyRate: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -1930,7 +2020,6 @@ struct AppSessionListBodyRate: TelemetryEvent {
 /// How large has a session grown (messages, tokens, edits, context)?
 struct AppSessionUsage: TelemetryEvent {
     static let name = "app.session_usage"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let messageCount: Int
     let inputTokens: Int
@@ -1976,6 +2065,10 @@ struct AppSessionUsage: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let provider { values["provider"] = TelemetryName.sanitize(provider) }
@@ -1987,7 +2080,6 @@ struct AppSessionUsage: TelemetryEvent {
 /// How long did prewarming the voice pipeline take?
 struct AppDictationPrewarm: TelemetryEvent {
     static let name = "app.dictation_prewarm"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Status: String, Sendable, CaseIterable {
         case ok
@@ -2024,6 +2116,10 @@ struct AppDictationPrewarm: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["voice_engine"] = voiceEngine.rawValue
@@ -2038,7 +2134,6 @@ struct AppDictationPrewarm: TelemetryEvent {
 /// How long from starting dictation to recording, per setup phase? Failed or cancelled setups carry only total_ms.
 struct AppDictationSetup: TelemetryEvent {
     static let name = "app.dictation_setup"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Status: String, Sendable, CaseIterable {
         case ok
@@ -2129,6 +2224,10 @@ struct AppDictationSetup: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["voice_engine"] = voiceEngine.rawValue
@@ -2153,7 +2252,6 @@ struct AppDictationSetup: TelemetryEvent {
 /// How long until the user saw the first transcript feedback?
 struct AppDictationFirstResult: TelemetryEvent {
     static let name = "app.dictation_first_result"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let durationMs: Double
     let voiceEngine: TelemetryTag.VoiceEngine
@@ -2211,6 +2309,10 @@ struct AppDictationFirstResult: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["voice_engine"] = voiceEngine.rawValue
@@ -2234,7 +2336,6 @@ struct AppDictationFirstResult: TelemetryEvent {
 /// How did a completed dictation take finish: finalize latency, length, and quality?
 struct AppDictationEnd: TelemetryEvent {
     static let name = "app.dictation_end"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let finalizeMs: Double
     let sessionMs: Double
@@ -2309,6 +2410,10 @@ struct AppDictationEnd: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["voice_engine"] = voiceEngine.rawValue
@@ -2331,7 +2436,6 @@ struct AppDictationEnd: TelemetryEvent {
 /// Did audio capture fail while dictating? Setup failures are app.dictation_setup errors.
 struct AppDictationCaptureError: TelemetryEvent {
     static let name = "app.dictation_capture_error"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let voiceEngine: TelemetryTag.VoiceEngine
     let locale: String?
@@ -2384,6 +2488,10 @@ struct AppDictationCaptureError: TelemetryEvent {
         [:]
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["voice_engine"] = voiceEngine.rawValue
@@ -2407,7 +2515,6 @@ struct AppDictationCaptureError: TelemetryEvent {
 /// Did the user cancel a dictation take after recording started?
 struct AppDictationCancel: TelemetryEvent {
     static let name = "app.dictation_cancel"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let voiceEngine: TelemetryTag.VoiceEngine
     let locale: String?
@@ -2457,6 +2564,10 @@ struct AppDictationCancel: TelemetryEvent {
         [:]
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["voice_engine"] = voiceEngine.rawValue
@@ -2479,9 +2590,6 @@ struct AppDictationCancel: TelemetryEvent {
 /// Did iOS keep CallKit calls listed after their Live Voice call was over?
 struct AppLiveVoiceLeftoverCall: TelemetryEvent {
     static let name = "app.live_voice_leftover_call"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "calls", min: 1, max: nil, matching: [:]),
-    ]
 
     enum Phase: String, Sendable, CaseIterable {
         case callStart = "call_start"
@@ -2506,6 +2614,11 @@ struct AppLiveVoiceLeftoverCall: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if Double(calls) < 1 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["phase"] = phase.rawValue
@@ -2516,7 +2629,6 @@ struct AppLiveVoiceLeftoverCall: TelemetryEvent {
 /// How smoothly did Live Voice call audio play?
 struct AppLiveVoiceCallPlayback: TelemetryEvent {
     static let name = "app.live_voice_call_playback"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let chunks: Int
     let receivedMs: Double
@@ -2568,6 +2680,10 @@ struct AppLiveVoiceCallPlayback: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         [:]
     }
@@ -2576,7 +2692,6 @@ struct AppLiveVoiceCallPlayback: TelemetryEvent {
 /// How long did voice replies and replayable voice media take to start playing?
 struct AppVoicePlaybackStart: TelemetryEvent {
     static let name = "app.voice_playback_start"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let durationMs: Double
     let playbackSource: String
@@ -2598,6 +2713,10 @@ struct AppVoicePlaybackStart: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["playback_source"] = TelemetryName.sanitize(playbackSource)
@@ -2609,7 +2728,6 @@ struct AppVoicePlaybackStart: TelemetryEvent {
 /// Where did voice playback fail?
 struct AppVoicePlaybackError: TelemetryEvent {
     static let name = "app.voice_playback_error"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Phase: String, Sendable, CaseIterable {
         case start
@@ -2637,6 +2755,10 @@ struct AppVoicePlaybackError: TelemetryEvent {
         [:]
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["playback_source"] = TelemetryName.sanitize(playbackSource)
@@ -2649,7 +2771,6 @@ struct AppVoicePlaybackError: TelemetryEvent {
 /// How long from player setup to playable video or audio?
 struct AppMediaPlaybackStart: TelemetryEvent {
     static let name = "app.media_playback_start"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let durationMs: Double
     let mediaKind: TelemetryTag.MediaKind
@@ -2674,6 +2795,10 @@ struct AppMediaPlaybackStart: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["media_kind"] = mediaKind.rawValue
@@ -2686,7 +2811,6 @@ struct AppMediaPlaybackStart: TelemetryEvent {
 /// Where did a media preview or player fail?
 struct AppMediaPlaybackError: TelemetryEvent {
     static let name = "app.media_playback_error"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Phase: String, Sendable, CaseIterable {
         case source
@@ -2716,6 +2840,10 @@ struct AppMediaPlaybackError: TelemetryEvent {
         [:]
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["media_kind"] = mediaKind.rawValue
@@ -2729,7 +2857,6 @@ struct AppMediaPlaybackError: TelemetryEvent {
 /// How long did a visible ask card block the agent before answer or ignore?
 struct AppAskResponse: TelemetryEvent {
     static let name = "app.ask_response"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Result: String, Sendable, CaseIterable {
         case answered
@@ -2788,6 +2915,10 @@ struct AppAskResponse: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["result"] = result.rawValue
@@ -2800,9 +2931,6 @@ struct AppAskResponse: TelemetryEvent {
 /// How long did rendering share-sheet content take?
 struct AppShareExport: TelemetryEvent {
     static let name = "app.share_export"
-    static let emitRules: [TelemetryEmitRule] = [
-        TelemetryEmitRule(field: "duration_ms", min: 1, max: nil, matching: [:]),
-    ]
 
     let durationMs: Double
     let exportFormat: String
@@ -2824,6 +2952,11 @@ struct AppShareExport: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        if durationMs < 1 { return false }
+        return true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["export_format"] = TelemetryName.sanitize(exportFormat)
@@ -2835,7 +2968,6 @@ struct AppShareExport: TelemetryEvent {
 /// How long did the shared-session redaction preflight take, and what did it find?
 struct AppSharePrepare: TelemetryEvent {
     static let name = "app.share_prepare"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Status: String, Sendable, CaseIterable {
         case ok
@@ -2906,6 +3038,10 @@ struct AppSharePrepare: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["status"] = status.rawValue
@@ -2917,7 +3053,6 @@ struct AppSharePrepare: TelemetryEvent {
 /// How long did publishing a shared session take?
 struct AppSharePublish: TelemetryEvent {
     static let name = "app.share_publish"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Status: String, Sendable, CaseIterable {
         case ok
@@ -2980,6 +3115,10 @@ struct AppSharePublish: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["status"] = status.rawValue
@@ -2991,7 +3130,6 @@ struct AppSharePublish: TelemetryEvent {
 /// How long did creating a quick session take, and did it fail? An intent whose prompt was not delivered is status=error, error_kind=prompt_delivery.
 struct AppQuickSessionCreate: TelemetryEvent {
     static let name = "app.quick_session_create"
-    static let emitRules: [TelemetryEmitRule] = []
 
     enum Status: String, Sendable, CaseIterable {
         case ok
@@ -3054,6 +3192,10 @@ struct AppQuickSessionCreate: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         values["origin_surface"] = originSurface.rawValue
@@ -3069,7 +3211,6 @@ struct AppQuickSessionCreate: TelemetryEvent {
 /// What did the app cost in CPU and memory, and how much headroom was left, on each screen and state? Sampled every 10 s.
 struct AppDeviceResources: TelemetryEvent {
     static let name = "app.device_resources"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let cpuPct: Double?
     let memoryMb: Double?
@@ -3109,6 +3250,10 @@ struct AppDeviceResources: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let screen { values["screen"] = TelemetryName.sanitize(screen) }
@@ -3122,7 +3267,6 @@ struct AppDeviceResources: TelemetryEvent {
 /// How large was the app when iOS sent a memory warning, and what did it free?
 struct AppMemoryWarning: TelemetryEvent {
     static let name = "app.memory_warning"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let footprintBeforeMb: Double?
     let footprintAfterMb: Double?
@@ -3153,6 +3297,10 @@ struct AppMemoryWarning: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let screen { values["screen"] = TelemetryName.sanitize(screen) }
@@ -3163,7 +3311,6 @@ struct AppMemoryWarning: TelemetryEvent {
 /// How large was the app when it returned to the foreground?
 struct AppForeground: TelemetryEvent {
     static let name = "app.foreground"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let footprintMb: Double?
     let reconnect: Bool
@@ -3186,6 +3333,10 @@ struct AppForeground: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let screen { values["screen"] = TelemetryName.sanitize(screen) }
@@ -3196,7 +3347,6 @@ struct AppForeground: TelemetryEvent {
 /// Did the main thread miss the watchdog probe, and how large was the app?
 struct AppMainThreadStallDetected: TelemetryEvent {
     static let name = "app.main_thread_stall_detected"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let thresholdMs: Double
     let footprintMb: Double?
@@ -3223,6 +3373,10 @@ struct AppMainThreadStallDetected: TelemetryEvent {
         return values
     }
 
+    var passesEmitPolicy: Bool {
+        true
+    }
+
     var tagValues: [String: String] {
         var values: [String: String] = [:]
         if let screen { values["screen"] = TelemetryName.sanitize(screen) }
@@ -3233,7 +3387,6 @@ struct AppMainThreadStallDetected: TelemetryEvent {
 /// How long did a detected main-thread stall last?
 struct AppMainThreadStallRecovered: TelemetryEvent {
     static let name = "app.main_thread_stall_recovered"
-    static let emitRules: [TelemetryEmitRule] = []
 
     let durationMs: Double
     let sequence: Int
@@ -3254,6 +3407,10 @@ struct AppMainThreadStallRecovered: TelemetryEvent {
         values["duration_ms"] = durationMs
         values["sequence"] = Double(sequence)
         return values
+    }
+
+    var passesEmitPolicy: Bool {
+        true
     }
 
     var tagValues: [String: String] {

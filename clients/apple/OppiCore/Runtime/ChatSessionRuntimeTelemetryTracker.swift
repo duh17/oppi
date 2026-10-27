@@ -47,7 +47,11 @@ final class ChatSessionRuntimeTelemetryTracker {
         sessionLoadRecorded = false
     }
 
-    func recordSessionLoadIfNeeded(path: String, itemCount: Int, workspaceId: String? = nil) {
+    func recordSessionLoadIfNeeded(
+        path: ChatSessionRuntimeTelemetry.LoadPath,
+        itemCount: Int,
+        workspaceId: String? = nil
+    ) {
         guard !sessionLoadRecorded, let startMs = sessionLoadStartMs else { return }
         sessionLoadRecorded = true
         effects.recordTelemetry(
@@ -76,7 +80,10 @@ final class ChatSessionRuntimeTelemetryTracker {
         observedTransportPath = path
     }
 
-    func recordFreshContentLagIfNeeded(reason: String, workspaceId: String? = nil) {
+    func recordFreshContentLagIfNeeded(
+        reason: ChatSessionRuntimeTelemetry.FreshnessReason,
+        workspaceId: String? = nil
+    ) {
         guard !freshContentLagRecorded, let startedAt = freshContentLagStartMs else { return }
         freshContentLagRecorded = true
         effects.recordTelemetry(

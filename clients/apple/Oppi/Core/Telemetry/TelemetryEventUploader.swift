@@ -3,42 +3,66 @@ import OSLog
 
 private let uploaderLog = Logger(subsystem: AppIdentifiers.subsystem, category: "TelemetryUpload")
 
+/// What `TelemetryEventUploader` needs from the server connection: one POST of
+/// catalog events. `nil` means the server accepted the upload (a 2xx) but its
+/// body could not be read, so no drop counts are known.
+protocol TelemetryEventUploading: Sendable {
+    func uploadTelemetryEvents(request: TelemetryEventUploadRequest) async throws -> TelemetryEventUploadResponse?
+}
+
+extension APIClient: TelemetryEventUploading {}
+
 /// Buffers catalog events and uploads them to `POST /telemetry/events`.
 ///
 /// Holds at most 1000 events, sends batches of 50, and flushes 10 s after the
-/// first buffered event or as soon as a batch is full. A failed upload keeps the
-/// batch for the next flush. The server answers with the events it refused, by
-/// reason; those cannot succeed on retry, so they are logged and not resent.
+/// first buffered event or as soon as a batch is full. A failed upload (no 2xx)
+/// keeps the batch for the next flush. A 2xx never requeues: the server stored
+/// the accepted events, and the ones it refused, which it reports by reason,
+/// cannot succeed on retry, so they are logged and not resent.
 actor TelemetryEventUploader {
     static let shared = TelemetryEventUploader()
 
-    private var apiClient: APIClient?
+    private var uploader: (any TelemetryEventUploading)?
     private var backlog: [TelemetryEventPayload] = []
     private var flushing = false
     private var flushTask: Task<Void, Never>?
 
-    private let maxPending = 1_000
-    private let maxBatchSize = 50
-    private let flushInterval: Duration = .seconds(10)
+    private let isUploadAllowed: @Sendable () -> Bool
+    private let onDrops: @Sendable (TelemetryEventUploadResponse, Int) -> Void
+    private let maxPending: Int
+    private let maxBatchSize: Int
+    private let flushInterval: Duration
 
-    private init() {}
+    init(
+        isUploadAllowed: @escaping @Sendable () -> Bool = { TelemetrySettings.allowsRemoteDiagnosticsUpload },
+        onDrops: @escaping @Sendable (TelemetryEventUploadResponse, Int) -> Void = TelemetryEventUploader.logDrops,
+        maxPending: Int = 1_000,
+        maxBatchSize: Int = 50,
+        flushInterval: Duration = .seconds(10)
+    ) {
+        self.isUploadAllowed = isUploadAllowed
+        self.onDrops = onDrops
+        self.maxPending = maxPending
+        self.maxBatchSize = maxBatchSize
+        self.flushInterval = flushInterval
+    }
 
-    func setUploadClient(_ client: APIClient?) {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
-            apiClient = nil
+    func setUploadClient(_ client: (any TelemetryEventUploading)?) {
+        guard isUploadAllowed() else {
+            uploader = nil
             backlog.removeAll(keepingCapacity: true)
             flushTask?.cancel()
             flushTask = nil
             return
         }
 
-        apiClient = client
+        uploader = client
         guard client != nil else { return }
         flushIfNeeded()
     }
 
     func enqueue(_ event: TelemetryEventPayload) {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
+        guard isUploadAllowed() else { return }
 
         backlog.append(event)
         if backlog.count > maxPending {
@@ -52,18 +76,22 @@ actor TelemetryEventUploader {
         }
     }
 
+    /// Events waiting for upload.
+    var pendingCount: Int { backlog.count }
+
     func flushIfNeeded() {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else { return }
+        guard isUploadAllowed() else { return }
         guard !flushing else { return }
         guard !backlog.isEmpty else { return }
 
         Task { [weak self] in
-            await self?.flushLoop()
+            await self?.flush()
         }
     }
 
-    private func flushLoop() async {
-        guard TelemetrySettings.allowsRemoteDiagnosticsUpload else {
+    /// Uploads every buffered batch, stopping at the first failure.
+    func flush() async {
+        guard isUploadAllowed() else {
             backlog.removeAll(keepingCapacity: true)
             return
         }
@@ -75,7 +103,7 @@ actor TelemetryEventUploader {
         flushTask?.cancel()
         flushTask = nil
 
-        guard let apiClient else {
+        guard let uploader else {
             scheduleFlushTimerIfNeeded()
             return
         }
@@ -91,8 +119,10 @@ actor TelemetryEventUploader {
             )
 
             do {
-                let response = try await apiClient.uploadTelemetryEvents(request: request)
-                Self.logDrops(response, batchSize: batch.count)
+                if let response = try await uploader.uploadTelemetryEvents(request: request),
+                   !response.dropped.isEmpty {
+                    onDrops(response, batch.count)
+                }
             } catch {
                 backlog = batch + backlog
                 scheduleFlushTimerIfNeeded()
@@ -101,8 +131,8 @@ actor TelemetryEventUploader {
         }
     }
 
-    private static func logDrops(_ response: TelemetryEventUploadResponse, batchSize: Int) {
-        guard !response.dropped.isEmpty else { return }
+    @Sendable
+    static func logDrops(_ response: TelemetryEventUploadResponse, batchSize: Int) {
         let reasons = response.dropped
             .sorted { $0.key < $1.key }
             .map { "\($0.key)=\($0.value)" }
@@ -115,8 +145,9 @@ actor TelemetryEventUploader {
     private func scheduleFlushTimerIfNeeded() {
         guard flushTask == nil else { return }
 
+        let interval = flushInterval
         flushTask = Task { [weak self] in
-            try? await Task.sleep(for: self?.flushInterval ?? .seconds(10))
+            try? await Task.sleep(for: interval)
             guard !Task.isCancelled else { return }
             await self?.flushTaskFired()
         }
