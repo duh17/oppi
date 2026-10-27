@@ -11,7 +11,7 @@ import SwiftUI
 /// `mcp`, `mcp-workspace`,
 /// `mcp-detail`, `mcp-add`, `mcp-sign-in`, `quick-comments`, `quick-comment-editor`,
 /// `auto-title`, `theme-import`, `dictionary`, `dictionary-workspace`,
-/// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `extensions`, `extensions-offline` (the catalog
+/// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `workspace-create`, `workspace-create-configure`.
@@ -350,6 +350,24 @@ struct SettingsSweepScreenshotPreview: View {
                 )
             }
             .ignoresSafeArea()
+        case "skill-detail":
+            RouterPreviewControllerStack(root: root) { [server, root, connection] in
+                ServerSkillDetailViewController(
+                    target: .init(serverId: server.id, kind: .skill, resourceId: "release"),
+                    root: root,
+                    connection: connection
+                )
+            }
+            .ignoresSafeArea()
+        case "skill-browser":
+            RouterPreviewControllerStack(root: root) { [server, root, connection] in
+                ServerSkillBrowserViewController(
+                    target: .init(serverId: server.id, resourceId: "release"),
+                    root: root,
+                    connection: connection
+                )
+            }
+            .ignoresSafeArea()
         case "skill-file-review":
             skillFilePage
         case "skill-file-edit":
@@ -426,8 +444,6 @@ struct SettingsSweepScreenshotPreview: View {
         case "auto-title": AutoTitleSettingsView()
         case "dictionary": DictationDictionaryView(workspaceId: nil)
         case "dictionary-workspace": DictationDictionaryView(workspaceId: "preview-ws")
-        case "skill-detail":
-            ServerSkillDetailView(target: .init(serverId: server.id, kind: .skill, resourceId: "release"))
         default:
             Text("Unknown SCREENSHOT_SWEEP_PAGE \(page)")
         }
@@ -590,6 +606,14 @@ struct SettingsSweepScreenshotPreview: View {
             "/server/info": Data(#"{"name":"mac-studio","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"mac-studio","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":1,"modelCount":0}}"#.utf8),
             "PUT /files/current": Data(#"{"etag":"\"sha256-\#(String(repeating: "b", count: 64))\"","size":1,"mtimeMs":1}"#.utf8),
             "/server/resources/skills": json(ServerSkillsCatalog(skills: skills)),
+            "PUT /server/resources/skills/release/enabled": json({ () -> ServerSkillSummary in
+                let release = skills[0]
+                return ServerSkillSummary(
+                    id: release.id, name: release.name, description: release.description,
+                    provenance: release.provenance, path: release.path,
+                    state: .disabled, loadError: nil, warnings: [], editable: release.editable
+                )
+            }()),
             "/server/resources/skills/release": json(ServerSkillDetail(
                 summary: skills[0],
                 skillMarkdown: "# Release\n\nReview release readiness.",

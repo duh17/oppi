@@ -1,7 +1,9 @@
 import XCTest
 
-/// The server Skills list on the real UIKit controller over the settings sweep
-/// fixture server (`SCREENSHOT_SCREEN=settings-sweep`).
+/// The server Skills screens (list, a Skill's page, its file browser) on the
+/// real UIKit controllers over the settings sweep fixture server
+/// (`SCREENSHOT_SCREEN=settings-sweep`). Writes that reach the fixture server
+/// show in `settingsSweep.lastWrite`.
 @MainActor
 final class ServerSkillsUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -51,6 +53,47 @@ final class ServerSkillsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["skills.row.release"].exists, "The cached catalog must stay listed")
     }
 
+    /// The page shows the Skill, its switch saves through the server, and the
+    /// file list is one row away.
+    func testSkillDetailSwitchSavesAndOffersFiles() {
+        launch(page: "skill-detail")
+        let enabled = app.switches["skills.detail.enabled"]
+        XCTAssertTrue(enabled.waitForExistence(timeout: 10), "Skill page did not load")
+        XCTAssertEqual(enabled.label, "Enable release on mac-studio")
+        XCTAssertEqual(enabled.value as? String, "1")
+
+        enabled.tap()
+        XCTAssertTrue(
+            waitFor(lastWrite.contains("PUT /server/resources/skills/release/enabled") && lastWrite.contains("\"enabled\":false")),
+            "The switch must save through the Skill: \(lastWrite)"
+        )
+
+        let files = app.buttons["skills.files.open"]
+        XCTAssertTrue(files.waitForExistence(timeout: 10), "The file list row did not show")
+        XCTAssertEqual(files.label, "Browse release files")
+        XCTAssertEqual(files.value as? String, "3 files")
+        assertRunning()
+    }
+
+    /// Folders open and close in place; files are buttons that open by path.
+    func testSkillBrowserOpensFolders() {
+        launch(page: "skill-browser")
+        let file = app.buttons["skills.file.SKILL.md"]
+        XCTAssertTrue(file.waitForExistence(timeout: 10), "The file tree did not load")
+        XCTAssertEqual(file.label, "Open SKILL.md")
+        let folder = app.buttons["skills.dir.scripts"]
+        XCTAssertTrue(folder.exists)
+        XCTAssertEqual(folder.value as? String, "Collapsed")
+        XCTAssertFalse(app.buttons["skills.file.scripts/check.sh"].exists)
+
+        folder.tap()
+        XCTAssertTrue(app.buttons["skills.file.scripts/check.sh"].waitForExistence(timeout: 5), "Opening a folder must list its files")
+        XCTAssertEqual(folder.value as? String, "Expanded")
+        folder.tap()
+        XCTAssertTrue(waitFor(!app.buttons["skills.file.scripts/check.sh"].exists), "Closing the folder must hide its files")
+        assertRunning()
+    }
+
     // MARK: Helpers
 
     private func launch(page: String) {
@@ -63,6 +106,10 @@ final class ServerSkillsUITests: XCTestCase {
         app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = "dark"
         app.launch()
         XCTAssertTrue(app.staticTexts["settingsSweep.lastWrite"].waitForExistence(timeout: 10), "Settings sweep harness did not appear")
+    }
+
+    private var lastWrite: String {
+        app.staticTexts["settingsSweep.lastWrite"].label
     }
 
     private func waitFor(_ condition: @autoclosure () -> Bool, timeout: TimeInterval = 10) -> Bool {

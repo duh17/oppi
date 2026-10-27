@@ -6,7 +6,9 @@ import SwiftUI
 // sidebar, a workspace's sessions, a session's chat
 // (`ChatRouteViewController`), Files (`FileBrowserViewController`), a linked
 // file (`WorkspaceLinkedFileViewController`), a Skill file
-// (`ServerSkillFileViewController`), Skills (`ServerSkillsViewController`), Extensions
+// (`ServerSkillFileViewController`), Skills (`ServerSkillsViewController`) with
+// a Skill's page (`ServerSkillDetailViewController`) and its file browser
+// (`ServerSkillBrowserViewController`), Extensions
 // (`ServerExtensionsViewController`) and an Extension's detail
 // (`ServerExtensionDetailViewController`), SSH Terminal's host list,
 // Schedules, Agents, MCP Servers (`McpServersViewController`), App Settings
@@ -87,8 +89,14 @@ enum ShellRouteScreens {
         if case .serverSkillFile(let target) = route {
             return ServerSkillFileViewController(target: target, root: root)
         }
-        if case .serverResourceDetail(let target) = route, target.kind == .extension {
-            return ServerExtensionDetailViewController(target: target, root: root)
+        if case .serverResourceDetail(let target) = route {
+            switch target.kind {
+            case .skill: return ServerSkillDetailViewController(target: target, root: root)
+            case .extension: return ServerExtensionDetailViewController(target: target, root: root)
+            }
+        }
+        if case .serverSkillBrowser(let target) = route {
+            return ServerSkillBrowserViewController(target: target, root: root)
         }
         if case .modelProviders(let target) = route {
             // Keyed by the route, not the visible host: a host-pill switch
@@ -163,8 +171,9 @@ enum ShellRouteScreens {
         }
         // The sidebar reads its own state.
         if screen is WorkspaceSidebarViewController { return }
-        // An Extension's detail and Model Providers read their own state.
-        if screen is ServerExtensionDetailViewController || screen is ModelProvidersViewController { return }
+        // A Skill's page and files, an Extension's detail, and Model Providers read their own state.
+        if screen is ServerSkillDetailViewController || screen is ServerSkillBrowserViewController
+            || screen is ServerExtensionDetailViewController || screen is ModelProvidersViewController { return }
         if let detail = screen as? WorkspaceDetailViewController {
             if case .workspace(let target) = route {
                 detail.update(workspace: target.workspace)
@@ -253,12 +262,14 @@ struct ShellRouteView: View {
     private var content: some View {
         switch route {
         case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile, .serverSkillFile,
-             .workspaceConfiguration, .modelProviders:
+             .workspaceConfiguration, .modelProviders, .serverResourceDetail, .serverSkillBrowser:
             // UIKit screens (SessionInboxViewController,
             // WorkspaceSidebarViewController, WorkspaceDetailViewController,
             // ChatRouteViewController, FileBrowserViewController,
             // WorkspaceLinkedFileViewController, ServerSkillFileViewController,
-            // WorkspaceSettingsViewController, ModelProvidersViewController).
+            // WorkspaceSettingsViewController, ModelProvidersViewController,
+            // ServerSkillDetailViewController, ServerExtensionDetailViewController,
+            // ServerSkillBrowserViewController).
             mountedByUIKitScreen
         case .chatReader(let target):
             if let chatReaderPayloadStore {
@@ -268,13 +279,6 @@ struct ShellRouteView: View {
             WorkspaceUtilityDestinationView(target: target)
         case .serverDetails(let target):
             ServerDetailsScopedDestinationView(target: target)
-        case .serverResourceDetail(let target):
-            switch target.kind {
-            case .skill: ServerSkillDetailScopedDestinationView(target: target)
-            case .extension: mountedByUIKitScreen
-            }
-        case .serverSkillBrowser(let target):
-            ServerSkillBrowserScopedDestinationView(target: target)
         case .sessionThread(let target):
             SessionThreadDetailView(target: target)
         }
