@@ -9,7 +9,7 @@ import {
   pruneOldJsonlFiles,
   retentionDaysFromEnv,
 } from "../metric-utils.js";
-import { createLogger } from "../logger.js";
+import { createLogger, type Logger } from "../logger.js";
 import { TelemetryEventWriter } from "../telemetry/event-writer.js";
 import { validateEvent } from "../telemetry/validate.js";
 import {
@@ -330,6 +330,7 @@ function countDrop(
  * envelope; otherwise the records to store and the drop counts by reason.
  */
 function parseEventsRequest(body: unknown): {
+  client: TelemetryClient;
   records: TelemetryEventRecord[];
   dropped: Partial<Record<TelemetryDropReason, number>>;
 } | null {
@@ -373,7 +374,7 @@ function parseEventsRequest(body: unknown): {
     });
   }
 
-  return { records, dropped };
+  return { client, records, dropped };
 }
 
 // ── Client logs ──
@@ -522,8 +523,44 @@ function appendClientLogRecord(ctx: RouteContext, request: ClientLogUploadReques
   );
 }
 
-export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
+/** Distinct (reason, build) pairs remembered for drop logging before the set resets. */
+const DROP_LOG_MEMORY = 256;
+
+export function createTelemetryRoutes(
+  ctx: RouteContext,
+  helpers: RouteHelpers,
+  logger: Logger = log,
+): RouteDispatcher {
   let eventWriter: TelemetryEventWriter | undefined;
+  const loggedDrops = new Set<string>();
+
+  /**
+   * An uploaded event the catalog refuses is lost to the client, which is told
+   * only in the response. Log it once per reason and client build so a build
+   * that emits a stale name or tag is visible without a log line per upload.
+   */
+  function logDrops(
+    dropped: Partial<Record<TelemetryDropReason, number>>,
+    client: TelemetryClient,
+  ): void {
+    const build = `${client.appVersion ?? "?"}+${client.buildNumber ?? "?"}`;
+    const fresh: Partial<Record<TelemetryDropReason, number>> = {};
+    for (const [reason, count] of Object.entries(dropped) as [TelemetryDropReason, number][]) {
+      const key = `${reason}|${build}|${client.kind}`;
+      if (loggedDrops.has(key)) continue;
+      if (loggedDrops.size >= DROP_LOG_MEMORY) loggedDrops.clear();
+      loggedDrops.add(key);
+      fresh[reason] = count;
+    }
+    if (Object.keys(fresh).length === 0) return;
+    logger.warn("telemetry_events.dropped", {
+      dropped: fresh,
+      clientKind: client.kind,
+      appVersion: client.appVersion,
+      buildNumber: client.buildNumber,
+      gitCommit: client.gitCommit,
+    });
+  }
 
   async function handleUploadMetricKit(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!telemetryUploadsEnabledFromEnv()) {
@@ -570,6 +607,7 @@ export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     eventWriter ??= new TelemetryEventWriter(telemetryDir(ctx));
     eventWriter.write("app", parsed.records);
+    logDrops(parsed.dropped, parsed.client);
     const response: TelemetryEventUploadResponse = {
       ok: true,
       accepted: parsed.records.length,

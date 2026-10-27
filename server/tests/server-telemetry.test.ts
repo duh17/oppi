@@ -231,6 +231,24 @@ describe("TelemetryEventWriter", () => {
     ]);
   });
 
+  it("keeps writing server.resources after ops events fill the daily cap", () => {
+    setEnv("OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES", "400");
+    const writer = new TelemetryEventWriter(dir);
+    for (let i = 0; i < 20; i += 1) writer.write("server", [record("server.ws_ping_timeout")]);
+    const resources = record("server.resources");
+    writer.write("server", [resources, record("server.session_create")]);
+    writer.write("server", [resources]);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const names = readFileSync(join(dir, `server-events-${today}.jsonl`), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as TelemetryEventRecord).name);
+    expect(names.filter((name) => name === "server.resources")).toHaveLength(2);
+    // The cap still holds for everything else: far fewer than 20 + 1 ops lines fit in 400 bytes.
+    expect(names.filter((name) => name !== "server.resources").length).toBeLessThan(10);
+  });
+
   it("prunes expired server event files and every pre-v2 server prefix on the server retention", () => {
     setEnv("OPPI_SERVER_METRICS_RETENTION_DAYS", "3");
     mkdirSync(dir, { recursive: true });

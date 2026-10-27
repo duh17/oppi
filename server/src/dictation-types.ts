@@ -254,7 +254,7 @@ export type DictationClientMessage =
 
 export interface DictationReadyMessage {
   type: "dictation_ready";
-  /** STT provider identifier reported by the backend (e.g. "streaming-localhost"). */
+  /** STT provider identifier reported by the backend (e.g. "streaming", "xai"); never an endpoint host. */
   sttProvider?: string;
   /** STT model identifier. */
   sttModel?: string;

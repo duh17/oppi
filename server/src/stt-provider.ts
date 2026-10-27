@@ -175,7 +175,8 @@ function takeQueuedBytes(queue: Buffer[], maxBytes: number): Buffer {
 }
 
 export class StreamingSttProvider implements SttProvider {
-  readonly name: string;
+  /** Constant: it reaches telemetry tags and the client, so it never carries the endpoint host. */
+  readonly name = "streaming";
   readonly model: string;
   readonly endpoint: string;
   private fetchFn: typeof globalThis.fetch;
@@ -212,13 +213,6 @@ export class StreamingSttProvider implements SttProvider {
     this.model = opts.model;
     this.fetchFn = fetchFn;
     this.feedIntervalMs = feedIntervalMs;
-    // Derive name from endpoint hostname for metrics disambiguation
-    try {
-      const host = new URL(opts.endpoint).hostname;
-      this.name = `streaming-${host}`;
-    } catch {
-      this.name = "streaming";
-    }
   }
 
   async start(options?: SttStartOptions): Promise<SttStartResult> {

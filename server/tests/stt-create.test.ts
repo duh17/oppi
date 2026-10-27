@@ -11,7 +11,7 @@ describe("createSttProvider", () => {
       sttModel: "test-model",
     });
     expect(provider).toBeInstanceOf(StreamingSttProvider);
-    expect(provider.name).toBe("streaming-127.0.0.1");
+    expect(provider.name).toBe("streaming");
   });
 
   it.each(["openai", "openai-codex"])(

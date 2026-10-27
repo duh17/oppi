@@ -52,12 +52,11 @@ export interface TelemetryClient {
 }
 
 /**
- * `POST /telemetry/events` body: `{ generatedAt, client, events: [{ ts, name,
- * fields, tags?, sessionId?, workspaceId? }] }`, where each event follows the
- * telemetry catalog. Ingest validates every event (`routes/telemetry.ts`); the
- * Swift encoder is generated from the catalog.
- *
- * Why ingest did not store an event.
+ * Why ingest did not store an uploaded event. A `POST /telemetry/events` body is
+ * `{ generatedAt, client, events: [{ ts, name, fields, tags?, sessionId?,
+ * workspaceId? }] }`, where each event follows the telemetry catalog; ingest
+ * validates every event (`routes/telemetry.ts`) and the Swift encoder is
+ * generated from the catalog.
  */
 export type TelemetryDropReason =
   | "malformed"

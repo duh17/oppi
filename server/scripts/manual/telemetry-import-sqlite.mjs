@@ -105,6 +105,7 @@ function ensureSchema(db) {
       tags_json TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_events_name_ts ON events(name, ts_ms);
+    CREATE INDEX IF NOT EXISTS idx_events_origin_ts ON events(origin, ts_ms);
 
     CREATE TABLE IF NOT EXISTS metrickit_payloads (
       id TEXT PRIMARY KEY,

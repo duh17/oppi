@@ -140,8 +140,8 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.session_load'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
-          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.session_load'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
+          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.session_load'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
+          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.session_load'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
           "timeColumns": [],
           "refId": "A"
         }
@@ -198,8 +198,8 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.ttft'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
-          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.ttft'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
+          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.ttft'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
+          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.ttft'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
           "timeColumns": [],
           "refId": "A"
         }
@@ -256,8 +256,8 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.jank_pct')), 1) AS value\nFROM events\nWHERE name = 'app.timeline_jank'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
-          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.jank_pct')), 1) AS value\nFROM events\nWHERE name = 'app.timeline_jank'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
+          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.jank_pct')), 1) AS value\nFROM events\nWHERE name = 'app.timeline_jank'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
+          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.jank_pct')), 1) AS value\nFROM events\nWHERE name = 'app.timeline_jank'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
           "timeColumns": [],
           "refId": "A"
         }
@@ -314,8 +314,8 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.dictation_first_result'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
-          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.dictation_first_result'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
+          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.dictation_first_result'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
+          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.dictation_first_result'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
           "timeColumns": [],
           "refId": "A"
         }
@@ -372,8 +372,8 @@
             "uid": "oppi-telemetry-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.catchup'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
-          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.catchup'\n  AND build_number = (SELECT MAX(build_number) FROM events WHERE origin = 'app')\n  AND ts_ms BETWEEN $__from AND $__to",
+          "rawQueryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.catchup'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
+          "queryText": "SELECT ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS value\nFROM events\nWHERE name = 'app.catchup'\n  AND build_number = (SELECT build_number FROM events WHERE origin = 'app' AND ts_ms BETWEEN $__from AND $__to ORDER BY CAST(build_number AS INTEGER) DESC LIMIT 1)\n  AND ts_ms BETWEEN $__from AND $__to",
           "timeColumns": [],
           "refId": "A"
         }

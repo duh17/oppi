@@ -323,9 +323,15 @@ const REVIEW_SCRIPT_PATH = join(serverRoot, "scripts/telemetry-review.ts");
 const JSON_KEY = /json_extract\(\s*(fields_json|tags_json)\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)/g;
 const NAME_EQUALS = /\bname\s*(?:=|!=|<>)\s*'([^']*)'/g;
 const NAME_IN = /\bname\s+(?:NOT\s+)?IN\s*\(([^)]*)\)/gi;
-/** A tag read, optionally wrapped in COALESCE/NULLIF/TRIM, compared with a literal or literal list. */
-const TAG_COMPARE =
-  /json_extract\(\s*tags_json\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)(?:\s*(?:\)|,\s*'[^']*'|,\s*\d+))*\s*(=|!=|<>|NOT\s+IN|IN)\s*(\([^)]*\)|'[^']*')/gi;
+const TAG_READ = String.raw`json_extract\(\s*tags_json\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)`;
+/** What closes a COALESCE/NULLIF/TRIM around a tag read: parentheses and default literals. */
+const TAG_WRAPPER = String.raw`(?:\s*(?:\)|,\s*'[^']*'|,\s*\d+))*`;
+const TAG_READ_PREFIX = `${TAG_READ}${TAG_WRAPPER}`;
+const COMPARISON = String.raw`\s*(=|!=|<>|NOT\s+IN|IN|NOT\s+LIKE|LIKE)\s*(\([^)]*\)|'[^']*')`;
+/** A tag read compared directly with a literal or literal list. */
+const TAG_COMPARE = new RegExp(`${TAG_READ_PREFIX}${COMPARISON}`, "gi");
+/** `<tag read> AS alias`: a CTE or subquery column that carries a tag under another name. */
+const TAG_ALIAS = new RegExp(`${TAG_READ}(${TAG_WRAPPER})\\s+AS\\s+([A-Za-z_][A-Za-z0-9_]*)`, "gi");
 
 const quoted = (text: string): string[] => [...text.matchAll(/'([^']*)'/g)].map((m) => m[1]!);
 
@@ -376,16 +382,18 @@ export function sqlCatalogViolations(
     }
   }
 
-  for (const match of sql.matchAll(TAG_COMPARE)) {
-    const key = match[1]!;
-    const literals = quoted(match[3]!);
+  for (const { key, operator, literals, synthetic } of tagComparisons(sql)) {
     const carriers = known.filter(([, event]) => key in (event.tags ?? {}));
     if (carriers.length === 0) continue; // already reported as an unknown tag key
     const perEvent = carriers.map(([, event]) => tagValues(tags, event, key));
     if (perEvent.some((values) => values === undefined)) continue; // open vocabulary
-    const allowed = new Set(perEvent.flatMap((values) => values!));
+    const allowed = [...new Set(perEvent.flatMap((values) => values!))];
     for (const literal of literals) {
-      if (!allowed.has(literal)) {
+      if (synthetic.includes(literal)) continue;
+      const matches = /LIKE$/i.test(operator)
+        ? allowed.some((value) => likeMatches(literal, value))
+        : allowed.includes(literal);
+      if (!matches) {
         problems.push(
           `${where}: tag "${key}" is compared with "${literal}", which ${eventList} never has`,
         );
@@ -393,6 +401,68 @@ export function sqlCatalogViolations(
     }
   }
   return problems;
+}
+
+interface TagComparison {
+  key: string;
+  operator: string;
+  literals: string[];
+  /** Default literals the query itself puts in the column (`COALESCE(<tag>, 'untagged') AS runtime`). */
+  synthetic: string[];
+}
+
+/** SQLite `LIKE` (case-insensitive for ASCII; `%` any run, `_` one character) against one value. */
+function likeMatches(pattern: string, value: string): boolean {
+  const source = [...pattern]
+    .map((char) => (char === "%" ? ".*" : char === "_" ? "." : char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+    .join("");
+  return new RegExp(`^${source}$`, "is").test(value);
+}
+
+/**
+ * Every comparison of a tag with literals: `json_extract(tags_json, '$.k') = 'x'`,
+ * and the same through an alias a CTE or subquery gave the tag
+ * (`json_extract(...) AS k` then `WHERE k = 'x'` or `CASE WHEN k IN (...)`).
+ * An alias that names two different tags in one text is ambiguous and skipped.
+ */
+function tagComparisons(sql: string): TagComparison[] {
+  const found: TagComparison[] = [];
+  for (const match of sql.matchAll(TAG_COMPARE)) {
+    found.push({
+      key: match[1]!,
+      operator: match[2]!,
+      literals: quoted(match[3]!),
+      synthetic: [],
+    });
+  }
+
+  const aliasKeys = new Map<string, Set<string>>();
+  const aliasDefaults = new Map<string, string[]>();
+  for (const match of sql.matchAll(TAG_ALIAS)) {
+    const alias = match[3]!.toLowerCase();
+    const keys = aliasKeys.get(alias) ?? new Set<string>();
+    keys.add(match[1]!);
+    aliasKeys.set(alias, keys);
+    aliasDefaults.set(alias, [...(aliasDefaults.get(alias) ?? []), ...quoted(match[2]!)]);
+  }
+  for (const [alias, keys] of aliasKeys) {
+    if (keys.size !== 1) continue;
+    const [key] = [...keys];
+    const compare = new RegExp(
+      `(?<![A-Za-z0-9_'"$])(?:[A-Za-z_][A-Za-z0-9_]*\\.)?${alias}\\b${COMPARISON}`,
+      "gi",
+    );
+    for (const match of sql.matchAll(compare)) {
+      // `json_extract(...) AS alias = ...` is not a comparison; an alias read is.
+      found.push({
+        key: key!,
+        operator: match[1]!,
+        literals: quoted(match[2]!),
+        synthetic: aliasDefaults.get(alias) ?? [],
+      });
+    }
+  }
+  return found;
 }
 
 interface SqlSource {

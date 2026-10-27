@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { createLogger, type Logger } from "../src/logger.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createTelemetryRoutes } from "../src/routes/telemetry.js";
 import type { RouteContext } from "../src/routes/types.js";
@@ -148,6 +149,76 @@ describe("POST /telemetry/events", () => {
       },
     });
     expect(storedAppEvents().map((record) => record.fields)).toEqual([{ duration_ms: 900 }]);
+  });
+
+  describe("drop logging", () => {
+    function droppingUpload(client: Record<string, string>): unknown {
+      const ts = Date.now();
+      return {
+        generatedAt: ts,
+        client,
+        events: [
+          { ts, name: "chat.ttft_ms", fields: { duration_ms: 1 } },
+          { ts, name: "app.ttft", fields: { duration_ms: 900 } },
+        ],
+      };
+    }
+
+    async function postWith(
+      dispatch: ReturnType<typeof createTelemetryRoutes>,
+      body: unknown,
+    ): Promise<void> {
+      await dispatch({
+        method: "POST",
+        path: "/telemetry/events",
+        url: new URL("http://localhost/telemetry/events"),
+        req: makeRequest(body) as never,
+        res: makeResponse() as never,
+      });
+    }
+
+    /** A logger of its own: the process logger's level and sink depend on the environment. */
+    function capturingLogger(): { logger: Logger; lines: Array<Record<string, unknown>> } {
+      const lines: Array<Record<string, unknown>> = [];
+      const logger = createLogger({
+        level: "debug",
+        sink: (_level, line) => lines.push(JSON.parse(line) as Record<string, unknown>),
+      });
+      return { logger, lines };
+    }
+
+    it("logs drops by reason with the client build, once per reason and build", async () => {
+      const { logger, lines } = capturingLogger();
+      const ctx = { storage: { getDataDir: () => dataDir } } as unknown as RouteContext;
+      const dispatch = createTelemetryRoutes(ctx, createRouteHelpers(), logger);
+
+      await postWith(dispatch, droppingUpload({ ...CLIENT, buildNumber: "412" }));
+      await postWith(dispatch, droppingUpload({ ...CLIENT, buildNumber: "412" }));
+      await postWith(dispatch, droppingUpload({ ...CLIENT, buildNumber: "413" }));
+
+      const drops = lines.filter((line) => line.event === "telemetry_events.dropped");
+      expect(drops).toHaveLength(2);
+      expect(drops[0]).toMatchObject({
+        level: "warn",
+        dropped: { unknown_event: 1 },
+        clientKind: "ios",
+        buildNumber: "412",
+      });
+      expect(drops[1]).toMatchObject({ buildNumber: "413", dropped: { unknown_event: 1 } });
+    });
+
+    it("logs nothing when every event is accepted", async () => {
+      const { logger, lines } = capturingLogger();
+      const ctx = { storage: { getDataDir: () => dataDir } } as unknown as RouteContext;
+      const dispatch = createTelemetryRoutes(ctx, createRouteHelpers(), logger);
+      const ts = Date.now();
+      await postWith(dispatch, {
+        generatedAt: ts,
+        client: CLIENT,
+        events: [{ ts, name: "app.ttft", fields: { duration_ms: 900 } }],
+      });
+      expect(lines.filter((line) => line.event === "telemetry_events.dropped")).toHaveLength(0);
+    });
   });
 
   it("stores unsafe name-tag values as unknown instead of dropping the event", async () => {

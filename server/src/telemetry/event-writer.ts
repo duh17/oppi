@@ -10,6 +10,10 @@
  * | app    | OPPI_CHAT_METRICS_RETENTION_DAYS (14)      | OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES        |
  * | server | OPPI_SERVER_METRICS_RETENTION_DAYS (30)    | OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES   |
  *
+ * The daily cap bounds event volume, not resource history: `server.resources`
+ * (one small record every 30 s, about 2 MB a day) is written outside the cap, so
+ * a busy day of ops events cannot starve the Server Metrics page of samples.
+ *
  * Pruning also removes the pre-v2 files (`chat-metrics-`, `server-ops-metrics-`,
  * `server-metrics-`) on their successor's retention so they age out. Nothing
  * reads or writes those files any more.
@@ -30,6 +34,9 @@ import type { TelemetryEventRecord } from "../types.js";
 import type { TelemetryOrigin } from "./catalog.js";
 
 const FILE_SUFFIX = ".jsonl";
+
+/** Events written whatever the daily cap says: the Server Metrics history reads them. */
+const CAP_EXEMPT_EVENTS: ReadonlySet<string> = new Set(["server.resources"]);
 
 const ORIGIN_FILES = {
   app: {
@@ -82,9 +89,15 @@ export class TelemetryEventWriter implements TelemetryEventSink {
       }
       const filePath = join(this.telemetryDir, telemetryEventFileName(origin, Date.now()));
       let lines = "";
-      for (const record of records) lines += `${JSON.stringify(record)}\n`;
+      let exemptLines = "";
+      for (const record of records) {
+        const line = `${JSON.stringify(record)}\n`;
+        if (CAP_EXEMPT_EVENTS.has(record.name)) exemptLines += line;
+        else lines += line;
+      }
+      if (exemptLines) appendJsonlLineWithByteLimit(filePath, exemptLines, null);
       const maxBytes = jsonlMaxBytesFromEnv(ORIGIN_FILES[origin].maxBytesEnv);
-      if (!appendJsonlLineWithByteLimit(filePath, lines, maxBytes)) {
+      if (lines && !appendJsonlLineWithByteLimit(filePath, lines, maxBytes)) {
         this.warnDailyCapOnce(filePath, maxBytes);
       }
       this.prune(origin);

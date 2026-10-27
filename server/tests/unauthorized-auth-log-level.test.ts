@@ -37,9 +37,9 @@ describe("unauthorizedAuthLogLevel", () => {
       level: "warn",
     },
     {
-      name: "logs telemetry chat-metrics unknown_token at info",
+      name: "logs telemetry events unknown_token at info",
       transport: "http" as const,
-      path: "/telemetry/chat-metrics",
+      path: "/telemetry/events",
       reason: "unknown_token",
       level: "info",
     },

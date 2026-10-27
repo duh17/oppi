@@ -40,6 +40,62 @@ describe("dashboard SQL against the catalog", () => {
     ]);
   });
 
+  it("rejects a stale value compared through a CTE alias", () => {
+    const sql = `WITH t AS (
+        SELECT ts_ms, json_extract(tags_json, '$.status') AS status,
+          COALESCE(json_extract(tags_json, '$.error_kind'), '') AS kind
+        FROM events WHERE name = 'app.thread_load' ${WINDOW}
+      )
+      SELECT COUNT(*) FROM t WHERE status = 'failed' AND t.kind IN ('timeout', 'exploded')`;
+    expect(sqlCatalogViolations("panel", sql)).toEqual([
+      'panel: tag "status" is compared with "failed", which app.thread_load never has',
+      'panel: tag "error_kind" is compared with "exploded", which app.thread_load never has',
+    ]);
+  });
+
+  it("accepts live values through an alias, including inside CASE WHEN", () => {
+    const sql = `WITH t AS (
+        SELECT json_extract(tags_json, '$.status') AS status FROM events
+        WHERE name = 'app.thread_load'
+      )
+      SELECT SUM(CASE WHEN status = 'ok' THEN 1 ELSE 0 END),
+        SUM(CASE WHEN status IN ('error') THEN 1 ELSE 0 END) FROM t`;
+    expect(sqlCatalogViolations("panel", sql)).toEqual([]);
+  });
+
+  it("allows the default literal a query itself puts in an aliased tag column", () => {
+    const sql = `SELECT COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.error_kind')), ''), 'none') AS kind,
+        COUNT(*) FROM events WHERE name = 'app.thread_load' GROUP BY 1
+      ORDER BY CASE WHEN kind = 'none' THEN 1 ELSE 0 END`;
+    expect(sqlCatalogViolations("panel", sql)).toEqual([]);
+  });
+
+  it("rejects a stale value inside CASE WHEN on a direct tag read", () => {
+    const sql = `SELECT SUM(CASE WHEN json_extract(tags_json, '$.status') = 'success' THEN 1 ELSE 0 END)
+      FROM events WHERE name = 'app.thread_load'`;
+    expect(sqlCatalogViolations("panel", sql)).toEqual([
+      'panel: tag "status" is compared with "success", which app.thread_load never has',
+    ]);
+  });
+
+  it("matches LIKE literals against the values the event has", () => {
+    const stale = `SELECT 1 FROM events WHERE name = 'app.catchup'
+      AND json_extract(tags_json, '$.result') LIKE 'cache%'`;
+    expect(sqlCatalogViolations("panel", stale)).toEqual([
+      'panel: tag "result" is compared with "cache%", which app.catchup never has',
+    ]);
+    const live = `SELECT 1 FROM events WHERE name = 'app.catchup'
+      AND json_extract(tags_json, '$.result') LIKE 'epoch%'`;
+    expect(sqlCatalogViolations("panel", live)).toEqual([]);
+  });
+
+  it("skips an alias that names two different tags", () => {
+    const sql = `SELECT json_extract(tags_json, '$.status') AS x,
+        json_extract(tags_json, '$.error_kind') AS x
+      FROM events WHERE name = 'app.thread_load' AND x = 'whatever'`;
+    expect(sqlCatalogViolations("panel", sql)).toEqual([]);
+  });
+
   it("honors a value set an event narrows", () => {
     const sql = `SELECT 1 FROM events WHERE name = 'server.turn'
       AND json_extract(tags_json, '$.error_kind') = 'connection'`;

@@ -11,6 +11,7 @@ import { ServerTelemetry } from "../src/telemetry/server-telemetry.js";
 import type { TelemetryEventRecord } from "../src/types.js";
 import {
   SttSessionCreateError,
+  StreamingSttProvider,
   type SttProvider,
   type SttStartOptions,
   type SttStartResult,
@@ -722,6 +723,50 @@ describe("DictationManager", () => {
         "stt_audio_ratio",
         "stt_ms",
       ]);
+    });
+
+    it("never puts a configured endpoint host in STT tags or the client's dictation_ready", async () => {
+      const endpoint = "http://mac-studio.tail1234.ts.net:7936";
+      const fetched = vi.fn<typeof globalThis.fetch>(
+        async () => new Response(JSON.stringify({ session_id: "stt-1" })),
+      );
+      const stt = new StreamingSttProvider({ endpoint, model: "parakeet" }, fetched);
+      const { telemetry, stored } = catalogTelemetry();
+      const mgr = new DictationManager(stt, telemetry);
+      const mgrSent: DictationServerMessage[] = [];
+
+      mgr.handleControlMessage({ type: "dictation_start" }, (msg) => mgrSent.push(msg));
+      await drain();
+      vi.advanceTimersByTime(25);
+      mgr.handleAudioData(silencePcm(500));
+      await drain();
+      mgr.handleControlMessage({ type: "dictation_cancel" }, (msg) => mgrSent.push(msg));
+      await drain();
+
+      const ready = messagesOfType(mgrSent, "dictation_ready");
+      expect(ready).toHaveLength(1);
+      expect(ready[0]?.sttProvider).toBe("streaming");
+      expect(stored().length).toBeGreaterThan(0);
+      const everything = JSON.stringify([stored(), mgrSent]);
+      expect(everything).not.toContain("mac-studio");
+      expect(everything).not.toContain("ts.net");
+      expect(stt.name).toBe("streaming");
+    });
+
+    it("stores a provider name shaped like a host as unknown", async () => {
+      const { telemetry, stored } = catalogTelemetry();
+      const hostNamed = { ...mockSttProvider(["hello"]), name: "stt.build-box.internal" };
+      const mgr = new DictationManager(hostNamed, telemetry);
+
+      mgr.handleControlMessage({ type: "dictation_start" }, () => {});
+      await drain();
+      vi.advanceTimersByTime(25);
+      mgr.handleAudioData(silencePcm(500));
+      await drain();
+
+      const tags = stored()[0]?.tags;
+      expect(tags?.stt_backend).toBe("unknown");
+      expect(tags?.stt_provider).toBe("stt_stt_build_box_internal");
     });
 
     it("ignores audio data before dictation_start", () => {
