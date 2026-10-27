@@ -94,7 +94,8 @@ struct LiveVoiceBargeInDetector {
             let length = min(windowSamples, count - start)
             var rms: Float = 0
             samples.withUnsafeBufferPointer { buffer in
-                vDSP_rmsqv(buffer.baseAddress! + start, 1, &rms, vDSP_Length(length))
+                guard let base = buffer.baseAddress else { return }
+                vDSP_rmsqv(base + start, 1, &rms, vDSP_Length(length))
             }
             let micDBFS = Self.dbfs(rms: rms / 32_768)
             let duration = TimeInterval(length) / TimeInterval(Self.sampleRate)
