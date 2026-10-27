@@ -88,12 +88,7 @@ export async function cmdSession(
   const jsonOutput = flags.json === "true";
 
   const callerSessionId = callerContext.callerSessionId ?? callerSessionIdFromEnvironment();
-  const { call, output } = createLocalApiCommandContext(
-    storage,
-    jsonOutput,
-    callerContext.signal,
-    callerSessionId,
-  );
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, callerContext.signal);
 
   try {
     flags = normalizeSessionFlagAliases(mode, flags);

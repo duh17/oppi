@@ -51,6 +51,8 @@ const DEAD_COLUMNS: Record<string, readonly string[]> = {
   agent_schedule_runs: ["approval_refs_json"],
 };
 
+export const SESSION_INTERACTIONS_DROP_MIGRATION_KEY = "session_interactions_drop_v1";
+
 const TOMBSTONE_PREFIX = "sessions_json_import_sqlite_backend_v2:%";
 
 /**
@@ -89,6 +91,33 @@ export function runSessionStateDeadSchemaCleanup(db: SqliteDatabase, dataDir: st
     tuiManagedRowsDeleted: work.tuiManagedRowCount,
     tombstonesDeleted: work.tombstoneCount,
   });
+}
+
+/**
+ * Drops the `session_interactions` table (who prompted, steered, or stopped whom), which the
+ * server no longer records or serves. Same guards as the dead-schema cleanup: keyed in
+ * `app_state_migrations`, backup first, one transaction. A database without the table only
+ * records the key.
+ */
+export function runSessionInteractionsDrop(db: SqliteDatabase, dataDir: string): void {
+  const key = SESSION_INTERACTIONS_DROP_MIGRATION_KEY;
+  ensureMigrationsTable(db);
+  if (hasCompletedMigration(db, key)) {
+    return;
+  }
+  if (!sqliteObjectExists(db, "table", "session_interactions")) {
+    recordMigration(db, key);
+    return;
+  }
+
+  const { backupPath } = migrateWithBackup(db, dataDir, key, () =>
+    db.transaction(() => {
+      // The indexes go with the table.
+      db.exec("DROP TABLE IF EXISTS session_interactions");
+      recordMigration(db, key);
+    })(),
+  );
+  log.info("session_state_cleanup.interactions_dropped", { key, backupPath });
 }
 
 /** The one migration ledger in session-state.db. */

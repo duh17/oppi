@@ -4,8 +4,7 @@ import XCTest
 ///
 /// `Fixtures/session-threads-2026-09-29.json` is an export of the owner's
 /// session state at 09:23 on 2026-09-29: names, models, costs, launch parents,
-/// statuses, and the cross-session messages recorded in their transcripts.
-/// Times keep their clock time when replayed on a later day.
+/// and statuses. Times keep their clock time when replayed on a later day.
 @MainActor
 final class SessionThreadsE2ETests: E2ETestCase {
     nonisolated(unsafe) private var workspaceIds: [String] = []
@@ -16,16 +15,9 @@ final class SessionThreadsE2ETests: E2ETestCase {
     private static let donkeyMasterKey = "0562cb98-a36a-432f-8ddd-48eed410ab73"
     private static let finishedFixKey = "7422b7a7-fe4c-4a8f-a41b-41562a6f2182"
     private static let reviewCleanupKey = "f7741ae5-2491-47a3-bb68-c0a0e57d32c0"
-    private static let sonnetCounterpartKey = "a6e4db71-dbb6-4a9c-8076-9445e62fa5e3"
     /// A stopped root with stopped children: history-only from both inbox targets.
     private static let stoppedRootKey = "145f0dcd-266a-42fe-9f97-2f8e58672536"
     private static let stoppedRootChildKey = "608460ea-1677-4f17-9900-99815dff3766"
-    /// Synthetic (not part of the captured snapshot): a stopped session last active
-    /// ten days ago, so it falls outside the app's three-day recent-session list.
-    /// The orchestrator's cross-thread message to it is a simulated edge; a real
-    /// prompt would have refreshed its activity.
-    nonisolated private static let archivedCounterpartKey = "synthetic-archived-counterpart"
-    nonisolated private static let archivedCounterpartName = "Archived Markdown resource review"
     /// Root of a stopped two-session thread in "oppi" (Daily upstream mirror sync).
     nonisolated private static let mirrorRootKey = "8bac488b-aa9a-416c-bddd-921a9c51ad8d"
     private static let mirrorChildKey = "2549460f-9896-478b-a1b5-bff6afce5e01"
@@ -60,18 +52,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
             JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
         )
         var sessions = try XCTUnwrap(fixture["sessions"] as? [[String: Any]])
-        var interactions = fixture["interactions"] as? [[String: Any]] ?? []
-        sessions.append([
-            "key": Self.archivedCounterpartKey,
-            "name": Self.archivedCounterpartName,
-            "status": "stopped",
-            "workspaceName": "oppi",
-            "createdAtOffsetMs": -10 * 86_400_000 - 3_600_000,
-            "lastActivityOffsetMs": -10 * 86_400_000,
-            "model": "anthropic/claude-opus-5-5",
-            "cost": 3.2,
-            "messageCount": 40,
-        ])
         // Only the cross-workspace test gets the extra workspace and session, so
         // every other test replays the captured snapshot unchanged.
         if name.contains("testWorkspaceListsShareLayoutAndMarkCrossWorkspaceThreads") { sessions.append([
@@ -86,12 +66,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
             "cost": 0.42,
             "messageCount": 12,
         ]) }
-        interactions.append([
-            "fromKey": Self.orchestratorKey,
-            "toKey": Self.archivedCounterpartKey,
-            "kind": "prompt",
-            "atOffsetMs": -4_000_000,
-        ])
         let snapshotAtMs = try XCTUnwrap(fixture["snapshotAtMs"] as? Double)
 
         var workspaceIdByName: [String: String] = [:]
@@ -130,7 +104,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
                 "workspaceId": workspaceIds[0],
                 "nowMs": Self.replayNowMs(snapshotAtMs: snapshotAtMs),
                 "sessions": sessions,
-                "interactions": interactions,
             ]
         )
         sessionIds = try XCTUnwrap(response["sessionIds"] as? [String: String])
@@ -177,7 +150,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 
-    func testRealSnapshotThreadsOutlineAndTimeline() throws {
+    func testRealSnapshotThreadsOutlineAndWaterfall() throws {
         let orchestrator = try id(Self.orchestratorKey)
         let donkeyMaster = try id(Self.donkeyMasterKey)
         let reviewCleanup = try id(Self.reviewCleanupKey)
@@ -233,26 +206,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
             "Expanding the fold should list finished children"
         )
         beat(1.5)
-        let counterpart = app.descendants(matching: .any)["thread.counterpart.\(try id(Self.sonnetCounterpartKey))"]
-        XCTAssertTrue(
-            reveal(counterpart, in: detail),
-            "The real 07:44 cross-thread message should list its counterpart"
-        )
-        XCTAssertTrue(counterpart.label.contains("Sonnet max Markdown resource access"), counterpart.label)
-        beat(1.5)
-
-        // Tapping the cross-thread row opens that session's chat, and Back returns here.
-        counterpart.tap()
-        // The counterpart is stopped, so its chat shows Resume instead of an input; the toolbar is common to both.
-        XCTAssertTrue(
-            app.buttons["chat.toolbar.files"].waitForExistence(timeout: 15),
-            "Cross-thread row did not open the other session"
-        )
-        beat(1.5)
-        app.buttons["chat.toolbar.back"].tap()
-        // The thread stays scrolled to the cross-thread card, so check the nav bar, not the title row.
-        XCTAssertTrue(app.navigationBars["Thread"].waitForExistence(timeout: 10), "Back did not return to the thread")
-        for _ in 0..<3 { detail.swipeDown(velocity: .fast) }
 
         // Waterfall: one row per session on clock time.
         let waterfallPill = app.buttons["thread.mode.waterfall"]
@@ -264,65 +217,19 @@ final class SessionThreadsE2ETests: E2ETestCase {
         beat(2.5)
         for _ in 0..<3 { detail.swipeDown(velocity: .fast) }
 
-        // Timeline with primitive filters.
-        let timelinePill = app.buttons["thread.mode.timeline"]
-        XCTAssertTrue(reveal(timelinePill, in: detail))
-        timelinePill.tap()
-        beat(2)
-        let launchRow = app.buttons["thread.timeline.launch:\(donkeyMaster)"]
-        XCTAssertTrue(reveal(launchRow, in: detail), "Timeline launch row missing")
-        beat(1.5)
-        XCTAssertTrue(reveal(app.buttons["thread.timeline.now"], in: detail), "Live working row missing")
-        beat(2)
-
-        let launches = app.buttons["thread.filter.launches"]
-        XCTAssertTrue(reveal(launches, in: detail))
-        launches.tap()
-        XCTAssertEqual(launches.value as? String, "Off")
-        XCTAssertTrue(
-            waitForNonExistence(app.buttons["thread.timeline.launch:\(donkeyMaster)"], timeout: 5),
-            "Hiding launches should remove launch rows"
-        )
-        beat(2)
-        app.buttons["thread.filter.ends"].tap()
-        beat(2)
-        launches.tap()
-        app.buttons["thread.filter.ends"].tap()
-        beat(1)
-
-        // A second real thread whose orchestrator messaged its workers.
+        // A second real thread.
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let reviewRow = app.buttons["thread.nav.\(reviewCleanup)"]
         XCTAssertTrue(reveal(reviewRow, in: inbox), "Review cleanup thread row missing")
         reviewRow.tap()
         XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15))
-        XCTAssertTrue(reveal(app.buttons["thread.mode.timeline"], in: detail))
-        app.buttons["thread.mode.timeline"].tap()
-        let messagesOnly = [
-            app.buttons["thread.filter.launches"],
-            app.buttons["thread.filter.ends"],
-            app.buttons["thread.filter.control"],
-            app.buttons["thread.filter.crossThread"],
-        ]
-        for chip in messagesOnly {
-            XCTAssertTrue(chip.waitForExistence(timeout: 5))
-            chip.tap()
-        }
-        let messageRows = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "thread.timeline.interaction:")
-        )
-        XCTAssertTrue(messageRows.firstMatch.waitForExistence(timeout: 5), "Recorded messages should remain visible")
-        XCTAssertEqual(messageRows.count, 4, "The review orchestrator messaged four checkpoint workers")
-        beat(2)
-
         // An idle session can be stopped from the thread outline.
         let reviewDetail = app.collectionViews["thread.detail"]
-        let outlinePill = app.buttons["thread.mode.outline"]
-        XCTAssertTrue(reveal(outlinePill, in: reviewDetail))
-        outlinePill.tap()
+        showOutline()
         let summary = app.descendants(matching: .any)["thread.summary"]
         XCTAssertTrue(reveal(summary, in: reviewDetail), "Thread header summary missing")
-        XCTAssertTrue(summary.label.contains("root idle"), "Header should call the idle root idle: \(summary.label)")
+        let idleSummary = summary.value as? String ?? ""
+        XCTAssertTrue(idleSummary.contains("Root: Idle"), "Header should call the idle root idle: \(idleSummary)")
         let reviewRoot = app.buttons["thread.row.\(reviewCleanup)"]
         XCTAssertTrue(reveal(reviewRoot, in: reviewDetail), "Idle review root row missing")
         XCTAssertFalse(reviewRoot.label.contains("stopped"), "Review root should start idle: \(reviewRoot.label)")
@@ -342,8 +249,9 @@ final class SessionThreadsE2ETests: E2ETestCase {
         )
         for _ in 0..<3 { reviewDetail.swipeDown(velocity: .fast) }
         XCTAssertTrue(summary.waitForExistence(timeout: 5), "Thread header summary missing")
-        XCTAssertFalse(summary.label.contains("root idle"), "Header still calls the stopped root idle: \(summary.label)")
-        XCTAssertTrue(summary.label.contains("finished"), "Header summary lost its counts: \(summary.label)")
+        let stoppedSummary = summary.value as? String ?? ""
+        XCTAssertFalse(stoppedSummary.contains("Root: Idle"), "Header still calls the stopped root idle: \(stoppedSummary)")
+        XCTAssertTrue(stoppedSummary.contains("finished"), "Header summary lost its counts: \(stoppedSummary)")
         beat(4)
     }
 
@@ -531,12 +439,12 @@ final class SessionThreadsE2ETests: E2ETestCase {
         // Thread view memory and the saved layout, then relaunch.
         strip.tap()
         XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15))
-        app.buttons["thread.mode.timeline"].tap()
+        app.buttons["thread.mode.waterfall"].tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(reveal(strip, in: inbox))
         strip.tap()
-        XCTAssertTrue(app.buttons["thread.mode.timeline"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["thread.mode.timeline"].isSelected, "Thread view was not remembered on reopen")
+        XCTAssertTrue(app.buttons["thread.mode.waterfall"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["thread.mode.waterfall"].isSelected, "Thread view was not remembered on reopen")
         app.navigationBars.buttons.element(boundBy: 0).tap()
         try setSessionThreads(false)
         let childRow = app.buttons["session.nav.\(donkeyMaster)"]
@@ -555,8 +463,8 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertFalse(rootBody.label.contains(rootCost), "Saved row appearance did not survive relaunch: \(rootBody.label)")
         XCTAssertFalse(strip.label.contains("$"), strip.label)
         strip.tap()
-        XCTAssertTrue(app.buttons["thread.mode.timeline"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["thread.mode.timeline"].isSelected, "Thread view did not survive relaunch")
+        XCTAssertTrue(app.buttons["thread.mode.waterfall"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["thread.mode.waterfall"].isSelected, "Thread view did not survive relaunch")
         app.buttons["thread.mode.outline"].tap()
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
@@ -1067,20 +975,11 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(marker.exists, "Could not return to All Sessions")
     }
 
-    /// A stopped counterpart outside the recent-session list must open as ended
-    /// history. Only an explicit Resume may start a stopped session.
-    func testStoppedCounterpartOutsideRecentListOpensWithoutStartingUntilExplicitResume() throws {
+    /// A stopped session opened from the thread outline shows ended history.
+    /// Only an explicit Resume may start a stopped session.
+    func testStoppedOutlineRowOpensWithoutStartingUntilExplicitResume() throws {
         let orchestrator = try id(Self.orchestratorKey)
-        let archived = try id(Self.archivedCounterpartKey)
         let finishedFix = try id(Self.finishedFixKey)
-
-        // Oracle: the app's global refresh asks for three days; the archived session is not in it,
-        // while the in-list counterpart is. Both start stopped on the server.
-        let recent = try e2eLabAPIJSON(method: "GET", path: "/sessions/recent?recentDays=3")
-        let recentIds = Set((recent["sessions"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
-        XCTAssertFalse(recentIds.contains(archived), "Archived counterpart must be outside the recent list")
-        XCTAssertTrue(recentIds.contains(try id(Self.sonnetCounterpartKey)), "Control: in-list counterpart missing")
-        try assertStopped(archived, "before opening")
         try assertStopped(finishedFix, "before opening")
 
         let inbox = app.collectionViews["workspace.sessionList"]
@@ -1091,33 +990,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         showOutline()
         let detail = app.collectionViews["thread.detail"]
 
-        // Outline: open the archived counterpart.
-        let counterpart = app.descendants(matching: .any)["thread.counterpart.\(archived)"]
-        XCTAssertTrue(reveal(counterpart, in: detail), "Archived counterpart row missing from the outline")
-        XCTAssertTrue(counterpart.label.contains(Self.archivedCounterpartName), counterpart.label)
-        counterpart.tap()
-        try assertOpenedAsEndedHistory(archived, via: "outline")
-        app.buttons["chat.toolbar.back"].tap()
-        XCTAssertTrue(app.navigationBars["Thread"].waitForExistence(timeout: 10), "Back did not return to the thread")
-
-        // Timeline: the same lookup path.
-        let timelinePill = app.buttons["thread.mode.timeline"]
-        XCTAssertTrue(reveal(timelinePill, in: detail))
-        timelinePill.tap()
-        let crossThreadRow = app.buttons.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
-            "thread.timeline.interaction:", Self.archivedCounterpartName
-        )).firstMatch
-        XCTAssertTrue(reveal(crossThreadRow, in: detail), "Timeline cross-thread row for the archived session missing")
-        crossThreadRow.tap()
-        try assertOpenedAsEndedHistory(archived, via: "timeline")
-        app.buttons["chat.toolbar.back"].tap()
-        XCTAssertTrue(app.navigationBars["Thread"].waitForExistence(timeout: 10), "Back did not return to the thread")
-
         // Explicit Resume from a stopped outline row is the only action that starts a runtime.
-        let outlinePill = app.buttons["thread.mode.outline"]
-        XCTAssertTrue(reveal(outlinePill, in: detail))
-        outlinePill.tap()
         let fold = app.buttons["thread.fold.\(orchestrator)"]
         XCTAssertTrue(reveal(fold, in: detail), "Finished children fold missing")
         if fold.value as? String == "Collapsed" { fold.tap() }
@@ -1147,7 +1020,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
             }
         }
         wait(for: [resumed], timeout: 15)
-        try assertStopped(archived, "after the explicit Resume of another session")
         beat(2)
     }
 

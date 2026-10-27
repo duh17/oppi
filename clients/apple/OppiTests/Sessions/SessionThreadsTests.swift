@@ -167,14 +167,10 @@ struct SessionThreadsTests {
         #expect(graph.segments.first { $0.id == "fix" }?.status == .done)
     }
 
-    // MARK: Timeline
+    // MARK: Lanes
 
-    private func snapshot(
-        _ sessions: [Session],
-        interactions: [SessionInteraction] = [],
-        counterparts: [SessionThreadCounterpart] = []
-    ) -> SessionThreadSnapshot {
-        SessionThreadSnapshot(rootSessionId: "root", sessions: sessions, interactions: interactions, counterparts: counterparts)
+    private func snapshot(_ sessions: [Session]) -> SessionThreadSnapshot {
+        SessionThreadSnapshot(rootSessionId: "root", sessions: sessions)
     }
 
     private var orchestration: [Session] {
@@ -187,88 +183,12 @@ struct SessionThreadsTests {
         ]
     }
 
-    @Test func lanesReuseFreedSlotsAndBranchFromTheLaunchingSession() {
-        let timeline = SessionThreadTimeline.build(snapshot: snapshot(orchestration), now: Date(timeIntervalSince1970: 100))
+    @Test func lanesReuseSlotsOfStoppedSessions() {
+        let members = orchestration
+        let lanes = SessionThreadLanes.assign(root: members[0], others: Array(members.dropFirst()))
 
-        #expect(timeline.laneBySessionId == ["root": 0, "fix": 1, "master": 2, "review": 1, "worker": 1])
-        let workerLaunch = timeline.rows.first { $0.id == "launch:worker" }
-        #expect(workerLaunch?.kind == .launch(parentLane: 2))
-        let fixEnd = timeline.rows.first { $0.id == "end:fix" }
-        #expect(fixEnd?.kind == .end(parentLane: 0))
-        #expect(fixEnd?.lanesBelow.contains(1) == false)
-        #expect(timeline.rows.last?.kind == .working(lanes: [2]))
-    }
-
-    @Test func aLockedMemberEndsWithoutItsCost() {
-        let timeline = SessionThreadTimeline.build(
-            snapshot: snapshot(orchestration),
-            now: Date(timeIntervalSince1970: 100),
-            hidesCost: { $0.id == "fix" }
-        )
-
-        #expect(timeline.rows.first { $0.id == "end:fix" }?.detail == "stopped")
-        #expect(timeline.rows.first { $0.id == "end:review" }?.detail?.contains("$") == true)
-    }
-
-    @Test func idleRootLaneTurnsDashedAfterItsLastActivity() {
-        let timeline = SessionThreadTimeline.build(snapshot: snapshot(orchestration), now: Date(timeIntervalSince1970: 100))
-
-        #expect(timeline.rows.first { $0.id == "launch:review" }?.idleLanes.isEmpty == true)
-        #expect(timeline.rows.first { $0.id == "end:review" }?.idleLanes == [0])
-    }
-
-    @Test func hidingAPrimitiveKeepsLaneContinuity() {
-        let timeline = SessionThreadTimeline.build(
-            snapshot: snapshot(orchestration),
-            now: Date(timeIntervalSince1970: 100),
-            filter: [.ends]
-        )
-
-        #expect(timeline.rows.map(\.id) == ["end:fix", "end:review", "end:worker", "now"])
-        // Master launched at t=20 with its row hidden; its lane still runs through later rows.
-        #expect(timeline.rows[0].lanesAbove.contains(2))
-        #expect(timeline.rows[1].lanesBelow.contains(2))
-    }
-
-    @Test func interactionsSplitIntoInThreadAndCrossThreadRows() {
-        let counterpart = SessionThreadCounterpart(
-            id: "outside", name: "Sonnet max", status: .stopped, rootSessionId: "other-root", rootName: "Modularity"
-        )
-        let thread = snapshot(
-            orchestration,
-            interactions: [
-                SessionInteraction(id: 1, at: Date(timeIntervalSince1970: 15), fromSessionId: "root", toSessionId: "outside", kind: .steer),
-                SessionInteraction(id: 2, at: Date(timeIntervalSince1970: 75), fromSessionId: "master", toSessionId: "worker", kind: .followUp),
-            ],
-            counterparts: [counterpart]
-        )
-
-        let all = SessionThreadTimeline.build(snapshot: thread, now: Date(timeIntervalSince1970: 100))
-        let cross = all.rows.first { $0.id == "interaction:1" }
-        #expect(cross?.kind == .crossThread(.steer, counterpart: counterpart, outgoing: true))
-        #expect(cross?.title == "steered Sonnet max")
-        #expect(cross?.detail == "from root · in Modularity")
-        #expect(all.rows.first { $0.id == "interaction:2" }?.kind == .interaction(.followUp, fromLane: 2))
-
-        let messagesOnly = SessionThreadTimeline.build(snapshot: thread, now: Date(timeIntervalSince1970: 100), filter: [.messages])
-        #expect(messagesOnly.rows.map(\.id) == ["interaction:2", "now"])
-    }
-
-    @Test func stopRecordedAtTheEndTimeSortsBeforeTheEndRow() throws {
-        let stop = SessionInteraction(
-            id: 9, at: Date(timeIntervalSince1970: 30), fromSessionId: "root", toSessionId: "fix", kind: .stop
-        )
-        let timeline = SessionThreadTimeline.build(
-            snapshot: snapshot(orchestration, interactions: [stop]),
-            now: Date(timeIntervalSince1970: 100)
-        )
-
-        let ids = timeline.rows.map(\.id)
-        let stopIndex = try #require(ids.firstIndex(of: "interaction:9"))
-        let endIndex = try #require(ids.firstIndex(of: "end:fix"))
-        #expect(stopIndex < endIndex)
-        // The stopped lane is still drawn through the stop row.
-        #expect(timeline.rows.first { $0.id == "interaction:9" }?.lanesBelow.contains(1) == true)
+        #expect(lanes.laneBySessionId == ["root": 0, "fix": 1, "master": 2, "review": 1, "worker": 1])
+        #expect(lanes.laneCount == 3)
     }
 
     // MARK: Lane graph
@@ -352,9 +272,7 @@ struct SessionThreadsTests {
             session("early", parent: "root", created: 10, last: 20),
             session("grandchild", parent: "early", created: 12, last: 18),
         ]
-        let thread = snapshot(members, interactions: [
-            SessionInteraction(id: 1, at: Date(timeIntervalSince1970: 15), fromSessionId: "early", toSessionId: "grandchild", kind: .steer),
-        ])
+        let thread = snapshot(members)
 
         let waterfall = SessionThreadWaterfall.build(snapshot: thread, now: Date(timeIntervalSince1970: 100))
 
@@ -365,7 +283,6 @@ struct SessionThreadsTests {
         #expect(waterfall.rows[1].end == 20.0 / 80)
         #expect(waterfall.rows[0].idleFrom == 40.0 / 80)
         #expect(waterfall.rows[0].end == 1)
-        #expect(waterfall.messages.first.map { [$0.fromRow, $0.toRow] } == [1, 2])
     }
 
     // MARK: Prompt cache
@@ -420,7 +337,8 @@ struct SessionThreadsTests {
 
     // MARK: Wire
 
-    @Test func snapshotDecodesParentLinksAndSkipsUnknownPrimitives() throws {
+    @Test func snapshotDecodesParentLinksAndPromptCache() throws {
+        // Older servers still send `interactions` and `counterparts`; the thread ignores them.
         let json = """
         {
           "rootSessionId": "root",
@@ -431,12 +349,9 @@ struct SessionThreadsTests {
              "tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"cost":0.5,"parentSessionId":"root"}
           ],
           "interactions": [
-            {"id":1,"at":1600,"fromSessionId":"root","toSessionId":"child","kind":"steer"},
-            {"id":2,"at":1700,"fromSessionId":"root","toSessionId":"child","kind":"future_primitive"}
+            {"id":1,"at":1600,"fromSessionId":"root","toSessionId":"child","kind":"steer"}
           ],
-          "counterparts": [
-            {"id":"other","name":"Other","status":"stopped","workspaceId":"ws-2","model":"openai/gpt-6","rootSessionId":"other"}
-          ],
+          "counterparts": [],
           "promptCache": {
             "root": {"retention":"short","ttlMs":300000,"lastRequestAt":2000,"warmer":{"state":"scheduled","action":"warm","nextWarmAt":2270000}},
             "child": {"retention":"long","ttlMs":3600000,"warmer":{"state":"future_state"}}
@@ -447,9 +362,6 @@ struct SessionThreadsTests {
         let decoded = try JSONDecoder().decode(SessionThreadSnapshot.self, from: Data(json.utf8))
 
         #expect(decoded.sessions.map(\.parentSessionId) == [nil, "root"])
-        #expect(decoded.interactions.map(\.kind) == [.steer])
-        #expect(decoded.interactions.first?.at == Date(timeIntervalSince1970: 1.6))
-        #expect(decoded.counterparts.first?.workspaceId == "ws-2")
         #expect(decoded.promptCache["root"] == SessionPromptCacheStatus(
             ttl: 300,
             lastRequestAt: Date(timeIntervalSince1970: 2),
@@ -519,9 +431,7 @@ struct SessionThreadsExperimentTests {
 struct SessionThreadLoadTests {
     @Test func threadSnapshotIsNotGatedOnAgentNames() async {
         let gate = NameGate()
-        let snapshot = SessionThreadSnapshot(
-            rootSessionId: "root", sessions: [], interactions: [], counterparts: []
-        )
+        let snapshot = SessionThreadSnapshot(rootSessionId: "root", sessions: [])
         let fetch = await completedWithin(.seconds(2)) {
             await SessionThreadLoad.fetch(
                 needsAgentNames: true,
@@ -573,7 +483,7 @@ struct SessionThreadLoadTests {
             needsAgentNames: false,
             listAgents: { Issue.record("listAgents should not run"); return nil },
             getThread: {
-                SessionThreadSnapshot(rootSessionId: "root", sessions: [], interactions: [], counterparts: [])
+                SessionThreadSnapshot(rootSessionId: "root", sessions: [])
             }
         )
 

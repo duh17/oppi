@@ -20,14 +20,7 @@ import { validateIconChoice } from "../icon-choice.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { hasToolMediaDetails } from "../session-agent-event-media.js";
 import { materializeToolMediaDetails } from "../session-attachments.js";
-import type {
-  AskQuestion,
-  IconChoice,
-  ServerMessage,
-  Session,
-  SessionInteractionKind,
-  StyledSegment,
-} from "../types.js";
+import type { AskQuestion, IconChoice, ServerMessage, Session, StyledSegment } from "../types.js";
 import type { RouteDispatcher, RouteHelpers, RouteContext } from "./types.js";
 
 const MAX_E2E_UI_MESSAGE_BYTES = 2 * 1024 * 1024;
@@ -565,19 +558,10 @@ async function handleDeleteStoppedSessionsFixture(
 }
 
 const E2E_THREAD_STATUSES = new Set<Session["status"]>(["busy", "ready", "stopped", "error"]);
-const E2E_INTERACTION_KINDS = new Set<SessionInteractionKind>([
-  "prompt",
-  "steer",
-  "follow_up",
-  "abort",
-  "stop",
-  "resume",
-]);
 const e2eSessionThreadFixtureIds = new Set<string>();
 
 /**
- * Seed a stored session-thread snapshot: sessions linked by launch parent plus
- * recorded interactions. Times are offsets from `nowMs` so relative labels stay
+ * Seed a stored session-thread snapshot: sessions linked by launch parent. Times are offsets from `nowMs` so relative labels stay
  * stable. Sessions are storage-only; no runtime starts.
  */
 async function handleSessionThreadsFixture(
@@ -592,7 +576,6 @@ async function handleSessionThreadsFixture(
   const defaultWorkspaceId = stringField(body.workspaceId)?.trim() ?? "";
   const nowMs = numberField(body.nowMs) ?? Date.now();
   const rawSessions = Array.isArray(body.sessions) ? body.sessions : [];
-  const rawInteractions = Array.isArray(body.interactions) ? body.interactions : [];
   if (rawSessions.length < 1 || rawSessions.length > MAX_E2E_STOPPED_SESSION_FIXTURES) {
     helpers.error(res, 400, `Fixture requires 1-${MAX_E2E_STOPPED_SESSION_FIXTURES} sessions`);
     return;
@@ -690,30 +673,6 @@ async function handleSessionThreadsFixture(
       };
     }
     ctx.storage.saveSession(session);
-  }
-
-  for (const raw of rawInteractions) {
-    const item = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-    const fromSessionId = idsByKey.get(stringField(item.fromKey) ?? "");
-    const toSessionId = idsByKey.get(stringField(item.toKey) ?? "");
-    const kind = stringField(item.kind) as SessionInteractionKind | undefined;
-    const atOffset = numberField(item.atOffsetMs);
-    if (
-      !fromSessionId ||
-      !toSessionId ||
-      !kind ||
-      !E2E_INTERACTION_KINDS.has(kind) ||
-      atOffset === undefined
-    ) {
-      helpers.error(res, 400, "Each interaction needs known fromKey/toKey, a kind, and atOffsetMs");
-      return;
-    }
-    ctx.storage.recordSessionInteraction({
-      at: nowMs + atOffset,
-      fromSessionId,
-      toSessionId,
-      kind,
-    });
   }
 
   helpers.json(res, { ok: true, sessionIds: Object.fromEntries(idsByKey) });

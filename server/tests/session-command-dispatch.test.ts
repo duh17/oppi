@@ -415,7 +415,6 @@ describe("session command dispatch and output boundaries", () => {
       ),
     );
 
-    // The caller id also travels as request metadata so the server records the interaction.
     expect(request).toHaveBeenCalledWith(storage, "/sessions/child-1/command", {
       method: "POST",
       body: {
@@ -423,7 +422,6 @@ describe("session command dispatch and output boundaries", () => {
         message: "This is a message from session parent-1: Focus on the failing test",
         streamingBehavior: "steer",
       },
-      callerSessionId: "parent-1",
     });
   });
 

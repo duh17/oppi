@@ -89,8 +89,8 @@ struct SessionThreadAgentCluster: View {
 // MARK: - Waterfall
 
 /// Trace-viewer layout: pinned label column (Agent icon, name, tree depth)
-/// beside a horizontally scrolling clock-time Canvas of status bars and
-/// message arrows. Pinch to zoom; tap a label or bar to open the session.
+/// beside a horizontally scrolling clock-time Canvas of status bars. Pinch to
+/// zoom; tap a label or bar to open the session.
 struct SessionThreadWaterfallView: View {
     @Environment(\.theme) private var theme
 
@@ -203,40 +203,6 @@ struct SessionThreadWaterfallView: View {
                 )
             }
         }
-
-        for message in waterfall.messages {
-            let messageX = x(message.at)
-            switch (message.fromRow, message.toRow) {
-            case let (from?, to?):
-                let fromY = rowY(from), toY = rowY(to)
-                context.stroke(
-                    Path { $0.move(to: CGPoint(x: messageX, y: fromY)); $0.addLine(to: CGPoint(x: messageX, y: toY)) },
-                    with: .color(theme.accent.cyan),
-                    lineWidth: 1.2
-                )
-                let direction: CGFloat = toY > fromY ? -1 : 1
-                context.fill(Path { path in
-                    path.move(to: CGPoint(x: messageX, y: toY))
-                    path.addLine(to: CGPoint(x: messageX - 3, y: toY + 5 * direction))
-                    path.addLine(to: CGPoint(x: messageX + 3, y: toY + 5 * direction))
-                    path.closeSubpath()
-                }, with: .color(theme.accent.cyan))
-            case let (from?, nil), let (nil, from?):
-                let markY = rowY(from)
-                context.fill(
-                    Path { path in
-                        path.move(to: CGPoint(x: messageX, y: markY - 5))
-                        path.addLine(to: CGPoint(x: messageX + 4, y: markY))
-                        path.addLine(to: CGPoint(x: messageX, y: markY + 5))
-                        path.addLine(to: CGPoint(x: messageX - 4, y: markY))
-                        path.closeSubpath()
-                    },
-                    with: .color(theme.accent.purple)
-                )
-            case (nil, nil):
-                break
-            }
-        }
     }
 }
 
@@ -297,20 +263,17 @@ struct SessionPromptCacheBadge: View {
 enum SessionThreadDetailMode: String, CaseIterable, Identifiable {
     case outline
     case waterfall
-    case timeline
     var id: String { rawValue }
     var label: String {
         switch self {
         case .outline: "Outline"
         case .waterfall: "Waterfall"
-        case .timeline: "Timeline"
         }
     }
     var systemImage: String {
         switch self {
         case .outline: "list.bullet.indent"
         case .waterfall: "chart.bar.doc.horizontal"
-        case .timeline: "chart.bar.xaxis"
         }
     }
 }
@@ -390,7 +353,6 @@ private struct SessionThreadDetailContentView: View {
     /// Member-change key the current snapshot reflects; avoids refetching for it.
     @State private var loadedMemberKey: String?
     @State private var mode = AppPreferences.SessionRows.threadDetailMode
-    @State private var filter: SessionThreadTimelineFilter = .all
     @State private var expandedFolds: Set<String> = []
     /// Only the newest load may replace the snapshot.
     @State private var loadGeneration = 0
@@ -419,8 +381,6 @@ private struct SessionThreadDetailContentView: View {
                 live.parentSessionId = live.parentSessionId ?? stored.parentSessionId
                 return live
             },
-            interactions: snapshot.interactions,
-            counterparts: snapshot.counterparts,
             promptCache: snapshot.promptCache
         )
     }
@@ -464,10 +424,8 @@ private struct SessionThreadDetailContentView: View {
                         )
                         .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
                     } footer: {
-                        Text("Bars run from launch to last activity on clock time. Arrows are messages between sessions. Pinch to zoom.")
+                        Text("Bars run from launch to last activity on clock time. Pinch to zoom.")
                     }
-                case .timeline:
-                    timeline(thread)
                 }
             } else if let loadError {
                 ContentUnavailableView(
@@ -794,13 +752,6 @@ private struct SessionThreadDetailContentView: View {
                 }
             }
         }
-        if !thread.counterparts.isEmpty {
-            Section("Cross-thread messages") {
-                ForEach(thread.counterparts, id: \.id) { counterpart in
-                    counterpartRow(counterpart, thread: thread)
-                }
-            }
-        }
     }
 
     private func isLocked(_ session: Session) -> Bool {
@@ -974,128 +925,6 @@ private struct SessionThreadDetailContentView: View {
         }.joined(separator: " · ")
     }
 
-    private func counterpartRow(_ counterpart: SessionThreadCounterpart, thread: SessionThreadSnapshot) -> some View {
-        let related = thread.interactions.filter {
-            $0.fromSessionId == counterpart.id || $0.toSessionId == counterpart.id
-        }
-        let latest = related.last
-        return Button {
-            Task { await openCounterpart(counterpart) }
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "arrow.up.right")
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(.themePurple)
-                    .frame(width: 14)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(counterpart.name ?? String(counterpart.id.prefix(8)))
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(1)
-                    Text(counterpartSubtitle(counterpart, latest: latest, count: related.count))
-                        .font(.footnote)
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeComment)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityIdentifier("thread.counterpart.\(counterpart.id)")
-    }
-
-    private func counterpartSubtitle(
-        _ counterpart: SessionThreadCounterpart,
-        latest: SessionInteraction?,
-        count: Int
-    ) -> String {
-        var parts: [String] = []
-        if let latest {
-            let verb = SessionThreadTimeline.verb(for: latest.kind)
-            parts.append("\(verb) \(latest.at.formatted(date: .omitted, time: .shortened))")
-        }
-        if count > 1 { parts.append("\(count) messages") }
-        if let rootName = counterpart.rootName { parts.append("in \(rootName)") }
-        return parts.joined(separator: " · ")
-    }
-
-    // MARK: Timeline
-
-    @ViewBuilder
-    private func timeline(_ thread: SessionThreadSnapshot) -> some View {
-        let layout = SessionThreadTimeline.build(
-            snapshot: thread,
-            now: Date(),
-            filter: filter,
-            hidesCost: isLocked,
-            status: memberStatus
-        )
-        Section {
-            filterBar
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
-        }
-        Section {
-            ForEach(layout.rows) { row in
-                Button {
-                    if case .crossThread(_, let counterpart, _) = row.kind {
-                        Task { await openCounterpart(counterpart) }
-                    } else if let session = thread.sessions.first(where: { $0.id == row.sessionId }) {
-                        open(session)
-                    }
-                } label: {
-                    SessionThreadTimelineRowView(row: row, laneCount: layout.laneCount)
-                }
-                .buttonStyle(.plain)
-                .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
-                .listRowSeparator(.hidden)
-                .accessibilityIdentifier("thread.timeline.\(row.id)")
-            }
-        } footer: {
-            Text("Launch = created, stop = last activity. Messages and control come from the interaction log.")
-        }
-    }
-
-    private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                filterChip("Launches", .launches, id: "launches")
-                filterChip("Messages", .messages, id: "messages")
-                filterChip("Control", .control, id: "control")
-                filterChip("Ends", .ends, id: "ends")
-                filterChip("Cross-thread", .crossThread, id: "crossThread")
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
-    private func filterChip(_ title: String, _ option: SessionThreadTimelineFilter, id: String) -> some View {
-        let isOn = filter.contains(option)
-        return Button {
-            withAnimation(ThemeMotion.animation(.snappy, reduceMotion: reduceMotion)) {
-                if isOn { filter.remove(option) } else { filter.insert(option) }
-            }
-        } label: {
-            Text(title)
-                .font(.footnote.weight(.semibold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .foregroundStyle(isOn ? theme.text.primary : theme.text.tertiary)
-                .background(
-                    Capsule().fill(isOn ? theme.accent.blue.opacity(0.28) : theme.text.tertiary.opacity(0.12))
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("thread.filter.\(id)")
-        .accessibilityValue(isOn ? "On" : "Off")
-    }
-
     // MARK: Navigation
 
     private func open(_ session: Session) {
@@ -1106,197 +935,13 @@ private struct SessionThreadDetailContentView: View {
             WorkspaceSessionNavTarget(serverId: target.serverId, sessionId: session.id, routeScope: routeScope)
         )
     }
-
-    /// Open a session outside this thread: the live store first, then the
-    /// authoritative server record. Chat needs the real session (its status) in
-    /// the store before it opens, or a stopped session outside the recent list
-    /// would look unknown and its stream would start it.
-    private func openCounterpart(_ counterpart: SessionThreadCounterpart) async {
-        guard let connection else { return }
-        if let known = connection.sessionStore.session(id: counterpart.id) {
-            open(known)
-            return
-        }
-        let name = counterpart.name ?? "session"
-        guard let api = connection.apiClient else {
-            refreshError = "Couldn't open \(name): not connected to the server"
-            return
-        }
-        do {
-            open(try await api.getSessionRecord(sessionId: counterpart.id))
-        } catch {
-            refreshError = "Couldn't open \(name): \(error.localizedDescription)"
-        }
-    }
-}
-
-// MARK: - Timeline row
-
-/// One git-graph row: lane segments, the event node, and its label.
-struct SessionThreadTimelineRowView: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    let row: SessionThreadTimelineRow
-    let laneCount: Int
-
-    static let laneSpacing: CGFloat = 16
-    static let rowHeight: CGFloat = 40
-
-    private var graphWidth: CGFloat {
-        CGFloat(max(laneCount, 1)) * Self.laneSpacing + 12
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(row.at?.formatted(date: .omitted, time: .shortened) ?? "now")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.themeComment)
-                .frame(width: 56, alignment: .leading)
-            graph
-                .frame(width: graphWidth, height: Self.rowHeight)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(titleText)
-                    .font(.subheadline)
-                    .lineLimit(1)
-                if let detail = row.detail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(height: Self.rowHeight)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-    }
-
-    private var titleText: AttributedString {
-        let (verb, color): (String, Color) = switch row.kind {
-        case .start: ("start ", theme.text.tertiary)
-        case .launch: ("launch ", theme.text.tertiary)
-        case .end: ("stop ", theme.text.tertiary)
-        case .interaction(let kind, _): ("\(SessionThreadTimeline.verb(for: kind)) ", theme.accent.cyan)
-        case .crossThread: ("↗ ", theme.accent.purple)
-        case .working: ("", SessionStatusKind.working.tint(theme))
-        }
-        var prefix = AttributedString(verb)
-        prefix.foregroundColor = color
-        var title = AttributedString(row.title)
-        switch row.kind {
-        case .crossThread: title.foregroundColor = theme.accent.purple
-        case .working: title.foregroundColor = SessionStatusKind.working.tint(theme)
-        case .end: title.foregroundColor = theme.text.secondary
-        default: title.foregroundColor = theme.text.primary
-        }
-        return prefix + title
-    }
-
-    @ViewBuilder
-    private var graph: some View {
-        if case .working = row.kind, !reduceMotion {
-            TimelineView(.animation) { context in
-                let phase = 0.55 + 0.45 * sin(context.date.timeIntervalSinceReferenceDate * 4)
-                canvas(pulse: phase)
-            }
-        } else {
-            canvas(pulse: 1)
-        }
-    }
-
-    private func canvas(pulse: Double) -> some View {
-        // The renderer runs off the main actor: read view state here.
-        let row = row
-        let theme = theme
-        let laneSpacing = Self.laneSpacing
-        return Canvas { context, size in
-            let mid = size.height / 2
-            func x(_ lane: Int) -> CGFloat { 8 + CGFloat(lane) * laneSpacing }
-            /// A lane takes the status color of the session drawing it on this row.
-            func laneColor(_ lane: Int) -> Color {
-                row.laneStatus[lane]?.tint(theme) ?? theme.text.tertiary
-            }
-            func stroke(_ path: Path, _ lane: Int, dashed: Bool = false, opacity: Double = 1) {
-                context.stroke(
-                    path,
-                    with: .color(laneColor(lane).opacity(opacity)),
-                    style: StrokeStyle(lineWidth: 2.2, lineCap: .round, dash: dashed ? [2, 4] : [])
-                )
-            }
-            for lane in row.lanesAbove {
-                stroke(Path { $0.move(to: CGPoint(x: x(lane), y: 0)); $0.addLine(to: CGPoint(x: x(lane), y: mid)) },
-                       lane, dashed: row.idleLanes.contains(lane))
-            }
-            for lane in row.lanesBelow {
-                stroke(Path { $0.move(to: CGPoint(x: x(lane), y: mid)); $0.addLine(to: CGPoint(x: x(lane), y: size.height)) },
-                       lane, dashed: row.idleLanes.contains(lane))
-            }
-            let node = CGPoint(x: x(row.lane), y: mid)
-            func dot(_ point: CGPoint, color: Color, radius: CGFloat = 4.5, hollow: Bool = false) {
-                let rect = CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
-                if hollow {
-                    // Punch through the lane line so the row background shows in any theme.
-                    var cutout = context
-                    cutout.blendMode = .clear
-                    cutout.fill(Path(ellipseIn: rect), with: .color(.black))
-                    context.stroke(Path(ellipseIn: rect), with: .color(color), lineWidth: 2)
-                } else {
-                    context.fill(Path(ellipseIn: rect), with: .color(color))
-                }
-            }
-            switch row.kind {
-            case .start:
-                dot(node, color: laneColor(row.lane), radius: 5)
-            case .launch(let parentLane):
-                if let parentLane {
-                    stroke(Path {
-                        $0.move(to: CGPoint(x: x(parentLane), y: 0))
-                        $0.addCurve(to: node,
-                                    control1: CGPoint(x: x(parentLane), y: mid * 0.7),
-                                    control2: CGPoint(x: node.x, y: mid * 0.3))
-                    }, row.lane)
-                }
-                dot(node, color: laneColor(row.lane))
-            case .end(let parentLane):
-                if let parentLane {
-                    stroke(Path {
-                        $0.move(to: node)
-                        $0.addCurve(to: CGPoint(x: x(parentLane), y: size.height),
-                                    control1: CGPoint(x: node.x, y: mid * 1.7),
-                                    control2: CGPoint(x: x(parentLane), y: mid * 1.3))
-                    }, row.lane, opacity: 0.55)
-                }
-                dot(node, color: laneColor(row.lane), hollow: true)
-            case .interaction(_, let fromLane):
-                let from = CGPoint(x: x(fromLane), y: mid)
-                context.stroke(Path { $0.move(to: from); $0.addLine(to: node) },
-                               with: .color(theme.accent.cyan),
-                               style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
-                dot(from, color: theme.accent.cyan, radius: 3)
-                dot(node, color: theme.accent.cyan, radius: 4)
-            case .crossThread:
-                context.stroke(Path { $0.move(to: node); $0.addLine(to: CGPoint(x: size.width, y: mid)) },
-                               with: .color(theme.accent.purple),
-                               style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
-                dot(node, color: theme.accent.purple, radius: 4)
-            case .working(let lanes):
-                for lane in lanes {
-                    let working = SessionStatusKind.working.tint(theme)
-                    dot(CGPoint(x: x(lane), y: mid), color: working.opacity(0.35), radius: 4 + 4 * pulse)
-                    dot(CGPoint(x: x(lane), y: mid), color: working)
-                }
-            }
-        }
-    }
 }
 
 // MARK: - Pill toggle
 
 /// Compact two-or-more option switch. The selected option slides inside one
 /// capsule instead of a full-width tab bar. Used for the thread Outline /
-/// Timeline switch.
+/// Waterfall switch.
 struct SessionPillToggle<Option: Hashable & Identifiable>: View {
     let options: [Option]
     @Binding var selection: Option

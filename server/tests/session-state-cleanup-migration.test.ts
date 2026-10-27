@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AgentDefinitionStore } from "../src/agent-definitions.js";
 import { AgentScheduleStore } from "../src/agent-schedules.js";
 import { openDatabase } from "../src/sqlite-compat.js";
-import { SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY } from "../src/storage/session-state-cleanup-migration.js";
+import {
+  SESSION_INTERACTIONS_DROP_MIGRATION_KEY,
+  SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY,
+} from "../src/storage/session-state-cleanup-migration.js";
 import { SessionSqliteStore } from "../src/storage/session-sqlite-store.js";
 import type { Session } from "../src/types.js";
 
@@ -104,6 +107,59 @@ describe("session-state.db dead schema cleanup", () => {
       schedules.close();
       agents.close();
     }
+  });
+
+  it("drops the retired session_interactions table after a backup and keeps sessions", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-interactions-drop-"));
+    dirs.push(dataDir);
+    const dbPath = join(dataDir, "session-state.db");
+    let store = new SessionSqliteStore(dataDir);
+    store.saveSession(makeSession({ id: "sess-a", name: "A", status: "stopped", lastActivity: 1 }));
+    store.close();
+
+    // The shape older servers wrote, plus a recorded row.
+    const db = openDatabase(dbPath);
+    db.exec(`
+      CREATE TABLE session_interactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at INTEGER NOT NULL,
+        from_session_id TEXT NOT NULL,
+        to_session_id TEXT NOT NULL,
+        kind TEXT NOT NULL
+      );
+      CREATE INDEX session_interactions_from_idx ON session_interactions (from_session_id, at);
+      INSERT INTO session_interactions (at, from_session_id, to_session_id, kind)
+      VALUES (1, 'sess-a', 'sess-b', 'steer');
+      DELETE FROM app_state_migrations WHERE key = '${SESSION_INTERACTIONS_DROP_MIGRATION_KEY}';
+    `);
+    db.close();
+
+    for (let open = 0; open < 2; open += 1) {
+      store = new SessionSqliteStore(dataDir);
+      store.close();
+      const after = openDatabase(dbPath);
+      try {
+        const names = (
+          after
+            .prepare("SELECT name FROM sqlite_master WHERE name LIKE 'session_interactions%'")
+            .all() as Array<{ name: string }>
+        ).map((row) => row.name);
+        expect(names).toEqual([]);
+      } finally {
+        after.close();
+      }
+    }
+
+    store = new SessionSqliteStore(dataDir);
+    try {
+      expect(store.getSession("sess-a")?.name).toBe("A");
+    } finally {
+      store.close();
+    }
+    const backups = readdirSync(join(dataDir, "backups")).filter((name) =>
+      name.startsWith(`session-state-pre-${SESSION_INTERACTIONS_DROP_MIGRATION_KEY}-`),
+    );
+    expect(backups).toHaveLength(1);
   });
 });
 

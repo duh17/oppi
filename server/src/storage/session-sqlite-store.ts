@@ -5,14 +5,17 @@ import { mintSessionId } from "../id.js";
 import { ICON_ASSET_ID_PATTERN, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import type { Session, SessionInteraction, SessionInteractionKind } from "../types.js";
+import type { Session } from "../types.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "../sqlite-compat.js";
 import {
   createSessionStateSessionsTable,
   runSessionColumnsRecordMigration,
 } from "./session-columns-record-migration.js";
 import type { WorkspaceSessionSummarySnapshot } from "./session-dao.js";
-import { runSessionStateDeadSchemaCleanup } from "./session-state-cleanup-migration.js";
+import {
+  runSessionInteractionsDrop,
+  runSessionStateDeadSchemaCleanup,
+} from "./session-state-cleanup-migration.js";
 import {
   backfillContextTokensFromTrace,
   backfillCostFromTokens,
@@ -122,8 +125,6 @@ export class SessionSqliteStore {
   private stmtList!: SqliteStatement;
   private stmtFindDurable!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
-  private stmtInsertInteraction!: SqliteStatement;
-  private stmtDeleteInteractions!: SqliteStatement;
 
   constructor(dataDir: string, dbPathOrOptions?: string | SessionSqliteStoreOptions) {
     if (!existsSync(dataDir)) {
@@ -364,52 +365,8 @@ export class SessionSqliteStore {
 
   deleteSession(sessionId: string): boolean {
     const result = this.stmtDelete.run(sessionId) as { changes?: number };
-    this.stmtDeleteInteractions.run(sessionId, sessionId);
     this.cache?.delete(sessionId);
     return (result.changes ?? 0) > 0;
-  }
-
-  recordSessionInteraction(input: {
-    at: number;
-    fromSessionId: string;
-    toSessionId: string;
-    kind: SessionInteractionKind;
-  }): void {
-    this.stmtInsertInteraction.run(input.at, input.fromSessionId, input.toSessionId, input.kind);
-  }
-
-  /**
-   * Newest `limit` interactions where either end is in `sessionIds`, returned
-   * oldest first. Rows live until either session is deleted.
-   */
-  listSessionInteractions(sessionIds: readonly string[], limit = 2_000): SessionInteraction[] {
-    if (sessionIds.length === 0) return [];
-    const ids = JSON.stringify(sessionIds);
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM (
-           SELECT id, at, from_session_id, to_session_id, kind
-           FROM session_interactions
-           WHERE from_session_id IN (SELECT value FROM json_each(?))
-              OR to_session_id IN (SELECT value FROM json_each(?))
-           ORDER BY at DESC, id DESC
-           LIMIT ?
-         ) ORDER BY at ASC, id ASC`,
-      )
-      .all(ids, ids, limit) as Array<{
-      id: number;
-      at: number;
-      from_session_id: string;
-      to_session_id: string;
-      kind: SessionInteractionKind;
-    }>;
-    return rows.map((row) => ({
-      id: row.id,
-      at: row.at,
-      fromSessionId: row.from_session_id,
-      toSessionId: row.to_session_id,
-      kind: row.kind,
-    }));
   }
 
   /**
@@ -458,6 +415,7 @@ export class SessionSqliteStore {
     // Ordered: the dead-schema cleanup drops columns of the old table shape before the rebuild.
     runSessionStateDeadSchemaCleanup(this.db, this.dataDir);
     runSessionColumnsRecordMigration(this.db, this.dataDir);
+    runSessionInteractionsDrop(this.db, this.dataDir);
     this.ensureSessionIndexesAndSchemaVersion();
     this.migrateStoredIconChoices();
   }
@@ -474,20 +432,6 @@ export class SessionSqliteStore {
       CREATE INDEX IF NOT EXISTS session_state_sessions_durable_idx
         ON session_state_sessions (durable_store_id, durable_conversation_id)
         WHERE durable_store_id IS NOT NULL;
-
-      CREATE TABLE IF NOT EXISTS session_interactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        at INTEGER NOT NULL,
-        from_session_id TEXT NOT NULL,
-        to_session_id TEXT NOT NULL,
-        kind TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS session_interactions_from_idx
-        ON session_interactions (from_session_id, at);
-
-      CREATE INDEX IF NOT EXISTS session_interactions_to_idx
-        ON session_interactions (to_session_id, at);
 
       CREATE TABLE IF NOT EXISTS session_restart_resume (
         session_id TEXT PRIMARY KEY,
@@ -561,12 +505,6 @@ export class SessionSqliteStore {
       LIMIT 1
     `);
     this.stmtDelete = this.db.prepare("DELETE FROM session_state_sessions WHERE id = ?");
-    this.stmtInsertInteraction = this.db.prepare(
-      "INSERT INTO session_interactions (at, from_session_id, to_session_id, kind) VALUES (?, ?, ?, ?)",
-    );
-    this.stmtDeleteInteractions = this.db.prepare(
-      "DELETE FROM session_interactions WHERE from_session_id = ? OR to_session_id = ?",
-    );
   }
 
   findSessionByLaunchIdempotencyKey(idempotencyKey: string): Session | undefined {

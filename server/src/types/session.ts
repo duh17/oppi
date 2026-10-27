@@ -280,33 +280,6 @@ export interface SessionSummary {
   pendingAskCount?: number;
 }
 
-/**
- * Cross-session primitive recorded when one session drives another through the
- * Oppi CLI. Launch edges are not recorded here: they stay derived from
- * `parentSessionId` + `createdAt` so each fact has one owner.
- */
-export type SessionInteractionKind = "prompt" | "steer" | "follow_up" | "abort" | "stop" | "resume";
-
-export interface SessionInteraction {
-  id: number;
-  at: number;
-  fromSessionId: string;
-  toSessionId: string;
-  kind: SessionInteractionKind;
-}
-
-/** Session outside a thread that exchanged interactions with it. */
-export interface SessionThreadCounterpart {
-  id: string;
-  name?: string;
-  status?: Session["status"];
-  /** Workspace route for opening the counterpart; absent for control sessions. */
-  workspaceId?: string;
-  model?: string;
-  rootSessionId: string;
-  rootName?: string;
-}
-
 /** Pi's prompt-cache warmer for a live session. */
 export interface SessionPromptCacheWarmer {
   state: "inactive" | "scheduled" | "refreshing";
@@ -336,8 +309,6 @@ export interface SessionPromptCacheStatus {
 export interface SessionThreadResponse {
   rootSessionId: string;
   sessions: SessionSummary[];
-  interactions: SessionInteraction[];
-  counterparts: SessionThreadCounterpart[];
   /** Keyed by session id; omitted for sessions without a known cache lifetime. */
   promptCache?: Record<string, SessionPromptCacheStatus>;
 }

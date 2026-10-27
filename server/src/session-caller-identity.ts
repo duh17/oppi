@@ -1,6 +1,4 @@
 export const OPPI_CALLER_SESSION_ID_ENV = "OPPI_CALLER_SESSION_ID";
-/** Lower-case HTTP header the CLI uses to attribute session commands to their caller. */
-export const OPPI_CALLER_SESSION_HEADER = "x-oppi-caller-session";
 
 export function callerSessionIdFromEnvironment(
   env: NodeJS.ProcessEnv = process.env,

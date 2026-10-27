@@ -113,6 +113,7 @@ Example:
 
 - **Server:** `oppi pair --show-token` is gone. It printed the owner token, which the server rejects over the network, so it never helped pair a device.
 - **Protocol:** `changeStats.addedLines` and `changeStats.removedLines` on a session are no longer sent. They were always `0`, kept only for Build 55.
+- **Client/Server/Protocol:** The thread view no longer shows messages between sessions. Timeline mode, the Waterfall's message arrows, and the Outline's cross-thread messages are gone; a saved Timeline choice opens Outline. The server stops recording prompts, steers, stops, and resumes that one session sends another, drops the `session_interactions` table from `session-state.db` on first start (after a backup in `backups/`), and `GET /sessions/:id/thread` no longer sends `interactions` or `counterparts`.
 
 ### Migration notes
 
@@ -120,6 +121,7 @@ Example:
 - **Compatibility:** This server no longer supports Builds 55 and older; update the app to Build 56 or later. It stopped sending the older shapes those builds need: user images in session history do not show, because they are stored references these builds cannot read; a session list fails to load in Builds 53 and 54 when a session has a control domain they do not know (`extensions` or `themes`); and Build 55 and older fail to load sessions that have change stats, which no longer carry `addedLines` and `removedLines`.
 - **Compatibility:** **Edit with Oppi** on the Mac needs a rebuilt Mac app against this server: an installed Mac build requires `control` metadata in the create response, which Oppi Control sessions on the durable engine do not carry. iOS builds that already send `domain`, `intent`, `targetId`, and `targetName` keep working.
 - **Compatibility:** The next app build requires the next `oppi-server` (the release after 0.53.0); update the app and the server together. The app no longer sends the `X-Oppi-Capabilities` header, so `oppi-server@0.53.0` treats it as a Build 55 client: user images in session history come back as inline data instead of stored references, and control sessions for extensions and themes show as agents.
+- **Compatibility:** A thread view from an app build that predates this change fails to load ("Thread Unavailable") against this server, because it still expects `interactions` in the thread response; update the app with the server.
 
 ## [0.53.0] - 2026-10-22
 

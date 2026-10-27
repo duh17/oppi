@@ -71,11 +71,14 @@ struct SessionRowPreferencesTests {
         withCleanDefaults {
             #expect(AppPreferences.SessionRows.threadDetailMode == .outline)
 
-            AppPreferences.SessionRows.setThreadDetailMode(.timeline)
-            #expect(AppPreferences.SessionRows.threadDetailMode == .timeline)
+            AppPreferences.SessionRows.setThreadDetailMode(.waterfall)
+            #expect(AppPreferences.SessionRows.threadDetailMode == .waterfall)
 
-            UserDefaults.standard.set("gantt", forKey: AppPreferences.SessionRows.threadDetailModeKey)
-            #expect(AppPreferences.SessionRows.threadDetailMode == .outline)
+            // "timeline" was a mode until the interaction log was removed; it opens Outline now.
+            for retired in ["timeline", "gantt"] {
+                UserDefaults.standard.set(retired, forKey: AppPreferences.SessionRows.threadDetailModeKey)
+                #expect(AppPreferences.SessionRows.threadDetailMode == .outline)
+            }
         }
     }
 }

@@ -594,7 +594,7 @@
     "Badge color reflects connection status: green connected, blue connecting, red disconnected." : {
 
     },
-    "Bars run from launch to last activity on clock time. Arrows are messages between sessions. Pinch to zoom." : {
+    "Bars run from launch to last activity on clock time. Pinch to zoom." : {
 
     },
     "Biometric Approval" : {
@@ -1697,9 +1697,6 @@
 
     },
     "Jakub Antalik — original thinking-orbs designs and engine" : {
-
-    },
-    "Launch = created, stop = last activity. Messages and control come from the interaction log." : {
 
     },
     "Leave empty to let Oppi create a folder. If the folder doesn’t exist, use Create This Folder; Oppi asks before creating one directory." : {

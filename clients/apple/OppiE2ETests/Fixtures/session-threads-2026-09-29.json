@@ -845,56 +845,6 @@
    "agentKey": "LHSj_iDJ"
   }
  ],
- "interactions": [
-  {
-   "fromKey": "bc7b041b-c79e-4b97-b451-000409933ddd",
-   "toKey": "73c1fc40-814a-406d-8feb-1d8476885530",
-   "kind": "prompt",
-   "atOffsetMs": -35749917
-  },
-  {
-   "fromKey": "bc7b041b-c79e-4b97-b451-000409933ddd",
-   "toKey": "73c1fc40-814a-406d-8feb-1d8476885530",
-   "kind": "prompt",
-   "atOffsetMs": -35716805
-  },
-  {
-   "fromKey": "bc7b041b-c79e-4b97-b451-000409933ddd",
-   "toKey": "2fe63c3f-75e7-4bc4-a677-7757b4aa94f6",
-   "kind": "prompt",
-   "atOffsetMs": -34803722
-  },
-  {
-   "fromKey": "d0dd7892-8366-4793-b923-debbc77c7ad3",
-   "toKey": "a6e4db71-dbb6-4a9c-8076-9445e62fa5e3",
-   "kind": "prompt",
-   "atOffsetMs": -5926607
-  },
-  {
-   "fromKey": "f7741ae5-2491-47a3-bb68-c0a0e57d32c0",
-   "toKey": "ebf42ff3-38bb-49c4-ac5e-89573897e211",
-   "kind": "prompt",
-   "atOffsetMs": -1434768
-  },
-  {
-   "fromKey": "f7741ae5-2491-47a3-bb68-c0a0e57d32c0",
-   "toKey": "219fd416-719b-4922-9195-59efca9c9ef2",
-   "kind": "prompt",
-   "atOffsetMs": -1241753
-  },
-  {
-   "fromKey": "f7741ae5-2491-47a3-bb68-c0a0e57d32c0",
-   "toKey": "6dec7761-1fd8-4a13-a2e1-94f7340312e7",
-   "kind": "prompt",
-   "atOffsetMs": -1217026
-  },
-  {
-   "fromKey": "f7741ae5-2491-47a3-bb68-c0a0e57d32c0",
-   "toKey": "d0c38602-afb3-4ed8-9f23-5b95e16b3446",
-   "kind": "prompt",
-   "atOffsetMs": -1181040
-  }
- ],
  "agents": [
   {
    "key": "rTrBZtZ7",

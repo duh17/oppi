@@ -1,6 +1,5 @@
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { mkdtempSync, rmSync } from "node:fs";
-import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,8 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
-import { OPPI_CALLER_SESSION_HEADER } from "../src/session-caller-identity.js";
-import { interactionKindForCommand, recordCallerInteraction } from "../src/session-interactions.js";
 import { SessionSqliteStore } from "../src/storage/session-sqlite-store.js";
 import type { Session, SessionThreadResponse } from "../src/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
@@ -53,18 +50,15 @@ function seed(
 }
 
 function routes(
-  sendSteer = vi.fn(async (): Promise<void> => undefined),
   cache: {
     models?: Record<string, { short?: number; long?: number }>;
     live?: Record<string, ReturnType<RouteContext["sessionRuntimes"]["getPromptCacheRuntime"]>>;
   } = {},
-  startSession = vi.fn(async (sessionId: string) => store.getSession(sessionId)!),
 ) {
   const ctx = {
-    sessions: { mobileRenderer: new MobileRendererRegistry(), startSession },
+    sessions: { mobileRenderer: new MobileRendererRegistry() },
     storage: store,
     sessionRuntimes: {
-      sendSteer,
       isSessionConnected: () => false,
       getActiveSessionIds: () => new Set<string>(),
       getActiveSession: () => undefined,
@@ -73,31 +67,7 @@ function routes(
     ensureSessionContextWindow: (session: Session) => session,
     getModelPromptCache: (model: string | undefined) => (model ? cache.models?.[model] : undefined),
   } as unknown as RouteContext;
-  return { dispatch: createSessionRoutes(ctx, createRouteHelpers()), sendSteer, startSession };
-}
-
-function withCaller(req: IncomingMessage, callerId?: string): IncomingMessage {
-  (req as IncomingMessage & { headers: Record<string, string> }).headers = callerId
-    ? { [OPPI_CALLER_SESSION_HEADER]: callerId }
-    : {};
-  return req;
-}
-
-async function send(
-  dispatch: ReturnType<typeof routes>["dispatch"],
-  path: string,
-  body: unknown,
-  callerId?: string,
-) {
-  const res = makeResponse();
-  await dispatch({
-    method: "POST",
-    path,
-    url: new URL(`http://localhost${path}`),
-    req: withCaller(makeRequest(body), callerId) as never,
-    res: res as never,
-  });
-  return res;
+  return { dispatch: createSessionRoutes(ctx, createRouteHelpers()) };
 }
 
 async function getThread(dispatch: ReturnType<typeof routes>["dispatch"], id: string) {
@@ -112,220 +82,14 @@ async function getThread(dispatch: ReturnType<typeof routes>["dispatch"], id: st
   return res;
 }
 
-describe("session interaction recording", () => {
-  it("records a successful command from a calling session", async () => {
-    const caller = seed("Orchestrator", 1_000, undefined, "ready");
-    const target = seed("Worker", 2_000, caller, "busy");
-    const { dispatch, sendSteer } = routes();
-
-    const res = await send(
-      dispatch,
-      `/sessions/${target.id}/command`,
-      { type: "steer", message: "rebase first" },
-      caller.id,
-    );
-
-    expect(res.statusCode).toBe(200);
-    expect(sendSteer).toHaveBeenCalledOnce();
-    const interactions = store.listSessionInteractions([target.id]);
-    expect(interactions).toEqual([
-      expect.objectContaining({ fromSessionId: caller.id, toSessionId: target.id, kind: "steer" }),
-    ]);
-  });
-
-  it.each([
-    ["no caller header", undefined, { type: "steer", message: "x" }],
-    ["self-targeting caller", "target", { type: "steer", message: "x" }],
-    ["unknown caller", "missing-session", { type: "steer", message: "x" }],
-    ["unsupported command", "caller", { type: "future_command_v99" }],
-  ])("records nothing for %s", async (_label, callerRef, body) => {
-    const caller = seed("Orchestrator", 1_000, undefined, "ready");
-    const target = seed("Worker", 2_000, caller, "busy");
-    const { dispatch } = routes();
-    const callerId =
-      callerRef === "caller" ? caller.id : callerRef === "target" ? target.id : callerRef;
-
-    await send(dispatch, `/sessions/${target.id}/command`, body, callerId);
-
-    expect(store.listSessionInteractions([caller.id, target.id])).toEqual([]);
-  });
-
-  it("records nothing when the runtime rejects the command", async () => {
-    const caller = seed("Orchestrator", 1_000, undefined, "ready");
-    const target = seed("Worker", 2_000, caller, "busy");
-    const { dispatch } = routes(
-      vi.fn(async (): Promise<void> => {
-        throw new Error("runtime unavailable");
-      }),
-    );
-
-    const res = await send(
-      dispatch,
-      `/sessions/${target.id}/command`,
-      { type: "steer", message: "x" },
-      caller.id,
-    );
-
-    expect(res.statusCode).toBe(500);
-    expect(store.listSessionInteractions([target.id])).toEqual([]);
-  });
-
-  it("maps only session-driving commands to interaction kinds", () => {
-    expect(
-      ["prompt", "steer", "follow_up", "abort", "set_session_name", "get_state"].map(
-        interactionKindForCommand,
-      ),
-    ).toEqual(["prompt", "steer", "follow_up", "abort", undefined, undefined]);
-  });
-
-  it("records a CLI stop before the session's own end time", async () => {
-    const caller = seed("Orchestrator", 1_000, undefined, "ready");
-    const target = seed("Worker", 2_000, caller, "ready");
-    const { dispatch } = routes();
-    // Every clock read advances, so a timestamp taken after the lifecycle sets
-    // lastActivity would be strictly later than it.
-    let clock = 10_000;
-    const now = vi.spyOn(Date, "now").mockImplementation(() => (clock += 1));
-
-    try {
-      const res = await send(dispatch, `/sessions/${target.id}/stop`, {}, caller.id);
-      expect(res.statusCode).toBe(200);
-    } finally {
-      now.mockRestore();
-    }
-
-    const [stop] = store.listSessionInteractions([target.id]);
-    expect(stop).toMatchObject({ fromSessionId: caller.id, toSessionId: target.id, kind: "stop" });
-    expect(stop.at).toBeLessThan(store.getSession(target.id)!.lastActivity);
-  });
-
-  it("records caller interactions on generic stop and command for declared Pi Control sessions", async () => {
-    const caller = seed("Orchestrator", 1_000, undefined, "ready");
-    const target = store.createSession("Control");
-    target.workspaceId = undefined;
-    target.status = "busy";
-    target.runtime = "oppi";
-    target.control = { domain: "agents", intent: "create" };
-    store.saveSession(target);
-    const { dispatch, sendSteer } = routes();
-
-    const commandRes = await send(
-      dispatch,
-      `/sessions/${target.id}/command`,
-      { type: "steer", message: "rebase first" },
-      caller.id,
-    );
-    expect(commandRes.statusCode).toBe(200);
-    expect(sendSteer).toHaveBeenCalledOnce();
-
-    const stopRes = await send(dispatch, `/sessions/${target.id}/stop`, {}, caller.id);
-    expect(stopRes.statusCode).toBe(200);
-
-    expect(store.listSessionInteractions([target.id])).toEqual([
-      expect.objectContaining({
-        fromSessionId: caller.id,
-        toSessionId: target.id,
-        kind: "steer",
-      }),
-      expect.objectContaining({
-        fromSessionId: caller.id,
-        toSessionId: target.id,
-        kind: "stop",
-      }),
-    ]);
-  });
-
-  it("records caller interactions on control-session stop and resume", async () => {
-    const caller = seed("Orchestrator", 1_000, undefined, "ready");
-    const target = store.createSession("Control");
-    target.workspaceId = undefined;
-    target.status = "ready";
-    target.runtime = "oppi";
-    target.control = { domain: "agents", intent: "create" };
-    store.saveSession(target);
-    const { dispatch, startSession } = routes();
-
-    const stopRes = await send(dispatch, `/control-sessions/${target.id}/stop`, {}, caller.id);
-    expect(stopRes.statusCode).toBe(200);
-    expect(store.listSessionInteractions([target.id])).toEqual([
-      expect.objectContaining({
-        fromSessionId: caller.id,
-        toSessionId: target.id,
-        kind: "stop",
-      }),
-    ]);
-
-    const resumeRes = await send(dispatch, `/control-sessions/${target.id}/resume`, {}, caller.id);
-    expect(resumeRes.statusCode).toBe(200);
-    expect(startSession).toHaveBeenCalledWith(target.id, undefined);
-    expect(store.listSessionInteractions([target.id])).toEqual([
-      expect.objectContaining({ kind: "stop" }),
-      expect.objectContaining({
-        fromSessionId: caller.id,
-        toSessionId: target.id,
-        kind: "resume",
-      }),
-    ]);
-  });
-
-  it("keeps a delivered command successful when the audit write fails", () => {
-    const caller = seed("Orchestrator", 1_000, undefined, "ready");
-    const target = seed("Worker", 2_000, caller, "busy");
-    const failing = {
-      getSession: (id: string) => store.getSession(id),
-      recordSessionInteraction: () => {
-        throw new Error("SQLITE_BUSY");
-      },
-    };
-
-    expect(() =>
-      recordCallerInteraction(failing, withCaller(makeRequest(), caller.id), target, "steer"),
-    ).not.toThrow();
-  });
-
-  it("drops a deleted session's interactions", () => {
-    const a = seed("A", 1_000);
-    const b = seed("B", 2_000);
-    store.recordSessionInteraction({
-      at: 3_000,
-      fromSessionId: a.id,
-      toSessionId: b.id,
-      kind: "prompt",
-    });
-
-    store.deleteSession(b.id);
-
-    expect(store.listSessionInteractions([a.id])).toEqual([]);
-  });
-});
-
 describe("GET /sessions/:id/thread", () => {
-  it("returns the whole launch tree and cross-thread counterparts from any member", async () => {
+  it("returns the whole launch tree from any member", async () => {
     const root = seed("Investigate Unfinished Sonnet Worktree", 1_000, undefined, "ready");
     const fix = seed("Fix: queue move banner", 2_000, root);
     const master = seed("Donkey Master", 3_000, root, "busy");
     const worker = seed("Worker P1s3", 4_000, master);
     const otherRoot = seed("Investigate iOS App Modularity", 500);
-    const otherChild = seed("Sonnet max Markdown resource access", 600, otherRoot);
-    const unrelated = seed("Daily digest", 700);
-    store.recordSessionInteraction({
-      at: 2_500,
-      fromSessionId: root.id,
-      toSessionId: otherChild.id,
-      kind: "steer",
-    });
-    store.recordSessionInteraction({
-      at: 4_500,
-      fromSessionId: master.id,
-      toSessionId: worker.id,
-      kind: "follow_up",
-    });
-    store.recordSessionInteraction({
-      at: 800,
-      fromSessionId: otherRoot.id,
-      toSessionId: unrelated.id,
-      kind: "prompt",
-    });
+    seed("Sonnet max Markdown resource access", 600, otherRoot);
     const { dispatch } = routes();
 
     const res = await getThread(dispatch, worker.id);
@@ -338,17 +102,6 @@ describe("GET /sessions/:id/thread", () => {
       [fix.name, root.id],
       [master.name, root.id],
       [worker.name, master.id],
-    ]);
-    expect(thread.interactions.map((i) => i.kind)).toEqual(["steer", "follow_up"]);
-    expect(thread.counterparts).toEqual([
-      {
-        id: otherChild.id,
-        name: otherChild.name,
-        status: "stopped",
-        workspaceId: "ws-1",
-        rootSessionId: otherRoot.id,
-        rootName: otherRoot.name,
-      },
     ]);
   });
 
@@ -372,7 +125,7 @@ describe("GET /sessions/:id/thread", () => {
         session.lastAgentReplyAt = repliedAt;
         store.saveSession(session);
       }
-      const { dispatch } = routes(undefined, {
+      const { dispatch } = routes({
         models: { "anthropic/claude-opus-5-5": { short: 300, long: 3600 } },
         live: {
           [live.id]: {

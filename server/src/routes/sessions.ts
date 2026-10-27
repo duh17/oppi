@@ -24,12 +24,7 @@ import { admitSessionRoute } from "../session-route-scope.js";
 import { parseClientCommand } from "../session-command-parse.js";
 import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
 import { isThinkingLevel } from "../thinking-levels.js";
-import {
-  buildSessionThread,
-  promptCacheRetention,
-  interactionKindForCommand,
-  recordCallerInteraction,
-} from "../session-interactions.js";
+import { buildSessionThread, promptCacheRetention } from "../session-threads.js";
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
@@ -480,20 +475,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
 
-    const interactionKind = interactionKindForCommand(parsed.message.type);
-    const failed = messages.some(
-      (message) => message.type === "command_result" && message.success === false,
-    );
-    if (interactionKind && !failed) {
-      recordCallerInteraction(ctx.storage, req, session, interactionKind);
-    }
     helpers.json(res, { messages });
   }
 
   async function handleResumeWorkspaceSession(
     workspaceId: string,
     sessionId: string,
-    req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
     const admitted = requireWorkspaceSession(workspaceId, sessionId, res);
@@ -507,7 +494,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     try {
       const result = await lifecycle.resumeWorkspaceSession({ session, workspace });
-      recordCallerInteraction(ctx.storage, req, session, "resume");
       helpers.json(res, {
         session: result.session,
         ...(result.rebound ? { rebound: true } : {}),
@@ -570,20 +556,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
-  async function stopKnownSession(
-    session: Session,
-    res: ServerResponse,
-    req?: IncomingMessage,
-  ): Promise<void> {
-    // Timestamp before the lifecycle sets lastActivity so the stop precedes the
-    // session's end on the thread timeline.
-    const requestedAt = Date.now();
+  async function stopKnownSession(session: Session, res: ServerResponse): Promise<void> {
     try {
       const result = await lifecycle.stopSession(session);
       if (result.storedStopOnly && result.session) {
         ctx.appEvents?.emitStopConfirmed(result.session, "user");
       }
-      if (req) recordCallerInteraction(ctx.storage, req, session, "stop", requestedAt);
       helpers.json(res, { ok: true, session: result.session });
     } catch (error: unknown) {
       helpers.error(res, 500, safeErrorMessage(error));
@@ -615,7 +593,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const thread = buildSessionThread(
       sessionsWithLiveStatus(ctx),
       sessionId,
-      (ids) => ctx.storage.listSessionInteractions(ids),
       promptCacheFor,
       owned,
     );
@@ -656,7 +633,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const controlStopMatch = path.match(/^\/control-sessions\/([^/]+)\/stop$/);
     if (controlStopMatch && method === "POST") {
       const session = requireControlSession(controlStopMatch[1], res);
-      if (session) await stopKnownSession(session, res, req);
+      if (session) await stopKnownSession(session, res);
       return true;
     }
 
@@ -668,7 +645,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         const result = isControlConversation(session)
           ? await lifecycle.resumeControlConversation(session)
           : await lifecycle.resumeControlSession(session);
-        recordCallerInteraction(ctx.storage, req, session, "resume");
         helpers.json(res, { session: result.session });
       } catch (error: unknown) {
         const status = error instanceof SessionLifecycleError ? error.statusCode : 500;
@@ -779,7 +755,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const sessionStopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
     if (sessionStopMatch && method === "POST") {
       const session = requireSession(sessionStopMatch[1], res);
-      if (session) await stopKnownSession(session, res, req);
+      if (session) await stopKnownSession(session, res);
       return true;
     }
 
@@ -863,18 +839,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const wsSessionStopMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/);
     if (wsSessionStopMatch && method === "POST") {
       const admitted = requireWorkspaceSession(wsSessionStopMatch[1], wsSessionStopMatch[2], res);
-      if (admitted) await stopKnownSession(admitted.session, res, req);
+      if (admitted) await stopKnownSession(admitted.session, res);
       return true;
     }
 
     const wsSessionResumeMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/resume$/);
     if (wsSessionResumeMatch && method === "POST") {
-      await handleResumeWorkspaceSession(
-        wsSessionResumeMatch[1],
-        wsSessionResumeMatch[2],
-        req,
-        res,
-      );
+      await handleResumeWorkspaceSession(wsSessionResumeMatch[1], wsSessionResumeMatch[2], res);
       return true;
     }
 

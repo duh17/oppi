@@ -246,7 +246,7 @@ export class DurableControlCli {
         throw new Error(message);
       }
       try {
-        await options.onWrite(await this.describe(request, callerSessionId, options.signal));
+        await options.onWrite(await this.describe(request, options.signal));
         // The answer can land as the script is stopped; a stopped script sends nothing.
         options.signal.throwIfAborted();
       } catch (error) {
@@ -279,7 +279,6 @@ export class DurableControlCli {
    */
   private async describe(
     request: LocalApiInterceptedRequest,
-    callerSessionId: string,
     signal: AbortSignal,
   ): Promise<ControlWrite> {
     const write: ControlWrite = {
@@ -290,7 +289,6 @@ export class DurableControlCli {
     const get = (path: string): Promise<JsonValue> =>
       localApiRequest<JsonValue>(createCliConnectionConfig(this.deps.dataDir), path, {
         signal,
-        callerSessionId,
       });
     const segments = (request.path.split("?")[0] ?? "").split("/").filter(Boolean);
     const targetPath =

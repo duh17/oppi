@@ -49,7 +49,6 @@ import type {
   PushRegistration,
   ServerConfig,
   Session,
-  SessionInteraction,
   UpdateWorkspaceRequest,
   Workspace,
 } from "./types.js";
@@ -504,16 +503,6 @@ export class Storage {
     worktreeId?: string,
   ): number[] {
     return this.sessionStore.listWorkspaceStoppedActivityTimes(workspaceId, beforeMs, worktreeId);
-  }
-
-  recordSessionInteraction(
-    input: Parameters<SessionSqliteStore["recordSessionInteraction"]>[0],
-  ): void {
-    this.sessionStore.recordSessionInteraction(input);
-  }
-
-  listSessionInteractions(sessionIds: readonly string[]): SessionInteraction[] {
-    return this.sessionStore.listSessionInteractions(sessionIds);
   }
 
   queueRestartResume(entries: readonly RestartResumeEntry[], recordedAt: number): void {

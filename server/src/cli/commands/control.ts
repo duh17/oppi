@@ -31,12 +31,7 @@ export async function cmdControl(
   callerContext: ControlCliCallerContext = {},
 ): Promise<void> {
   const jsonOutput = flags.json === "true";
-  const { call, output } = createLocalApiCommandContext(
-    storage,
-    jsonOutput,
-    callerContext.signal,
-    callerContext.callerSessionId,
-  );
+  const { call, output } = createLocalApiCommandContext(storage, jsonOutput, callerContext.signal);
 
   try {
     const allowed = action ? CONTROL_FLAGS[action] : undefined;
