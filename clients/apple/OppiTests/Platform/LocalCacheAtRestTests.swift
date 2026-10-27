@@ -90,7 +90,7 @@ struct LocalCacheAtRestTests {
         await timeline.saveWorkspaces([makeTestWorkspace(id: "w1", name: "One")], serverId: "sha256:a")
         await files.cacheFileIndex(["a.txt"], workspaceId: "w1", serverId: "sha256:a")
 
-        await SettingsStoragePage.clearLocalCache(
+        await LocalCache.clear(
             timelineCache: timeline,
             fileBrowserCache: files,
             httpCacheDirectory: http

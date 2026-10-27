@@ -7,24 +7,21 @@ import UIKit
 /// real buttons, so a tap, a VoiceOver activation, and `app.buttons[id]` all run
 /// the row's own push. The index reads its summaries in `updateProperties()`,
 /// which Observation re-runs when a store it read changes, and again whenever
-/// this screen comes back from a page that wrote a preference.
+/// this screen comes back from a page that wrote a preference
+/// (`SettingsListViewController`).
 @MainActor
-final class SettingsRootViewController: UIViewController, UICollectionViewDelegate {
+final class SettingsRootViewController: SettingsListViewController<SettingsRootViewController.Section, SettingsRootViewController.Item> {
     private let root: AppRootEnvironment
 
     private var coordinator: ConnectionCoordinator { root.coordinator }
     private var navigation: AppNavigation { root.navigation }
     private var serverStore: ServerStore { root.coordinator.serverStore }
 
-    private let collectionView: UICollectionView
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var appliedThemeID: ThemeID?
-    private var changedRows = ChangedRows<Item>()
     private var cacheSizeText = ""
 
-    private enum Section: Hashable { case servers, pages }
+    enum Section: Hashable, Sendable { case servers, pages }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case server(String)
         case addServer
         case general, appearance, text, editor, chat, sessions, voice, tailscale
@@ -39,54 +36,34 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
 
     init(root: AppRootEnvironment) {
         self.root = root
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        config.headerMode = .supplementary
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
-        super.init(nibName: nil, bundle: nil)
-        traitOverrides.appRootEnvironment = root
-        title = String(localized: "Settings")
         // App Settings is the root of its pages, so it keeps the large title
         // the shell used to give it. `applyTitleDisplayMode` drops it where the
         // system puts the bar on a vertical edge.
-        navigationItem.largeTitleDisplayMode = .always
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
+        super.init(title: String(localized: "Settings"), listIdentifier: "settings.list", headers: true, largeTitle: true)
+        traitOverrides.appRootEnvironment = root
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "settings.list"
-        SSHTerminalSettingsList.pin(collectionView, in: view)
-        installDataSource()
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         if #available(iOS 27.1, *) {
             registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (self: Self, _) in
                 self.setNeedsUpdateProperties()
             }
         }
-        setNeedsUpdateProperties()
     }
 
     override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        // A page writes straight to preferences, so the summary it feeds is
-        // re-read on the way back. The cache size is measured here too: Clear
-        // Local Cache on the Storage page writes nothing this screen observes.
+        // Clear Local Cache on the Storage page writes nothing this screen
+        // observes, so the cache size is measured again on the way back.
         refreshCacheSize()
         applyTitleDisplayMode()
-        setNeedsUpdateProperties()
+        super.viewWillAppear(animated)
     }
 
     /// Measures the local cache again and redraws only when it moved.
     private func refreshCacheSize() {
         Task { [weak self] in
-            let size = await SettingsStoragePage.formattedCacheSize()
+            let size = await LocalCache.formattedSize()
             guard let self, cacheSizeText != size else { return }
             cacheSizeText = size
             setNeedsUpdateProperties()
@@ -108,45 +85,26 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         navigationItem.largeTitleDisplayMode = mode
     }
 
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
-
     override func updateProperties() {
-        super.updateProperties()
-        let themeID = ThemeRuntimeState.currentThemeID()
-        if appliedThemeID != themeID {
-            appliedThemeID = themeID
-            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
-        }
-        // Read every value so any change re-runs this pass.
-        _ = (root.themeStore.mode, root.themeStore.manualThemeID)
-        _ = navigation.sessionThreadsEnabled
-        _ = (AppPreferences.Voice.engineMode, FontPreferences.codeFont)
         applyTitleDisplayMode()
-        applySnapshot()
+        super.updateProperties()
     }
 
     // MARK: - Snapshot
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.servers])
-        snapshot.appendItems(serverStore.servers.map { .server($0.id) } + [.addServer], toSection: .servers)
-        snapshot.appendSections([.pages])
-        snapshot.appendItems(Self.pages, toSection: .pages)
-        let shown = Set(dataSource.snapshot().itemIdentifiers)
-        // The theme is in the key: a light/dark or theme change repaints every
-        // row, which otherwise keeps the colors it was configured with.
-        let themeID = ThemeRuntimeState.currentThemeID()
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
-            AnyHashable([AnyHashable(themeID), inputs(of: item)])
-        }
-        snapshot.reconfigureItems(changed.filter(shown.contains))
-        dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
+    override func sections() -> [SettingsSectionModel<Section, Item>] {
+        [
+            SettingsSectionModel(
+                .servers,
+                header: String(localized: "Servers"),
+                items: serverStore.servers.map { .server($0.id) } + [.addServer]
+            ),
+            SettingsSectionModel(.pages, items: Self.pages),
+        ]
     }
 
     /// The values a row is drawn from.
-    private func inputs(of item: Item) -> AnyHashable {
+    override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .server(let id):
             guard let server = serverStore.servers.first(where: { $0.id == id }) else {
@@ -161,8 +119,12 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
                 AnyHashable(tint),
                 AnyHashable(lockWord(ScopedLockService.shared.badge(.server(id)))),
             ])
-        case .addServer, .general, .sessions, .chat, .privacy, .sshTerminal:
+        case .addServer, .general, .chat, .sshTerminal:
             return AnyHashable(0)
+        case .sessions:
+            return AnyHashable(AppPreferences.Session.autoTitleProvider)
+        case .privacy:
+            return AnyHashable(privacySummary)
         case .appearance:
             return AnyHashable(themeSummary)
         case .text:
@@ -180,49 +142,43 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    private func installDataSource() {
-        let row = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, item in
-            guard let self else { return }
-            let palette = ThemeRuntimeState.currentPalette()
-            cell.configure(
-                title: title(of: item),
-                systemImage: systemImage(of: item),
-                value: value(of: item),
-                showsDisclosure: item != .addServer,
-                // An action row, not a destination: it reads in the accent
-                // color the Add Server button always had.
-                titleColor: item == .addServer ? UIColor(palette.blue) : UIColor(palette.fg),
-                identifier: accessibilityIdentifier(of: item)
-            ) { [weak self] in self?.open(item) }
-        }
-        let server = UICollectionView.CellRegistration<SettingsServerRowCell, Item> { [weak self] cell, _, item in
-            guard let self, case .server(let id) = item,
-                  let paired = serverStore.servers.first(where: { $0.id == id }) else { return }
-            cell.configure(
-                name: paired.name,
-                state: serverBadge(paired),
-                icon: paired.resolvedBadgeIcon,
-                lock: ScopedLockService.shared.badge(.server(paired.id)),
-                identifier: "settings.server.\(paired.id)"
-            ) { [weak self] in self?.openServerSettings(paired) }
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section) == .servers
-                ? String(localized: "Servers")
-                : nil
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            switch item {
-            case .server:
-                collectionView.dequeueConfiguredReusableCell(using: server, for: indexPath, item: item)
-            default:
-                collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
+    private lazy var row = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        let palette = ThemeRuntimeState.currentPalette()
+        cell.configure(
+            title: title(of: item),
+            systemImage: systemImage(of: item),
+            value: value(of: item),
+            showsDisclosure: item != .addServer,
+            // An action row, not a destination: it reads in the accent
+            // color the Add Server button always had.
+            titleColor: item == .addServer ? UIColor(palette.blue) : UIColor(palette.fg),
+            identifier: accessibilityIdentifier(of: item)
+        ) { [weak self] in self?.open(item) }
+    }
+
+    private lazy var serverRow = UICollectionView.CellRegistration<SettingsServerRowCell, Item> { [weak self] cell, _, item in
+        guard let self, case .server(let id) = item,
+              let paired = serverStore.servers.first(where: { $0.id == id }) else { return }
+        cell.configure(
+            name: paired.name,
+            state: serverBadge(paired),
+            icon: paired.resolvedBadgeIcon,
+            lock: ScopedLockService.shared.badge(.server(paired.id)),
+            identifier: "settings.server.\(paired.id)"
+        ) { [weak self] in self?.openServerSettings(paired) }
+    }
+
+    override func prepareRegistrations() {
+        _ = (row, serverRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .server:
+            collectionView.dequeueConfiguredReusableCell(using: serverRow, for: indexPath, item: item)
+        default:
+            collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
         }
     }
 
@@ -253,7 +209,7 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         case .sessions: String(localized: "Sessions")
         case .voice: String(localized: "Voice & Dictation")
         case .tailscale: String(localized: "Tailscale")
-        case .sshTerminal: String(localized: "SSH Hosts")
+        case .sshTerminal: String(localized: "SSH Terminal")
         case .privacy: String(localized: "Privacy & Security")
         case .experiments: String(localized: "Experiments")
         case .storage: String(localized: "Storage & About")
@@ -281,6 +237,10 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
 
     private func value(of item: Item) -> String? {
         switch item {
+        // General stays blank: it holds three unrelated switches, so no one
+        // value of them says anything about the page.
+        case .sessions: AppPreferences.Session.autoTitleProvider.label
+        case .privacy: privacySummary
         case .appearance: themeSummary
         case .text: FontPreferences.codeFont.displayName
         case .editor: CodeEditorPreferences.shared.keybindings.label
@@ -320,6 +280,11 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         }
     }
 
+    /// Whether App Lock is on; the timeout is one tap away on the page.
+    private var privacySummary: String {
+        AppLockService.shared.isEnabled ? String(localized: "App Lock On") : String(localized: "App Lock Off")
+    }
+
     private var tailscaleSummary: String {
         TailnetSettingsViewController.statusLabel(TailnetNodeController.shared.state)
     }
@@ -341,7 +306,7 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         case .addServer:
             presentAddServer()
         case .general:
-            navigator.push { SettingsGeneralPage() }
+            navigator.push(SettingsGeneralViewController())
         case .appearance:
             navigator.push { SettingsAppearancePage() }
         case .text:
@@ -363,7 +328,7 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         case .experiments:
             navigator.push(SettingsExperimentsViewController(navigation: navigation))
         case .storage:
-            navigator.push { SettingsStoragePage() }
+            navigator.push(SettingsStorageViewController())
         case .server:
             break
         }
@@ -396,132 +361,15 @@ final class SettingsRootViewController: UIViewController, UICollectionViewDelega
         )
     }
 
+    override func isSelectable(_ item: Item) -> Bool { true }
+
     /// Rows push themselves; selecting one runs the same owner action as its
     /// button, so the two can never diverge.
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        collectionView.deselectItem(at: indexPath, animated: true)
-        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
+    override func select(_ item: Item) {
         if case .server(let id) = item, let server = serverStore.servers.first(where: { $0.id == id }) {
             openServerSettings(server)
         } else {
             open(item)
-        }
-    }
-}
-
-/// A settings index row: a theme-blue symbol, a Title Case title, an optional
-/// current-value summary, and the system disclosure chevron. The whole row is
-/// one button, so a tap, a VoiceOver activation, and `app.buttons[id]` all run
-/// the row's push.
-final class SettingsIndexRowCell: UICollectionViewListCell {
-    private let button = SettingsRowButton(type: .system)
-    private let iconView = UIImageView()
-    private let titleLabel = UILabel()
-    private let valueLabel = UILabel()
-    private var tapAction: UIAction?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        for view in [iconView, titleLabel, valueLabel, button] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(view)
-        }
-        // The system highlight is the cell's own: it fills the whole row and
-        // keeps the card's corners, which a content-view fill cannot.
-        button.onHighlight = { [weak self] in self?.isHighlighted = $0 }
-        iconView.contentMode = .scaleAspectFit
-        iconView.setContentHuggingPriority(.required, for: .horizontal)
-        iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
-        titleLabel.font = .preferredFont(forTextStyle: .body)
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.numberOfLines = 0
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        valueLabel.font = .preferredFont(forTextStyle: .body)
-        valueLabel.adjustsFontForContentSizeCategory = true
-        valueLabel.textAlignment = .right
-        valueLabel.setContentHuggingPriority(.required, for: .horizontal)
-        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        button.accessibilityTraits = .button
-        // The labels paint the row; the button above them is its one accessible
-        // element, so the row reads as a single control.
-        accessibilityElements = [button]
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
-            iconView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 24),
-            titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
-            titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 12),
-            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -8),
-            valueLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            valueLabel.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            button.topAnchor.constraint(equalTo: contentView.topAnchor),
-            button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            // A grouped list's separator starts where the row's title does.
-            separatorLayoutGuide.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func configure(
-        title: String,
-        systemImage: String,
-        value: String?,
-        showsDisclosure: Bool,
-        titleColor: UIColor,
-        identifier: String,
-        action: @escaping () -> Void
-    ) {
-        let palette = ThemeRuntimeState.currentPalette()
-        iconView.image = UIImage(systemName: systemImage)
-        iconView.tintColor = UIColor(palette.blue)
-        titleLabel.text = title
-        titleLabel.textColor = titleColor
-        valueLabel.text = value
-        valueLabel.textColor = UIColor(palette.comment)
-        valueLabel.isHidden = value == nil
-        accessories = showsDisclosure ? [.disclosureIndicator()] : []
-        button.accessibilityIdentifier = identifier
-        button.accessibilityLabel = title
-        button.accessibilityValue = value
-        if let tapAction { button.removeAction(tapAction, for: .touchUpInside) }
-        let tap = UIAction { _ in action() }
-        tapAction = tap
-        button.addAction(tap, for: .touchUpInside)
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        if let tapAction {
-            button.removeAction(tapAction, for: .touchUpInside)
-            self.tapAction = nil
-        }
-        button.accessibilityIdentifier = nil
-        button.accessibilityLabel = nil
-        button.accessibilityValue = nil
-        iconView.image = nil
-        titleLabel.text = nil
-        valueLabel.text = nil
-        isHighlighted = false
-    }
-}
-
-/// A row's overlay button. It is transparent over the row's labels, so the
-/// cell's own highlight never fires; this hands the press to the cell, which
-/// paints the pressed fill.
-final class SettingsRowButton: UIButton {
-    var onHighlight: ((Bool) -> Void)?
-
-    override var isHighlighted: Bool {
-        didSet {
-            guard isHighlighted != oldValue else { return }
-            onHighlight?(isHighlighted)
         }
     }
 }

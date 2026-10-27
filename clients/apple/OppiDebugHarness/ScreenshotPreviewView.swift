@@ -249,7 +249,7 @@ struct ScreenshotPreviewView: View {
             )
         case "workspace-top-bar":
             WorkspaceTopBarScreenshotPreview()
-        case "settings-root", "settings-chat", "settings-editor", "settings-chat-top-bar":
+        case "settings-root", "settings-general", "settings-storage", "settings-chat", "settings-editor", "settings-chat-top-bar":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         case "push-discovery-card":
             PushDiscoveryCardScreenshotPreview()
@@ -827,8 +827,8 @@ private struct WorkspaceTopBarScreenshotPreview: View {
     }
 }
 
-/// `SCREENSHOT_SCREEN=settings-root` / `settings-chat` / `settings-editor`: a
-/// UIKit settings page as the root of a router stack, over fixture services.
+/// `SCREENSHOT_SCREEN=settings-root` / `settings-general` / `settings-storage` /
+/// `settings-chat` / `settings-editor`: a UIKit settings page as the root of a router stack, over fixture services.
 /// Nothing here calls a server. They are captured in the same harness so their
 /// bars can be compared.
 private struct SettingsPageScreenshotPreview: View {
@@ -873,6 +873,8 @@ private struct SettingsPageScreenshotPreview: View {
             switch screen {
             case "settings-root": SettingsRootViewController(root: root)
             case "settings-editor": SettingsEditorViewController()
+            case "settings-general": SettingsGeneralViewController()
+            case "settings-storage": SettingsStorageViewController()
             case "settings-chat-top-bar": SettingsChatTopBarViewController()
             default: SettingsChatViewController()
             }
