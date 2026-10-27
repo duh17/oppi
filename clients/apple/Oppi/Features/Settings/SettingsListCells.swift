@@ -29,7 +29,9 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         titleLabel.font = .preferredFont(forTextStyle: .body)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.numberOfLines = 0
-        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // The title holds its width before the value does, so a short value
+        // beside it wraps or truncates instead of squeezing the title.
+        titleLabel.setContentCompressionResistancePriority(UILayoutPriority(751), for: .horizontal)
         valueLabel.font = .preferredFont(forTextStyle: .body)
         valueLabel.adjustsFontForContentSizeCategory = true
         valueLabel.textAlignment = .right

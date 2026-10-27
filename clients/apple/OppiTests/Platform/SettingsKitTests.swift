@@ -1,4 +1,5 @@
 import Testing
+import SwiftUI
 import UIKit
 @testable import Oppi
 
@@ -87,27 +88,40 @@ struct SettingsKitTests {
         #expect(button.accessibilityValue != nil)
     }
 
-    @Test("A dark theme's card is its bgHighlight unless that is too close to bg; a light theme keeps the system card")
+    @Test("The card is whichever of the system card and bgHighlight reads better against bg")
     func cardColorFollowsTheThemeWithEnoughContrast() {
         let system = UIColor.secondarySystemGroupedBackground
+        func color(_ hex: Int) -> Color {
+            Color(UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1))
+        }
+
+        // A built-in dark theme: its highlight reads better than the system card.
         let dark = ThemeID.dark.palette
         let darkStyle = SettingsStyle(palette: dark, isDark: true)
         #expect(darkStyle.card == UIColor(dark.bgHighlight))
-        #expect(SettingsStyle.contrast(darkStyle.card, darkStyle.page) >= SettingsStyle.minimumCardContrast)
-
-        // An imported dark theme whose highlight barely differs from its page.
-        var flat = dark
-        flat.bgHighlight = flat.bg
-        #expect(SettingsStyle(palette: flat, isDark: true).card == system)
-
-        // A light theme keeps the system card whatever its highlight is.
-        #expect(SettingsStyle(palette: ThemeID.light.palette, isDark: false).card == system)
-
         // Every built-in dark theme's card reads against its page.
         for id in [ThemeID.dark, .oled, .night] {
             let style = SettingsStyle(palette: id.palette, isDark: true)
-            #expect(SettingsStyle.contrast(style.card, style.page) >= SettingsStyle.minimumCardContrast, "\(id)")
+            #expect(SettingsStyle.contrast(style.card, style.page, isDark: true) >= SettingsStyle.minimumCardContrast, "\(id)")
         }
+
+        // A dark bg near #1C1C1E is the system card's own color: any highlight that
+        // differs more wins, and one that does not leaves the system card.
+        var nearSystem = dark
+        nearSystem.bg = color(0x1C1C1E)
+        nearSystem.bgHighlight = color(0x2C2C30)
+        #expect(SettingsStyle(palette: nearSystem, isDark: true).card == UIColor(nearSystem.bgHighlight))
+        nearSystem.bgHighlight = color(0x1C1C1E)
+        #expect(SettingsStyle(palette: nearSystem, isDark: true).card == system)
+
+        // A light theme keeps the system (white) card when it reads against bg...
+        #expect(SettingsStyle(palette: ThemeID.light.palette, isDark: false).card == system)
+
+        // ...and takes bgHighlight when bg is white itself and the highlight reads better.
+        var white = ThemeID.light.palette
+        white.bg = color(0xFFFFFF)
+        white.bgHighlight = color(0xE8E8EC)
+        #expect(SettingsStyle(palette: white, isDark: false).card == UIColor(white.bgHighlight))
     }
 
     private static func footerTexts(in collectionView: UICollectionView) -> [String] {

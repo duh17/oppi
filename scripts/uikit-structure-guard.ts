@@ -91,14 +91,24 @@ const settingsThemingExceptions: { file: string; reason: string }[] = [
     reason: "The SSH password prompt: a small modal form.",
   },
   {
-    file: "clients/apple/Oppi/Features/Chat/",
-    reason: "Chat panels and pickers (model, context, extensions, review comments), not settings pages.",
+    file: "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStashContent.swift",
+    reason: "The review-comment stash inside a chat's composer panel.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Chat/Support/ContextInspectorViewController.swift",
+    reason: "The chat's context inspector panel: read-only usage rows beside a chat.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Chat/Support/ModelPickerViewController.swift",
+    reason: "The chat's model picker: a choice list presented from the composer.",
+  },
+  {
+    file: "clients/apple/Oppi/Features/Chat/Support/SessionExtensionContextViewController.swift",
+    reason: "The chat's session-extension context panel, presented from a chat.",
   },
 ];
 const settingsThemingExempt = [settingsBase, settingsStyle, ...settingsThemingExceptions.map((entry) => entry.file)];
-/** An entry ending in `/` exempts the whole directory. */
-const isSettingsThemingExempt = (file: string) =>
-  settingsThemingExempt.some((entry) => (entry.endsWith("/") ? file.startsWith(entry) : file === entry));
+
 
 const constructs: Construct[] = [
   { name: "NavigationStack", pattern: /\bNavigationStack\b/g, disallowed: true },
@@ -169,7 +179,7 @@ function scan(): Hit[] {
     const file = relative(repoRoot, absFile);
     const stripped = stripSwiftCommentsAndStrings(readFileSync(absFile, "utf8"));
     for (const { name, pattern, exemptFiles, fileMustMatch } of constructs) {
-      if (exemptFiles && exemptFiles === settingsThemingExempt ? isSettingsThemingExempt(file) : exemptFiles?.includes(file)) continue;
+      if (exemptFiles?.includes(file)) continue;
       if (fileMustMatch && !fileMustMatch.test(stripped)) continue;
       for (const match of stripped.matchAll(pattern)) {
         const start = match.index + (match[0].length - match[0].trimStart().length);

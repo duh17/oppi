@@ -16,10 +16,12 @@ struct SettingsStyle {
     let warning: UIColor
     /// The page behind the cards.
     let page: UIColor
-    /// The card behind a group of rows. A dark theme uses its own `bgHighlight`,
-    /// so a card reads as a surface on that theme's `bg`. A light theme keeps
-    /// the system card (white), and so does a dark theme whose `bgHighlight`
-    /// is too close to its `bg` to tell apart (an imported theme can be).
+    /// The card behind a group of rows: the system card or the theme's own
+    /// `bgHighlight`, whichever reads better against `bg`. In a dark theme that
+    /// is whichever contrasts more (the system card sits at 1.01 on a `bg` near
+    /// `#1C1C1E`). A light theme keeps the system card (white) unless it is
+    /// under `minimumCardContrast` against `bg`, and then takes `bgHighlight`
+    /// if that contrasts more.
     let card: UIColor
 
     /// The least contrast ratio a themed card needs against the page.
@@ -33,9 +35,13 @@ struct SettingsStyle {
         warning = UIColor(palette.orange)
         page = UIColor(palette.bg)
         let highlight = UIColor(palette.bgHighlight)
-        card = isDark && Self.contrast(highlight, page) >= Self.minimumCardContrast
-            ? highlight
-            : .secondarySystemGroupedBackground
+        let system = UIColor.secondarySystemGroupedBackground
+        let highlightContrast = Self.contrast(highlight, page, isDark: isDark)
+        let systemContrast = Self.contrast(system, page, isDark: isDark)
+        let prefersHighlight = isDark
+            ? highlightContrast > systemContrast
+            : systemContrast < Self.minimumCardContrast && highlightContrast > systemContrast
+        card = prefersHighlight ? highlight : system
     }
 
     @MainActor
@@ -46,15 +52,16 @@ struct SettingsStyle {
         )
     }
 
-    /// WCAG contrast ratio between two colors, 1 to 21.
-    static func contrast(_ first: UIColor, _ second: UIColor) -> CGFloat {
-        let (lighter, darker) = (max(luminance(first), luminance(second)), min(luminance(first), luminance(second)))
-        return (lighter + 0.05) / (darker + 0.05)
+    /// WCAG contrast ratio between two colors in a light or dark scheme, 1 to 21.
+    static func contrast(_ first: UIColor, _ second: UIColor, isDark: Bool) -> CGFloat {
+        let (one, two) = (luminance(first, isDark: isDark), luminance(second, isDark: isDark))
+        return (max(one, two) + 0.05) / (min(one, two) + 0.05)
     }
 
-    private static func luminance(_ color: UIColor) -> CGFloat {
+    private static func luminance(_ color: UIColor, isDark: Bool) -> CGFloat {
         var (red, green, blue, alpha): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
-        color.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark)).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        let traits = UITraitCollection(userInterfaceStyle: isDark ? .dark : .light)
+        color.resolvedColor(with: traits).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         func linear(_ value: CGFloat) -> CGFloat {
             value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
         }
@@ -67,7 +74,7 @@ struct SettingsStyle {
     @MainActor
     static func cardBackground(for state: UICellConfigurationState) -> UIBackgroundConfiguration {
         var background = UIBackgroundConfiguration.listCell().updated(for: state)
-        if !state.isHighlighted, !state.isSelected {
+        if !state.isHighlighted, !state.isSelected, !state.isFocused {
             background.backgroundColor = current.card
         }
         return background
@@ -152,7 +159,7 @@ enum SettingsListStyle {
 
     static func applyTheme(to view: UIView, collectionView: UICollectionView, themeID: ThemeID) {
         view.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        let bg = SettingsStyle(palette: themeID.palette, isDark: themeID.preferredColorScheme != .light).page
+        let bg = UIColor(themeID.palette.bg)
         view.backgroundColor = bg
         collectionView.backgroundColor = bg
     }
