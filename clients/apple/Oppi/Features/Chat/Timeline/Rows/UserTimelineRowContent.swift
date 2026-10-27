@@ -927,7 +927,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         messageTextView.font = AppFont.messageBody
 
         guard !text.isEmpty else {
-            resetMarkdownBodyToSingleTextView()
+            clearExtraMarkdownViews()
             messageTextView.attributedText = nil
             messageTextView.isHidden = true
             return
@@ -943,7 +943,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             return false
         }
         guard hasTable else {
-            resetMarkdownBodyToSingleTextView()
+            clearExtraMarkdownViews()
             if case .attributed(let attributed) = pieces.first {
                 messageTextView.attributedText = attributed
             } else {
@@ -953,20 +953,21 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             return
         }
 
+        // The primary text view never leaves `bodyStack`: it stays the first
+        // arranged subview and is hidden when the body opens with a table. Taking
+        // it out while hidden (a folded agent card) and re-adding it shown left the
+        // stack's zero-height hiding constraint behind, so the opened card laid its
+        // table over the first paragraph.
         clearExtraMarkdownViews()
-        messageTextView.removeFromSuperview()
         messageTextView.attributedText = nil
         messageTextView.isHidden = true
 
-        var usedPrimaryTextView = false
-        for piece in pieces {
+        for (index, piece) in pieces.enumerated() {
             switch piece {
             case .attributed(let attributed):
-                if !usedPrimaryTextView {
+                if index == 0 {
                     messageTextView.attributedText = attributed
                     messageTextView.isHidden = false
-                    bodyStack.addArrangedSubview(messageTextView)
-                    usedPrimaryTextView = true
                 } else {
                     let extra = makeExtraMarkdownTextView()
                     extra.attributedText = attributed
@@ -984,18 +985,11 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         }
     }
 
-    private func resetMarkdownBodyToSingleTextView() {
-        clearExtraMarkdownViews()
-        if messageTextView.superview !== bodyStack {
-            bodyStack.insertArrangedSubview(messageTextView, at: 0)
-        }
-    }
-
     /// A folded agent message shows its preview instead of the body, so the
     /// rendered Markdown goes; reopening it renders again from the message text.
     private func clearMarkdownBody() {
         renderedMarkdownBody = nil
-        resetMarkdownBodyToSingleTextView()
+        clearExtraMarkdownViews()
         messageTextView.attributedText = nil
         messageTextView.isHidden = true
         messageTextView.isSelectable = false

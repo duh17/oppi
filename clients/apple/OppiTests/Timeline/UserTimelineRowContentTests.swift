@@ -446,6 +446,70 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test(
+        "opening a folded agent report lays its text above the table",
+        arguments: [ChatTimelineChromeStyle.standard, .conversation]
+    )
+    func openingFoldedAgentReportLaysTextAboveTable(style: ChatTimelineChromeStyle) throws {
+        let report = """
+        The MCP conversion and both review repairs are integrated on the branch, rebased onto main, and every gate passed on the simulator and the device.
+
+        | SHA | Subject |
+        |---|---|
+        | 11736037a | refactor: move MCP Servers, server detail, Add, and sign-in to UIKit |
+        | 8920c0e34 | fix: keep MCP rows with their own host and lay out at AX5 |
+
+        The whole branch against main is 22 files.
+        """
+        let origin = MessageOrigin(kind: "session", sessionId: "child", name: "worker-mcp", intent: "report")
+        func configuration(isExpanded: Bool) -> UserTimelineRowConfiguration {
+            UserTimelineRowConfiguration(
+                text: report,
+                images: [],
+                canFork: false,
+                onFork: nil,
+                itemID: "agent-1",
+                chromeStyle: style,
+                agentMessage: AgentMessageCard(
+                    origin: origin,
+                    preview: AgentMessageCard.preview(forMarkdown: report).text,
+                    isExpanded: isExpanded,
+                    canExpand: true
+                )
+            )
+        }
+        let width: CGFloat = 390
+        func layOut(_ view: UIView) {
+            let fitted = view.systemLayoutSizeFitting(
+                CGSize(width: width, height: 0),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            )
+            view.frame = CGRect(origin: .zero, size: CGSize(width: width, height: fitted.height))
+            view.setNeedsLayout()
+            view.layoutIfNeeded()
+        }
+
+        // Folded first, as the timeline draws it, then opened in the same view.
+        let view = UserTimelineRowContentView(configuration: configuration(isExpanded: false))
+        layOut(view)
+        view.configuration = configuration(isExpanded: true)
+        layOut(view)
+
+        let table = try #require(firstSubview(ofType: NativeTableBlockView.self, in: view))
+        let lead = try #require(
+            allSubviews(ofType: UITextView.self, in: view).first {
+                $0.attributedText?.string.hasPrefix("The MCP conversion") == true
+            }
+        )
+        let leadFrame = lead.convert(lead.bounds, to: view)
+        let tableFrame = table.convert(table.bounds, to: view)
+        let leadNeeds = lead.sizeThatFits(CGSize(width: lead.bounds.width, height: .greatestFiniteMagnitude))
+        #expect(lead.bounds.height >= leadNeeds.height - 0.5, "lead text is \(lead.bounds.height)pt tall but needs \(leadNeeds.height)pt")
+        #expect(tableFrame.minY >= leadFrame.maxY - 0.5, "table \(tableFrame) overlaps lead text \(leadFrame)")
+    }
+
+    @MainActor
     @Test("commit pill stays inside the fitted first-row height and opens as a control")
     func commitPillStaysInsideFittedHeightAndOpensAsControl() throws {
         let transport = """
