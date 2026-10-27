@@ -1,6 +1,6 @@
 import XCTest
 
-/// Real paired-server proof for the server-global Skills route.
+/// Real paired-server proof for the server-global Skills and Extensions routes.
 @MainActor
 final class ServerResourcesE2ETests: E2ETestCase {
     override var e2eLaunchesSessionsInboxOnly: Bool {
@@ -23,6 +23,22 @@ final class ServerResourcesE2ETests: E2ETestCase {
         search.typeText("no-matching-e2e-skill")
         XCTAssertTrue(app.staticTexts["No Results"].waitForExistence(timeout: 5))
         try saveLabScreenshot(name: "iphone-server-resources-skills-no-results-e2e")
+    }
+
+    /// The shell mounts the Extensions list for the paired server and loads its
+    /// catalog. The E2E server has no Pi extensions, so the list says so; a row
+    /// opening its detail is proven in `ServerExtensionsViewControllerTests`.
+    func testIPhoneExtensionsListLoadsServerCatalog() throws {
+        openCompactSidebar()
+        tap(app.buttons["workspace.extensions.open"], named: "Extensions sidebar destination")
+        XCTAssertTrue(app.navigationBars["Extensions"].waitForExistence(timeout: 10))
+        assertServerScope()
+        XCTAssertTrue(
+            app.staticTexts["No Pi Extensions Found"].waitForExistence(timeout: 15),
+            "The server's empty extension catalog did not load"
+        )
+        XCTAssertTrue(app.searchFields["Search extensions"].exists)
+        try saveLabScreenshot(name: "iphone-server-resources-extensions-e2e")
     }
 
     private func openCompactSidebar() {

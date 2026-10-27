@@ -6,7 +6,8 @@ import SwiftUI
 // sidebar, a workspace's sessions, a session's chat
 // (`ChatRouteViewController`), Files (`FileBrowserViewController`), a linked
 // file (`WorkspaceLinkedFileViewController`), a Skill file
-// (`ServerSkillFileViewController`), an Extension's detail
+// (`ServerSkillFileViewController`), Extensions
+// (`ServerExtensionsViewController`) and an Extension's detail
 // (`ServerExtensionDetailViewController`), SSH Terminal's host list,
 // Schedules, Agents, App Settings (`SettingsRootViewController`), Workspace
 // Settings (`WorkspaceSettingsViewController`), Model Providers
@@ -45,6 +46,9 @@ enum ShellRouteScreens {
         }
         if case .utility(.serverMetrics) = route {
             return ServerMetricsViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
+        }
+        if case .utility(.extensions) = route {
+            return ServerExtensionsViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
         }
         if case .sidebar = route {
             return WorkspaceSidebarViewController(root: root)
@@ -120,6 +124,10 @@ enum ShellRouteScreens {
         }
         if let metrics = screen as? ServerMetricsViewController {
             metrics.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let list = screen as? ServerExtensionsViewController {
+            list.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
         if let chatRoute = screen as? ChatRouteViewController {
@@ -338,14 +346,12 @@ private struct WorkspaceUtilityDestinationView: View {
 
     var body: some View {
         switch target {
-        case .schedules, .agents:
-            // The shell hosts these routes as ScheduleListViewController
-            // and AgentListViewController.
+        case .schedules, .agents, .extensions:
+            // The shell hosts these routes as ScheduleListViewController,
+            // AgentListViewController, and ServerExtensionsViewController.
             EmptyView()
         case .skills:
             ServerSkillsView()
-        case .extensions:
-            ServerExtensionsView()
         case .mcpServers:
             McpServersView(scopeId: McpScopeSnapshot.globalId)
         case .sshTerminal:

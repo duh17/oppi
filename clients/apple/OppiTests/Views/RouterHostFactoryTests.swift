@@ -86,8 +86,8 @@ struct RouterHostFactoryTests {
         })
 
         // A page a screen pushes itself sits above its route, outside AppNavigation.
-        let extensions = try #require(shellStack.topViewController as? HostedScreenController)
-        extensions.navigator.push { Text("Extension detail") }
+        let extensions = try #require(shellStack.topViewController as? ServerExtensionsViewController)
+        Router.push(UIViewController(), from: extensions)
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
             shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 4
         })

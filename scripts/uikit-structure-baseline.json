@@ -157,9 +157,6 @@
     "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerViewController.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Extensions/ServerExtensionsView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift": {
       "import SwiftUI": 1
     },

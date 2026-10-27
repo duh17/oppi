@@ -11,7 +11,9 @@ import SwiftUI
 /// `mcp`, `mcp-workspace`,
 /// `mcp-detail`, `mcp-add`, `quick-comments`, `quick-comment-editor`,
 /// `auto-title`, `theme-import`, `dictionary`, `dictionary-workspace`,
-/// `skills`, `skill-detail`, `extensions`, `extension-detail`,
+/// `skills`, `skill-detail`, `extensions`, `extensions-offline` (the catalog
+/// request fails over a cached catalog), `extensions-unavailable` (the
+/// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `workspace-create`, `workspace-create-configure`.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
@@ -21,7 +23,7 @@ import SwiftUI
 /// `agents-pi` serve them too. `SCREENSHOT_SWEEP_SHOWS_WRITES=1` shows the
 /// last write the fixture server received (`settingsSweep.lastWrite`);
 /// `SCREENSHOT_SWEEP_WRITE_DELAY=<seconds>` holds each write's answer that long.
-/// `SCREENSHOT_COLOR_SCHEME=dark` selects the dark theme.
+/// `SCREENSHOT_COLOR_SCHEME=dark` or `light` selects that theme.
 struct SettingsSweepScreenshotPreview: View {
     private let coordinator: ConnectionCoordinator
     private let connection: ServerConnection
@@ -76,6 +78,10 @@ struct SettingsSweepScreenshotPreview: View {
         ),
     ]
 
+    private static func catalogExtensions(page: String) -> [ServerExtensionSummary] {
+        page == "extensions-builtin-only" ? extensions.filter { $0.kind == .builtIn } : extensions
+    }
+
     static let mcpGlobal = McpScopeSnapshot(
         id: McpScopeSnapshot.globalId, title: "Global", kind: "global", projectTrust: nil,
         servers: [
@@ -101,6 +107,9 @@ struct SettingsSweepScreenshotPreview: View {
     init() {
         let environment = ProcessInfo.processInfo.environment
         ScreenshotVolatileDefaults.applyDarkTheme(environment["SCREENSHOT_COLOR_SCHEME"] == "dark")
+        if environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
+            ScreenshotVolatileDefaults.applyTheme(.light)
+        }
         themeStore = ThemeStore()
         page = environment["SCREENSHOT_SWEEP_PAGE"] ?? "tailscale"
         showsWrites = environment["SCREENSHOT_SWEEP_SHOWS_WRITES"] == "1"
@@ -132,7 +141,10 @@ struct SettingsSweepScreenshotPreview: View {
         connection.setPreviewServerId(server.id)
         connection.setPreviewAPIClient(client)
         connection.serverResourceStore.replaceSkills(Self.skills, serverId: server.id)
-        connection.serverResourceStore.replaceExtensions(Self.extensions, serverId: server.id)
+        // `extensions-unavailable` has no cached catalog; its page clears the disk cache first.
+        if page != "extensions-unavailable" {
+            connection.serverResourceStore.replaceExtensions(Self.catalogExtensions(page: page), serverId: server.id)
+        }
         connection.serverResourceStore.switchServer(to: server.id)
         self.connection = connection
 
@@ -224,9 +236,16 @@ struct SettingsSweepScreenshotPreview: View {
         case "skills":
             RouterPreviewStack(root: root) { ServerSkillsView() }
                 .ignoresSafeArea()
-        case "extensions":
-            RouterPreviewStack(root: root) { ServerExtensionsView() }
+        case "extensions", "extensions-offline", "extensions-builtin-only":
+            RouterPreviewControllerStack(root: root) { ServerExtensionsViewController(root: root) }
                 .ignoresSafeArea()
+        case "extensions-unavailable":
+            // The disk cache outlives launches: an earlier page's saved catalog
+            // would show, so the screen mounts once it is replaced by an empty one.
+            CatalogCacheCleared(serverId: server.id) {
+                RouterPreviewControllerStack(root: root) { ServerExtensionsViewController(root: root) }
+                    .ignoresSafeArea()
+            }
         case "ssh-hosts", "ssh-hosts-empty":
             RouterPreviewControllerStack(root: root) { SSHTerminalHostListViewController() }
                 .ignoresSafeArea()
@@ -505,7 +524,7 @@ struct SettingsSweepScreenshotPreview: View {
             "/server/resources/pi/system-prompt": json(systemPrompt),
             "/server/resources/pi/default-tools": json(PiDefaultToolsSnapshot(defaultTools: ["+codemode"])),
             "/server/resources/extensions": json(ServerExtensionCatalog(
-                extensions: extensions,
+                extensions: catalogExtensions(page: page),
                 builtInTools: [ServerToolSummary(name: "read"), ServerToolSummary(name: "bash")],
                 optionalTools: [ServerToolSummary(name: "codemode")]
             )),
@@ -541,6 +560,10 @@ struct SettingsSweepScreenshotPreview: View {
             "/mcp/auth/flows/mcp-flow": json(McpFlowBody(flow: mcpFlow)),
             "/mcp/auth/flows/mcp-flow/cancel": Data(#"{"flow":{"flowId":"mcp-flow","scopeId":"global","serverName":"github","launchMode":"phone_browser","status":"cancelled","createdAt":1,"updatedAt":2,"expiresAt":9999999999999}}"#.utf8),
         ]
+        // The catalog request answers 404, so a sync fails.
+        if page == "extensions-offline" || page == "extensions-unavailable" {
+            SettingsSweepFixtureURLProtocol.routes["/server/resources/extensions"] = nil
+        }
     }
 }
 
@@ -570,6 +593,30 @@ private struct ServerInfoLoaded<Content: View>: View {
         .task {
             _ = try? await client.serverInfo()
             loaded = true
+        }
+    }
+}
+
+/// Shows `content` once the server's saved Skills and Extensions catalog on disk
+/// is replaced by an empty one.
+private struct CatalogCacheCleared<Content: View>: View {
+    let serverId: String
+    @ViewBuilder let content: () -> Content
+    @State private var cleared = false
+
+    var body: some View {
+        Group {
+            if cleared { content() } else { ProgressView() }
+        }
+        .task {
+            await TimelineCache.shared.saveServerResourceCatalog(
+                ServerResourceCatalogSnapshot(
+                    skills: [], extensions: [], builtInTools: [], savedAt: Date(),
+                    skillsLoaded: false, extensionsLoaded: false, skillsSavedAt: nil, extensionsSavedAt: nil
+                ),
+                serverId: serverId
+            )
+            cleared = true
         }
     }
 }
