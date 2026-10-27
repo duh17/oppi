@@ -306,14 +306,6 @@ export function nameRuleViolations(
           `name rule "${rule.id}": single-character need "${need}" must not be a letter`,
         );
       }
-      for (let k = 1; k < need.length; k += 1) {
-        if (need.slice(0, k) === need.slice(-k)) {
-          problems.push(
-            `name rule "${rule.id}": need "${need}" repeats its own prefix; the Swift word scan needs a border-free word`,
-          );
-          break;
-        }
-      }
     }
   }
   return problems;

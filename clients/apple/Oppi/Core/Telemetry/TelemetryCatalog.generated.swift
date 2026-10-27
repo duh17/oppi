@@ -61,16 +61,27 @@ enum TelemetryName {
     private static let triggerBytes: Set<UInt8> = [0x2E, 0x2F, 0x3A, 0x40, 0x7E]
     private static let triggerWords: [[UInt8]] = ["localhost"].map { Array($0.utf8) }
 
-    private static func containsIgnoringASCIICase(_ value: String, word: [UInt8]) -> Bool {
-        var matched = 0
-        for var byte in value.utf8 {
-            if (0x41...0x5A).contains(byte) { byte += 0x20 }
-            if byte == word[matched] {
-                matched += 1
-                if matched == word.count { return true }
-            } else {
-                matched = byte == word[0] ? 1 : 0
+    /// Whether `value` holds `word` (lowercase ASCII) ignoring ASCII case. Compares at
+    /// every offset, so overlapping near-matches (`localocalhost`) are found; values
+    /// are at most 128 bytes, and a native string is scanned in place.
+    static func containsIgnoringASCIICase(_ value: String, word: [UInt8]) -> Bool {
+        if let found = value.utf8.withContiguousStorageIfAvailable({ containsWord(in: $0, word: word) }) {
+            return found
+        }
+        return Array(value.utf8).withUnsafeBufferPointer { containsWord(in: $0, word: word) }
+    }
+
+    private static func containsWord(in haystack: UnsafeBufferPointer<UInt8>, word: [UInt8]) -> Bool {
+        guard !word.isEmpty, haystack.count >= word.count else { return false }
+        for start in 0...(haystack.count - word.count) {
+            var offset = 0
+            while offset < word.count {
+                var byte = haystack[start + offset]
+                if (0x41...0x5A).contains(byte) { byte += 0x20 }
+                if byte != word[offset] { break }
+                offset += 1
             }
+            if offset == word.count { return true }
         }
         return false
     }

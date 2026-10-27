@@ -114,6 +114,18 @@ struct TelemetryTests {
         }
     }
 
+    /// The `needs` word scan compares at every offset: a near-match that overlaps the
+    /// real occurrence (`local` + `ocalhost`) must not hide it.
+    @Test func wordScanFindsOverlappingOccurrences() {
+        let word = Array("localhost".utf8)
+        for value in ["localocalhost", "LOCALOCALHOST", "xlocalhostx", "localhost", "lolocalhost", "a-LocalHost"] {
+            #expect(TelemetryName.containsIgnoringASCIICase(value, word: word), "\(value)")
+        }
+        for value in ["localhos", "local-host", "", "ocalhost", "localhst"] {
+            #expect(!TelemetryName.containsIgnoringASCIICase(value, word: word), "\(value)")
+        }
+    }
+
     @Test func sizeBucketsUseTheServersEdges() {
         #expect(TelemetryTag.OutputSize(bytes: 999) == .under1kb)
         #expect(TelemetryTag.OutputSize(bytes: 1_000) == .under10kb)

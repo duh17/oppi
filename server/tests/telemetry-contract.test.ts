@@ -163,20 +163,18 @@ describe("telemetry catalog invariants", () => {
       ]);
     });
 
-    it("rejects duplicate ids, empty needs, letter-only single needs, and self-overlapping words", () => {
+    it("rejects duplicate ids, empty needs, and letter-only single needs", () => {
       const problems = nameRuleViolations([
         rule("a", "x"),
         rule("a", "y"),
         rule("no_needs", "z", []),
         rule("letter", "q", ["q"]),
-        rule("overlap", "aba", ["abab"]),
         rule("broken", "(", ["."]),
       ]);
       expect(problems).toEqual([
         'name rule "a" is declared twice',
         'name rule "no_needs" has no needs prefilter',
         'name rule "letter": single-character need "q" must not be a letter',
-        'name rule "overlap": need "abab" repeats its own prefix; the Swift word scan needs a border-free word',
         'name rule "broken" is not a valid regular expression',
       ]);
     });
