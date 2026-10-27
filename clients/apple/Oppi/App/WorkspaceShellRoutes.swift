@@ -9,8 +9,9 @@ import SwiftUI
 // (`ServerSkillFileViewController`), an Extension's detail
 // (`ServerExtensionDetailViewController`), SSH Terminal's host list,
 // Schedules, Agents, App Settings (`SettingsRootViewController`), Workspace
-// Settings (`WorkspaceSettingsViewController`), and Model Providers
-// (`ModelProvidersViewController`) are UIKit screens.
+// Settings (`WorkspaceSettingsViewController`), Model Providers
+// (`ModelProvidersViewController`), and Server Metrics
+// (`ServerMetricsViewController`) are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -41,6 +42,9 @@ enum ShellRouteScreens {
         }
         if case .utility(.appSettings) = route {
             return SettingsRootViewController(root: root)
+        }
+        if case .utility(.serverMetrics) = route {
+            return ServerMetricsViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
         }
         if case .sidebar = route {
             return WorkspaceSidebarViewController(root: root)
@@ -112,6 +116,10 @@ enum ShellRouteScreens {
         }
         if let list = screen as? AgentListViewController {
             list.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let metrics = screen as? ServerMetricsViewController {
+            metrics.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
         if let chatRoute = screen as? ChatRouteViewController {
@@ -346,7 +354,8 @@ private struct WorkspaceUtilityDestinationView: View {
         case .manageServers:
             ServerView()
         case .serverMetrics:
-            ServerMetricsScreen()
+            // The shell hosts this route as ServerMetricsViewController.
+            EmptyView()
         case .appSettings:
             // The shell hosts this route as SettingsRootViewController.
             EmptyView()

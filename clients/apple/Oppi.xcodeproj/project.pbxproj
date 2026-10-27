@@ -1308,6 +1308,7 @@
 		95A3DE41B75EDFB97FDCF5A9 /* AutoTitleSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331097B81B15D75B475DFE00 /* AutoTitleSettingsView.swift */; };
 		95D6594C8F8A7AA09E3099FE /* AppRootLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77CBDFC89D9B49147A2CB24C /* AppRootLayer.swift */; };
 		95D9E55E155961BAE1A62556 /* McpServersModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54168235EDF48D7A00BC0684 /* McpServersModel.swift */; };
+		95EA29857EA70A7871B65B56 /* ServerMetricsScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B1513F02BA20C2E3F6FC9A4 /* ServerMetricsScreenshotPreview.swift */; };
 		962DE1D1ED9F621168052F43 /* ProviderColorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78C0A69A83DB9430933BC8EF /* ProviderColorTests.swift */; };
 		963A676273B7AD30AA354B8B /* TailnetNodeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4468D573E1FB95D1E49ED96B /* TailnetNodeController.swift */; };
 		963BFB60CEEA718BC72EA363 /* SSHTerminalSettingsCells.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE3456F3EEBEE1566D9AD630 /* SSHTerminalSettingsCells.swift */; };
@@ -3171,6 +3172,7 @@
 		6A9FF81A535EDDBF3077AB87 /* SessionRowPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRowPreferencesTests.swift; sourceTree = "<group>"; };
 		6AC119FF0FC7DB47A2F34864 /* GameOfLifeLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameOfLifeLayer.swift; sourceTree = "<group>"; };
 		6B03E13EB1486F5CFBB693C6 /* OrgParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgParser.swift; sourceTree = "<group>"; };
+		6B1513F02BA20C2E3F6FC9A4 /* ServerMetricsScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerMetricsScreenshotPreview.swift; sourceTree = "<group>"; };
 		6B4E8D2C6F1DC6232912DE51 /* suzanne-garden.usdz */ = {isa = PBXFileReference; lastKnownFileType = file.usdz; path = "suzanne-garden.usdz"; sourceTree = "<group>"; };
 		6B53D6492D9B3BF02D02814E /* DeviceKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceKeyStore.swift; sourceTree = "<group>"; };
 		6B818EE594819D34B9CD7A4E /* MacExtensionInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacExtensionInteractionTests.swift; sourceTree = "<group>"; };
@@ -5994,6 +5996,7 @@
 				43D21754C58888B198B2E62B /* MetalOrbScreenshotPreview.swift */,
 				35750EA103C3BAE8B56699EE /* PreviewComposerController.swift */,
 				1BF70C174823D0BB112AD489 /* QuietWorkStripPreview.swift */,
+				6B1513F02BA20C2E3F6FC9A4 /* ServerMetricsScreenshotPreview.swift */,
 				7E4043CFE211DC1DB4CB856E /* SessionTimelinePreview.swift */,
 				5671EA739042454D6566347F /* SettingsSweepScreenshotPreview.swift */,
 				73B7A43BDA142A5D7EA96CD8 /* SSHTerminalScreenshotPreview.swift */,
@@ -10008,6 +10011,7 @@
 				47ACF07FEDAF8C7024F4326F /* ServerMessage.swift in Sources */,
 				DDF63B2142138364F54CB0FF /* ServerMessageEffects.swift in Sources */,
 				AD2F966B8110424382BBEF1B /* ServerMetrics.swift in Sources */,
+				95EA29857EA70A7871B65B56 /* ServerMetricsScreenshotPreview.swift in Sources */,
 				D8C55E6C71ACAA076E498105 /* ServerMetricsViewController.swift in Sources */,
 				2367B908DB4791B3656E2EE0 /* ServerNotificationsSection.swift in Sources */,
 				474CC58ED85AE3F925FEAEB4 /* ServerPairedDevicesPage.swift in Sources */,

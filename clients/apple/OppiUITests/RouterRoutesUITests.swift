@@ -372,6 +372,22 @@ final class RouterRoutesUITests: XCTestCase {
         XCTAssertTrue(metricsItem.waitForExistence(timeout: 5), "The host pill has no Server Metrics item")
         metricsItem.tap()
         XCTAssertTrue(app.navigationBars["Server Metrics"].waitForExistence(timeout: 5), "Server Metrics did not open")
+        let metricsBar = app.navigationBars["Server Metrics"]
+        let range = app.segmentedControls["server.metrics.range"]
+        XCTAssertTrue(range.exists, "Server Metrics has no range control")
+        // The host switcher is on the Metrics bar (or the Duo's rail), not a pill left on All Sessions.
+        let metricsPill = metricsBar.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:")).firstMatch
+        let railPill = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:")).firstMatch
+        XCTAssertTrue(metricsPill.exists || (railPill.exists && !app.collectionViews["workspace.sessionList"].exists), "Server Metrics has no host switcher")
+        if isSplit {
+            // The sidebar floats over the detail column: the page must start right of it, not under it.
+            XCTAssertTrue(app.buttons["workspace.open.oppi"].exists, "The sidebar is not showing beside Server Metrics")
+            let sidebarRight = app.buttons["workspace.open.oppi"].frame.maxX
+            XCTAssertGreaterThanOrEqual(
+                range.frame.minX, sidebarRight,
+                "The Server Metrics range control sits under the sidebar (range \(range.frame), sidebar edge \(sidebarRight))"
+            )
+        }
         attachScreenshot("shell-server-metrics")
         assertRunning()
         if !isSplit {

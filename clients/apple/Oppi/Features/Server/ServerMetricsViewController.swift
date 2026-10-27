@@ -1,23 +1,20 @@
 import UIKit
 
-/// Where the Server Metrics page loads from. The SwiftUI host passes a new one
-/// when the pill switches hosts.
-struct ServerMetricsSource {
-    let serverId: String
-    let client: @MainActor () async -> APIClient?
-    /// The connection's cached `serverMetrics.enabled`; nil when not yet known.
-    let cachedEnabled: @MainActor () -> Bool?
-    /// Records what the page learned or changed, so the host pill follows it.
-    let cacheEnabled: @MainActor (Bool) -> Void
-}
-
-/// Server Metrics: the active host's CPU, memory, and disk and the Oppi server
-/// process over a chosen range, read from the server's resource sampler.
-/// Activity Monitor for a phone: a current value per card and its history.
+/// Server Metrics (route `.utility(.serverMetrics)`): the visible host's CPU,
+/// memory, and disk and the Oppi server process over a chosen range, read from
+/// the server's resource sampler. Activity Monitor for a phone: a current value
+/// per card and its history. The host switcher in the bar changes the server;
+/// the page follows it and reloads.
 @MainActor
 final class ServerMetricsViewController: UIViewController {
-    private var source: ServerMetricsSource
+    var showsSidebarToggle: Bool {
+        didSet { setNeedsUpdateProperties() }
+    }
+
+    private let root: AppRootEnvironment
     private var themeID: ThemeID
+    /// The host the page shows; nil while no server is paired.
+    private var loadedServerId: String?
     private var range: ServerMetricsRange = .day
     private var snapshot: ServerMetricsSnapshot?
     private var errorMessage: String?
@@ -28,6 +25,11 @@ final class ServerMetricsViewController: UIViewController {
     private var isAppeared = false
     private var loadTask: Task<Void, Never>?
     private var refreshTimer: Timer?
+    private var switcher: SessionListServerSwitcher?
+    private var switcherServerId: String?
+    private var sidebarToggle: UIBarButtonItem?
+    /// A fixed snapshot that replaces the server load (screenshot preview only).
+    private let fixture: ServerMetricsSnapshot?
 
     private let scrollView = UIScrollView()
     private let stack = UIStackView()
@@ -49,10 +51,31 @@ final class ServerMetricsViewController: UIViewController {
         [processHeader, processCPUCard, processMemoryCard, activityCard, footerLabel]
     }
 
-    init(source: ServerMetricsSource, themeID: ThemeID) {
-        self.source = source
-        self.themeID = themeID
+    init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
+        self.root = root
+        self.showsSidebarToggle = showsSidebarToggle
+        themeID = root.themeStore.activeThemeID
+        fixture = nil
         super.init(nibName: nil, bundle: nil)
+        setUp()
+    }
+
+    #if DEBUG
+    /// Screenshot harness entry: a fixed snapshot, no server load.
+    init(root: AppRootEnvironment, fixture: ServerMetricsSnapshot) {
+        self.root = root
+        showsSidebarToggle = false
+        themeID = root.themeStore.activeThemeID
+        self.fixture = fixture
+        super.init(nibName: nil, bundle: nil)
+        setUp()
+    }
+    #endif
+
+    private func setUp() {
+        traitOverrides.appRootEnvironment = root
+        title = HostSwitcherDestination.serverMetrics.title
+        navigationItem.largeTitleDisplayMode = .never
     }
 
     @available(*, unavailable)
@@ -65,14 +88,13 @@ final class ServerMetricsViewController: UIViewController {
         buildLayout()
         applyTheme()
         render()
-        reload()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         isAppeared = true
         // Sampling may have been turned on in Server Settings while this page sat in the stack.
-        if isOff, source.cachedEnabled() == true {
+        if isOff, loadedServerId.flatMap(cachedEnabled) == true {
             snapshot = nil
             samplingOff = false
             render()
@@ -89,10 +111,43 @@ final class ServerMetricsViewController: UIViewController {
 
     private var isOff: Bool { samplingOff || snapshot?.enabled == false }
 
-    func setSource(_ newSource: ServerMetricsSource) {
-        let switchedHost = newSource.serverId != source.serverId
-        source = newSource
-        guard switchedHost else { return }
+    private var coordinator: ConnectionCoordinator { root.coordinator }
+
+    /// The visible host: the active server, else the first paired one.
+    private var server: PairedServer? {
+        ServerSelection.resolve(selectedId: coordinator.activeServerId, from: coordinator.serverStore.servers)
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
+        applyThemeIfNeeded(root.themeStore.activeThemeID)
+        let server = server
+        updateBar(server)
+        guard let server else {
+            loadedServerId = nil
+            loadTask?.cancel()
+            snapshot = nil
+            updateAutoRefresh()
+            scrollView.isHidden = true
+            var unavailable = ControlScreenList.unavailable(
+                "No Servers",
+                systemImage: "server.rack",
+                description: "Pair a server to view its metrics.",
+                palette: themeID.palette
+            )
+            unavailable.background.backgroundColor = root.themeStore.backgroundColor
+            contentUnavailableConfiguration = unavailable
+            return
+        }
+        scrollView.isHidden = false
+        contentUnavailableConfiguration = nil
+        if loadedServerId != server.id { switchHost(to: server.id) }
+    }
+
+    /// Host-local state resets on a host switch.
+    private func switchHost(to serverId: String) {
+        loadedServerId = serverId
         snapshot = nil
         samplingOff = false
         errorMessage = nil
@@ -102,11 +157,57 @@ final class ServerMetricsViewController: UIViewController {
         reload()
     }
 
-    func applyThemeIfNeeded(_ newThemeID: ThemeID) {
+    private func applyThemeIfNeeded(_ newThemeID: ThemeID) {
         guard newThemeID != themeID else { return }
         themeID = newThemeID
         applyTheme()
         render()
+    }
+
+    // MARK: - Bar
+
+    /// The host switcher (trailing, on the Duo's rail when it has one) and, at
+    /// the split detail root, the sidebar toggle.
+    private func updateBar(_ server: PairedServer?) {
+        var trailing: [UIBarButtonItem] = []
+        if let server {
+            let joinsRail = SessionListBarItems.joinsRail(traitCollection)
+            let model = HostSwitcherModel(
+                coordinator: coordinator,
+                serverStore: coordinator.serverStore,
+                navigation: root.navigation,
+                current: server,
+                destination: .serverMetrics
+            )
+            if let switcher, switcher.joinsRail == joinsRail {
+                switcher.update(model)
+            } else {
+                switcher = SessionListServerSwitcher(model: model, joinsRail: joinsRail)
+            }
+            if let switcher {
+                trailing = [joinsRail ? SessionListBarItems.railItem(switcher.item, priority: .keep) : switcher.item]
+            }
+            if switcherServerId != server.id {
+                switcherServerId = server.id
+                // Once per connection: a known value is never refetched.
+                Task { await model.loadServerMetricsEnabled() }
+            }
+        } else {
+            switcher = nil
+            switcherServerId = nil
+        }
+        var leading: [UIBarButtonItem] = []
+        if showsSidebarToggle {
+            let toggle = sidebarToggle ?? WorkspaceSplitSidebarToggle.makeItem(root: root)
+            sidebarToggle = toggle
+            WorkspaceSplitSidebarToggle.sync(toggle, root: root)
+            leading = [toggle]
+        }
+        ControlScreenList.setBarItems(trailing: trailing, leading: leading, on: navigationItem)
+    }
+
+    private func cachedEnabled(_ serverId: String) -> Bool? {
+        coordinator.connection(for: serverId)?.serverMetricsEnabled
     }
 
     // MARK: - Layout
@@ -153,9 +254,14 @@ final class ServerMetricsViewController: UIViewController {
         stack.setCustomSpacing(16, after: activityCard)
 
         let content = scrollView.contentLayoutGuide
-        let frame = scrollView.frameLayoutGuide
-        let fullWidth = stack.widthAnchor.constraint(equalTo: frame.widthAnchor, constant: -32)
-        fullWidth.priority = .defaultHigh
+        // The safe area, not the scroll view's frame: in the split view the
+        // sidebar floats over the detail column and shows in the safe area's
+        // leading inset, so the page centers on the column it can see.
+        let safe = view.safeAreaLayoutGuide
+        let fullWidth = stack.widthAnchor.constraint(equalTo: safe.widthAnchor, constant: -32)
+        // Above every label's compression resistance, so a large type size wraps
+        // or shrinks text instead of widening the page past the screen.
+        fullWidth.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -163,7 +269,7 @@ final class ServerMetricsViewController: UIViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -24),
-            stack.centerXAnchor.constraint(equalTo: frame.centerXAnchor),
+            stack.centerXAnchor.constraint(equalTo: safe.centerXAnchor),
             stack.widthAnchor.constraint(lessThanOrEqualToConstant: 720),
             fullWidth,
         ])
@@ -215,10 +321,20 @@ final class ServerMetricsViewController: UIViewController {
 
     private func reload(endingRefresh: Bool = false) {
         loadTask?.cancel()
-        let source = source
+        guard let serverId = loadedServerId else {
+            if endingRefresh { scrollView.refreshControl?.endRefreshing() }
+            return
+        }
+        if let fixture {
+            snapshot = fixture
+            render()
+            if endingRefresh { scrollView.refreshControl?.endRefreshing() }
+            return
+        }
+        let coordinator = coordinator
         let range = range
         // Known off: show the off state without asking the server for history.
-        if source.cachedEnabled() == false {
+        if cachedEnabled(serverId) == false {
             samplingOff = true
             snapshot = nil
             errorMessage = nil
@@ -232,34 +348,34 @@ final class ServerMetricsViewController: UIViewController {
             defer {
                 if endingRefresh { self?.scrollView.refreshControl?.endRefreshing() }
             }
-            guard let client = await source.client() else {
-                self?.finishLoad(serverId: source.serverId, range: range, result: .failure(ServerMetricsLoadError.notConnected))
+            guard let client = await coordinator.apiClientReady(for: serverId) else {
+                self?.finishLoad(serverId: serverId, range: range, result: .failure(ServerMetricsLoadError.notConnected))
                 return
             }
             do {
                 // Unknown flag (a leftover or deep-linked page): the tiny settings
                 // read decides before the history read does.
-                if source.cachedEnabled() == nil {
+                if coordinator.connection(for: serverId)?.serverMetricsEnabled == nil {
                     let enabled = try await client.serverMetricsEnabled()
                     guard !Task.isCancelled else { return }
-                    source.cacheEnabled(enabled)
+                    coordinator.setServerMetricsEnabledCache(enabled, for: serverId)
                     if !enabled {
-                        self?.finishOff(serverId: source.serverId)
+                        self?.finishOff(serverId: serverId)
                         return
                     }
                 }
                 let result = try await client.fetchServerMetrics(range: range)
-                self?.finishLoad(serverId: source.serverId, range: range, result: .success(result))
+                self?.finishLoad(serverId: serverId, range: range, result: .success(result))
             } catch is CancellationError {
                 return
             } catch {
-                self?.finishLoad(serverId: source.serverId, range: range, result: .failure(error))
+                self?.finishLoad(serverId: serverId, range: range, result: .failure(error))
             }
         }
     }
 
     private func finishOff(serverId: String) {
-        guard serverId == source.serverId, !Task.isCancelled else { return }
+        guard serverId == loadedServerId, !Task.isCancelled else { return }
         samplingOff = true
         snapshot = nil
         errorMessage = nil
@@ -269,13 +385,13 @@ final class ServerMetricsViewController: UIViewController {
 
     private func finishLoad(serverId: String, range: ServerMetricsRange, result: Result<ServerMetricsSnapshot, Error>) {
         // A slow answer for a host or range the page has left is stale.
-        guard serverId == source.serverId, range == self.range, !Task.isCancelled else { return }
+        guard serverId == loadedServerId, range == self.range, !Task.isCancelled else { return }
         switch result {
         case .success(let value):
             snapshot = value
             samplingOff = false
             errorMessage = nil
-            source.cacheEnabled(value.enabled)
+            coordinator.setServerMetricsEnabledCache(value.enabled, for: serverId)
         case .failure(let error):
             if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.localizedDescription
@@ -285,21 +401,23 @@ final class ServerMetricsViewController: UIViewController {
     }
 
     private func setSampling(_ enabled: Bool) {
-        guard !isTogglingSampling else { return }
+        guard !isTogglingSampling, let serverId = loadedServerId else { return }
         isTogglingSampling = true
         render()
-        let source = source
+        let coordinator = coordinator
         Task { [weak self] in
             var failure: Error?
             do {
-                guard let client = await source.client() else { throw ServerMetricsLoadError.notConnected }
+                guard let client = await coordinator.apiClientReady(for: serverId) else {
+                    throw ServerMetricsLoadError.notConnected
+                }
                 let saved = try await client.setServerMetricsEnabled(enabled)
-                source.cacheEnabled(saved)
+                coordinator.setServerMetricsEnabledCache(saved, for: serverId)
             } catch {
                 failure = error
             }
             // The pill moved to another host meanwhile; this answer is not its.
-            guard let self, self.source.serverId == source.serverId else { return }
+            guard let self, self.loadedServerId == serverId else { return }
             self.isTogglingSampling = false
             if let failure {
                 self.errorMessage = failure.localizedDescription
@@ -654,6 +772,10 @@ final class ServerMetricsStatusView: UIView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -24),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            // A centered stack leaves a label at its one-line width, so its
+            // wrapped height is measured wrong and the message truncates.
+            titleLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            messageLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
     }
 
@@ -746,10 +868,7 @@ final class ServerMetricCardView: UIView {
 
         titleLabel.text = title
         titleLabel.font = .preferredFont(forTextStyle: .caption1)
-        valueLabel.font = UIFont.monospacedDigitSystemFont(
-            ofSize: UIFont.preferredFont(forTextStyle: .title3).pointSize,
-            weight: .semibold
-        )
+        valueLabel.font = .scaled(.title3, .semibold, monospacedDigits: true)
         valueLabel.adjustsFontSizeToFitWidth = true
         valueLabel.minimumScaleFactor = 0.7
         detailLabel.font = .preferredFont(forTextStyle: .caption1)
@@ -757,13 +876,21 @@ final class ServerMetricCardView: UIView {
         for label in [startLabel, endLabel] {
             label.font = .preferredFont(forTextStyle: .caption2)
         }
+        // At accessibility sizes the two axis labels must wrap instead of
+        // widening the card past the screen.
+        startLabel.numberOfLines = 0
+        for label in [titleLabel, valueLabel, detailLabel, startLabel, endLabel] {
+            label.adjustsFontForContentSizeCategory = true
+        }
         endLabel.text = "now"
         endLabel.textAlignment = .right
 
         chartView.onScrub = { [weak self] index in self?.scrubbed(to: index) }
 
         let axis = UIStackView(arrangedSubviews: [startLabel, endLabel])
-        axis.distribution = .fillEqually
+        endLabel.setContentHuggingPriority(.required, for: .horizontal)
+        endLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        startLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let stack = UIStackView(arrangedSubviews: [titleLabel, valueLabel, detailLabel, chartView, axis])
         stack.axis = .vertical
         stack.spacing = 4

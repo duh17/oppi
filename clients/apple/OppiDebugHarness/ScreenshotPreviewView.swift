@@ -136,6 +136,10 @@ struct ScreenshotPreviewView: View {
             AskCardTallScrollPreview(fixture: .controlReviewExpanded)
         case "model-providers-quota-inline":
             ModelProvidersScreenshotPreview()
+        case "server-metrics":
+            ServerMetricsScreenshotPreview(samplingOn: true)
+        case "server-metrics-off":
+            ServerMetricsScreenshotPreview(samplingOn: false)
         case "tool-call-document":
             ToolCallDocumentPreview(direct: false)
         case "tool-call-document-mcp":
@@ -880,6 +884,22 @@ private struct SettingsPageScreenshotPreview: View {
             }
         }
         .ignoresSafeArea()
+        .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+/// `SCREENSHOT_SCREEN=server-metrics` / `server-metrics-off`: the Server
+/// Metrics page over a fixture snapshot (`ServerMetricsScreenshotFixture`).
+private struct ServerMetricsScreenshotPreview: View {
+    let samplingOn: Bool
+    @State private var root = ServerMetricsScreenshotFixture.makeRoot()
+
+    var body: some View {
+        RouterPreviewControllerStack(root: root) {
+            ServerMetricsViewController(root: root, fixture: ServerMetricsScreenshotFixture.snapshot(samplingOn: samplingOn))
+        }
+        .ignoresSafeArea()
+        .publishesAppRootToWindow(root)
         .accessibilityIdentifier("screenshot.ready")
     }
 }
