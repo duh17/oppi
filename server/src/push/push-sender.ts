@@ -7,7 +7,10 @@
 import { createHash, createHmac, type KeyObject } from "node:crypto";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import type { ServerMetricCollector } from "../server-metric-collector.js";
+import type { EventTags } from "../telemetry/catalog.js";
+import type { ServerTelemetry } from "../telemetry/server-telemetry.js";
+
+type PushNotificationKind = EventTags<"server.push">["notification"];
 import type { PushEvent, PushRegistration, ServerConfig } from "../types.js";
 import { type PushPlaintext, type PushSubject, sealPushEnvelope } from "./envelope.js";
 import {
@@ -177,7 +180,7 @@ export interface PushSenderStorage {
 export interface PushSenderOptions {
   /** The server's Ed25519 identity key. */
   signingKey: KeyObject;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
   fetch?: typeof fetch;
   now?: () => number;
   /** How many pruned send tokens to remember (default GONE_SEND_TOKENS_MAX). */
@@ -346,10 +349,11 @@ export class PushSender {
       notification.event === "blocked" || notification.event === "pairing_approval";
     if (!this.budget.takeAlert(registration.deviceId, waitsOnUser, startedAt)) {
       log.info("push.device_budget_exhausted", { alert: notification.event });
-      this.options.metrics?.record("server.push_result", 1, {
-        result: "throttled",
-        event: notification.event,
-      });
+      this.options.metrics?.record(
+        "server.push",
+        {},
+        { result: "throttled", notification: notification.event },
+      );
       return { status: "throttled" };
     }
 
@@ -391,10 +395,10 @@ export class PushSender {
     const relays = this.relays();
     if (!relays || !registration.liveActivity || !this.isCurrent(registration)) return null;
     const startedAt = this.now();
-    const event = `live_activity_${push.event}`;
+    const event = `live_activity_${push.event}` as const;
     if (!this.budget.allowsLiveActivity(registration.deviceId, push.event, startedAt)) {
       log.info("push.device_budget_exhausted", { alert: event });
-      this.options.metrics?.record("server.push_result", 1, { result: "throttled", event });
+      this.options.metrics?.record("server.push", {}, { result: "throttled", notification: event });
       return { status: "throttled" };
     }
     let result: LiveActivitySendResult | { status: "failed" };
@@ -438,7 +442,7 @@ export class PushSender {
     registration: PushRegistration,
     result: RelaySendResult | LiveActivitySendResult | { status: "failed" },
     startedAt: number,
-    event: string,
+    event: PushNotificationKind,
   ): void {
     if (result.status === "gone" && result.prune) {
       this.storage.removePushRegistration(registration.deviceId, registration.sendToken);
@@ -452,10 +456,11 @@ export class PushSender {
           : {}),
       });
     }
-    this.options.metrics?.record("server.push_send_ms", this.now() - startedAt, {
-      result: result.status,
-    });
-    this.options.metrics?.record("server.push_result", 1, { result: result.status, event });
+    this.options.metrics?.record(
+      "server.push",
+      { send_ms: this.now() - startedAt },
+      { result: result.status, notification: event },
+    );
   }
 
   private rememberGoneSendToken(sendToken: string): void {

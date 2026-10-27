@@ -14,7 +14,7 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type { ServerResourceService } from "../server-resource-service.js";
 import type { ServerUpdateService } from "../server-update.js";
 import type { McpService } from "../mcp-service.js";
-import type { ServerMetricCollector } from "../server-metric-collector.js";
+import type { ServerTelemetry } from "../telemetry/server-telemetry.js";
 import type { PushSender } from "../push/push-sender.js";
 import type { DevicePairing } from "../device-pairing.js";
 import type { ServerResourceRecord } from "../server-metrics-history.js";
@@ -98,7 +98,7 @@ export interface RouteContext {
   /** Stop the sandbox VM for a deleted workspace. Composed in server.ts. */
   stopWorkspaceVm?: (workspaceId: string) => void | Promise<void>;
   /** Server operational metrics. Optional so route tests can omit it. */
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
   /** Resource sampler control. Optional so route tests can omit it. */
   serverMetrics?: ServerMetricsControl;
 }

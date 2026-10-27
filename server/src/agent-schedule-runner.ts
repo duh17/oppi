@@ -1,7 +1,7 @@
 import { cronMatchesNow, earlierRepeatedWallClockMinute } from "./agent-schedule-cron.js";
 import { atSlotKey, type AgentSchedule, type AgentScheduleTrigger } from "./agent-schedules.js";
 import { recordScheduleRun } from "./schedule-run-metrics.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   createAgentScheduleDispatchHooks,
   type AgentScheduleDispatchDeps,
@@ -22,7 +22,7 @@ export interface AgentScheduleRunnerDeps extends AgentScheduleDispatchDeps {
   leaseMs?: number;
   limit?: number;
   ownerId?: string;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
 }
 
 export class AgentScheduleRunner {
@@ -132,14 +132,14 @@ export class AgentScheduleRunner {
           startedAt,
           now: this.nowMs(),
           kind: "due",
-          status: "completed",
+          status: "ok",
         });
       } catch (error) {
         recordScheduleRun(this.deps.metrics, {
           startedAt,
           now: this.nowMs(),
           kind: "due",
-          status: "failed",
+          status: "error",
           error,
         });
         log.warn("agent_schedule_runner.dispatch.failed", {

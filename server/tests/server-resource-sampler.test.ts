@@ -1,42 +1,41 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ServerResourceSampler, type ServerMetricsDeps } from "../src/server-resource-sampler.js";
+import { ServerTelemetry } from "../src/telemetry/server-telemetry.js";
+import type { TelemetryEventRecord } from "../src/types.js";
+
+/** Catalog-validating telemetry that keeps what it would write. */
+function capture(): { telemetry: ServerTelemetry; written: TelemetryEventRecord[] } {
+  const written: TelemetryEventRecord[] = [];
+  return {
+    telemetry: new ServerTelemetry({ write: (_origin, batch) => written.push(...batch) }),
+    written,
+  };
+}
 
 describe("ServerResourceSampler", () => {
-  let telemetryDir: string;
-
-  beforeEach(() => {
-    telemetryDir = mkdtempSync(join(tmpdir(), "oppi-server-resource-sampler-"));
-  });
-
   afterEach(() => {
     delete process.env.OPPI_SERVER_METRICS_INTERVAL_MS;
-    delete process.env.OPPI_SERVER_METRICS_RETENTION_DAYS;
-    delete process.env.OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES;
     vi.restoreAllMocks();
-    rmSync(telemetryDir, { recursive: true, force: true });
   });
 
-  it("writes a deterministic sample record and emits drill-down ops metrics", async () => {
-    const opsMetrics: Array<{ metric: string; value: number; tags?: Record<string, string> }> = [];
+  it("writes each sample at once as a server.resources event and keeps the latest reading", async () => {
+    const { telemetry, written } = capture();
     const deps: ServerMetricsDeps = {
-      telemetryDir,
+      telemetry,
       getSessionCounts: () => ({ busy: 1, ready: 2, starting: 0, total: 3 }),
       getWebSocketCount: () => 7,
-      recordOpsMetric: (metric, value, tags) => opsMetrics.push({ metric, value, tags }),
       getEventRingSnapshots: () => [
-        { ring: "timeline", length: 3, capacity: 4 },
-        { ring: "empty", length: 1, capacity: 0 },
+        { ring: "session", length: 3, capacity: 4 },
+        { ring: "session", length: 1, capacity: 10 },
+        { ring: "session", length: 1, capacity: 0 },
       ],
       hostProbe: {
         sample: async () => ({
-          scope: "host" as const,
+          scope: "container" as const,
           cpu: 12.5,
-          load1: 2,
+          cpuCores: 2,
+          cpuLimited: true,
           memUsed: 1000,
           memTotal: 4000,
         }),
@@ -82,25 +81,55 @@ describe("ServerResourceSampler", () => {
 
     await (sampler as unknown as { sample: () => Promise<void> }).sample();
 
-    expect(opsMetrics).toEqual([
-      { metric: "server.event_ring_utilization", value: 0.75, tags: { ring: "timeline" } },
+    expect(written).toEqual([
+      {
+        v: 2,
+        ts: 2_000,
+        origin: "server",
+        name: "server.resources",
+        fields: {
+          cpu_total_pct: 30,
+          cpu_user_pct: 25,
+          cpu_system_pct: 5,
+          rss_mb: 100,
+          heap_used_mb: 25,
+          heap_total_mb: 50,
+          external_mb: 5,
+          sessions_busy: 1,
+          sessions_ready: 2,
+          sessions_starting: 0,
+          sessions_total: 3,
+          sessions_peak: 5,
+          ws_connections: 7,
+          event_loop_p50_ms: 50,
+          event_loop_p95_ms: 95,
+          event_loop_p99_ms: 99,
+          event_loop_max_ms: 200,
+          event_ring_peak_ratio: 0.75,
+          host_cpu_pct: 12.5,
+          host_cpu_cores: 2,
+          host_cpu_limited: 1,
+          host_mem_used_mb: 1000,
+          host_mem_total_mb: 4000,
+        },
+        tags: { host_scope: "container" },
+      },
     ]);
-
-    const files = readdirSync(telemetryDir);
-    expect(files).toHaveLength(1);
-    expect(files[0]).toMatch(/^server-metrics-\d{4}-\d{2}-\d{2}\.jsonl$/);
-
-    const [line] = readFileSync(join(telemetryDir, files[0]), "utf8").trim().split("\n");
-    const record = JSON.parse(line);
-
-    expect(record).toEqual({
+    expect(sampler.latestSample).toEqual({
       ts: 2_000,
       cpu: { user: 25, system: 5, total: 30 },
       memory: { heapUsed: 25, heapTotal: 50, rss: 100, external: 5 },
       sessions: { busy: 1, ready: 2, starting: 0, total: 3, peak: 5 },
       wsConnections: 7,
       eventLoop: { p50: 50, p95: 95, p99: 99, max: 200 },
-      host: { scope: "host", cpu: 12.5, load1: 2, memUsed: 1000, memTotal: 4000 },
+      host: {
+        scope: "container",
+        cpu: 12.5,
+        cpuCores: 2,
+        cpuLimited: true,
+        memUsed: 1000,
+        memTotal: 4000,
+      },
     });
     expect(eventLoopResetCalled).toBe(true);
     expect((sampler as unknown as { activeSessionPeak: number }).activeSessionPeak).toBe(3);
@@ -111,7 +140,7 @@ describe("ServerResourceSampler", () => {
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval").mockReturnValue(fakeTimer);
 
     const deps: ServerMetricsDeps = {
-      telemetryDir,
+      telemetry: capture().telemetry,
       getSessionCounts: () => ({ busy: 0, ready: 0, starting: 0, total: 0 }),
       getWebSocketCount: () => 0,
     };
@@ -131,43 +160,15 @@ describe("ServerResourceSampler", () => {
     expect((fakeTimer.unref as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
   });
 
-  it("drops samples that would exceed the daily JSONL byte cap", async () => {
-    process.env.OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES = "32";
-    vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    vi.spyOn(Date, "now").mockReturnValue(2_000);
-    vi.spyOn(process, "memoryUsage").mockReturnValue({
-      rss: 100 * 1024 * 1024,
-      heapTotal: 50 * 1024 * 1024,
-      heapUsed: 25 * 1024 * 1024,
-      external: 5 * 1024 * 1024,
-      arrayBuffers: 0,
-    });
-    vi.spyOn(process, "cpuUsage").mockReturnValue({ user: 0, system: 0 });
-
-    const existingFile = join(telemetryDir, "server-metrics-1970-01-01.jsonl");
-    writeFileSync(existingFile, '{"existing":true}\n');
-    const before = statSync(existingFile).size;
-
-    const sampler = new ServerResourceSampler({
-      telemetryDir,
-      getSessionCounts: () => ({ busy: 0, ready: 0, starting: 0, total: 0 }),
-      getWebSocketCount: () => 0,
-    });
-
-    await (sampler as unknown as { sample: () => Promise<void> }).sample();
-
-    expect(statSync(existingFile).size).toBe(before);
-    expect(readFileSync(existingFile, "utf8")).toBe('{"existing":true}\n');
-  });
-
   it("drops a sample whose host read was still in flight when sampling stopped", async () => {
     vi.spyOn(globalThis, "setInterval").mockReturnValue({
       unref: vi.fn(),
     } as unknown as NodeJS.Timeout);
     vi.spyOn(globalThis, "clearInterval").mockImplementation(() => {});
     let finishHostRead: (value: { scope: "host"; cpu: number }) => void = () => {};
+    const { telemetry, written } = capture();
     const sampler = new ServerResourceSampler({
-      telemetryDir,
+      telemetry,
       getSessionCounts: () => ({ busy: 0, ready: 0, starting: 0, total: 0 }),
       getWebSocketCount: () => 0,
       hostProbe: {
@@ -185,28 +186,15 @@ describe("ServerResourceSampler", () => {
     finishHostRead({ scope: "host", cpu: 50 });
     await inFlight;
 
-    expect(readdirSync(telemetryDir).filter((f) => f.startsWith("server-metrics-"))).toEqual([]);
+    expect(written).toEqual([]);
     expect(sampler.latestSample).toBeNull();
   });
 
-  it("expires old samples when sampling is turned off, without sampling again", () => {
-    const expired = join(telemetryDir, "server-metrics-1970-01-01.jsonl");
-    writeFileSync(expired, '{"ts":1}\n');
-    const sampler = new ServerResourceSampler({
-      telemetryDir,
-      getSessionCounts: () => ({ busy: 0, ready: 0, starting: 0, total: 0 }),
-      getWebSocketCount: () => 0,
-    });
-
-    sampler.stop();
-
-    expect(readdirSync(telemetryDir)).toEqual([]);
-  });
-
-  it("swallows sampling errors without writing a record", async () => {
+  it("swallows sampling errors without writing an event", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const { telemetry, written } = capture();
     const sampler = new ServerResourceSampler({
-      telemetryDir,
+      telemetry,
       getSessionCounts: () => {
         throw new Error("boom");
       },
@@ -214,7 +202,7 @@ describe("ServerResourceSampler", () => {
     });
 
     await (sampler as unknown as { sample: () => Promise<void> }).sample();
-    expect(readdirSync(telemetryDir)).toEqual([]);
+    expect(written).toEqual([]);
     expect(stderr).toHaveBeenCalled();
   });
 });

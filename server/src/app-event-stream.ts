@@ -8,7 +8,7 @@ import {
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { isExtensionUISessionStreamOnlyMethod } from "./extension-ui-contract.js";
 import { startServerPing } from "./stream.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { Storage } from "./storage.js";
 import type { PairingApprovalEvents } from "./device-pairing.js";
 import type {
@@ -24,7 +24,6 @@ import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 
 const APP_EVENT_STREAM_PATH = "/app/events/stream";
-const APP_EVENT_STREAM_PATH_TAG = "app_event_stream";
 const PING_INTERVAL_MS = 30_000;
 const MAX_SESSION_ERROR_MESSAGE_LENGTH = 1_000;
 
@@ -98,7 +97,7 @@ export interface AppEventStreamContext {
   ensureSessionContextWindow: (session: Session) => Session;
   trackConnection: (ws: WebSocket) => void;
   untrackConnection: (ws: WebSocket) => void;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
   now?: () => number;
 }
 
@@ -164,9 +163,11 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
     const connId = this.nextConnId();
 
     if (upgradeReceivedAt && metrics) {
-      metrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt, {
-        path: APP_EVENT_STREAM_PATH_TAG,
-      });
+      metrics.record(
+        "server.ws_handshake",
+        { duration_ms: connectedAt - upgradeReceivedAt },
+        { stream: "app_events" },
+      );
     }
 
     log.info("ws.app_event_stream_connected", { connId, path: APP_EVENT_STREAM_PATH });
@@ -184,11 +185,11 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
       }
       msgSent += 1;
       ws.send(JSON.stringify(message));
-      metrics?.record("server.ws_message_sent", 1, {
-        type: message.type,
-        level: "app_event",
-        path: APP_EVENT_STREAM_PATH_TAG,
-      });
+      metrics?.record(
+        "server.ws_message_sent",
+        { messages: 1 },
+        { stream: "app_events", message_type: message.type },
+      );
       return true;
     };
 
@@ -203,15 +204,15 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
       this.subscribers.delete(subscriber);
       stopPing();
       this.ctx.untrackConnection(ws);
-      metrics?.record("server.ws_session_duration_ms", this.now() - connectedAt, {
-        path: APP_EVENT_STREAM_PATH_TAG,
-      });
-      metrics?.record("server.ws_messages_sent", msgSent, { path: APP_EVENT_STREAM_PATH_TAG });
-      metrics?.record("server.ws_messages_received", msgRecv, { path: APP_EVENT_STREAM_PATH_TAG });
-      metrics?.record("server.ws_close_code", 1, {
-        code: String(code),
-        path: APP_EVENT_STREAM_PATH_TAG,
-      });
+      metrics?.record(
+        "server.ws_session",
+        {
+          duration_ms: this.now() - connectedAt,
+          messages_sent: msgSent,
+          messages_received: msgRecv,
+        },
+        { stream: "app_events", close_code: String(code) },
+      );
       log.info("ws.app_event_stream_disconnected", {
         connId,
         code,
@@ -225,19 +226,18 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
     ws.on("message", (data, isBinary) => {
       msgRecv += 1;
       if (isBinary) {
-        metrics?.record("server.ws_message_received", 1, {
-          type: "binary",
-          path: APP_EVENT_STREAM_PATH_TAG,
-        });
-        metrics?.record("server.ws_binary_received_bytes", toBuffer(data).byteLength, {
-          path: APP_EVENT_STREAM_PATH_TAG,
-        });
+        metrics?.record(
+          "server.ws_message_received",
+          { messages: 1, binary_bytes: toBuffer(data).byteLength },
+          { stream: "app_events", message_type: "binary" },
+        );
         return;
       }
-      metrics?.record("server.ws_message_received", 1, {
-        type: "client_frame_ignored",
-        path: APP_EVENT_STREAM_PATH_TAG,
-      });
+      metrics?.record(
+        "server.ws_message_received",
+        { messages: 1, binary_bytes: 0 },
+        { stream: "app_events", message_type: "client_frame_ignored" },
+      );
     });
 
     ws.on("close", cleanup);

@@ -1229,6 +1229,7 @@
 		8A58DC0B4022DCB79C1BFCA5 /* ChatRouteViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B007D6FF128D712BF02A12C /* ChatRouteViewController.swift */; };
 		8A5BED7D174C6AA29F59F577 /* ServerConnectionSessionCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BA5980D0C2B23B8FE37A93B /* ServerConnectionSessionCacheTests.swift */; };
 		8A63CEEE08D35E90B6C93C8B /* ServerConnection+Refresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3819CA55AD2619675FA70D3 /* ServerConnection+Refresh.swift */; };
+		8AA5E441136D51C40927B43F /* TelemetryCatalog.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DA156DFB4E482CDB96CDBAD /* TelemetryCatalog.generated.swift */; };
 		8AC1234C0A2A7F0911414387 /* SettingsSessionsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52ED519BD33AFC9FA534BC18 /* SettingsSessionsPage.swift */; };
 		8ADD6FD701B3C628973742A4 /* ComposerBarController+Buttons.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0A777061EC28E0B368FBCE /* ComposerBarController+Buttons.swift */; };
 		8B13C4903122C95CA8CE7D74 /* SymbolsNerdFontMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A3158D2D9998FB647D430634 /* SymbolsNerdFontMono-Regular.ttf */; };
@@ -2968,6 +2969,7 @@
 		4D5479F254C51BF9A7ECBC99 /* WorkspaceGitSummaryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceGitSummaryStoreTests.swift; sourceTree = "<group>"; };
 		4D63D8949F9E75EC29682125 /* SystemTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemTimelineRowContent.swift; sourceTree = "<group>"; };
 		4D7C5417BB536A964508D585 /* ConnectionTaskKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionTaskKey.swift; sourceTree = "<group>"; };
+		4DA156DFB4E482CDB96CDBAD /* TelemetryCatalog.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryCatalog.generated.swift; sourceTree = "<group>"; };
 		4DA2D1AE21E3BEEE82A6FE75 /* ChatItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatItem.swift; sourceTree = "<group>"; };
 		4DA63B335C53918C06A87DE6 /* VoiceInputTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputTelemetry.swift; sourceTree = "<group>"; };
 		4DA6C0629E074FD9019EF30A /* ChatSessionStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSessionStateTests.swift; sourceTree = "<group>"; };
@@ -6774,6 +6776,14 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		BC428A22DBBCDF1B2410DD69 /* Telemetry */ = {
+			isa = PBXGroup;
+			children = (
+				4DA156DFB4E482CDB96CDBAD /* TelemetryCatalog.generated.swift */,
+			);
+			path = Telemetry;
+			sourceTree = "<group>";
+		};
 		C17B2D509F6C65D42EE4422B /* SSHTerminal */ = {
 			isa = PBXGroup;
 			children = (
@@ -7518,6 +7528,7 @@
 				CF7D7E7C5559270C777F6208 /* Push */,
 				1E09D8A77DCB12ED20301E11 /* Runtime */,
 				481EC671213A6D65238CAE53 /* Services */,
+				BC428A22DBBCDF1B2410DD69 /* Telemetry */,
 				8EC6777B86B90182153A8CAE /* Theme */,
 				8DDEB8B3FFB611A2160899AA /* Views */,
 			);
@@ -10160,6 +10171,7 @@
 				F2E0FF171CC7492175AA2B44 /* TailnetStatus.swift in Sources */,
 				3D12BA89218E8E72F1EF2C18 /* TailnetTransportRoute.swift in Sources */,
 				B3BBAB1CD45A3B579C82BB36 /* TeXMathParser.swift in Sources */,
+				8AA5E441136D51C40927B43F /* TelemetryCatalog.generated.swift in Sources */,
 				8008C37EB63C2AED1492BA91 /* TelemetrySettings.swift in Sources */,
 				D06B7F95AEE6F0037C27BE71 /* TerminalLogEngine.swift in Sources */,
 				98E6458E95AB87B44EDE7DA3 /* TerminalMirrorIndicatorView.swift in Sources */,

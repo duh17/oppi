@@ -40,7 +40,7 @@ function messageEnd(row: ReturnType<typeof assistant>) {
   return { type: "message_end", entry: row } as never;
 }
 
-/** Project a run and return turn_error samples recorded from its agent_end. */
+/** Project a run and return the failed server.turn events recorded from its agent_end. */
 async function turnErrors(steps: {
   attached: unknown[];
   live?: unknown[];
@@ -58,7 +58,7 @@ async function turnErrors(steps: {
     persistSessionNow: () => undefined,
     markSessionDirty: () => undefined,
     metrics: {
-      record(metric: string, _value: number, tags?: Record<string, string>) {
+      record(metric: string, _fields: unknown, tags?: Record<string, string>) {
         metrics.push({ metric, tags });
       },
     } as never,
@@ -86,16 +86,18 @@ async function turnErrors(steps: {
   const ended = await projection.batch([{ type: "run_end", inputs: [1] } as never]);
   const agentEnd = ended.find((event) => event.type === "agent_end");
   processor.updateSessionFromEvent("sess-1", active as never, agentEnd as never);
-  return metrics.filter((sample) => sample.metric === "server.turn_error");
+  return metrics.filter(
+    (sample) => sample.metric === "server.turn" && sample.tags?.status === "error",
+  );
 }
 
 const overloaded = {
-  metric: "server.turn_error",
-  tags: { sessionId: "sess-1", runtime: "durable", category: "overloaded" },
+  metric: "server.turn",
+  tags: { runtime: "durable", status: "error", error_kind: "overloaded" },
 };
 
-describe("durable turn_error", () => {
-  it("records turn_error when the ending run's assistant stopped with error", async () => {
+describe("durable turn error", () => {
+  it("records turn error when the ending run's assistant stopped with error", async () => {
     const errors = await turnErrors({
       attached: [user(1)],
       live: [messageEnd(assistant(4, "error", "overloaded"))],
@@ -103,7 +105,7 @@ describe("durable turn_error", () => {
     expect(errors).toEqual([overloaded]);
   });
 
-  it("does not invent turn_error when the ending assistant stopped cleanly", async () => {
+  it("does not invent turn error when the ending assistant stopped cleanly", async () => {
     const errors = await turnErrors({
       attached: [user(1)],
       live: [messageEnd(assistant(4, "stop"))],
@@ -111,7 +113,7 @@ describe("durable turn_error", () => {
     expect(errors).toEqual([]);
   });
 
-  it("keeps turn_error when a same-run snapshot still has that error", async () => {
+  it("keeps turn error when a same-run snapshot still has that error", async () => {
     const error = assistant(4, "error", "overloaded");
     const errors = await turnErrors({
       attached: [user(1)],
@@ -131,7 +133,7 @@ describe("durable turn_error", () => {
     expect(errors).toEqual([]);
   });
 
-  it("records turn_error when a snapshot's overflow error is followed by a compaction summary", async () => {
+  it("records turn error when a snapshot's overflow error is followed by a compaction summary", async () => {
     const errors = await turnErrors({
       attached: [user(1)],
       replaced: [user(1), assistant(4, "error", "overloaded"), user(5, "pi.compaction")],
@@ -139,7 +141,7 @@ describe("durable turn_error", () => {
     expect(errors).toEqual([overloaded]);
   });
 
-  it("records turn_error when a snapshot's error is followed by a reset handoff", async () => {
+  it("records turn error when a snapshot's error is followed by a reset handoff", async () => {
     const errors = await turnErrors({
       attached: [user(1)],
       replaced: [user(1), assistant(4, "error", "overloaded"), user(5, "pi.reset")],

@@ -40,7 +40,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { createLogger } from "./logger.js";
 import { recordMcpConnect } from "./mcp-connect-metrics.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   loadPiMcpInternals,
   type McpOAuthCredentialStore,
@@ -97,7 +97,7 @@ export interface DurableMcpOptions {
   uninstall: (extension: Extension) => void;
   /** This session's connected servers as codemode namespaces; undefined once it closes. */
   namespaces: (namespaces: readonly CodemodeNamespace[] | undefined) => void;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
 }
 
 function exposureOf(entry: McpServerEntry): McpExposure {

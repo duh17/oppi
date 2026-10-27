@@ -220,7 +220,7 @@ For OAuth, choose **Open Sign-In Page**. After approval the browser might fail t
 
 Sampling is opt-in and off by default; off runs nothing (no timer, reads, or files) and the menu item is hidden. Turn it on with the **Server Metrics** switch in Server Settings (applies at once) or `oppi config set serverMetrics.enabled true` (applies at restart).
 
-When on, the server takes one sample every 30 seconds (about 1 ms of work) and keeps 30 days of samples, about 1.2 MB a day (`OPPI_SERVER_METRICS_RETENTION_DAYS` changes it). Samples stay in the `diagnostics/telemetry/` directory and also feed the optional Grafana dashboards. The app reads samples only while the page is open: the 1-hour and 24-hour views refresh every 30 seconds, and the 7-day and 30-day views load once and refresh when pulled. Turning sampling off stops new samples; files already written stay until they pass retention, and expired files are removed when you turn it off and at each server start.
+When on, the server takes one sample every 30 seconds (about 1 ms of work) and keeps 30 days of samples, about 2 MB a day (`OPPI_SERVER_METRICS_RETENTION_DAYS` changes it, together with the retention of the server's other diagnostic events). Samples stay in the `diagnostics/telemetry/` directory and also feed the optional Grafana dashboards. The app reads samples only while the page is open: the 1-hour and 24-hour views refresh every 30 seconds, and the 7-day and 30-day views load once and refresh when pulled. Turning sampling off stops new samples; files already written stay until they pass retention, and expired files are removed when you turn it off and at each server start.
 
 | Server runs on | Section | CPU | Memory |
 | --- | --- | --- | --- |

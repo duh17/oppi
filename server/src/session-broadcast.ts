@@ -1,6 +1,6 @@
 import { safeErrorMessage } from "./log-utils.js";
 import type { EventRing, SequencedMessage } from "./event-ring.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
 import {
@@ -37,7 +37,7 @@ export interface SessionBroadcasterDeps {
   saveSession: (session: Session) => void;
   /** Called when a sync here changes the session's program status. */
   onProgramStatusChange?: ProgramStatusChangeListener;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
 }
 
 export class SessionBroadcaster {
@@ -110,11 +110,12 @@ export class SessionBroadcaster {
 
     const metrics = this.deps.metrics;
     if (metrics) {
+      const ids = { sessionId: active.session.id };
       if (canServe && events.length > 0) {
-        metrics.record("server.catchup_events", events.length, { ring: "session" });
+        metrics.record("server.catchup", { events: events.length }, { result: "replayed" }, ids);
       }
       if (!canServe) {
-        metrics.record("server.catchup_miss", 1, { ring: "session" });
+        metrics.record("server.catchup", { events: 0 }, { result: "miss" }, ids);
       }
     }
 
@@ -206,9 +207,11 @@ export class SessionBroadcaster {
       event: sequenced,
     });
 
-    this.deps.metrics?.record("server.broadcast_fanout", active.subscribers.size, {
-      type: sequenced.type,
-    });
+    this.deps.metrics?.record(
+      "server.broadcast_fanout",
+      { subscribers: active.subscribers.size },
+      { message_type: sequenced.type },
+    );
 
     for (const cb of active.subscribers) {
       try {

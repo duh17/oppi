@@ -30,7 +30,7 @@ import type { Storage } from "./storage.js";
 import { WorkspaceRuntime, resolveRuntimeLimits } from "./workspace-runtime.js";
 import { type SessionBackendEvent } from "./pi-events.js";
 import { MobileRendererRegistry } from "./mobile-renderer.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   createSessionCoordinatorBundle,
   type SessionCoordinatorBundle,
@@ -126,7 +126,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   onFirstMessage: ((session: Session) => void) | null = null;
 
   /** Injected by the server for per-turn operational metrics. */
-  opsMetrics: ServerMetricCollector | null = null;
+  opsMetrics: ServerTelemetry | null = null;
 
   /** Injected by the server for full-text search index updates. */
   searchIndex: SearchIndex | null = null;
@@ -149,7 +149,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly stopCoordinator: SessionCoordinatorBundle["stopCoordinator"];
   private readonly startCoordinator: SessionCoordinatorBundle["startCoordinator"];
 
-  constructor(storage: Storage, metrics?: ServerMetricCollector, stopTimers?: SessionStopTimers) {
+  constructor(storage: Storage, metrics?: ServerTelemetry, stopTimers?: SessionStopTimers) {
     super();
     this.storage = storage;
     if (metrics) this.opsMetrics = metrics;

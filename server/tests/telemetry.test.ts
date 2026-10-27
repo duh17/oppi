@@ -68,13 +68,15 @@ describe("telemetry routes", () => {
     const generatedAt = Date.now();
     const harness = makeHarness({
       generatedAt,
-      appVersion: "1.0",
-      buildNumber: "34",
-      osVersion: "iOS test",
-      deviceModel: "iPhone",
-      clientKind: "ios",
-      appInstanceId: "app-1",
-      bootId: "boot-1",
+      client: {
+        kind: "ios",
+        appVersion: "1.0",
+        buildNumber: "34",
+        osVersion: "iOS test",
+        deviceModel: "iPhone17,1",
+        appInstanceId: "app-1",
+        bootId: "boot-1",
+      },
       droppedCount: 2,
       entries: [
         {
@@ -158,9 +160,7 @@ describe("telemetry routes", () => {
   it("rejects client log uploads with invalid generatedAt instead of throwing", async () => {
     const harness = makeHarness({
       generatedAt: Number.MAX_VALUE,
-      clientKind: "ios",
-      appInstanceId: "app-1",
-      bootId: "boot-1",
+      client: { kind: "ios", appInstanceId: "app-1", bootId: "boot-1" },
       entries: [
         {
           ts: Date.now(),
@@ -184,9 +184,7 @@ describe("telemetry routes", () => {
 
       expect(handled).toBe(true);
       expect(harness.responses).toEqual([]);
-      expect(harness.errors).toEqual([
-        { status: 400, message: "entries must be a non-empty array of valid client logs" },
-      ]);
+      expect(harness.errors.map((error) => error.status)).toEqual([400]);
     } finally {
       rmSync(harness.dataDir, { recursive: true, force: true });
     }
@@ -196,12 +194,14 @@ describe("telemetry routes", () => {
     const generatedAt = Date.now();
     const harness = makeHarness({
       generatedAt,
-      appVersion: "1.1.2",
-      buildNumber: "54",
-      gitCommit: "ABCDEF123456-dirty",
-      clientKind: "ios",
-      appInstanceId: "app-1",
-      bootId: "boot-1",
+      client: {
+        kind: "ios",
+        appVersion: "1.1.2",
+        buildNumber: "54",
+        gitCommit: "ABCDEF123456-dirty",
+        appInstanceId: "app-1",
+        bootId: "boot-1",
+      },
       entries: [
         {
           ts: generatedAt,
@@ -240,10 +240,12 @@ describe("telemetry routes", () => {
 
     const unsafe = makeHarness({
       generatedAt,
-      gitCommit: "../secrets/id_rsa",
-      clientKind: "ios",
-      appInstanceId: "app-1",
-      bootId: "boot-1",
+      client: {
+        kind: "ios",
+        gitCommit: "../secrets/id_rsa",
+        appInstanceId: "app-1",
+        bootId: "boot-1",
+      },
       entries: [
         {
           ts: generatedAt,
@@ -277,10 +279,7 @@ describe("telemetry routes", () => {
 
     const unknown = makeHarness({
       generatedAt,
-      gitCommit: "unknown",
-      clientKind: "ios",
-      appInstanceId: "app-1",
-      bootId: "boot-1",
+      client: { kind: "ios", gitCommit: "unknown", appInstanceId: "app-1", bootId: "boot-1" },
       entries: [
         {
           ts: generatedAt,
@@ -314,9 +313,7 @@ describe("telemetry routes", () => {
 
     const omitted = makeHarness({
       generatedAt,
-      clientKind: "ios",
-      appInstanceId: "app-1",
-      bootId: "boot-1",
+      client: { kind: "ios", appInstanceId: "app-1", bootId: "boot-1" },
       entries: [
         {
           ts: generatedAt,
@@ -344,7 +341,10 @@ describe("telemetry routes", () => {
         "telemetry",
         `client-logs-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
       );
-      const record = JSON.parse(readFileSync(path, "utf8").trim()) as { gitCommit?: string; entryCount?: number };
+      const record = JSON.parse(readFileSync(path, "utf8").trim()) as {
+        gitCommit?: string;
+        entryCount?: number;
+      };
       expect(record.gitCommit).toBeUndefined();
       expect(record.entryCount).toBe(1);
     } finally {

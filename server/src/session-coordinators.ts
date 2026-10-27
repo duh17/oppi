@@ -5,7 +5,7 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import type { ProgramStatusChangeListener } from "./program-status.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   SessionActivationCoordinator,
   type SessionActivationActiveSession,
@@ -63,8 +63,8 @@ export interface SessionCoordinatorBundleDeps {
   runtimeManager: WorkspaceRuntime;
   active: Map<string, SessionStartActiveSession>;
   mobileRenderers: MobileRendererRegistry;
-  /** Lazy accessor for server operational metric collector. */
-  getMetrics?: () => ServerMetricCollector | null;
+  /** Lazy accessor for server telemetry. */
+  getMetrics?: () => ServerTelemetry | null;
   eventRingCapacity: number;
   stopAbortTimeoutMs: number;
   stopAbortRetryTimeoutMs: number;
@@ -95,8 +95,8 @@ export interface SessionCoordinatorBundleDeps {
   autoStopSession: SessionLifecycleCoordinatorDeps["autoStopSession"];
   /** Called when a session's firstMessage is first captured. */
   onFirstMessage?: (session: Session) => void;
-  /** Operational metrics collector for session lifecycle timing. */
-  metrics?: ServerMetricCollector;
+  /** Server telemetry for session lifecycle timing. */
+  metrics?: ServerTelemetry;
   durableHarness: Promise<DurableHarness>;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
   hasUI?: (key: string) => boolean;

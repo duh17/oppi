@@ -17,7 +17,8 @@ import {
   type DictationServerMessage,
 } from "./dictation-types.js";
 import { SttSessionCreateError, type SttProvider } from "./stt-provider.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { EventTags } from "./telemetry/catalog.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import { createLogger } from "./logger.js";
 
 // ─── Constants ───
@@ -59,8 +60,8 @@ export type DictationSendFn = (msg: DictationServerMessage) => void;
 export class DictationManager {
   private sttProvider: SttProvider;
 
-  /** Optional metrics collector for pipeline telemetry. */
-  private metrics: ServerMetricCollector | null;
+  /** Server telemetry for the dictation pipeline, when configured. */
+  private metrics: ServerTelemetry | null;
 
   /** Active dictation session state. */
   private session: DictationSession | null = null;
@@ -74,7 +75,7 @@ export class DictationManager {
   /** Serialize provider.start() and its stale-stop so they finish before a newer take starts. */
   private startChain: Promise<void> = Promise.resolve();
 
-  constructor(sttProvider: SttProvider, metrics?: ServerMetricCollector) {
+  constructor(sttProvider: SttProvider, metrics?: ServerTelemetry) {
     this.sttProvider = sttProvider;
     this.metrics = metrics ?? null;
   }
@@ -158,9 +159,9 @@ export class DictationManager {
     if (buf.length > 0 && this.session.firstAudioHrMs === undefined) {
       this.session.firstAudioHrMs = performance.now();
       this.metrics?.record(
-        "server.dictation_first_audio_ms",
-        Math.round(this.session.firstAudioHrMs - this.session.startHrMs),
-        this.metricTags({ language: "auto" }),
+        "server.dictation_first_audio",
+        { duration_ms: Math.round(this.session.firstAudioHrMs - this.session.startHrMs) },
+        this.sttTags(),
       );
     }
 
@@ -263,14 +264,9 @@ export class DictationManager {
           (this.session.firstResultBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS)) * 1000,
         );
         this.metrics?.record(
-          "server.dictation_first_result_ms",
-          firstResultMs,
-          this.metricTags({ language: "auto" }),
-        );
-        this.metrics?.record(
-          "server.dictation_first_result_audio_ms",
-          firstResultAudioMs,
-          this.metricTags({ language: "auto" }),
+          "server.dictation_first_result",
+          { duration_ms: firstResultMs, audio_ms: firstResultAudioMs },
+          this.sttTags(),
         );
         log.info("dictation.first_result", {
           latencyMs: firstResultMs,
@@ -298,31 +294,22 @@ export class DictationManager {
 
   private async finalizeSession(session: DictationSession): Promise<void> {
     const finalizeT0 = performance.now();
-    const langTag = "auto";
 
     try {
-      // Emit session-level metrics
-      const sessionMs = Math.round(performance.now() - session.startHrMs);
-      const audioDurationMs = Math.round(
-        (session.totalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS)) * 1000,
-      );
-      this.metrics?.record(
-        "server.dictation_session_ms",
-        sessionMs,
-        this.metricTags({ language: langTag }),
-      );
-      this.metrics?.record(
-        "server.dictation_audio_duration_ms",
-        audioDurationMs,
-        this.metricTags({ language: langTag }),
-      );
-      this.metrics?.record(
-        "server.dictation_result_updates",
-        session.resultUpdateCount,
-        this.metricTags({ language: langTag }),
-      );
+      const sessionFields = {
+        session_ms: Math.round(performance.now() - session.startHrMs),
+        audio_duration_ms: Math.round(
+          (session.totalBytes / (SAMPLE_RATE * BYTES_PER_SAMPLE * NUM_CHANNELS)) * 1000,
+        ),
+        result_updates: session.resultUpdateCount,
+      };
 
       if (session.totalBytes === 0) {
+        this.metrics?.record("server.dictation_finalize", sessionFields, {
+          ...this.sttTags(),
+          status: "ok",
+          result: "no_audio",
+        });
         await this.sttProvider.stop().catch(() => {});
         this.send({ type: "dictation_final", text: "" });
         return;
@@ -336,38 +323,26 @@ export class DictationManager {
       try {
         finalTranscript = await this.sttProvider.stop();
         finalSttMs = Math.round(performance.now() - sttT0);
-        this.metrics?.record(
-          "server.dictation_stt_ms",
-          finalSttMs,
-          this.metricTags({
-            phase: "finalize",
-            audio_seconds: String(Math.round(audioSeconds)),
-            language: langTag,
-          }),
-        );
-        if (audioSeconds > 0) {
-          this.metrics?.record(
-            "server.dictation_stt_audio_ratio",
-            Math.round((finalSttMs / (audioSeconds * 1000)) * 100) / 100,
-            this.metricTags({ phase: "finalize", language: langTag }),
-          );
-        }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        this.metrics?.record(
-          "server.dictation_error",
-          1,
-          this.metricTags({ phase: "stt", fatal: "true", error_kind: "stt", language: langTag }),
-        );
+        this.metrics?.record("server.dictation_finalize", sessionFields, {
+          ...this.sttTags(),
+          status: "error",
+          error_kind: "stt",
+        });
         this.send({ type: "dictation_error", error: `STT failed: ${errorMsg}`, fatal: true });
         return;
       }
 
-      const finalizeMs = Math.round(performance.now() - finalizeT0);
       this.metrics?.record(
-        "server.dictation_finalize_ms",
-        finalizeMs,
-        this.metricTags({ language: langTag }),
+        "server.dictation_finalize",
+        {
+          ...sessionFields,
+          stt_ms: finalSttMs,
+          stt_audio_ratio: Math.round((finalSttMs / (audioSeconds * 1000)) * 100) / 100,
+          finalize_ms: Math.round(performance.now() - finalizeT0),
+        },
+        { ...this.sttTags(), status: "ok", result: "transcribed" },
       );
 
       this.send({
@@ -390,12 +365,11 @@ export class DictationManager {
 
   // ─── Metrics ───
 
-  private metricTags(extra: Record<string, string>): Record<string, string> {
+  private sttTags(): EventTags<"server.dictation_first_audio"> {
     return {
-      provider_id: `stt_${this.sttProvider.name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`,
+      stt_provider: `stt_${this.sttProvider.name.replace(/[^a-z0-9]+/gi, "_").toLowerCase()}`,
       stt_backend: this.sttProvider.name,
-      model: this.sttProvider.model,
-      ...extra,
+      stt_model: this.sttProvider.model,
     };
   }
 }

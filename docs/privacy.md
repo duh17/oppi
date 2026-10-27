@@ -171,10 +171,9 @@ Diagnostics can include bounded MetricKit summaries, crash, hang, CPU, disk, and
 | Diagnostic data | Default retention | Operator override |
 | --- | ---: | --- |
 | MetricKit payloads | 14 days | `OPPI_METRICKIT_RETENTION_DAYS` |
-| Chat metrics | 14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS` |
+| App events (timings, counts, and resource samples from the app) | 14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS` |
 | Client logs | 14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS` |
-| Server resource metrics | 30 days | `OPPI_SERVER_METRICS_RETENTION_DAYS` |
-| Server operations metrics | 30 days | `OPPI_SERVER_OPS_METRICS_RETENTION_DAYS` |
+| Server events (operations and resource samples) | 30 days | `OPPI_SERVER_METRICS_RETENTION_DAYS` |
 
 The server operator can change these values, stop accepting uploads through telemetry mode, delete diagnostic files, or retain backups. Development and internal builds can have different defaults; the public-build opt-in is the App Store behavior.
 

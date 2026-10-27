@@ -49,7 +49,7 @@ export function usesDurableEngine(
 }
 
 /**
- * Bounded backend for turn and tool ops metrics.
+ * Bounded backend for the `runtime` tag on turn and tool telemetry events.
  * Reuses `SessionRuntimeKind` (`oppi`, `pi-tui`) and the durable engine name.
  * `durable` is `usesDurableEngine`, not merely a `serverDurable` row.
  * A terminal mirror stays `pi-tui`.

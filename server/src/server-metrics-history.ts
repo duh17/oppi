@@ -1,20 +1,21 @@
 /**
- * History for the Server Metrics page, read from the resource sampler's raw
- * daily files (`server-metrics-YYYY-MM-DD.jsonl`, one sample every ~30s, kept
- * 30 days). Every range buckets those samples on request; no derived files.
+ * History for the Server Metrics page, read from the `server.resources` events
+ * in the daily server event files (`server-events-YYYY-MM-DD.jsonl`, one sample
+ * every ~30s while sampling is on). Every range buckets those samples on
+ * request; no derived files. Other server events in the same files are skipped.
  *
- * Cost, measured on mac-studio: 30 days is ~86k samples (~25–36 MB) and
- * parses in ~90 ms, one file at a time so the event loop gets turns between
- * days. The page refreshes only the 1h and 24h ranges on a timer.
+ * The page refreshes only the 1h and 24h ranges on a timer and reads one day
+ * file at a time so the event loop gets turns between days.
  */
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { dateString, round2 } from "./metric-utils.js";
+import { round2 } from "./metric-utils.js";
+import { telemetryEventFileName } from "./telemetry/event-writer.js";
 
-export const RAW_FILE_PREFIX = "server-metrics-";
-const FILE_SUFFIX = ".jsonl";
+const RESOURCE_EVENT = "server.resources";
+const RESOURCE_EVENT_MARKER = `"name":"${RESOURCE_EVENT}"`;
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -34,7 +35,7 @@ export const SERVER_METRIC_SERIES = [
 ] as const;
 export type ServerMetricSeriesKey = (typeof SERVER_METRIC_SERIES)[number];
 
-/** One line of `server-metrics-*.jsonl`, as the sampler writes it. */
+/** One sampler reading; the latest is served as `latest` by `GET /server/metrics`. */
 export interface ServerResourceRecord {
   ts: number;
   cpu: { user: number; system: number; total: number };
@@ -103,24 +104,27 @@ interface Stat {
 }
 type Bucket = Partial<Record<ServerMetricSeriesKey, Stat>>;
 
-function recordValues(record: ServerResourceRecord): Record<ServerMetricSeriesKey, unknown> {
-  return {
-    cpu: record.cpu?.total,
-    rss: record.memory?.rss,
-    heapUsed: record.memory?.heapUsed,
-    eventLoopP99: record.eventLoop?.p99,
-    sessions: record.sessions?.total,
-    wsConnections: record.wsConnections,
-    hostCpu: record.host?.cpu,
-    memUsed: record.host?.memUsed,
-    diskUsed: record.host?.diskUsed,
-  };
+/** `server.resources` field behind each series. */
+const SERIES_FIELDS: Record<ServerMetricSeriesKey, string> = {
+  cpu: "cpu_total_pct",
+  rss: "rss_mb",
+  heapUsed: "heap_used_mb",
+  eventLoopP99: "event_loop_p99_ms",
+  sessions: "sessions_total",
+  wsConnections: "ws_connections",
+  hostCpu: "host_cpu_pct",
+  memUsed: "host_mem_used_mb",
+  diskUsed: "host_disk_used_mb",
+};
+
+interface ResourceSample {
+  ts: number;
+  fields: Record<string, unknown>;
 }
 
-function addRecord(bucket: Bucket, record: ServerResourceRecord): void {
-  const values = recordValues(record);
+function addSample(bucket: Bucket, sample: ResourceSample): void {
   for (const key of SERVER_METRIC_SERIES) {
-    const value = values[key];
+    const value = sample.fields[SERIES_FIELDS[key]];
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
     const stat = bucket[key];
     if (stat) {
@@ -137,31 +141,39 @@ function bucketStart(ts: number, bucketMs: number): number {
   return Math.floor(ts / bucketMs) * bucketMs;
 }
 
-async function readRawRecords(dir: string, date: string): Promise<ServerResourceRecord[]> {
+async function readResourceSamples(dir: string, day: number): Promise<ResourceSample[]> {
   let text: string;
   try {
-    text = await readFile(join(dir, `${RAW_FILE_PREFIX}${date}${FILE_SUFFIX}`), "utf8");
+    text = await readFile(join(dir, telemetryEventFileName("server", day)), "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
   }
-  const records: ServerResourceRecord[] = [];
+  const samples: ResourceSample[] = [];
   for (const line of text.split("\n")) {
-    if (!line) continue;
+    // Most lines are other server events; skip them before parsing.
+    if (!line.includes(RESOURCE_EVENT_MARKER)) continue;
     try {
-      const value: unknown = JSON.parse(line);
+      const value = JSON.parse(line) as {
+        v?: unknown;
+        name?: unknown;
+        ts?: unknown;
+        fields?: unknown;
+      };
       if (
-        typeof value === "object" &&
-        value !== null &&
-        typeof (value as { ts?: unknown }).ts === "number"
+        value.v === 2 &&
+        value.name === RESOURCE_EVENT &&
+        typeof value.ts === "number" &&
+        typeof value.fields === "object" &&
+        value.fields !== null
       ) {
-        records.push(value as ServerResourceRecord);
+        samples.push({ ts: value.ts, fields: value.fields as Record<string, unknown> });
       }
     } catch {
       // A torn final line from a crash mid-append; the rest of the file is fine.
     }
   }
-  return records;
+  return samples;
 }
 
 export async function readServerMetricsHistory(
@@ -176,15 +188,15 @@ export async function readServerMetricsHistory(
 
   // Files are UTC days; read every day the window touches, oldest first.
   for (let day = bucketStart(firstBucket, DAY_MS); day <= now; day += DAY_MS) {
-    for (const record of await readRawRecords(dir, dateString(day))) {
-      const start = bucketStart(record.ts, spec.bucketMs);
+    for (const sample of await readResourceSamples(dir, day)) {
+      const start = bucketStart(sample.ts, spec.bucketMs);
       if (start < firstBucket || start > lastBucket) continue;
       let bucket = buckets.get(start);
       if (!bucket) {
         bucket = {};
         buckets.set(start, bucket);
       }
-      addRecord(bucket, record);
+      addSample(bucket, sample);
     }
   }
 

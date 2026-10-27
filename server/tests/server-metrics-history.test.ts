@@ -16,6 +16,7 @@ import {
   readServerMetricsHistory,
   type ServerResourceRecord,
 } from "../src/server-metrics-history.js";
+import { resourceEventFields } from "../src/server-resource-sampler.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 const MINUTE = 60_000;
@@ -42,8 +43,33 @@ function record(
   };
 }
 
+/** A sample as the sampler writes it: one `server.resources` event line. */
+function eventLine(sample: ServerResourceRecord): string {
+  return JSON.stringify({
+    v: 2,
+    ts: sample.ts,
+    origin: "server",
+    name: "server.resources",
+    fields: resourceEventFields(sample, undefined),
+    tags: sample.host ? { host_scope: sample.host.scope } : {},
+  });
+}
+
+/** Other server events share the day file; history must skip them. */
+const OTHER_EVENT = JSON.stringify({
+  v: 2,
+  ts: DAY0,
+  origin: "server",
+  name: "server.ws_ping",
+  fields: { rtt_ms: 999 },
+  tags: {},
+});
+
 function writeRaw(dir: string, date: string, lines: string[]): void {
-  writeFileSync(join(dir, `server-metrics-${date}.jsonl`), lines.join("\n") + "\n");
+  writeFileSync(
+    join(dir, `server-events-${date}.jsonl`),
+    [OTHER_EVENT, ...lines].join("\n") + "\n",
+  );
 }
 
 describe("server metrics history", () => {
@@ -67,7 +93,7 @@ describe("server metrics history", () => {
         record(now - 50 * MINUTE, { cpu: 10, hostCpu: 40 }),
         record(now - 50 * MINUTE + 20_000, { cpu: 30, hostCpu: 60 }),
         record(now - 5 * 1000, { cpu: 5 }), // pre-host sample in the current bucket
-      ].map((r) => JSON.stringify(r)),
+      ].map(eventLine),
     );
 
     const history = await readServerMetricsHistory(dir, "1h", now);
@@ -88,13 +114,13 @@ describe("server metrics history", () => {
 
   it("reads every UTC day file a long range touches, skipping torn lines", async () => {
     const now = DAY0 + 3 * HOUR;
-    writeRaw(dir, "2026-09-17", [JSON.stringify(record(DAY0 - 29 * DAY + 5 * MINUTE, { cpu: 8 }))]);
+    writeRaw(dir, "2026-09-17", [eventLine(record(DAY0 - 29 * DAY + 5 * MINUTE, { cpu: 8 }))]);
     writeRaw(dir, "2026-10-15", [
-      JSON.stringify(record(DAY0 - DAY + HOUR, { cpu: 10 })),
-      JSON.stringify(record(DAY0 - DAY + HOUR + 30_000, { cpu: 50 })),
+      eventLine(record(DAY0 - DAY + HOUR, { cpu: 10 })),
+      eventLine(record(DAY0 - DAY + HOUR + 30_000, { cpu: 50 })),
       '{"ts":12', // crash mid-append
     ]);
-    writeRaw(dir, "2026-10-16", [JSON.stringify(record(DAY0 + 2 * HOUR, { cpu: 7 }))]);
+    writeRaw(dir, "2026-10-16", [eventLine(record(DAY0 + 2 * HOUR, { cpu: 7 }))]);
 
     const history = await readServerMetricsHistory(dir, "30d", now);
 
@@ -138,7 +164,7 @@ describe("GET/PUT /server/metrics", () => {
   it("serves history while enabled, nothing while off, and toggles the switch", async () => {
     let enabled = true;
     const latest = record(Date.now(), { cpu: 12, hostCpu: 30 });
-    writeRaw(dir, new Date().toISOString().slice(0, 10), [JSON.stringify(latest)]);
+    writeRaw(dir, new Date().toISOString().slice(0, 10), [eventLine(latest)]);
     const call = routeWith({
       telemetryDir: dir,
       intervalMs: 30_000,

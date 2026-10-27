@@ -19,7 +19,7 @@ import type {
   Session,
   Workspace,
 } from "./types.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { DictationManager } from "./dictation-manager.js";
 import {
   SessionLifecycleError,
@@ -54,7 +54,7 @@ export interface StreamContext {
   storage: Storage;
   sessions: SessionManager;
   sessionRuntimes: SessionRuntimes;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
   ensureSessionContextWindow: (session: Session) => Session;
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   handleClientMessage: (
@@ -168,13 +168,6 @@ function toBuffer(data: RawData): Buffer {
   return Buffer.from(data);
 }
 
-function countBucketForTag(count: number): string {
-  if (count <= 0) return "0";
-  if (count === 1) return "1";
-  if (count <= 4) return "2-4";
-  return "5+";
-}
-
 function parseIncomingJsonRecord(
   data: RawData,
 ): { ok: true; record: Record<string, unknown> } | { ok: false; error: string } {
@@ -256,7 +249,7 @@ export function startServerPing(
   ws: WebSocket,
   label: string,
   intervalMs = PING_INTERVAL_MS,
-  metrics?: ServerMetricCollector,
+  metrics?: ServerTelemetry,
   connId?: string,
 ): () => void {
   let missedPongs = 0;
@@ -265,14 +258,14 @@ export function startServerPing(
   ws.on("pong", () => {
     missedPongs = 0;
     if (lastPingSentAt > 0 && metrics) {
-      metrics.record("server.ws_ping_rtt_ms", Date.now() - lastPingSentAt);
+      metrics.record("server.ws_ping", { rtt_ms: Date.now() - lastPingSentAt }, {});
     }
   });
 
   const timer = setInterval(() => {
     missedPongs++;
     if (missedPongs > 2) {
-      metrics?.record("server.ws_ping_timeout", 1);
+      metrics?.record("server.ws_ping_timeout", {}, {});
       log.warn("ws.ping_timeout", {
         connId,
         label,
@@ -417,9 +410,11 @@ export class BoundSessionStreamMux {
     const session = admitted.session;
 
     if (upgradeReceivedAt && metrics) {
-      metrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt, {
-        path: "bound_session_stream",
-      });
+      metrics.record(
+        "server.ws_handshake",
+        { duration_ms: connectedAt - upgradeReceivedAt },
+        { stream: "session" },
+      );
     }
 
     log.info("ws.bound_session_stream_connected", {
@@ -474,15 +469,15 @@ export class BoundSessionStreamMux {
       stopPing();
       this.ctx.untrackConnection(ws);
       const reasonStr = reason?.toString() || "";
-      metrics?.record("server.ws_session_duration_ms", Date.now() - connectedAt, {
-        path: "bound_session_stream",
-      });
-      metrics?.record("server.ws_messages_sent", msgSent, { path: "bound_session_stream" });
-      metrics?.record("server.ws_messages_received", msgRecv, { path: "bound_session_stream" });
-      metrics?.record("server.ws_close_code", 1, {
-        code: String(code),
-        path: "bound_session_stream",
-      });
+      metrics?.record(
+        "server.ws_session",
+        {
+          duration_ms: Date.now() - connectedAt,
+          messages_sent: msgSent,
+          messages_received: msgRecv,
+        },
+        { stream: "session", close_code: String(code) },
+      );
       log.info("ws.bound_session_stream_disconnected", {
         connId,
         workspaceId,
@@ -527,11 +522,11 @@ export class BoundSessionStreamMux {
       msgSent += 1;
       ws.send(JSON.stringify(msg));
       if (fromSession) {
-        metrics?.record("server.ws_message_sent", 1, {
-          type: msg.type,
-          level: "bound_session",
-          path: "bound_session_stream",
-        });
+        metrics?.record(
+          "server.ws_message_sent",
+          { messages: 1 },
+          { stream: "session", message_type: msg.type },
+        );
       }
       return true;
     };
@@ -723,15 +718,18 @@ export class BoundSessionStreamMux {
           currentSeq: catchUp?.currentSeq,
           runtimeAvailable: Boolean(catchUp),
         });
-        metrics?.record("server.session_subscribe_ms", Date.now() - connectedAt, {
-          level: "bound_session",
-          outcome: "error",
-          path: "bound_session_stream",
-          catchup_requested: "true",
-          catchup_complete: "false",
-          started_session: openResult.startedSession ? "true" : "false",
-          pending_ui_requests: "0",
-        });
+        metrics?.record(
+          "server.session_subscribe",
+          {
+            duration_ms: Date.now() - connectedAt,
+            catchup_requested: 1,
+            catchup_complete: 0,
+            started_session: openResult.startedSession ? 1 : 0,
+            pending_ui_requests: 0,
+          },
+          { status: "error" },
+          { sessionId, workspaceId },
+        );
         cleanupBoundConnection(1011);
         ws.close(1011, "Session stream bootstrap retry required");
         return;
@@ -795,15 +793,18 @@ export class BoundSessionStreamMux {
         (message) => message.type === "extension_ui_request",
       ).length;
 
-      metrics?.record("server.session_subscribe_ms", Date.now() - connectedAt, {
-        level: "bound_session",
-        outcome: "success",
-        path: "bound_session_stream",
-        catchup_requested: catchUpEvents.length > 0 ? "true" : "false",
-        catchup_complete: catchUp ? "true" : "false",
-        started_session: openResult.startedSession ? "true" : "false",
-        pending_ui_requests: countBucketForTag(pendingUIDialogCount),
-      });
+      metrics?.record(
+        "server.session_subscribe",
+        {
+          duration_ms: Date.now() - connectedAt,
+          catchup_requested: catchUpEvents.length > 0 ? 1 : 0,
+          catchup_complete: catchUp ? 1 : 0,
+          started_session: openResult.startedSession ? 1 : 0,
+          pending_ui_requests: pendingUIDialogCount,
+        },
+        { status: "ok" },
+        { sessionId, workspaceId },
+      );
 
       ws.on("message", (data, isBinary) => {
         queue = queue
@@ -812,27 +813,26 @@ export class BoundSessionStreamMux {
             msgRecv += 1;
 
             if (isBinary) {
-              metrics?.record("server.ws_message_received", 1, {
-                type: "binary",
-                path: "bound_session_stream",
-              });
               const pcm = toBuffer(data);
               // Mic audio for a Live Voice call running on this connection.
-              if (this.ctx.handleVoiceAudio?.(connId, pcm)) {
-                metrics?.record("server.ws_binary_received_bytes", pcm.byteLength, {
-                  path: "bound_session_stream",
-                });
-                return;
-              }
+              const handled = this.ctx.handleVoiceAudio?.(connId, pcm) === true;
+              metrics?.record(
+                "server.ws_message_received",
+                { messages: 1, binary_bytes: handled ? pcm.byteLength : 0 },
+                { stream: "session", message_type: "binary" },
+              );
+              if (handled) return;
               send({ type: "error", error: "Binary messages are not supported on session stream" });
               return;
             }
 
             if (!firstMessageRecorded && metrics) {
               firstMessageRecorded = true;
-              metrics.record("server.ws_first_message_ms", Date.now() - connectedAt, {
-                path: "bound_session_stream",
-              });
+              metrics.record(
+                "server.ws_first_message",
+                { duration_ms: Date.now() - connectedAt },
+                { stream: "session" },
+              );
             }
 
             const parsed = parseIncomingSessionCommand(data);
@@ -863,10 +863,11 @@ export class BoundSessionStreamMux {
               send({ type: "error", error: "Access expired on this connection", sessionId });
               return;
             }
-            metrics?.record("server.ws_message_received", 1, {
-              type: msg.type,
-              path: "bound_session_stream",
-            });
+            metrics?.record(
+              "server.ws_message_received",
+              { messages: 1, binary_bytes: 0 },
+              { stream: "session", message_type: msg.type },
+            );
             const trace = msg as { requestId?: string; sessionId?: string };
             log.debug("ws.bound_session_stream_message_received", {
               connId,
@@ -1026,15 +1027,18 @@ export class BoundSessionStreamMux {
       for (const frame of startupMessages) ws.emit("message", frame.data, frame.isBinary);
     } catch (err: unknown) {
       const message = safeErrorMessage(err);
-      metrics?.record("server.session_subscribe_ms", Date.now() - connectedAt, {
-        level: "bound_session",
-        outcome: "error",
-        path: "bound_session_stream",
-        catchup_requested: "false",
-        catchup_complete: "false",
-        started_session: "false",
-        pending_ui_requests: "0",
-      });
+      metrics?.record(
+        "server.session_subscribe",
+        {
+          duration_ms: Date.now() - connectedAt,
+          catchup_requested: 0,
+          catchup_complete: 0,
+          started_session: 0,
+          pending_ui_requests: 0,
+        },
+        { status: "error" },
+        { sessionId, workspaceId },
+      );
       // Session lifecycle wraps configuration failures for HTTP callers with a
       // typed 422 error. Keep the focused stream's policy close semantics for
       // that same terminal configuration boundary.
@@ -1116,7 +1120,6 @@ export class DictationStreamMux {
       ws,
       path: "/dictation/stream",
       pathTag: "dictation_stream",
-      level: "dictation",
       upgradeReceivedAt,
       access,
       logMetadata: {},
@@ -1132,7 +1135,6 @@ export class DictationStreamMux {
     ws,
     path,
     pathTag,
-    level,
     upgradeReceivedAt,
     access,
     logMetadata,
@@ -1140,7 +1142,6 @@ export class DictationStreamMux {
     ws: WebSocket;
     path: string;
     pathTag: string;
-    level: string;
     upgradeReceivedAt?: number;
     access?: DictationStreamAccess;
     logMetadata: Record<string, unknown>;
@@ -1150,9 +1151,11 @@ export class DictationStreamMux {
     const metrics = this.ctx.metrics;
     const connId = this.nextConnId(pathTag);
     if (upgradeReceivedAt && metrics) {
-      metrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt, {
-        path: pathTag,
-      });
+      metrics.record(
+        "server.ws_handshake",
+        { duration_ms: connectedAt - upgradeReceivedAt },
+        { stream: "dictation" },
+      );
     }
 
     log.info(`ws.${pathTag}_connected`, {
@@ -1171,11 +1174,11 @@ export class DictationStreamMux {
       if (ws.readyState !== WebSocket.OPEN) return;
       msgSent += 1;
       ws.send(JSON.stringify(msg));
-      metrics?.record("server.ws_message_sent", 1, {
-        type: msg.type,
-        level,
-        path: pathTag,
-      });
+      metrics?.record(
+        "server.ws_message_sent",
+        { messages: 1 },
+        { stream: "dictation", message_type: msg.type },
+      );
       const connection = this.connections.get(ws);
       // Accepted audio must deliver dictation_final (or a fatal error) before 4001.
       if (
@@ -1188,10 +1191,7 @@ export class DictationStreamMux {
     };
 
     if (!dictationManager) {
-      metrics?.record("server.dictation_error", 1, {
-        stage: "audio_stream_connect",
-        path: pathTag,
-      });
+      metrics?.record("server.dictation_stream_error", {}, { reason: "dictation_unavailable" });
       send({
         type: "dictation_error",
         error: "Server dictation is unavailable",
@@ -1214,13 +1214,11 @@ export class DictationStreamMux {
       msgRecv += 1;
       if (isBinary) {
         const buffer = toBuffer(data);
-        metrics?.record("server.ws_message_received", 1, {
-          type: "binary_audio",
-          path: pathTag,
-        });
-        metrics?.record("server.ws_binary_received_bytes", buffer.byteLength, {
-          path: pathTag,
-        });
+        metrics?.record(
+          "server.ws_message_received",
+          { messages: 1, binary_bytes: buffer.byteLength },
+          { stream: "dictation", message_type: "binary_audio" },
+        );
         dictationManager.handleAudioData(buffer);
         return;
       }
@@ -1232,10 +1230,11 @@ export class DictationStreamMux {
       }
 
       const msg = parsed.message;
-      metrics?.record("server.ws_message_received", 1, {
-        type: msg.type,
-        path: pathTag,
-      });
+      metrics?.record(
+        "server.ws_message_received",
+        { messages: 1, binary_bytes: 0 },
+        { stream: "dictation", message_type: msg.type },
+      );
       switch (msg.type) {
         case "dictation_start":
           if (this.accessExpired(state)) {
@@ -1256,10 +1255,7 @@ export class DictationStreamMux {
           }
           return;
         default:
-          metrics?.record("server.dictation_error", 1, {
-            stage: "unsupported_audio_stream_message",
-            path: pathTag,
-          });
+          metrics?.record("server.dictation_stream_error", {}, { reason: "unsupported_message" });
           send({
             type: "dictation_error",
             error: `Unsupported dictation stream message: ${msg.type}`,
@@ -1273,15 +1269,15 @@ export class DictationStreamMux {
       dictationManager.handleDisconnect();
       stopPing();
       this.ctx.untrackConnection(ws);
-      metrics?.record("server.ws_session_duration_ms", Date.now() - connectedAt, {
-        path: pathTag,
-      });
-      metrics?.record("server.ws_messages_sent", msgSent, { path: pathTag });
-      metrics?.record("server.ws_messages_received", msgRecv, { path: pathTag });
-      metrics?.record("server.ws_close_code", 1, {
-        code: String(code),
-        path: pathTag,
-      });
+      metrics?.record(
+        "server.ws_session",
+        {
+          duration_ms: Date.now() - connectedAt,
+          messages_sent: msgSent,
+          messages_received: msgRecv,
+        },
+        { stream: "dictation", close_code: String(code) },
+      );
       log.info(`ws.${pathTag}_closed`, {
         connId,
         ...logMetadata,

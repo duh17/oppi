@@ -1,83 +1,78 @@
 import { describe, expect, it } from "vitest";
 
 import { ScheduleDispatchError, recordScheduleRun } from "../src/schedule-run-metrics.js";
-import type { ServerMetricCollector } from "../src/server-metric-collector.js";
+import { ServerTelemetry } from "../src/telemetry/server-telemetry.js";
+import type { TelemetryEventRecord } from "../src/types.js";
 
-function collector() {
-  const samples: Array<{ metric: string; value: number; tags?: Record<string, string> }> = [];
-  return {
-    samples,
-    metrics: {
-      record(metric: string, value: number, tags?: Record<string, string>) {
-        samples.push({ metric, value, tags });
-      },
-    } as unknown as ServerMetricCollector,
-  };
+function telemetry() {
+  const records: TelemetryEventRecord[] = [];
+  const metrics = new ServerTelemetry({ write: (_origin, batch) => records.push(...batch) });
+  return { metrics, stored: () => (metrics.flush(), records) };
 }
 
 describe("schedule run metrics", () => {
   it("records a bounded failure reason and drops the raw error text", () => {
-    const { samples, metrics } = collector();
+    const { metrics, stored } = telemetry();
     recordScheduleRun(metrics, {
       startedAt: 1_000,
       now: 1_250,
       kind: "due",
-      status: "failed",
+      status: "error",
       error: new Error(
         'Required model "ds4/deepseek-v4-flash" is not available at /Users/example/secret',
       ),
     });
-    expect(samples).toEqual([
-      {
-        metric: "server.schedule_run_ms",
-        value: 250,
-        tags: { status: "failed", kind: "due", reason: "other" },
-      },
+    expect(stored()).toEqual([
+      expect.objectContaining({
+        name: "server.schedule_run",
+        fields: { duration_ms: 250 },
+        tags: { status: "error", run_kind: "due", reason: "other" },
+      }),
     ]);
-    expect(JSON.stringify(samples)).not.toContain("deepseek");
-    expect(JSON.stringify(samples)).not.toContain("/Users/example/secret");
+    expect(JSON.stringify(stored())).not.toContain("deepseek");
+    expect(JSON.stringify(stored())).not.toContain("/Users/example/secret");
   });
 
   it("maps a promptError that mentions release or not found to other", () => {
-    const { samples, metrics } = collector();
+    const { metrics, stored } = telemetry();
     recordScheduleRun(metrics, {
       startedAt: 1,
       now: 2,
       kind: "due",
-      status: "failed",
+      status: "error",
       error: new ScheduleDispatchError(
         "other",
         "please release the workspace; model not found at /Users/example/secret",
       ),
     });
-    expect(samples[0]?.tags).toEqual({ status: "failed", kind: "due", reason: "other" });
     recordScheduleRun(metrics, {
       startedAt: 1,
       now: 2,
       kind: "due",
-      status: "failed",
+      status: "error",
       error: new Error("please release the file; model not found"),
     });
-    expect(samples[1]?.tags?.reason).toBe("other");
-    expect(JSON.stringify(samples)).not.toContain("release");
-    expect(JSON.stringify(samples)).not.toContain("not found");
-    expect(JSON.stringify(samples)).not.toContain("/Users/example/secret");
+    const records = stored();
+    expect(records.map((record) => record.tags.reason)).toEqual(["other", "other"]);
+    expect(JSON.stringify(records)).not.toContain("release");
+    expect(JSON.stringify(records)).not.toContain("not found");
   });
 
-  it("classifies lease loss without keeping the run id", () => {
-    const { samples, metrics } = collector();
+  it("classifies lease loss without keeping the run id, and omits a reason on success", () => {
+    const { metrics, stored } = telemetry();
     recordScheduleRun(metrics, {
       startedAt: 10,
       now: 10,
       kind: "manual",
-      status: "failed",
+      status: "error",
       error: new Error("Schedule run lease was lost: run-9f3a"),
     });
-    expect(samples[0]?.tags).toEqual({
-      status: "failed",
-      kind: "manual",
-      reason: "lease_lost",
-    });
-    expect(JSON.stringify(samples)).not.toContain("run-9f3a");
+    recordScheduleRun(metrics, { startedAt: 10, now: 12, kind: "manual", status: "ok" });
+    const records = stored();
+    expect(records.map((record) => record.tags)).toEqual([
+      { status: "error", run_kind: "manual", reason: "lease_lost" },
+      { status: "ok", run_kind: "manual" },
+    ]);
+    expect(JSON.stringify(records)).not.toContain("run-9f3a");
   });
 });

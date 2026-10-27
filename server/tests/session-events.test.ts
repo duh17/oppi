@@ -2,9 +2,9 @@ import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { describe, expect, it, vi } from "vitest";
 
-import { SERVER_METRIC_REGISTRY } from "../src/server-metric-registry.js";
 import { SessionEventProcessor, type EventProcessorSessionState } from "../src/session-events.js";
-import type { Session } from "../src/types.js";
+import { ServerTelemetry } from "../src/telemetry/server-telemetry.js";
+import type { Session, TelemetryEventRecord } from "../src/types.js";
 
 function makeSession(id = "sess-1"): Session {
   const now = Date.now();
@@ -30,22 +30,23 @@ function makeActiveSession(session: Session): EventProcessorSessionState {
   };
 }
 
-class MockMetrics {
-  samples: Array<{ metric: string; value: number; tags?: Record<string, string> }> = [];
+/** Real catalog-validating telemetry; `samples` are the records a flush would write. */
+class MockMetrics extends ServerTelemetry {
+  private readonly written: TelemetryEventRecord[];
 
-  record(metric: string, value: number, tags?: Record<string, string>): void {
-    this.samples.push({ metric, value, tags });
+  constructor() {
+    const written: TelemetryEventRecord[] = [];
+    super({ write: (_origin, batch) => written.push(...batch) });
+    this.written = written;
+  }
+
+  get samples(): TelemetryEventRecord[] {
+    this.flush();
+    return this.written;
   }
 }
 
 describe("SessionEventProcessor", () => {
-  it("registers per-tool duration and result metrics", () => {
-    expect(SERVER_METRIC_REGISTRY).toHaveProperty("server.tool_duration_ms");
-    expect(SERVER_METRIC_REGISTRY).toHaveProperty("server.tool_result");
-    expect(SERVER_METRIC_REGISTRY["server.tool_duration_ms"].unit).toBe("ms");
-    expect(SERVER_METRIC_REGISTRY["server.tool_result"].unit).toBe("count");
-  });
-
   it("tags turn duration, TTFT, and tool-call counts with exact provider and model", () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
@@ -84,31 +85,25 @@ describe("SessionEventProcessor", () => {
       } as never);
 
       const expectedTags = {
-        sessionId: "sess-1",
         runtime: "oppi",
         provider: "openrouter",
         model: "z.ai/glm-5",
         thinking: "high",
       };
-      expect(metrics.samples).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            metric: "server.turn_ttft_ms",
-            value: 250,
-            tags: expectedTags,
-          }),
-          expect.objectContaining({
-            metric: "server.turn_duration_ms",
-            value: 1_000,
-            tags: expectedTags,
-          }),
-          expect.objectContaining({
-            metric: "server.turn_tool_calls",
-            value: 1,
-            tags: expectedTags,
-          }),
-        ]),
-      );
+      expect(metrics.samples).toEqual([
+        expect.objectContaining({
+          name: "server.turn_ttft",
+          fields: { duration_ms: 250 },
+          tags: expectedTags,
+          sessionId: "sess-1",
+        }),
+        expect.objectContaining({
+          name: "server.turn",
+          fields: { duration_ms: 1_000, tool_calls: 1 },
+          tags: { ...expectedTags, status: "ok" },
+          sessionId: "sess-1",
+        }),
+      ]);
     } finally {
       vi.useRealTimers();
     }
@@ -138,18 +133,12 @@ describe("SessionEventProcessor", () => {
       ],
     } as never);
 
-    expect(metrics.samples).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "server.turn_duration_ms",
-          tags: { sessionId: "sess-1", runtime: "oppi" },
-        }),
-        expect.objectContaining({
-          metric: "server.turn_error",
-          tags: { sessionId: "sess-1", runtime: "oppi", category: "overloaded" },
-        }),
-      ]),
-    );
+    expect(metrics.samples).toEqual([
+      expect.objectContaining({
+        name: "server.turn",
+        tags: { runtime: "oppi", status: "error", error_kind: "overloaded" },
+      }),
+    ]);
     expect(JSON.stringify(metrics.samples)).not.toContain("/Users/example/secret");
     for (const sample of metrics.samples) {
       expect(sample.tags).not.toHaveProperty("provider");
@@ -188,8 +177,8 @@ describe("SessionEventProcessor", () => {
         type: "agent_end",
         messages: [{ stopReason: "error", errorMessage: "overloaded" }],
       } as never);
-      expect(metrics.samples.find((sample) => sample.metric === "server.turn_error")?.tags).toEqual(
-        expect.objectContaining({ runtime, category: "overloaded" }),
+      expect(metrics.samples.find((sample) => sample.name === "server.turn")?.tags).toEqual(
+        expect.objectContaining({ runtime, status: "error", error_kind: "overloaded" }),
       );
       expect(metrics.samples.every((sample) => sample.tags?.runtime === runtime)).toBe(true);
     }
@@ -245,36 +234,25 @@ describe("SessionEventProcessor", () => {
       } as never);
 
       const routing = {
-        sessionId: "sess-1",
         runtime: "oppi",
         provider: "anthropic",
         model: "claude-sonnet-4-0",
         tool: "bash",
       };
-      expect(metrics.samples).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            metric: "server.tool_duration_ms",
-            value: 200,
-            tags: { ...routing, status: "error" },
-          }),
-          expect.objectContaining({
-            metric: "server.tool_result",
-            value: 1,
-            tags: { ...routing, status: "error" },
-          }),
-          expect.objectContaining({
-            metric: "server.tool_duration_ms",
-            value: 800,
-            tags: { ...routing, status: "ok" },
-          }),
-          expect.objectContaining({
-            metric: "server.tool_result",
-            value: 1,
-            tags: { ...routing, status: "ok" },
-          }),
-        ]),
-      );
+      expect(metrics.samples).toEqual([
+        expect.objectContaining({
+          name: "server.tool_call",
+          fields: { duration_ms: 200 },
+          tags: { ...routing, status: "error" },
+          sessionId: "sess-1",
+        }),
+        expect.objectContaining({
+          name: "server.tool_call",
+          fields: { duration_ms: 800 },
+          tags: { ...routing, status: "ok" },
+          sessionId: "sess-1",
+        }),
+      ]);
       for (const sample of metrics.samples) {
         const serialized = JSON.stringify(sample);
         expect(serialized).not.toContain("sleep 1");
@@ -330,38 +308,15 @@ describe("SessionEventProcessor", () => {
         messages: [],
       } as never);
 
-      const toolSamples = metrics.samples.filter((sample) =>
-        sample.metric.startsWith("server.tool_"),
-      );
-      expect(toolSamples).toEqual(
-        expect.arrayContaining([
-          {
-            metric: "server.tool_result",
-            value: 1,
-            tags: {
-              sessionId: "sess-1",
-              runtime: "oppi",
-              provider: "openai",
-              model: "gpt-5.5",
-              tool: "edit",
-              status: "ok",
-            },
-          },
-          {
-            metric: "server.tool_result",
-            value: 1,
-            tags: {
-              sessionId: "sess-1",
-              runtime: "oppi",
-              provider: "openai",
-              model: "gpt-5.5",
-              tool: "unknown",
-              status: "error",
-            },
-          },
-        ]),
-      );
-      expect(toolSamples.some((sample) => sample.metric === "server.tool_duration_ms")).toBe(false);
+      const toolSamples = metrics.samples.filter((sample) => sample.name === "server.tool_call");
+      const route = { runtime: "oppi", provider: "openai", model: "gpt-5.5" };
+      expect(toolSamples).toEqual([
+        expect.objectContaining({ fields: {}, tags: { ...route, tool: "edit", status: "ok" } }),
+        expect.objectContaining({
+          fields: {},
+          tags: { ...route, tool: "unknown", status: "error" },
+        }),
+      ]);
       const serialized = JSON.stringify(toolSamples);
       expect(serialized).not.toContain("/Users/example/secret.ts");
       expect(serialized).not.toContain("patched");
@@ -412,32 +367,20 @@ describe("SessionEventProcessor", () => {
       },
     } as never);
 
-    expect(metrics.samples).toEqual(
-      expect.arrayContaining([
-        {
-          metric: "server.turn_input_tokens",
-          value: 100,
-          tags: {
-            sessionId: "sess-1",
-            runtime: "oppi",
-            provider: "xai",
-            model: "grok-4.6",
-            thinking: "high",
-          },
-        },
-        {
-          metric: "server.turn_cost",
-          value: 20_000,
-          tags: {
-            sessionId: "sess-1",
-            runtime: "oppi",
-            provider: "opencode-go",
-            model: "glm-5.3",
-            thinking: "max",
-          },
-        },
-      ]),
-    );
+    expect(metrics.samples).toEqual([
+      expect.objectContaining({
+        name: "server.turn_usage",
+        fields: { input_tokens: 100, output_tokens: 20, cost_usd_micros: 10_000 },
+        tags: { runtime: "oppi", provider: "xai", model: "grok-4.6", thinking: "high" },
+        sessionId: "sess-1",
+      }),
+      expect.objectContaining({
+        name: "server.turn_usage",
+        fields: { input_tokens: 200, output_tokens: 40, cost_usd_micros: 20_000 },
+        tags: { runtime: "oppi", provider: "opencode-go", model: "glm-5.3", thinking: "max" },
+        sessionId: "sess-1",
+      }),
+    ]);
   });
 
   it.each(["edit", "write", "functions.edit", "functions.write", "bash"])(
@@ -593,7 +536,7 @@ describe("SessionEventProcessor", () => {
     }
   });
 
-  it("counts a successful compaction_end and records success", () => {
+  it("counts a successful compaction_end and records ok", () => {
     const metrics = new MockMetrics();
     const processor = new SessionEventProcessor({
       mobileRenderers: new MobileRendererRegistry(),
@@ -613,13 +556,12 @@ describe("SessionEventProcessor", () => {
     } as never);
 
     expect(active.session.changeStats?.compactionCount).toBe(1);
-    expect(metrics.samples).toContainEqual(
+    expect(metrics.samples).toEqual([
       expect.objectContaining({
-        metric: "server.compaction_result",
-        value: 1,
-        tags: expect.objectContaining({ result: "success" }),
+        name: "server.compaction",
+        tags: { runtime: "oppi", status: "ok" },
       }),
-    );
+    ]);
   });
 
   it("does not count a failed compaction_end as success", () => {
@@ -642,17 +584,10 @@ describe("SessionEventProcessor", () => {
     } as never);
 
     expect(active.session.changeStats?.compactionCount).toBeUndefined();
-    expect(metrics.samples).toContainEqual(
-      expect.objectContaining({
-        metric: "server.compaction_result",
-        value: 1,
-        tags: expect.objectContaining({ result: "failed" }),
-      }),
-    );
-    expect(metrics.samples.some((sample) => sample.tags?.result === "success")).toBe(false);
+    expect(metrics.samples.map((sample) => sample.tags.status)).toEqual(["error"]);
   });
 
-  it("classifies combined compaction_end flags as aborted, then failed, then will_retry", () => {
+  it("classifies combined compaction_end flags as cancelled, then error, then will_retry", () => {
     const metrics = new MockMetrics();
     const processor = new SessionEventProcessor({
       mobileRenderers: new MobileRendererRegistry(),
@@ -689,10 +624,10 @@ describe("SessionEventProcessor", () => {
     expect(abortedAndRetrying.session.changeStats?.compactionCount).toBeUndefined();
     expect(failedAndRetrying.session.changeStats?.compactionCount).toBeUndefined();
     expect(retryOnly.session.changeStats?.compactionCount).toBe(1);
-    expect(metrics.samples.map((sample) => sample.tags?.result)).toEqual([
-      "aborted",
-      "failed",
-      "will_retry",
+    expect(metrics.samples.map((sample) => [sample.tags.status, sample.tags.result])).toEqual([
+      ["cancelled", undefined],
+      ["error", undefined],
+      ["ok", "will_retry"],
     ]);
   });
 });

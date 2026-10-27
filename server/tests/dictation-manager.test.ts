@@ -7,8 +7,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DictationManager, type DictationSendFn } from "../src/dictation-manager.js";
 
 import type { DictationServerMessage } from "../src/dictation-types.js";
-import type { ServerMetricCollector } from "../src/server-metric-collector.js";
-import type { ServerMetricName } from "../src/server-metric-registry.js";
+import { ServerTelemetry } from "../src/telemetry/server-telemetry.js";
+import type { TelemetryEventRecord } from "../src/types.js";
 import {
   SttSessionCreateError,
   type SttProvider,
@@ -37,21 +37,16 @@ function messagesOfType<T extends DictationServerMessage["type"]>(
   return sent.filter((m) => m.type === type) as Extract<DictationServerMessage, { type: T }>[];
 }
 
-function mockMetrics(): {
-  collector: {
-    record: (metric: ServerMetricName, value: number, tags?: Record<string, string>) => void;
-  };
-  records: Array<{ metric: ServerMetricName; value: number; tags?: Record<string, string> }>;
-} {
-  const records: Array<{ metric: ServerMetricName; value: number; tags?: Record<string, string> }> =
-    [];
+/** Real catalog-validating telemetry; `stored()` flushes and returns what would be written. */
+function catalogTelemetry(): { telemetry: ServerTelemetry; stored: () => TelemetryEventRecord[] } {
+  const records: TelemetryEventRecord[] = [];
+  const telemetry = new ServerTelemetry({ write: (_origin, batch) => records.push(...batch) });
   return {
-    collector: {
-      record(metric, value, tags) {
-        records.push({ metric, value, tags });
-      },
+    telemetry,
+    stored: () => {
+      telemetry.flush();
+      return records;
     },
-    records,
   };
 }
 
@@ -692,13 +687,10 @@ describe("DictationManager", () => {
       });
     });
 
-    it("records server-side first audio, first result, and update count metrics", async () => {
-      const metrics = mockMetrics();
+    it("records first audio, first result, and one finalize event per take", async () => {
+      const { telemetry, stored } = catalogTelemetry();
       const metricProvider = mockSttProvider(["hello", "world"]);
-      const mgr = new DictationManager(
-        metricProvider,
-        metrics.collector as unknown as ServerMetricCollector,
-      );
+      const mgr = new DictationManager(metricProvider, telemetry);
       const mgrSent: DictationServerMessage[] = [];
 
       mgr.handleControlMessage({ type: "dictation_start" }, (msg) => mgrSent.push(msg));
@@ -709,15 +701,27 @@ describe("DictationManager", () => {
       mgr.handleControlMessage({ type: "dictation_stop" }, (msg) => mgrSent.push(msg));
       await drain();
 
-      expect(metrics.records.some((r) => r.metric === "server.dictation_first_audio_ms")).toBe(
-        true,
-      );
-      expect(metrics.records).toContainEqual(
-        expect.objectContaining({ metric: "server.dictation_first_result_audio_ms", value: 500 }),
-      );
-      expect(metrics.records).toContainEqual(
-        expect.objectContaining({ metric: "server.dictation_result_updates", value: 2 }),
-      );
+      const sttTags = { stt_provider: "stt_mock", stt_backend: "mock", stt_model: "mock-model" };
+      const records = stored();
+      expect(records.map((record) => record.name)).toEqual([
+        "server.dictation_first_audio",
+        "server.dictation_first_result",
+        "server.dictation_finalize",
+      ]);
+      expect(records[0]?.tags).toEqual(sttTags);
+      expect(records[1]?.fields.audio_ms).toBe(500);
+      expect(records[2]).toMatchObject({
+        fields: { audio_duration_ms: 500, result_updates: 2 },
+        tags: { ...sttTags, status: "ok", result: "transcribed" },
+      });
+      expect(Object.keys(records[2]?.fields ?? {}).sort()).toEqual([
+        "audio_duration_ms",
+        "finalize_ms",
+        "result_updates",
+        "session_ms",
+        "stt_audio_ratio",
+        "stt_ms",
+      ]);
     });
 
     it("ignores audio data before dictation_start", () => {

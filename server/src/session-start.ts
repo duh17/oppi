@@ -18,7 +18,7 @@ import {
   createRuntimeSessionStateScaffold,
   type RuntimeSessionStateScaffold,
 } from "./session-runtime-state.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
@@ -53,7 +53,7 @@ export interface SessionStartCoordinatorDeps {
   bootstrapSessionState: (key: string) => Promise<void>;
   /** True once the owning SessionManager is closed for server shutdown. */
   isClosed?: () => boolean;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
   durableHarness: Promise<DurableHarness>;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
   hasUI?: (key: string) => boolean;
@@ -154,7 +154,11 @@ export class SessionStartCoordinator {
                     ? { liveVoiceExtension: this.deps.liveVoiceExtension }
                     : {}),
                 });
-          this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
+          this.deps.metrics?.record(
+            "server.session_create",
+            { duration_ms: Date.now() - createStart },
+            {},
+          );
 
           // Shutdown already ran stopAll() and cannot see this runtime. Drop it
           // without registering or persisting: after an in-process update

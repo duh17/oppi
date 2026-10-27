@@ -105,15 +105,15 @@ describe("agent schedule runner", () => {
       },
       500,
     );
-    const samples: Array<{ metric: string; value: number; tags?: Record<string, string> }> = [];
+    const samples: Array<{ name: string; fields: unknown; tags?: Record<string, string> }> = [];
     const runner = new AgentScheduleRunner({
       storage: storage(),
       sessions: { startSession, sendPrompt },
       ensureSessionContextWindow: (session) => session,
       nowMs: () => 2_000,
       metrics: {
-        record(metric: string, value: number, tags?: Record<string, string>) {
-          samples.push({ metric, value, tags });
+        record(name: string, fields: unknown, tags?: Record<string, string>) {
+          samples.push({ name, fields, tags });
         },
       } as never,
     });
@@ -123,9 +123,9 @@ describe("agent schedule runner", () => {
 
     expect(samples).toEqual([
       {
-        metric: "server.schedule_run_ms",
-        value: 0,
-        tags: { status: "completed", kind: "due" },
+        name: "server.schedule_run",
+        fields: { duration_ms: 0 },
+        tags: { status: "ok", run_kind: "due" },
       },
     ]);
     expect(startSession).toHaveBeenCalledTimes(1);

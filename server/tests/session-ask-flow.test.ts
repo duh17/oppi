@@ -11,7 +11,7 @@ import {
   settleExtensionUIRequest,
   type ExtensionUIRequest,
 } from "../src/extension-ui-state.js";
-import type { ServerMetricCollector } from "../src/server-metric-collector.js";
+import type { ServerTelemetry } from "../src/telemetry/server-telemetry.js";
 import type { SdkBackend } from "../src/sdk-backend.js";
 import type { Session } from "../src/types.js";
 
@@ -219,7 +219,7 @@ describe("direct ask flow", () => {
       active,
       { type: "extension_ui_response", id: "ask-sync-settle", value: "{}" },
       {
-        metrics: { record } as unknown as ServerMetricCollector,
+        metrics: { record } as unknown as ServerTelemetry,
         now: () => now,
         deliver: (payload) => {
           settleExtensionUIRequest(active, payload.id, {});
@@ -231,11 +231,12 @@ describe("direct ask flow", () => {
     expect(handled).toBe(true);
     expect(active.pendingAsk).toBeUndefined();
     expect(record).toHaveBeenCalledTimes(1);
-    expect(record).toHaveBeenCalledWith("server.ask_round_trip_ms", 3_500, {
-      sessionId: active.session.id,
-      cancelled: "false",
-      questionCount: "1",
-    });
+    expect(record).toHaveBeenCalledWith(
+      "server.ask_round_trip",
+      { duration_ms: 3_500, questions: 1 },
+      { status: "ok" },
+      { sessionId: active.session.id },
+    );
   });
 
   it("keeps a pending request when response delivery fails", () => {

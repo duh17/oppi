@@ -1,9 +1,11 @@
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { EventTags } from "./telemetry/catalog.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 
 export type ScheduleRunMetricKind = "due" | "manual";
-export type ScheduleRunMetricStatus = "completed" | "failed";
+export type ScheduleRunMetricStatus = "ok" | "error";
+type ScheduleRunFailureReason = NonNullable<EventTags<"server.schedule_run">["reason"]>;
 
-const SCHEDULE_RUN_REASONS = new Set(["lease_lost", "not_found", "launch_in_progress"]);
+const SCHEDULE_RUN_REASONS = new Set<string>(["lease_lost", "not_found", "launch_in_progress"]);
 
 /** Dispatch failure whose metric reason is a code, not the user-facing message. */
 export class ScheduleDispatchError extends Error {
@@ -22,9 +24,9 @@ function failureCode(error: unknown): string | undefined {
 }
 
 /** Bounded failure class. Never the raw error text. */
-export function scheduleRunFailureReason(error: unknown): string {
+export function scheduleRunFailureReason(error: unknown): ScheduleRunFailureReason {
   const code = failureCode(error);
-  if (code && SCHEDULE_RUN_REASONS.has(code)) return code;
+  if (code && SCHEDULE_RUN_REASONS.has(code)) return code as ScheduleRunFailureReason;
   // A typed code that is not a schedule reason, including prompt failures, stays other.
   if (code) return "other";
 
@@ -49,7 +51,7 @@ export function scheduleRunFailureReason(error: unknown): string {
 
 /** Dispatch outcome for a schedule run. Duration is wall time around dispatch. */
 export function recordScheduleRun(
-  metrics: ServerMetricCollector | undefined,
+  metrics: ServerTelemetry | undefined,
   input: {
     startedAt: number;
     now: number;
@@ -58,14 +60,13 @@ export function recordScheduleRun(
     error?: unknown;
   },
 ): void {
-  const tags: Record<string, string> = {
-    status: input.status,
-    kind: input.kind,
-  };
-  if (input.status === "failed") tags.reason = scheduleRunFailureReason(input.error);
   metrics?.record(
-    "server.schedule_run_ms",
-    Math.max(0, Math.round(input.now - input.startedAt)),
-    tags,
+    "server.schedule_run",
+    { duration_ms: Math.max(0, Math.round(input.now - input.startedAt)) },
+    {
+      status: input.status,
+      run_kind: input.kind,
+      ...(input.status === "error" ? { reason: scheduleRunFailureReason(input.error) } : {}),
+    },
   );
 }

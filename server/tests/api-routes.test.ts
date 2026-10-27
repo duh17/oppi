@@ -32,7 +32,6 @@ const ROUTES = {
   wsQuickActionSelection: /^\/workspaces\/([^/]+)\/quick-actions\/selection$/,
   wsQuickActionSession: /^\/workspaces\/([^/]+)\/quick-actions\/session$/,
   telemetryMetricKit: /^\/telemetry\/metrickit$/,
-  telemetryChatMetrics: /^\/telemetry\/chat-metrics$/,
 };
 
 describe("Workspace-scoped API routes", () => {
@@ -187,7 +186,4 @@ describe("Workspace-scoped API routes", () => {
     expect("/telemetry/metrickit".match(ROUTES.telemetryMetricKit)).toBeTruthy();
   });
 
-  it("matches telemetry chat metrics route", () => {
-    expect("/telemetry/chat-metrics".match(ROUTES.telemetryChatMetrics)).toBeTruthy();
-  });
 });

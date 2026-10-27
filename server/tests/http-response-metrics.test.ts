@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  httpOpsMetricSamples,
+  httpRequestEvent,
   observeHttpResponseBody,
   shouldRecordHttpRequestMetric,
 } from "../src/http-request-metrics.js";
@@ -36,56 +36,43 @@ function fakeResponse(init?: {
 }
 
 describe("http response metrics", () => {
-  it("uses one gating decision and the same tags for duration and bytes", () => {
-    const gated = httpOpsMetricSamples({
+  it("gates fast routine routes and records duration and bytes as one event", () => {
+    const gated = httpRequestEvent({
       method: "GET",
       pathPattern: "/health",
       statusCode: 200,
       durationMs: 1,
       responseBytes: 12,
     });
-    expect(gated).toEqual([]);
+    expect(gated).toBeUndefined();
     expect(shouldRecordHttpRequestMetric("/health", 200, 1)).toBe(false);
 
-    const recorded = httpOpsMetricSamples({
+    const recorded = httpRequestEvent({
       method: "GET",
       pathPattern: "/sessions/:sessionId/trace",
       statusCode: 200,
       durationMs: 4,
       responseBytes: 18,
     });
-    expect(recorded).toEqual([
-      {
-        metric: "server.http_request_ms",
-        value: 4,
-        tags: {
-          method: "GET",
-          path_pattern: "/sessions/:sessionId/trace",
-          status_code: "200",
-        },
+    expect(recorded).toEqual({
+      fields: { duration_ms: 4, response_bytes: 18 },
+      tags: {
+        method: "GET",
+        path_pattern: "/sessions/:sessionId/trace",
+        status_code: "200",
       },
-      {
-        metric: "server.http_response_bytes",
-        value: 18,
-        tags: {
-          method: "GET",
-          path_pattern: "/sessions/:sessionId/trace",
-          status_code: "200",
-        },
-      },
-    ]);
-    expect(recorded[0]?.tags).toBe(recorded[1]?.tags);
+    });
   });
 
   it("omits bytes when the count would be garbage, and still records duration", () => {
-    const samples = httpOpsMetricSamples({
+    const event = httpRequestEvent({
       method: "GET",
       pathPattern: "/sessions/:id",
       statusCode: 101,
       durationMs: 3,
       responseBytes: undefined,
     });
-    expect(samples.map((sample) => sample.metric)).toEqual(["server.http_request_ms"]);
+    expect(event?.fields).toEqual({ duration_ms: 3 });
   });
 
   it("counts bytes actually written, not Content-Length", () => {

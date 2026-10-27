@@ -2,14 +2,14 @@
 
 Oppi records diagnostics to answer one question: **does the app feel fast, reliable, and safe while someone supervises a Pi session from Apple clients?**
 
-This page is the in-repo source of truth for available telemetry, its gates and storage, and the metrics that matter to user experience. It is not part of the public user docs.
+This page explains the telemetry, its gates and storage, and the events that matter to user experience. It is not part of the public user docs. Every event itself (name, fields and units, tags, emit policy, storage, group, SLO) is declared once in the telemetry catalog, `server/src/telemetry/catalog.ts`; see [Telemetry catalog](#telemetry-catalog).
 
 ## Scope
 
 This page covers:
 
-- Apple client diagnostics: MetricKit payloads, chat/runtime metrics, device resource samples, and redacted client logs.
-- Server diagnostics: operational metrics, resource samples, and review commands.
+- Apple client diagnostics: MetricKit payloads, app events (UX, rendering, dictation, device), and redacted client logs.
+- Server diagnostics: server events (operations and resource samples) and review commands.
 - Privacy gates and storage paths.
 - The small set of experience metrics that belong on release and quality dashboards.
 
@@ -83,130 +83,192 @@ Allowed diagnostic data:
 
 ## Upload channels
 
-| Channel                 | Endpoint                       | Stored at                                                                   | Purpose                                                                                             |
-| ----------------------- | ------------------------------ | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Chat metrics            | `POST /telemetry/chat-metrics` | `<OPPI_DATA_DIR>/diagnostics/telemetry/chat-metrics-YYYY-MM-DD.jsonl`       | Client UX, rendering, queueing, dictation, and device metrics.                                      |
-| MetricKit               | `POST /telemetry/metrickit`    | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl`          | Apple crash, hang, CPU, disk, battery, and app-launch diagnostics with bounded correlation context. |
-| Client logs             | `POST /telemetry/client-logs`  | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl`        | Redacted warning/error events plus selected lifecycle, recovery, network, memory, and navigation info logs. |
-| Server resource metrics | local JSONL writer             | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-metrics-YYYY-MM-DD.jsonl`     | Server CPU, memory, event loop, sessions, and WebSocket counts, plus host or container CPU, memory, and disk. |
-| Server ops metrics      | local JSONL writer             | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-ops-metrics-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, extension UI, dictation, retry, and compaction metrics.            |
-| Server log              | local JSONL/text log           | `<OPPI_DATA_DIR>/server.log`                                                | Structured server events and warnings.                                                              |
+| Channel       | Endpoint                      | Stored at                                                              | Purpose                                                                                                      |
+| ------------- | ----------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| App events    | `POST /telemetry/events`      | `<OPPI_DATA_DIR>/diagnostics/telemetry/app-events-YYYY-MM-DD.jsonl`    | Client UX, rendering, connection, queueing, dictation, media, and device events.                             |
+| MetricKit     | `POST /telemetry/metrickit`   | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl`     | Apple crash, hang, CPU, disk, battery, and app-launch diagnostics with bounded correlation context.          |
+| Client logs   | `POST /telemetry/client-logs` | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl`   | Redacted warning/error events plus selected lifecycle, recovery, network, memory, and navigation info logs.  |
+| Server events | local writer                  | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-events-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, tool, HTTP, push, MCP, schedule, and dictation events, and resource samples. |
+| Server log    | local JSONL/text log          | `<OPPI_DATA_DIR>/server.log`                                           | Structured server events and warnings.                                                                       |
+
+All three uploads carry the same `client` envelope: `{ kind: "ios" | "mac", appVersion?, buildNumber?, gitCommit?, osVersion?, deviceModel?, appInstanceId?, bootId? }`. `deviceModel` is the hardware identifier (`iPhone17,1`). An upload without a valid `client.kind` is refused with HTTP 400. MetricKit and client-log files keep their pre-envelope stored shape (client fields at the top level of each line).
+
+Daily files are named by the server's UTC write date; readers filter by each record's `ts`.
 
 Retention defaults:
 
-| Data                    | Default retention | Environment override                     |
-| ----------------------- | ----------------: | ---------------------------------------- |
-| MetricKit               |           14 days | `OPPI_METRICKIT_RETENTION_DAYS`          |
-| Chat metrics            |           14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS`       |
-| Client logs             |           14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS`       |
-| Server resource metrics |           30 days | `OPPI_SERVER_METRICS_RETENTION_DAYS`     |
-| Server ops metrics      |           30 days | `OPPI_SERVER_OPS_METRICS_RETENTION_DAYS` |
+| Data          | Default retention | Environment override                 |
+| ------------- | ----------------: | ------------------------------------ |
+| MetricKit     |           14 days | `OPPI_METRICKIT_RETENTION_DAYS`      |
+| App events    |           14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS`   |
+| Client logs   |           14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS`   |
+| Server events |           30 days | `OPPI_SERVER_METRICS_RETENTION_DAYS` |
+
+Daily byte caps (unset means no cap): `OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES` for each uploaded file, `OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES` for server events. Pre-catalog files (`chat-metrics-*`, `server-ops-metrics-*`, `server-metrics-*`) are no longer written or read; the retention pass prunes them on their successor's retention so they age out.
 
 ## Server resource sampling and the Server Metrics page
 
-`ServerResourceSampler` runs only while server config `serverMetrics.enabled` is true. It is opt-in (default false): off runs no timer, no event-loop histogram, no host reads, and writes no files, so Server Health's resource panels and the `server.event_loop_max_ms` release-gate input are empty until an operator turns it on. On, one sample costs about 1 ms (0.7 ms Node CPU on mac-studio including the `vm_stat` spawn wait, 0.4 ms in a Docker container). The process latches the switch at startup; a later config reload does not change it. The app's Server Settings toggle (`PUT /server/metrics/settings`) persists the switch and starts or stops sampling live; `oppi config set serverMetrics.enabled` needs a restart. Off also stops the `server.event_ring_utilization` ops samples the sampler emits.
+`ServerResourceSampler` runs only while server config `serverMetrics.enabled` is true. It is opt-in (default false): off runs no timer, no event-loop histogram, no host reads, and writes no samples, so Server Health's resource panels and the `server.resources.event_loop_max_ms` release-gate input are empty until an operator turns it on. On, one sample costs about 1 ms (0.7 ms Node CPU on mac-studio including the `vm_stat` spawn wait, 0.4 ms in a Docker container). The process latches the switch at startup; a later config reload does not change it. The app's Server Settings toggle (`PUT /server/metrics/settings`) persists the switch and starts or stops sampling live; `oppi config set serverMetrics.enabled` needs a restart.
+
+Each sample is one `server.resources` event, written at once (not buffered) to `server-events-*.jsonl`: process CPU (`cpu_total_pct`, share of one core, can exceed 100), memory in MB, session counts and the interval peak, WebSocket connections, event-loop delay p50/p95/p99/max for the interval, and `event_ring_peak_ratio` (the fullest session event ring, absent when no session holds one).
 
 Each sample adds a `host` block (`host-resource-probe.ts`) in MB and percent: `scope` (`host` or `container`), `cpu` (busy share of `cpuCores`, 0–100), `cpuCores`, `load1` (hosts only), `memUsed`/`memTotal`, `diskUsed`/`diskTotal`. A host reads macOS memory from `vm_stat` (anonymous − purgeable + wired + compressed pages, Activity Monitor's Memory Used) and Linux memory as `MemTotal − MemAvailable`; CPU comes from `os.cpus()` times. A Linux process is a container when `/.dockerenv`, `/run/.containerenv`, `$container`, or `$KUBERNETES_SERVICE_HOST` exists; it then reads its cgroup (v2, else v1) like `docker stats`: memory is usage minus inactive file cache against `memory.max` (machine memory when unlimited), CPU is usage against the `cpu.max` quota (else `availableParallelism()`). A container whose cgroup cannot be read omits CPU and memory rather than reporting the machine. Disk is `statfs` on the data directory, used = total − available to the user. A failed read is omitted, never estimated. Process `cpu.total` stays a share of one core and can exceed 100.
 
-`GET /server/metrics?range=1h|24h|7d|30d` returns the latest sample and columnar avg/max series bucketed from the raw daily files (`server-metrics-history.ts`): 1-minute, 5-minute, 30-minute, and 2-hour buckets. There are no derived files. Measured on mac-studio: ~420 B per sample (~1.2 MB/day); 30 days is ~86k samples and parses in ~90 ms, one day file at a time. The app refreshes 1h and 24h every 30 s and the longer ranges on pull. Grafana's importer ignores the `host` block.
+In the event the host block becomes `host_cpu_pct`, `host_cpu_cores`, `host_cpu_limited`, `host_load1`, `host_mem_used_mb`, `host_mem_total_mb`, `host_mem_limited`, `host_disk_used_mb`, and `host_disk_total_mb`; an omitted reading is an absent field.
 
-## Metric taxonomy
+`GET /server/metrics?range=1h|24h|7d|30d` returns the latest sample and columnar avg/max series bucketed from the `server.resources` events in the daily server event files (`server-metrics-history.ts`): 1-minute, 5-minute, 30-minute, and 2-hour buckets. The response shape is the pre-catalog one. There are no derived files. A sample line is ~680 B (~2 MB/day at one sample per 30 s); reading 30 days with three other server events per sample takes ~280 ms on mac-studio, one day file at a time, skipping other events before parsing. The app refreshes 1h and 24h every 30 s and the longer ranges on pull.
 
-Use this split when reading dashboards or telemetry reviews:
+## Telemetry catalog
 
-| Category                    | Meaning                                                             | Examples                                                                                                                                                       | How to read it                                                                                                                                                                                                                                                                              |
-| --------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| UX responsiveness           | The user is waiting for the app, stream, or media to become usable. | `chat.ttft_ms`, `chat.session_load_ms`, `chat.ws_wait_for_connected_ms`, `chat.media_playback_start_ms`                                                        | High values are user-visible latency. These belong on the front page and can have SLOs.                                                                                                                                                                                                     |
-| Reliability counters        | A user action, stream, or render path failed or recovered.          | `chat.message_queue_stale_drop`, `server.mcp_connect_ms`, `server.schedule_run_ms`, client logs                                                                | Split by `status` and `reason`. A connected MCP sample or completed schedule run is not a failure.                                                                                                                                                                                          |
-| Agent workload and progress | The agent is actively doing work.                                   | `server.turn_duration_ms`, `server.turn_tool_calls`, `server.tool_duration_ms`, `server.tool_result`, `server.turn_input_tokens`, `chat.session_files_changed` | Long values are not automatically bad. Correlate with progress, tokens, tools, file changes, errors, and TTFT before calling it a stall. `npm run telemetry:review -- --models` compares exact provider/model and model+tool latency. Operational success is not accepted-task correctness. |
-| Resource health             | Local client/server pressure that can make UX worse.                | `device.memory_mb`, `server.heap_mb`, `server.event_loop_lag_ms`                                                                                               | Diagnose capacity or leaks; do not confuse with agent productivity.                                                                                                                                                                                                                         |
-| Drill-down internals        | Mechanical sub-steps used to explain a front-page metric.           | `chat.queue_sync_ms`, `server.session_subscribe_ms`, `server.http_response_bytes`                                                                              | Keep available, but do not let them define product health by themselves. Response bytes share the HTTP request gate.                                                                                                                                                                        |
+`server/src/telemetry/catalog.ts` declares every event once. It is pure data plus types. Everything else derives from it or is checked against it:
 
-`server.turn_duration_ms` is workload telemetry. It measures the full wall-clock duration of an agent turn. A long turn can mean the agent is handling a large task, running tools, editing files, waiting on tests, or processing a large context. Treat it as a problem only when it combines with missing progress signals, high first-token latency, stuck tool calls, errors, blocked asks, or disconnected clients.
+| Consumer | How it uses the catalog |
+| --- | --- |
+| `POST /telemetry/events` (`routes/telemetry.ts`) | Validates each uploaded event's name, origin, fields and units, tag keys and values, and emit policy (`telemetry/validate.ts`); drops failing events and returns counts by reason. |
+| Server emitters | `ServerTelemetry.record(name, fields, tags, ids?)` takes its types from the catalog, so an unknown event, field, tag, or enum value does not compile. Runtime validation repeats the check. |
+| Server collector (`telemetry/server-telemetry.ts`) | Folds events whose `storage.aggregate` is set into one record per tag set, session, and workspace per 60 s flush window (sum or max per field). |
+| iOS | `server/scripts/generate-telemetry-catalog.ts` writes `clients/apple/Oppi/Core/Telemetry/TelemetryCatalog.generated.swift`: one struct per `app.*` event with typed fields and tag enums, the emit policy, bucketing helpers, `name`-tag sanitizing, and the upload wire types. Never edit it by hand. |
+| `npm run telemetry:review` | Reads groups, units, and SLOs; each event field is one series named `<event>.<field>`. |
+| `npm run check` | `server/scripts/check-telemetry.ts` enforces the catalog invariants below and fails while the generated Swift is stale. |
 
-Turn and tool ops metrics carry a bounded `runtime` tag: `oppi` (classic SDK), `durable` (live durable engine: `serverDurable` and no Pi session file), or `pi-tui` (terminal mirror). They also carry the exact session-configured `provider` and `model` route when the session already has a canonical `provider/modelId`. A bounded `thinking` tag records the session-configured reasoning level when it is one of Pi's known levels. Provider fallback or per-response reasoning changes can differ from those configured-route tags. Per-tool `server.tool_duration_ms` and `server.tool_result` pair concurrent calls by `toolCallId`. An end event without a matching start records a result without duration; starts without an end are discarded at turn end. These samples never include tool arguments, output, or file paths. Use `npm run telemetry:review -- --models` to compare observed TTFT, turn and tool latency, call frequency, token use, total observed cost/output divided by tool starts, and mechanical error rates. The cost/output ratios are route-level efficiency indicators across all observed turns, not costs attributable to individual tools. Historical samples without provider/model or runtime tags stay in an explicit untagged bucket. `npm run telemetry:review -- --models` includes the runtime breakdown. A `status=ok` tool result means the tool finished without a mechanical error; it does not mean the agent completed the accepted task correctly.
+### Naming and units
 
-## Experience metrics that belong on the front page
+- Event names are `<origin>.<snake_case>`: `app.*` from the Apple client (the envelope's `client.kind` says iOS or Mac), `server.*` from the server.
+- One logical event is one record. Values measured together are fields of one event (`server.http_request {duration_ms, response_bytes}`), not sibling samples.
+- Field units: `ms`, `count`, `bytes`, `mb`, `pct` (0–100), `ratio` (0–1), `usd_micros`, `bool` (0 or 1). Field names end with the unit suffix (`_ms`, `_bytes`, `_mb`, `_pct`, `_ratio`, `_usd_micros`); `count` and `bool` fields have none. A field may be optional (a phase that did not run); an absent field is never written as 0.
+- Numbers are never tags: counts and sizes are fields. IDs are never tags: `sessionId` and `workspaceId` are record fields.
+- `emit` rules drop an event whose field is outside `[min, max)`, optionally only when its tags match. The generated Swift applies them before recording; ingest applies them again.
+- `slo` sets a TM99 threshold on one field, optionally only over events whose tags match (`where`), for example `app.trace_fetch.duration_ms` over `status=ok`. Rendering SLOs use the 120 Hz frame budget (8.3 ms).
+- Removed events are deleted from the catalog, not retired.
 
-The front page should focus on metrics that directly map to user experience. Keep low-level counters available for drill-down, but do not let them define the product health story.
+### Tag vocabulary
+
+Each tag key has exactly one meaning and one kind, declared in the catalog's `TAGS` table with its description:
+
+- `enum`: a closed value list; an event may narrow it to a subset (the generated Swift gets a nested enum for that event).
+- `bucket`: named size classes with shared edges (`output_size`, `input_size`: `under_1kb` … `over_200kb`); the generated Swift buckets the measured value.
+- `name`: an open but bounded identifier (tool, model, provider, command, screen, route pattern, …) of 1 to 128 ASCII letters, digits, and `._/:@-`; anything else is stored as `unknown`.
+
+Shared meanings:
+
+| Key | Meaning |
+| --- | --- |
+| `status` | Mechanical outcome of the measured operation: `ok`, `error`, `cancelled`, `timeout`. Success is always `ok`. |
+| `result` | Event-specific domain outcome (catch-up taxonomy, push delivery, ask answered/empty/ignored, WebSocket wait, compaction `will_retry`, …), narrowed per event. |
+| `reason` | Why the event happened (freshness source, reconnect cause, session end, schedule failure, …), narrowed per event. |
+| `error_kind` | One coarse error vocabulary for every event, narrowed per event. Never a platform type name, error text, or code. |
+| `phase` | Step of the operation in which the event happened, narrowed per event. |
+| `stream` | Server WebSocket stream: `session`, `dictation`, `app_events`. |
+| `transport` | Client connection transport: `paired`, `lan`, `unix`, or `local` (on-device, no server). |
+| `provider`, `model`, `thinking`, `runtime` | The session-configured LLM route and runtime on server workload events. |
+
+Keys that used to carry two meanings are split, and `check-telemetry.ts` refuses the old keys: server WebSocket `path` → `stream`; device `stream` → `stream_state`; `level` → `stream` (it always matched the stream); AVAudioSession `mode`/`category` → `audio_mode`/`audio_category`; STT `model`/`provider_id` → `stt_model`/`stt_provider`; turn error `category` → `error_kind`; load `path` → `load_path`; voice model `path` → `model_path`; `source` → `trigger`, `playback_source`, `load_source`, or `origin_surface`; command `outcome`, subscribe `outcome`, and resolve-lag `success` → `status`; network `failReason` → `error_kind`; push `event` → `notification`; schedule `kind` → `run_kind`; media `kind` → `media_kind`; message `type` → `message_type`; close `code` → `close_code`. The raw server `host` is never a tag.
+
+### Wire format and storage
+
+An events upload is `{ generatedAt, client, events: [{ ts, name, fields, tags?, sessionId?, workspaceId? }] }`, at most 500 events; extra events are dropped as `over_batch_limit`. The response is `{ ok: true, accepted, dropped: { <reason>: count } }`; drop reasons are `malformed`, `invalid_timestamp`, `over_batch_limit`, `unknown_event`, `wrong_origin`, `missing_field`, `unknown_field`, `invalid_field_value`, `missing_tag`, `unknown_tag`, `invalid_tag_value`, and `emit_policy`. A dropped event cannot succeed on retry. `protocol/telemetry-events-upload.json` is a golden upload encoded by the generated Swift; the server ingest test requires every event in it to be accepted.
+
+Each stored event, from either origin, is one JSONL line:
+
+```json
+{ "v": 2, "ts": 1793000000000, "origin": "app", "name": "app.session_load",
+  "fields": { "duration_ms": 412, "items": 87 }, "tags": { "load_path": "cache_hit" },
+  "sessionId": "…", "workspaceId": "…", "client": { "kind": "ios", "buildNumber": "412", … } }
+```
+
+App events carry `client`; server events do not. An aggregated server record carries the window's sum or max in `fields` and the last event's `ts`; its count of events is not stored, so a catalog event that needs one declares a count field (`server.ws_message_sent.messages`).
+
+## Event taxonomy
+
+Use this split when reading dashboards or telemetry reviews. The catalog `group` of each event places it in a review group (UX Responsiveness, Connection Reliability, Rendering Smoothness, Attention and Media UX, Dictation UX, Dictation Backend, Session List, Device, Server, Agent Workload, Server Operations).
+
+| Category | Meaning | Examples | How to read it |
+| --- | --- | --- | --- |
+| UX responsiveness | The user is waiting for the app, stream, or media to become usable. | `app.ttft`, `app.session_load`, `app.ws_wait`, `app.media_playback_start` | High values are user-visible latency. These belong on the front page and can have SLOs. |
+| Reliability | A user action, stream, or render path failed or recovered. | `app.message_queue_stale_drop`, `server.mcp_connect`, `server.schedule_run`, client logs | Split by `status`, `reason`, and `error_kind`. |
+| Agent workload and progress | The agent is actively doing work. | `server.turn`, `server.tool_call`, `server.turn_usage`, `app.session_usage` | Long values are not automatically bad. Correlate with progress, tokens, tools, file changes, errors, and TTFT before calling it a stall. `npm run telemetry:review -- --models` compares exact provider/model and model+tool latency. Operational success is not accepted-task correctness. |
+| Resource health | Local client/server pressure that can make UX worse. | `app.device_resources`, `app.memory_warning`, `server.resources` | Diagnose capacity or leaks; do not confuse with agent productivity. |
+| Drill-down internals | Mechanical sub-steps used to explain a front-page event. | `app.queue_sync`, `server.session_subscribe`, `server.http_request` | Keep available, but do not let them define product health by themselves. |
+
+`server.turn.duration_ms` is workload telemetry. It measures the full wall-clock duration of an agent turn. A long turn can mean the agent is handling a large task, running tools, editing files, waiting on tests, or processing a large context. Treat it as a problem only when it combines with missing progress signals, high first-token latency, stuck tool calls, errors, blocked asks, or disconnected clients.
+
+Turn and tool events carry a required `runtime` tag: `oppi` (classic SDK), `durable` (live durable engine: `serverDurable` and no Pi session file), or `pi-tui` (terminal mirror). They also carry the exact session-configured `provider` and `model` route when the session already has a canonical `provider/modelId`, and `thinking` when the configured reasoning level is one of Pi's known levels. Provider fallback or per-response reasoning changes can differ from those configured-route tags. `server.tool_call` pairs concurrent calls by `toolCallId`; an end without a matching start records the call without `duration_ms`, and starts without an end are discarded at turn end. A failed turn is `server.turn` with `status=error` and an `error_kind`. These events never include tool arguments, output, or file paths. `npm run telemetry:review -- --models` compares observed TTFT, turn and tool latency, call frequency, token use, total observed cost/output divided by tool calls, and mechanical error rates; the cost/output ratios are route-level efficiency indicators, not costs attributable to individual tools. A `status=ok` tool call means the tool finished without a mechanical error; it does not mean the agent completed the accepted task correctly.
+
+## Experience events that belong on the front page
+
+The front page should focus on events that directly map to user experience. Keep low-level events available for drill-down, but do not let them define the product health story. Series are `<event>.<field>`; the catalog holds each SLO.
 
 ### App and session responsiveness
 
-| Metric                      | Why it matters                                                   |
-| --------------------------- | ---------------------------------------------------------------- |
-| MetricKit app launch        | Daily time-to-first-draw and resume histograms; the client has no per-launch metric. |
-| `chat.workspace_load_ms`    | Time until the workspace screen is usable.                       |
-| `chat.session_load_ms`      | Time from selecting a session to chat content visible.           |
-| `chat.session_switch_ms`    | Session row tap-to-content latency.                              |
-| `chat.thread_load_ms`       | Time from opening a thread until its snapshot is applied.        |
-| `chat.ttft_ms`              | User-perceived time to first assistant response token.           |
-| `chat.fresh_content_lag_ms` | Delay between new stream content and visible timeline freshness. |
+| Event | Why it matters |
+| --- | --- |
+| MetricKit app launch | Daily time-to-first-draw and resume histograms; the client has no per-launch event. |
+| `app.workspace_load` | Time until the workspace screen is usable. |
+| `app.session_load` | Time from selecting a session to chat content visible. |
+| `app.session_switch` | Session row tap-to-content latency. |
+| `app.thread_load` | Time from opening a thread until its snapshot is applied. |
+| `app.ttft` | User-perceived time to first assistant response token. |
+| `app.fresh_content_lag` | Delay between new stream content and visible timeline freshness. |
 
 ### Connection and queue reliability
 
-| Metric or source                                      | Why it matters                                                                                    |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `chat.ws_wait_for_connected_ms`                       | Client wait before commands can use the focused session stream.                                   |
-| `server.ws_handshake_ms`                              | Server-side WebSocket upgrade latency.                                                            |
-| `server.session_subscribe_ms`                         | Server session subscribe/catch-up path latency.                                                   |
-| `chat.queue_sync_ms`                                  | Time to refresh queued steer/follow-up state.                                                     |
-| `chat.message_queue_ack_ms`                           | Time from a busy send to server acknowledgement. `intent` is the composer's steer or follow_up; a turn that already ended prompts it normally. |
-| `chat.message_queue_stale_drop`                       | User input was dropped because the client had stale session state.                                |
-| `chat.app_event_stream_connect_ms`                    | Time until global app updates, attention cards, and session list events are live.                 |
-| `chat.app_event_stream_reconnect`                     | Global app-event stream reconnect attempts and exhaustion.                                        |
-| `chat.app_event_stream_decode_error`                  | Global app-event stream payload/schema failures.                                                  |
-| `server.ws_ping_timeout`                              | Dead connection detection.                                                                        |
+| Event or source | Why it matters |
+| --- | --- |
+| `app.ws_wait` | Client wait before commands can use the focused session stream; `result` says whether it was already connected, connected, or timed out. |
+| `server.ws_handshake` | Server-side WebSocket upgrade latency, by `stream`. |
+| `server.session_subscribe` | Server session subscribe/catch-up path latency. |
+| `app.queue_sync` | Time to refresh queued steer/follow-up state. |
+| `app.message_queue_ack` | Time from a busy send to server acknowledgement. `intent` is the composer's steer or follow_up; a turn that already ended prompts it normally. |
+| `app.message_queue_stale_drop` | User input was dropped because the client had stale session state. |
+| `app.app_event_stream_connect` | Time until global app updates, attention cards, and session list events are live. |
+| `app.app_event_stream_reconnect` | Global app-event stream reconnects, by reason. |
+| `app.app_event_stream_decode_error` | Global app-event stream payload/schema failures. |
+| `server.ws_ping_timeout` | Dead connection detection. |
 | Client logs: `WebSocket`, `AppEventStream`, `Network` | Reconnect storms, HTTP 1011s, POSIX disconnects, endpoint changes, and app-event stream failures. |
 
 ### Attention and media interactions
 
-| Metric                         | Why it matters                                                                         |
-| ------------------------------ | -------------------------------------------------------------------------------------- |
-| `chat.ask_response_ms`         | How long the visible ask card blocked the agent before answer or ignore.               |
-| `chat.media_playback_start_ms` | Time from player setup to playable video or audio. Inline Markdown video sets up the player on the play tap, so it measures tap to ready. |
-| `chat.media_playback_error`    | User-visible media preview/player failures by media kind and phase.                    |
-| `chat.voice_playback_start_ms` | Startup latency for voice replies and replayable voice media, by source and mode.      |
-| `chat.voice_playback_error`    | Voice playback failures by source and phase.                                           |
-| Client logs: `MediaPlayback`   | Playback/source failures with privacy-safe kind, source, phase, mode, and error class. |
+| Event | Why it matters |
+| --- | --- |
+| `app.ask_response` | How long the visible ask card blocked the agent before answer or ignore. |
+| `app.media_playback_start` | Time from player setup to playable video or audio. Inline Markdown video sets up the player on the play tap, so it measures tap to ready. |
+| `app.media_playback_error` | User-visible media preview/player failures by media kind and phase. |
+| `app.voice_playback_start` | Startup latency for voice replies and replayable voice media, by source and mode. |
+| `app.voice_playback_error` | Voice playback failures by source and phase. |
+| Client logs: `MediaPlayback` | Playback/source failures with privacy-safe kind, source, phase, mode, and error class. |
 
 ### Timeline rendering and scrolling
 
-| Metric                       | Why it matters                                         |
-| ---------------------------- | ------------------------------------------------------ |
-| `chat.timeline_apply_ms`     | Snapshot/reducer apply time during streaming.          |
-| `chat.timeline_layout_ms`    | UIKit layout cost during streaming.                    |
-| `chat.cell_configure_ms`     | Row rendering cost, especially large tool output rows. |
-| `chat.markdown_streaming_ms` | Markdown streaming parse/build/apply cost.             |
-| `chat.jank_pct`              | Percentage of render cycles over frame budget. Tags `hitches` and `cycles` carry the raw counts. |
+| Event | Why it matters |
+| --- | --- |
+| `app.timeline_apply` | Snapshot/reducer apply time during streaming. |
+| `app.timeline_layout` | UIKit layout cost during streaming. |
+| `app.cell_configure` | Row rendering cost, especially large tool output rows. |
+| `app.markdown_streaming` | Markdown streaming parse/build/apply cost. |
+| `app.timeline_jank` | `jank_pct` of render cycles over frame budget, with the raw `cycles` and `hitches`. |
 
 ### Dictation and voice input
 
-| Metric                                              | Why it matters                                      |
-| --------------------------------------------------- | --------------------------------------------------- |
-| `chat.dictation_setup_ms`                           | Time from starting dictation to ready state.        |
-| `chat.dictation_first_result_ms`                    | Time until the user sees first transcript feedback. |
-| `chat.dictation_finalize_ms`                        | Stop-to-final-result latency.                       |
-| `chat.dictation_preview_final_delta`                | How much final text changed from the preview.       |
-| `chat.dictation_input_level_peak`                   | Loudest mic level of a take; near 0 means silence.  |
-| `chat.live_voice_leftover_call`                     | A CallKit call iOS kept after Live Voice ended.     |
-| `server.dictation_stt_ms`                           | Backend STT latency.                                |
-| `server.dictation_stt_audio_ratio`                  | STT real-time factor.                               |
-| `chat.dictation_error` and `server.dictation_error` | User-visible dictation failures.                    |
+| Event | Why it matters |
+| --- | --- |
+| `app.dictation_setup` | Time from starting dictation to recording, with each setup phase as a field. Failed and cancelled setups carry only `total_ms`. |
+| `app.dictation_first_result` | Time until the user sees first transcript feedback. |
+| `app.dictation_end` | Stop-to-final latency, take length, preview/final delta, and loudest input level (near 0 means silence). |
+| `app.dictation_capture_error` | Capture failures while dictating. |
+| `app.live_voice_leftover_call` | A CallKit call iOS kept after Live Voice ended. |
+| `server.dictation_finalize` | Backend STT latency and real-time factor, and total finalize time; `status=error` is a failed final STT. |
+| `server.dictation_stream_error` | The dictation stream refused a connection or message. |
 
 ### Resource health and crash diagnostics
 
-| Metric or source                                    | Why it matters                                                                                                                 |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `device.cpu_pct`                                    | Client CPU (all threads) during real interaction, tagged by screen, stream, agents, and voice to locate steady cost.           |
-| `device.memory_mb`                                  | Client memory footprint, tagged by screen, stream, agents, and voice to locate spikes.                                         |
-| `device.memory_available_mb`                        | Headroom before jetsam; low is bad.                                                                                            |
-| `device.thermal_state`                              | Thermal pressure that can make the app feel slow.                                                                              |
-| `server.cpu_total`                                  | Server CPU saturation.                                                                                                         |
-| `server.event_loop_lag_ms`                          | Server event-loop delay p99 during sampler intervals. Derived by review from the resource sample, not an ops-registry emitter. |
-| `server.rss_mb` and `server.heap_mb`                | Server memory pressure.                                                                                                        |
-| `server.sessions_total` and `server.ws_connections` | Local server concurrency pressure.                                                                                             |
-| MetricKit diagnostics                               | Crashes, hangs, CPU exceptions, disk-write exceptions, and app-launch diagnostics.                                             |
-| Client logs                                         | Redacted diagnostic context for what happened before failure.                                                                  |
+| Event or source | Why it matters |
+| --- | --- |
+| `app.device_resources` | Client CPU (all threads), memory footprint, available memory (low is bad), and thermal state every 10 s, tagged by screen, stream state, agents, and voice. |
+| `app.memory_warning`, `app.foreground` | App size when iOS warns about memory and when it returns to the foreground. |
+| `app.main_thread_stall_detected`, `app.main_thread_stall_recovered` | Watchdog stalls with footprint and duration. |
+| `server.resources` | Server CPU, memory, event-loop delay (`event_loop_max_ms` is the release gate; `event_loop_p99_ms` is the ungated trend), sessions, and WebSocket connections. |
+| MetricKit diagnostics | Crashes, hangs, CPU exceptions, disk-write exceptions, and app-launch diagnostics. |
+| Client logs | Redacted diagnostic context for what happened before failure. |
 
 ## Lifecycle and hang correlation
 
@@ -239,13 +301,13 @@ Debug and Release iOS builds stamp `OPPIGitCommit` through Info.plist preprocess
 
 Every lane that compiles the Oppi target runs in a git checkout with that root: local `sim-pool`, device install, release builds, TestFlight archive, the pre-push Apple gate, and Xcode Cloud. Xcode Cloud may refuse the clone as dubious ownership; the stamp script marks the checkout safe for the read instead of skipping the stamp. No Oppi compile lane builds without git.
 
-Client-log, chat-metric, and MetricKit upload records store that value next to `appVersion` and `buildNumber` when it is a short SHA or a SHA with `-dirty`. The client omits any other stamp. The server drops any other string, including `unknown`, so a bad stamp cannot store a path. Older clients that omit the field still upload.
+Client-log, app-event, and MetricKit uploads store that value (`client.gitCommit`) next to `appVersion` and `buildNumber` when it is a short SHA or a SHA with `-dirty`. The client omits any other stamp. The server drops any other string, including `unknown`, so a bad stamp cannot store a path. A client that omits the field still uploads.
 
-## Informational metrics policy
+## Informational events policy
 
-Informational metrics are useful for debugging, but they must not drown out the experience story.
+Informational events are useful for debugging, but they must not drown out the experience story.
 
-A metric belongs on the front page only when it has all of these:
+An event belongs on the front page only when it has all of these:
 
 1. A user-visible question it answers.
 2. A unit and owner.
@@ -253,26 +315,26 @@ A metric belongs on the front page only when it has all of these:
 4. A release threshold, trend, or explicit investigation use.
 5. Enough context to debug, usually `sessionId`, `workspaceId`, and low-cardinality tags.
 
-Keep informational metrics when they are low-volume or needed for drill-down. Aggregate, sample, demote, or remove them when they are high-volume and do not affect a release decision.
+Keep informational events when they are low-volume or needed for drill-down. Aggregate, sample, demote, or remove them when they are high-volume and do not affect a release decision.
 
-Server operational metrics can be aggregated before storage. For sum-aggregated counters, `value` is the event sum for the roughly one-minute flush bucket; dashboards should use `SUM(value)`, not row count, when showing throughput. For max-aggregated gauges such as fanout and ring utilization, `value` is the peak seen in the flush bucket.
+Server events whose catalog entry declares `storage.aggregate` are folded before storage: for a `sum` field the stored value is the total over the roughly one-minute flush window, so dashboards should sum it, not count rows; for a `max` field (`server.broadcast_fanout.subscribers`) it is the window's peak.
 
 Current handling guidance:
 
-| Pattern                                                                                        | Action                                                                                                                                                                              |
-| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Per-message counters such as `server.ws_message_sent`                                          | Keep for drill-down, but sum-aggregate by path/type/status instead of showing raw sample volume.                                                                                    |
-| Ephemeral UI counters                                                                          | Keep only if they explain a UX metric; otherwise sample or summarize by session.                                                                                                    |
-| Server HTTP timings such as `server.http_request_ms` and `server.http_response_bytes`          | Promote only route groups that affect visible UX; both use one threshold gate. Fast successful health/stats/capability/navigation/session-poll/telemetry-upload routes are omitted. |
-| Server drill-down gauges such as `server.broadcast_fanout` and `server.event_ring_utilization` | Max-aggregate by bounded tags; use peaks for diagnostics instead of raw sample counts.                                                                                              |
-| Server resource snapshots such as active-session peak                                          | Prefer the structured server resource sample over duplicating the same value into server-ops metrics.                                                                               |
-| Paired metrics such as coalescer events/bytes                                                  | Aggregate over a larger window and drop tiny partial drain windows; keep them as drill-down, not front-page rows.                                                                   |
-| Render drill-down metrics such as `chat.render_strategy_ms`                                    | Keep signposts for every operation, but upload only non-trivial samples.                                                                                                            |
-| Routine command metrics such as successful `get_queue` command send/resolve/roundtrip          | Keep errors, cancellations, and slow samples; rely on queue UX metrics for the normal success path. `outcome=error` is a user-visible failure, not a cancelled or superseded refresh. |
-| Server token and cost counters such as `server.turn_input_tokens` and `server.turn_cost`       | Sum-aggregate before storage; dashboards should use `SUM(value)`.                                                                                                                   |
-| Client session-size snapshots such as `chat.session_input_tokens`                              | Emit only stable non-empty snapshots; dashboards should treat them as latest/max capacity diagnostics, not per-update events.                                                       |
-| Rare error counters                                                                            | Prefer a single error metric with a `reason` tag over many near-zero standalone metrics.                                                                                            |
-| Stale or redundant metrics                                                                     | Stop emitting them and keep import compatibility only for archived dashboards.                                                                                                      |
+| Pattern | Action |
+| --- | --- |
+| Per-message counters such as `server.ws_message_sent` | Keep for drill-down, sum-aggregated by stream and message type instead of one record per frame. |
+| Ephemeral UI counters | Keep only if they explain a UX event; otherwise sample or summarize by session. |
+| Server HTTP timings (`server.http_request`) | Promote only route groups that affect visible UX. Fast successful health/stats/capability/navigation/session-poll/telemetry-upload routes are omitted (`http-request-metrics.ts`). |
+| Server drill-down gauges such as `server.broadcast_fanout` | Max-aggregate by bounded tags; use peaks for diagnostics instead of raw counts. |
+| Resource snapshots such as active-session peak or event-ring fill | Fields of `server.resources`, not separate events. |
+| Windowed counters such as `app.coalescer_window` | Aggregate over a larger window and drop tiny partial drain windows; keep them as drill-down, not front-page rows. |
+| Render drill-down such as `app.render_strategy` | Keep signposts for every operation, but upload only non-trivial events (catalog `emit` floor). |
+| Routine commands such as successful `get_queue` | Keep errors, cancellations, and slow ones (catalog `emit` rule); rely on queue UX events for the normal success path. `status=error` is a user-visible failure, not a cancelled or superseded refresh. |
+| Server token and cost usage (`server.turn_usage`) | Sum-aggregated before storage. |
+| Client session-size snapshots (`app.session_usage`) | Emit only stable non-empty snapshots; treat them as latest/max capacity diagnostics, not per-update events. |
+| Rare failures | Fold into the timing event as `status`/`error_kind`, or one error event with a `reason`, rather than many near-zero standalone events. |
+| Stale or redundant events | Delete them from the catalog. |
 
 ## How Oppi uses Pi observability
 
@@ -302,9 +364,9 @@ Query stored rows by how they were written:
 - Max-aggregated gauges (`server.broadcast_fanout`, `server.event_ring_utilization`): `value` is the flush-bucket peak. Use `MAX(value)`.
 - Raw samples, including `server.http_request_ms`, session-create timings, dictation timings, and chat metrics: `value` is one measurement. Use percentiles or `AVG`/`MAX` of `value`, and `COUNT(*)` for sample count. Do not treat that count as request volume when the emitter omits fast successful routine routes.
 
-`telemetry:review -- --http` uses the same raw-sample rule for `server.http_request_ms` and `server.http_response_bytes`: latency p50/p90/p99, sample count, and `status_code >= 400` rate, plus response-byte p50/p90/max, by method and `path_pattern`. Percentiles are nearest-rank.
+`telemetry:review -- --http` reads raw `server.http_request` events: `duration_ms` p50/p90/p99, event count, and `status_code >= 400` rate, plus `response_bytes` p50/p90/max, by method and `path_pattern`. Percentiles are nearest-rank.
 
-`chat.thread_load_ms` has no release SLO. `chat.workspace_load_ms` (TM99 1000ms) and `chat.session_switch_ms` (TM99 600ms) were gated from observed headroom. Retained chat JSONL through 2026-10-09 has no `chat.thread_load_ms` samples; those samples start only after the iOS app that emits the metric is installed, so there is no TM99 to set a threshold against.
+`app.thread_load` has no release SLO. `app.workspace_load` (TM99 1000 ms) and `app.session_switch` (TM99 600 ms) were gated from observed headroom; thread load had no installed-app samples to set a threshold against. The release gate for event-loop stalls is `server.resources.event_loop_max_ms` (TM99 100 ms), which sits between the 2026-10-06 TM99 of 50 ms and the 2026-10-07 TM99 of 111 ms; `event_loop_p99_ms` is a trend, not a second gate.
 
 Importer notes:
 
@@ -314,58 +376,25 @@ Importer notes:
 - normalizes append-only daily JSONL files incrementally, and reimports a file when the importer parser version changes
 - flattens common server-op tags for split-stream panels. `provider`, `model`, and `runtime` stay in `tags_json`; dashboards read them with `json_extract`. The importer parser version stays 6.
 - copies resource-sample `eventLoop` `p50`, `p95`, `p99`, and `max` into `server_metric_samples` (`event_loop_p50`, `event_loop_p95`, `event_loop_p99`, `event_loop_max`). Missing values stay NULL. Server Health plots p99 as the ungated trend and max as the stall gate.
-- `telemetry:review` derives `server.event_loop_lag_ms` from the sampler p99 and `server.event_loop_max_ms` from the sampler max. The release gate uses only `server.event_loop_max_ms` (TM99 SLO 100ms). That threshold sits between the 2026-10-06 TM99 of 50ms and the 2026-10-07 TM99 of 111ms. The p99 series is a trend, not a second gate.
 
 See `server/README.md` for the full dashboard runbook.
 
-## Tag vocabulary
+## Adding or changing an event
 
-Use the same tag names across clients, server metrics, logs, and dashboards when possible.
+Before adding an event, answer these questions in the code review:
 
-| Tag            | Use                                                                                                                                                                                                                                        |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `provider`     | Exact provider from the session-configured canonical `provider/modelId` route. Omitted when missing or malformed; a provider fallback can differ from this route.                                                                          |
-| `model`        | Exact model id after the first `/` of the session-configured route, including nested ids such as `z.ai/glm-5`. Never a family alias.                                                                                                       |
-| `thinking`     | Bounded session-configured Pi thinking level (`off` through `max`). Omitted when missing or unsafe; per-response reasoning can differ.                                                                                                     |
-| `tool`         | Sanitized tool name (`[A-Za-z0-9._-]{1,64}`). Unsafe or missing names become `unknown`. Never arguments, output, or paths.                                                                                                                 |
-| `status`       | Bounded mechanical outcome. Common values are `ok`, `error`, `cancelled`, and `timeout`; transport metrics also use `connected`, `failed`, `attempt`, `recovered`, `completed`, and `setup_failed`.                                        |
-| `result`       | Domain result, such as catch-up result: `applied`, `no_gap`, `ring_miss`, `fetch_failed`. Compaction also uses `success`, `failed`, `aborted`, and `will_retry`.                                                                           |
-| `transport`    | Active transport for metric samples: `http`, `lan`, `paired`, or `unknown`.                                                                                                                                                                |
-| `path`         | Client samples: privacy-safe network path `direct` or `unknown`. Server WebSocket metrics reuse `path` for a bounded stream name (`bound_session_stream` or the app-event stream tag). Never an IP, endpoint ID, relay URL, or relay host. |
-| `streamRole`   | WebSocket role in client logs, such as `focused_session` or another low-cardinality stream name.                                                                                                                                           |
-| `error_kind`   | Coarse error class for metrics: `network`, `timeout`, `decode`, `cancelled`, `not_connected`, or `other`.                                                                                                                                  |
-| `category`     | Bounded turn error class: `request_too_large`, `overloaded`, `rate_limit`, `auth`, `timeout`, `connection`, `json_parse`, `terminated`, `other`, or `unknown`.                                                                             |
-| `runtime`      | Turn, tool, retry, and compaction ops metrics. `oppi` (classic SDK), `durable` (live durable engine; a `serverDurable` row with a Pi session file stays `oppi`), or `pi-tui` (terminal mirror).                                            |
-| `kind`         | Schedule run kind: `due` or `manual`.                                                                                                                                                                                                      |
-| `method`       | HTTP method on `server.http_request_ms` and `server.http_response_bytes`.                                                                                                                                                                  |
-| `path_pattern` | Normalized HTTP route pattern. Not a file path. Requests that miss the route registry record `unregistered`, never the raw pathname.                                                                                                       |
-| `status_code`  | HTTP status as a decimal string.                                                                                                                                                                                                           |
-| `outcome`      | Subscribe result: `success` or `error`. Command send/roundtrip reuses it as `ok`, `cancelled`, or `error`. `error` is a user-visible failure; cancellation and supersession are `cancelled`, not `error`. Not renamed to `status`; already emitted. |
-| `reason`       | Why an event happened, such as `capabilityRefreshFailed`, `idle_timeout`, `auth`, `connect`, `config`, `lease_lost`, `not_found`, `launch_in_progress`, or `other`.                                                                        |
-
-Server ops samples also emit bounded tags that stay as stored: `attempt`, `event`, `ring`, `type`, `level`, `code`, `cancelled`, `questionCount`, `tokens`, `language`, `phase`, `audio_seconds`, `fatal`, and `sessionId`. Do not rename them; dashboards read the stored names. Push metrics use `result` for the relay outcome (`delivered`, `gone`, `rejected`, `unavailable`, `failed`, `throttled`, `no_activity`) and `event` for the notification kind, not `status`.
-
-`telemetry:review` derives `server.cpu_total`, `server.rss_mb`, `server.heap_mb`, `server.sessions_total`, `server.ws_connections`, and `server.event_loop_lag_ms` from resource-sample fields (`cpu.total`, `memory.rss`, `memory.heapUsed`, `sessions.total`, `wsConnections`, `eventLoop.p99`). Those names are not in the ops registry and have no second emitter. `server.event_loop_lag_ms` is the interval p99.
-
-Retired ops names are not emitted. They stay in the registry so archived dashboard imports still recognize them: `server.session_active_peak` (use `sessions.peak` on the resource sample), `server.dictation_retranscribe_ms`, `server.dictation_retranscribe_count`, and `server.dictation_retranscribe_skip`.
-
-Prefer logs over metrics for raw platform error details such as `NSURLErrorDomain`, HTTP status, or WebSocket close code. Use metrics for bounded counts, durations, and ratios.
-
-## Adding or changing a metric
-
-Before adding a metric, answer these questions in the code review:
-
-1. What user experience question does this metric answer?
-2. Is this a front-page metric, drill-down metric, or temporary investigation metric?
-3. What is the unit?
-4. What tags are allowed, and are they bounded?
-5. Does the sample include session/workspace context when that is useful?
-6. What is the removal or promotion trigger if this is temporary?
+1. What user experience question does this event answer? (It becomes the catalog `description`.)
+2. Is it a front-page event, drill-down, or temporary investigation event?
+3. What are its fields and their units?
+4. Which tags does it carry, and are they bounded?
+5. Does it carry session/workspace context when that is useful?
+6. What is the removal or promotion trigger if it is temporary?
 
 Implementation rules:
 
-- Add chat/client metrics to `server/src/types/telemetry.ts` first.
-- Mirror chat/client metric names in `clients/apple/Oppi/Core/Services/MetricKitModels.swift`.
-- Add server operational metrics to `server/src/server-metric-registry.ts` first.
-- Update tests when a metric contract changes.
-- Prefer fewer, better-shaped metrics over broad logging-by-metric.
+- Declare the event in `server/src/telemetry/catalog.ts` first: fields with units, tags (reuse a vocabulary key with the same meaning, or add a key with one meaning), `group`, and any `emit`, `storage`, and `slo`.
+- `app.*` events: run `bun server/scripts/generate-telemetry-catalog.ts` and record the generated struct from the client. Server events: call `ServerTelemetry.record` with the catalog types.
+- `cd server && npm run check` runs `scripts/check-telemetry.ts`; fix every invariant it reports and commit the regenerated Swift.
+- Prefer log lines for raw platform error details such as `NSURLErrorDomain`, HTTP status, or WebSocket close reason; events carry bounded counts, durations, and ratios.
+- Update tests when an event's behavior changes; do not pin event names or wording.
+- Prefer fewer, better-shaped events over broad logging-by-event.

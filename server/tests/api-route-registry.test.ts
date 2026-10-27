@@ -158,7 +158,7 @@ const settingsOperationIds = [
   "listThemes",
   "getTheme",
   "uploadMetricKitPayload",
-  "uploadChatMetrics",
+  "uploadTelemetryEvents",
   "createIconAsset",
   "getIconAsset",
   "headIconAsset",

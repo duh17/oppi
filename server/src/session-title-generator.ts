@@ -25,7 +25,7 @@ export interface AutoTitleConfig {
 export interface TitleGenerationMetrics {
   durationMs: number;
   model: string;
-  status: "success" | "error" | "timeout";
+  status: "ok" | "error" | "timeout";
   tokens: number;
 }
 
@@ -215,7 +215,7 @@ export class ApiModelTitleProvider implements SessionTitleProvider {
           .join("");
 
         const normalized = normalizeTitle(text);
-        status = normalized ? "success" : "error";
+        status = normalized ? "ok" : "error";
         return normalized;
       } catch (err: unknown) {
         clearTimeout(timeout);

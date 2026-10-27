@@ -92,7 +92,7 @@ import {
 } from "./mobile-output-guide-settings.js";
 import type { ExtensionErrorEvent, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import { addSessionAttachmentFile, type SessionAttachmentKind } from "./session-attachments.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
@@ -768,8 +768,8 @@ export interface SdkBackendConfig {
   skillPaths?: string[];
   /** Oppi server data directory for session-owned tool attachments. */
   dataDir?: string;
-  /** Operational metrics collector for SDK timing. */
-  metrics?: ServerMetricCollector;
+  /** Server telemetry for SDK session setup timing. */
+  metrics?: ServerTelemetry;
   /** Saved Agent definition used to configure this runtime. */
   agentDefinition?: AgentDefinition;
   /** Server settings that affect Oppi-owned SDK sessions. */
@@ -1770,7 +1770,6 @@ export class SdkBackend implements AgentBackend {
 
     backendRef.current = backend;
     const preBindMs = Date.now() - createStartMs;
-    config.metrics?.record("server.session_create_sdk_ms", preBindMs);
 
     try {
       await backend.bindCurrentSessionExtensions();
@@ -1783,7 +1782,7 @@ export class SdkBackend implements AgentBackend {
 
     const totalMs = Date.now() - createStartMs;
     const bindMs = totalMs - preBindMs;
-    config.metrics?.record("server.session_create_bind_ms", bindMs);
+    config.metrics?.record("server.sdk_session_setup", { sdk_ms: preBindMs, bind_ms: bindMs }, {});
 
     log.info("sdk.session.created", {
       model: backend.piSession.model?.id ?? backend.piSession.model?.name,

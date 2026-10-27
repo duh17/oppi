@@ -64,7 +64,7 @@ import { exportDurableToHtml } from "./durable-export.js";
 import { readDurableSessionEntries } from "./durable-history.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import {
   SdkBackend,
   resolveSessionSeedModel,
@@ -141,7 +141,7 @@ interface DurableBackendOptions {
   onEvent: (event: SessionBackendEvent) => void;
   /** Startup dialogs (project trust) before the projection exists, as for SDK sessions. */
   onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
   hasUI?: () => boolean;
 }
 

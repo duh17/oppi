@@ -32,6 +32,71 @@ export function telemetryUploadsEnabledFromEnv(mode = process.env.OPPI_TELEMETRY
   }
 }
 
+export type ClientKind = "ios" | "mac";
+
+/**
+ * Who sent an upload. Shared by `POST /telemetry/events`, `/telemetry/client-logs`,
+ * and `/telemetry/metrickit`. `deviceModel` is the hardware identifier
+ * (`iPhone17,1`), not a marketing name.
+ */
+export interface TelemetryClient {
+  kind: ClientKind;
+  appVersion?: string;
+  buildNumber?: string;
+  /** Short SHA, optional `-dirty`. Anything else is dropped at ingest. */
+  gitCommit?: string;
+  osVersion?: string;
+  deviceModel?: string;
+  appInstanceId?: string;
+  bootId?: string;
+}
+
+/**
+ * `POST /telemetry/events` body: `{ generatedAt, client, events: [{ ts, name,
+ * fields, tags?, sessionId?, workspaceId? }] }`, where each event follows the
+ * telemetry catalog. Ingest validates every event (`routes/telemetry.ts`); the
+ * Swift encoder is generated from the catalog.
+ *
+ * Why ingest did not store an event.
+ */
+export type TelemetryDropReason =
+  | "malformed"
+  | "invalid_timestamp"
+  | "over_batch_limit"
+  | "unknown_event"
+  | "wrong_origin"
+  | "missing_field"
+  | "unknown_field"
+  | "invalid_field_value"
+  | "missing_tag"
+  | "unknown_tag"
+  | "invalid_tag_value"
+  | "emit_policy";
+
+export interface TelemetryEventUploadResponse {
+  ok: true;
+  accepted: number;
+  /** Events not stored, by reason. Retrying them cannot succeed. */
+  dropped: Partial<Record<TelemetryDropReason, number>>;
+}
+
+/**
+ * One stored telemetry event: one JSONL line in `app-events-YYYY-MM-DD.jsonl`
+ * or `server-events-YYYY-MM-DD.jsonl`. Server records aggregated by the catalog
+ * carry the flush-window sum or max in `fields` and the last event's `ts`.
+ */
+export interface TelemetryEventRecord {
+  v: 2;
+  ts: number;
+  origin: "app" | "server";
+  name: string;
+  fields: Record<string, number>;
+  tags: Record<string, string>;
+  sessionId?: string;
+  workspaceId?: string;
+  client?: TelemetryClient;
+}
+
 export interface MetricKitPayloadItem {
   /** "metric" (MXMetricPayload) or "diagnostic" (MXDiagnosticPayload). */
   kind: "metric" | "diagnostic";
@@ -47,386 +112,11 @@ export interface MetricKitPayloadItem {
 
 export interface MetricKitUploadRequest {
   generatedAt: number;
-  appVersion?: string;
-  buildNumber?: string;
-  gitCommit?: string;
-  osVersion?: string;
-  deviceModel?: string;
-  clientKind?: "ios" | "mac";
-  appInstanceId?: string;
-  bootId?: string;
+  client: TelemetryClient;
   payloads: MetricKitPayloadItem[];
 }
 
-export type ChatMetricUnit = "ms" | "count" | "ratio";
-
-export interface ChatMetricDefinition {
-  unit: ChatMetricUnit;
-  description: string;
-}
-
-/**
- * Single source of truth for chat metric contracts.
- *
- * Add new metrics here first, then emit from clients and surface in dashboards.
- */
-export const CHAT_METRIC_REGISTRY = {
-  "chat.ttft_ms": {
-    unit: "ms",
-    description: "Time-to-first-token latency for a user turn.",
-  },
-  "chat.catchup_ms": {
-    unit: "ms",
-    description: "Catch-up replay latency when (re)subscribing to a session stream.",
-  },
-  "chat.catchup_ring_miss": {
-    unit: "count",
-    description: "Count of catch-up ring misses that required a fallback path.",
-  },
-  "chat.timeline_apply_ms": {
-    unit: "ms",
-    description: "Reducer apply latency (threshold-gated, only emitted when >= 4ms).",
-  },
-  "chat.timeline_layout_ms": {
-    unit: "ms",
-    description: "Timeline layout latency (threshold-gated, only emitted when >= 2ms).",
-  },
-  // Removed: chat.ws_decode_ms (high-volume noise, build 21)
-  "chat.session_load_ms": {
-    unit: "ms",
-    description:
-      "End-to-end session load latency from tap to content visible. Tags: path (cache_hit|cache_miss|full_reload|first_message_fallback), items (timeline item count).",
-  },
-  "chat.jank_pct": {
-    unit: "ratio",
-    description: "Percentage of render cycles exceeding 16ms frame budget during streaming.",
-  },
-  "chat.coalescer_flush_events": {
-    unit: "count",
-    description: "Event count flushed per coalescer batch.",
-  },
-  "chat.coalescer_flush_bytes": {
-    unit: "count",
-    description: "Payload byte count flushed per coalescer batch.",
-  },
-  "chat.trace_fetch_ms": {
-    unit: "ms",
-    description:
-      "HTTP trace-page fetch and response decode latency. Tags: status, trace_events, error_kind.",
-  },
-  "chat.fresh_content_lag_ms": {
-    unit: "ms",
-    description: "Lag between new content arrival and visible timeline freshness.",
-  },
-  "chat.cache_load_ms": {
-    unit: "ms",
-    description: "Client-side cache load latency.",
-  },
-  "chat.reducer_load_ms": {
-    unit: "ms",
-    description: "Reducer reconstruction/load latency from cached state.",
-  },
-  "chat.ws_wait_for_connected_ms": {
-    unit: "ms",
-    description: "Client wait for the active session WebSocket to reach connected.",
-  },
-  "chat.command_send_ms": {
-    unit: "ms",
-    description:
-      "Client command send path duration until WebSocket send returns. Tags: command, transport, outcome (ok, cancelled, or error). outcome=error is a user-visible failure. Cancellation uses outcome=cancelled and error_kind=cancelled.",
-  },
-  "chat.command_roundtrip_ms": {
-    unit: "ms",
-    description:
-      "Client command request/response duration until correlated command_result resolves. Tags: command, transport, outcome (ok, cancelled, or error). outcome=error is a user-visible failure; a cancelled or superseded waiter is outcome=cancelled. error_kind is network, timeout, decode, cancelled, not_connected, or other.",
-  },
-  "chat.command_resolve_lag_ms": {
-    unit: "ms",
-    description: "Client lag from command_result frame receipt to command waiter resolution.",
-  },
-  "network.handshake_ms": {
-    unit: "ms",
-    description:
-      "Client HTTPS candidate handshake duration, tagged by connection route and status.",
-  },
-  "network.ws_ping_rtt_ms": {
-    unit: "ms",
-    description: "Client WebSocket ping round-trip time, tagged by connection route.",
-  },
-  "chat.queue_sync_ms": {
-    unit: "ms",
-    description:
-      "Latency for initial queue snapshot refresh (get_queue command). Tags: transport, phase, status (ok, cancelled, or error). status=error is a failed refresh, not a cancelled or superseded one.",
-  },
-  "chat.message_queue_ack_ms": {
-    unit: "ms",
-    description:
-      "Latency from a busy send to server acknowledgement. Tags: intent (the composer's steer or follow_up; a turn that already ended prompts it normally), transport, status, error_kind.",
-  },
-  "chat.message_queue_stale_drop": {
-    unit: "count",
-    description: "Messages dropped from queue due to stale session state.",
-  },
-  "chat.message_queue_start_miss": {
-    unit: "count",
-    description: "Queue messages sent before session start was confirmed.",
-  },
-  "chat.session_message_count": {
-    unit: "count",
-    description: "Stable per-session cumulative message count snapshot.",
-  },
-  "chat.session_input_tokens": {
-    unit: "count",
-    description: "Stable per-session cumulative input token count snapshot.",
-  },
-  "chat.session_output_tokens": {
-    unit: "count",
-    description: "Stable per-session cumulative output token count snapshot.",
-  },
-  // Removed: chat.session_total_tokens — 100% redundant (input + output)
-  "chat.session_mutating_tool_calls": {
-    unit: "count",
-    description: "Stable per-session cumulative mutating tool call count snapshot.",
-  },
-  "chat.session_files_changed": {
-    unit: "count",
-    description: "Stable per-session cumulative unique changed file count snapshot.",
-  },
-  "chat.session_context_tokens": {
-    unit: "count",
-    description: "Stable session context token usage snapshot.",
-  },
-  "chat.session_context_window": {
-    unit: "count",
-    description: "Stable session context window size snapshot.",
-  },
-  "chat.voice_prewarm_ms": {
-    unit: "ms",
-    description: "Voice pipeline prewarm latency.",
-  },
-  "chat.voice_setup_ms": {
-    unit: "ms",
-    description: "Voice capture/setup latency.",
-  },
-  "chat.voice_first_result_ms": {
-    unit: "ms",
-    description: "Voice first-result latency.",
-  },
-  "chat.voice_playback_start_ms": {
-    unit: "ms",
-    description:
-      "Audio playback startup latency for voice replies and replayable voice media. Tags: source, mode, status.",
-  },
-  "chat.voice_playback_error": {
-    unit: "count",
-    description: "Audio playback failure count. Tags: source, phase, error_kind.",
-  },
-  // ── Dictation session metrics ──
-  "chat.dictation_setup_ms": {
-    unit: "ms",
-    description: "Server dictation session setup latency (WS connect + ready).",
-  },
-  "chat.dictation_first_result_ms": {
-    unit: "ms",
-    description: "Time from recording start to first transcription result.",
-  },
-  "chat.dictation_finalize_ms": {
-    unit: "ms",
-    description: "Server-side finalization latency (stop to final text).",
-  },
-  "chat.dictation_session_ms": {
-    unit: "ms",
-    description: "Total dictation session duration from start to stop.",
-  },
-  "chat.dictation_audio_duration_ms": {
-    unit: "ms",
-    description: "Audio recording duration within a dictation session.",
-  },
-  "chat.dictation_result_updates": {
-    unit: "count",
-    description: "Number of transcript update events during a dictation session.",
-  },
-  "chat.dictation_preview_final_delta": {
-    unit: "ratio",
-    description:
-      "Edit distance ratio between preview and final transcript (0=identical, 1=completely different).",
-  },
-  "chat.dictation_input_level_peak": {
-    unit: "ratio",
-    description:
-      "Loudest microphone level of a dictation take on the waveform meter scale (RMS x 25, capped at 1). Near 0 means the microphone delivered silence.",
-  },
-  "chat.live_voice_leftover_call": {
-    unit: "count",
-    description:
-      "CallKit calls iOS still listed after their Live Voice call was over, which the app then ended. Tags: phase (call_end, call_start, dictation_start).",
-  },
-  "chat.dictation_error": {
-    unit: "count",
-    description: "Dictation error count. Tags: phase, error_kind.",
-  },
-  "chat.dictation_cancel": {
-    unit: "count",
-    description: "Dictation session cancellation count.",
-  },
-
-  "chat.cell_configure_ms": {
-    unit: "ms",
-    description:
-      "Cell configure latency for tool rows. Tags: expanded, content_type, tool, output_bytes.",
-  },
-  "chat.render_strategy_ms": {
-    unit: "ms",
-    description:
-      "Internal render strategy time for tool row content. Tags: mode, input_bytes, language.",
-  },
-
-  "chat.markdown_streaming_ms": {
-    unit: "ms",
-    description:
-      "Streaming markdown full-cycle render cost (parse + build + view apply). Tags: surface, segments.",
-  },
-
-  // ── App-level UX latency ──
-  "chat.session_switch_ms": {
-    unit: "ms",
-    description:
-      "Session switch latency: tap session row to chat content visible. Tags: cached=0|1.",
-  },
-  "chat.share_export_ms": {
-    unit: "ms",
-    description:
-      "Share sheet export rendering duration (offscreen render to shareable format). Tags: format, content_type.",
-  },
-  "chat.share_prepare_ms": {
-    unit: "ms",
-    description:
-      "Shared-session redaction preflight duration. Tags: status, blocked, can_publish, findings, replacements, emails, phones, user_paths, ip_addresses, jwt_bearer, names, skills.",
-  },
-  "chat.share_publish_ms": {
-    unit: "ms",
-    description:
-      "Shared-session publish duration. Tags: status, findings, replacements, emails, phones, user_paths, ip_addresses, jwt_bearer, names, skills.",
-  },
-  "chat.share_error": {
-    unit: "count",
-    description: "Shared-session request failure count. Tags: action, error_kind.",
-  },
-  "chat.quick_session_create_ms": {
-    unit: "ms",
-    description:
-      "Quick session creation duration. Tags: source, status, selection, has_message, has_attachments, has_repo_refs, has_model.",
-  },
-  "chat.quick_session_error": {
-    unit: "count",
-    description: "Quick session failure count. Tags: source, selection, error_kind.",
-  },
-  "chat.app_event_stream_connect_ms": {
-    unit: "ms",
-    description:
-      "Global app-event stream time from socket open to connected frame. Tags: status, attempt, snapshot_required.",
-  },
-  "chat.app_event_stream_reconnect": {
-    unit: "count",
-    description:
-      "Global app-event stream reconnect attempts or exhaustion. Tags: status, reason, attempt, close_code.",
-  },
-  "chat.app_event_stream_decode_error": {
-    unit: "count",
-    description: "Global app-event stream frame decode failures. Tags: error_kind.",
-  },
-
-  "chat.ask_response_ms": {
-    unit: "ms",
-    description:
-      "Ask card visible duration until answer or ignore. Tags: outcome, surface, question_count, answered_count, ignored_count, multi_select, multi_select_count, custom, allow_custom, selected_count, response_encoding.",
-  },
-  "chat.media_playback_start_ms": {
-    unit: "ms",
-    description:
-      "Media preview/player startup latency until playable. Tags: kind, source, mode, status.",
-  },
-  "chat.media_playback_error": {
-    unit: "count",
-    description: "Media preview/player failure count. Tags: kind, source, phase, error_kind.",
-  },
-
-  // ── Session list rendering ──
-  "chat.session_list_compute_ms": {
-    unit: "ms",
-    description:
-      "Session list viewData computation latency. Tags: active_count, stopped_count, workspace_id.",
-  },
-  "chat.session_list_body_rate": {
-    unit: "count",
-    description:
-      "Session list body evaluation count per 5-second window. High values indicate store churn.",
-  },
-  "chat.session_list_row_compute_ms": {
-    unit: "ms",
-    description:
-      "Aggregate per-row computation latency for visible session rows. Tags: row_count, workspace_id.",
-  },
-  "chat.workspace_load_ms": {
-    unit: "ms",
-    description:
-      "Workspace screen load latency from view entry until the list is usable. Tags: path (open|return_from_chat).",
-  },
-  "chat.thread_load_ms": {
-    unit: "ms",
-    description:
-      "Time from thread view load start until the snapshot is applied or the load fails. Tags: phase=initial|refresh, status=ok|error, error_kind on failure.",
-  },
-
-  // ── Device resource samples (10s interval) ──
-  "device.cpu_pct": {
-    unit: "count",
-    description:
-      "App CPU usage percentage of one core (0-100+ across cores) over a 10s window, from getrusage across all threads. Tags: screen, stream, agents (running|idle), voice (on|off) at sample time.",
-  },
-  "device.memory_mb": {
-    unit: "count",
-    description:
-      "Device physical memory footprint in MB (phys_footprint from task_vm_info). Tags: screen, stream, agents (running|idle), voice (on|off) at sample time.",
-  },
-  "device.memory_available_mb": {
-    unit: "count",
-    description: "Available memory headroom in MB before jetsam (os_proc_available_memory).",
-  },
-  "device.thermal_state": {
-    unit: "count",
-    description: "Device thermal state: 0=nominal, 1=fair, 2=serious, 3=critical.",
-  },
-} as const satisfies Readonly<Record<string, ChatMetricDefinition>>;
-
-export type ChatMetricName = keyof typeof CHAT_METRIC_REGISTRY;
-
-export const CHAT_METRIC_NAME_VALUES = Object.freeze(
-  Object.keys(CHAT_METRIC_REGISTRY) as ChatMetricName[],
-);
-
-export interface ChatMetricSample {
-  ts: number;
-  metric: ChatMetricName;
-  value: number;
-  unit: ChatMetricUnit;
-  sessionId?: string;
-  workspaceId?: string;
-  tags?: Record<string, string>;
-}
-
-export interface ChatMetricUploadRequest {
-  generatedAt: number;
-  appVersion?: string;
-  buildNumber?: string;
-  gitCommit?: string;
-  osVersion?: string;
-  deviceModel?: string;
-  samples: ChatMetricSample[];
-}
-
 export type ClientLogLevel = "debug" | "info" | "warn" | "error";
-export type ClientKind = "ios" | "mac";
 
 export interface ClientLogEntry {
   /** Client-side timestamp (ms since epoch). */
@@ -443,14 +133,7 @@ export interface ClientLogEntry {
 
 export interface ClientLogUploadRequest {
   generatedAt: number;
-  appVersion?: string;
-  buildNumber?: string;
-  gitCommit?: string;
-  osVersion?: string;
-  deviceModel?: string;
-  clientKind: ClientKind;
-  appInstanceId: string;
-  bootId: string;
+  client: TelemetryClient;
   droppedCount?: number;
   entries: ClientLogEntry[];
 }

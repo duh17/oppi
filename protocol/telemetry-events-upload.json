@@ -1,0 +1,174 @@
+{
+  "client" : {
+    "appInstanceId" : "app-instance-golden",
+    "appVersion" : "1.53.0",
+    "bootId" : "boot-golden",
+    "buildNumber" : "412",
+    "deviceModel" : "iPhone17,1",
+    "gitCommit" : "0123456789ab",
+    "kind" : "ios",
+    "osVersion" : "26.1"
+  },
+  "events" : [
+    {
+      "fields" : {
+        "duration_ms" : 412,
+        "items" : 87
+      },
+      "name" : "app.session_load",
+      "sessionId" : "sess-golden-1",
+      "tags" : {
+        "load_path" : "cache_hit"
+      },
+      "ts" : 1793000000000,
+      "workspaceId" : "ws-golden-1"
+    },
+    {
+      "fields" : {
+        "duration_ms" : 950.5
+      },
+      "name" : "app.trace_fetch",
+      "sessionId" : "sess-golden-1",
+      "tags" : {
+        "error_kind" : "timeout",
+        "status" : "error"
+      },
+      "ts" : 1793000000001
+    },
+    {
+      "fields" : {
+        "roundtrip_ms" : 640,
+        "send_ms" : 12
+      },
+      "name" : "app.command",
+      "sessionId" : "sess-golden-1",
+      "tags" : {
+        "command" : "get_queue",
+        "status" : "ok",
+        "transport" : "lan"
+      },
+      "ts" : 1793000000002
+    },
+    {
+      "fields" : {
+        "duration_ms" : 3,
+        "expanded" : 1
+      },
+      "name" : "app.cell_configure",
+      "sessionId" : "sess-golden-1",
+      "tags" : {
+        "content_type" : "code",
+        "output_size" : "under_50kb",
+        "row_type" : "tool",
+        "tool" : "bash"
+      },
+      "ts" : 1793000000003
+    },
+    {
+      "fields" : {
+        "analyzer_start_ms" : 15,
+        "audio_sample_rate" : 48000,
+        "audio_session_ms" : 90,
+        "audio_start_ms" : 60,
+        "model_ready_ms" : 40,
+        "total_ms" : 310,
+        "transcriber_create_ms" : 20
+      },
+      "name" : "app.dictation_setup",
+      "sessionId" : "sess-golden-1",
+      "tags" : {
+        "audio_category" : "AVAudioSessionCategoryPlayAndRecord",
+        "audio_inputs" : "MicrophoneBuiltIn",
+        "audio_mode" : "AVAudioSessionModeDefault",
+        "audio_outputs" : "Speaker",
+        "locale" : "en-US",
+        "model_path" : "dictation_audio_ws",
+        "status" : "ok",
+        "stt_backend" : "mlx-server",
+        "stt_model" : "parakeet-tdt-0.6b-v3",
+        "stt_provider" : "oppi_server_dictation",
+        "stt_provider_kind" : "local_server",
+        "trigger" : "composer_mic",
+        "voice_engine" : "server"
+      },
+      "ts" : 1793000000004
+    },
+    {
+      "fields" : {
+        "audio_duration_ms" : 5100,
+        "finalize_ms" : 210,
+        "input_level_peak_ratio" : 0.62,
+        "preview_final_delta_ratio" : 0.08,
+        "result_updates" : 14,
+        "session_ms" : 5400
+      },
+      "name" : "app.dictation_end",
+      "tags" : {
+        "locale" : "de-DE",
+        "voice_engine" : "speech"
+      },
+      "ts" : 1793000000005
+    },
+    {
+      "fields" : {
+        "cpu_pct" : 18.25,
+        "memory_available_mb" : 1420,
+        "memory_mb" : 231.5,
+        "thermal_state" : 1
+      },
+      "name" : "app.device_resources",
+      "tags" : {
+        "agents" : "running",
+        "screen" : "chat",
+        "stream_state" : "queueSync.initial",
+        "voice" : "off"
+      },
+      "ts" : 1793000000006
+    },
+    {
+      "fields" : {
+        "cache_bytes" : 18874368,
+        "cache_entries" : 31,
+        "footprint_after_mb" : 540,
+        "footprint_before_mb" : 612
+      },
+      "name" : "app.memory_warning",
+      "tags" : {
+        "screen" : "unknown"
+      },
+      "ts" : 1793000000007
+    },
+    {
+      "fields" : {
+        "queue_version" : 9
+      },
+      "name" : "app.message_queue_start_miss",
+      "sessionId" : "sess-golden-1",
+      "tags" : {
+        "intent" : "follow_up"
+      },
+      "ts" : 1793000000008
+    },
+    {
+      "fields" : {
+
+      },
+      "name" : "app.app_event_stream_decode_error",
+      "tags" : {
+        "error_kind" : "decode"
+      },
+      "ts" : 1793000000009
+    },
+    {
+      "fields" : {
+        "cycles" : 240,
+        "hitches" : 30,
+        "jank_pct" : 12.5
+      },
+      "name" : "app.timeline_jank",
+      "sessionId" : "sess-golden-1",
+      "ts" : 1793000000010
+    }
+  ],
+  "generatedAt" : 1793000000020
+}

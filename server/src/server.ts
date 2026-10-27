@@ -30,7 +30,7 @@ import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { SdkBackend } from "./sdk-backend.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
-import { httpOpsMetricSamples, observeHttpResponseBody } from "./http-request-metrics.js";
+import { httpRequestEvent, observeHttpResponseBody } from "./http-request-metrics.js";
 import { defaultModelRefFromGlobalSettings, ModelCatalog } from "./model-catalog.js";
 import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import type { ProgramStatusSync } from "./program-status.js";
@@ -42,9 +42,9 @@ import { clearServerStopRequest, consumeServerStopRequest } from "./server-stop-
 import { AgentScheduleRunner } from "./agent-schedule-runner.js";
 import { intervalFromEnv, ServerResourceSampler } from "./server-resource-sampler.js";
 import { HostResourceProbe } from "./host-resource-probe.js";
-import { ServerMetricCollector } from "./server-metric-collector.js";
 import { SearchIndex } from "./search-index.js";
-import { JsonlMetricWriter } from "./server-metric-writer.js";
+import { TelemetryEventWriter } from "./telemetry/event-writer.js";
+import { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
 import { authenticatedVoiceDeviceId, VoiceCallController } from "./continuous-voice-call.js";
 import {
@@ -511,8 +511,9 @@ export class Server {
    */
   private serverMetricsEnabled: boolean;
 
-  // Server operational metrics (latencies, counts, errors)
-  private opsMetrics: ServerMetricCollector;
+  // Server telemetry events (latencies, counts, errors, resource samples)
+  private telemetryWriter: TelemetryEventWriter;
+  private opsMetrics: ServerTelemetry;
 
   // End-to-end-encrypted session alerts through the push relay.
   private sessionPushNotifier: SessionPushNotifier;
@@ -570,10 +571,9 @@ export class Server {
       dataDir,
       agentDir: getAgentDir(),
     });
-    // Server operational metrics collector (event-driven latencies, counts).
-    this.opsMetrics = new ServerMetricCollector(
-      new JsonlMetricWriter(join(dataDir, "diagnostics", "telemetry")),
-    );
+    // Server telemetry events (catalog-typed latencies, counts, resource samples).
+    this.telemetryWriter = new TelemetryEventWriter(join(dataDir, "diagnostics", "telemetry"));
+    this.opsMetrics = new ServerTelemetry(this.telemetryWriter);
 
     // Scan both host skills (~/.pi/agent/skills/) and bundled skills (server/skills/).
     const serverRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -720,7 +720,7 @@ export class Server {
     // Server resource utilization sampler
     this.serverMetricsEnabled = storage.getConfig().serverMetrics?.enabled === true;
     this.resourceSampler = new ServerResourceSampler({
-      telemetryDir: join(dataDir, "diagnostics", "telemetry"),
+      telemetry: this.opsMetrics,
       getSessionCounts: () => {
         const ids = this.sessionRuntimes.getActiveSessionIds();
         let busy = 0;
@@ -736,8 +736,6 @@ export class Server {
         return { busy, ready, starting, total: ids.size };
       },
       getWebSocketCount: () => this.connections.size,
-      recordOpsMetric: (metric, value, tags) =>
-        this.opsMetrics.record(metric as Parameters<typeof this.opsMetrics.record>[0], value, tags),
       getEventRingSnapshots: () => {
         const snapshots: Array<{ ring: string; length: number; capacity: number }> = [];
         // Per-session event rings
@@ -939,11 +937,11 @@ export class Server {
         this.appEventStreamMux.emitSessionSummaryById(sessionId);
       },
       onMetrics: (metrics) => {
-        this.opsMetrics.record("server.session_title_gen_ms", metrics.durationMs, {
-          model: metrics.model,
-          status: metrics.status,
-          tokens: String(metrics.tokens),
-        });
+        this.opsMetrics.record(
+          "server.session_title",
+          { duration_ms: metrics.durationMs, tokens: metrics.tokens },
+          { model: metrics.model, status: metrics.status },
+        );
       },
     });
     this.sessions.onFirstMessage = (session) => this.titleGenerator.tryGenerateTitle(session);
@@ -1012,8 +1010,12 @@ export class Server {
         setEnabled: (enabled) => {
           this.storage.updateConfig({ serverMetrics: { enabled } });
           this.serverMetricsEnabled = enabled;
-          if (enabled) this.resourceSampler.start();
-          else this.resourceSampler.stop();
+          if (enabled) {
+            this.resourceSampler.start();
+          } else {
+            this.resourceSampler.stop();
+            this.telemetryWriter.prune("server");
+          }
         },
         latestSample: () => this.resourceSampler.latestSample,
       },
@@ -1062,10 +1064,11 @@ export class Server {
         }
       }
 
+      // Expire event files (and pre-v2 files) left by an earlier run, sampling or not.
+      this.telemetryWriter.prune("server");
+      this.telemetryWriter.prune("app");
       if (this.serverMetricsEnabled) {
         this.resourceSampler.start();
-      } else {
-        this.resourceSampler.pruneOldFiles();
       }
       this.opsMetrics.start();
       this.startUploadGcLoop();
@@ -1731,15 +1734,14 @@ export class Server {
     res.on("finish", () => {
       const durationMs = Date.now() - startTime;
       const pathPattern = normalizePathPattern(path);
-      for (const sample of httpOpsMetricSamples({
+      const event = httpRequestEvent({
         method,
         pathPattern,
         statusCode: res.statusCode,
         durationMs,
         responseBytes: responseBytes(),
-      })) {
-        this.opsMetrics.record(sample.metric, sample.value, sample.tags);
-      }
+      });
+      if (event) this.opsMetrics.record("server.http_request", event.fields, event.tags);
     });
 
     // The owner module's gate sees every network request, health and pairing included,

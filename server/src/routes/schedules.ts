@@ -228,7 +228,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         startedAt,
         now: Date.now(),
         kind: "manual",
-        status: "completed",
+        status: "ok",
       });
       return completed;
     } catch (error) {
@@ -236,7 +236,7 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         startedAt,
         now: Date.now(),
         kind: "manual",
-        status: "failed",
+        status: "error",
         error,
       });
       throw error;

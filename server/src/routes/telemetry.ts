@@ -1,39 +1,42 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { isSensitiveLogKey, redactLogString, REDACTED } from "../log-redact.js";
-import { appendJsonlLineWithByteLimit, jsonlMaxBytesFromEnv } from "../metric-utils.js";
-import { createLogger } from "../logger.js";
 import {
-  CHAT_METRIC_NAME_VALUES,
-  CHAT_METRIC_REGISTRY,
+  appendJsonlLineWithByteLimit,
+  jsonlMaxBytesFromEnv,
+  pruneOldJsonlFiles,
+  retentionDaysFromEnv,
+} from "../metric-utils.js";
+import { createLogger } from "../logger.js";
+import { TelemetryEventWriter } from "../telemetry/event-writer.js";
+import { validateEvent } from "../telemetry/validate.js";
+import {
   telemetryUploadsEnabledFromEnv,
-  type ChatMetricSample,
-  type ChatMetricUploadRequest,
   type ClientKind,
   type ClientLogEntry,
   type ClientLogLevel,
   type ClientLogUploadRequest,
   type MetricKitPayloadItem,
   type MetricKitUploadRequest,
+  type TelemetryClient,
+  type TelemetryDropReason,
+  type TelemetryEventRecord,
+  type TelemetryEventUploadResponse,
 } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
-const METRICKIT_DIR = "telemetry";
+const TELEMETRY_DIR = "telemetry";
+const FILE_SUFFIX = ".jsonl";
+
 const METRICKIT_FILE_PREFIX = "metrickit-";
-const METRICKIT_FILE_SUFFIX = ".jsonl";
 const METRICKIT_MAX_PAYLOAD_COUNT = 160;
 const METRICKIT_MAX_SUMMARY_FIELDS = 24;
 const METRICKIT_MAX_SUMMARY_VALUE_CHARS = 256;
 
-const CHAT_METRIC_FILE_PREFIX = "chat-metrics-";
-const CHAT_METRIC_MAX_SAMPLE_COUNT = 200;
-const CHAT_METRIC_MAX_TAG_FIELDS = 16;
-const CHAT_METRIC_MAX_TAG_KEY_CHARS = 96;
-const CHAT_METRIC_MAX_TAG_VALUE_CHARS = 256;
-const CHAT_METRIC_MAX_METRIC_CHARS = 96;
-const CHAT_METRIC_MAX_UNIT_CHARS = 16;
+const EVENTS_MAX_PER_UPLOAD = 500;
+const EVENT_ID_MAX_CHARS = 96;
 
 const CLIENT_LOG_FILE_PREFIX = "client-logs-";
 const CLIENT_LOG_MAX_ENTRY_COUNT = 200;
@@ -48,26 +51,11 @@ const log = createLogger({ base: { component: "telemetry_routes" } });
 const cappedTelemetryFiles = new Set<string>();
 
 function telemetryDir(ctx: RouteContext): string {
-  return join(ctx.storage.getDataDir(), "diagnostics", METRICKIT_DIR);
+  return join(ctx.storage.getDataDir(), "diagnostics", TELEMETRY_DIR);
 }
 
-function metrickitFileName(timestampMs: number): string {
-  const date = new Date(timestampMs);
-  return `${METRICKIT_FILE_PREFIX}${date.toISOString().slice(0, 10)}${METRICKIT_FILE_SUFFIX}`;
-}
-
-function metrickitRetentionDaysFromEnv(): number {
-  const raw = process.env.OPPI_METRICKIT_RETENTION_DAYS?.trim() ?? "";
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return 14;
-}
-
-function chatMetricRetentionDaysFromEnv(): number {
-  const raw = process.env.OPPI_CHAT_METRICS_RETENTION_DAYS?.trim() ?? "";
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return 14;
+function dailyFileName(prefix: string, timestampMs: number): string {
+  return `${prefix}${new Date(timestampMs).toISOString().slice(0, 10)}${FILE_SUFFIX}`;
 }
 
 function isString(value: unknown): value is string {
@@ -95,51 +83,8 @@ function toValidTimestamp(value: unknown, fallback: number): number | null {
   return Number.isNaN(new Date(timestamp).getTime()) ? null : timestamp;
 }
 
-function pruneTelemetryDataByPrefix(
-  ctx: RouteContext,
-  filePrefix: string,
-  retentionDays: number,
-): void {
-  const retentionMs = retentionDays * 24 * 60 * 60 * 1_000;
-  const cutoffMs = Date.now() - retentionMs;
-  const dir = telemetryDir(ctx);
-
-  if (!existsSync(dir)) {
-    return;
-  }
-
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.startsWith(filePrefix) || !entry.endsWith(METRICKIT_FILE_SUFFIX)) {
-      continue;
-    }
-
-    const datePart = entry.slice(filePrefix.length, -METRICKIT_FILE_SUFFIX.length);
-    const fileDate = Date.parse(`${datePart}T00:00:00.000Z`);
-    if (Number.isNaN(fileDate) || fileDate >= cutoffMs) {
-      continue;
-    }
-
-    try {
-      unlinkSync(join(dir, entry));
-    } catch {
-      // Best effort.
-    }
-  }
-}
-
-function pruneOldMetricKitTelemetryData(ctx: RouteContext): void {
-  pruneTelemetryDataByPrefix(ctx, METRICKIT_FILE_PREFIX, metrickitRetentionDaysFromEnv());
-}
-
-function pruneOldChatMetricsTelemetryData(ctx: RouteContext): void {
-  pruneTelemetryDataByPrefix(ctx, CHAT_METRIC_FILE_PREFIX, chatMetricRetentionDaysFromEnv());
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function sanitizePayloadValue(
@@ -234,14 +179,9 @@ function sanitizeSummary(value: unknown): Record<string, string> {
   return out;
 }
 
-function sanitizeString(value: unknown, maxLength: number): string {
-  if (!isString(value)) return "";
-  return trimText(value, maxLength);
-}
-
 /** Short SHA, optional `-dirty`. Missing and anything else, including `unknown`, are dropped. */
 function sanitizeGitCommit(value: unknown): string | undefined {
-  const raw = sanitizeString(value, 64).trim();
+  const raw = trimText(isString(value) ? value : undefined, 64).trim();
   if (!raw) return undefined;
   if (/^[0-9a-f]{7,40}(?:-dirty)?$/i.test(raw)) return raw.toLowerCase();
   return undefined;
@@ -251,6 +191,71 @@ function sanitizeRedactedString(value: unknown, maxLength: number): string {
   if (!isString(value)) return "";
   return redactLogString(value, maxLength);
 }
+
+function isClientKind(value: unknown): value is ClientKind {
+  return value === "ios" || value === "mac";
+}
+
+/**
+ * The `client` envelope shared by every upload. `kind` is required; every other
+ * field is optional, redacted, and length-bounded.
+ */
+function parseTelemetryClient(value: unknown): TelemetryClient | null {
+  if (!isRecord(value) || !isClientKind(value.kind)) return null;
+  const client: TelemetryClient = { kind: value.kind };
+  const text = (key: keyof Omit<TelemetryClient, "kind" | "gitCommit">, max: number): void => {
+    const sanitized = sanitizeRedactedString(value[key], max);
+    if (sanitized) client[key] = sanitized;
+  };
+  text("appVersion", 96);
+  text("buildNumber", 64);
+  text("osVersion", 128);
+  text("deviceModel", 128);
+  text("appInstanceId", CLIENT_LOG_MAX_ID_CHARS);
+  text("bootId", CLIENT_LOG_MAX_ID_CHARS);
+  const gitCommit = sanitizeGitCommit(value.gitCommit);
+  if (gitCommit) client.gitCommit = gitCommit;
+  return client;
+}
+
+/** Pre-v2 stored shape for MetricKit and client-log files: client fields at the top level. */
+function flattenedClient(client: TelemetryClient): Record<string, string | undefined> {
+  return {
+    appVersion: client.appVersion,
+    buildNumber: client.buildNumber,
+    gitCommit: client.gitCommit,
+    osVersion: client.osVersion,
+    deviceModel: client.deviceModel,
+    clientKind: client.kind,
+    appInstanceId: client.appInstanceId,
+    bootId: client.bootId,
+  };
+}
+
+function appendTelemetryRecord(kind: string, path: string, record: unknown): void {
+  const maxBytes = jsonlMaxBytesFromEnv("OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES");
+  const wrote = appendJsonlLineWithByteLimit(path, `${JSON.stringify(record)}\n`, maxBytes);
+  if (wrote) return;
+
+  const key = `${kind}:${path}`;
+  if (cappedTelemetryFiles.has(key)) return;
+  cappedTelemetryFiles.add(key);
+  log.warn("telemetry.write.daily_file_cap_reached", {
+    kind,
+    path,
+    maxBytes,
+  });
+}
+
+function ensureTelemetryDir(ctx: RouteContext): string {
+  const dir = telemetryDir(ctx);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+  return dir;
+}
+
+// ── MetricKit ──
 
 function normalizePayload(
   payload: unknown,
@@ -278,246 +283,100 @@ function normalizePayload(
   };
 }
 
-function parseRequest(body: unknown): MetricKitUploadRequest | null {
-  if (!body || typeof body !== "object") return null;
+function parseMetricKitRequest(body: unknown): MetricKitUploadRequest | null {
+  if (!isRecord(body)) return null;
+  const client = parseTelemetryClient(body.client);
+  if (!client || !Array.isArray(body.payloads)) return null;
 
-  const raw = body as Record<string, unknown>;
-  const rawPayloads = raw.payloads;
-  if (!Array.isArray(rawPayloads)) return null;
-
-  const generatedAt = toFiniteNumber(raw.generatedAt, Date.now());
-  const rawClientKind = sanitizeString(raw.clientKind, 16);
-  const appInstanceId = sanitizeRedactedString(raw.appInstanceId, 128);
-  const bootId = sanitizeRedactedString(raw.bootId, 128);
-  const result: MetricKitUploadRequest = {
-    generatedAt,
-    appVersion: sanitizeString(raw.appVersion, 96),
-    buildNumber: sanitizeString(raw.buildNumber, 64),
-    gitCommit: sanitizeGitCommit(raw.gitCommit),
-    osVersion: sanitizeString(raw.osVersion, 128),
-    deviceModel: sanitizeString(raw.deviceModel, 128),
-    clientKind: rawClientKind === "ios" || rawClientKind === "mac" ? rawClientKind : undefined,
-    appInstanceId: appInstanceId || undefined,
-    bootId: bootId || undefined,
-    payloads: [],
-  };
-
-  for (const candidate of rawPayloads.slice(0, METRICKIT_MAX_PAYLOAD_COUNT)) {
+  const generatedAt = toFiniteNumber(body.generatedAt, Date.now());
+  const payloads: MetricKitPayloadItem[] = [];
+  for (const candidate of body.payloads.slice(0, METRICKIT_MAX_PAYLOAD_COUNT)) {
     const parsed = normalizePayload(candidate, generatedAt);
-    if (parsed.ok) result.payloads.push(parsed.payload);
+    if (parsed.ok) payloads.push(parsed.payload);
   }
 
-  if (result.payloads.length === 0) return null;
-  return result;
-}
-
-function appendTelemetryRecord(kind: string, path: string, record: unknown): void {
-  const maxBytes = jsonlMaxBytesFromEnv("OPPI_TELEMETRY_DAILY_FILE_MAX_BYTES");
-  const wrote = appendJsonlLineWithByteLimit(path, `${JSON.stringify(record)}\n`, maxBytes);
-  if (wrote) return;
-
-  const key = `${kind}:${path}`;
-  if (cappedTelemetryFiles.has(key)) return;
-  cappedTelemetryFiles.add(key);
-  log.warn("telemetry.write.daily_file_cap_reached", {
-    kind,
-    path,
-    maxBytes,
-  });
+  if (payloads.length === 0) return null;
+  return { generatedAt, client, payloads };
 }
 
 function appendMetricKitRecord(ctx: RouteContext, request: MetricKitUploadRequest): void {
-  const dir = telemetryDir(ctx);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-  }
-
+  const dir = ensureTelemetryDir(ctx);
   const record = {
     receivedAt: Date.now(),
     generatedAt: request.generatedAt,
-    appVersion: request.appVersion,
-    buildNumber: request.buildNumber,
-    gitCommit: request.gitCommit,
-    osVersion: request.osVersion,
-    deviceModel: request.deviceModel,
-    clientKind: request.clientKind,
-    appInstanceId: request.appInstanceId,
-    bootId: request.bootId,
+    ...flattenedClient(request.client),
     payloadCount: request.payloads.length,
     payloads: request.payloads,
   };
-
-  const path = join(dir, metrickitFileName(request.generatedAt));
-  appendTelemetryRecord("metrickit", path, record);
-}
-
-const CHAT_METRIC_NAMES = new Set<ChatMetricSample["metric"]>(CHAT_METRIC_NAME_VALUES);
-
-if (CHAT_METRIC_NAMES.size !== CHAT_METRIC_NAME_VALUES.length) {
-  throw new Error("CHAT_METRIC_NAME_VALUES contains duplicate entries");
-}
-
-if (Object.keys(CHAT_METRIC_REGISTRY).length !== CHAT_METRIC_NAME_VALUES.length) {
-  throw new Error("CHAT_METRIC_REGISTRY must stay in parity with CHAT_METRIC_NAME_VALUES");
-}
-
-function isChatMetricName(value: string): value is ChatMetricSample["metric"] {
-  return CHAT_METRIC_NAMES.has(value as ChatMetricSample["metric"]);
-}
-
-function normalizeChatMetricTagKey(key: string): string {
-  const candidate = trimText(key, CHAT_METRIC_MAX_TAG_KEY_CHARS);
-  if (!candidate) {
-    return "";
-  }
-
-  const normalized = candidate
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/[^A-Za-z0-9_]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toLowerCase();
-
-  return trimText(normalized, CHAT_METRIC_MAX_TAG_KEY_CHARS);
-}
-
-function sanitizeChatMetricTags(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object") {
-    return {};
-  }
-
-  const out: Record<string, string> = {};
-  const input = value as Record<string, unknown>;
-
-  for (const [key, rawValue] of Object.entries(input)) {
-    if (Object.keys(out).length >= CHAT_METRIC_MAX_TAG_FIELDS) {
-      break;
-    }
-
-    if (typeof rawValue !== "string") {
-      continue;
-    }
-
-    const safeKey = normalizeChatMetricTagKey(key);
-    if (!safeKey || safeKey in out) {
-      continue;
-    }
-
-    out[safeKey] = trimText(rawValue, CHAT_METRIC_MAX_TAG_VALUE_CHARS);
-  }
-
-  return out;
-}
-
-function normalizeChatMetricSample(value: unknown): ChatMetricSample | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const sample = value as Record<string, unknown>;
-
-  const tsRaw = sample.ts;
-  const valueRaw = sample.value;
-  if (typeof tsRaw !== "number" || !Number.isFinite(tsRaw)) {
-    return null;
-  }
-  if (typeof valueRaw !== "number" || !Number.isFinite(valueRaw)) {
-    return null;
-  }
-
-  const metricCandidate = sanitizeString(sample.metric, CHAT_METRIC_MAX_METRIC_CHARS);
-  if (!isChatMetricName(metricCandidate)) {
-    return null;
-  }
-  const metricRaw = metricCandidate;
-
-  const unitRaw = sanitizeString(
-    sample.unit,
-    CHAT_METRIC_MAX_UNIT_CHARS,
-  ) as ChatMetricSample["unit"];
-  if (unitRaw !== CHAT_METRIC_REGISTRY[metricRaw].unit) {
-    return null;
-  }
-
-  const sessionId = sanitizeString(sample.sessionId, 96);
-  const workspaceId = sanitizeString(sample.workspaceId, 96);
-  const tags = sanitizeChatMetricTags(sample.tags);
-
-  return {
-    ts: Math.trunc(tsRaw),
-    metric: metricRaw,
-    value: valueRaw,
-    unit: unitRaw,
-    ...(sessionId ? { sessionId } : {}),
-    ...(workspaceId ? { workspaceId } : {}),
-    ...(Object.keys(tags).length > 0 ? { tags } : {}),
-  };
-}
-
-function parseChatMetricRequest(body: unknown): ChatMetricUploadRequest | null {
-  if (!body || typeof body !== "object") {
-    return null;
-  }
-
-  const raw = body as Record<string, unknown>;
-  const rawSamples = raw.samples;
-  if (!Array.isArray(rawSamples)) {
-    return null;
-  }
-
-  const generatedAt = toFiniteNumber(raw.generatedAt, Date.now());
-  const samples: ChatMetricSample[] = [];
-
-  for (const candidate of rawSamples.slice(0, CHAT_METRIC_MAX_SAMPLE_COUNT)) {
-    const normalized = normalizeChatMetricSample(candidate);
-    if (normalized) {
-      samples.push(normalized);
-    }
-  }
-
-  if (samples.length === 0) {
-    return null;
-  }
-
-  return {
-    generatedAt,
-    appVersion: sanitizeString(raw.appVersion, 96),
-    buildNumber: sanitizeString(raw.buildNumber, 64),
-    gitCommit: sanitizeGitCommit(raw.gitCommit),
-    osVersion: sanitizeString(raw.osVersion, 128),
-    deviceModel: sanitizeString(raw.deviceModel, 128),
-    samples,
-  };
-}
-
-function appendChatMetricRecord(ctx: RouteContext, request: ChatMetricUploadRequest): void {
-  const dir = telemetryDir(ctx);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-  }
-
-  const record = {
-    receivedAt: Date.now(),
-    generatedAt: request.generatedAt,
-    appVersion: request.appVersion,
-    buildNumber: request.buildNumber,
-    gitCommit: request.gitCommit,
-    osVersion: request.osVersion,
-    deviceModel: request.deviceModel,
-    sampleCount: request.samples.length,
-    samples: request.samples,
-  };
-
-  const path = join(
-    dir,
-    `${CHAT_METRIC_FILE_PREFIX}${new Date(request.generatedAt).toISOString().slice(0, 10)}${METRICKIT_FILE_SUFFIX}`,
+  appendTelemetryRecord(
+    "metrickit",
+    join(dir, dailyFileName(METRICKIT_FILE_PREFIX, request.generatedAt)),
+    record,
   );
-  appendTelemetryRecord("chat_metrics", path, record);
 }
 
-function isClientKind(value: string): value is ClientKind {
-  return value === "ios" || value === "mac";
+// ── App events ──
+
+function countDrop(
+  dropped: Partial<Record<TelemetryDropReason, number>>,
+  reason: TelemetryDropReason,
+  count = 1,
+): void {
+  dropped[reason] = (dropped[reason] ?? 0) + count;
 }
+
+/**
+ * Validate an events upload against the catalog. Returns null for a malformed
+ * envelope; otherwise the records to store and the drop counts by reason.
+ */
+function parseEventsRequest(body: unknown): {
+  records: TelemetryEventRecord[];
+  dropped: Partial<Record<TelemetryDropReason, number>>;
+} | null {
+  if (!isRecord(body) || !Array.isArray(body.events)) return null;
+  const client = parseTelemetryClient(body.client);
+  if (!client) return null;
+
+  const records: TelemetryEventRecord[] = [];
+  const dropped: Partial<Record<TelemetryDropReason, number>> = {};
+  if (body.events.length > EVENTS_MAX_PER_UPLOAD) {
+    countDrop(dropped, "over_batch_limit", body.events.length - EVENTS_MAX_PER_UPLOAD);
+  }
+
+  for (const candidate of body.events.slice(0, EVENTS_MAX_PER_UPLOAD)) {
+    if (!isRecord(candidate)) {
+      countDrop(dropped, "malformed");
+      continue;
+    }
+    const ts = candidate.ts;
+    if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) {
+      countDrop(dropped, "invalid_timestamp");
+      continue;
+    }
+    const result = validateEvent("app", candidate.name, candidate.fields, candidate.tags);
+    if (!result.ok) {
+      countDrop(dropped, result.reason);
+      continue;
+    }
+    const sessionId = sanitizeRedactedString(candidate.sessionId, EVENT_ID_MAX_CHARS);
+    const workspaceId = sanitizeRedactedString(candidate.workspaceId, EVENT_ID_MAX_CHARS);
+    records.push({
+      v: 2,
+      ts: Math.trunc(ts),
+      origin: "app",
+      name: result.event.name,
+      fields: result.event.fields,
+      tags: result.event.tags,
+      ...(sessionId ? { sessionId } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+      client,
+    });
+  }
+
+  return { records, dropped };
+}
+
+// ── Client logs ──
 
 function normalizeClientLogLevel(value: unknown): ClientLogLevel | null {
   if (value === "debug" || value === "info" || value === "warn" || value === "error") {
@@ -530,12 +389,12 @@ function normalizeClientLogLevel(value: unknown): ClientLogLevel | null {
 }
 
 function sanitizeClientLogMetadata(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return undefined;
   }
 
   const out: Record<string, string> = {};
-  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, rawValue] of Object.entries(value)) {
     if (Object.keys(out).length >= CLIENT_LOG_MAX_METADATA_FIELDS) {
       break;
     }
@@ -558,13 +417,12 @@ function sanitizeClientLogMetadata(value: unknown): Record<string, string> | und
 }
 
 function normalizeClientLogEntry(value: unknown): ClientLogEntry | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return null;
   }
 
-  const raw = value as Record<string, unknown>;
-  const ts = raw.ts;
-  const seq = raw.seq;
+  const ts = value.ts;
+  const seq = value.seq;
   if (typeof ts !== "number" || !Number.isFinite(ts)) {
     return null;
   }
@@ -572,20 +430,20 @@ function normalizeClientLogEntry(value: unknown): ClientLogEntry | null {
     return null;
   }
 
-  const level = normalizeClientLogLevel(raw.level);
+  const level = normalizeClientLogLevel(value.level);
   if (!level) {
     return null;
   }
 
-  const category = sanitizeRedactedString(raw.category, CLIENT_LOG_MAX_CATEGORY_CHARS);
-  const message = sanitizeRedactedString(raw.message, CLIENT_LOG_MAX_MESSAGE_CHARS);
+  const category = sanitizeRedactedString(value.category, CLIENT_LOG_MAX_CATEGORY_CHARS);
+  const message = sanitizeRedactedString(value.message, CLIENT_LOG_MAX_MESSAGE_CHARS);
   if (!category || !message) {
     return null;
   }
 
-  const metadata = sanitizeClientLogMetadata(raw.metadata);
-  const sessionId = sanitizeRedactedString(raw.sessionId, CLIENT_LOG_MAX_ID_CHARS);
-  const workspaceId = sanitizeRedactedString(raw.workspaceId, CLIENT_LOG_MAX_ID_CHARS);
+  const metadata = sanitizeClientLogMetadata(value.metadata);
+  const sessionId = sanitizeRedactedString(value.sessionId, CLIENT_LOG_MAX_ID_CHARS);
+  const workspaceId = sanitizeRedactedString(value.workspaceId, CLIENT_LOG_MAX_ID_CHARS);
 
   return {
     ts: Math.trunc(ts),
@@ -600,23 +458,16 @@ function normalizeClientLogEntry(value: unknown): ClientLogEntry | null {
 }
 
 function parseClientLogRequest(body: unknown): ClientLogUploadRequest | null {
-  if (!body || typeof body !== "object") {
+  if (!isRecord(body) || !Array.isArray(body.entries)) {
     return null;
   }
-
-  const raw = body as Record<string, unknown>;
-  const clientKindRaw = sanitizeString(raw.clientKind, 16);
-  if (!isClientKind(clientKindRaw)) {
-    return null;
-  }
-
-  const rawEntries = raw.entries;
-  if (!Array.isArray(rawEntries)) {
+  const client = parseTelemetryClient(body.client);
+  if (!client) {
     return null;
   }
 
   const entries: ClientLogEntry[] = [];
-  for (const candidate of rawEntries.slice(0, CLIENT_LOG_MAX_ENTRY_COUNT)) {
+  for (const candidate of body.entries.slice(0, CLIENT_LOG_MAX_ENTRY_COUNT)) {
     const normalized = normalizeClientLogEntry(candidate);
     if (normalized) {
       entries.push(normalized);
@@ -627,12 +478,12 @@ function parseClientLogRequest(body: unknown): ClientLogUploadRequest | null {
     return null;
   }
 
-  const generatedAt = toValidTimestamp(raw.generatedAt, Date.now());
+  const generatedAt = toValidTimestamp(body.generatedAt, Date.now());
   if (generatedAt === null) {
     return null;
   }
 
-  const droppedCountRaw = raw.droppedCount;
+  const droppedCountRaw = body.droppedCount;
   const droppedCount =
     typeof droppedCountRaw === "number" && Number.isFinite(droppedCountRaw)
       ? Math.max(0, Math.trunc(droppedCountRaw))
@@ -640,71 +491,59 @@ function parseClientLogRequest(body: unknown): ClientLogUploadRequest | null {
 
   return {
     generatedAt,
-    appVersion: sanitizeRedactedString(raw.appVersion, 96),
-    buildNumber: sanitizeRedactedString(raw.buildNumber, 64),
-    gitCommit: sanitizeGitCommit(raw.gitCommit),
-    osVersion: sanitizeRedactedString(raw.osVersion, 128),
-    deviceModel: sanitizeRedactedString(raw.deviceModel, 128),
-    clientKind: clientKindRaw,
-    appInstanceId: sanitizeRedactedString(raw.appInstanceId, CLIENT_LOG_MAX_ID_CHARS),
-    bootId: sanitizeRedactedString(raw.bootId, CLIENT_LOG_MAX_ID_CHARS),
+    client,
     ...(droppedCount && droppedCount > 0 ? { droppedCount } : {}),
     entries,
   };
 }
 
 function appendClientLogRecord(ctx: RouteContext, request: ClientLogUploadRequest): void {
-  const dir = telemetryDir(ctx);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-  }
-
+  const dir = ensureTelemetryDir(ctx);
   const receivedAt = Date.now();
+  const { client } = request;
   const record = {
     receivedAt,
     generatedAt: request.generatedAt,
-    appVersion: request.appVersion,
-    buildNumber: request.buildNumber,
-    gitCommit: request.gitCommit,
-    osVersion: request.osVersion,
-    deviceModel: request.deviceModel,
-    clientKind: request.clientKind,
-    appInstanceId: request.appInstanceId,
-    bootId: request.bootId,
+    ...flattenedClient(client),
     droppedCount: request.droppedCount ?? 0,
     entryCount: request.entries.length,
     entries: request.entries.map((entry) => ({
       receivedAt,
-      clientKind: request.clientKind,
-      appInstanceId: request.appInstanceId,
-      bootId: request.bootId,
+      clientKind: client.kind,
+      appInstanceId: client.appInstanceId,
+      bootId: client.bootId,
       ...entry,
     })),
   };
-
-  const path = join(
-    dir,
-    `${CLIENT_LOG_FILE_PREFIX}${new Date(request.generatedAt).toISOString().slice(0, 10)}${METRICKIT_FILE_SUFFIX}`,
+  appendTelemetryRecord(
+    "client_logs",
+    join(dir, dailyFileName(CLIENT_LOG_FILE_PREFIX, request.generatedAt)),
+    record,
   );
-  appendTelemetryRecord("client_logs", path, record);
 }
 
 export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers): RouteDispatcher {
+  let eventWriter: TelemetryEventWriter | undefined;
+
   async function handleUploadMetricKit(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!telemetryUploadsEnabledFromEnv()) {
       helpers.error(res, 403, "telemetry uploads disabled by OPPI_TELEMETRY_MODE");
       return;
     }
 
-    const rawBody = await helpers.parseBody<MetricKitUploadRequest>(req);
-    const request = parseRequest(rawBody);
+    const request = parseMetricKitRequest(await helpers.parseBody<unknown>(req));
     if (!request) {
-      helpers.error(res, 400, "payloads must be a non-empty array");
+      helpers.error(res, 400, "client and a non-empty payloads array are required");
       return;
     }
 
     appendMetricKitRecord(ctx, request);
-    pruneOldMetricKitTelemetryData(ctx);
+    pruneOldJsonlFiles(
+      telemetryDir(ctx),
+      METRICKIT_FILE_PREFIX,
+      FILE_SUFFIX,
+      retentionDaysFromEnv("OPPI_METRICKIT_RETENTION_DAYS", 14),
+    );
 
     const windowStartMs = Math.min(...request.payloads.map((payload) => payload.windowStartMs));
     const windowEndMs = Math.max(...request.payloads.map((payload) => payload.windowEndMs));
@@ -717,31 +556,26 @@ export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers):
     });
   }
 
-  async function handleUploadChatMetrics(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  async function handleUploadEvents(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!telemetryUploadsEnabledFromEnv()) {
       helpers.error(res, 403, "telemetry uploads disabled by OPPI_TELEMETRY_MODE");
       return;
     }
 
-    const rawBody = await helpers.parseBody<ChatMetricUploadRequest>(req);
-    const request = parseChatMetricRequest(rawBody);
-    if (!request) {
-      helpers.error(res, 400, "samples must be a non-empty array of valid metrics");
+    const parsed = parseEventsRequest(await helpers.parseBody<unknown>(req));
+    if (!parsed) {
+      helpers.error(res, 400, "client and an events array are required");
       return;
     }
 
-    appendChatMetricRecord(ctx, request);
-    pruneOldChatMetricsTelemetryData(ctx);
-
-    const windowStartMs = Math.min(...request.samples.map((sample) => sample.ts));
-    const windowEndMs = Math.max(...request.samples.map((sample) => sample.ts));
-
-    helpers.json(res, {
+    eventWriter ??= new TelemetryEventWriter(telemetryDir(ctx));
+    eventWriter.write("app", parsed.records);
+    const response: TelemetryEventUploadResponse = {
       ok: true,
-      accepted: request.samples.length,
-      windowStartMs,
-      windowEndMs,
-    });
+      accepted: parsed.records.length,
+      dropped: parsed.dropped,
+    };
+    helpers.json(res, response);
   }
 
   async function handleUploadClientLogs(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -750,15 +584,24 @@ export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const rawBody = await helpers.parseBody<ClientLogUploadRequest>(req);
-    const request = parseClientLogRequest(rawBody);
+    const request = parseClientLogRequest(await helpers.parseBody<unknown>(req));
     if (!request) {
-      helpers.error(res, 400, "entries must be a non-empty array of valid client logs");
+      helpers.error(
+        res,
+        400,
+        "client and a non-empty entries array of valid client logs are required",
+      );
       return;
     }
 
     appendClientLogRecord(ctx, request);
-    pruneTelemetryDataByPrefix(ctx, CLIENT_LOG_FILE_PREFIX, chatMetricRetentionDaysFromEnv());
+    // Client logs share the app-event retention.
+    pruneOldJsonlFiles(
+      telemetryDir(ctx),
+      CLIENT_LOG_FILE_PREFIX,
+      FILE_SUFFIX,
+      retentionDaysFromEnv("OPPI_CHAT_METRICS_RETENTION_DAYS", 14),
+    );
 
     const windowStartMs = Math.min(...request.entries.map((entry) => entry.ts));
     const windowEndMs = Math.max(...request.entries.map((entry) => entry.ts));
@@ -778,8 +621,8 @@ export function createTelemetryRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return true;
     }
 
-    if (method === "POST" && path === "/telemetry/chat-metrics") {
-      await handleUploadChatMetrics(req, res);
+    if (method === "POST" && path === "/telemetry/events") {
+      await handleUploadEvents(req, res);
       return true;
     }
 

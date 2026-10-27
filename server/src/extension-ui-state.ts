@@ -7,7 +7,7 @@ import {
   isExtensionUIFireAndForgetMethod,
 } from "./extension-ui-contract.js";
 import type { ExtensionUIRequestEvent } from "./pi-events.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
 import type { ServerMessage, Session } from "./types.js";
 
 /** Extension UI request from pi SDK or pi-tui mirror bridge. */
@@ -54,7 +54,7 @@ export interface ExtensionUIResponseDeliveryOptions {
     response: ExtensionUIResponse,
     request: ExtensionUIRequest,
   ) => boolean | Promise<boolean>;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
   now?: () => number;
   broadcastSettled?: (message: ServerMessage) => void;
 }
@@ -461,7 +461,7 @@ function completeAskRequest(
   active: Pick<ExtensionUIState, "pendingAsk" | "session">,
   options: {
     cancelled: boolean;
-    metrics?: ServerMetricCollector;
+    metrics?: ServerTelemetry;
     now?: () => number;
   },
 ): void {
@@ -477,17 +477,17 @@ function completeAskRequest(
 function recordAskRoundTrip(
   sessionId: string,
   ask: PendingAskState,
-  options: { cancelled: boolean; metrics?: ServerMetricCollector; now?: () => number },
+  options: { cancelled: boolean; metrics?: ServerTelemetry; now?: () => number },
 ): void {
   if (!options.metrics || !ask.initiatedAt) return;
   options.metrics.record(
-    "server.ask_round_trip_ms",
-    (options.now?.() ?? Date.now()) - ask.initiatedAt,
+    "server.ask_round_trip",
     {
-      sessionId,
-      cancelled: options.cancelled ? "true" : "false",
-      questionCount: String(ask.questionCount),
+      duration_ms: (options.now?.() ?? Date.now()) - ask.initiatedAt,
+      questions: ask.questionCount,
     },
+    { status: options.cancelled ? "cancelled" : "ok" },
+    { sessionId },
   );
 }
 
@@ -496,7 +496,7 @@ export function settleExtensionUIRequest(
   requestId: string,
   options: {
     cancelled?: boolean;
-    metrics?: ServerMetricCollector;
+    metrics?: ServerTelemetry;
     now?: () => number;
     broadcastSettled?: (message: ServerMessage) => void;
     broadcastIfMissing?: boolean;
@@ -527,7 +527,7 @@ export function settleAllExtensionUIRequests(
   active: ExtensionUIState,
   options: {
     cancelled?: boolean;
-    metrics?: ServerMetricCollector;
+    metrics?: ServerTelemetry;
     now?: () => number;
     broadcastSettled?: (message: ServerMessage) => void;
   } = {},
@@ -556,7 +556,7 @@ export function drainExtensionUITeardownMessages(
   active: ExtensionUIState,
   options: {
     cancelled?: boolean;
-    metrics?: ServerMetricCollector;
+    metrics?: ServerTelemetry;
     now?: () => number;
   } = {},
 ): ServerMessage[] {

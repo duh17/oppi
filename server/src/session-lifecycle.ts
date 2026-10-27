@@ -1,7 +1,10 @@
 import { clearExtensionUIState, type ExtensionUIState } from "./extension-ui-state.js";
 import type { PendingStop, PendingStopSessionState } from "./session-stop.js";
 import type { AgentBackend } from "./agent-backend.js";
-import type { ServerMetricCollector } from "./server-metric-collector.js";
+import type { EventTags } from "./telemetry/catalog.js";
+import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
+
+type SessionEndReason = EventTags<"server.session_end">["reason"];
 import { isPendingUserReplyRequest } from "./session-attention.js";
 import type { Session, ServerMessage } from "./types.js";
 import { createLogger } from "./logger.js";
@@ -28,7 +31,7 @@ export interface SessionLifecycleCoordinatorDeps {
    */
   autoStopSession: (sessionId: string, guard: AutoStopGuard) => Promise<boolean>;
   getSessionIdleTimeoutMs: () => number;
-  metrics?: ServerMetricCollector;
+  metrics?: ServerTelemetry;
 }
 
 /** What auto-stop's locked recheck asks of the session. */
@@ -62,7 +65,12 @@ export class SessionLifecycleCoordinator {
 
     const isIdleTimeout = this.pendingIdleTimeoutKeys.delete(key);
     const metricReason = isIdleTimeout ? "idle_timeout" : normalizeEndReason(reason);
-    this.deps.metrics?.record("server.session_end", 1, { reason: metricReason });
+    this.deps.metrics?.record(
+      "server.session_end",
+      {},
+      { reason: metricReason },
+      { sessionId: active.session.id, workspaceId: active.workspaceId },
+    );
 
     const failures: Array<{ phase: string; message: string }> = [];
     const recordFailure = (phase: string, error: unknown): void => {
@@ -332,10 +340,11 @@ function hasPendingUserReplyDialog(active: SessionLifecycleSessionState): boolea
 }
 
 /** Map SDK/server reason strings to metric tag values. */
-function normalizeEndReason(reason: string): string {
+function normalizeEndReason(reason: string): SessionEndReason {
   const lower = reason.toLowerCase();
   if (lower === "completed" || lower === "done") return "completed";
   if (lower === "stopped" || lower === "terminated") return "stopped";
   if (lower.includes("error")) return "error";
-  return reason;
+  if (lower === "server_restart" || lower === "store_failed") return lower;
+  return "other";
 }

@@ -1,28 +1,48 @@
 #!/usr/bin/env bun
 
 /**
- * Oppi telemetry review — reads JSONL metric files, computes percentiles,
- * flags SLO reference threshold violations, and provides dictation-focused
- * and model-routing dashboard views. `--models` is read-only operational
- * telemetry: success is not accepted-task correctness. `--http` breaks
- * raw `server.http_request_ms` and `server.http_response_bytes` samples down
- * by method and path pattern. `--models` includes a runtime breakdown;
- * missing runtime stays in an explicit untagged bucket.
+ * Oppi telemetry review — reads v2 telemetry event files (`app-events-*.jsonl`,
+ * `server-events-*.jsonl`), computes percentiles per event field, flags SLO
+ * violations, and provides dictation-focused, model-routing, and HTTP views.
+ *
+ * Units, groups, and SLOs come from the telemetry catalog
+ * (`server/src/telemetry/catalog.ts`). Each event field is one series named
+ * `<event>.<field>` (`app.session_load.duration_ms`). An SLO with a `where`
+ * filter keeps only matching events in that field's series.
+ *
+ * `--models` is read-only operational telemetry: success is not accepted-task
+ * correctness. `--http` breaks `server.http_request` down by method and path
+ * pattern. Missing provider/model or runtime stays in an explicit untagged bucket.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { EVENT_DEFS, GROUPS, fieldSpec, type EventDef } from "../src/telemetry/catalog.ts";
+import { tagsMatch } from "../src/telemetry/validate.ts";
+
 interface SloThreshold {
-  p95: number;
+  tm99: number;
   label: string;
   group: string;
   short: string;
   lowerIsBad?: boolean;
-  displayUnit?: string;
+  displayUnit: string;
 }
 
+/** One stored v2 event inside the review window. */
+export interface LoadedRecord {
+  ts: number;
+  name: string;
+  fields: Record<string, number>;
+  tags: Record<string, string>;
+  sessionId?: string;
+  buildNumber?: string;
+  appVersion?: string;
+}
+
+/** One field value of one event: a point in the `<event>.<field>` series. */
 interface LoadedSample {
   ts: number;
   metric: string;
@@ -47,7 +67,7 @@ interface MetricStats {
 
 interface MetricResult extends MetricStats {
   unit: string;
-  slo_p95: number | null;
+  slo_tm99: number | null;
   group: string;
   status: "pass" | "over" | "no_slo";
 }
@@ -64,6 +84,8 @@ interface LoadResult {
   byBuild: Record<string, Record<string, MetricBucket>>;
   buildSummary: Record<string, BuildInfo>;
   samples: LoadedSample[];
+  records: LoadedRecord[];
+  /** Events read inside the window. */
   totalSamples: number;
   filesRead: number;
 }
@@ -72,8 +94,7 @@ interface DictationErrorSummary {
   attempts: number;
   errors: number;
   setupErrors: number;
-  streamErrors: number;
-  otherErrors: number;
+  captureErrors: number;
   errorRate: number | null;
 }
 
@@ -195,354 +216,66 @@ export interface ModelsReviewOutput {
 const MODELS_REVIEW_NOTE =
   "Operational success is not accepted-task correctness. These rows measure observed routing latency and mechanical tool/turn outcomes, not whether the agent completed the user's task.";
 
-const MODEL_REVIEW_METRICS = new Set([
-  "server.turn_ttft_ms",
-  "server.turn_duration_ms",
-  "server.turn_error",
-  "server.turn_tool_calls",
-  "server.turn_input_tokens",
-  "server.turn_output_tokens",
-  "server.turn_cost",
-  "server.tool_duration_ms",
-  "server.tool_result",
+const MODEL_REVIEW_EVENTS = new Set([
+  "server.turn",
+  "server.turn_ttft",
+  "server.turn_usage",
+  "server.tool_call",
 ]);
 
-export const STATUS_FILTERED_METRICS = new Set([
-  "chat.trace_fetch_ms",
-  "chat.queue_sync_ms",
-  "chat.message_queue_ack_ms",
-]);
+const EVENT_FILE_PREFIXES = ["app-events-", "server-events-"];
 
-// Release SLOs gate on TM99, not raw p95. Values are intentionally tighter
-// than historical p95-era thresholds while keeping headroom over recent
-// two-week daily TM99 behavior.
-export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
-  "chat.ttft_ms": {
-    p95: 20_000,
-    label: "Time to first token",
-    group: "UX Responsiveness",
-    short: "ttft",
-  },
-  "chat.fresh_content_lag_ms": {
-    p95: 1_000,
-    label: "Fresh content lag",
-    group: "UX Responsiveness",
-    short: "content_lag",
-  },
-  "chat.catchup_ms": {
-    p95: 500,
-    label: "Reconnection catch-up",
-    group: "UX Responsiveness",
-    short: "catchup",
-  },
-  "chat.trace_fetch_ms": {
-    p95: 1_500,
-    label: "Trace fetch",
-    group: "UX Responsiveness",
-    short: "trace_fetch",
-  },
-  "chat.cache_load_ms": {
-    p95: 200,
-    label: "Cache load",
-    group: "UX Responsiveness",
-    short: "cache_load",
-  },
-  "chat.reducer_load_ms": {
-    p95: 200,
-    label: "Timeline rebuild",
-    group: "UX Responsiveness",
-    short: "reducer",
-  },
-  "chat.session_load_ms": {
-    p95: 600,
-    label: "Session load",
-    group: "UX Responsiveness",
-    short: "sess_load",
-  },
-  "chat.workspace_load_ms": {
-    p95: 1_000,
-    label: "Workspace load",
-    group: "UX Responsiveness",
-    short: "ws_load",
-  },
-  "chat.session_switch_ms": {
-    p95: 600,
-    label: "Session switch",
-    group: "UX Responsiveness",
-    short: "sess_sw",
-  },
+export function seriesName(event: string, field: string): string {
+  return `${event}.${field}`;
+}
 
-  "chat.ws_wait_for_connected_ms": {
-    p95: 1_000,
-    label: "Client WS connected wait",
-    group: "Connection Reliability",
-    short: "ws_wait",
-  },
-  "server.ws_handshake_ms": {
-    p95: 100,
-    label: "Server WS handshake",
-    group: "Connection Reliability",
-    short: "ws_handshake",
-  },
-  "server.session_subscribe_ms": {
-    p95: 300,
-    label: "Server session subscribe",
-    group: "Connection Reliability",
-    short: "srv_sub",
-  },
-  "chat.queue_sync_ms": {
-    p95: 500,
-    label: "Queue sync (ok only)",
-    group: "Connection Reliability",
-    short: "queue_sync",
-  },
-  "chat.message_queue_ack_ms": {
-    p95: 300,
-    label: "Message queue ack (ok)",
-    group: "Connection Reliability",
-    short: "msg_ack",
-  },
-  "chat.app_event_stream_connect_ms": {
-    p95: 1_000,
-    label: "App-event stream ready",
-    group: "Connection Reliability",
-    short: "app_evt",
-  },
+function eventDef(name: string): EventDef | undefined {
+  return Object.hasOwn(EVENT_DEFS, name) ? EVENT_DEFS[name] : undefined;
+}
 
-  "chat.timeline_apply_ms": {
-    p95: 20,
-    label: "Timeline apply (30fps)",
-    group: "Rendering Smoothness",
-    short: "tl_apply",
-  },
-  "chat.timeline_layout_ms": {
-    p95: 16,
-    label: "Timeline layout (60fps)",
-    group: "Rendering Smoothness",
-    short: "tl_layout",
-  },
-  "chat.cell_configure_ms": {
-    p95: 8,
-    label: "Cell configure",
-    group: "Rendering Smoothness",
-    short: "cell_config",
-  },
-  "chat.markdown_streaming_ms": {
-    p95: 16,
-    label: "Streaming markdown",
-    group: "Rendering Smoothness",
-    short: "md_stream",
-  },
-  "chat.jank_pct": {
-    p95: 25,
-    label: "Scroll jank %",
-    group: "Rendering Smoothness",
-    short: "jank_pct",
-  },
+/** `<event>.<field>` → its event's catalog entry and field. */
+function seriesSource(series: string): { event: string; def: EventDef; field: string } | undefined {
+  const dot = series.lastIndexOf(".");
+  if (dot < 0) return undefined;
+  const event = series.slice(0, dot);
+  const def = eventDef(event);
+  return def ? { event, def, field: series.slice(dot + 1) } : undefined;
+}
 
-  "chat.media_playback_start_ms": {
-    p95: 2_000,
-    label: "Media playback start",
-    group: "Attention and Media UX",
-    short: "media_start",
-  },
-
-  "chat.voice_setup_ms": {
-    p95: 150,
-    label: "Voice setup (legacy alias)",
-    group: "Voice Compatibility",
-    short: "voice_setup",
-  },
-  "chat.voice_first_result_ms": {
-    p95: 6_000,
-    label: "Voice first result (legacy alias)",
-    group: "Voice Compatibility",
-    short: "voice_1st",
-  },
-  "chat.voice_prewarm_ms": {
-    p95: 100,
-    label: "Voice prewarm (legacy alias)",
-    group: "Voice Compatibility",
-    short: "voice_prewarm",
-  },
-
-  "chat.dictation_setup_ms": {
-    p95: 350,
-    label: "Dictation setup",
-    group: "Dictation UX",
-    short: "setup",
-  },
-  "chat.dictation_first_result_ms": {
-    p95: 6_000,
-    label: "Dictation first result",
-    group: "Dictation UX",
-    short: "first_result",
-  },
-  "chat.dictation_finalize_ms": {
-    p95: 500,
-    label: "Dictation finalize",
-    group: "Dictation UX",
-    short: "finalize",
-  },
-  "chat.dictation_preview_final_delta": {
-    p95: 0.15,
-    label: "Preview/final delta",
-    group: "Dictation UX",
-    short: "preview_delta",
-  },
-
-  "server.dictation_stt_ms": {
-    p95: 200,
-    label: "STT inference",
-    group: "Dictation Backend",
-    short: "stt_ms",
-  },
-  "server.dictation_stt_audio_ratio": {
-    p95: 0.1,
-    label: "STT real-time factor",
-    group: "Dictation Backend",
-    short: "stt_rtf",
-  },
-  "server.dictation_finalize_ms": {
-    p95: 250,
-    label: "Finalize total",
-    group: "Dictation Backend",
-    short: "finalize",
-  },
-  "chat.session_list_compute_ms": {
-    p95: 10,
-    label: "List compute",
-    group: "Session List",
-    short: "list_compute",
-  },
-  "chat.session_list_body_rate": {
-    p95: 12,
-    label: "List body evals/5s",
-    group: "Session List",
-    short: "list_body",
-  },
-
-  "device.cpu_pct": {
-    p95: 20,
-    label: "CPU usage %",
-    group: "Device",
-    short: "cpu_pct",
-    displayUnit: "pct",
-  },
-  "device.memory_mb": {
-    p95: 250,
-    label: "Memory footprint",
-    group: "Device",
-    short: "mem_mb",
-    displayUnit: "mb",
-  },
-  "device.memory_available_mb": {
-    p95: 100,
-    label: "Memory avail (low=bad)",
-    group: "Device",
-    short: "mem_avail",
-    lowerIsBad: true,
-    displayUnit: "mb",
-  },
-  "device.thermal_state": { p95: 1, label: "Thermal (0-3)", group: "Device", short: "thermal" },
-
-  "server.cpu_total": {
-    p95: 10,
-    label: "Server CPU %",
-    group: "Server",
-    short: "srv_cpu",
-    displayUnit: "pct",
-  },
-  "server.rss_mb": {
-    p95: 800,
-    label: "Server RSS",
-    group: "Server",
-    short: "srv_rss",
-    displayUnit: "mb",
-  },
-  "server.heap_mb": {
-    p95: 200,
-    label: "Server heap",
-    group: "Server",
-    short: "srv_heap",
-    displayUnit: "mb",
-  },
-  "server.ws_connections": { p95: 5, label: "WS connections", group: "Server", short: "srv_ws" },
-  "server.sessions_total": {
-    p95: 8,
-    label: "Active sessions",
-    group: "Server",
-    short: "srv_sess",
-  },
-  // Stall gate, not the typical interval. TM99 of eventLoop.max was 50ms on
-  // 2026-10-06 and 111ms on 2026-10-07, so 100ms passes the calm day and fails
-  // the stall days. server.event_loop_lag_ms stays the ungated p99 trend.
-  "server.event_loop_max_ms": {
-    p95: 100,
-    label: "Event-loop stall max",
-    group: "Server",
-    short: "evt_max",
-  },
-};
+/** Release SLOs from the catalog, keyed by series. They gate on TM99, not raw p95. */
+export const SLO_THRESHOLDS: Record<string, SloThreshold> = Object.fromEntries(
+  Object.entries(EVENT_DEFS).flatMap(([event, def]) =>
+    (def.slo ?? []).map((slo) => [
+      seriesName(event, slo.field),
+      {
+        tm99: slo.tm99,
+        label: slo.label,
+        group: GROUPS[def.group].label,
+        short: slo.label,
+        ...(slo.lowerIsBad ? { lowerIsBad: true } : {}),
+        displayUnit: fieldSpec(def.fields[slo.field]!).unit,
+      } satisfies SloThreshold,
+    ]),
+  ),
+);
 
 const DICTATION_COMPARE_METRICS = [
-  "chat.dictation_setup_ms",
-  "chat.dictation_first_result_ms",
-  "chat.dictation_finalize_ms",
-  "chat.dictation_preview_final_delta",
-  "server.dictation_stt_ms",
-  "server.dictation_stt_audio_ratio",
+  "app.dictation_setup.total_ms",
+  "app.dictation_first_result.duration_ms",
+  "app.dictation_end.finalize_ms",
+  "app.dictation_end.preview_final_delta_ratio",
+  "server.dictation_finalize.stt_ms",
+  "server.dictation_finalize.stt_audio_ratio",
 ] as const;
 
 const DICTATION_BREAKDOWN_METRICS = new Set<string>([
   ...DICTATION_COMPARE_METRICS,
-  "server.dictation_finalize_ms",
-  "chat.dictation_error",
+  "server.dictation_finalize.finalize_ms",
 ]);
 
-function inferUnit(metric: string): string {
-  if (metric.endsWith("_ms")) return "ms";
-  if (metric.endsWith("_bytes")) return "bytes";
-  if (metric.endsWith("_ratio") || metric.includes("_delta")) return "ratio";
-  if (metric.endsWith("_pct")) return "pct";
-  if (metric.endsWith("_mb")) return "mb";
-  if (
-    metric.endsWith("_count") ||
-    metric.endsWith("_skip") ||
-    metric.endsWith("_error") ||
-    metric.endsWith("_cancel") ||
-    metric.endsWith("_updates") ||
-    metric.endsWith("_tokens") ||
-    metric.endsWith("_cost") ||
-    metric.endsWith("_calls") ||
-    metric.endsWith("_decision") ||
-    metric.endsWith("_result") ||
-    metric.endsWith("_timeout") ||
-    metric.endsWith("_fanout") ||
-    metric.endsWith("_events") ||
-    metric.endsWith("_messages_sent") ||
-    metric.endsWith("_messages_received") ||
-    metric.endsWith("_message_sent") ||
-    metric.endsWith("_message_received") ||
-    metric.endsWith("_close_code") ||
-    metric.endsWith("_active_peak")
-  ) {
-    return "count";
-  }
-
-  // Server operational metrics use `_ms` for latency and explicit suffixes
-  // for bytes/ratios. Treat unknown derived metrics as counts rather than
-  // milliseconds so dashboards do not render tokens, costs, or close-code
-  // counters as seconds.
-  return "count";
-}
-
 function isDictationMetric(metric: string): boolean {
-  return (
-    metric.startsWith("chat.dictation_") ||
-    metric.startsWith("server.dictation_") ||
-    metric.startsWith("chat.voice_")
-  );
+  const group = seriesSource(metric)?.def.group;
+  return group === "dictation_ux" || group === "dictation_backend";
 }
 
 function shouldIncludeMetric(metric: string, dictationOnly: boolean): boolean {
@@ -559,193 +292,113 @@ function pushValue(
   values[metric].vals.push(value);
 }
 
-function pushSample(samples: LoadedSample[], sample: LoadedSample): void {
-  samples.push(sample);
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** A v2 record of a catalog event, or undefined for anything else. */
+function parseRecord(line: string): LoadedRecord | undefined {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (!isObject(raw) || raw.v !== 2 || typeof raw.name !== "string") return undefined;
+  if (typeof raw.ts !== "number" || !isObject(raw.fields)) return undefined;
+  if (!eventDef(raw.name)) return undefined;
+  const fields: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw.fields)) {
+    if (typeof value === "number" && Number.isFinite(value)) fields[key] = value;
+  }
+  const tags: Record<string, string> = {};
+  for (const [key, value] of Object.entries(isObject(raw.tags) ? raw.tags : {})) {
+    if (typeof value === "string") tags[key] = value;
+  }
+  const client = isObject(raw.client) ? raw.client : undefined;
+  return {
+    ts: raw.ts,
+    name: raw.name,
+    fields,
+    tags,
+    ...(typeof raw.sessionId === "string" ? { sessionId: raw.sessionId } : {}),
+    ...(typeof client?.buildNumber === "string" ? { buildNumber: client.buildNumber } : {}),
+    ...(typeof client?.appVersion === "string" ? { appVersion: client.appVersion } : {}),
+  };
+}
+
+/** Load every catalog event of the last `daysBack` days and split it into field series. */
 export function loadSamples(telemetryDir: string, daysBack: number): LoadResult {
   const cutoffMs = Date.now() - daysBack * 24 * 60 * 60 * 1_000;
   const values: Record<string, MetricBucket> = {};
   const byBuild: Record<string, Record<string, MetricBucket>> = {};
   const buildSummary: Record<string, BuildInfo> = {};
   const samples: LoadedSample[] = [];
-  let totalSamples = 0;
+  const records: LoadedRecord[] = [];
   let filesRead = 0;
 
   let files: string[] = [];
   try {
     files = readdirSync(telemetryDir)
-      .filter((f) => f.startsWith("chat-metrics-") && f.endsWith(".jsonl"))
+      .filter(
+        (file) =>
+          EVENT_FILE_PREFIXES.some((prefix) => file.startsWith(prefix)) && file.endsWith(".jsonl"),
+      )
       .sort();
   } catch {
-    return { values, byBuild, buildSummary, samples, totalSamples: 0, filesRead: 0 };
+    return { values, byBuild, buildSummary, samples, records, totalSamples: 0, filesRead: 0 };
   }
 
   for (const file of files) {
     const text = readFileSync(join(telemetryDir, file), "utf8");
     filesRead += 1;
-
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
-      let record: { buildNumber?: string; appVersion?: string; samples?: LoadedSample[] };
-      try {
-        record = JSON.parse(line);
-      } catch {
-        continue;
-      }
-
-      const build = record.buildNumber ?? "unknown";
-      const version = record.appVersion ?? "?";
-
-      for (const sample of record.samples ?? []) {
-        if (typeof sample.ts !== "number" || sample.ts < cutoffMs) continue;
-        if (typeof sample.value !== "number" || !Number.isFinite(sample.value)) continue;
-
-        if (STATUS_FILTERED_METRICS.has(sample.metric)) {
-          const status = sample.tags?.status;
-          if (status && status !== "ok") continue;
-        }
-
-        const unit = sample.unit ?? inferUnit(sample.metric);
-        pushValue(values, sample.metric, sample.value, unit);
-        if (!byBuild[build]) byBuild[build] = {};
-        pushValue(byBuild[build], sample.metric, sample.value, unit);
-        pushSample(samples, { ...sample, unit });
-
+      const record = parseRecord(line);
+      if (!record || record.ts < cutoffMs) continue;
+      records.push(record);
+      const def = eventDef(record.name)!;
+      const build = record.buildNumber;
+      if (build) {
         if (!buildSummary[build]) {
-          buildSummary[build] = { version, samples: 0, firstSeen: sample.ts, lastSeen: sample.ts };
+          buildSummary[build] = {
+            version: record.appVersion ?? "?",
+            samples: 0,
+            firstSeen: record.ts,
+            lastSeen: record.ts,
+          };
         }
         buildSummary[build].samples += 1;
-        buildSummary[build].firstSeen = Math.min(buildSummary[build].firstSeen, sample.ts);
-        buildSummary[build].lastSeen = Math.max(buildSummary[build].lastSeen, sample.ts);
-        totalSamples += 1;
+        buildSummary[build].firstSeen = Math.min(buildSummary[build].firstSeen, record.ts);
+        buildSummary[build].lastSeen = Math.max(buildSummary[build].lastSeen, record.ts);
+      }
+
+      for (const [field, value] of Object.entries(record.fields)) {
+        const fieldDef = def.fields[field];
+        if (!fieldDef) continue;
+        const slo = def.slo?.find((candidate) => candidate.field === field);
+        if (slo && !tagsMatch(slo.where, record.tags)) continue;
+        const metric = seriesName(record.name, field);
+        const unit = fieldSpec(fieldDef).unit;
+        pushValue(values, metric, value, unit);
+        samples.push({ ts: record.ts, metric, value, unit, tags: record.tags });
+        if (build) {
+          if (!byBuild[build]) byBuild[build] = {};
+          pushValue(byBuild[build], metric, value, unit);
+        }
       }
     }
   }
 
-  const serverResult = loadServerMetrics(telemetryDir, cutoffMs, values, samples);
-  totalSamples += serverResult.samples;
-  filesRead += serverResult.files;
-
-  const opsResult = loadServerOpsMetrics(telemetryDir, cutoffMs, values, samples);
-  totalSamples += opsResult.samples;
-  filesRead += opsResult.files;
-
-  return { values, byBuild, buildSummary, samples, totalSamples, filesRead };
-}
-
-function loadServerMetrics(
-  telemetryDir: string,
-  cutoffMs: number,
-  values: Record<string, MetricBucket>,
-  samples: LoadedSample[],
-): { samples: number; files: number } {
-  let files: string[] = [];
-  let totalSamples = 0;
-  let filesRead = 0;
-  try {
-    files = readdirSync(telemetryDir)
-      .filter((f) => f.startsWith("server-metrics-") && f.endsWith(".jsonl"))
-      .sort();
-  } catch {
-    return { samples: 0, files: 0 };
-  }
-
-  for (const file of files) {
-    const text = readFileSync(join(telemetryDir, file), "utf8");
-    filesRead += 1;
-    for (const line of text.split("\n")) {
-      if (!line.trim()) continue;
-      let rec: {
-        ts?: number;
-        cpu?: { total?: number };
-        memory?: { rss?: number; heapUsed?: number };
-        sessions?: { total?: number };
-        wsConnections?: number;
-        eventLoop?: { p99?: number; max?: number };
-      };
-      try {
-        rec = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (typeof rec.ts !== "number" || rec.ts < cutoffMs) continue;
-
-      const push = (metric: string, val: number | undefined, unit: string) => {
-        if (typeof val !== "number" || !Number.isFinite(val)) return;
-        pushValue(values, metric, val, unit);
-        pushSample(samples, { ts: rec.ts!, metric, value: val, unit });
-        totalSamples += 1;
-      };
-
-      push("server.cpu_total", rec.cpu?.total, "pct");
-      push("server.rss_mb", rec.memory?.rss, "mb");
-      push("server.heap_mb", rec.memory?.heapUsed, "mb");
-      push("server.ws_connections", rec.wsConnections, "count");
-      push("server.sessions_total", rec.sessions?.total, "count");
-      push("server.event_loop_lag_ms", rec.eventLoop?.p99, "ms");
-      push("server.event_loop_max_ms", rec.eventLoop?.max, "ms");
-    }
-  }
-
-  return { samples: totalSamples, files: filesRead };
-}
-
-function loadServerOpsMetrics(
-  telemetryDir: string,
-  cutoffMs: number,
-  values: Record<string, MetricBucket>,
-  samples: LoadedSample[],
-): { samples: number; files: number } {
-  let files: string[] = [];
-  let totalSamples = 0;
-  let filesRead = 0;
-  try {
-    files = readdirSync(telemetryDir)
-      .filter((f) => f.startsWith("server-ops-metrics-") && f.endsWith(".jsonl"))
-      .sort();
-  } catch {
-    return { samples: 0, files: 0 };
-  }
-
-  for (const file of files) {
-    const text = readFileSync(join(telemetryDir, file), "utf8");
-    filesRead += 1;
-    for (const line of text.split("\n")) {
-      if (!line.trim()) continue;
-      let record: {
-        samples?: Array<{
-          ts?: number;
-          metric?: string;
-          value?: number;
-          tags?: Record<string, string>;
-        }>;
-      };
-      try {
-        record = JSON.parse(line);
-      } catch {
-        continue;
-      }
-
-      for (const sample of record.samples ?? []) {
-        if (typeof sample.ts !== "number" || sample.ts < cutoffMs) continue;
-        if (typeof sample.metric !== "string") continue;
-        if (typeof sample.value !== "number" || !Number.isFinite(sample.value)) continue;
-        const unit = inferUnit(sample.metric);
-        pushValue(values, sample.metric, sample.value, unit);
-        pushSample(samples, {
-          ts: sample.ts,
-          metric: sample.metric,
-          value: sample.value,
-          unit,
-          tags: sample.tags,
-        });
-        totalSamples += 1;
-      }
-    }
-  }
-
-  return { samples: totalSamples, files: filesRead };
+  return {
+    values,
+    byBuild,
+    buildSummary,
+    samples,
+    records,
+    totalSamples: records.length,
+    filesRead,
+  };
 }
 
 function walkJsonFiles(dir: string): string[] {
@@ -933,9 +586,7 @@ interface RuntimeAccumulator {
   costMicrodollars: number;
 }
 
-function emptyRuntimeAccumulator(
-  identity: ReturnType<typeof runtimeIdentity>,
-): RuntimeAccumulator {
+function emptyRuntimeAccumulator(identity: ReturnType<typeof runtimeIdentity>): RuntimeAccumulator {
   return {
     runtime: identity.runtime,
     untagged: identity.untagged,
@@ -1016,73 +667,77 @@ export function reviewModels(data: LoadResult, options: { days: number }): Model
   let untaggedSamples = 0;
   let untaggedRuntimeSamples = 0;
 
-  for (const sample of data.samples) {
-    if (!MODEL_REVIEW_METRICS.has(sample.metric)) continue;
-    const identity = routingIdentity(sample.tags);
+  for (const record of data.records) {
+    if (!MODEL_REVIEW_EVENTS.has(record.name)) continue;
+    const { fields, tags } = record;
+    const identity = routingIdentity(tags);
     if (identity.untagged) untaggedSamples += 1;
-    const runtime = runtimeIdentity(sample.tags);
+    const runtime = runtimeIdentity(tags);
     if (runtime.untagged) untaggedRuntimeSamples += 1;
     const runtimeRow = runtimes.get(runtime.key) ?? emptyRuntimeAccumulator(runtime);
+    const modelRow = models.get(identity.key) ?? emptyModelAccumulator(identity);
     runtimeRow.samples += 1;
-    if (sample.metric === "server.turn_ttft_ms") runtimeRow.ttft.push(sample.value);
-    if (sample.metric === "server.turn_duration_ms") runtimeRow.turnDuration.push(sample.value);
-    if (sample.metric === "server.turn_error") runtimeRow.turnErrors += Math.max(0, sample.value);
-    if (sample.metric === "server.tool_result") {
-      const results = Math.max(0, sample.value);
-      runtimeRow.toolResults += results;
-      if (sample.tags?.status === "error") runtimeRow.toolErrors += results;
-    }
-    if (sample.metric === "server.turn_cost") {
-      runtimeRow.costMicrodollars += Math.max(0, sample.value);
+    modelRow.samples += 1;
+
+    switch (record.name) {
+      case "server.turn_ttft":
+        if (fields.duration_ms !== undefined) {
+          runtimeRow.ttft.push(fields.duration_ms);
+          modelRow.ttft.push(fields.duration_ms);
+        }
+        break;
+      case "server.turn": {
+        if (fields.duration_ms !== undefined) {
+          runtimeRow.turnDuration.push(fields.duration_ms);
+          modelRow.turnDuration.push(fields.duration_ms);
+        }
+        modelRow.turnToolCalls += Math.max(0, fields.tool_calls ?? 0);
+        if (tags.status === "error") {
+          runtimeRow.turnErrors += 1;
+          modelRow.turnErrors += 1;
+        }
+        break;
+      }
+      case "server.turn_usage": {
+        const cost = Math.max(0, fields.cost_usd_micros ?? 0);
+        runtimeRow.costMicrodollars += cost;
+        modelRow.costMicrodollars += cost;
+        modelRow.inputTokens += Math.max(0, fields.input_tokens ?? 0);
+        modelRow.outputTokens += Math.max(0, fields.output_tokens ?? 0);
+        break;
+      }
+      case "server.tool_call": {
+        const failed = tags.status === "error";
+        runtimeRow.toolResults += 1;
+        modelRow.toolResults += 1;
+        if (failed) {
+          runtimeRow.toolErrors += 1;
+          modelRow.toolErrors += 1;
+        }
+        if (fields.duration_ms !== undefined) modelRow.toolDuration.push(fields.duration_ms);
+
+        const tool = tags.tool?.trim() || "unknown";
+        const toolKey = `${identity.key}\0${tool}`;
+        const toolRow =
+          modelTools.get(toolKey) ??
+          ({
+            provider: identity.provider,
+            model: identity.model,
+            tool,
+            untagged: identity.untagged,
+            duration: [],
+            calls: 0,
+            errors: 0,
+          } satisfies ModelToolAccumulator);
+        if (fields.duration_ms !== undefined) toolRow.duration.push(fields.duration_ms);
+        toolRow.calls += 1;
+        if (failed) toolRow.errors += 1;
+        modelTools.set(toolKey, toolRow);
+        break;
+      }
     }
     runtimes.set(runtime.key, runtimeRow);
-    const modelRow = models.get(identity.key) ?? emptyModelAccumulator(identity);
-    modelRow.samples += 1;
-    if (sample.metric === "server.turn_ttft_ms") modelRow.ttft.push(sample.value);
-    if (sample.metric === "server.turn_duration_ms") modelRow.turnDuration.push(sample.value);
-    if (sample.metric === "server.turn_error") modelRow.turnErrors += Math.max(0, sample.value);
-    if (sample.metric === "server.turn_tool_calls") {
-      modelRow.turnToolCalls += Math.max(0, sample.value);
-    }
-    if (sample.metric === "server.turn_input_tokens") {
-      modelRow.inputTokens += Math.max(0, sample.value);
-    }
-    if (sample.metric === "server.turn_output_tokens") {
-      modelRow.outputTokens += Math.max(0, sample.value);
-    }
-    if (sample.metric === "server.turn_cost") {
-      modelRow.costMicrodollars += Math.max(0, sample.value);
-    }
-    if (sample.metric === "server.tool_duration_ms") modelRow.toolDuration.push(sample.value);
-    if (sample.metric === "server.tool_result") {
-      const results = Math.max(0, sample.value);
-      modelRow.toolResults += results;
-      if (sample.tags?.status === "error") modelRow.toolErrors += results;
-    }
     models.set(identity.key, modelRow);
-
-    if (sample.metric === "server.tool_duration_ms" || sample.metric === "server.tool_result") {
-      const tool = sample.tags?.tool?.trim() || "unknown";
-      const toolKey = `${identity.key}\0${tool}`;
-      const toolRow =
-        modelTools.get(toolKey) ??
-        ({
-          provider: identity.provider,
-          model: identity.model,
-          tool,
-          untagged: identity.untagged,
-          duration: [],
-          calls: 0,
-          errors: 0,
-        } satisfies ModelToolAccumulator);
-      if (sample.metric === "server.tool_duration_ms") toolRow.duration.push(sample.value);
-      if (sample.metric === "server.tool_result") {
-        const results = Math.max(0, sample.value);
-        toolRow.calls += results;
-        if (sample.tags?.status === "error") toolRow.errors += results;
-      }
-      modelTools.set(toolKey, toolRow);
-    }
   }
 
   const modelRows = [...models.values()]
@@ -1252,7 +907,7 @@ export function formatModelsReview(
 }
 
 export const HTTP_REVIEW_NOTE =
-  "server.http_request_ms and server.http_response_bytes rows are raw samples, not sum- or max-aggregated buckets. Fast successful routine routes are omitted, so sample count is not request volume. error_rate is the share of request samples with status_code >= 400. Byte p50/p90 use the same nearest-rank percentile as latency; max is the largest response sample.";
+  "server.http_request rows are raw events, not aggregated buckets. Fast successful routine routes are omitted, so the count is not request volume. error_rate is the share of requests with status_code >= 400. Response-byte p50/p90 use the same nearest-rank percentile as latency; max is the largest response; WebSocket upgrades and unmeasurable bodies carry no bytes.";
 
 export interface HttpRouteReviewRow {
   method: string;
@@ -1294,24 +949,23 @@ export function reviewHttp(data: LoadResult, options: { days: number }): HttpRev
     { method: string; pathPattern: string; latency: number[]; errors: number; bytes: number[] }
   >();
 
-  for (const sample of data.samples) {
-    if (sample.metric !== "server.http_request_ms" && sample.metric !== "server.http_response_bytes") {
-      continue;
-    }
-    const method = sample.tags?.method?.trim() || "?";
-    const pathPattern = sample.tags?.path_pattern?.trim() || "?";
+  for (const record of data.records) {
+    if (record.name !== "server.http_request") continue;
+    const method = record.tags.method?.trim() || "?";
+    const pathPattern = record.tags.path_pattern?.trim() || "?";
     const key = `${method}\0${pathPattern}`;
     let row = byRoute.get(key);
     if (!row) {
       row = { method, pathPattern, latency: [], errors: 0, bytes: [] };
       byRoute.set(key, row);
     }
-    if (sample.metric === "server.http_response_bytes") {
-      row.bytes.push(sample.value);
-      continue;
+    const duration = record.fields.duration_ms;
+    if (duration !== undefined) {
+      row.latency.push(duration);
+      if (httpStatusCode(record.tags) >= 400) row.errors += 1;
     }
-    row.latency.push(sample.value);
-    if (httpStatusCode(sample.tags) >= 400) row.errors += 1;
+    const bytes = record.fields.response_bytes;
+    if (bytes !== undefined) row.bytes.push(bytes);
   }
 
   const routes = [...byRoute.values()]
@@ -1364,7 +1018,7 @@ export function formatHttpReview(
     `  ${"Method".padEnd(6)} ${"Path".padEnd(68)} ${"n".padStart(7)} ${"p50".padStart(8)} ${"p90".padStart(8)} ${"p99".padStart(8)} ${"err%".padStart(7)} ${"b_n".padStart(7)} ${"b_p50".padStart(8)} ${"b_p90".padStart(8)} ${"b_max".padStart(8)}`,
   );
   if (result.routes.length === 0) {
-    lines.push(`  ${c.dim}no server.http_request_ms or server.http_response_bytes samples${c.reset}`);
+    lines.push(`  ${c.dim}no server.http_request events${c.reset}`);
     return lines.join("\n");
   }
   for (const row of result.routes) {
@@ -1382,7 +1036,14 @@ function statusValue(stats: MetricStats): number {
 
 function metricPassesSlo(stats: MetricStats, slo: SloThreshold): boolean {
   const value = statusValue(stats);
-  return slo.lowerIsBad ? value >= slo.p95 : value <= slo.p95;
+  return slo.lowerIsBad ? value >= slo.tm99 : value <= slo.tm99;
+}
+
+/** Catalog group of a series, labeled "(no SLO)" when the series is not gated. */
+function seriesGroup(metric: string, gated: boolean): string {
+  const source = seriesSource(metric);
+  const label = source ? GROUPS[source.def.group].label : "Other";
+  return gated ? label : `${label} (no SLO)`;
 }
 
 function buildMetricResult(metric: string, vals: number[], unit: string): MetricResult {
@@ -1391,8 +1052,8 @@ function buildMetricResult(metric: string, vals: number[], unit: string): Metric
   return {
     ...stats,
     unit: slo?.displayUnit ?? unit,
-    slo_p95: slo?.p95 ?? null,
-    group: slo?.group ?? "Informational",
+    slo_tm99: slo?.tm99 ?? null,
+    group: seriesGroup(metric, slo !== undefined),
     status: slo ? (metricPassesSlo(stats, slo) ? "pass" : "over") : "no_slo",
   };
 }
@@ -1406,16 +1067,16 @@ function buildBreakdowns(
 
   for (const tag of byTags) {
     const buckets: Record<string, Record<string, MetricBucket>> = {};
-    const dictationErrorsByValue: Record<
-      string,
-      {
-        attempts: number;
-        errors: number;
-        setupErrors: number;
-        streamErrors: number;
-        otherErrors: number;
-      }
-    > = {};
+    const dictationErrorsByValue: Record<string, Omit<DictationErrorSummary, "errorRate">> = {};
+    const errorSummaryFor = (tagValue: string): Omit<DictationErrorSummary, "errorRate"> => {
+      dictationErrorsByValue[tagValue] ??= {
+        attempts: 0,
+        errors: 0,
+        setupErrors: 0,
+        captureErrors: 0,
+      };
+      return dictationErrorsByValue[tagValue];
+    };
     let sawAny = false;
 
     for (const sample of data.samples) {
@@ -1425,37 +1086,34 @@ function buildBreakdowns(
       if (!tagValue) continue;
       sawAny = true;
       if (!buckets[tagValue]) buckets[tagValue] = {};
-      if (!dictationErrorsByValue[tagValue]) {
-        dictationErrorsByValue[tagValue] = {
-          attempts: 0,
-          errors: 0,
-          setupErrors: 0,
-          streamErrors: 0,
-          otherErrors: 0,
-        };
-      }
       pushValue(buckets[tagValue], sample.metric, sample.value, sample.unit);
+    }
 
-      if (sample.metric === "chat.dictation_setup_ms") {
-        dictationErrorsByValue[tagValue].attempts += 1;
-      } else if (sample.metric === "chat.dictation_error") {
-        const count = Math.max(0, Math.round(sample.value));
-        const phase = sample.tags?.phase;
-        dictationErrorsByValue[tagValue].errors += count;
-        if (phase === "setup") {
-          dictationErrorsByValue[tagValue].setupErrors += count;
-          dictationErrorsByValue[tagValue].attempts += count;
-        } else if (phase === "stream") {
-          dictationErrorsByValue[tagValue].streamErrors += count;
-        } else {
-          dictationErrorsByValue[tagValue].otherErrors += count;
+    // An attempt is a setup that finished (ok or error); cancelled setups are not attempts.
+    for (const record of data.records) {
+      const tagValue = record.tags[tag];
+      if (!tagValue) continue;
+      if (record.name === "app.dictation_setup") {
+        if (record.tags.status === "cancelled") continue;
+        sawAny = true;
+        const summary = errorSummaryFor(tagValue);
+        summary.attempts += 1;
+        if (record.tags.status === "error") {
+          summary.errors += 1;
+          summary.setupErrors += 1;
         }
+      } else if (record.name === "app.dictation_capture_error") {
+        sawAny = true;
+        const summary = errorSummaryFor(tagValue);
+        summary.errors += 1;
+        summary.captureErrors += 1;
       }
     }
 
     if (!sawAny) continue;
 
     const values: Record<string, BreakdownEntry> = {};
+    for (const tagValue of Object.keys(dictationErrorsByValue)) buckets[tagValue] ??= {};
     for (const [tagValue, metrics] of Object.entries(buckets)) {
       const metricResults: Record<string, MetricResult> = {};
       let sampleCount = 0;
@@ -1832,11 +1490,11 @@ export function buildTelemetryTrendSvg(
         if (value == null || !Number.isFinite(value)) return max;
         return Math.max(max, value);
       }, 0);
-      const chartMax = Math.max(1, maxSeriesValue, metricResult.tm99, metricResult.slo_p95 ?? 0);
+      const chartMax = Math.max(1, maxSeriesValue, metricResult.tm99, metricResult.slo_tm99 ?? 0);
       const thresholdY =
-        metricResult.slo_p95 == null
+        metricResult.slo_tm99 == null
           ? null
-          : chartY + chartHeight - ((metricResult.slo_p95 ?? 0) / chartMax) * chartHeight;
+          : chartY + chartHeight - ((metricResult.slo_tm99 ?? 0) / chartMax) * chartHeight;
       const sparkPathData = seriesPath(series, chartX, chartY, chartWidth, chartHeight, chartMax);
 
       pieces.push(
@@ -1846,7 +1504,7 @@ export function buildTelemetryTrendSvg(
         `<text class="metric-title" x="${cardX + 16}" y="${cardY + 22}">${escapeXml(titleText)}</text>`,
       );
       pieces.push(
-        `<text class="metric-meta" x="${cardX + 16}" y="${cardY + 40}">overall tm99 ${escapeXml(fmtValue(metricResult.tm99, metricResult.unit))} / slo ${escapeXml(fmtValue(metricResult.slo_p95 ?? 0, metricResult.unit))}${slo.lowerIsBad ? " · low bad" : ""}</text>`,
+        `<text class="metric-meta" x="${cardX + 16}" y="${cardY + 40}">overall tm99 ${escapeXml(fmtValue(metricResult.tm99, metricResult.unit))} / slo ${escapeXml(fmtValue(metricResult.slo_tm99 ?? 0, metricResult.unit))}${slo.lowerIsBad ? " · low bad" : ""}</text>`,
       );
       pieces.push(
         `<text class="status" x="${cardX + cardWidth - 16}" y="${cardY + 22}" text-anchor="end" fill="${palette.text}">${metricResult.status === "over" ? "OVER" : "OK"}</text>`,
@@ -1862,7 +1520,7 @@ export function buildTelemetryTrendSvg(
           `<line class="threshold" x1="${chartX}" y1="${thresholdY.toFixed(1)}" x2="${chartX + chartWidth}" y2="${thresholdY.toFixed(1)}" />`,
         );
         pieces.push(
-          `<text class="axis" x="${chartX + chartWidth}" y="${(thresholdY - 4).toFixed(1)}" text-anchor="end">SLO ${escapeXml(fmtValue(metricResult.slo_p95 ?? 0, metricResult.unit))}</text>`,
+          `<text class="axis" x="${chartX + chartWidth}" y="${(thresholdY - 4).toFixed(1)}" text-anchor="end">SLO ${escapeXml(fmtValue(metricResult.slo_tm99 ?? 0, metricResult.unit))}</text>`,
         );
       }
       if (sparkPathData) {
@@ -1957,91 +1615,13 @@ function makeColors(enabled: boolean) {
   };
 }
 
-const GROUP_NOTES: Record<string, string> = {
-  "UX Responsiveness": "User-visible wait time. Do not put full agent work duration in this group.",
-  Server:
-    "Resource pressure. event_loop_lag_ms is the ungated sampler p99 trend. event_loop_max_ms is the interval max; the release gate uses its TM99.",
-  "Connection Reliability":
-    "Command/session readiness and stream health. These are user-blocking when they fail or tail out.",
-  "Attention and Media UX":
-    "Human-in-the-loop and media playback timings. Ask response is tracked separately as user dwell time, not app latency.",
-  "Voice Compatibility":
-    "chat.voice_* metrics are legacy aliases kept for older dashboards; Dictation UX is the canonical voice-input namespace.",
-};
-
-const AGENT_WORKLOAD_METRICS = new Set([
-  "server.turn_duration_ms",
-  "server.turn_tool_calls",
-  "server.tool_duration_ms",
-  "server.tool_result",
-  "server.turn_input_tokens",
-  "server.turn_output_tokens",
-  "server.turn_cost",
-  "chat.session_message_count",
-  "chat.session_input_tokens",
-  "chat.session_output_tokens",
-  "chat.session_mutating_tool_calls",
-  "chat.session_files_changed",
-  "chat.session_context_tokens",
-  "chat.session_context_window",
-  "server.compaction_ms",
-  "server.compaction_result",
-]);
-
-function informationalGroup(metric: string): string {
-  // chat.thread_load_ms stays no_slo: no installed-app samples yet, so there is no TM99 to gate.
-  if (
-    metric === "server.turn_ttft_ms" ||
-    metric === "chat.thread_load_ms" ||
-    metric === "chat.session_switch_ms" ||
-    metric === "chat.workspace_load_ms"
-  ) {
-    return "UX responsiveness drill-down (no SLO)";
-  }
-  if (metric.startsWith("chat.dictation_") || metric.startsWith("server.dictation_")) {
-    return "Dictation drill-down (no SLO)";
-  }
-  if (
-    metric.startsWith("chat.share_") ||
-    metric.startsWith("chat.quick_session_") ||
-    metric.startsWith("chat.ask_") ||
-    metric.startsWith("chat.media_") ||
-    metric.startsWith("chat.voice_playback_")
-  ) {
-    return "Attention and media drill-down (no SLO)";
-  }
-  if (metric.startsWith("network.")) {
-    return "Connection and command drill-down (no SLO)";
-  }
-  if (AGENT_WORKLOAD_METRICS.has(metric)) return "Agent workload / progress (not UX latency)";
-  if (
-    metric.startsWith("server.ws_") ||
-    metric.startsWith("server.session_") ||
-    metric.startsWith("chat.app_event_stream_") ||
-    metric.startsWith("chat.command_") ||
-    metric.startsWith("chat.message_queue_")
-  ) {
-    return "Connection and command drill-down (no SLO)";
-  }
-  if (
-    metric.startsWith("chat.timeline_") ||
-    metric.startsWith("chat.render_") ||
-    metric.startsWith("chat.coalescer_")
-  ) {
-    return "Rendering drill-down (no SLO)";
-  }
-  if (
-    metric.startsWith("server.turn_") ||
-    metric.startsWith("server.auto_retry") ||
-    metric.startsWith("server.compaction_")
-  ) {
-    return "Agent workload / progress (not UX latency)";
-  }
-  if (metric.startsWith("server.") || metric.startsWith("device.")) {
-    return "Server and device diagnostics (no SLO)";
-  }
-  return "Other informational (no SLO)";
-}
+/** Catalog group notes, keyed by group label and its "(no SLO)" variant. */
+const GROUP_NOTES: Record<string, string> = Object.fromEntries(
+  Object.values(GROUPS).flatMap((group) => [
+    [group.label, group.note],
+    [`${group.label} (no SLO)`, group.note],
+  ]),
+);
 
 function printGroupNote(groupName: string, c: ReturnType<typeof makeColors>): void {
   const note = GROUP_NOTES[groupName];
@@ -2116,11 +1696,11 @@ function printBreakdowns(result: ReviewOutput, c: ReturnType<typeof makeColors>)
       `  ${"Value".padEnd(32)} ${"Attempts".padStart(8)} ${"setup p95".padStart(10)} ${"first p95".padStart(10)} ${"final p95".padStart(10)} ${"delta p95".padStart(10)} ${"stt p95".padStart(10)} ${"errors".padStart(12)}`,
     );
     for (const [tagValue, entry] of Object.entries(section.values)) {
-      const setup = entry.metrics["chat.dictation_setup_ms"];
-      const first = entry.metrics["chat.dictation_first_result_ms"];
-      const final = entry.metrics["chat.dictation_finalize_ms"];
-      const delta = entry.metrics["chat.dictation_preview_final_delta"];
-      const stt = entry.metrics["server.dictation_stt_ms"];
+      const setup = entry.metrics["app.dictation_setup.total_ms"];
+      const first = entry.metrics["app.dictation_first_result.duration_ms"];
+      const final = entry.metrics["app.dictation_end.finalize_ms"];
+      const delta = entry.metrics["app.dictation_end.preview_final_delta_ratio"];
+      const stt = entry.metrics["server.dictation_finalize.stt_ms"];
       const attempts =
         entry.dictationErrors?.attempts ??
         setup?.count ??
@@ -2163,7 +1743,7 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
     groups[slo.group].push(metric);
   }
 
-  const NAME_W = 14;
+  const NAME_W = 26;
   const VAL_W = 7;
   const SLO_W = 6;
 
@@ -2180,7 +1760,7 @@ function printNarrow(result: ReviewOutput, args: ParsedArgs): void {
       }
       const over = r.status === "over";
       const statusStr = fmtValue(statusValue(r), r.unit).padStart(VAL_W);
-      const sloStr = fmtValue(r.slo_p95 ?? 0, r.unit).padStart(SLO_W);
+      const sloStr = fmtValue(r.slo_tm99 ?? 0, r.unit).padStart(SLO_W);
       console.log(
         `  ${name.padEnd(NAME_W)} ${over ? c.red : ""}${statusStr}${c.reset} /${sloStr}  ${over ? `${c.red}OVER${c.reset}` : `${c.green}ok${c.reset}`}`,
       );
@@ -2215,7 +1795,7 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
   for (const [groupName, metrics] of Object.entries(groups)) {
     console.log(`${c.bold}${c.cyan}${groupName}${c.reset}`);
     printGroupNote(groupName, c);
-    const cols: string[] = [`  ${"Metric".padEnd(34)}`];
+    const cols: string[] = [`  ${"Metric".padEnd(48)}`];
     if (fields.has("count")) cols.push("Count".padStart(8));
     if (fields.has("tm99")) cols.push("tm99".padStart(8));
     if (fields.has("p50")) cols.push("p50".padStart(8));
@@ -2229,11 +1809,11 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
     for (const metric of metrics) {
       const r = result.metrics[metric];
       if (!r || r.count === 0) {
-        console.log(`  ${metric.padEnd(34)} ${c.dim}no data${c.reset}`);
+        console.log(`  ${metric.padEnd(48)} ${c.dim}no data${c.reset}`);
         continue;
       }
       const over = r.status === "over";
-      const vals: string[] = [`  ${metric.padEnd(34)}`];
+      const vals: string[] = [`  ${metric.padEnd(48)}`];
       if (fields.has("count")) vals.push(r.count.toLocaleString().padStart(8));
       if (fields.has("tm99")) vals.push(fmtValue(r.tm99, r.unit).padStart(8));
       if (fields.has("p50")) vals.push(fmtValue(r.p50, r.unit).padStart(8));
@@ -2241,7 +1821,7 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
         vals.push((over ? c.red : "") + fmtValue(r.p95, r.unit).padStart(8) + c.reset);
       if (fields.has("p99")) vals.push(fmtValue(r.p99, r.unit).padStart(8));
       if (fields.has("max")) vals.push(fmtValue(r.max, r.unit).padStart(8));
-      if (fields.has("slo")) vals.push(fmtValue(r.slo_p95 ?? 0, r.unit).padStart(8));
+      if (fields.has("slo")) vals.push(fmtValue(r.slo_tm99 ?? 0, r.unit).padStart(8));
       if (fields.has("status"))
         vals.push(over ? `${c.red}- OVER${c.reset}` : `${c.green}+ ok${c.reset}`);
       console.log(vals.join(" "));
@@ -2255,7 +1835,7 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
   if (informational.length > 0) {
     const grouped = new Map<string, Array<[string, MetricResult]>>();
     for (const entry of informational) {
-      const groupName = informationalGroup(entry[0]);
+      const groupName = entry[1].group;
       const entries = grouped.get(groupName) ?? [];
       entries.push(entry);
       grouped.set(groupName, entries);
@@ -2263,14 +1843,10 @@ function printWide(result: ReviewOutput, args: ParsedArgs): void {
 
     for (const [groupName, entries] of grouped) {
       console.log(`${c.bold}${c.cyan}${groupName}${c.reset}`);
-      if (groupName.startsWith("Agent workload")) {
-        console.log(
-          `  ${c.dim}Long values here usually mean the agent was working. Call them bad only when correlated with no progress, high TTFT, tool hangs, errors, or missing UI updates.${c.reset}`,
-        );
-      }
+      printGroupNote(groupName, c);
       for (const [metric, r] of entries) {
         console.log(
-          `  ${metric.padEnd(40)} ${String(r.count).padStart(8)} ${fmtValue(r.p50, r.unit).padStart(10)} ${fmtValue(r.p95, r.unit).padStart(10)} ${fmtValue(r.max, r.unit).padStart(10)}`,
+          `  ${metric.padEnd(48)} ${String(r.count).padStart(8)} ${fmtValue(r.p50, r.unit).padStart(10)} ${fmtValue(r.p95, r.unit).padStart(10)} ${fmtValue(r.max, r.unit).padStart(10)}`,
         );
       }
       console.log();
@@ -2297,7 +1873,7 @@ function printCompact(result: ReviewOutput, args: ParsedArgs): void {
     if (fields.has("p95")) entry.p95 = r.p95;
     if (fields.has("p99")) entry.p99 = r.p99;
     if (fields.has("max")) entry.max = r.max;
-    if (fields.has("slo")) entry.slo = r.slo_p95;
+    if (fields.has("slo")) entry.slo = r.slo_tm99;
     if (fields.has("status")) entry.s = r.status;
     metrics[metric] = entry;
   }
@@ -2421,7 +1997,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
   result.byTags = [...new Set(result.byTags)];
   if (result.dictation && result.byTags.length === 0) {
-    result.byTags = ["engine", "source", "provider_id", "model"];
+    result.byTags = ["voice_engine", "trigger", "stt_provider", "stt_model"];
   }
   return result;
 }
@@ -2435,7 +2011,7 @@ Phone-friendly by default. Use --wide for full tables.
   bun server/scripts/telemetry-review.ts --wide
   bun server/scripts/telemetry-review.ts --days 1
   bun server/scripts/telemetry-review.ts --dictation --wide
-  bun server/scripts/telemetry-review.ts --dictation --by engine,source,provider_id,model
+  bun server/scripts/telemetry-review.ts --dictation --by voice_engine,trigger,stt_provider,stt_model
   bun server/scripts/telemetry-review.ts --models
   bun server/scripts/telemetry-review.ts --models --json
   bun server/scripts/telemetry-review.ts --http --days 1
@@ -2445,15 +2021,15 @@ Options:
   --days <n>            Days of data (default: 7)
   --wide                Full table with all columns
   --dictation           Dictation-focused dashboard (UX + backend + assets)
-                        Defaults to --by engine,source,provider_id,model
+                        Defaults to --by voice_engine,trigger,stt_provider,stt_model
   --models              Read-only routing review by exact provider/model, runtime, and tool.
                         Missing provider/model or runtime stays in an explicit untagged
                         bucket. Operational success is not accepted-task correctness.
-  --http                Per-route server.http_request_ms table (p50/p90/p99, sample count,
-                        status_code>=400 rate) plus server.http_response_bytes p50/p90/max.
-                        Same nearest-rank percentile. Raw samples; fast successful routine
+  --http                Per-route server.http_request table: duration p50/p90/p99, event
+                        count, status_code>=400 rate, and response_bytes p50/p90/max.
+                        Nearest-rank percentiles. Raw events; fast successful routine
                         routes are omitted.
-  --by <tags>           Breakdown tags (comma-separated). Example: engine,source,provider_id,model
+  --by <tags>           Breakdown tags (comma-separated). Example: voice_engine,stt_model
   --json                Machine-readable JSON
   --compact             Minimal JSON for agents
   --svg-out <path>      Write an app-viewable SVG trend dashboard to a file
@@ -2481,7 +2057,7 @@ function main(): void {
     const err = {
       error: "no_data",
       message: `No telemetry data found at ${telemetryDir}`,
-      hint: "Check that the iOS app is sending metrics and the data dir is correct. Try: --data-dir ~/.config/oppi",
+      hint: "Check that the app is sending telemetry events and the data dir is correct. Try: --data-dir ~/.config/oppi",
       exit_code: 1,
     };
     if (args.json || args.compact) console.log(JSON.stringify(err));
