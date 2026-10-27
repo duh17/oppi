@@ -308,7 +308,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         case .general:
             navigator.push(SettingsGeneralViewController())
         case .appearance:
-            navigator.push { SettingsAppearancePage() }
+            navigator.push(SettingsAppearanceViewController(root: root))
         case .text:
             navigator.push { SettingsTextPage() }
         case .editor:

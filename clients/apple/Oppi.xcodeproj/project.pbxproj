@@ -650,7 +650,6 @@
 		4A0F69DA33216EF8D13B21BD /* ServerInfoVersionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A378BABF8302362035E9A41F /* ServerInfoVersionTests.swift */; };
 		4A51AE873D003CABBC80111F /* MermaidPieConformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF5854D2CBC462F828B72D56 /* MermaidPieConformanceTests.swift */; };
 		4A9B75F6751FB350A09918A1 /* TimelineReducerToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C7153BAC2F728C87542A18B /* TimelineReducerToolTests.swift */; };
-		4AA7FC36B05001145A25E8E9 /* SettingsAppearancePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB8AFBBDE1495AF43162CDB3 /* SettingsAppearancePage.swift */; };
 		4AB68B68E97034473D3DD9C1 /* PairedDevicesE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AADA3A05DBB7D2FA6D1BA846 /* PairedDevicesE2ETests.swift */; };
 		4ABDE5378622D815582B9729 /* OppiClientEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F3C89992F5DCEE3EC870931 /* OppiClientEnvironment.swift */; };
 		4B4EC8E539A0FA24F410C6B0 /* DeviceAuthSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24F80637EB2D077A3410259D /* DeviceAuthSession.swift */; };
@@ -1178,6 +1177,7 @@
 		85725178A7DFDB5BD52D095F /* GeoJSONMapModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6291D75ECEC830843EA51883 /* GeoJSONMapModel.swift */; };
 		8578FCF74A611E8808FA4FDB /* ServerSkillListPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD4CCF57864B54E419000917 /* ServerSkillListPresentation.swift */; };
 		8583957070AD267A048F7CEC /* GuidedControlComposerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F5B32F8EE2FE06844C45846 /* GuidedControlComposerController.swift */; };
+		8586E00DE0D5FF984A8419FA /* SettingsAppearanceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32AAB031C25B95FFD1597293 /* SettingsAppearanceViewController.swift */; };
 		85A6FBF37C07035331053095 /* TestWaiters.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1C37E10063DE9715CA090E3 /* TestWaiters.swift */; };
 		85BAC081D7A9ED1AA4BC8CB6 /* ScopedLockViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 619A5B5458E19C6680509A86 /* ScopedLockViews.swift */; };
 		85D621FAD02E7B1114745794 /* RouterRoutesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C69F8AD3550F7A408E771E5 /* RouterRoutesUITests.swift */; };
@@ -1740,6 +1740,7 @@
 		C21C4BA4052D6105A379B7C6 /* ThinkingLevelMenuSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = D305AF56C4E1F4185F6C4749 /* ThinkingLevelMenuSource.swift */; };
 		C24E6FA07237638FC20AEA20 /* ServerTLSTrustPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F802D6BE1FF5B98186B5C83B /* ServerTLSTrustPolicy.swift */; };
 		C296A66E88AD68FFA5425B3E /* QuickSessionLaunchRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B15B29F53BA1B192BE8505DA /* QuickSessionLaunchRoutingTests.swift */; };
+		C2D20E66C6D5DBF28332E999 /* ThemeGalleryViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3622E44BB9790DF1FDF51AEF /* ThemeGalleryViewController.swift */; };
 		C2DFDDC83245E0AE9DEBE09B /* MermaidERParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA5130567D8BB2FF99C2F37 /* MermaidERParser.swift */; };
 		C3022EEDEAD37BBBEE0DA16C /* ChangedFileRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A9B614D6AC58E54D176CE5 /* ChangedFileRow.swift */; };
 		C3177AEB555B50F4D4D2F6BD /* MermaidFlowchartRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05867D89410F8026ABA59F5 /* MermaidFlowchartRenderer.swift */; };
@@ -2768,6 +2769,7 @@
 		326FCAA1D955145A1BE861E2 /* NativeGeoJSONBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGeoJSONBlockView.swift; sourceTree = "<group>"; };
 		3277D42879F451F1119D4C7B /* ServerSyncState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSyncState.swift; sourceTree = "<group>"; };
 		327944AD5D492A7669B1D041 /* DeltaCoalescer+Telemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DeltaCoalescer+Telemetry.swift"; sourceTree = "<group>"; };
+		32AAB031C25B95FFD1597293 /* SettingsAppearanceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsAppearanceViewController.swift; sourceTree = "<group>"; };
 		32B94B7C042304D8E6A5523D /* AppLockSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockSettings.swift; sourceTree = "<group>"; };
 		32C1DCD6795B5C6E5C5595F3 /* WhatsNewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhatsNewView.swift; sourceTree = "<group>"; };
 		32E5F9DA123B8A89CF952124 /* WorkspaceSettingsLockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSettingsLockTests.swift; sourceTree = "<group>"; };
@@ -2803,6 +2805,7 @@
 		35F0F7021189F9C668C0B936 /* ProviderAuthFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAuthFlow.swift; sourceTree = "<group>"; };
 		35F57C3EB7B70D151A45A6F4 /* TableColumnAlignmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableColumnAlignmentTests.swift; sourceTree = "<group>"; };
 		35FA3411D780C1DB10CED7BC /* AUDIT-RESULTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "AUDIT-RESULTS.md"; sourceTree = "<group>"; };
+		3622E44BB9790DF1FDF51AEF /* ThemeGalleryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeGalleryViewController.swift; sourceTree = "<group>"; };
 		3676B62608949F0D8D754EF1 /* TelemetryModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryModeTests.swift; sourceTree = "<group>"; };
 		3695F252E62C1CCE438CB4AB /* ServerCatalogServerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerCatalogServerRow.swift; sourceTree = "<group>"; };
 		369CC8375740648865129C00 /* MacReviewCommentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacReviewCommentTests.swift; sourceTree = "<group>"; };
@@ -4147,7 +4150,6 @@
 		EACE76BD002D360FBE84ADC5 /* MacAuthenticatedAVPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAuthenticatedAVPlayerView.swift; sourceTree = "<group>"; };
 		EB196D437A72B2FBC17ACEF2 /* SSHTerminalFloatingControlsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalFloatingControlsTests.swift; sourceTree = "<group>"; };
 		EB5ED80B0BE9656A889C1AF2 /* ContextInspectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextInspectorTests.swift; sourceTree = "<group>"; };
-		EB8AFBBDE1495AF43162CDB3 /* SettingsAppearancePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsAppearancePage.swift; sourceTree = "<group>"; };
 		EBA1F58EE677A0E99E3C219E /* HTMLPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLPreviewView.swift; sourceTree = "<group>"; };
 		EBA4A370DBCECC528A7D6BA3 /* OppiActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiActivityAttributes.swift; sourceTree = "<group>"; };
 		EBCE562200A12E557E6C5266 /* ChatFilePanelFolderNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFilePanelFolderNavigationTests.swift; sourceTree = "<group>"; };
@@ -5770,7 +5772,7 @@
 				D7A9FC3D15AC24355BCDCD79 /* DictationDictionaryView.swift */,
 				3948E970951A00788EA9CC0B /* QuickCommentsSettingsView.swift */,
 				B7A5FA18027F3E607BD011DB /* ScopedLockToggle.swift */,
-				EB8AFBBDE1495AF43162CDB3 /* SettingsAppearancePage.swift */,
+				32AAB031C25B95FFD1597293 /* SettingsAppearanceViewController.swift */,
 				7944C1B97B4B860A0055111B /* SettingsChatTopBarViewController.swift */,
 				2046466FB7E5B0BCD2150784 /* SettingsChatViewController.swift */,
 				B257FEC8F35142CBCC918B3A /* SettingsEditorPage.swift */,
@@ -5787,6 +5789,7 @@
 				5686D4E7ADC447F82A0F7C29 /* SetupListCells.swift */,
 				B3BF0AFCA898AD123764BE8D /* SSHPreflightViewController.swift */,
 				63B72CF35FCB08C5993042AF /* TailnetSettingsViewController.swift */,
+				3622E44BB9790DF1FDF51AEF /* ThemeGalleryViewController.swift */,
 				1C91C555B1F0D108DE2CE127 /* ThemeImportViewController.swift */,
 			);
 			path = Settings;
@@ -10097,7 +10100,7 @@
 				D58BA0FA961B0941005DF8D6 /* SessionToolOutputAccess.swift in Sources */,
 				EFDF0A3AF5767FF45F497E63 /* SessionTouchedFileRouting.swift in Sources */,
 				243157850174567E4B0F9EFB /* SessionTreeFilterMode.swift in Sources */,
-				4AA7FC36B05001145A25E8E9 /* SettingsAppearancePage.swift in Sources */,
+				8586E00DE0D5FF984A8419FA /* SettingsAppearanceViewController.swift in Sources */,
 				AAE0FA9854558479369B16D3 /* SettingsChatTopBarViewController.swift in Sources */,
 				14949EC19B29718CFE5E3CEE /* SettingsChatViewController.swift in Sources */,
 				E18FECA280CCC0C88A73E70F /* SettingsEditorPage.swift in Sources */,
@@ -10154,6 +10157,7 @@
 				98E6458E95AB87B44EDE7DA3 /* TerminalMirrorIndicatorView.swift in Sources */,
 				6489355DCB28B4FDFB42FCE0 /* ThemeCatalog.swift in Sources */,
 				06E99FB177B112932A9F7D47 /* ThemeContrast.swift in Sources */,
+				C2D20E66C6D5DBF28332E999 /* ThemeGalleryViewController.swift in Sources */,
 				CCE2262716F9ADFDED3562C9 /* ThemeImportViewController.swift in Sources */,
 				197B2B1E64E8EAB9DA5C6376 /* ThemeStore.swift in Sources */,
 				67C61EC8455022ABA3759124 /* ThinkingLevelMenuSource.swift in Sources */,

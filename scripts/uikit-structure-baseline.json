@@ -244,9 +244,6 @@
     "clients/apple/Oppi/Features/Settings/ScopedLockToggle.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Settings/SettingsAppearancePage.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift": {
       "import SwiftUI": 1
     },

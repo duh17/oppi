@@ -255,6 +255,8 @@ struct ScreenshotPreviewView: View {
             WorkspaceTopBarScreenshotPreview()
         case "settings-root", "settings-general", "settings-storage", "settings-chat", "settings-editor", "settings-chat-top-bar":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
+        case "settings-appearance", "settings-appearance-gallery", "settings-appearance-gallery-light", "settings-appearance-gallery-dark":
+            SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         case "push-discovery-card":
             PushDiscoveryCardScreenshotPreview()
         case "workspace-file-editor", "workspace-file-editor-markdown", "workspace-file-editor-vim":
@@ -832,7 +834,9 @@ private struct WorkspaceTopBarScreenshotPreview: View {
 }
 
 /// `SCREENSHOT_SCREEN=settings-root` / `settings-general` / `settings-storage` /
-/// `settings-chat` / `settings-editor`: a UIKit settings page as the root of a router stack, over fixture services.
+/// `settings-chat` / `settings-editor` / `settings-appearance`: a UIKit settings page as the root of a router stack, over fixture services.
+/// `settings-appearance-gallery` (and `-light`, `-dark`) is the theme gallery for the manual, Light and Dark choice, over two imported
+/// fixture themes; `SCREENSHOT_THEME_MODE=system` puts Appearance in Match System.
 /// Nothing here calls a server. They are captured in the same harness so their
 /// bars can be compared.
 private struct SettingsPageScreenshotPreview: View {
@@ -855,6 +859,13 @@ private struct SettingsPageScreenshotPreview: View {
             ])
         default:
             break
+        }
+        if screen.hasPrefix("settings-appearance") {
+            var values: [String: Any] = ["\(AppIdentifiers.subsystem).customThemes": Self.importedThemes]
+            if ProcessInfo.processInfo.environment["SCREENSHOT_THEME_MODE"] == "system" {
+                values["\(AppIdentifiers.subsystem).theme.mode"] = ThemeMode.system.rawValue
+            }
+            ScreenshotVolatileDefaults.apply(values)
         }
         // The App Settings index shows one paired server, so its Servers
         // section reads like a paired app's.
@@ -880,11 +891,54 @@ private struct SettingsPageScreenshotPreview: View {
             case "settings-general": SettingsGeneralViewController()
             case "settings-storage": SettingsStorageViewController()
             case "settings-chat-top-bar": SettingsChatTopBarViewController()
+            case "settings-appearance": SettingsAppearanceViewController(root: root)
+            case "settings-appearance-gallery": ThemeGalleryViewController(themeStore: root.themeStore, slot: .manual)
+            case "settings-appearance-gallery-light": ThemeGalleryViewController(themeStore: root.themeStore, slot: .light)
+            case "settings-appearance-gallery-dark": ThemeGalleryViewController(themeStore: root.themeStore, slot: .dark)
             default: SettingsChatViewController()
             }
         }
         .ignoresSafeArea()
         .accessibilityIdentifier("screenshot.ready")
+    }
+
+    /// Two imported themes, one light and one dark, as `CustomThemeStore` keeps
+    /// them. Only the base colors differ; every other token follows from them.
+    private static var importedThemes: Data {
+        func theme(
+            _ name: String, scheme: String,
+            bg: String, bgDark: String, highlight: String, fg: String, dim: String, comment: String,
+            blue: String, cyan: String, green: String, orange: String, purple: String, red: String, yellow: String
+        ) -> [String: Any] {
+            let colors: [String: String] = [
+                "bg": bg, "bgDark": bgDark, "bgHighlight": highlight, "fg": fg, "fgDim": dim, "comment": comment,
+                "blue": blue, "cyan": cyan, "green": green, "orange": orange, "purple": purple, "red": red, "yellow": yellow,
+                "thinkingText": dim, "userMessageBg": highlight, "userMessageText": fg,
+                "toolPendingBg": highlight, "toolSuccessBg": highlight, "toolErrorBg": highlight,
+                "toolTitle": fg, "toolOutput": dim, "mdHeading": blue, "mdLink": cyan, "mdLinkUrl": comment,
+                "mdCode": cyan, "mdCodeBlock": green, "mdCodeBlockBorder": highlight, "mdQuote": dim,
+                "mdQuoteBorder": highlight, "mdHr": highlight, "mdListBullet": orange,
+                "toolDiffAdded": green, "toolDiffRemoved": red, "toolDiffContext": comment,
+                "syntaxComment": comment, "syntaxKeyword": purple, "syntaxFunction": blue, "syntaxVariable": fg,
+                "syntaxString": green, "syntaxNumber": orange, "syntaxType": cyan, "syntaxOperator": fg,
+                "syntaxPunctuation": dim, "thinkingOff": highlight, "thinkingMinimal": comment, "thinkingLow": blue,
+                "thinkingMedium": cyan, "thinkingHigh": purple, "thinkingXhigh": red,
+            ]
+            return ["name": name, "colorScheme": scheme, "colors": colors]
+        }
+        let themes = [
+            "Paper": theme(
+                "Paper", scheme: "light",
+                bg: "#F4EFE6", bgDark: "#E8E1D3", highlight: "#DDD3BF", fg: "#3B3226", dim: "#6A5E4C", comment: "#7F7360",
+                blue: "#2F5D9C", cyan: "#1F7A80", green: "#4B7A2E", orange: "#B2661B", purple: "#7A4C9E", red: "#B03A3A", yellow: "#A68416"
+            ),
+            "Neon Harbor": theme(
+                "Neon Harbor", scheme: "dark",
+                bg: "#0B1020", bgDark: "#060914", highlight: "#1B2442", fg: "#E4ECFF", dim: "#9CB0DC", comment: "#8498C4",
+                blue: "#4DA3FF", cyan: "#3DF0E0", green: "#5DF08A", orange: "#FFB454", purple: "#C08CFF", red: "#FF6B8A", yellow: "#FFE066"
+            ),
+        ]
+        return (try? JSONSerialization.data(withJSONObject: themes)) ?? Data()
     }
 }
 

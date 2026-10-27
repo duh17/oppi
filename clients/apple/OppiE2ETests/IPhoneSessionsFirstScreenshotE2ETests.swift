@@ -310,7 +310,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         }
         XCTAssertTrue(sessionRow.waitForExistence(timeout: 15), "Theme-switch session row did not appear")
 
-        selectManualTheme("OLED")
+        try selectManualTheme("oled")
         openWorkspaceSidebar()
 
         let workspaceRow = app.buttons["workspace.open.Theme Switch Workspace"]
@@ -328,7 +328,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             "Sidebar did not close before switching back to Light"
         )
 
-        selectManualTheme("Light")
+        try selectManualTheme("light")
         XCTAssertTrue(sessionRow.waitForExistence(timeout: 10), "Session row did not return after theme switch")
         XCTAssertGreaterThan(
             pixelFraction(in: sessionRow.screenshot().image, crop: CGRect(x: 0.03, y: 0, width: 0.70, height: 0.42)) { $0 < 0.35 },
@@ -942,33 +942,48 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertEqual(element.value as? String, text)
     }
 
-    private func selectManualTheme(_ themeName: String) {
-        // App Settings is at the foot of the workspace sidebar, and its theme
-        // picker is one level down, on Appearance.
+    /// `themeID` is the theme's raw value (`oled`, `light`), which names its gallery card.
+    private func selectManualTheme(_ themeID: String) throws {
+        // App Settings is at the foot of the workspace sidebar. Its theme
+        // gallery is two levels down: Appearance, then the Theme row.
         openWorkspaceSidebar()
         tap(app.buttons["App Settings"], named: "app settings", timeout: 5)
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10), "Settings did not open")
         tap(app.buttons["settings.row.appearance"], named: "Appearance settings row", timeout: 5)
         XCTAssertTrue(app.navigationBars["Appearance"].waitForExistence(timeout: 10), "Appearance did not open")
 
-        let themePicker = app.buttons.matching(
-            NSPredicate(format: "label == %@ OR label BEGINSWITH %@", "Theme", "Theme,")
-        ).firstMatch
-        tap(themePicker, named: "manual theme picker", timeout: 5)
-        tap(app.buttons[themeName], named: "\(themeName) theme", timeout: 5)
+        // The simulator may have been left on Match System, which has Light
+        // and Dark rows and no Theme row: choose Manual first.
+        if !app.buttons["settings.appearance.theme"].waitForExistence(timeout: 2) {
+            tap(app.buttons["settings.appearance.themeSource"], named: "theme source menu", timeout: 5)
+            tap(app.buttons["Manual"], named: "Manual theme source", timeout: 5)
+        }
+        tap(app.buttons["settings.appearance.theme"], named: "manual theme row", timeout: 5)
+        XCTAssertTrue(app.navigationBars["Theme"].waitForExistence(timeout: 10), "Theme gallery did not open")
+        let card = app.buttons["settings.appearance.theme.\(themeID)"]
+        tap(card, named: "\(themeID) theme card", timeout: 5)
+        // The card is the chosen one, and the gallery stays open.
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"), object: card)
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [selected], timeout: 5), .completed,
+            "\(themeID) theme card was not marked selected"
+        )
+        // The app re-themes behind the open gallery.
+        try saveLabScreenshot(name: "iphone-theme-gallery-\(themeID)-e2e")
+        tap(app.navigationBars["Theme"].buttons.firstMatch, named: "theme gallery back button", timeout: 5)
 
         tap(app.navigationBars["Appearance"].buttons.firstMatch, named: "appearance back button", timeout: 5)
         tap(app.navigationBars["Settings"].buttons.firstMatch, named: "settings back button", timeout: 5)
         XCTAssertTrue(
             app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 10),
-            "Sessions inbox did not return after selecting \(themeName)"
+            "Sessions inbox did not return after selecting \(themeID)"
         )
         if app.buttons["workspace.create.sidebar.open"].isHittable {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.50)).tap()
         }
         XCTAssertTrue(
             waitForHittable(app.buttons["workspace.sidebar.open"], timeout: 5),
-            "Sidebar did not close after selecting \(themeName)"
+            "Sidebar did not close after selecting \(themeID)"
         )
     }
 

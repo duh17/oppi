@@ -323,7 +323,7 @@ final class RouterRoutesUITests: XCTestCase {
 
         let pages: [(row: String, title: String, links: [(row: String, title: String)])] = [
             ("settings.row.general", "General", []),
-            ("settings.row.appearance", "Appearance", [("settings.appearance.customThemes", "Custom Themes")]),
+            ("settings.row.appearance", "Appearance", [("settings.appearance.theme", "Theme"), ("settings.appearance.customThemes", "Custom Themes")]),
             ("settings.row.text", "Text", []),
             ("settings.row.editor", "Editor", []),
             ("settings.row.chat", "Chat", [("Quick Comments", "Quick Comments")]),
@@ -512,7 +512,10 @@ final class RouterRoutesUITests: XCTestCase {
             XCUIDevice.shared.orientation = .landscapeLeft
         }
         app = XCUIApplication()
-        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES"]
+        // Appearance lists one Theme row in Manual and two in Match System; a
+        // simulator that an earlier run left on Match System must not change
+        // which rows the page walk finds.
+        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES", "-dev.chenda.Oppi.theme.mode", "manual"]
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "workspace-shell"
         app.launch()
         XCTAssertTrue(
