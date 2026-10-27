@@ -561,8 +561,9 @@ const E2E_THREAD_STATUSES = new Set<Session["status"]>(["busy", "ready", "stoppe
 const e2eSessionThreadFixtureIds = new Set<string>();
 
 /**
- * Seed a stored session-thread snapshot: sessions linked by launch parent. Times are offsets from `nowMs` so relative labels stay
- * stable. Sessions are storage-only; no runtime starts.
+ * Seed a stored session-thread snapshot: sessions linked by launch parent. Times are
+ * offsets from `nowMs` so relative labels stay stable. Sessions are storage-only; no
+ * runtime starts.
  */
 async function handleSessionThreadsFixture(
   ctx: RouteContext,

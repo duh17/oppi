@@ -112,6 +112,9 @@ export function runSessionInteractionsDrop(db: SqliteDatabase, dataDir: string):
 
   const { backupPath } = migrateWithBackup(db, dataDir, key, () =>
     db.transaction(() => {
+      if (hasCompletedMigration(db, key)) {
+        return;
+      }
       // The indexes go with the table.
       db.exec("DROP TABLE IF EXISTS session_interactions");
       recordMigration(db, key);

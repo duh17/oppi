@@ -113,7 +113,7 @@ Example:
 
 - **Server:** `oppi pair --show-token` is gone. It printed the owner token, which the server rejects over the network, so it never helped pair a device.
 - **Protocol:** `changeStats.addedLines` and `changeStats.removedLines` on a session are no longer sent. They were always `0`, kept only for Build 55.
-- **Client/Server/Protocol:** The thread view no longer shows messages between sessions. Timeline mode, the Waterfall's message arrows, and the Outline's cross-thread messages are gone; a saved Timeline choice opens Outline. The server stops recording prompts, steers, stops, and resumes that one session sends another, drops the `session_interactions` table from `session-state.db` on first start (after a backup in `backups/`), and `GET /sessions/:id/thread` no longer sends `interactions` or `counterparts`.
+- **Client/Server/Protocol:** The thread view no longer shows messages between sessions. Timeline mode, the Waterfall's message arrows, and the Outline's cross-thread messages are gone; a saved Timeline choice opens Outline. The server stops recording prompts, steers, stops, and resumes that one session sends another, drops the `session_interactions` table from `session-state.db` on first start (after a backup in `backups/`). `GET /sessions/:id/thread` no longer sends `interactions` or `counterparts`, and the `oppi` CLI no longer sends the `X-Oppi-Caller-Session` header.
 
 ### Migration notes
 
