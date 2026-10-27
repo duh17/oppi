@@ -4,9 +4,10 @@ import SwiftUI
 /// Real Workspace Settings surfaces with one fixture workspace and no network.
 /// `SCREENSHOT_WORKSPACE_PAGE` picks the root (default, the UIKit
 /// `WorkspaceSettingsViewController`) or a page: `details`, `instructions`,
-/// `skills`, `extensions`, `mcp`, `network`.
+/// `skills`, `skill-detail` (a skill's loaded detail, from the cache),
+/// `extensions`, `mcp`, `network`.
 /// `SCREENSHOT_WORKSPACE_RUNTIME=sandbox` renders a sandbox workspace instead of
-/// a host workspace. `SCREENSHOT_COLOR_SCHEME=dark` selects the dark theme.
+/// a host workspace. `SCREENSHOT_COLOR_SCHEME=dark|light` selects that theme.
 struct WorkspaceSettingsScreenshotPreview: View {
     private let connection: ServerConnection
     private let root: AppRootEnvironment
@@ -57,7 +58,11 @@ struct WorkspaceSettingsScreenshotPreview: View {
 
     init() {
         let environment = ProcessInfo.processInfo.environment
-        ScreenshotVolatileDefaults.applyDarkTheme(environment["SCREENSHOT_COLOR_SCHEME"] == "dark")
+        if environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
+            ScreenshotVolatileDefaults.applyTheme(.light)
+        } else {
+            ScreenshotVolatileDefaults.applyDarkTheme(environment["SCREENSHOT_COLOR_SCHEME"] == "dark")
+        }
         themeStore = ThemeStore()
         let isSandbox = environment["SCREENSHOT_WORKSPACE_RUNTIME"] == "sandbox"
         let serverId = Self.serverId
@@ -135,7 +140,12 @@ struct WorkspaceSettingsScreenshotPreview: View {
         switch ProcessInfo.processInfo.environment["SCREENSHOT_WORKSPACE_PAGE"] {
         case "details": leaf { WorkspaceDetailsPage(model: model) }
         case "instructions": leaf { WorkspaceInstructionsPage(model: model) }
-        case "skills": leaf { WorkspaceSkillsPage(model: model) }
+        case "skills":
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceSkillsViewController(model: model, connection: connection, root: root)
+            }
+        case "skill-detail":
+            SkillDetailPreviewHost(root: root, connection: connection, serverId: Self.serverId)
         case "extensions": leaf { WorkspaceExtensionsPage(model: model) }
         case "mcp":
             leaf {
@@ -156,6 +166,64 @@ struct WorkspaceSettingsScreenshotPreview: View {
     /// A pushed SwiftUI page as the root of a router stack.
     private func leaf<Page: View>(@ViewBuilder _ page: @escaping () -> Page) -> some View {
         RouterPreviewStack(root: root) { page().withServerScopedEnvironment(connection) }
+    }
+}
+
+/// A skill's detail with no server: the cache holds its loaded detail, which
+/// the screen shows while its refresh finds no API client.
+private struct SkillDetailPreviewHost: View {
+    let root: AppRootEnvironment
+    let connection: ServerConnection
+    let serverId: String
+    @State private var primed = false
+
+    private static let name = "deep-research"
+
+    private static let detail = SkillDetail(
+        skill: SkillInfo(
+            name: name,
+            description: "Conduct safe, evidence-first web research with iterative search and citation verification.",
+            path: "/skills/deep-research"
+        ),
+        content: """
+        # Deep Research
+
+        Use for multi-source research that needs a verified, cited answer.
+
+        ## Workflow
+
+        1. Frame the question and list what would change the answer.
+        2. Search broadly, then read the primary sources.
+        3. Record each claim with its source and date.
+
+        ```bash
+        ./scripts/search.sh "query" --depth 2
+        ```
+
+        > Never cite a page you did not open.
+        """,
+        files: ["SKILL.md", "scripts/search.sh", "scripts/verify.py", "references/sources.md", "config.json"]
+    )
+
+    var body: some View {
+        Group {
+            if primed {
+                RouterPreviewControllerStack(root: root) {
+                    SkillDetailViewController(
+                        skillName: Self.name,
+                        connection: connection,
+                        root: root,
+                        reviewCommentSelectionScope: nil
+                    )
+                }
+            } else {
+                Color.clear
+            }
+        }
+        .task {
+            await TimelineCache.shared.saveSkillDetail(Self.name, detail: Self.detail, serverId: serverId)
+            primed = true
+        }
     }
 }
 #endif

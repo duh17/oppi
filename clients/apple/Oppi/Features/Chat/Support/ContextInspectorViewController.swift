@@ -789,22 +789,18 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
         dataSource.apply(snapshot, to: section, animatingDifferences: true)
     }
 
-    // Pushed SwiftUI pages run in their own screen, so this chat's server and
-    // review scope go on explicitly.
-
     private func openSkill(_ name: String) {
         guard let root = HostFactory.root(near: self) else {
             assertionFailure("Context panel push needs appRootEnvironment")
             return
         }
-        let cwd = model.skillCwd
-        let connection = connection
-        let scope = reviewCommentSelectionScope
-        let page = HostFactory.screen(root: root) {
-            SkillDetailView(skillName: name, cwd: cwd)
-                .withServerScopedEnvironment(connection)
-                .environment(\.reviewCommentSelectionScope, scope)
-        }
+        let page = SkillDetailViewController(
+            skillName: name,
+            cwd: model.skillCwd,
+            connection: connection,
+            root: root,
+            reviewCommentSelectionScope: reviewCommentSelectionScope
+        )
         Router.push(page, from: self)
     }
 

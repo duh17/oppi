@@ -309,6 +309,35 @@ final class RouterModalSitesUITests: XCTestCase {
         pickIconAndSave(row: app.buttons["workspace.edit.icon"])
     }
 
+    /// The Skills page lists one switch per skill with its saved state; a write
+    /// with no server shows its error inline, and a skill's info button pushes
+    /// that skill's detail on the page's server.
+    func testWorkspaceSkillsPageTogglesAndOpensDetail() {
+        launch(screen: "workspace-settings", environment: ["SCREENSHOT_WORKSPACE_PAGE": "skills"])
+        let list = app.collectionViews["workspace.edit.skills.list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 10), "The Skills page did not open")
+        XCTAssertTrue(app.navigationBars["Skills"].exists, "The Skills page must carry its title")
+        let enabled = list.switches["workspace.edit.skill.agents-md"]
+        let disabled = list.switches["workspace.edit.skill.audio-transcribe"]
+        XCTAssertTrue(enabled.waitForExistence(timeout: 5), "A skill must show its switch")
+        XCTAssertEqual(enabled.value as? String, "1")
+        XCTAssertEqual(disabled.value as? String, "0")
+        attachScreenshot("workspace-skills-page")
+
+        enabled.tap()
+        XCTAssertTrue(
+            list.staticTexts["Server is offline"].waitForExistence(timeout: 5),
+            "A write with no server must show its error"
+        )
+        XCTAssertEqual(enabled.value as? String, "1", "A refused write must put the switch back")
+
+        list.buttons["workspace.edit.skill.agents-md.detail"].tap()
+        XCTAssertTrue(app.navigationBars["agents-md"].waitForExistence(timeout: 5), "The info button did not push the skill")
+        XCTAssertTrue(app.staticTexts["Failed to load"].waitForExistence(timeout: 5), "A detail with no server must say it failed")
+        attachScreenshot("workspace-skill-detail-offline")
+        assertRunning()
+    }
+
     /// Workspace Settings carries the compact Oppi bar for this workspace:
     /// no pills at rest, the pills with the keyboard, Send once there is text.
     func testWorkspaceSettingsShowsTheOppiBar() {

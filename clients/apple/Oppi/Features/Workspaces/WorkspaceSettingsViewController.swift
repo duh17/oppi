@@ -676,10 +676,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                     .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
             }
         case .skills:
-            navigator.push {
-                WorkspaceSkillsPage(model: model)
-                    .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-            }
+            Router.push(WorkspaceSkillsViewController(model: model, connection: connection, root: root), from: self)
         case .extensions:
             navigator.push {
                 WorkspaceExtensionsPage(model: model)
