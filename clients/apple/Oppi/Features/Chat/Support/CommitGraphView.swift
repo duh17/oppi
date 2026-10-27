@@ -397,13 +397,13 @@ enum CommitGraphView {
                     if lane == row.column {
                         path.addLine(to: end)
                     } else {
-                        // Leave the dot sideways and arrive straight down, so
-                        // the bend meets the next row's vertical line.
-                        let mid = (dot.y + bottom) / 2
+                        // Leave the dot straight down and arrive straight
+                        // down: the line drops toward its parent, sweeps
+                        // across, and meets the next row's vertical line.
                         path.addCurve(
                             to: end,
-                            control1: CGPoint(x: end.x, y: dot.y),
-                            control2: CGPoint(x: end.x, y: mid)
+                            control1: CGPoint(x: dot.x, y: bottom),
+                            control2: CGPoint(x: end.x, y: dot.y)
                         )
                     }
                 }
