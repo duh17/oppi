@@ -2,7 +2,7 @@
  * Live Voice's ears: one OpenAI Realtime transcription WebSocket per call.
  *
  * `{endpoint}/v1/realtime?intent=transcription` (Yuwp's `yuwp-asr`). The client sends a
- * `session.update` (type `transcription`, PCM16 mono, server VAD), then streams
+ * `session.update` (type `transcription`, PCM16 mono, semantic VAD), then streams
  * `input_audio_buffer.append`. The server's VAD cuts the audio into items: `speech_started`
  * when the caller starts, `input_audio_buffer.committed` when the pause ends the item, and
  * `conversation.item.input_audio_transcription.completed` with its punctuated final text.
@@ -107,7 +107,10 @@ export interface LiveTranscription {
 export interface RealtimeTranscriptionOptions {
   /** `ws(s)` URL from `realtimeTranscriptionUrl`. */
   url: string;
-  /** The pause that ends an item, in the server's VAD. */
+  /**
+   * The pause that ends an item on a Yuwp without semantic_vad, and how long an open item may
+   * go without audio before this client cuts it (the stalled-audio guard).
+   */
   silenceDurationMs: number;
   /** Dictionary phrases the recognizer should favor; sent as `vocabularyPrompt`. */
   vocabulary?: readonly string[];
@@ -143,9 +146,23 @@ function rawToString(data: RawData): string {
 
 /** `session.audio.input.transcription.prompt` of the server's effective session, if any. */
 function echoedPrompt(event: Record<string, unknown>): unknown {
-  const session = event.session as
-    { audio?: { input?: { transcription?: { prompt?: unknown } } } } | undefined;
-  return session?.audio?.input?.transcription?.prompt;
+  return echoedInput(event)?.transcription?.prompt;
+}
+
+/** The turn detection the server applied, as its type string; undefined when not echoed. */
+function echoedTurnDetection(event: Record<string, unknown>): string | undefined {
+  const type = echoedInput(event)?.turn_detection?.type;
+  return typeof type === "string" ? type : undefined;
+}
+
+type EchoedInput = {
+  transcription?: { prompt?: unknown };
+  turn_detection?: { type?: unknown } | null;
+};
+
+/** `session.audio.input` of the server's effective session (`session.updated`). */
+function echoedInput(event: Record<string, unknown>): EchoedInput | undefined {
+  return (event.session as { audio?: { input?: EchoedInput } } | undefined)?.audio?.input;
 }
 
 function parseEvent(data: RawData): Record<string, unknown> | undefined {
@@ -215,8 +232,13 @@ export class RealtimeTranscriptionClient implements LiveTranscription {
             input: {
               format: { type: "audio/pcm", rate: WIRE_SAMPLE_RATE },
               ...(prompt ? { transcription: { prompt } } : {}),
+              // Yuwp scores each pause with Smart Turn and waits longer when the caller sounds
+              // mid-thought (`auto` = `medium`, up to 4 s). A Yuwp from before semantic_vad
+              // reads this as server_vad, so `silence_duration_ms` keeps its pause from
+              // falling to Yuwp's 500 ms default; semantic_vad ignores it.
               turn_detection: {
-                type: "server_vad",
+                type: "semantic_vad",
+                eagerness: "auto",
                 silence_duration_ms: this.options.silenceDurationMs,
               },
             },
@@ -326,6 +348,8 @@ export class RealtimeTranscriptionClient implements LiveTranscription {
         this.ready = true;
         // Counts only: dictionary phrases are private vocabulary.
         log.info("realtime_transcription.session_ready", {
+          // `semantic_vad`, or `server_vad` from a Yuwp that predates it.
+          turnDetection: echoedTurnDetection(event),
           vocabularyPhrases: this.options.vocabulary?.length ?? 0,
           promptApplied: this.prompt !== undefined && echoedPrompt(event) === this.prompt,
         });

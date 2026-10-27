@@ -159,7 +159,7 @@ async function until(check: () => boolean): Promise<void> {
 }
 
 describe("realtime transcription client", () => {
-  it("opens a transcription session with server VAD and waits for session.updated before sending audio", async () => {
+  it("opens a transcription session with semantic VAD and waits for session.updated before sending audio", async () => {
     const { server, client, events } = await connect({ autoReady: false, silenceDurationMs: 700 });
     const started = client.start(events);
     // Audio fed before the server accepted the session is held, not dropped.
@@ -174,7 +174,11 @@ describe("realtime transcription client", () => {
           audio: {
             input: {
               format: { type: "audio/pcm", rate: 16_000 },
-              turn_detection: { type: "server_vad", silence_duration_ms: 700 },
+              turn_detection: {
+                type: "semantic_vad",
+                eagerness: "auto",
+                silence_duration_ms: 700,
+              },
             },
           },
         },

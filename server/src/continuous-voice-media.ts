@@ -92,7 +92,9 @@ export interface VoiceCallMediaAttachInput {
 }
 
 /**
- * The pause, in the ASR server's VAD, after which a Live Voice turn is over. Every pause this
+ * Yuwp ends Live Voice turns with semantic_vad (Smart Turn; see RealtimeTranscriptionClient).
+ * This fixed pause is what a Yuwp from before semantic_vad uses instead, and how long an open
+ * turn may go without audio before the client cuts it. As a fixed pause, every pause this
  * long splits the caller's speech into separate turns, mid-sentence or not, so it trades reply
  * latency against cutting people off. Measured on 8 recordings of Chen's speech with
  * mid-sentence pauses (real yuwp-asr, real time): 1200 ms gave 24 turns, 1500 ms gave 23, and
