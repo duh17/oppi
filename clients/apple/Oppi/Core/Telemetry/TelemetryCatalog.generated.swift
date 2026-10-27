@@ -482,6 +482,7 @@ enum TelemetryTag {
         case ask
         case select
         case confirm
+        case input
     }
 
     /// Where a quick session was started: the in-app sheet or an App Intent.
@@ -754,7 +755,9 @@ struct AppFreshContentLag: TelemetryEvent {
 /// How long from tapping a session row until chat content was visible?
 struct AppSessionSwitch: TelemetryEvent {
     static let name = "app.session_switch"
-    static let emitRules: [TelemetryEmitRule] = []
+    static let emitRules: [TelemetryEmitRule] = [
+        TelemetryEmitRule(field: "duration_ms", min: nil, max: 60000, matching: [:]),
+    ]
 
     let durationMs: Double
     let cached: Bool
@@ -871,7 +874,9 @@ struct AppThreadLoad: TelemetryEvent {
 /// How long until the workspace screen was usable?
 struct AppWorkspaceLoad: TelemetryEvent {
     static let name = "app.workspace_load"
-    static let emitRules: [TelemetryEmitRule] = []
+    static let emitRules: [TelemetryEmitRule] = [
+        TelemetryEmitRule(field: "duration_ms", min: nil, max: 60000, matching: [:]),
+    ]
 
     enum LoadPath: String, Sendable, CaseIterable {
         case open

@@ -577,7 +577,7 @@ const TAGS = {
   },
   response_encoding: {
     kind: "enum",
-    values: ["ask", "select", "confirm"],
+    values: ["ask", "select", "confirm", "input"],
     description: "How an ask card encodes its answer.",
   },
   export_format: { kind: "name", description: "Share export format (`image`, `pdf`, `source`)." },
@@ -664,6 +664,9 @@ const OPT_BOOL = { unit: "bool", optional: true } as const;
 
 /** The longest plausible foreground operation; longer samples spanned an app suspension. */
 const SUSPENSION_CEILING_MS = 5_000;
+
+/** The longest plausible screen load; a longer sample waited out a backgrounding or an abandoned visit. */
+const LOAD_CEILING_MS = 60_000;
 
 // ── Events ──
 
@@ -763,6 +766,7 @@ const EVENTS = {
     description: "How long from tapping a session row until chat content was visible?",
     group: "ux",
     fields: { duration_ms: "ms", cached: "bool" },
+    emit: [{ field: "duration_ms", max: LOAD_CEILING_MS }],
     slo: [{ field: "duration_ms", tm99: 600, label: "Session switch" }],
   },
   "app.trace_fetch": {
@@ -789,6 +793,7 @@ const EVENTS = {
     group: "ux",
     fields: { duration_ms: "ms" },
     tags: { load_path: { required: true, values: ["open", "return_from_chat"] } },
+    emit: [{ field: "duration_ms", max: LOAD_CEILING_MS }],
     slo: [{ field: "duration_ms", tm99: 1_000, label: "Workspace load" }],
   },
 
