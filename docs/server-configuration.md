@@ -75,7 +75,7 @@ oppi dictionary add --workspace <id> --phrase 'Workspace term'
 oppi dictionary list --workspace <id>
 ```
 
-The lists are hints, not guaranteed corrections, and conversations are not harvested automatically; agents can inspect past sessions and add chosen phrases. On-device dictation can use them without sending phrases to the server. For server dictation, the iPhone has a separate, default-off consent to send selected phrases to the server and its speech provider. `oppi dictionary --help` covers batch input, removal, and workspace cleanup.
+The lists are hints, not guaranteed corrections, and conversations are not harvested automatically; agents can inspect past sessions and add chosen phrases. On-device dictation can use them without sending phrases to the server. For server dictation, the iPhone has a separate, default-off consent to send selected phrases to the server and its speech provider. Live Voice with `asr.liveVoiceBackend` set to `yuwp` always sends the call's selected phrases (its workspace's, then global) to `asr.sttEndpoint` with the call's audio; changes apply from the next call. `oppi dictionary --help` covers batch input, removal, and workspace cleanup.
 
 ## Read aloud
 

@@ -38,6 +38,29 @@ const PING_INTERVAL_MS = 60_000;
  * grow this call's memory without bound; a few seconds of dropped speech is the lesser harm.
  */
 const MAX_BUFFERED_BYTES = Math.ceil((5 * WIRE_SAMPLE_RATE * 2 * 4) / 3);
+/** Yuwp rejects a `transcription.prompt` past this many UTF-8 bytes, which fails the call's start. */
+const MAX_PROMPT_BYTES = 8192;
+const VOCABULARY_PREFIX = "Vocabulary: ";
+const VOCABULARY_SEPARATOR = ", ";
+
+/**
+ * Dictionary phrases as the realtime `transcription.prompt`, in the same `Vocabulary: a, b` form
+ * Yuwp builds from dictation's `contextual_strings`. Phrases past Yuwp's prompt limit are left
+ * out, in order. Undefined when nothing fits.
+ */
+export function vocabularyPrompt(phrases: readonly string[]): string | undefined {
+  const kept: string[] = [];
+  let bytes = Buffer.byteLength(VOCABULARY_PREFIX, "utf8");
+  for (const phrase of phrases) {
+    const cost =
+      Buffer.byteLength(phrase, "utf8") +
+      (kept.length > 0 ? Buffer.byteLength(VOCABULARY_SEPARATOR, "utf8") : 0);
+    if (bytes + cost > MAX_PROMPT_BYTES) break;
+    kept.push(phrase);
+    bytes += cost;
+  }
+  return kept.length > 0 ? VOCABULARY_PREFIX + kept.join(VOCABULARY_SEPARATOR) : undefined;
+}
 
 /** What ended a user turn. Telemetry only. */
 export type LiveTurnEndReason =
@@ -86,6 +109,8 @@ export interface RealtimeTranscriptionOptions {
   url: string;
   /** The pause that ends an item, in the server's VAD. */
   silenceDurationMs: number;
+  /** Dictionary phrases the recognizer should favor; sent as `vocabularyPrompt`. */
+  vocabulary?: readonly string[];
   startTimeoutMs?: number;
   drainTimeoutMs?: number;
   pingIntervalMs?: number;
@@ -116,6 +141,13 @@ function rawToString(data: RawData): string {
   return Buffer.isBuffer(data) ? data.toString("utf8") : Buffer.from(data).toString("utf8");
 }
 
+/** `session.audio.input.transcription.prompt` of the server's effective session, if any. */
+function echoedPrompt(event: Record<string, unknown>): unknown {
+  const session = event.session as
+    { audio?: { input?: { transcription?: { prompt?: unknown } } } } | undefined;
+  return session?.audio?.input?.transcription?.prompt;
+}
+
 function parseEvent(data: RawData): Record<string, unknown> | undefined {
   try {
     const parsed: unknown = JSON.parse(rawToString(data));
@@ -132,6 +164,7 @@ export class RealtimeTranscriptionClient implements LiveTranscription {
   private socket: WebSocket | undefined;
   private events: LiveTranscriptionEvents | undefined;
   private ready = false;
+  private readonly prompt: string | undefined;
   /** `stop()`, a failed start, or a close already reported: the socket ending is not a call event. */
   private closing = false;
   private socketErrored = false;
@@ -164,12 +197,15 @@ export class RealtimeTranscriptionClient implements LiveTranscription {
   private startTimer: ReturnType<typeof setTimeout> | undefined;
   private drainWait: (() => void) | undefined;
 
-  constructor(private readonly options: RealtimeTranscriptionOptions) {}
+  constructor(private readonly options: RealtimeTranscriptionOptions) {
+    this.prompt = vocabularyPrompt(options.vocabulary ?? []);
+  }
 
   async start(events: LiveTranscriptionEvents): Promise<void> {
     this.events = events;
     const socket = new WebSocket(this.options.url);
     this.socket = socket;
+    const prompt = this.prompt;
     socket.on("open", () => {
       this.send({
         type: "session.update",
@@ -178,6 +214,7 @@ export class RealtimeTranscriptionClient implements LiveTranscription {
           audio: {
             input: {
               format: { type: "audio/pcm", rate: WIRE_SAMPLE_RATE },
+              ...(prompt ? { transcription: { prompt } } : {}),
               turn_detection: {
                 type: "server_vad",
                 silence_duration_ms: this.options.silenceDurationMs,
@@ -284,9 +321,14 @@ export class RealtimeTranscriptionClient implements LiveTranscription {
     if (!event) return;
     const itemId = typeof event.item_id === "string" ? event.item_id : undefined;
     switch (event.type) {
-      case "session.updated":
+      case "session.updated": {
         if (this.ready) return;
         this.ready = true;
+        // Counts only: dictionary phrases are private vocabulary.
+        log.info("realtime_transcription.session_ready", {
+          vocabularyPhrases: this.options.vocabulary?.length ?? 0,
+          promptApplied: this.prompt !== undefined && echoedPrompt(event) === this.prompt,
+        });
         // Audio fed while the session was being accepted goes first, in order.
         for (const chunk of this.audioQueue) this.append(chunk);
         this.audioQueue = [];
@@ -295,6 +337,7 @@ export class RealtimeTranscriptionClient implements LiveTranscription {
         this.startWait = undefined;
         this.startPing();
         return;
+      }
       case "input_audio_buffer.speech_started":
         this.itemOpen = true;
         this.itemOpenedAt = Date.now();

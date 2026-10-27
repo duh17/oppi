@@ -71,4 +71,35 @@ describe("dictation dictionary persistence", () => {
     expect(() => store.replace(null, 1, [...batch.slice(0, 100), "overflow"])).toThrow();
     expect(() => store.replace("other", 1, ["é".repeat(129)])).toThrow();
   });
+
+  it("selects workspace phrases before global ones, without duplicates, within the hint limits", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-dictionary-selected-"));
+    const store = new DictationDictionaryStore(dir);
+    store.addMany(null, ["Oppi", "kypu"]);
+    store.addMany("ws-a", ["Yuwp", "Oppi"]);
+    expect(store.selected("ws-a")).toEqual(["Yuwp", "Oppi", "kypu"]);
+    expect(store.selected("ws-unknown")).toEqual(["Oppi", "kypu"]);
+    expect(store.selected(undefined)).toEqual(["Oppi", "kypu"]);
+
+    // 100 phrases in each scope: the union stops at 100, workspace first.
+    const wide = new DictationDictionaryStore(mkdtempSync(join(tmpdir(), "oppi-dictionary-cap-")));
+    wide.addMany(
+      "ws",
+      Array.from({ length: 100 }, (_, i) => `w${i}`),
+    );
+    wide.addMany(
+      null,
+      Array.from({ length: 100 }, (_, i) => `g${i}`),
+    );
+    expect(wide.selected("ws")).toEqual(Array.from({ length: 100 }, (_, i) => `w${i}`));
+
+    // 8192 UTF-8 bytes total: a phrase that would overflow is skipped, smaller ones still fit.
+    const heavy = new DictationDictionaryStore(
+      mkdtempSync(join(tmpdir(), "oppi-dictionary-bytes-")),
+    );
+    const big = Array.from({ length: 32 }, (_, i) => `${i}`.padStart(256, "x"));
+    heavy.addMany("ws", big.slice(0, 31));
+    heavy.addMany(null, ["y".repeat(255), big[31], "tail"]);
+    expect(heavy.selected("ws")).toEqual([...big.slice(0, 31), "y".repeat(255)]);
+  });
 });

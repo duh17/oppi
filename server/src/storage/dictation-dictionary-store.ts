@@ -16,6 +16,7 @@ import { join } from "node:path";
 import {
   DICTATION_CONTEXT_MAX_PHRASES,
   DICTATION_CONTEXT_MAX_PHRASE_BYTES,
+  DICTATION_CONTEXT_MAX_TOTAL_BYTES,
 } from "../dictation-types.js";
 
 export class DictionaryError extends Error {
@@ -87,6 +88,32 @@ export class DictationDictionaryStore {
     const record = this.read();
     const list = workspaceId === null ? record.global : (record.workspaces[workspaceId] ?? empty());
     return { revision: list.revision, phrases: [...list.phrases] };
+  }
+
+  /**
+   * The phrases a take uses: the workspace list first, then the global one, without duplicates,
+   * within the dictation hint limits. Same selection as the app's `DictationDictionarySelection`.
+   */
+  selected(workspaceId: string | undefined): string[] {
+    const record = this.read();
+    const lists = [
+      ...(workspaceId ? [record.workspaces[workspaceId]?.phrases ?? []] : []),
+      record.global.phrases,
+    ];
+    const selected: string[] = [];
+    const seen = new Set<string>();
+    let total = 0;
+    for (const phrase of lists.flat()) {
+      if (seen.has(phrase)) continue;
+      seen.add(phrase);
+      const bytes = Buffer.byteLength(phrase, "utf8");
+      if (bytes > DICTATION_CONTEXT_MAX_PHRASE_BYTES) continue;
+      if (selected.length >= maxSaved || total + bytes > DICTATION_CONTEXT_MAX_TOTAL_BYTES)
+        continue;
+      selected.push(phrase);
+      total += bytes;
+    }
+    return selected;
   }
 
   add(workspaceId: string | null, phrase: unknown): List {

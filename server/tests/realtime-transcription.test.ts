@@ -13,6 +13,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import {
   RealtimeTranscriptionClient,
   realtimeTranscriptionUrl,
+  vocabularyPrompt,
   type LiveTranscriptionEvents,
 } from "../src/realtime-transcription.js";
 import { SttSessionCreateError } from "../src/stt-provider.js";
@@ -131,6 +132,7 @@ async function connect(
     autoCommitEmpty?: boolean;
     silenceDurationMs?: number;
     pingIntervalMs?: number;
+    vocabulary?: string[];
   } = {},
 ) {
   const server = await FakeRealtimeServer.listen(options);
@@ -141,6 +143,7 @@ async function connect(
     startTimeoutMs: 500,
     drainTimeoutMs: 500,
     pingIntervalMs: options.pingIntervalMs,
+    vocabulary: options.vocabulary,
   });
   const { events, seen } = recorder();
   return { server, client, events, seen };
@@ -188,6 +191,31 @@ describe("realtime transcription client", () => {
       { type: "input_audio_buffer.append", audio: Buffer.from([3, 0]).toString("base64") },
     ]);
     await client.stop();
+  });
+
+  it("sends dictionary phrases as Yuwp's vocabulary prompt, cut to the prompt limit in order", async () => {
+    const { server, client, events } = await connect({
+      autoReady: false,
+      vocabulary: ["Oppi", "kypu", "Yuwp"],
+    });
+    const started = client.start(events);
+    await server.waitFor("session.update");
+    expect(server.received[0]).toMatchObject({
+      session: {
+        audio: { input: { transcription: { prompt: "Vocabulary: Oppi, kypu, Yuwp" } } },
+      },
+    });
+    server.send({ type: "session.updated" });
+    await started;
+    await client.stop();
+
+    // A full dictionary (100 phrases, 8192 bytes) plus the prefix and separators is past Yuwp's
+    // 8192-byte prompt limit, which would fail the call's start: trailing phrases are left out.
+    const full = Array.from({ length: 100 }, (_, i) => `${i}`.padStart(81, "x"));
+    const prompt = vocabularyPrompt(full) ?? "";
+    expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(8192);
+    expect(prompt).toBe(`Vocabulary: ${full.slice(0, 98).join(", ")}`);
+    expect(vocabularyPrompt([])).toBeUndefined();
   });
 
   it("hands turns over in commit order even when the transcripts finish out of order", async () => {

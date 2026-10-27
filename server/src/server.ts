@@ -149,6 +149,7 @@ import {
 import { GrokVoiceMediaAdapter, grokVoiceFromTts } from "./grok-live-voice.js";
 import { VoiceBackendHealth } from "./voice-backend-health.js";
 import { RealtimeTranscriptionClient, realtimeTranscriptionUrl } from "./realtime-transcription.js";
+import { DictationDictionaryStore } from "./storage/dictation-dictionary-store.js";
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { McpService } from "./mcp-service.js";
@@ -648,7 +649,7 @@ export class Server {
       getAuth: async (providerId) => this.modelRuntime?.getAuth(providerId),
     });
     this.voiceMediaCoordinator = new VoiceCallMediaCoordinator({
-      createAdapter: ({ callId }) => this.createLiveVoiceMediaAdapter(callId),
+      createAdapter: ({ callId, sessionId }) => this.createLiveVoiceMediaAdapter(callId, sessionId),
       calls: this.voiceCallController,
       nextUtteranceId: () => randomUUID(),
       nextDelegationId: () => randomUUID(),
@@ -1435,7 +1436,7 @@ export class Server {
   }
 
   /** Built per call from the voice settings on disk, so a call picks up changes without a restart. */
-  private createLiveVoiceMediaAdapter(callId: string): VoiceMediaAdapter {
+  private createLiveVoiceMediaAdapter(callId: string, sessionId: string): VoiceMediaAdapter {
     const { asr, tts } = this.storage.readVoiceConfig();
     const endpoint = asr?.sttEndpoint?.trim() || undefined;
     const getAuth: SttGetAuth = async (providerId) => this.modelRuntime?.getAuth(providerId);
@@ -1448,6 +1449,7 @@ export class Server {
             new RealtimeTranscriptionClient({
               url: realtimeTranscriptionUrl(endpoint),
               silenceDurationMs: LIVE_VOICE_TURN_SILENCE_MS,
+              vocabulary: this.liveVoiceVocabulary(callId, sessionId),
             })
         : undefined,
       // Local calls speak like read aloud: same engine, same voice.
@@ -1462,6 +1464,20 @@ export class Server {
           resolveApiKey: () => resolveSttBearerToken("xai", { getAuth }),
         }),
     });
+  }
+
+  /**
+   * The Dictation Dictionary phrases for a call's session (its workspace's, then global), read
+   * per call like the voice settings. A damaged dictionary costs the hints, never the call.
+   */
+  private liveVoiceVocabulary(callId: string, sessionId: string): string[] {
+    try {
+      const workspaceId = this.storage.getSession(sessionId)?.workspaceId;
+      return new DictationDictionaryStore(this.storage.getDataDir()).selected(workspaceId);
+    } catch (err) {
+      log.warn("voice_media.vocabulary_unavailable", { callId, error: safeErrorMessage(err) });
+      return [];
+    }
   }
 
   private trackConnection(ws: WebSocket): void {

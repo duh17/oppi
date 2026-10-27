@@ -609,7 +609,7 @@ export class VoiceCallMediaCoordinator {
 
   constructor(
     private readonly deps: {
-      createAdapter: (call: { callId: string }) => VoiceMediaAdapter;
+      createAdapter: (call: { callId: string; sessionId: string }) => VoiceMediaAdapter;
       calls: VoiceCallController;
       nextUtteranceId?: () => string;
       nextDelegationId?: () => string;
@@ -629,13 +629,14 @@ export class VoiceCallMediaCoordinator {
       });
       return;
     }
-    const adapter = this.deps.createAdapter({ callId: input.callId });
+    const sessionId = this.deps.calls.snapshot(input.callId).controlSessionId;
+    const adapter = this.deps.createAdapter({ callId: input.callId, sessionId });
     if (input.frontend.sendAudio) {
       adapter.setPlaybackSink?.(input.frontend.sendAudio);
     }
     const session: MediaSession = {
       callId: input.callId,
-      sessionId: this.deps.calls.snapshot(input.callId).controlSessionId,
+      sessionId,
       controllerLeaseEpoch: input.controllerLeaseEpoch,
       frontend: input.frontend,
       adapter,
