@@ -171,7 +171,16 @@ struct SettingsSweepScreenshotPreview: View {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        coordinator.installPreviewConnection(connection, serverId: server.id)
+        if page.hasPrefix("mcp") {
+            // The MCP screens wait for `apiClientReady`, so their connection is
+            // a ready one whose requests the fixture answers, as the Router and
+            // Metrics previews build theirs.
+            if coordinator.switchToServer(server) {
+                coordinator.connection(for: server.id)?.setAPIClientForTesting(client)
+            }
+        } else {
+            coordinator.installPreviewConnection(connection, serverId: server.id)
+        }
         self.coordinator = coordinator
 
         // The app root: router modals present with these services.

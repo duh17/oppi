@@ -55,6 +55,51 @@ struct McpServersModelTests {
         #expect(model.snapshot == nil)
     }
 
+    /// The host menu and the iPad sidebar make another server the active one
+    /// before its client is ready. From the switch until that host's own list
+    /// arrives, the screen reads rows through `snapshot(forHost:)`: the old
+    /// host's rows are gone at once and never show under the new host.
+    @Test func aSwitchedHostShowsNoRowsUntilItsOwnListArrives() async {
+        let model = McpServersModel()
+        await model.refresh(hostId: "a", hostName: "A", flowClient: IdleFlowClient(), list: { response(flow: nil) })
+        #expect(model.snapshot(forHost: "a")?.scope.servers.first?.name == "remote")
+        #expect(model.snapshot(forHost: "b") == nil)
+
+        model.switchHost(to: "b")
+        #expect(model.snapshot(forHost: "a") == nil)
+        #expect(model.snapshot(forHost: "b") == nil)
+        #expect(model.error == nil)
+        #expect(!model.loading)
+
+        await model.refresh(hostId: "b", hostName: "B", flowClient: IdleFlowClient(), list: { response(flow: nil) })
+        #expect(model.snapshot(forHost: "b")?.scope.servers.first?.name == "remote")
+        #expect(model.snapshot(forHost: "a") == nil)
+    }
+
+    @Test func aProbeStillInFlightForTheOldHostNeverLandsUnderTheNewOne() async {
+        let model = McpServersModel()
+        let gate = Gate()
+        let probe = Task { @MainActor in
+            await model.refresh(hostId: "a", hostName: "A", flowClient: IdleFlowClient()) {
+                await gate.wait()
+                return response(flow: nil)
+            }
+        }
+        await gate.waitUntilWaiting()
+        #expect(model.loading)
+
+        model.switchHost(to: "b")
+        #expect(!model.loading)
+        await gate.open()
+        await probe.value
+
+        #expect(model.snapshot(forHost: "a") == nil)
+        #expect(model.snapshot(forHost: "b") == nil)
+        #expect(model.snapshot == nil)
+        #expect(!model.loading)
+        #expect(model.error == nil)
+    }
+
     @Test func cancelledFlowKeepsAskingUntilTheHostSettlesWithoutAnError() async {
         let sleeps = Counter()
         let model = McpServersModel(sleep: { _ in await sleeps.increment() })
@@ -88,6 +133,29 @@ private func response(flow: McpAuthFlowSnapshot?) -> McpServersResponse {
                                 servers: [server], inherited: nil, errors: []),
         activeSignIn: flow
     )
+}
+/// Holds a probe until the test lets it answer.
+private actor Gate {
+    private var isOpen = false
+    private var isWaiting = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        guard !isOpen else { return }
+        isWaiting = true
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    /// Returns once a probe is parked in `wait()`.
+    func waitUntilWaiting() async {
+        while !isWaiting { await Task.yield() }
+    }
+
+    func open() {
+        isOpen = true
+        waiter?.resume()
+        waiter = nil
+    }
 }
 private actor Counter {
     private(set) var value = 0

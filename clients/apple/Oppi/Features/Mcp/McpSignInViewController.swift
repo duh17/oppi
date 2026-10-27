@@ -199,16 +199,12 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
         switch item {
         case .host:
             ControlScreenList.staticRow(cell)
-            let value = attempt.serverName
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                ControlRowViews.valueRow("Host", value, palette: palette, style: .body)
-            }
+            cell.contentConfiguration = Self.valueContent("Host", attempt.serverName)
         case .status:
             ControlScreenList.staticRow(cell)
-            let value = ProviderAuthFlowPresentation.statusText(attempt.flow.status)
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                ControlRowViews.valueRow("Status", value, palette: palette, style: .body)
-            }
+            cell.contentConfiguration = Self.valueContent(
+                "Status", ProviderAuthFlowPresentation.statusText(attempt.flow.status)
+            )
         case .finishing:
             ControlScreenList.staticRow(cell)
             cell.contentConfiguration = ControlScreenList.loading("Finishing sign-in on the host…")
@@ -270,6 +266,15 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
         }
     }
 
+    /// A title and its value, as the Storage page draws them: the system
+    /// value cell breaks between words and stacks at accessibility sizes.
+    private static func valueContent(_ title: String, _ value: String) -> UIListContentConfiguration {
+        var content = UIListContentConfiguration.valueCell()
+        content.text = title
+        content.secondaryText = value
+        return content
+    }
+
     private static func actionContent(_ title: String, color: UIColor) -> UIListContentConfiguration {
         var content = UIListContentConfiguration.cell()
         content.text = title
@@ -303,11 +308,18 @@ final class McpSignInPresenter {
     private var isScheduled = false
 
     func sync(owner: McpSignInOwner, root: AppRootEnvironment, from screen: UIViewController) {
-        guard owner.showingSheet, owner.attempt != nil else {
+        guard owner.showingSheet, let wanted = owner.attempt else {
             if let sheet, !sheet.isBeingDismissed { Router.finish(sheet) }
             return
         }
-        guard sheet == nil, !isScheduled, screen.viewIfLoaded?.window != nil else { return }
+        if let sheet {
+            // A different attempt replaces the open sheet: the old one closes
+            // (it no longer owns the owner's state), and its dismissal
+            // presents the new one.
+            if sheet.attempt !== wanted, !sheet.isBeingDismissed { Router.finish(sheet) }
+            return
+        }
+        guard !isScheduled, screen.viewIfLoaded?.window != nil else { return }
         // A presentation needs a settled view tree, not the layout pass that asked for it.
         isScheduled = true
         Task { @MainActor [weak self, weak owner, weak screen] in
@@ -317,8 +329,16 @@ final class McpSignInPresenter {
                   sheet == nil, screen.viewIfLoaded?.window != nil, !Self.isShowing(from: screen) else { return }
             let sheet = McpSignInViewController(attempt: attempt, owner: owner, root: root)
             self.sheet = sheet
-            Router.present(sheet, presentation: .sheet.inNavigation(), from: screen) { [weak owner] in
-                owner?.sheetDismissed()
+            Router.present(sheet, presentation: .sheet.inNavigation(), from: screen) { [weak self, weak owner, weak screen] in
+                guard let self else { return }
+                self.sheet = nil
+                guard let owner else { return }
+                if owner.attempt === attempt {
+                    owner.sheetDismissed()
+                } else if let screen {
+                    // Replaced by another attempt: show that one.
+                    sync(owner: owner, root: root, from: screen)
+                }
             }
         }
     }

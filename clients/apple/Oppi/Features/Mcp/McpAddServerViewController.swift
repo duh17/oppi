@@ -188,6 +188,19 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
         let editor = UICollectionView.CellRegistration<AgentNativeEditTextViewCell, Item> { [weak self] cell, _, item in
             self?.configureEditor(cell, item: item)
         }
+        let menu = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+            guard let self else { return }
+            cell.configure(
+                title: "Exposure",
+                identifier: "mcp.add.exposure",
+                options: McpExposure.allCases.map { option in
+                    (title: option.title, selected: option == exposure, action: { [weak self] in
+                        guard let self, !saving else { return }
+                        exposure = option
+                    })
+                }
+            )
+        }
         let segmented = UICollectionView.CellRegistration<AgentNativeEditSegmentedCell, Item> { [weak self] cell, _, _ in
             guard let self else { return }
             cell.configure(
@@ -224,6 +237,8 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
                 collectionView.dequeueConfiguredReusableCell(using: editor, for: indexPath, item: item)
             case .transport:
                 collectionView.dequeueConfiguredReusableCell(using: segmented, for: indexPath, item: item)
+            case .exposure:
+                collectionView.dequeueConfiguredReusableCell(using: menu, for: indexPath, item: item)
             default:
                 collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
             }
@@ -279,31 +294,12 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
         switch item {
         case .host:
             ControlScreenList.staticRow(cell)
-            let host = serverName
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                ControlRowViews.valueRow("Host", host, palette: palette, style: .body)
-            }
+            cell.contentConfiguration = Self.valueContent("Host", serverName)
         case .scope:
             ControlScreenList.staticRow(cell, identifier: "mcp.add.scope")
-            let title = scope.title
-            cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-                ControlRowViews.valueRow("Scope", title, palette: palette, style: .body)
-            }
+            cell.contentConfiguration = Self.valueContent("Scope", scope.title)
         case .exposure:
-            ControlScreenList.staticRow(cell)
-            var content = UIListContentConfiguration.cell()
-            content.text = "Exposure"
-            content.textProperties.color = UIColor(palette.fg)
-            cell.contentConfiguration = content
-            cell.accessories = [.settingsPopUpMenu(
-                identifier: "mcp.add.exposure",
-                isEnabled: !saving,
-                options: McpExposure.allCases.map { option in
-                    (title: option.title, selected: option == exposure, action: { [weak self] in
-                        self?.exposure = option
-                    })
-                }
-            )]
+            break
         case .error:
             ControlScreenList.staticRow(cell, identifier: "mcp.add.error")
             let message = error
@@ -317,6 +313,15 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
         default:
             break
         }
+    }
+
+    /// A title and its value, as the Storage page draws them: the system
+    /// value cell breaks between words and stacks at accessibility sizes.
+    private static func valueContent(_ title: String, _ value: String) -> UIListContentConfiguration {
+        var content = UIListContentConfiguration.valueCell()
+        content.text = title
+        content.secondaryText = value
+        return content
     }
 
     private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {

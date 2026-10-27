@@ -194,14 +194,44 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
         }
     }
 
+    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+        self?.configureExposure(cell)
+    }
+
+    private func configureExposure(_ cell: SettingsMenuRowCell) {
+        let client = client
+        let scopeId = scope.id
+        let name = entry.name
+        cell.configure(
+            title: "Exposure",
+            identifier: "mcp.exposure",
+            options: McpExposure.allCases.map { option in
+                (title: option.title, selected: option == entry.exposure, action: { [weak self] in
+                    // The row is a menu button at every text size, so a change
+                    // asked for while another is saving or a sign-in is open
+                    // stops here.
+                    guard let self, !locked else { return }
+                    perform {
+                        try await client.patchMcpServer(
+                            scopeId: scopeId, name: name, patch: McpPatchServerRequest(exposure: option)
+                        )
+                    }
+                })
+            }
+        )
+    }
+
     override func prepareRegistrations() {
         _ = buttonRow
+        _ = menuRow
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
         case .continueSignIn, .signIn, .signOut, .remove:
             collectionView.dequeueConfiguredReusableCell(using: buttonRow, for: indexPath, item: item)
+        case .exposure:
+            collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
         default:
             super.dequeue(item, at: indexPath)
         }
@@ -251,20 +281,7 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
                 }
             }]
         case .exposure:
-            cell.contentConfiguration = Self.rowText("Exposure")
-            cell.accessories = [.settingsPopUpMenu(
-                identifier: "mcp.exposure",
-                isEnabled: !locked,
-                options: McpExposure.allCases.map { option in
-                    (title: option.title, selected: option == entry.exposure, action: { [weak self] in
-                        self?.perform {
-                            try await client.patchMcpServer(
-                                scopeId: scopeId, name: name, patch: McpPatchServerRequest(exposure: option)
-                            )
-                        }
-                    })
-                }
-            )]
+            break
         case .header(let key):
             reference(cell, key, entry.config.headers?[key])
         case .env(let key):
@@ -347,11 +364,13 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
         return content
     }
 
+    /// A title and its value, as the Storage page draws them: the system
+    /// value cell breaks between words, and stacks at accessibility sizes.
     private func value(_ cell: UICollectionViewListCell, _ title: String, _ value: String) {
-        let palette = palette
-        cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
-            ControlRowViews.valueRow(title, value, palette: palette, style: .body)
-        }
+        var content = UIListContentConfiguration.valueCell()
+        content.text = title
+        content.secondaryText = value
+        cell.contentConfiguration = content
     }
 
     /// A header or environment reference: its name, and its value or `[redacted]`.
@@ -473,6 +492,9 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
         let name = entry.name
         let serverId = serverId
         let serverName = serverName
+        // The owner outlives this page: a sign-in that started is adopted even
+        // if the page was popped while the host answered.
+        let signIn = signIn
         Task { [weak self] in
             do {
                 let flow = try await client.startMcpAuthFlow(scopeId: scopeId, name: name)
@@ -480,7 +502,7 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
                     flow: flow.providerPresentation, client: McpFlowClient(client: client),
                     serverId: serverId, serverName: serverName, providerName: name
                 )
-                self?.signIn.adopt(attempt, scopeId: scopeId)
+                signIn.adopt(attempt, scopeId: scopeId)
             } catch {
                 self?.error = error.localizedDescription
             }

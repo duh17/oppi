@@ -63,6 +63,10 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
     private let signInPresenter = McpSignInPresenter()
     private var observedServerId: String?
     private var observedFlowStatus: ProviderAuthFlowSnapshot.Status?
+    /// Probes waiting for their host's client.
+    private var preparingCount = 0 {
+        didSet { setNeedsUpdateProperties() }
+    }
     private var activityObservers = NotificationObservers()
 
     init(scopeId: String, root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
@@ -150,7 +154,11 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
         ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
 
         let server = server
-        let snapshot = model.snapshot
+        // Rows and errors show only for the host that produced them: the active
+        // server can change (the host menu, the iPad sidebar) before its client
+        // is ready and before this screen has probed it.
+        let snapshot = model.snapshot(forHost: server?.id)
+        let shownHost = model.snapshotHostId == server?.id
         let attempt = signIn.attempt
         state = ViewState(
             server: server,
@@ -158,11 +166,11 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
             hostState: server.map { HostSwitcherBadgeState.make(for: $0, coordinator: coordinator) },
             serverCount: coordinator.serverStore.servers.count,
             snapshot: snapshot,
-            error: model.error,
-            loading: model.loading,
+            error: shownHost ? model.error : nil,
+            loading: model.loading || preparingCount > 0,
             liveAttempt: signIn.hasActive ? attempt : nil
         )
-        addItem.isEnabled = !(snapshot == nil || model.loading || signIn.hasActive)
+        addItem.isEnabled = !(snapshot == nil || state.loading || signIn.hasActive)
         ControlScreenList.setBarItems(trailing: [addItem], leading: sidebarItems(), on: navigationItem)
 
         // `.task(id: activeServerId)`: a switched server is probed again.
@@ -194,8 +202,16 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
 
     // MARK: - Data
 
+    /// Probes the active server. The old host's rows go first, then it waits
+    /// for the new host's client; a host that stopped being active meanwhile
+    /// is not probed.
     private func refresh() async {
-        guard let server, let client else { return }
+        guard let server else { return }
+        model.switchHost(to: server.id)
+        preparingCount += 1
+        let client = await coordinator.apiClientReady(for: server.id)
+        preparingCount -= 1
+        guard let client, coordinator.activeServerId == server.id else { return }
         let scopeId = scopeId
         await model.refresh(
             hostId: server.id, hostName: server.name,
@@ -204,7 +220,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
     }
 
     private func presentAdd() {
-        guard let client, let snapshot = model.snapshot, let server else { return }
+        guard let server, let snapshot = model.snapshot(forHost: server.id), let client else { return }
         let add = McpAddServerViewController(
             client: client, scope: snapshot.scope, serverName: server.name, root: root
         ) { [weak self] in
@@ -214,9 +230,9 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
     }
 
     private func openDetail(_ name: String) {
-        guard let scope = model.snapshot?.scope,
+        guard let server, let scope = model.snapshot(forHost: server.id)?.scope,
               let entry = scope.servers.first(where: { $0.name == name }),
-              let client, let server else { return }
+              let client else { return }
         let detail = McpServerDetailViewController(
             scope: scope, entry: entry, client: client,
             serverId: server.id, serverName: server.name,
@@ -534,23 +550,27 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
 
     // MARK: - Host row
 
-    /// Built each time it opens, so the connection words are current.
+    /// Built each time it opens, so the connection words are current. A
+    /// choice asks for the server's lock, then makes it the active one once its
+    /// connection is ready (what the SwiftUI `ServerCatalogServerRow` did).
     private func hostMenu(current: PairedServer) -> UIMenu {
         UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
             guard let self else { return completion([]) }
-            let model = HostSwitcherModel(
-                coordinator: coordinator,
-                serverStore: coordinator.serverStore,
-                navigation: root.navigation,
-                current: current,
-                destination: .inbox
-            )
-            let servers = model.servers.map { server in
+            let coordinator = coordinator
+            let servers = coordinator.serverStore.servers.map { server in
+                let state = HostSwitcherBadgeState.make(for: server, coordinator: coordinator)
                 let action = UIAction(
-                    title: model.menuTitle(for: server),
-                    image: UIImage(systemName: model.menuImage(for: server))
-                ) { _ in model.switchHost(server) }
-                action.accessibilityValue = model.menuAccessibilityValue(for: server)
+                    title: state == .connected ? server.name : "\(server.name) — \(state.title)",
+                    image: UIImage(systemName: server.id == current.id
+                        ? "checkmark.circle.fill"
+                        : server.resolvedBadgeIcon.symbolName)
+                ) { _ in
+                    Task { @MainActor in
+                        guard await ScopedLockService.shared.authorize(.server(server.id)) else { return }
+                        await coordinator.switchToServerReady(server)
+                    }
+                }
+                action.accessibilityValue = state.title
                 return action
             }
             let usage = UIAction(

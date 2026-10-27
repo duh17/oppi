@@ -17,11 +17,30 @@ final class McpServersModel {
     let signIn = McpSignInOwner()
 
     private var generation = 0
-    private var snapshotHostId: String?
+    /// The host `snapshot` and `error` belong to.
+    private(set) var snapshotHostId: String?
     private let sleep: Sleep
 
     init(sleep: @escaping Sleep = { try await Task.sleep(for: $0) }) {
         self.sleep = sleep
+    }
+
+    /// The last good response, only while it is `hostId`'s. A screen shows rows
+    /// through this, so a host's servers never draw under another host.
+    func snapshot(forHost hostId: String?) -> McpServersResponse? {
+        hostId == snapshotHostId ? snapshot : nil
+    }
+
+    /// A different host is now the one shown: drop the old host's rows and
+    /// error at once and ignore its probe still in flight. Call before waiting
+    /// for the new host's client, so nothing of the old host shows meanwhile.
+    func switchHost(to hostId: String) {
+        guard snapshotHostId != hostId else { return }
+        generation += 1
+        snapshot = nil
+        error = nil
+        loading = false
+        snapshotHostId = hostId
     }
 
     func refresh(
@@ -30,12 +49,9 @@ final class McpServersModel {
         flowClient: any ProviderAuthFlowClient,
         list: () async throws -> McpServersResponse
     ) async {
+        switchHost(to: hostId)
         generation += 1
         let token = generation
-        if snapshotHostId != hostId {
-            snapshot = nil
-            snapshotHostId = hostId
-        }
         loading = true
         defer { if token == generation { loading = false } }
         for _ in 0...Self.settlePollLimit {
