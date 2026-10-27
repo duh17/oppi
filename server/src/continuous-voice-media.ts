@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import type { VoiceCallController, VoiceCallFrontendConnection } from "./continuous-voice-call.js";
-import type { SttProvider, SttSpeechState, SttTranscriptUpdate } from "./stt-provider.js";
+import type {
+  LiveTranscription,
+  LiveTranscriptionClosedReason,
+  LiveTurnEndReason,
+} from "./realtime-transcription.js";
 import { createLogger, type Logger } from "./logger.js";
 import { startSpeech, type SpeechDeps, type TtsConfig } from "./speech-synthesis.js";
 
@@ -57,8 +61,8 @@ export interface LiveVoiceTtsPort {
 /** Production selector: one adapter per attached call. */
 export function selectLiveVoiceMediaAdapter(input: {
   liveVoiceBackend?: string;
-  sttEndpoint?: string;
-  createStt?: () => SttProvider;
+  /** The call's listening half; absent when no ASR endpoint is configured. */
+  createTranscription?: () => LiveTranscription;
   tts?: LiveVoiceTtsPort;
   createGrokVoice?: () => VoiceMediaAdapter;
   /** The call this adapter serves; local-route telemetry is tagged with it. */
@@ -72,10 +76,13 @@ export function selectLiveVoiceMediaAdapter(input: {
   if (backend !== "yuwp") {
     throw new Error(`Unknown Live Voice media backend: ${String(input.liveVoiceBackend)}`);
   }
-  if (!input.sttEndpoint || !input.createStt) {
+  if (!input.createTranscription) {
     throw new Error("Live Voice ASR is unavailable");
   }
-  return new YuwpVoiceMediaAdapter(input.createStt(), { tts: input.tts, callId: input.callId });
+  return new YuwpVoiceMediaAdapter(input.createTranscription(), {
+    tts: input.tts,
+    callId: input.callId,
+  });
 }
 
 export interface VoiceCallMediaAttachInput {
@@ -84,41 +91,22 @@ export interface VoiceCallMediaAttachInput {
   frontend: VoiceCallFrontendConnection;
 }
 
-/** Trailing silence after which a Live Voice call asks the ASR backend to mark speech ended. */
-export const LIVE_VOICE_ENDPOINTING_MS = 700;
-/** Silence after which a turn that already ends a sentence is handed over without waiting for endpointing. */
-const SENTENCE_END_SILENCE_MS = 450;
 /**
- * Silence after which an unfinished-looking turn is handed over anyway. The backend's end of
- * speech also fires on mid-sentence pauses, so it ends only turns that read as finished.
+ * The pause, in the ASR server's VAD, after which a Live Voice turn is over. Every pause this
+ * long splits the caller's speech into separate turns, mid-sentence or not, so it trades reply
+ * latency against cutting people off. Measured on 8 recordings of Chen's speech with
+ * mid-sentence pauses (real yuwp-asr, real time): 1200 ms gave 24 turns, 1500 ms gave 23, and
+ * 2000 ms gave 18, so 2000 ms leaves the fewest sentences split and each reply starts about
+ * 0.5 s later than at 1500 ms. Pauses longer than this still split ("what does the" /
+ * "Installation Part Two" in one recording stays two turns at every value tried). Table:
+ * .internal/reports/live-voice-realtime-qa-2026-10-26/README.md.
  */
-const UNFINISHED_SILENCE_MS = 1_200;
+export const LIVE_VOICE_TURN_SILENCE_MS = 2_000;
 const SENTENCE_END = /[。？！?.!]$/;
 /** Playback is 16-bit mono PCM, so this many bytes make a millisecond of audio. */
 const PLAYBACK_BYTES_PER_MS = (LIVE_VOICE_PLAYBACK_SAMPLE_RATE * 2) / 1_000;
-/**
- * Consecutive speaking reports that interrupt the assistant. Yuwp reports speech state with
- * every feed (~200 ms), so two in a row normally mean the detector still hears speech one feed
- * later, roughly 200-400 ms of speech rather than a blip (cough, click). It is a heuristic,
- * not a guarantee: a feed too short for a new detector chunk (0.16 s at current settings)
- * repeats the last state, so the floor is about one chunk. A third report would spend another
- * ~200 ms of the ~0.5-0.7 s this saves over waiting for text (measured: speech_active
- * ~400 ms after onset, first text ~1160 ms).
- */
-const BARGE_IN_SPEAKING_REPORTS = 2;
-
-/** Why a user turn was handed to the session. Telemetry only; never carries what was said. */
-type TurnEndReason =
-  /** The backend's end of speech, on a turn that ends a sentence. */
-  | "speech_final"
-  /** Enough trailing silence after a turn that ends a sentence. */
-  | "sentence_end_silence"
-  /** Long trailing silence after a turn that does not read as finished. */
-  | "unfinished_silence"
-  /** Nothing new arrived for `turnEndPauseMs`. */
-  | "watchdog"
-  /** The call ended with words not yet handed over. */
-  | "call_stop";
+/** How the call's listening ended. Telemetry only. */
+type CallEnd = "stop" | LiveTranscriptionClosedReason;
 
 /**
  * Counters for one local call, logged once as `voice_media.call_summary`. Counts, durations,
@@ -127,7 +115,7 @@ type TurnEndReason =
 interface CallStats {
   startedAt: number;
   turns: number;
-  endReasons: Partial<Record<TurnEndReason, number>>;
+  endReasons: Partial<Record<LiveTurnEndReason, number>>;
   bargeIns: number;
   /** Of `bargeIns`, the ones the phone heard first (`voice_call_barge_in`). */
   localBargeIns: number;
@@ -136,7 +124,6 @@ interface CallStats {
   ttsFailures: number;
   firstAudioMs: number[];
   turnToVoiceMs: number[];
-  asrRestarts: number;
 }
 
 /** Nearest-rank percentile of `values`; undefined when empty. */
@@ -149,34 +136,24 @@ function percentile(values: readonly number[], fraction: number): number | undef
 /**
  * Local Live Voice: streaming ASR in, read-aloud TTS out, the session's agent does the work.
  *
- * A user turn ends at a pause, not at an ASR commit. Streaming ASR (Yuwp R2T2)
- * locks in text every few hundred milliseconds, so a commit is a stable prefix,
- * not the end of what the user is saying. The transcript is cumulative for the
- * call; a turn is the words after the ones already sent to the session.
+ * The ASR server decides when the user's turn is over. `LiveTranscription` (Yuwp's realtime
+ * transcription socket) cuts the caller's audio on its own VAD and delivers each item's
+ * punctuated final text, in order; this adapter hands every non-empty one to the session as a
+ * turn. It runs no pause timers of its own, so a mid-sentence pause the server's VAD rides
+ * out stays one turn.
  *
- * When the backend reports speech state (endpointing), the audio decides the pause: a
- * turn that ends a sentence is handed over at the backend's end of speech or after a short
- * silence; one that does not waits for a longer silence, since people pause mid-sentence.
- * Either way, a turn ends once nothing new (text or speech state) has arrived for
- * `turnEndPauseMs`: while the user talks, reports arrive with every feed and keep it from
- * firing, and when they stop (mute, a stalled upload, a backend error) the turn still ends.
- * Without endpointing that is the only rule, and it can fire mid-sentence when recognition
- * lags.
- *
- * The user can talk over the assistant: sustained speaking reports (or, failing that, the
- * first new words) stop the sentence playing, drop queued ones, and tell the phone to drop
- * the audio it has buffered.
+ * The user can talk over the assistant: the server's `speech_started` (or, failing that, the
+ * first new words) stops the sentence playing, drops queued ones, and tells the phone to
+ * drop the audio it has buffered.
  */
 export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   readonly streamsReplies = true;
   private handler: VoiceMediaEventHandler | undefined;
-  /** The call's whole transcript as last heard. */
-  private transcript = "";
-  /** Speech units of `transcript` already handed to Pi (see `speechUnits`). */
-  private delegatedUnits = 0;
-  private lastTurnText = "";
-  private commitInFlight: Promise<void> | undefined;
+  /** The caption last sent to the phone (the caller's words not yet handed over); "" when none. */
+  private lastPartial = "";
+  /** The caller has said words since the last turn was handed over. */
   private speaking = false;
+  private commitInFlight: Promise<void> | undefined;
   /** Bumped by barge-in and stop; queued speech from an older generation is dropped. */
   private speechGeneration = 0;
   private speechAbort: AbortController | undefined;
@@ -184,19 +161,13 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   /** The reply whose sentences are arriving, and the speech generation its first one found. */
   private reply: { id: string; generation: number } | undefined;
   private playbackSink: ((pcm: Buffer) => void) | undefined;
-  private turnEndTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly turnEndPauseMs: number;
   private readonly tts: LiveVoiceTtsPort | undefined;
   private readonly now: () => number;
   private readonly log: Logger;
   private readonly stats: CallStats;
   private summarized = false;
-  /** When the user's pending turn first showed text; unset between turns. */
+  /** When the user's pending turn started (speech or first words); unset between turns. */
   private turnStartedAt: number | undefined;
-  /** The ASR transcript restarted while the pending turn was being said. */
-  private turnRestarted = false;
-  /** Trailing silence in the backend's latest speech report; unset before one and after a commit. */
-  private lastTrailingSilenceMs: number | undefined;
   /** When the newest turn was committed and no assistant audio has reached the phone since. */
   private awaitingVoiceSince: number | undefined;
   /** Assistant speech queued or playing since the last barge-in: items, first queued, audio sent. */
@@ -208,21 +179,17 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
    * the phone keeps playing buffered audio long after the queue has drained.
    */
   private playbackEndsAt = 0;
-  /** Speaking reports in a row since the last silent one. */
-  private speakingReports = 0;
   /** The "…" barge-in placeholder is the visible partial; real turn text or a clear replaces it. */
   private placeholderShowing = false;
 
   constructor(
-    private readonly stt: SttProvider,
+    private readonly transcription: LiveTranscription,
     options: {
-      turnEndPauseMs?: number;
       tts?: LiveVoiceTtsPort;
       callId?: string;
       now?: () => number;
     } = {},
   ) {
-    this.turnEndPauseMs = options.turnEndPauseMs ?? 1_800;
     this.tts = options.tts;
     this.now = options.now ?? Date.now;
     this.log = log.child({ callId: options.callId });
@@ -237,7 +204,6 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
       ttsFailures: 0,
       firstAudioMs: [],
       turnToVoiceMs: [],
-      asrRestarts: 0,
     };
   }
 
@@ -248,17 +214,16 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   async start(handler: VoiceMediaEventHandler): Promise<void> {
     this.handler = handler;
     this.stats.startedAt = this.now();
-    this.stt.onToken((update) => {
-      this.handleTranscript(update);
+    await this.transcription.start({
+      speechStarted: () => this.handleSpeechStarted(),
+      partial: (text) => this.handlePartial(text),
+      turn: (turn) => this.handleTurn(turn),
+      closed: (reason, detail) => this.handleClosed(reason, detail.code),
     });
-    this.stt.onSpeechState?.((state) => {
-      this.handleSpeechState(state);
-    });
-    await this.stt.start();
   }
 
   feedAudio(pcm: Buffer): void {
-    this.stt.feedAudio(pcm);
+    this.transcription.feedAudio(pcm);
   }
 
   /** The agent's words are said in order; newer ones wait for the one playing instead of cutting it off. */
@@ -295,12 +260,15 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
 
   async stop(): Promise<void> {
     this.cancelAssistantSpeech();
-    // End can arrive mid-sentence; hand Pi whatever the user said since the last turn.
-    this.clearTurnEnd();
-    const final = await this.stt.stop().catch(() => undefined);
-    if (final?.text.trim()) this.transcript = final.text.trim();
-    await this.commitTurn("call_stop");
-    this.logCallSummary();
+    // End can arrive mid-sentence; the transcription cuts what the user was saying and hands
+    // over every item in flight (as turns) before it resolves, so Pi hears them.
+    await this.transcription.stop().catch((error: unknown) => {
+      this.log.warn("voice_media.asr_stop_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    await this.commitInFlight;
+    this.logCallSummary("stop");
     const handler = this.handler;
     this.handler = undefined;
     if (handler) await handler({ type: "disconnected" });
@@ -415,12 +383,12 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     });
   }
 
-  private logCallSummary(): void {
+  private logCallSummary(ended: CallEnd): void {
     if (this.summarized) return;
     this.summarized = true;
     const st = this.stats;
     this.log.info("voice_media.call_summary", {
-      ended: "stop",
+      ended,
       durationMs: this.now() - st.startedAt,
       turns: st.turns,
       endReasons: st.endReasons,
@@ -429,7 +397,6 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
       ttsItems: st.ttsItems,
       ttsAborted: st.ttsAborted,
       ttsFailures: st.ttsFailures,
-      asrRestarts: st.asrRestarts,
       firstAudioP50Ms: percentile(st.firstAudioMs, 0.5),
       firstAudioMaxMs: percentile(st.firstAudioMs, 1),
       turnToVoiceP50Ms: percentile(st.turnToVoiceMs, 0.5),
@@ -437,36 +404,34 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     });
   }
 
-  private handleTranscript(update: SttTranscriptUpdate): void {
-    const handler = this.handler;
-    if (!handler) return;
-    // A recreated ASR session (Yuwp restart, or a long mute outlasting its idle
-    // timeout) starts its transcript over; count handed-off units from zero.
-    if (update.transcriptRestarted) {
-      this.delegatedUnits = 0;
-      this.lastTurnText = "";
-      this.turnRestarted = true;
-      this.stats.asrRestarts += 1;
+  /** The caller's words so far changed (the server's streamed text for items not yet turns). */
+  private handlePartial(text: string): void {
+    if (text === this.lastPartial) return;
+    if (!text) {
+      // Everything streamed was handed over or retracted; a handed-over turn already
+      // cleared the phone's caption.
+      this.clearCaption();
+      return;
     }
-    this.transcript = update.text.trim();
-    const turn = this.pendingTurnText();
-    // Repeats of the same text are not new speech and must not push the turn end back.
-    if (!turn || turn === this.lastTurnText) return;
-    this.lastTurnText = turn;
+    this.lastPartial = text;
     this.placeholderShowing = false;
     this.turnStartedAt ??= this.now();
+    // The caller's first words of a turn talk over whatever reply is still being written, and
+    // work even when the server sent no speech_started (it is optional).
     if (!this.speaking) {
       this.speaking = true;
       this.logBargeIn();
       this.cancelAssistantSpeech();
     }
-    void handler({ type: "user_transcript_partial", text: turn });
-    this.scheduleTurnEnd();
+    void this.handler?.({ type: "user_transcript_partial", text });
   }
 
-  private pendingTurnText(): string {
-    const next = speechUnits(this.transcript)[this.delegatedUnits];
-    return next ? this.transcript.slice(next.index).trim() : "";
+  /** An item with nothing said (failed, or noise): the caption and the "…" placeholder go. */
+  private clearCaption(): void {
+    if (!this.lastPartial && !this.placeholderShowing) return;
+    this.lastPartial = "";
+    this.placeholderShowing = false;
+    void this.handler?.({ type: "user_transcript_partial", text: "" });
   }
 
   /** Barge-in and End: stop the sentence playing and drop queued ones. */
@@ -483,8 +448,9 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   }
 
   /**
-   * Sustained speech while the assistant is audible or about to be: still generating, or the
-   * phone may still be playing what was sent. Otherwise an ordinary turn would flash "…".
+   * The server's VAD heard the caller while the assistant is audible or about to be (still
+   * generating, or the phone may still be playing what was sent). Otherwise an ordinary turn
+   * would flash "…".
    */
   private bargeInOnSpeech(): void {
     if (this.queuedSpeechItems === 0 && this.now() >= this.playbackEndsAt) return;
@@ -493,71 +459,48 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     // A non-empty partial is the phone's barge-in signal (it drops audio already buffered),
     // as with Grok. Words already showing flush the phone on their next change, and "…"
     // would hide them.
-    if (this.placeholderShowing || this.pendingTurnText()) return;
+    if (this.placeholderShowing || this.lastPartial) return;
     this.placeholderShowing = true;
-    // The phone no longer shows the last words; if ASR retracts them and they return, they
-    // must count as new.
-    this.lastTurnText = "";
     void this.handler?.({ type: "user_transcript_partial", text: "…" });
   }
 
-  private handleSpeechState(state: SttSpeechState): void {
-    this.lastTrailingSilenceMs = state.trailingSilenceMs;
-    // The speaking run ended without any words (cough, noise), or endpointing was released.
-    // Clear the placeholder, or the next barge-in's identical "…" would not flush the phone.
-    if (
-      this.placeholderShowing &&
-      (state.speechFinal || (!state.speechActive && state.trailingSilenceMs === undefined))
-    ) {
-      this.placeholderShowing = false;
-      void this.handler?.({ type: "user_transcript_partial", text: "" });
-    }
-    // While the user talks a speaking report arrives with every feed and restarts the
-    // watchdog, so the turn cannot end however long the text stalls. Silent reports leave
-    // it running: the silence rules below or the watchdog end the turn.
-    if (state.speechActive) {
-      this.speakingReports += 1;
-      if (this.speakingReports >= BARGE_IN_SPEAKING_REPORTS) this.bargeInOnSpeech();
-      this.scheduleTurnEnd();
+  private handleSpeechStarted(): void {
+    this.turnStartedAt ??= this.now();
+    this.bargeInOnSpeech();
+  }
+
+  /** One finished item from the server, in commit order. */
+  private handleTurn(turn: {
+    text: string;
+    reason: LiveTurnEndReason;
+    finalMs: number | undefined;
+  }): void {
+    this.speaking = false;
+    if (!turn.text) {
+      this.turnStartedAt = undefined;
+      this.clearCaption();
       return;
     }
-    this.speakingReports = 0;
-    const turn = this.pendingTurnText();
-    if (!turn) return;
-    const silence = state.trailingSilenceMs ?? 0;
-    const endsSentence = SENTENCE_END.test(turn);
-    const finished = endsSentence && (state.speechFinal || silence >= SENTENCE_END_SILENCE_MS);
-    if (finished || silence >= UNFINISHED_SILENCE_MS) {
-      this.clearTurnEnd();
-      const reason: TurnEndReason = !finished
-        ? "unfinished_silence"
-        : state.speechFinal
-          ? "speech_final"
-          : "sentence_end_silence";
-      void this.commitTurn(reason);
-    }
+    this.lastPartial = "";
+    this.placeholderShowing = false;
+    void this.commitTurn(turn.text, turn.reason, turn.finalMs);
   }
 
-  private scheduleTurnEnd(): void {
-    this.clearTurnEnd();
-    this.turnEndTimer = setTimeout(() => {
-      this.turnEndTimer = undefined;
-      void this.commitTurn("watchdog");
-    }, this.turnEndPauseMs);
-  }
-
-  private clearTurnEnd(): void {
-    if (this.turnEndTimer) {
-      clearTimeout(this.turnEndTimer);
-      this.turnEndTimer = undefined;
-    }
+  /** The listening socket ended mid-call: the call cannot go on, so say so and end it. */
+  private handleClosed(reason: LiveTranscriptionClosedReason, code: number | undefined): void {
+    this.log.warn("voice_media.asr_closed", { reason, code });
+    this.cancelAssistantSpeech();
+    this.logCallSummary(reason);
+    const handler = this.handler;
+    this.handler = undefined;
+    void handler?.({ type: "disconnected", reason });
   }
 
   /** One line per user turn: what ended it and how long it took. Never the words. */
   private logTurnCommitted(
     turn: string,
-    reason: TurnEndReason,
-    trailingSilenceMs: number | undefined,
+    reason: LiveTurnEndReason,
+    finalMs: number | undefined,
     committedAt: number,
   ): void {
     const stats = this.stats;
@@ -565,35 +508,32 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     stats.endReasons[reason] = (stats.endReasons[reason] ?? 0) + 1;
     this.log.info("voice_media.turn_committed", {
       reason,
-      trailingSilenceMs,
+      // The server's commit to its final text.
+      finalMs,
       endsSentence: SENTENCE_END.test(turn),
       units: speechUnits(turn).length,
       turnMs: this.turnStartedAt === undefined ? undefined : committedAt - this.turnStartedAt,
-      asrRestarted: this.turnRestarted,
     });
     this.turnStartedAt = undefined;
-    this.turnRestarted = false;
-    this.lastTrailingSilenceMs = undefined;
   }
 
-  private commitTurn(reason: TurnEndReason): Promise<void> {
-    const trailingSilenceMs = this.lastTrailingSilenceMs;
-    // A pause and End can overlap. Chain them so each word is handed to Pi once.
+  private commitTurn(
+    text: string,
+    reason: LiveTurnEndReason,
+    finalMs: number | undefined,
+  ): Promise<void> {
+    // Turns can arrive back to back, and End can overlap one. Chain them so each is handed
+    // to Pi once, in order.
     const perform = async (): Promise<void> => {
       const handler = this.handler;
       if (!handler) return;
-      const turn = this.pendingTurnText();
-      if (!turn) return;
       const committedAt = this.now();
-      this.logTurnCommitted(turn, reason, trailingSilenceMs, committedAt);
-      this.delegatedUnits = speechUnits(this.transcript).length;
-      this.lastTurnText = "";
-      this.speaking = false;
+      this.logTurnCommitted(text, reason, finalMs, committedAt);
       this.awaitingVoiceSince = committedAt;
       await handler({
         type: "user_utterance_committed",
         utteranceId: randomUUID(),
-        text: turn,
+        text,
       });
     };
 
@@ -608,9 +548,8 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
 }
 
 /**
- * What a turn boundary counts in: a word in spaced scripts, a single character in Chinese,
- * Japanese, and Korean (which have no spaces between words). Punctuation does not count,
- * because ASR revises the punctuation and case of earlier text as it hears more.
+ * What turn telemetry counts in: a word in spaced scripts, a single character in Chinese,
+ * Japanese, and Korean (which have no spaces between words). Punctuation does not count.
  */
 const SPEECH_UNIT =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[^\s\p{P}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;

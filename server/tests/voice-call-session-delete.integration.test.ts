@@ -3,8 +3,6 @@
  * session's call records from voice-calls.json, leaving other sessions' calls alone.
  */
 import { generateKeyPairSync } from "node:crypto";
-import { createServer, type Server as HttpServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { request as httpsRequest } from "node:https";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +14,7 @@ import { WebSocket, type RawData } from "ws";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import { voiceCallStorePath } from "../src/voice-call-store.js";
+import { startSilentRealtimeAsr } from "./helpers/silent-realtime-asr.js";
 import type { DevicePublicKey } from "../src/types.js";
 
 function makeDeviceKey(): DevicePublicKey {
@@ -105,7 +104,7 @@ let storage: Storage;
 let server: Server;
 let baseUrl: string;
 let probes: WsProbe[] = [];
-const sttServers: HttpServer[] = [];
+const sttServers: Array<{ close: () => Promise<void> }> = [];
 
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-voice-delete-"));
@@ -120,7 +119,7 @@ beforeEach(async () => {
 afterEach(async () => {
   for (const probe of probes) probe.ws.terminate();
   probes = [];
-  for (const stt of sttServers.splice(0)) stt.close();
+  await Promise.all(sttServers.splice(0).map((asr) => asr.close()));
   await server.stop().catch(() => {});
   rmSync(dataDir, { recursive: true, force: true });
 }, 45_000);
@@ -143,18 +142,11 @@ async function connectStream(
   return probe;
 }
 
-/** Streaming STT that accepts a session and hears nothing, enough for a Live Voice call to run. */
+/** A realtime ASR endpoint that hears nothing, enough for a Live Voice call to run. */
 async function silentStreamingStt(): Promise<string> {
-  const stt = createServer((req, res) => {
-    req.resume();
-    req.on("end", () => {
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify(req.method === "POST" ? { session_id: "stt-1" } : { text: "" }));
-    });
-  });
-  sttServers.push(stt);
-  await new Promise<void>((resolve) => stt.listen(0, "127.0.0.1", resolve));
-  return `http://127.0.0.1:${(stt.address() as AddressInfo).port}`;
+  const asr = await startSilentRealtimeAsr();
+  sttServers.push(asr);
+  return asr.endpoint;
 }
 
 function networkRequest(

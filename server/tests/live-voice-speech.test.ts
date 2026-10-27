@@ -12,9 +12,9 @@ import {
   type RunOutcome,
 } from "../src/live-voice-speech.js";
 import type { SessionBackendEvent } from "../src/pi-events.js";
-import type { SttProvider, SttTranscriptUpdate } from "../src/stt-provider.js";
 import type { VoiceCallDelegationUpdateKind } from "../src/types.js";
 import { DeterministicVoiceCallFrontend } from "./helpers/deterministic-voice-call-frontend.js";
+import { ScriptedTranscription } from "./helpers/scripted-transcription.js";
 
 const start = { type: "agent_start" } as SessionBackendEvent;
 
@@ -576,25 +576,6 @@ describe("LiveVoiceSpeech", () => {
   });
 });
 
-class ScriptedStt implements SttProvider {
-  readonly name = "scripted";
-  readonly model = "test";
-  private tokenCb?: (update: SttTranscriptUpdate) => void;
-  async start() {
-    return { contextApplied: false };
-  }
-  feedAudio(): void {}
-  onToken(cb: (update: SttTranscriptUpdate) => void): void {
-    this.tokenCb = cb;
-  }
-  async stop() {
-    return { text: "" };
-  }
-  emit(text: string): void {
-    this.tokenCb?.({ text });
-  }
-}
-
 const echoTts: LiveVoiceTtsPort = {
   async *speak(text: string) {
     yield Buffer.from(text);
@@ -616,10 +597,10 @@ describe("LiveVoiceSessionLink", () => {
       nextCallId: () => `call-${++callSequence}`,
       dispatchDelegation: (sessionId, delegation) => link.dispatch(sessionId, delegation),
     });
-    const stt = new ScriptedStt();
+    const stt = new ScriptedTranscription();
     let delegationSequence = 0;
     const media = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt, { tts: echoTts, turnEndPauseMs: 5 }),
+      createAdapter: () => new YuwpVoiceMediaAdapter(stt, { tts: echoTts }),
       calls,
       nextDelegationId: () => `delegation-${++delegationSequence}`,
       onSessionMediaChanged: (sessionId, attached) => link.sessionMediaChanged(sessionId, attached),
@@ -648,7 +629,7 @@ describe("LiveVoiceSessionLink", () => {
     });
     expect(runtime.active).toContain("speak");
 
-    stt.emit("how many sessions are running");
+    stt.say("how many sessions are running");
     await turnEnd();
     expect(prompts).toEqual([{ sessionId: "sess-1", request: "how many sessions are running" }]);
 
@@ -677,7 +658,7 @@ describe("LiveVoiceSessionLink", () => {
     const interrupted = writeReply(link.speech, "sess-1");
     interrupted.write("The build is green. ");
     await turnEnd();
-    stt.emit("how many sessions are running wait");
+    stt.say("wait");
     interrupted.write("It took four minutes.");
     interrupted.end();
     await turnEnd();
@@ -690,7 +671,7 @@ describe("LiveVoiceSessionLink", () => {
     expect(heard().slice(3)).toEqual(["The build is green.", "Okay, waiting."]);
 
     failNext = true;
-    stt.emit("how many sessions are running wait and stop the build");
+    stt.say("and stop the build");
     await turnEnd();
     expect(statuses().at(-1)).toEqual(["blocked", "Session is stopped"]);
     expect(heard().at(-1)).toBe("That did not reach the session.");

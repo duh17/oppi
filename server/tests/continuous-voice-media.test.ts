@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
+// These tests read the call's telemetry from stderr. The pre-commit hook runs with
+// OPPI_LOG_LEVEL=error and loggers bind their level at import, so set it before imports.
+vi.hoisted(() => {
+  process.env.OPPI_LOG_LEVEL = "info";
+});
+
 import {
   LIVE_VOICE_PLAYBACK_SAMPLE_RATE,
   ReadAloudLiveVoiceTts,
@@ -11,76 +17,20 @@ import {
   YuwpVoiceMediaAdapter,
 } from "../src/continuous-voice-media.js";
 import { VoiceCallController } from "../src/continuous-voice-call.js";
-import {
-  StreamingSttProvider,
-  type SttProvider,
-  type SttSpeechState,
-  type SttStartResult,
-  type SttTranscriptUpdate,
-} from "../src/stt-provider.js";
 import { WsMessageHandler, type WsMessageHandlerDeps } from "../src/ws-message-handler.js";
 import type { ServerMessage, Session } from "../src/types.js";
 import { DeterministicVoiceCallFrontend } from "./helpers/deterministic-voice-call-frontend.js";
-
-/** Test turns end after a short pause; the default is sized for real speech. */
-const TEST_TURN_END_PAUSE_MS = 5;
+import { ScriptedTranscription } from "./helpers/scripted-transcription.js";
 
 function localAdapter(
-  stt: SttProvider,
+  stt: ScriptedTranscription,
   options: ConstructorParameters<typeof YuwpVoiceMediaAdapter>[1] = {},
 ): YuwpVoiceMediaAdapter {
-  return new YuwpVoiceMediaAdapter(stt, { turnEndPauseMs: TEST_TURN_END_PAUSE_MS, ...options });
+  return new YuwpVoiceMediaAdapter(stt, options);
 }
 
-/** Let a committed turn finish handing over, so the next one is judged on its own. */
+/** Let a handed-over turn finish, so the next one is judged on its own. */
 const settled = () => new Promise<void>((resolve) => setImmediate(resolve));
-
-/** Let the user's pause end the turn. */
-const turnEnd = () => new Promise<void>((resolve) => setTimeout(resolve, 60));
-
-class ScriptedSttProvider implements SttProvider {
-  readonly name = "scripted-yuwp";
-  readonly model = "test-asr";
-  started = false;
-  stopped = false;
-  fed: Buffer[] = [];
-  startError?: Error;
-  private tokenCb?: (update: SttTranscriptUpdate) => void;
-  private speechCb?: (state: SttSpeechState) => void;
-
-  async start(): Promise<SttStartResult> {
-    if (this.startError) throw this.startError;
-    this.started = true;
-    return { contextApplied: false };
-  }
-
-  onSpeechState(cb: (state: SttSpeechState) => void): void {
-    this.speechCb = cb;
-  }
-
-  speech(state: SttSpeechState): void {
-    this.speechCb?.(state);
-  }
-
-  feedAudio(pcm: Buffer): void {
-    this.fed.push(pcm);
-  }
-
-  onToken(cb: (update: SttTranscriptUpdate) => void): void {
-    this.tokenCb = cb;
-  }
-
-  stopResult: { text: string; committedText?: string; activeText?: string } = { text: "" };
-
-  async stop(): Promise<{ text: string; committedText?: string; activeText?: string }> {
-    this.stopped = true;
-    return this.stopResult;
-  }
-
-  emit(update: SttTranscriptUpdate): void {
-    this.tokenCb?.(update);
-  }
-}
 
 function makeVoiceSession(id = "voice-1"): Session {
   return {
@@ -103,9 +53,9 @@ function makeCalls(): VoiceCallController {
 }
 
 describe("continuous voice media", () => {
-  it("hands Pi one request per spoken turn while streaming ASR locks in words", async () => {
+  it("hands Pi one request per finished item, in order, and shows the words while they stream", async () => {
     const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     const frontend = new DeterministicVoiceCallFrontend({
       connectionId: "connection-1",
       authenticatedDeviceId: "paired-device-a",
@@ -128,24 +78,25 @@ describe("continuous voice media", () => {
       frontend: frontend.connection,
     });
     coordinator.feedAudio("connection-1", Buffer.from("pcm-bytes"));
-    // R2T2 shape: the call's transcript is cumulative and every update is committed.
-    const lockIn = (text: string) => stt.emit({ text, committedText: text, activeText: "" });
 
-    lockIn("Can");
-    lockIn("Can you ask pi how");
-    lockIn("Can you ask pi how many sessions are running?");
+    stt.speechStarted();
+    stt.partial("Can you ask pi how");
+    expect(calls.snapshot(started.state.callId).partialTranscript).toBe("Can you ask pi how");
+    // Streaming words are a caption, not a request: nothing is handed over until the server
+    // finishes the item.
+    stt.partial("Can you ask pi how many sessions are");
     expect(calls.snapshot(started.state.callId).delegations).toEqual([]);
-    await turnEnd();
+
+    stt.turn("Can you ask pi how many sessions are running?");
+    stt.partial("");
+    await settled();
     // A handed-off turn clears the phone's input bar: the newest state carries no partial.
     const lastState = () =>
       frontend.messages.filter((message) => message.type === "voice_call_state").at(-1);
-    expect(lastState()).toEqual(expect.objectContaining({ type: "voice_call_state" }));
     expect(lastState()).not.toHaveProperty("partialTranscript");
 
-    // The next turn revises the earlier punctuation; only the new words are handed off.
-    lockIn("Can you ask pi how many sessions are running, and");
-    lockIn("Can you ask pi how many sessions are running, and then check the tests?");
-    await turnEnd();
+    stt.say("And then check the tests.");
+    await settled();
     expect(lastState()).not.toHaveProperty("partialTranscript");
 
     expect(stt.fed).toHaveLength(1);
@@ -157,184 +108,17 @@ describe("continuous voice media", () => {
       }),
       expect.objectContaining({
         delegationId: "delegation-2",
-        request: "and then check the tests?",
+        request: "And then check the tests.",
         state: "delegated",
       }),
     ]);
-    expect(frontend.messages).toContainEqual(
-      expect.objectContaining({
-        type: "voice_call_state",
-        partialTranscript: "and then check the tests?",
-      }),
-    );
     await coordinator.detach("connection-1");
     expect(calls.snapshot(started.state.callId).delegations).toHaveLength(2);
   });
 
-  it("ends a turn on the audio when the backend reports speech, not on a stalled transcript", async () => {
-    const stt = new ScriptedSttProvider();
-    const adapter = localAdapter(stt, { turnEndPauseMs: 100 });
-    const committed: string[] = [];
-    await adapter.start((event) => {
-      if (event.type === "user_utterance_committed") committed.push(event.text);
-    });
-
-    // Recognition stalls mid-sentence while the user keeps talking (a speaking report with
-    // every feed, ~200 ms apart in production): no cut-off, however long the text stalls.
-    stt.emit({ text: "帮我看一下现在有几个会话" });
-    for (let i = 0; i < 8; i++) {
-      stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-      await new Promise((resolve) => setTimeout(resolve, 40));
-    }
-    expect(committed).toEqual([]);
-
-    // A mid-sentence pause long enough for the backend's end of speech: the turn does not
-    // read as finished, so it waits for the user to go on.
-    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
-    await Promise.resolve();
-    expect(committed).toEqual([]);
-
-    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-    await turnEnd();
-    expect(committed).toEqual([]);
-    stt.emit({ text: "帮我看一下现在有几个会话在跑了吗？" });
-    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
-    await Promise.resolve();
-    expect(committed).toEqual(["帮我看一下现在有几个会话在跑了吗？"]);
-
-    // An end of speech with nothing new to hand over is a no-op.
-    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
-    await Promise.resolve();
-    expect(committed).toHaveLength(1);
-  });
-
-  it("ends the turn when speech reports stop arriving, as on mute or a stalled upload", async () => {
-    const stt = new ScriptedSttProvider();
-    const adapter = localAdapter(stt);
-    const committed: string[] = [];
-    await adapter.start((event) => {
-      if (event.type === "user_utterance_committed") committed.push(event.text);
-    });
-
-    // The last report said speaking, then the feeds stopped (the user muted mid-word).
-    stt.emit({ text: "run the server" });
-    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-    await turnEnd();
-
-    expect(committed).toEqual(["run the server"]);
-  });
-
-  it("hands over an unpunctuated turn once the silence is long enough", async () => {
-    const stt = new ScriptedSttProvider();
-    const adapter = localAdapter(stt, { turnEndPauseMs: 60_000 });
-    const committed: string[] = [];
-    await adapter.start((event) => {
-      if (event.type === "user_utterance_committed") committed.push(event.text);
-    });
-
-    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-    stt.emit({ text: "then run the server tests" });
-    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
-    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 1_000 });
-    await Promise.resolve();
-    expect(committed).toEqual([]);
-
-    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 1_200 });
-    await Promise.resolve();
-    expect(committed).toEqual(["then run the server tests"]);
-  });
-
-  it("hands over a finished sentence after a short silence, before the backend calls it", async () => {
-    const stt = new ScriptedSttProvider();
-    const adapter = localAdapter(stt, { turnEndPauseMs: 60_000 });
-    const committed: string[] = [];
-    await adapter.start((event) => {
-      if (event.type === "user_utterance_committed") committed.push(event.text);
-    });
-
-    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-    stt.emit({ text: "Run the server tests." });
-    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 200 });
-    await Promise.resolve();
-    expect(committed).toEqual([]);
-
-    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 450 });
-    await Promise.resolve();
-    expect(committed).toEqual(["Run the server tests."]);
-  });
-
-  it("ends a turn whose silent reports never measure silence, as when the detector heard no speech", async () => {
-    const stt = new ScriptedSttProvider();
-    const adapter = localAdapter(stt, { turnEndPauseMs: 100 });
-    const committed: string[] = [];
-    await adapter.start((event) => {
-      if (event.type === "user_utterance_committed") committed.push(event.text);
-    });
-
-    // Recognized text the detector never counted as speech: silent reports keep arriving
-    // with no trailing silence, and must not hold the turn open.
-    stt.emit({ text: "run the tests" });
-    for (let i = 0; i < 6; i++) {
-      stt.speech({ speechActive: false, speechFinal: false });
-      await new Promise((resolve) => setTimeout(resolve, 40));
-    }
-
-    expect(committed).toEqual(["run the tests"]);
-  });
-
-  it("still ends a silent turn when the backend never marks the end of speech", async () => {
-    const stt = new ScriptedSttProvider();
-    const adapter = localAdapter(stt);
-    const committed: string[] = [];
-    await adapter.start((event) => {
-      if (event.type === "user_utterance_committed") committed.push(event.text);
-    });
-
-    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-    stt.emit({ text: "list open sessions" });
-    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 200 });
-    await turnEnd();
-
-    expect(committed).toEqual(["list open sessions"]);
-  });
-
-  it("hands Pi each Chinese turn, which has no spaces between words", async () => {
-    const stt = new ScriptedSttProvider();
-    const adapter = localAdapter(stt);
-    const committed: string[] = [];
-    await adapter.start((event) => {
-      if (event.type === "user_utterance_committed") committed.push(event.text);
-    });
-
-    stt.emit({ text: "帮我看一下有几个会话在跑" });
-    await turnEnd();
-    // The next turn revises the punctuation of the first and adds no spaces.
-    stt.emit({ text: "帮我看一下有几个会话在跑。然后跑一下测试" });
-    await turnEnd();
-
-    expect(committed).toEqual(["帮我看一下有几个会话在跑", "然后跑一下测试"]);
-  });
-
-  it("hands Pi the next turn after the ASR session restarts its transcript", async () => {
-    const stt = new ScriptedSttProvider();
-    const adapter = localAdapter(stt);
-    const committed: string[] = [];
-    await adapter.start((event) => {
-      if (event.type === "user_utterance_committed") committed.push(event.text);
-    });
-
-    stt.emit({ text: "list every open session in the oppi workspace" });
-    await turnEnd();
-    // A long mute outlasted Yuwp's idle timeout; the recreated session hears from scratch.
-    stt.emit({ text: "stop the build", transcriptRestarted: true });
-    await turnEnd();
-
-    expect(committed).toEqual(["list every open session in the oppi workspace", "stop the build"]);
-  });
-
-  it("updates a partial transcript without creating a delegation", async () => {
+  it("hands Pi nothing for an item with no words and clears the caption", async () => {
     const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     const frontend = new DeterministicVoiceCallFrontend({
       connectionId: "connection-1",
       authenticatedDeviceId: "paired-device-a",
@@ -353,162 +137,20 @@ describe("continuous voice media", () => {
       frontend: frontend.connection,
     });
 
-    stt.emit({ text: "lis", activeText: "lis" });
+    stt.speechStarted();
+    stt.partial("lis");
+    expect(calls.snapshot(started.state.callId).partialTranscript).toBe("lis");
+    // The server's transcript for the item came back empty (or the item failed).
+    stt.turn("");
+    stt.partial("");
+    await settled();
 
-    const snapshot = calls.snapshot(started.state.callId);
-    expect(snapshot.partialTranscript).toBe("lis");
-    expect(snapshot.delegations).toEqual([]);
-    expect(frontend.messages).toContainEqual(
-      expect.objectContaining({
-        type: "voice_call_state",
-        partialTranscript: "lis",
-      }),
-    );
-  });
-
-  it("commits a stable Yuwp partial after idle without ending the call", async () => {
-    const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
-    const frontend = new DeterministicVoiceCallFrontend({
-      connectionId: "connection-1",
-      authenticatedDeviceId: "paired-device-a",
-    });
-    const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => localAdapter(stt, { turnEndPauseMs: 15 }),
-      calls,
-      nextUtteranceId: () => "utterance-idle-1",
-      nextDelegationId: () => "delegation-idle-1",
-    });
-    const started = calls.startCall(
-      { controlSessionId: "voice-1", clientCallId: "client-1" },
-      frontend.connection,
-    );
-    await coordinator.attach({
-      callId: started.state.callId,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      frontend: frontend.connection,
-    });
-
-    stt.emit({
-      text: "list open sessions",
-      committedText: "",
-      activeText: "list open sessions",
-    });
+    expect(calls.snapshot(started.state.callId).partialTranscript).toBeUndefined();
     expect(calls.snapshot(started.state.callId).delegations).toEqual([]);
-
-    await new Promise((resolve) => setTimeout(resolve, 40));
-
-    expect(calls.snapshot(started.state.callId).lifecycle).toBe("active");
-    expect(calls.snapshot(started.state.callId).frontend).toBe("attached");
-    expect(calls.snapshot(started.state.callId).delegations).toEqual([
-      expect.objectContaining({
-        delegationId: "delegation-idle-1",
-        request: "list open sessions",
-        state: "delegated",
-      }),
-    ]);
     await coordinator.detach("connection-1");
   });
 
-  it("commits leftover Yuwp active text when the STT session stops", async () => {
-    const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
-    stt.stopResult = {
-      text: "list open sessions",
-      committedText: "list open sessions",
-      activeText: "",
-    };
-    const frontend = new DeterministicVoiceCallFrontend({
-      connectionId: "connection-1",
-      authenticatedDeviceId: "paired-device-a",
-    });
-    const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => localAdapter(stt),
-      calls,
-      nextUtteranceId: () => "utterance-stop-1",
-      nextDelegationId: () => "delegation-stop-1",
-    });
-    const started = calls.startCall(
-      { controlSessionId: "voice-1", clientCallId: "client-1" },
-      frontend.connection,
-    );
-    await coordinator.attach({
-      callId: started.state.callId,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      frontend: frontend.connection,
-    });
-
-    stt.emit({
-      text: "list open sessions",
-      committedText: "",
-      activeText: "list open sessions",
-    });
-    expect(calls.snapshot(started.state.callId).delegations).toEqual([]);
-
-    await coordinator.detach("connection-1");
-
-    expect(calls.snapshot(started.state.callId).delegations).toEqual([
-      expect.objectContaining({
-        delegationId: "delegation-stop-1",
-        utteranceId: "utterance-stop-1",
-        request: "list open sessions",
-        state: "delegated",
-      }),
-    ]);
-  });
-
-  it("emits at most one user_utterance_committed per distinct segment when idle pause and stop overlap", async () => {
-    vi.useFakeTimers();
-    try {
-      const stt = new ScriptedSttProvider();
-      stt.stopResult = {
-        text: "list open sessions",
-        committedText: "list open sessions",
-        activeText: "",
-      };
-      const adapter = localAdapter(stt, { turnEndPauseMs: 15 });
-      const committed: string[] = [];
-      let releaseFirst = () => {};
-      const holdFirst = new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      });
-      let sawFirst = () => {};
-      const firstStarted = new Promise<void>((resolve) => {
-        sawFirst = resolve;
-      });
-      await adapter.start(async (event) => {
-        if (event.type !== "user_utterance_committed") return;
-        committed.push(event.text);
-        if (committed.length === 1) {
-          sawFirst();
-          await holdFirst;
-        }
-      });
-
-      stt.emit({
-        text: "list open sessions",
-        committedText: "",
-        activeText: "list open sessions",
-      });
-
-      const idle = vi.advanceTimersByTimeAsync(15);
-      await firstStarted;
-      stt.emit({
-        text: "list open sessions",
-        committedText: "list open sessions",
-        activeText: "",
-      });
-      const stopping = adapter.stop();
-      releaseFirst();
-      await Promise.all([idle, stopping]);
-
-      expect(committed).toEqual(["list open sessions"]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("sends what was said before End to the call's session", async () => {
+  it("hands over the words the caller was still saying when End arrives", async () => {
     const dispatched: Array<{ sessionId: string; request: string }> = [];
     const calls = new VoiceCallController({
       now: () => 1_000,
@@ -516,12 +158,8 @@ describe("continuous voice media", () => {
       dispatchDelegation: (sessionId, delegation) =>
         dispatched.push({ sessionId, request: delegation.request }),
     });
-    const stt = new ScriptedSttProvider();
-    stt.stopResult = {
-      text: "list open sessions",
-      committedText: "list open sessions",
-      activeText: "",
-    };
+    const stt = new ScriptedTranscription();
+    stt.flushOnStop = ["list open sessions"];
     const frontend = new DeterministicVoiceCallFrontend({
       connectionId: "connection-1",
       authenticatedDeviceId: "paired-device-a",
@@ -541,52 +179,95 @@ describe("continuous voice media", () => {
       controllerLeaseEpoch: started.state.controllerLeaseEpoch,
       frontend: frontend.connection,
     });
-    stt.emit({
-      text: "list open sessions",
-      committedText: "",
-      activeText: "list open sessions",
-    });
+    stt.speechStarted();
+    stt.partial("list open");
     await coordinator.detach("connection-1");
 
+    expect(stt.stopped).toBe(true);
     expect(dispatched).toEqual([{ sessionId: "voice-1", request: "list open sessions" }]);
   });
 
-  it("does not use the dictation stream or DictationManager as the call engine", async () => {
-    const createDictationManager = vi.fn();
-    const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
-    const frontend = new DeterministicVoiceCallFrontend({
-      connectionId: "connection-1",
-      authenticatedDeviceId: "paired-device-a",
+  it("hands turns to Pi once each and in order while the session is still taking the last one", async () => {
+    const stt = new ScriptedTranscription();
+    const adapter = localAdapter(stt);
+    const committed: string[] = [];
+    let releaseFirst = () => {};
+    const holdFirst = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
     });
-    const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => localAdapter(stt),
-      calls,
-      nextUtteranceId: () => "utterance-1",
-      nextDelegationId: () => "delegation-1",
+    await adapter.start(async (event) => {
+      if (event.type !== "user_utterance_committed") return;
+      committed.push(event.text);
+      if (committed.length === 1) await holdFirst;
     });
 
-    const started = calls.startCall(
-      { controlSessionId: "voice-1", clientCallId: "client-1" },
-      frontend.connection,
-    );
-    await coordinator.attach({
-      callId: started.state.callId,
-      controllerLeaseEpoch: started.state.controllerLeaseEpoch,
-      frontend: frontend.connection,
-    });
-    coordinator.feedAudio("connection-1", Buffer.from("pcm"));
-    stt.emit({ text: "hello", committedText: "hello" });
-    await turnEnd();
+    stt.turn("first request");
+    // A second item finishes while the first is still being handed over, and End follows.
+    stt.turn("second request");
+    const stopping = adapter.stop();
+    await settled();
+    expect(committed).toEqual(["first request"]);
+    releaseFirst();
+    await stopping;
 
-    expect(createDictationManager).not.toHaveBeenCalled();
-    expect(stt.name).toBe("scripted-yuwp");
-    expect(calls.snapshot(started.state.callId).delegations).toHaveLength(1);
+    expect(committed).toEqual(["first request", "second request"]);
+  });
+
+  it("ends the call with a logged reason when the listening socket drops", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+      const line = JSON.parse(String(chunk)) as Record<string, unknown>;
+      if (/^(voice_media|realtime_transcription)\./.test(String(line.event))) lines.push(line);
+      return true;
+    }) as typeof process.stderr.write);
+    try {
+      const calls = makeCalls();
+      const stt = new ScriptedTranscription();
+      const cancelled: string[] = [];
+      const tts = new GateableTtsPort({ onCancel: (text) => cancelled.push(text) });
+      const frontend = new DeterministicVoiceCallFrontend({
+        connectionId: "connection-1",
+        authenticatedDeviceId: "paired-device-a",
+      });
+      const coordinator = new VoiceCallMediaCoordinator({
+        createAdapter: ({ callId }) => localAdapter(stt, { tts, callId }),
+        calls,
+      });
+      const started = calls.startCall(
+        { controlSessionId: "voice-1", clientCallId: "client-1" },
+        frontend.connection,
+      );
+      await coordinator.attach({
+        callId: started.state.callId,
+        controllerLeaseEpoch: started.state.controllerLeaseEpoch,
+        frontend: frontend.connection,
+      });
+      const speaking = coordinator.speak(started.state.callId, "working on it");
+      await tts.waitForSpeak("working on it");
+
+      stt.close("socket_error", 1006);
+      await speaking;
+
+      expect(calls.snapshot(started.state.callId).lifecycle).toBe("ended");
+      expect(cancelled).toEqual(["working on it"]);
+      expect(lines.find((line) => line.event === "voice_media.asr_closed")).toMatchObject({
+        reason: "socket_error",
+        code: 1006,
+      });
+      expect(lines.find((line) => line.event === "voice_media.call_summary")).toMatchObject({
+        ended: "socket_error",
+      });
+      expect(lines.find((line) => line.event === "voice_media.backend_disconnected")).toMatchObject(
+        { reason: "socket_error" },
+      );
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("fails closed when ASR cannot start and does not leave a live call", async () => {
     const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     stt.startError = new Error("STT backend unreachable");
     const coordinator = new VoiceCallMediaCoordinator({
       createAdapter: () => localAdapter(stt),
@@ -712,45 +393,9 @@ describe("continuous voice media", () => {
     expect(coordinator.callIdsForSession("voice-1")).toEqual([]);
   });
 
-  it("one-shot Live Voice STT skips constructor warmup so start does not race createSession", async () => {
-    const endpoint = "http://127.0.0.1:7936";
-    const streamUrl = `${endpoint}/v1/audio/transcriptions/stream`;
-    let creates = 0;
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const method = init?.method ?? "GET";
-      if (method === "POST" && url === streamUrl) {
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        creates += 1;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-        inFlight -= 1;
-        return new Response(JSON.stringify({ session_id: `s${creates}` }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ text: "" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }) as typeof fetch;
-
-    const stt = new StreamingSttProvider({ endpoint, model: "test-asr", warmUp: false }, fetchFn);
-    const adapter = localAdapter(stt);
-    await adapter.start(async () => {});
-    expect(creates).toBe(1);
-    expect(maxInFlight).toBe(1);
-    await adapter.stop();
-    expect(creates).toBe(1);
-  });
-
   it("selects the configured media backend and fails closed when it cannot run", () => {
-    const stt = new ScriptedSttProvider();
-    const yuwp = { sttEndpoint: "http://127.0.0.1:7936", createStt: () => stt };
+    const stt = new ScriptedTranscription();
+    const yuwp = { createTranscription: () => stt };
     expect(selectLiveVoiceMediaAdapter({ liveVoiceBackend: undefined, ...yuwp })).toBeInstanceOf(
       YuwpVoiceMediaAdapter,
     );
@@ -781,7 +426,7 @@ describe("continuous voice media", () => {
       dispatchDelegation: (sessionId, delegation) =>
         dispatched.push({ sessionId, request: delegation.request }),
     });
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     const frontend = new DeterministicVoiceCallFrontend({
       connectionId: "connection-1",
       authenticatedDeviceId: "paired-device-a",
@@ -802,12 +447,8 @@ describe("continuous voice media", () => {
       frontend: frontend.connection,
     });
 
-    stt.emit({
-      text: "summarize the inbox",
-      committedText: "summarize the inbox",
-      activeText: "",
-    });
-    await turnEnd();
+    stt.say("summarize the inbox");
+    await settled();
 
     expect(calls.snapshot(started.state.callId).lifecycle).toBe("active");
     expect(calls.snapshot(started.state.callId).frontend).toBe("attached");
@@ -816,15 +457,16 @@ describe("continuous voice media", () => {
   });
 
   it("Yuwp adapter reports what the caller says and nothing provider-specific", async () => {
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     const adapter = localAdapter(stt);
     const events: VoiceMediaEvent[] = [];
     await adapter.start((event) => {
       events.push(event);
     });
-    stt.emit({ text: "hi", activeText: "hi" });
-    stt.emit({ text: "hi there", committedText: "hi there", activeText: "" });
-    await turnEnd();
+    stt.speechStarted();
+    stt.partial("hi");
+    stt.turn("hi there");
+    await settled();
 
     expect(events.some((event) => event.type === "user_transcript_partial")).toBe(true);
     expect(events.at(-1)).toMatchObject({ type: "user_utterance_committed", text: "hi there" });
@@ -860,11 +502,11 @@ describe("continuous voice media", () => {
   });
 
   it("drops queued speech when the user starts talking and says later words", async () => {
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     const spoken: string[] = [];
     const pcm: string[] = [];
     const tts = new GateableTtsPort({ onSpeak: (text) => spoken.push(text) });
-    const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
+    const adapter = localAdapter(stt, { tts });
     adapter.setPlaybackSink((chunk) => pcm.push(chunk.toString()));
     await adapter.start(() => {});
     const update = (text: string) => adapter.speak(text);
@@ -872,7 +514,7 @@ describe("continuous voice media", () => {
     const playing = update("working on it");
     const queued = update("still working");
     await tts.waitForSpeak("working on it");
-    stt.emit({ text: "wait" });
+    stt.partial("wait");
     await Promise.all([playing, queued]);
     const later = update("done");
     await tts.waitForSpeak("done");
@@ -884,7 +526,7 @@ describe("continuous voice media", () => {
   });
 
   it("says newer words after the ones playing instead of cutting them off", async () => {
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     const spoken: string[] = [];
     const cancelled: string[] = [];
     const pcm: string[] = [];
@@ -902,7 +544,7 @@ describe("continuous voice media", () => {
     const first = adapter.speak("working on it");
     await tts.waitForSpeak("working on it");
     const second = adapter.speak("three open sessions");
-    await turnEnd();
+    await settled();
     expect(spoken).toEqual(["working on it"]);
 
     tts.release("working on it");
@@ -923,45 +565,32 @@ describe("continuous voice media", () => {
       return true;
     }) as typeof process.stderr.write);
     try {
-      const stt = new ScriptedSttProvider();
-      stt.stopResult = { text: "Plum is the passphrase. Plum again. Plum and then. Plum, plum" };
+      const stt = new ScriptedTranscription();
+      stt.flushOnStop = ["Plum, plum"];
       const adapter = localAdapter(stt, { callId: "call-1" });
       await adapter.start(async () => {});
 
-      stt.emit({ text: "Plum is the passphrase." });
-      stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+      stt.say("Plum is the passphrase.");
       await settled();
-      stt.emit({ text: "Plum is the passphrase. Plum again." });
-      stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 450 });
+      stt.say("Plum again, and then some");
       await settled();
-      stt.emit({ text: "Plum is the passphrase. Plum again. Plum and then" });
-      stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 1_200 });
-      await settled();
-      stt.emit({ text: "Plum is the passphrase. Plum again. Plum and then. Plum" });
-      await turnEnd();
-      stt.emit({ text: "Plum is the passphrase. Plum again. Plum and then. Plum, plum" });
+      stt.speechStarted();
+      stt.partial("Plum");
       await adapter.stop();
 
       const turns = lines.filter((line) => line.event === "voice_media.turn_committed");
       expect(turns.map((line) => [line.reason, line.endsSentence, line.units])).toEqual([
-        ["speech_final", true, 4],
-        ["sentence_end_silence", true, 2],
-        ["unfinished_silence", false, 3],
-        ["watchdog", false, 1],
-        ["call_stop", false, 1],
+        ["server_vad", true, 4],
+        ["server_vad", false, 5],
+        ["call_stop", false, 2],
       ]);
-      expect(turns[0]).toMatchObject({ callId: "call-1", trailingSilenceMs: 700 });
+      expect(turns[0]).toMatchObject({ callId: "call-1", finalMs: 120 });
       const summary = lines.find((line) => line.event === "voice_media.call_summary");
       expect(summary).toMatchObject({
         callId: "call-1",
-        turns: 5,
-        endReasons: {
-          speech_final: 1,
-          sentence_end_silence: 1,
-          unfinished_silence: 1,
-          watchdog: 1,
-          call_stop: 1,
-        },
+        ended: "stop",
+        turns: 3,
+        endReasons: { server_vad: 2, call_stop: 1 },
       });
       expect(JSON.stringify(lines)).not.toMatch(/plum/i);
     } finally {
@@ -971,7 +600,7 @@ describe("continuous voice media", () => {
 
   it("plays what the session's agent says as call audio", async () => {
     const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     const tts = new GateableTtsPort();
     const frontend = new DeterministicVoiceCallFrontend({
       connectionId: "connection-1",
@@ -993,8 +622,8 @@ describe("continuous voice media", () => {
       frontend: frontend.connection,
     });
     coordinator.feedAudio("connection-1", Buffer.from("pcm"));
-    stt.emit({ text: "list open sessions", committedText: "list open sessions" });
-    await turnEnd();
+    stt.say("list open sessions");
+    await settled();
 
     const published = coordinator.speak(started.state.callId, "You have three open sessions");
     await tts.waitForSpeak("You have three open sessions");
@@ -1006,8 +635,8 @@ describe("continuous voice media", () => {
     await coordinator.detach("connection-1");
   });
 
-  it("aborts in-flight Yuwp TTS on the first user partial", async () => {
-    const stt = new ScriptedSttProvider();
+  it("aborts in-flight Yuwp TTS on the first words, even without speech_started", async () => {
+    const stt = new ScriptedTranscription();
     const cancelled: string[] = [];
     const pcm: Buffer[] = [];
     const tts = new GateableTtsPort({
@@ -1015,14 +644,14 @@ describe("continuous voice media", () => {
         cancelled.push(text);
       },
     });
-    const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
+    const adapter = localAdapter(stt, { tts });
     adapter.setPlaybackSink((chunk) => pcm.push(Buffer.from(chunk)));
     await adapter.start(async () => {});
 
     const speaking = adapter.speak("working on it");
     await tts.waitForSpeak("working on it");
 
-    stt.emit({ text: "stop", activeText: "stop" });
+    stt.partial("stop");
     tts.release("working on it");
     await speaking;
 
@@ -1030,8 +659,8 @@ describe("continuous voice media", () => {
     expect(pcm).toEqual([]);
   });
 
-  it("cancels in-flight and queued speech after two consecutive speaking reports", async () => {
-    const stt = new ScriptedSttProvider();
+  it("cancels in-flight and queued speech when the server hears the caller start", async () => {
+    const stt = new ScriptedTranscription();
     const cancelled: string[] = [];
     const spoken: string[] = [];
     const pcm: Buffer[] = [];
@@ -1039,7 +668,7 @@ describe("continuous voice media", () => {
       onSpeak: (text) => spoken.push(text),
       onCancel: (text) => cancelled.push(text),
     });
-    const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
+    const adapter = localAdapter(stt, { tts });
     adapter.setPlaybackSink((chunk) => pcm.push(Buffer.from(chunk)));
     await adapter.start(async () => {});
 
@@ -1047,9 +676,8 @@ describe("continuous voice media", () => {
     const queued = adapter.speak("still working");
     await tts.waitForSpeak("working on it");
 
-    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
     expect(cancelled).toEqual([]);
-    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+    stt.speechStarted();
     tts.release("working on it");
     await Promise.all([playing, queued]);
 
@@ -1059,19 +687,16 @@ describe("continuous voice media", () => {
   });
 
   it.each([
+    ["the server's VAD", (stt: ScriptedTranscription) => stt.speechStarted()],
     [
-      "the speech detector",
-      (stt: ScriptedSttProvider) => {
-        stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-        stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-      },
+      "the phone",
+      (_stt: ScriptedTranscription, adapter: YuwpVoiceMediaAdapter) => adapter.bargeIn(),
     ],
-    ["the phone", (_stt: ScriptedSttProvider, adapter: YuwpVoiceMediaAdapter) => adapter.bargeIn()],
-    ["the transcript", (stt: ScriptedSttProvider) => stt.emit({ text: "wait" })],
+    ["the transcript", (stt: ScriptedTranscription) => stt.partial("wait")],
   ])(
     "drops the rest of a reply still being written when %s hears the caller",
     async (_path, bargeIn) => {
-      const stt = new ScriptedSttProvider();
+      const stt = new ScriptedTranscription();
       const spoken: string[] = [];
       // The first sentence plays until a barge-in stops it; later ones finish at once.
       const tts: LiveVoiceTtsPort = {
@@ -1085,7 +710,7 @@ describe("continuous voice media", () => {
           yield Buffer.from(text);
         },
       };
-      const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
+      const adapter = localAdapter(stt, { tts });
       adapter.setPlaybackSink(() => {});
       await adapter.start(async () => {});
 
@@ -1103,14 +728,14 @@ describe("continuous voice media", () => {
 
   it("tells the phone to drop buffered audio on each speech barge-in", async () => {
     const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     const tts = new GateableTtsPort();
     const frontend = new DeterministicVoiceCallFrontend({
       connectionId: "connection-1",
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => localAdapter(stt, { tts, turnEndPauseMs: 60_000 }),
+      createAdapter: () => localAdapter(stt, { tts }),
       calls,
     });
     const started = calls.startCall(
@@ -1126,25 +751,22 @@ describe("continuous voice media", () => {
       frontend.messages.flatMap((message) =>
         message.type === "voice_call_state" ? [message.partialTranscript] : [],
       );
-    const speaking = { speechActive: true, speechFinal: false, trailingSilenceMs: 0 };
 
     const first = coordinator.speak(started.state.callId, "working on it");
     await tts.waitForSpeak("working on it");
-    stt.speech(speaking);
-    expect(partials()).toEqual([]);
-    stt.speech(speaking);
+    stt.speechStarted();
     expect(partials()).toEqual(["…"]);
     tts.release("working on it");
     await first;
 
-    // The user only coughed: the placeholder clears so the next "…" is a change again.
-    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+    // The user only coughed: the item had no words, so the placeholder clears and the next
+    // "…" is a change again.
+    stt.turn("");
     expect(partials()).toEqual(["…", undefined]);
 
     const second = coordinator.speak(started.state.callId, "still here");
     await tts.waitForSpeak("still here");
-    stt.speech(speaking);
-    stt.speech(speaking);
+    stt.speechStarted();
     expect(partials()).toEqual(["…", undefined, "…"]);
     tts.release("still here");
     await second;
@@ -1153,7 +775,7 @@ describe("continuous voice media", () => {
 
   it("barges in on audio the phone is still playing, not after it ends", async () => {
     const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     // TTS runs faster than real time: 3 s of audio is sent at once and nothing stays pending.
     const threeSeconds = Buffer.alloc(3 * LIVE_VOICE_PLAYBACK_SAMPLE_RATE * 2);
     const tts: LiveVoiceTtsPort = {
@@ -1167,7 +789,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => localAdapter(stt, { tts, turnEndPauseMs: 60_000, now: () => clock }),
+      createAdapter: () => localAdapter(stt, { tts, now: () => clock }),
       calls,
     });
     const started = calls.startCall(
@@ -1183,50 +805,39 @@ describe("continuous voice media", () => {
       frontend.messages.flatMap((message) =>
         message.type === "voice_call_state" ? [message.partialTranscript] : [],
       );
-    const speaking = { speechActive: true, speechFinal: false, trailingSilenceMs: 0 };
 
     await coordinator.speak(started.state.callId, "working on it");
     clock += 500;
-    stt.speech(speaking);
-    stt.speech(speaking);
+    stt.speechStarted();
     expect(partials()).toEqual(["…"]);
-    stt.speech({ speechActive: false, speechFinal: true, trailingSilenceMs: 700 });
+    stt.turn("");
 
     await coordinator.speak(started.state.callId, "still here");
     clock += 3_001;
-    stt.speech(speaking);
-    stt.speech(speaking);
+    stt.speechStarted();
     expect(partials()).toEqual(["…", undefined]);
     await coordinator.detach("connection-1");
   });
 
-  it("keeps speaking through isolated speaking reports", async () => {
-    const stt = new ScriptedSttProvider();
-    const cancelled: string[] = [];
-    const pcm: string[] = [];
-    const tts = new GateableTtsPort({ onCancel: (text) => cancelled.push(text) });
-    const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
-    adapter.setPlaybackSink((chunk) => pcm.push(chunk.toString()));
-    await adapter.start(async () => {});
+  it("shows no placeholder when the caller starts talking while nothing is being said", async () => {
+    const stt = new ScriptedTranscription();
+    const adapter = localAdapter(stt, { tts: new GateableTtsPort() });
+    const partials: string[] = [];
+    await adapter.start((event) => {
+      if (event.type === "user_transcript_partial") partials.push(event.text);
+    });
 
-    const playing = adapter.speak("working on it");
-    await tts.waitForSpeak("working on it");
-
-    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-    stt.speech({ speechActive: false, speechFinal: false, trailingSilenceMs: 200 });
-    stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-    tts.release("working on it");
-    await playing;
-
-    expect(cancelled).toEqual([]);
-    expect(pcm).toEqual(["working on it"]);
+    stt.speechStarted();
+    expect(partials).toEqual([]);
+    stt.partial("hello");
+    expect(partials).toEqual(["hello"]);
   });
 
   describe("the phone's voice_call_barge_in", () => {
     /** A call started through the socket handler on `connection-1`, with local ASR and TTS. */
     async function bargeInCall() {
       const calls = makeCalls();
-      const stt = new ScriptedSttProvider();
+      const stt = new ScriptedTranscription();
       let clock = 1_000;
       const spoken: string[] = [];
       const cancelled: string[] = [];
@@ -1240,8 +851,7 @@ describe("continuous voice media", () => {
         },
       });
       const coordinator = new VoiceCallMediaCoordinator({
-        createAdapter: ({ callId }) =>
-          localAdapter(stt, { tts, callId, turnEndPauseMs: 60_000, now: () => clock }),
+        createAdapter: ({ callId }) => localAdapter(stt, { tts, callId, now: () => clock }),
         calls,
       });
       const handler = new WsMessageHandler({
@@ -1390,8 +1000,7 @@ describe("continuous voice media", () => {
         await call.tts.waitForSpeak("working on it");
         expect(await call.bargeIn("barge-1")).toMatchObject({ data: { cancelled: true } });
 
-        call.stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-        call.stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+        call.stt.speechStarted();
         await playing;
         expect(placeholderSent(call.sent)).toBe(false);
         expect(call.cancelled).toEqual(["working on it"]);
@@ -1411,8 +1020,7 @@ describe("continuous voice media", () => {
       const lines = await voiceLogs(async () => {
         const playing = call.coordinator.speak(call.callId, "working on it");
         await call.tts.waitForSpeak("working on it");
-        call.stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
-        call.stt.speech({ speechActive: true, speechFinal: false, trailingSilenceMs: 0 });
+        call.stt.speechStarted();
         await playing;
         expect(placeholderSent(call.sent)).toBe(true);
 
@@ -1473,7 +1081,7 @@ describe("continuous voice media", () => {
 
   it("delegates a later committed utterance after barge-in and keeps the call up", async () => {
     const calls = makeCalls();
-    const stt = new ScriptedSttProvider();
+    const stt = new ScriptedTranscription();
     const cancelled: string[] = [];
     const tts = new GateableTtsPort({
       onCancel(text) {
@@ -1485,7 +1093,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => localAdapter(stt, { tts, turnEndPauseMs: 25 }),
+      createAdapter: () => localAdapter(stt, { tts }),
       calls,
       nextUtteranceId: () => "utterance-1",
       nextDelegationId: () => "delegation-1",
@@ -1504,7 +1112,8 @@ describe("continuous voice media", () => {
     await tts.waitForSpeak("working on it");
     const commit = vi.spyOn(calls, "commitFrontendUtterance");
 
-    stt.emit({ text: "wait", activeText: "wait" });
+    stt.speechStarted();
+    stt.partial("wait");
     tts.release("working on it");
     await published;
 
@@ -1515,16 +1124,9 @@ describe("continuous voice media", () => {
     expect(calls.snapshot(started.state.callId).frontend).toBe("attached");
     expect(frontend.audio).toEqual([]);
 
-    stt.emit({
-      text: "list open sessions",
-      committedText: "list open sessions",
-      activeText: "",
-    });
-    stt.stopResult = {
-      text: "list open sessions",
-      committedText: "list open sessions",
-    };
-    await turnEnd();
+    stt.turn("list open sessions");
+    stt.partial("");
+    await settled();
 
     expect(commit).toHaveBeenCalledTimes(1);
     expect(calls.snapshot(started.state.callId).delegations).toEqual([

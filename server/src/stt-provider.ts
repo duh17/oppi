@@ -25,21 +25,6 @@ export interface SttTranscriptUpdate {
   snap?: boolean;
   committedText?: string;
   activeText?: string;
-  /** The backend session was recreated mid-take; `text` starts a new transcript. */
-  transcriptRestarted?: boolean;
-}
-
-/**
- * Where the speaker is, from the backend's voice activity detection. Sent on every feed
- * response that carries it, whether or not the transcript changed.
- */
-export interface SttSpeechState {
-  /** Speech is in the audio now. */
-  speechActive: boolean;
-  /** Trailing silence after speech reached the requested endpointing time: the utterance ended. Once per utterance. */
-  speechFinal: boolean;
-  /** Silence since the last speech; 0 while speaking. Absent before any speech. */
-  trailingSilenceMs?: number;
 }
 
 /** Final transcript payload returned when the backend session is closed. */
@@ -77,8 +62,6 @@ export interface SttProvider {
   feedAudio(pcm: Buffer): void;
   /** Register callback for transcript updates (full replacement text each time). */
   onToken(cb: (update: SttTranscriptUpdate) => void): void;
-  /** Register callback for speech state, delivered only when endpointing was applied. */
-  onSpeechState?(cb: (state: SttSpeechState) => void): void;
   /** Close audio input, wait for completion, return full final text. */
   stop(): Promise<SttFinalTranscript>;
   /** Clean up provider resources (e.g. remote sessions). Call on shutdown. */
@@ -92,11 +75,6 @@ export interface StreamingSttOptions {
   endpoint: string;
   /** Model identifier sent to the backend. */
   model: string;
-  /**
-   * Ask the backend to mark an utterance ended after this much trailing silence
-   * (0..5000 ms). Backends without voice activity detection ignore it.
-   */
-  endpointingMs?: number;
 }
 
 export type SttSessionCreateErrorCategory = "http_error" | "invalid_response" | "network" | "auth";
@@ -147,7 +125,7 @@ const log = createLogger({ base: { component: "stt_provider" } });
 function parseSttCreateEnvelope(
   data: unknown,
   sentHints: boolean,
-): { sessionId: string; contextApplied: boolean; endpointingApplied: boolean } {
+): { sessionId: string; contextApplied: boolean } {
   if (typeof data !== "object" || data === null || Array.isArray(data)) {
     throw new SttSessionCreateError({ category: "invalid_response" });
   }
@@ -158,26 +136,9 @@ function parseSttCreateEnvelope(
   if (record.context_applied !== undefined && typeof record.context_applied !== "boolean") {
     throw new SttSessionCreateError({ category: "invalid_response" });
   }
-  if (record.endpointing_applied !== undefined && typeof record.endpointing_applied !== "boolean") {
-    throw new SttSessionCreateError({ category: "invalid_response" });
-  }
   return {
     sessionId: record.session_id,
     contextApplied: sentHints && record.context_applied === true,
-    endpointingApplied: record.endpointing_applied === true,
-  };
-}
-
-/** Speech state from a feed response, or undefined when it carries none. */
-function parseSpeechState(data: Record<string, unknown>): SttSpeechState | undefined {
-  if (typeof data.speech_active !== "boolean") return undefined;
-  const trailing = data.trailing_silence_ms;
-  return {
-    speechActive: data.speech_active,
-    speechFinal: data.speech_final === true,
-    ...(typeof trailing === "number" && Number.isFinite(trailing)
-      ? { trailingSilenceMs: trailing }
-      : {}),
   };
 }
 
@@ -220,9 +181,6 @@ export class StreamingSttProvider implements SttProvider {
   private fetchFn: typeof globalThis.fetch;
   private sessionId: string | null = null;
   private tokenCb: ((update: SttTranscriptUpdate) => void) | null = null;
-  private speechStateCb: ((state: SttSpeechState) => void) | null = null;
-  private readonly endpointingMs: number | undefined;
-  private endpointingApplied = false;
   private lastText = "";
   /**
    * Last preview signature emitted to the client.
@@ -230,7 +188,6 @@ export class StreamingSttProvider implements SttProvider {
    * segment-commit can still surface even when the visible text is unchanged.
    */
   private lastPreviewSignature: string | null = null;
-  private transcriptRestarted = false;
   private audioQueue: Buffer[] = [];
   private feeding = false;
   private stopped = false;
@@ -253,7 +210,6 @@ export class StreamingSttProvider implements SttProvider {
   ) {
     this.endpoint = opts.endpoint;
     this.model = opts.model;
-    this.endpointingMs = opts.endpointingMs;
     this.fetchFn = fetchFn;
     this.feedIntervalMs = feedIntervalMs;
     // Derive name from endpoint hostname for metrics disambiguation
@@ -320,10 +276,6 @@ export class StreamingSttProvider implements SttProvider {
 
   onToken(cb: (update: SttTranscriptUpdate) => void): void {
     this.tokenCb = cb;
-  }
-
-  onSpeechState(cb: (state: SttSpeechState) => void): void {
-    this.speechStateCb = cb;
   }
 
   async stop(): Promise<SttFinalTranscript> {
@@ -425,7 +377,6 @@ export class StreamingSttProvider implements SttProvider {
     if (this.takeContextualStrings && this.takeContextualStrings.length > 0) {
       streamConfig.contextual_strings = [...this.takeContextualStrings];
     }
-    if (this.endpointingMs !== undefined) streamConfig.endpointing_ms = this.endpointingMs;
     if (Object.keys(streamConfig).length > 0) body.stream_config = streamConfig;
     return JSON.stringify(body);
   }
@@ -458,13 +409,6 @@ export class StreamingSttProvider implements SttProvider {
     const parsed = parseSttCreateEnvelope(data, sentHints);
     this.sessionId = parsed.sessionId;
     this.contextApplied = parsed.contextApplied;
-    const hadEndpointing = this.endpointingApplied;
-    this.endpointingApplied = this.endpointingMs !== undefined && parsed.endpointingApplied;
-    // A recreated session without voice activity detection reports no speech state;
-    // release a listener that last heard speech so it can fall back to its own timing.
-    if (hadEndpointing && !this.endpointingApplied) {
-      this.speechStateCb?.({ speechActive: false, speechFinal: false });
-    }
   }
 
   private async drainAudioQueue(): Promise<void> {
@@ -561,19 +505,13 @@ export class StreamingSttProvider implements SttProvider {
         if (text && signature !== this.lastPreviewSignature) {
           this.lastText = text;
           this.lastPreviewSignature = signature;
-          const restarted = this.transcriptRestarted;
-          this.transcriptRestarted = false;
           this.tokenCb?.({
             text,
             ...(snap ? { snap: true } : {}),
             ...(committedText !== undefined ? { committedText } : {}),
             ...(activeText !== undefined ? { activeText } : {}),
-            ...(restarted ? { transcriptRestarted: true } : {}),
           });
         }
-        // After the text: a speech_final response's text already covers the utterance.
-        const speech = this.endpointingApplied ? parseSpeechState(data) : undefined;
-        if (speech) this.speechStateCb?.(speech);
       } else if (res.status === 404) {
         // Stale session — server likely restarted. The new Yuwp session has
         // empty pending audio, so the startup byte budget must restart too.
@@ -588,7 +526,6 @@ export class StreamingSttProvider implements SttProvider {
           this.forwardedStartupBytes = 0;
           // The new session's first text starts a new transcript, even if it repeats the old one.
           this.lastPreviewSignature = null;
-          this.transcriptRestarted = true;
         } catch (err) {
           log.warn("stt.session_recreate.failed", {
             error: err instanceof Error ? err.message : String(err),

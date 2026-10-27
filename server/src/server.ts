@@ -48,7 +48,7 @@ import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
 import { authenticatedVoiceDeviceId, VoiceCallController } from "./continuous-voice-call.js";
 import {
-  LIVE_VOICE_ENDPOINTING_MS,
+  LIVE_VOICE_TURN_SILENCE_MS,
   ReadAloudLiveVoiceTts,
   selectLiveVoiceMediaAdapter,
   VoiceCallMediaCoordinator,
@@ -148,7 +148,7 @@ import {
 } from "./create-stt-provider.js";
 import { GrokVoiceMediaAdapter, grokVoiceFromTts } from "./grok-live-voice.js";
 import { VoiceBackendHealth } from "./voice-backend-health.js";
-import { StreamingSttProvider } from "./stt-provider.js";
+import { RealtimeTranscriptionClient, realtimeTranscriptionUrl } from "./realtime-transcription.js";
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { McpService } from "./mcp-service.js";
@@ -1438,19 +1438,17 @@ export class Server {
   private createLiveVoiceMediaAdapter(callId: string): VoiceMediaAdapter {
     const { asr, tts } = this.storage.readVoiceConfig();
     const endpoint = asr?.sttEndpoint?.trim() || undefined;
-    const model = asr?.sttModel?.trim() || DEFAULT_DICTATION_CONFIG.sttModel;
     const getAuth: SttGetAuth = async (providerId) => this.modelRuntime?.getAuth(providerId);
     return selectLiveVoiceMediaAdapter({
       callId,
       liveVoiceBackend: asr?.liveVoiceBackend,
-      sttEndpoint: endpoint,
-      createStt: endpoint
+      // Listens on Yuwp's realtime transcription socket; its VAD ends the turns.
+      createTranscription: endpoint
         ? () =>
-            new StreamingSttProvider(
-              // Only a call asks for endpointing; dictation's create body stays as it was.
-              { endpoint, model, endpointingMs: LIVE_VOICE_ENDPOINTING_MS },
-              globalThis.fetch,
-            )
+            new RealtimeTranscriptionClient({
+              url: realtimeTranscriptionUrl(endpoint),
+              silenceDurationMs: LIVE_VOICE_TURN_SILENCE_MS,
+            })
         : undefined,
       // Local calls speak like read aloud: same engine, same voice.
       tts:

@@ -3,8 +3,7 @@
  * at_, and staged dt_ retirement on ordinary HTTP/WS (migrate still works).
  */
 import { generateKeyPairSync } from "node:crypto";
-import { createServer, request as httpRequest, type Server as HttpServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,6 +16,7 @@ import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import { CLOCK_SKEW_MS } from "../src/storage/device-auth.js";
 import type { DevicePublicKey } from "../src/types.js";
+import { startSilentRealtimeAsr } from "./helpers/silent-realtime-asr.js";
 
 function makeDeviceKey(): DevicePublicKey {
   const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -116,7 +116,7 @@ let baseUrl: string;
 let socketPath: string;
 let ownerToken: string;
 let probes: WsProbe[] = [];
-const sttServers: HttpServer[] = [];
+const sttServers: Array<{ close: () => Promise<void> }> = [];
 
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-auth-expiry-"));
@@ -138,7 +138,7 @@ afterEach(async () => {
     probe.ws.terminate();
   }
   probes = [];
-  for (const stt of sttServers.splice(0)) stt.close();
+  await Promise.all(sttServers.splice(0).map((asr) => asr.close()));
   await server.stop().catch(() => {});
   rmSync(dataDir, { recursive: true, force: true });
 }, 45_000);
@@ -253,18 +253,11 @@ async function connectStream(
   return probe;
 }
 
-/** Streaming STT that accepts a session and hears nothing, enough for a Live Voice call to run. */
+/** A realtime ASR endpoint that hears nothing, enough for a Live Voice call to run. */
 async function silentStreamingStt(): Promise<string> {
-  const stt = createServer((req, res) => {
-    req.resume();
-    req.on("end", () => {
-      res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify(req.method === "POST" ? { session_id: "stt-1" } : { text: "" }));
-    });
-  });
-  sttServers.push(stt);
-  await new Promise<void>((resolve) => stt.listen(0, "127.0.0.1", resolve));
-  return `http://127.0.0.1:${(stt.address() as AddressInfo).port}`;
+  const asr = await startSilentRealtimeAsr();
+  sttServers.push(asr);
+  return asr.endpoint;
 }
 
 describe("access-token expiry and dt_ retirement", { timeout: 30_000 }, () => {

@@ -83,6 +83,19 @@ Create response:
 
 `context_applied` is optional. `true` means the backend consumed that take's hints. It is not a recognition-accuracy guarantee. Missing or `false` still allows ordinary audio dictation.
 
+## Live Voice (Yuwp realtime transcription)
+
+Local Live Voice (`asr.liveVoiceBackend: yuwp`) does not use the HTTP session API above. Each call opens one WebSocket to `{asr.sttEndpoint}/v1/realtime?intent=transcription` (`http` becomes `ws`, `https` becomes `wss`), Yuwp's OpenAI Realtime transcription session:
+
+1. Oppi sends `session.update` with `session.type: "transcription"`, `audio.input.format: { "type": "audio/pcm", "rate": 16000 }` and `turn_detection: { "type": "server_vad", "silence_duration_ms": 2000 }`, then waits up to 10 s for `session.updated`. Yuwp accepts 16 kHz or 24 kHz PCM, so the phone's 16 kHz audio goes out as is.
+2. Oppi sends the call's audio as `input_audio_buffer.append` (base64 PCM16 mono) until the call ends.
+3. Yuwp's VAD ends each turn after the pause. It sends `input_audio_buffer.speech_started`, then `input_audio_buffer.committed` (`item_id`) and `conversation.item.input_audio_transcription.completed` (`transcript`, punctuated final text). `…delta` events carry the stable text while an item is still being heard and only feed the live caption. `…failed` is an empty item.
+4. Items are ordered by commit; Oppi hands turns to the session in that order, even when a later transcript finishes first.
+5. At the end of the call Oppi sends `input_audio_buffer.commit` to cut what the VAD had not, waits for the items in flight, and closes the socket.
+6. Oppi pings the socket every 60 s (Yuwp closes one that receives nothing for 15 minutes). When the phone stops sending audio while an item is open (mute, hold), Yuwp's VAD cannot see the pause, so after `silence_duration_ms` without a frame Oppi sends one `input_audio_buffer.commit` for that item; `input_audio_buffer_commit_empty` in answer means it had already ended.
+
+Oppi has no silence timers of its own for Live Voice: the pause that ends a turn is `silence_duration_ms` in Yuwp's VAD. A Yuwp without `/v1/realtime`, or one that refuses the session, fails the call's start; a socket that closes or errors mid-call ends the call.
+
 ## Local Yuwp ASR setup
 
 Build Yuwp:
