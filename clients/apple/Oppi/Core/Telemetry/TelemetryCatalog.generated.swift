@@ -44,8 +44,35 @@ enum TelemetryName {
     /// the catalog's `NAME_LOCATION_RULES`, the same data the server applies. The app
     /// has no route templates, so a leading `/` is a path here.
     static func looksLikeLocation(_ value: String) -> Bool {
+        guard mayLookLikeLocation(value) else { return false }
         let range = NSRange(value.startIndex..., in: value)
         return locationRules.contains { $0.firstMatch(in: value, range: range) != nil }
+    }
+
+    /// The rules' `needs` prefilter: every rule needs one of these characters or
+    /// words to match, so a value with none (`bash`, `user_native`) skips the
+    /// regexes. A pure optimization: the shared fixture and a fuzz sweep check
+    /// the server's identical prefilter against every rule.
+    private static func mayLookLikeLocation(_ value: String) -> Bool {
+        if value.utf8.contains(where: { triggerBytes.contains($0) }) { return true }
+        return triggerWords.contains { containsIgnoringASCIICase(value, word: $0) }
+    }
+
+    private static let triggerBytes: Set<UInt8> = [0x2E, 0x2F, 0x3A, 0x40, 0x7E]
+    private static let triggerWords: [[UInt8]] = ["localhost"].map { Array($0.utf8) }
+
+    private static func containsIgnoringASCIICase(_ value: String, word: [UInt8]) -> Bool {
+        var matched = 0
+        for var byte in value.utf8 {
+            if (0x41...0x5A).contains(byte) { byte += 0x20 }
+            if byte == word[matched] {
+                matched += 1
+                if matched == word.count { return true }
+            } else {
+                matched = byte == word[0] ? 1 : 0
+            }
+        }
+        return false
     }
 
     private static let locationRules: [NSRegularExpression] = [

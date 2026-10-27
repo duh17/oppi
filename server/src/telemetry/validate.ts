@@ -30,6 +30,7 @@ export type ValidationResult =
 const LOCATION_RULES = NAME_LOCATION_RULES.map((rule) => ({
   regex: new RegExp(rule.source, rule.ignoreCase ? "i" : ""),
   exemptForRoute: rule.exemptForRoute === true,
+  needs: rule.needs.map((need) => need.toLowerCase()),
 }));
 
 /**
@@ -40,8 +41,14 @@ const LOCATION_RULES = NAME_LOCATION_RULES.map((rule) => ({
  * generated Swift (`TelemetryName`) applies the same data.
  */
 export function looksLikeLocation(value: string, allowRoute = false): boolean {
+  // The regex runs only when the value holds a character the rule needs; a plain
+  // identifier (`bash`, `user_native`) never reaches one.
+  const lower = value.toLowerCase();
   return LOCATION_RULES.some(
-    (rule) => !(allowRoute && rule.exemptForRoute) && rule.regex.test(value),
+    (rule) =>
+      !(allowRoute && rule.exemptForRoute) &&
+      rule.needs.some((need) => lower.includes(need)) &&
+      rule.regex.test(value),
   );
 }
 

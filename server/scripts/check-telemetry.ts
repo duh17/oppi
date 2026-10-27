@@ -37,11 +37,13 @@ import { fileURLToPath } from "node:url";
 
 import {
   EVENT_DEFS,
+  NAME_LOCATION_RULES,
   TAG_DEFS,
   eventOrigin,
   fieldSpec,
   type EventDef,
   type FieldUnit,
+  type NameLocationRule,
   type TagDef,
 } from "../src/telemetry/catalog.ts";
 import { telemetryEventFileName } from "../src/telemetry/event-writer.ts";
@@ -265,12 +267,65 @@ function checkEvent(
   return problems;
 }
 
+/**
+ * Regex constructs JavaScript and ICU (the Swift side) do not share, or that
+ * Swift's `NSRegularExpression` reads differently: lookbehind and named groups
+ * (`(?<`), inline flags (`(?i`), Unicode properties (`\p{`), named
+ * backreferences (`\k<`). Lookahead and non-capturing groups are portable.
+ */
+const NON_PORTABLE_REGEX = [
+  { pattern: /\(\?<[=!A-Za-z_]/, what: "lookbehind or named group (?<" },
+  { pattern: /\(\?[A-Za-z-]+[:)]/, what: "inline flag (?i" },
+  { pattern: /\\[pP]\{/, what: "Unicode property \\p{" },
+  { pattern: /\\k</, what: "named backreference \\k<" },
+];
+
+/** Invariants of the `name` location rules: ids, portable regexes, and a sound `needs` prefilter. */
+export function nameRuleViolations(
+  rules: readonly NameLocationRule[] = NAME_LOCATION_RULES,
+): string[] {
+  const problems: string[] = [];
+  const ids = new Set<string>();
+  for (const rule of rules) {
+    if (ids.has(rule.id)) problems.push(`name rule "${rule.id}" is declared twice`);
+    ids.add(rule.id);
+    for (const { pattern, what } of NON_PORTABLE_REGEX) {
+      if (pattern.test(rule.source)) {
+        problems.push(`name rule "${rule.id}" uses ${what}, which is not portable to Swift (ICU)`);
+      }
+    }
+    try {
+      new RegExp(rule.source, rule.ignoreCase ? "i" : "");
+    } catch {
+      problems.push(`name rule "${rule.id}" is not a valid regular expression`);
+    }
+    if (rule.needs.length === 0) problems.push(`name rule "${rule.id}" has no needs prefilter`);
+    for (const need of rule.needs) {
+      if (need.length === 1 && /[A-Za-z]/.test(need)) {
+        problems.push(
+          `name rule "${rule.id}": single-character need "${need}" must not be a letter`,
+        );
+      }
+      for (let k = 1; k < need.length; k += 1) {
+        if (need.slice(0, k) === need.slice(-k)) {
+          problems.push(
+            `name rule "${rule.id}": need "${need}" repeats its own prefix; the Swift word scan needs a border-free word`,
+          );
+          break;
+        }
+      }
+    }
+  }
+  return problems;
+}
+
 /** Every catalog invariant violation; empty means the catalog is consistent. */
 export function catalogViolations(
   events: Readonly<Record<string, EventDef>> = EVENT_DEFS,
   tags: Readonly<Record<string, TagDef>> = TAG_DEFS,
+  rules: readonly NameLocationRule[] = NAME_LOCATION_RULES,
 ): string[] {
-  const problems = checkTagVocabulary(tags);
+  const problems = [...checkTagVocabulary(tags), ...nameRuleViolations(rules)];
   const sloLabels = new Map<string, string>();
   for (const [name, event] of Object.entries(events)) {
     problems.push(...checkEvent(tags, name, event));

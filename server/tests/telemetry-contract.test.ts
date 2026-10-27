@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { catalogViolations } from "../scripts/check-telemetry.ts";
+import { catalogViolations, nameRuleViolations } from "../scripts/check-telemetry.ts";
 import { EVENT_DEFS, type EventDef, type TagDef } from "../src/telemetry/catalog.js";
 import { validateEvent } from "../src/telemetry/validate.js";
 import { telemetryUploadsEnabledFromEnv } from "../src/types.js";
@@ -129,5 +129,56 @@ describe("telemetry catalog invariants", () => {
     expect(telemetryUploadsEnabledFromEnv("internal")).toBe(true);
     expect(telemetryUploadsEnabledFromEnv("PUBLIC")).toBe(false);
     expect(telemetryUploadsEnabledFromEnv("unknown-mode")).toBe(false);
+  });
+
+  describe("name location rules", () => {
+    const rule = (id: string, source: string, needs: string[] = ["."]) => ({
+      id,
+      source,
+      needs,
+      description: "x",
+    });
+
+    it("holds for the shipped rules", () => {
+      expect(nameRuleViolations()).toEqual([]);
+    });
+
+    it("rejects regex constructs ICU and JavaScript do not share", () => {
+      const problems = nameRuleViolations([
+        rule("lookbehind", "(?<=a)b"),
+        rule("named", "(?<host>x)y"),
+        rule("inline_flag", "(?i)host"),
+        rule("property", "^\\p{L}+$"),
+        rule("backref", "(x)\\k<a>"),
+        rule("lookahead_ok", "^(?=a)b$"),
+        rule("group_ok", "^(?:ab)+$"),
+      ]);
+      expect(problems).toEqual([
+        'name rule "lookbehind" uses lookbehind or named group (?<, which is not portable to Swift (ICU)',
+        'name rule "named" uses lookbehind or named group (?<, which is not portable to Swift (ICU)',
+        'name rule "inline_flag" uses inline flag (?i, which is not portable to Swift (ICU)',
+        'name rule "inline_flag" is not a valid regular expression',
+        'name rule "property" uses Unicode property \\p{, which is not portable to Swift (ICU)',
+        'name rule "backref" uses named backreference \\k<, which is not portable to Swift (ICU)',
+      ]);
+    });
+
+    it("rejects duplicate ids, empty needs, letter-only single needs, and self-overlapping words", () => {
+      const problems = nameRuleViolations([
+        rule("a", "x"),
+        rule("a", "y"),
+        rule("no_needs", "z", []),
+        rule("letter", "q", ["q"]),
+        rule("overlap", "aba", ["abab"]),
+        rule("broken", "(", ["."]),
+      ]);
+      expect(problems).toEqual([
+        'name rule "a" is declared twice',
+        'name rule "no_needs" has no needs prefilter',
+        'name rule "letter": single-character need "q" must not be a letter',
+        'name rule "overlap": need "abab" repeats its own prefix; the Swift word scan needs a border-free word',
+        'name rule "broken" is not a valid regular expression',
+      ]);
+    });
   });
 });
