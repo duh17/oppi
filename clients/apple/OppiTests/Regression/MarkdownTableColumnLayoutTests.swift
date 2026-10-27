@@ -376,6 +376,157 @@ struct NativeTableWrapToFitTests {
     }
 }
 
+@Suite("Native table streaming")
+@MainActor
+struct NativeTableStreamingTests {
+    /// A streamed table only rebuilds the rows past the unchanged prefix. At
+    /// every tick — a new row, a row still being typed, a column that widens,
+    /// a link that makes cells selectable, a rewritten middle row, a dropped
+    /// row — it must match a table built from scratch, and rows before the
+    /// first change must stay mounted while the columns hold.
+    @Test func streamedGridMatchesAFreshTableAndKeepsUnchangedRows() {
+        let long = "keeps the open table in the streaming tail and wraps at the clamp"
+        var rows: [[[MarkdownInline]]] = (0..<8).map { Self.cells(["row \($0)", "\(long) \($0)"]) }
+        rows[5][0] = [.text("a much wider first column cell")]
+
+        var ticks: [[[[MarkdownInline]]]] = []
+        for count in 1...rows.count {
+            var tick = Array(rows.prefix(count))
+            // The last row arrives in two pieces before it is complete.
+            tick[count - 1][1] = [.text(String(long.prefix(12)))]
+            ticks.append(tick)
+            ticks.append(Array(rows.prefix(count)))
+        }
+        rows.append([[.text("row 8")], [.link(children: [.text("docs")], destination: "https://example.com"), .text(" \(long)")]])
+        ticks.append(rows)
+        rows[3][1] = [.text("\(long) rewritten")]
+        ticks.append(rows)
+        ticks.append(Array(rows.dropLast()))
+
+        let headers = Self.cells(["Name", "Notes"])
+        let streamed = NativeTableBlockView()
+        var previousTick: [[[MarkdownInline]]] = []
+        var previousRowViews: [UIView] = []
+        var ticksThatKeptRows = 0
+        for (index, tick) in ticks.enumerated() {
+            let previousColumns = Self.columnWidths(of: streamed)
+            streamed.apply(headers: headers, rows: tick, palette: ThemeRuntimeState.currentPalette())
+
+            let fresh = NativeTableBlockView()
+            fresh.apply(headers: headers, rows: tick, palette: ThemeRuntimeState.currentPalette())
+
+            #expect(Self.gridSnapshot(of: streamed) == Self.gridSnapshot(of: fresh), "tick \(index)")
+            #expect(Self.fittedHeight(of: streamed) == Self.fittedHeight(of: fresh), "tick \(index) height")
+
+            let rowViews = Self.bodyRowViews(of: streamed)
+            let unchanged = zip(previousTick, tick).prefix { $0 == $1 }.count
+            if !previousColumns.isEmpty, previousColumns == Self.columnWidths(of: streamed), unchanged > 0 {
+                ticksThatKeptRows += 1
+                for row in 0..<unchanged {
+                    #expect(previousRowViews[row] === rowViews[row], "tick \(index) rebuilt unchanged row \(row)")
+                }
+            }
+            previousTick = tick
+            previousRowViews = rowViews
+        }
+        #expect(ticksThatKeptRows >= ticks.count / 2, "Only \(ticksThatKeptRows) of \(ticks.count) ticks kept rows")
+    }
+
+    /// The table's own height must hold every wrapped row once the grid is
+    /// laid out, tick after tick, at the size of a long streamed answer. A
+    /// height that lags the appended rows clips the bottom of the table.
+    @Test func mountedStreamingTableNeverClipsItsRows() throws {
+        let tableView = NativeTableBlockView()
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 375, height: 800))
+        container.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            tableView.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+
+        let headers = Self.cells(["Metric", "Emitter", "Unit", "Tags emitted", "Filter", "Review", "Dash"])
+        var rows: [[[MarkdownInline]]] = []
+        for index in 0..<64 {
+            let tags = index % 3 == 0
+                ? "engine, locale, ui_locale, source, provider_id, provider_kind, stt_backend, model"
+                : "phase, status"
+            rows.append(Self.cells([
+                "chat.metric_\(index)_ms",
+                "ChatSessionManager.swift:\(100 + index * 7)",
+                "ms",
+                tags,
+                index % 4 == 0 ? "only when the session is streaming and visible" : "none",
+                "UX",
+                "RP",
+            ]))
+            tableView.apply(headers: headers, rows: rows, palette: ThemeRuntimeState.currentPalette())
+            container.setNeedsLayout()
+            container.layoutIfNeeded()
+            guard index % 8 == 7 else { continue }
+
+            let card = try #require(tableView.subviews.first { $0.layer.cornerRadius == 8 })
+            let lastRow = try #require(Self.bodyRowViews(of: tableView).last)
+            let lastFrame = lastRow.convert(lastRow.bounds, to: card)
+            #expect(lastFrame.maxY <= card.bounds.maxY + 1, "\(index + 1) rows: last row \(lastFrame) past card \(card.bounds)")
+            for case let cell as UITextView in Self.bodyRowViews(of: tableView).flatMap({ ($0 as? UIStackView)?.arrangedSubviews ?? [] }) {
+                let needed = cell.sizeThatFits(CGSize(width: cell.bounds.width, height: .greatestFiniteMagnitude)).height
+                #expect(cell.bounds.height + 0.5 >= needed, "\(index + 1) rows: cell squeezed to \(cell.bounds.height) of \(needed)")
+            }
+        }
+    }
+
+    private static func fittedHeight(of table: NativeTableBlockView) -> CGFloat {
+        table.systemLayoutSizeFitting(
+            CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+    }
+
+    private static func cells(_ texts: [String]) -> [[MarkdownInline]] {
+        texts.map { [.text($0)] }
+    }
+
+    private static func wrapStack(of table: NativeTableBlockView) -> UIStackView? {
+        timelineAllViews(in: table).compactMap { $0 as? UIStackView }.first {
+            !$0.isHidden && $0.axis == .vertical
+        }
+    }
+
+    private static func bodyRowViews(of table: NativeTableBlockView) -> [UIView] {
+        // Header row and separator lead the grid.
+        Array((wrapStack(of: table)?.arrangedSubviews ?? []).dropFirst(2))
+    }
+
+    private static func columnWidths(of table: NativeTableBlockView) -> [CGFloat] {
+        guard let header = wrapStack(of: table)?.arrangedSubviews.first as? UIStackView else { return [] }
+        return header.arrangedSubviews.map { pinnedWidth(of: $0) }
+    }
+
+    /// The cell's column width. Laid-out cells also carry UIKit's intrinsic
+    /// size constraints, which are subclasses and do not count.
+    private static func pinnedWidth(of cell: UIView) -> CGFloat {
+        cell.constraints.first {
+            type(of: $0) == NSLayoutConstraint.self && $0.firstAttribute == .width
+        }?.constant ?? -1
+    }
+
+    /// Cell text, width, and selectability, and the stripe color, of every
+    /// grid row.
+    private static func gridSnapshot(of table: NativeTableBlockView) -> [String] {
+        (wrapStack(of: table)?.arrangedSubviews ?? []).map { row in
+            guard let row = row as? UIStackView else { return "separator" }
+            let cells = row.arrangedSubviews.map { cell in
+                let selectable = (cell as? UITextView)?.isSelectable == true ? "sel" : "-"
+                return "\(timelineRenderedText(of: cell))@\(pinnedWidth(of: cell)) \(selectable)"
+            }
+            return cells.joined(separator: " | ") + " bg=\(String(describing: row.backgroundColor))"
+        }
+    }
+}
+
 @MainActor
 private func visibleTableCells(in tableView: NativeTableBlockView) -> [UITextView] {
     timelineAllTextViews(in: tableView).filter { !$0.isHidden && $0.bounds.width > 1 }

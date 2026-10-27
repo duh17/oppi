@@ -814,10 +814,50 @@ final class NativeTableBlockView: UIView {
     /// overflows the main-thread stack on wide document-reader tables.
     private var isMeasuringLayout = false
     private var lastMeasuredHeight: CGFloat = 1
-    /// Identity of the last rendered table content/mode so streaming ticks can
-    /// skip full wrap-grid reconstruction when nothing meaningful changed.
-    private var renderedContentSignature: String = ""
-    private var lastContentIdentity: String = ""
+    /// Height of the rendered body, valid until the body changes. The chat row
+    /// measures every table on each streaming tick; re-solving a finished
+    /// table's grid there makes every tick cost O(all table cells).
+    private var cachedTableHeight: CGFloat?
+    /// Measured heights of the leading wrap-grid rows, by position in
+    /// `wrapStack`. Trimmed wherever rows are removed.
+    private var wrapRowHeights: [CGFloat] = []
+
+    private enum RenderedMode {
+        case clip
+        case wrap
+    }
+
+    /// Nil until the first render.
+    private var renderedMode: RenderedMode?
+    /// Colors and fonts a wrap-grid row is drawn with.
+    private struct WrapStyle: Equatable {
+        let colors: [UIColor]
+        let fonts: [UIFont]
+
+        /// Colors are resolved so two conversions of the same palette compare
+        /// equal; a dynamic color would compare by provider identity.
+        init(palette: ThemePalette, traits: UITraitCollection) {
+            colors = [palette.bgHighlight, palette.fg, palette.cyan, palette.blue, palette.comment]
+                .map { UIColor($0).resolvedColor(with: traits) }
+            fonts = [AppFont.monoMediumBold, AppFont.monoMedium]
+        }
+    }
+
+    /// How the wrap grid was drawn. While the grid shows `currentRows`, a
+    /// streamed table grows a row at a time: when the columns, header, and
+    /// style hold, only rows past the unchanged prefix are rebuilt, so a tick
+    /// costs O(new rows) instead of O(table).
+    private var renderedWrapColumnWidths: [CGFloat] = []
+    private var renderedWrapStyle: WrapStyle?
+    /// Whether the grid cells are selectable.
+    private var renderedWrapSelectionEnabled = false
+    private var wrapSeparatorHeight: CGFloat = 0
+    /// Natural single-line widths of `currentHeaders` and of each row of
+    /// `currentRows`, kept so a tick only measures rows that changed. Valid for
+    /// the fonts they were measured in.
+    private var measuredHeaderWidths: [CGFloat] = []
+    private var measuredRowWidths: [[CGFloat]] = []
+    private var measuredFonts: [UIFont] = []
 
     private lazy var longPressCopyGesture: UILongPressGestureRecognizer = {
         UILongPressGestureRecognizer(target: self, action: #selector(longPressCopy(_:)))
@@ -827,6 +867,13 @@ final class NativeTableBlockView: UIView {
         super.init(frame: frame)
         accessibilityIdentifier = "markdown.table"
         setupViews()
+        // Row heights are rounded to the display's pixel grid. A table measured
+        // before it is on screen rounds to whole points; measure it again once
+        // the real scale is known.
+        registerForTraitChanges([UITraitDisplayScale.self]) { (table: Self, _: UITraitCollection) in
+            table.wrapRowHeights = []
+            table.notifyHeightMayHaveChanged()
+        }
     }
 
     @available(*, unavailable)
@@ -928,6 +975,9 @@ final class NativeTableBlockView: UIView {
     }
 
     private func cachedOrMeasureTableHeight() -> CGFloat {
+        if let cachedTableHeight {
+            return cachedTableHeight
+        }
         if isMeasuringLayout {
             return lastMeasuredHeight
         }
@@ -935,18 +985,13 @@ final class NativeTableBlockView: UIView {
         defer { isMeasuringLayout = false }
         let height = measuredTableHeight()
         lastMeasuredHeight = height
+        cachedTableHeight = height
         return height
     }
 
     private func measuredTableHeight() -> CGFloat {
         if isWrapMode {
-            let columnWidth = max(1, wrapStackWidthConstraint?.constant ?? 0)
-            let stackSize = wrapStack.systemLayoutSizeFitting(
-                CGSize(width: columnWidth, height: UIView.layoutFittingCompressedSize.height),
-                withHorizontalFittingPriority: .required,
-                verticalFittingPriority: .fittingSizeLevel
-            )
-            return max(1, ceil(stackSize.height + 12))
+            return max(1, ceil(measuredWrapGridHeight() + 12))
         }
 
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -955,6 +1000,40 @@ final class NativeTableBlockView: UIView {
             return max(1, ceil(bounds.height + tableLabel.textContainerInset.top + tableLabel.textContainerInset.bottom))
         }
         return max(1, tableLabel.intrinsicContentSize.height)
+    }
+
+    /// Sum of the grid rows, each as tall as its tallest cell at its pinned
+    /// column width. Measured from the cells rather than with
+    /// `wrapStack.systemLayoutSizeFitting`: that solve runs in this view's
+    /// engine, where the grid is pinned to the scroller's frame and so to this
+    /// view's previous intrinsic height, and returns that stale height once
+    /// rows are appended to a mounted grid. Row heights are kept, so a
+    /// streaming tick measures only the rows it added.
+    private func measuredWrapGridHeight() -> CGFloat {
+        let rows = wrapStack.arrangedSubviews
+        let scale = max(traitCollection.displayScale, 1)
+        if wrapRowHeights.count > rows.count {
+            wrapRowHeights = []
+        }
+        for row in rows[wrapRowHeights.count...] {
+            guard let cells = (row as? UIStackView)?.arrangedSubviews else {
+                // The separator between header and body.
+                wrapRowHeights.append(wrapSeparatorHeight)
+                continue
+            }
+            let tallest = cells.reduce(0) { tallest, cell in
+                guard let textView = cell as? UITextView else { return tallest }
+                let fitted = textView.sizeThatFits(CGSize(
+                    width: textView.textContainer.size.width,
+                    height: .greatestFiniteMagnitude
+                ))
+                return max(tallest, fitted.height)
+            }
+            // Round each row up to the pixel grid: summed rounding can then
+            // only leave a sliver of slack, never squeeze the last row.
+            wrapRowHeights.append(ceil(tallest * scale) / scale)
+        }
+        return wrapRowHeights.reduce(0, +)
     }
 
     /// Card width is min(contentWidth, bounds.width) in both clip and grid mode.
@@ -1005,7 +1084,13 @@ final class NativeTableBlockView: UIView {
         reviewCommentSourceContext = sourceContext
         let selectionEnabled = router != nil && sourceContext != nil
         tableLabel.isSelectable = selectionEnabled
-        applySelectionStateToWrapCells(selectionEnabled: selectionEnabled || hasLinks)
+        // Runs before every streaming tick's apply. Walking every cell when
+        // nothing changed would make each tick O(table) again.
+        let cellsSelectable = selectionEnabled || hasLinks
+        if cellsSelectable != renderedWrapSelectionEnabled {
+            applySelectionStateToWrapCells(selectionEnabled: cellsSelectable)
+            renderedWrapSelectionEnabled = cellsSelectable
+        }
         longPressCopyGesture.isEnabled = !selectionEnabled
     }
 
@@ -1015,9 +1100,25 @@ final class NativeTableBlockView: UIView {
     }
 
     func apply(headers: [[MarkdownInline]], rows: [[[MarkdownInline]]], palette: ThemePalette) {
-        let contentIdentity = Self.contentIdentity(headers: headers, rows: rows)
-        let contentChanged = contentIdentity != lastContentIdentity
-        lastContentIdentity = contentIdentity
+        let headerChanged = renderedMode == nil || headers != currentHeaders
+        let unchangedRows = Self.commonPrefixCount(currentRows, rows)
+        let contentChanged = headerChanged
+            || unchangedRows != rows.count
+            || unchangedRows != currentRows.count
+
+        let fonts = [AppFont.monoMediumBold, AppFont.monoMedium]
+        if fonts != measuredFonts {
+            measuredFonts = fonts
+            measuredRowWidths = []
+            measuredHeaderWidths = Self.naturalCellWidths(headers, font: AppFont.monoMediumBold)
+        } else if headerChanged {
+            measuredHeaderWidths = Self.naturalCellWidths(headers, font: AppFont.monoMediumBold)
+        }
+        let measuredRows = min(unchangedRows, measuredRowWidths.count)
+        measuredRowWidths.removeSubrange(measuredRows...)
+        for row in rows[measuredRows...] {
+            measuredRowWidths.append(Self.naturalCellWidths(row, font: AppFont.monoMedium))
+        }
 
         currentHeaders = headers
         currentRows = rows
@@ -1029,7 +1130,11 @@ final class NativeTableBlockView: UIView {
         cardView.backgroundColor = UIColor(palette.bgDark)
         cardView.layer.borderColor = UIColor(palette.mdCodeBlockBorder).withAlphaComponent(0.5).cgColor
 
-        let metrics = Self.measureNaturalColumns(headers: headers, rows: rows)
+        let metrics = Self.naturalColumnMetrics(
+            headerWidths: measuredHeaderWidths,
+            rowWidths: measuredRowWidths,
+            columnCount: Self.columnCount(headers: headers, rows: rows)
+        )
 
         // Only snap horizontal offset when the table body actually changed.
         if contentChanged {
@@ -1043,7 +1148,12 @@ final class NativeTableBlockView: UIView {
             let widths = MarkdownTableColumnLayout.clampedColumnWidths(
                 naturalWidths: metrics.columnWidths
             )
-            renderWrapMode(columnWidths: widths, palette: palette, force: contentChanged)
+            renderWrapMode(
+                columnWidths: widths,
+                palette: palette,
+                force: contentChanged,
+                keptRows: headerChanged ? nil : unchangedRows
+            )
         } else {
             renderClipMode(palette: palette, force: contentChanged)
         }
@@ -1059,15 +1169,15 @@ final class NativeTableBlockView: UIView {
     }
 
     private func notifyHeightMayHaveChanged() {
+        cachedTableHeight = nil
         invalidateIntrinsicContentSize()
         setNeedsLayout()
         ToolTimelineRowPresentationHelpers.invalidateEnclosingStreamingHeightCache(startingAt: self)
     }
 
     private func renderClipMode(palette: ThemePalette, force: Bool) {
-        let signature = "clip|" + lastContentIdentity
         let modeChanged = isWrapMode
-        if !force, !modeChanged, renderedContentSignature == signature {
+        if !force, renderedMode == .clip {
             return
         }
 
@@ -1100,16 +1210,38 @@ final class NativeTableBlockView: UIView {
         let maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         let boundingRect = attrText.boundingRect(with: maxSize, options: [.usesLineFragmentOrigin], context: nil)
         tableLabelWidthConstraint?.constant = ceil(boundingRect.width)
-        renderedContentSignature = signature
+        renderedMode = .clip
         if modeChanged || force {
             notifyHeightMayHaveChanged()
         }
     }
 
-    private func renderWrapMode(columnWidths: [CGFloat], palette: ThemePalette, force: Bool) {
-        let signature = "wrap|" + lastContentIdentity
-        let modeChanged = !isWrapMode
-        if !force, !modeChanged, renderedContentSignature == signature {
+    private func renderWrapMode(
+        columnWidths: [CGFloat],
+        palette: ThemePalette,
+        force: Bool,
+        keptRows: Int?
+    ) {
+        if !force, renderedMode == .wrap {
+            return
+        }
+
+        let selectionEnabled = hasLinks
+            || (reviewCommentSelectionRouter != nil && reviewCommentSourceContext != nil)
+        let style = WrapStyle(palette: palette, traits: traitCollection)
+
+        // Kept rows were drawn for these columns, header, colors, and fonts;
+        // any other change redraws the whole grid.
+        if renderedMode == .wrap,
+           let keptRows,
+           columnWidths == renderedWrapColumnWidths,
+           style == renderedWrapStyle {
+            updateWrapRows(
+                keptRows: keptRows,
+                columnWidths: columnWidths,
+                palette: palette,
+                selectionEnabled: selectionEnabled
+            )
             return
         }
 
@@ -1124,9 +1256,6 @@ final class NativeTableBlockView: UIView {
         tableLabelWidthConstraint?.constant = 0
         clearWrapStack()
 
-        let selectionEnabled = hasLinks
-            || (reviewCommentSelectionRouter != nil && reviewCommentSourceContext != nil)
-
         let headerRow = makeWrapRow(
             cells: paddedCells(currentHeaders, count: columnWidths.count),
             columnWidths: columnWidths,
@@ -1140,13 +1269,65 @@ final class NativeTableBlockView: UIView {
         let separator = UIView()
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.25)
-        let scale = max(traitCollection.displayScale, 1)
-        separator.heightAnchor.constraint(equalToConstant: 1 / scale).isActive = true
+        wrapSeparatorHeight = 1 / max(traitCollection.displayScale, 1)
+        separator.heightAnchor.constraint(equalToConstant: wrapSeparatorHeight).isActive = true
         wrapStack.addArrangedSubview(separator)
 
-        for (rowIndex, row) in currentRows.enumerated() {
+        appendWrapRows(
+            from: 0,
+            columnWidths: columnWidths,
+            palette: palette,
+            selectionEnabled: selectionEnabled
+        )
+
+        renderedMode = .wrap
+        renderedWrapColumnWidths = columnWidths
+        renderedWrapStyle = style
+        renderedWrapSelectionEnabled = selectionEnabled
+        notifyHeightMayHaveChanged()
+    }
+
+    /// Same columns, header, and style as the rendered grid: keep the first
+    /// `keptRows` body rows and rebuild the rest. Zebra striping follows the
+    /// row index, so kept rows stay striped correctly.
+    private func updateWrapRows(
+        keptRows: Int,
+        columnWidths: [CGFloat],
+        palette: ThemePalette,
+        selectionEnabled: Bool
+    ) {
+        // Header row and separator precede the body rows.
+        let keptViews = Self.wrapBodyRowOffset + keptRows
+        while wrapStack.arrangedSubviews.count > keptViews,
+              let view = wrapStack.arrangedSubviews.last {
+            wrapStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        wrapRowHeights = Array(wrapRowHeights.prefix(keptViews))
+        if selectionEnabled != renderedWrapSelectionEnabled {
+            applySelectionStateToWrapCells(selectionEnabled: selectionEnabled)
+            renderedWrapSelectionEnabled = selectionEnabled
+        }
+        appendWrapRows(
+            from: keptRows,
+            columnWidths: columnWidths,
+            palette: palette,
+            selectionEnabled: selectionEnabled
+        )
+        notifyHeightMayHaveChanged()
+    }
+
+    private static let wrapBodyRowOffset = 2
+
+    private func appendWrapRows(
+        from start: Int,
+        columnWidths: [CGFloat],
+        palette: ThemePalette,
+        selectionEnabled: Bool
+    ) {
+        for rowIndex in start ..< currentRows.count {
             let body = makeWrapRow(
-                cells: paddedCells(row, count: columnWidths.count),
+                cells: paddedCells(currentRows[rowIndex], count: columnWidths.count),
                 columnWidths: columnWidths,
                 palette: palette,
                 isHeader: false,
@@ -1155,12 +1336,21 @@ final class NativeTableBlockView: UIView {
             )
             wrapStack.addArrangedSubview(body)
         }
+    }
 
-        renderedContentSignature = signature
-        notifyHeightMayHaveChanged()
+    private static func commonPrefixCount(
+        _ lhs: [[[MarkdownInline]]],
+        _ rhs: [[[MarkdownInline]]]
+    ) -> Int {
+        var count = 0
+        while count < lhs.count, count < rhs.count, lhs[count] == rhs[count] {
+            count += 1
+        }
+        return count
     }
 
     private func clearWrapStack() {
+        wrapRowHeights = []
         for view in wrapStack.arrangedSubviews {
             wrapStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -1308,50 +1498,15 @@ final class NativeTableBlockView: UIView {
         return ceil((string as NSString).size(withAttributes: [.font: font]).width)
     }
 
-    private static func contentIdentity(
+    private static func columnCount(
         headers: [[MarkdownInline]],
         rows: [[[MarkdownInline]]]
-    ) -> String {
-        func inlineKey(_ inline: MarkdownInline) -> String {
-            switch inline {
-            case .text(let value):
-                return "text:\(value.count):\(value)"
-            case .emphasis(let children):
-                return "emphasis:[\(children.map(inlineKey).joined(separator: ","))]"
-            case .strong(let children):
-                return "strong:[\(children.map(inlineKey).joined(separator: ","))]"
-            case .code(let value):
-                return "code:\(value.count):\(value)"
-            case .link(let children, let destination):
-                return "link:\(destination ?? ""):[\(children.map(inlineKey).joined(separator: ","))]"
-            case .image(let alt, let source):
-                return "image:\(alt):\(source ?? "")"
-            case .videoEmbed(let embed):
-                return "video:\(embed.reference.target)"
-            case .audioEmbed(let embed):
-                return "audio:\(embed.reference.target)"
-            case .usdzEmbed(let embed):
-                return "usdz:\(embed.reference.target)"
-            case .softBreak:
-                return "softBreak"
-            case .hardBreak:
-                return "hardBreak"
-            case .html(let value):
-                return "html:\(value.count):\(value)"
-            case .strikethrough(let children):
-                return "strikethrough:[\(children.map(inlineKey).joined(separator: ","))]"
-            }
-        }
+    ) -> Int {
+        max(headers.count, rows.first?.count ?? 0)
+    }
 
-        func cellKey(_ cell: [MarkdownInline]) -> String {
-            cell.map(inlineKey).joined(separator: ",")
-        }
-
-        let headerKey = headers.map(cellKey).joined(separator: "|")
-        let rowKey = rows.map { row in
-            row.map(cellKey).joined(separator: "|")
-        }.joined(separator: "/")
-        return headerKey + "#" + rowKey
+    private static func naturalCellWidths(_ cells: [[MarkdownInline]], font: UIFont) -> [CGFloat] {
+        cells.map { measuredTextWidth(plainText(from: $0), font: font) }
     }
 
     /// Natural single-line column metrics used to choose clip vs grid.
@@ -1359,25 +1514,31 @@ final class NativeTableBlockView: UIView {
         headers: [[MarkdownInline]],
         rows: [[[MarkdownInline]]]
     ) -> (columnWidths: [CGFloat], totalWidth: CGFloat) {
-        let colCount = max(headers.count, rows.first?.count ?? 0)
+        naturalColumnMetrics(
+            headerWidths: naturalCellWidths(headers, font: AppFont.monoMediumBold),
+            rowWidths: rows.map { naturalCellWidths($0, font: AppFont.monoMedium) },
+            columnCount: columnCount(headers: headers, rows: rows)
+        )
+    }
+
+    /// Column metrics from already measured cell widths; cells past
+    /// `columnCount` are not rendered and do not count.
+    private static func naturalColumnMetrics(
+        headerWidths: [CGFloat],
+        rowWidths: [[CGFloat]],
+        columnCount colCount: Int
+    ) -> (columnWidths: [CGFloat], totalWidth: CGFloat) {
         guard colCount > 0 else { return ([], 0) }
 
         let cellFont = AppFont.monoMedium
-        let headerFont = AppFont.monoMediumBold
         var colWidths = [CGFloat](repeating: 0, count: colCount)
 
-        for (index, header) in headers.enumerated() where index < colCount {
-            colWidths[index] = max(
-                colWidths[index],
-                measuredTextWidth(plainText(from: header), font: headerFont)
-            )
+        for (index, width) in headerWidths.enumerated() where index < colCount {
+            colWidths[index] = max(colWidths[index], width)
         }
-        for row in rows {
-            for (index, cell) in row.enumerated() where index < colCount {
-                colWidths[index] = max(
-                    colWidths[index],
-                    measuredTextWidth(plainText(from: cell), font: cellFont)
-                )
+        for row in rowWidths {
+            for (index, width) in row.enumerated() where index < colCount {
+                colWidths[index] = max(colWidths[index], width)
             }
         }
 
