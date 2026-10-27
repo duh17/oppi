@@ -231,6 +231,7 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
             return AnyHashable([
                 AnyHashable(peer.displayName),
                 AnyHashable(peer.dnsName),
+                AnyHashable(peer.os),
                 AnyHashable(peer.tailscaleIPs),
                 AnyHashable(String(describing: status(of: peer))),
                 AnyHashable(pairingPeerID),
@@ -358,7 +359,7 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
                 InAppBrowserPresenter.present(url: url)
             }
         case .tryAgain:
-            cell.configure(title: String(localized: "Try Again"), identifier: "tailnet.tryAgain") { [weak self] in
+            cell.configure(title: String(localized: "Retry"), identifier: "tailnet.tryAgain") { [weak self] in
                 guard let self else { return }
                 Task { await self.tailnet.restart() }
             }

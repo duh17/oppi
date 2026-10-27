@@ -88,16 +88,38 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         valueLabel.text = value
         valueLabel.textColor = style.value
         valueLabel.isHidden = value == nil
-        // A short value stays on the title's line. A label that may wrap
-        // takes its widest width in Auto Layout and squeezes the title, so
-        // only a value too long for one line is allowed to.
-        let lineWidth = ((value ?? "") as NSString).size(withAttributes: [.font: valueLabel.font as Any]).width
-        valueLabel.numberOfLines = lineWidth > 160 ? 0 : 1
+        updateValueLines(forRowWidth: bounds.width)
         accessories = [.disclosureIndicator()]
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = value
         button.setTapAction(action)
+    }
+
+    /// The room the disclosure chevron takes at the row's trailing edge.
+    private static let accessoryAllowance: CGFloat = 40
+
+    /// A value stays on the title's line when the title and the value fit side
+    /// by side in a row this wide, and wraps otherwise. A label that may wrap
+    /// takes its widest width in Auto Layout and squeezes the title, so only a
+    /// value that would not fit is allowed to.
+    private func updateValueLines(forRowWidth width: CGFloat) {
+        guard width > 0, !valueLabel.isHidden else {
+            valueLabel.numberOfLines = 1
+            return
+        }
+        func lineWidth(_ label: UILabel) -> CGFloat {
+            ((label.text ?? "") as NSString).size(withAttributes: [.font: label.font as Any]).width
+        }
+        let margins = contentView.directionalLayoutMargins
+        let iconWidth: CGFloat = iconView.isHidden ? 0 : 36
+        let available = width - margins.leading - margins.trailing - iconWidth - Self.accessoryAllowance
+        valueLabel.numberOfLines = lineWidth(titleLabel) + 8 + lineWidth(valueLabel) <= available ? 1 : 0
+    }
+
+    override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
+        updateValueLines(forRowWidth: layoutAttributes.size.width)
+        return super.preferredLayoutAttributesFitting(layoutAttributes)
     }
 
     override func prepareForReuse() {

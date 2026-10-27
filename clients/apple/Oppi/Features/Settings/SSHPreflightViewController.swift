@@ -100,11 +100,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         self.coordinator = coordinator
         self.onPaired = onPaired
         selection = initialPeer?.dialHost ?? ""
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        // Clear, so the theme's background shows behind the cards.
-        config.backgroundColor = .clear
-        config.headerMode = .supplementary
-        config.footerMode = .supplementary
+        var config = SettingsListStyle.layoutConfiguration(headers: true, footers: true)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
         super.init(nibName: nil, bundle: nil)
         title = String(localized: "Set Up a Computer")
@@ -366,7 +362,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, kind, indexPath in
             self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
             switch item {
             case .manualHost, .username, .password:
                 collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
@@ -379,7 +375,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
             default:
                 collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
             }
-        }
+        })
         dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
             if kind == UICollectionView.elementKindSectionHeader {
                 return collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
@@ -470,7 +466,7 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
                 self?.cancel()
             }
         case .installRetry:
-            cell.configure(title: String(localized: "Try Again"), identifier: "sshPreflight.install.retry", isEnabled: !isBusy && canSignIn) { [weak self] in
+            cell.configure(title: String(localized: "Retry"), identifier: "sshPreflight.install.retry", isEnabled: !isBusy && canSignIn) { [weak self] in
                 guard let self, let (_, address) = currentReport else { return }
                 startInstall(address: address)
             }

@@ -244,9 +244,9 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, kind, indexPath in
             self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { [weak self] _, indexPath, item in
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { [weak self] _, indexPath, item in
             self?.dequeue(item, at: indexPath)
-        }
+        })
         dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
             kind == UICollectionView.elementKindSectionHeader
                 ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
@@ -309,7 +309,9 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         toProposedIndexPath proposedIndexPath: IndexPath
     ) -> IndexPath {
         guard proposedIndexPath.section != originalIndexPath.section else { return proposedIndexPath }
+        // Dragged past its section: the nearest end of the section it came from.
         let count = collectionView.numberOfItems(inSection: originalIndexPath.section)
-        return IndexPath(item: max(0, count - 1), section: originalIndexPath.section)
+        let item = proposedIndexPath.section < originalIndexPath.section ? 0 : max(0, count - 1)
+        return IndexPath(item: item, section: originalIndexPath.section)
     }
 }

@@ -70,7 +70,9 @@ final class ServerExtensionsListUITests: XCTestCase {
 
     func testUnavailableCatalogShowsRetry() {
         launch(page: "extensions-unavailable")
-        XCTAssertTrue(app.buttons["extensions.retry"].waitForExistence(timeout: 20), "A failed first load offers Retry")
+        let retry = app.buttons["extensions.retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 20), "A failed first load offers Retry")
+        XCTAssertTrue(retry.label.localizedCaseInsensitiveContains("unavailable"), "The row says why: \(retry.label)")
         XCTAssertFalse(app.buttons["extensions.row.workflow"].exists)
         attachScreenshot("extensions-unavailable")
     }

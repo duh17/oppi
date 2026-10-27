@@ -16,23 +16,62 @@ struct SettingsStyle {
     let warning: UIColor
     /// The page behind the cards.
     let page: UIColor
+    /// The card behind a group of rows. A dark theme uses its own `bgHighlight`,
+    /// so a card reads as a surface on that theme's `bg`. A light theme keeps
+    /// the system card (white), and so does a dark theme whose `bgHighlight`
+    /// is too close to its `bg` to tell apart (an imported theme can be).
+    let card: UIColor
 
-    /// The card behind a group of rows. The system paints it from the page's
-    /// light or dark scheme, which `SettingsListStyle.applyTheme` sets from the
-    /// theme, so it follows the theme without a token per theme.
-    static let card = UIColor.secondarySystemGroupedBackground
+    /// The least contrast ratio a themed card needs against the page.
+    static let minimumCardContrast: CGFloat = 1.08
 
-    init(palette: ThemePalette) {
+    init(palette: ThemePalette, isDark: Bool) {
         title = UIColor(palette.fg)
         value = UIColor(palette.comment)
         accent = UIColor(palette.blue)
         destructive = UIColor(palette.red)
         warning = UIColor(palette.orange)
         page = UIColor(palette.bg)
+        let highlight = UIColor(palette.bgHighlight)
+        card = isDark && Self.contrast(highlight, page) >= Self.minimumCardContrast
+            ? highlight
+            : .secondarySystemGroupedBackground
     }
 
     @MainActor
-    static var current: SettingsStyle { SettingsStyle(palette: ThemeRuntimeState.currentPalette()) }
+    static var current: SettingsStyle {
+        SettingsStyle(
+            palette: ThemeRuntimeState.currentPalette(),
+            isDark: ThemeRuntimeState.currentThemeID().preferredColorScheme != .light
+        )
+    }
+
+    /// WCAG contrast ratio between two colors, 1 to 21.
+    static func contrast(_ first: UIColor, _ second: UIColor) -> CGFloat {
+        let (lighter, darker) = (max(luminance(first), luminance(second)), min(luminance(first), luminance(second)))
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private static func luminance(_ color: UIColor) -> CGFloat {
+        var (red, green, blue, alpha): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+        color.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark)).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        func linear(_ value: CGFloat) -> CGFloat {
+            value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
+    }
+
+    /// The background of a settings row: the system list-cell look (so a press
+    /// keeps its pressed fill) with the theme's card color when the row is at
+    /// rest.
+    @MainActor
+    static func cardBackground(for state: UICellConfigurationState) -> UIBackgroundConfiguration {
+        var background = UIBackgroundConfiguration.listCell().updated(for: state)
+        if !state.isHighlighted, !state.isSelected {
+            background.backgroundColor = current.card
+        }
+        return background
+    }
 
     /// What a plain list row shows.
     enum Content {
@@ -113,9 +152,33 @@ enum SettingsListStyle {
 
     static func applyTheme(to view: UIView, collectionView: UICollectionView, themeID: ThemeID) {
         view.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        let bg = UIColor(themeID.palette.bg)
+        let bg = SettingsStyle(palette: themeID.palette, isDark: themeID.preferredColorScheme != .light).page
         view.backgroundColor = bg
         collectionView.backgroundColor = bg
+    }
+
+    /// Paints a settings row's card in the theme. A cell that already has its
+    /// own background handler keeps it.
+    @discardableResult
+    static func card(_ cell: UICollectionViewCell) -> UICollectionViewCell {
+        guard let cell = cell as? UICollectionViewListCell else { return cell }
+        if cell.configurationUpdateHandler == nil {
+            cell.configurationUpdateHandler = { cell, state in
+                cell.backgroundConfiguration = SettingsStyle.cardBackground(for: state)
+            }
+        }
+        // A theme change reconfigures the row through the data source, which
+        // comes back here; the handler reads the theme again.
+        cell.setNeedsUpdateConfiguration()
+        return cell
+    }
+
+    /// A data source's cell provider whose cells are painted with the theme's
+    /// card. Every settings list builds its data source with this.
+    static func cardProvider<Item>(
+        _ provider: @escaping (UICollectionView, IndexPath, Item) -> UICollectionViewCell?
+    ) -> (UICollectionView, IndexPath, Item) -> UICollectionViewCell? {
+        { collectionView, indexPath, item in provider(collectionView, indexPath, item).map(card) }
     }
 
     /// An inset-grouped list layout whose own background is clear, so the

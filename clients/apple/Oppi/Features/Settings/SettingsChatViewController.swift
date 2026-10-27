@@ -122,7 +122,8 @@ final class SettingsChatViewController: SettingsListViewController<SettingsChatV
 
     // MARK: - Cells
 
-    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { cell, _, _ in
+    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
         cell.configure(
             title: String(localized: "Busy Animation"),
             identifier: "settings.spinnerStyle",

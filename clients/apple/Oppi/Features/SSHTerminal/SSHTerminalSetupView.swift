@@ -49,11 +49,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         profile = stored
         portText = String(stored.port)
         colorChoice = SSHTerminalColorStore().choice(for: stored.id)
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        // Clear, so the theme's background shows behind the cards.
-        config.backgroundColor = .clear
-        config.headerMode = .supplementary
-        config.footerMode = .supplementary
+        var config = SettingsListStyle.layoutConfiguration(headers: true, footers: true)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
         super.init(nibName: nil, bundle: nil)
         title = "SSH Terminal"
@@ -167,7 +163,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             content.textProperties.numberOfLines = 0
             cell.contentConfiguration = content
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
             switch item {
             case .host, .port, .username, .startup, .sudoPassword:
                 collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
@@ -180,7 +176,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             default:
                 collectionView.dequeueConfiguredReusableCell(using: list, for: indexPath, item: item)
             }
-        }
+        })
         dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
             if kind == UICollectionView.elementKindSectionHeader {
                 return collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
@@ -297,8 +293,9 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             cell.configure(
                 title: "Delete Host",
                 tint: .destructive,
-                identifier: "sshTerminal.deleteHost"
-            ) { [weak self] in self?.confirmDelete() }
+                identifier: "sshTerminal.deleteHost",
+                confirmation: .init(title: "Delete this host and its saved passwords?", actionTitle: "Delete Host")
+            ) { [weak self] in self?.deleteHost() }
         default:
             break
         }
@@ -438,9 +435,11 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             snapshot.appendSections([.delete])
             snapshot.appendItems([.deleteHost], toSection: .delete)
         }
-        if let current = dataSource?.snapshot(), current.itemIdentifiers == snapshot.itemIdentifiers {
-            snapshot.reloadItems(snapshot.itemIdentifiers)
-        }
+        // Rows that stay are redrawn in place, whether or not the list around
+        // them changed: Sign In shows the choice just made even when it adds or
+        // removes the rows below it.
+        let shown = Set(dataSource?.snapshot().itemIdentifiers ?? [])
+        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter(shown.contains))
         dataSource?.apply(snapshot, animatingDifferences: false)
     }
 
@@ -654,24 +653,6 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             sudoPassword: suppliedSudoPassword,
             onSaved: applySaved
         )
-    }
-
-    private func confirmDelete() {
-        let sheet = UIAlertController(
-            title: "Delete this host and its saved passwords?",
-            message: nil,
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: "Delete Host", style: .destructive) { [weak self] _ in
-            self?.deleteHost()
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
-            popover.permittedArrowDirections = []
-        }
-        present(sheet, animated: true)
     }
 
     private func deleteHost() {

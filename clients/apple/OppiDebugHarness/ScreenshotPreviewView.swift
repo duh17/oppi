@@ -267,9 +267,7 @@ struct ScreenshotPreviewView: View {
             )
         case "workspace-top-bar":
             WorkspaceTopBarScreenshotPreview()
-        case "settings-root", "settings-general", "settings-storage", "settings-chat", "settings-editor", "settings-chat-top-bar":
-            SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
-        case "settings-experiments":
+        case "settings-root", "settings-general", "settings-storage", "settings-chat", "settings-editor", "settings-chat-top-bar", "settings-experiments":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         case "settings-appearance", "settings-appearance-gallery", "settings-appearance-gallery-light", "settings-appearance-gallery-dark":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)

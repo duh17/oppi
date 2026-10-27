@@ -149,7 +149,10 @@ final class ThemeImportViewController: SettingsListViewController<ThemeImportVie
         case .loading:
             cell.configure(.loading("Fetching themes…"))
         case .failed:
-            cell.configure(.failure("Unable to load themes. \(self?.error ?? "")", retry: { [weak self] in self?.refresh() }))
+            cell.configure(.failure(
+                ["Unable to load themes.", self?.error].compactMap { $0 }.joined(separator: " "),
+                retry: { [weak self] in self?.refresh() }
+            ))
         default:
             cell.configure(.message("No custom themes yet. Describe a theme below and Oppi writes it to your server."))
         }
@@ -202,7 +205,7 @@ final class ThemeImportViewController: SettingsListViewController<ThemeImportVie
                 check.tintColor = UIColor(palette.green)
                 cell.accessories = [.customView(configuration: .init(customView: check, placement: .trailing()))]
             }
-            ControlScreenList.background(cell, grouped: true, palette: palette)
+            ControlScreenList.background(cell, grouped: true, palette: palette, settingsCard: true)
         }
     }
 

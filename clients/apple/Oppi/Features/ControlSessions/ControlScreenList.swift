@@ -132,15 +132,20 @@ enum ControlScreenList {
 
     /// The row's background: grouped card or clear, dimmed while its button
     /// is pressed.
+    ///
+    /// `settingsCard` paints the grouped card as a settings page does (the
+    /// theme's card color at rest); the control-definition screens keep the
+    /// system card.
     static func background(
         _ cell: SidebarListCell,
         grouped: Bool,
-        palette: ThemePalette
+        palette: ThemePalette,
+        settingsCard: Bool = false
     ) {
         cell.configurationUpdateHandler = { cell, state in
             guard let cell = cell as? SidebarListCell else { return }
             var background = grouped
-                ? UIBackgroundConfiguration.listCell().updated(for: state)
+                ? (settingsCard ? SettingsStyle.cardBackground(for: state) : UIBackgroundConfiguration.listCell().updated(for: state))
                 : UIBackgroundConfiguration.clear()
             if !cell.element.isHidden, cell.element.isHighlighted {
                 background.backgroundColor = UIColor(palette.fg).withAlphaComponent(0.1)

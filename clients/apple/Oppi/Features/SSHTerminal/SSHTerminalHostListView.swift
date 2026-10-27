@@ -33,11 +33,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
 
     init(showsSidebarToggle: Bool = false) {
         self.showsSidebarToggle = showsSidebarToggle
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        // Clear, so the theme's background shows behind the cards.
-        config.backgroundColor = .clear
-        config.headerMode = .none
-        config.footerMode = .none
+        var config = SettingsListStyle.layoutConfiguration(headers: false, footers: false)
         config.trailingSwipeActionsConfigurationProvider = { indexPath in
             nil
         }
@@ -52,11 +48,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        // Clear, so the theme's background shows behind the cards.
-        config.backgroundColor = .clear
-        config.headerMode = .none
-        config.footerMode = .none
+        var config = SettingsListStyle.layoutConfiguration(headers: false, footers: false)
         config.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
             self?.swipeActions(at: indexPath)
         }
@@ -147,14 +139,14 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 onEdit: { [weak self] in self?.openEditor(profileID: profile.id) }
             )
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
             switch item {
             case .host:
                 collectionView.dequeueConfiguredReusableCell(using: hostCell, for: indexPath, item: item)
             default:
                 collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
             }
-        }
+        })
     }
 
     private func configure(_ cell: UICollectionViewListCell, item: Item) {

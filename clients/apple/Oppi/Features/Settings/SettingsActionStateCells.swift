@@ -4,7 +4,8 @@ import UIKit
 /// leading symbol, and an optional spinner while the work runs. The whole row
 /// is one button, so a tap, a VoiceOver activation, and `app.buttons[id]` all
 /// run the row's action. Like `SettingsIndexRowCell`, the labels paint the row
-/// and the button above them is its one accessible element.
+/// and the button above them is its one accessible element, so VoiceOver
+/// activates the button itself.
 ///
 /// A row that can't be undone passes a `Confirmation`: an alert, or an action
 /// sheet that anchors to the row as a popover on iPad. The action runs only
@@ -119,12 +120,6 @@ final class SettingsActionRowCell: UICollectionViewListCell {
         button.accessibilityLabel = title
         button.accessibilityValue = isBusy ? String(localized: "In progress") : nil
         button.accessibilityTraits = isActive ? .button : [.button, .notEnabled]
-    }
-
-    override func accessibilityActivate() -> Bool {
-        guard button.isEnabled else { return false }
-        activate()
-        return true
     }
 
     private func activate() {
@@ -257,12 +252,6 @@ final class SettingsStateRowCell: UICollectionViewListCell {
         button.accessibilityTraits = retry == nil ? .staticText : .button
         button.accessibilityHint = retry == nil ? nil : Self.retryTitle
         button.setTapAction(retry)
-    }
-
-    override func accessibilityActivate() -> Bool {
-        guard button.isUserInteractionEnabled else { return false }
-        button.sendActions(for: .touchUpInside)
-        return true
     }
 
     override func prepareForReuse() {

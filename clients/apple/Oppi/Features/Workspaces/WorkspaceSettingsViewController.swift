@@ -133,10 +133,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     }
 
     private static func makeCollectionView() -> UICollectionView {
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        // Clear, so the theme's background shows behind the cards.
-        config.backgroundColor = .clear
-        config.footerMode = .supplementary
+        var config = SettingsListStyle.layoutConfiguration(headers: false, footers: true)
         return UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
     }
 
@@ -471,7 +468,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, _, indexPath in
             self?.configureFooter(view, at: indexPath)
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
             switch item {
             case .summary:
                 collectionView.dequeueConfiguredReusableCell(using: summary, for: indexPath, item: item)
@@ -484,7 +481,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             case .delete:
                 collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
             }
-        }
+        })
         dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
             collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
         }

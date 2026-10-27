@@ -38,10 +38,7 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
         self.channel = channel
         self.onSelect = onSelect
         themes = channel == nil ? .offline : .loading
-        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
-        // Clear, so the theme's background shows behind the cards.
-        config.backgroundColor = .clear
-        config.footerMode = .supplementary
+        var config = SettingsListStyle.layoutConfiguration(headers: false, footers: true)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
         super.init(nibName: nil, bundle: nil)
         title = "Terminal Colors"
@@ -108,9 +105,9 @@ final class SSHTerminalColorPickerViewController: UIViewController, UICollection
             content.textProperties.numberOfLines = 0
             cell.contentConfiguration = content
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
             collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
+        })
         dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
             collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
         }
