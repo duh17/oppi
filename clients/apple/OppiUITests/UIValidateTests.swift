@@ -20,8 +20,11 @@ final class UIValidateTests: XCTestCase {
         let resolvedReady = (readyIdentifier?.isEmpty == false) ? readyIdentifier! : "screenshot.ready"
         let outputDir = try resolveOutputDirectory(screen: resolvedScreen)
 
-        // A simulator an earlier test left in landscape would crop the capture.
-        XCUIDevice.shared.orientation = .portrait
+        // Portrait unless OPPI_UI_VALIDATE_ORIENTATION=landscape: a simulator an
+        // earlier test left in landscape would otherwise change the layout this
+        // dump records.
+        let landscape = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_ORIENTATION"] == "landscape"
+        XCUIDevice.shared.orientation = landscape ? .landscapeLeft : .portrait
         let app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = resolvedScreen

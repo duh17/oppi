@@ -836,7 +836,8 @@ private struct WorkspaceTopBarScreenshotPreview: View {
 /// `SCREENSHOT_SCREEN=settings-root` / `settings-general` / `settings-storage` /
 /// `settings-chat` / `settings-editor` / `settings-appearance`: a UIKit settings page as the root of a router stack, over fixture services.
 /// `settings-appearance-gallery` (and `-light`, `-dark`) is the theme gallery for the manual, Light and Dark choice, over two imported
-/// fixture themes; `SCREENSHOT_THEME_MODE=system` puts Appearance in Match System.
+/// fixture themes. The theme itself is pinned by launch arguments, which `UIValidateTests` builds from `SCREENSHOT_COLOR_SCHEME` and
+/// `SCREENSHOT_THEME_MODE=system` (Appearance in Match System); the page shares the app's `ThemeStore`.
 /// Nothing here calls a server. They are captured in the same harness so their
 /// bars can be compared.
 private struct SettingsPageScreenshotPreview: View {
@@ -844,10 +845,13 @@ private struct SettingsPageScreenshotPreview: View {
     @Environment(\.appRootEnvironment) private var appRoot
 
     var body: some View {
+        guard let appRoot else {
+            preconditionFailure("SettingsPageScreenshotPreview needs appRootEnvironment(_:) above it")
+        }
         // The page shares the app's own `ThemeStore`, the one that owns the
         // window: a theme chosen on the page then re-themes the window, as in
         // the app. A store of its own would change only itself.
-        SettingsPageScreenshotContent(screen: screen, themeStore: appRoot?.themeStore)
+        return SettingsPageScreenshotContent(screen: screen, themeStore: appRoot.themeStore)
     }
 }
 
@@ -856,28 +860,10 @@ private struct SettingsPageScreenshotContent: View {
 
     @State private var root: AppRootEnvironment
 
-    init(screen: String, themeStore: ThemeStore?) {
+    init(screen: String, themeStore: ThemeStore) {
         self.screen = screen
-        // Pin the theme in the argument domain, before a fallback `ThemeStore()` reads it:
-        // the pool simulator's own appearance is dark, so a light capture needs
-        // an explicit light theme and not just a light color scheme.
-        switch ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] {
-        case "dark":
-            ScreenshotVolatileDefaults.applyDarkTheme(true)
-        case "light":
-            ScreenshotVolatileDefaults.apply([
-                "\(AppIdentifiers.subsystem).theme.mode": ThemeMode.manual.rawValue,
-                ThemeID.storageKey: ThemeID.light.rawValue,
-            ])
-        default:
-            break
-        }
         if screen.hasPrefix("settings-appearance") {
-            var values: [String: Any] = ["\(AppIdentifiers.subsystem).customThemes": Self.importedThemes]
-            if ProcessInfo.processInfo.environment["SCREENSHOT_THEME_MODE"] == "system" {
-                values["\(AppIdentifiers.subsystem).theme.mode"] = ThemeMode.system.rawValue
-            }
-            ScreenshotVolatileDefaults.apply(values)
+            ScreenshotVolatileDefaults.apply(["\(AppIdentifiers.subsystem).customThemes": Self.importedThemes])
         }
         // The App Settings index shows one paired server, so its Servers
         // section reads like a paired app's.
@@ -887,7 +873,7 @@ private struct SettingsPageScreenshotContent: View {
         _root = State(initialValue: AppRootEnvironment(
             coordinator: coordinator,
             navigation: AppNavigation(),
-            themeStore: themeStore ?? ThemeStore(),
+            themeStore: themeStore,
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),
             chatReaderPayloadStore: ChatReaderPayloadStore(),

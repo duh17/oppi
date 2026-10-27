@@ -216,6 +216,7 @@ final class ThemeCardCell: UICollectionViewCell {
     private let nameLabel = UILabel()
     private let detailLabel = UILabel()
     private let checkmark = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         card.translatesAutoresizingMaskIntoConstraints = false
