@@ -342,7 +342,9 @@
       "id": 13,
       "options": {
         "legend": {
-          "displayMode": "hidden"
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "orientation": "horizontal",
         "showValue": "auto",
@@ -391,7 +393,9 @@
       "id": 14,
       "options": {
         "legend": {
-          "displayMode": "hidden"
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "orientation": "horizontal",
         "showValue": "auto",
@@ -459,7 +463,9 @@
       "id": 15,
       "options": {
         "legend": {
-          "displayMode": "hidden"
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "orientation": "horizontal",
         "showValue": "auto",
@@ -508,7 +514,9 @@
       "id": 16,
       "options": {
         "legend": {
-          "displayMode": "hidden"
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
         },
         "orientation": "horizontal",
         "showValue": "auto",
@@ -758,7 +766,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": false
+            "inspect": false,
+            "minWidth": 70
           }
         },
         "overrides": [
@@ -863,6 +872,18 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "provider"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 130
+              }
+            ]
           }
         ]
       },
@@ -886,7 +907,24 @@
         }
       ],
       "title": "By provider",
-      "type": "table"
+      "type": "table",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "provider": 0,
+              "turns": 1,
+              "cost_usd": 2,
+              "turn_err_pct": 3,
+              "tool_err_pct": 4,
+              "ttft_avg_ms": 5
+            }
+          }
+        }
+      ]
     },
     {
       "datasource": {
@@ -901,7 +939,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": false
+            "inspect": false,
+            "minWidth": 70
           }
         },
         "overrides": [
@@ -985,7 +1024,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": false
+            "inspect": false,
+            "minWidth": 70
           }
         },
         "overrides": [
@@ -1122,6 +1162,18 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "route"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 270
+              }
+            ]
           }
         ]
       },
@@ -1145,7 +1197,30 @@
         }
       ],
       "title": "By provider / model",
-      "type": "table"
+      "type": "table",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "renameByName": {},
+            "indexByName": {
+              "route": 0,
+              "turns": 1,
+              "cost_usd": 2,
+              "turn_err_pct": 3,
+              "tool_err_pct": 4,
+              "ttft_avg_ms": 5,
+              "turn_avg_s": 6,
+              "tool_starts": 7,
+              "tools_per_turn": 8,
+              "usd_per_turn": 9,
+              "usd_per_1k_out": 10,
+              "output_tokens": 11
+            }
+          }
+        }
+      ]
     },
     {
       "datasource": {
@@ -1160,7 +1235,8 @@
             "cellOptions": {
               "type": "auto"
             },
-            "inspect": false
+            "inspect": false,
+            "minWidth": 70
           }
         },
         "overrides": [

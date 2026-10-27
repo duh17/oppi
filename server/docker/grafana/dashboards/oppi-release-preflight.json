@@ -2342,7 +2342,11 @@
             "drawStyle": "points",
             "lineWidth": 0,
             "pointSize": 5,
-            "showPoints": "always"
+            "showPoints": "always",
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            }
           }
         },
         "overrides": [
@@ -2430,7 +2434,7 @@
       ],
       "title": "Workspace Load, Session Switch",
       "type": "timeseries",
-      "description": "Front-page session responsiveness. app.workspace_load is time until the workspace screen is usable; app.session_switch is row tap-to-content. app.thread_load p50/p90 by phase is the table below."
+      "description": "Front-page session responsiveness. app.workspace_load is time until the workspace screen is usable; app.session_switch is row tap-to-content. app.thread_load p50/p90 by phase is the table below. Log-scale y axis: a single suspended-app sample (an hour or more) would otherwise flatten every normal load; 0 ms samples are not drawn."
     },
     {
       "datasource": {
@@ -3357,7 +3361,9 @@
           "mode": "single"
         },
         "legend": {
-          "displayMode": "hidden"
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
         }
       }
     },
