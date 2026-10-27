@@ -39,7 +39,8 @@ final class UIValidateTests: XCTestCase {
                 ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"]) {
         case ("system", _):
             app.launchArguments += ["-dev.chenda.Oppi.theme.mode", "system"]
-        case (_, let scheme?) where scheme == "dark" || scheme == "light":
+        case (_, let scheme?) where ["dark", "light", "oled", "night"].contains(scheme) || scheme.hasPrefix("custom:"):
+            // A built-in theme by name, or an imported one as `custom:<name>`.
             app.launchArguments += ["-dev.chenda.Oppi.theme.mode", "manual", "-dev.chenda.Oppi.theme.id", scheme]
         default:
             break

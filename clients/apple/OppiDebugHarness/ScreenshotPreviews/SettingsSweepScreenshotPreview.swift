@@ -23,7 +23,7 @@ import SwiftUI
 /// `agents-pi` serve them too. `SCREENSHOT_SWEEP_SHOWS_WRITES=1` shows the
 /// last write the fixture server received (`settingsSweep.lastWrite`);
 /// `SCREENSHOT_SWEEP_WRITE_DELAY=<seconds>` holds each write's answer that long.
-/// `SCREENSHOT_COLOR_SCHEME=dark` or `light` selects that theme.
+/// `SCREENSHOT_COLOR_SCHEME=dark|light|oled|night|custom:Paper` selects that theme.
 struct SettingsSweepScreenshotPreview: View {
     private let coordinator: ConnectionCoordinator
     private let connection: ServerConnection
@@ -127,10 +127,7 @@ struct SettingsSweepScreenshotPreview: View {
 
     init() {
         let environment = ProcessInfo.processInfo.environment
-        ScreenshotVolatileDefaults.applyDarkTheme(environment["SCREENSHOT_COLOR_SCHEME"] == "dark")
-        if environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
-            ScreenshotVolatileDefaults.applyTheme(.light)
-        }
+        ScreenshotVolatileDefaults.applyThemeScheme(environment["SCREENSHOT_COLOR_SCHEME"])
         themeStore = ThemeStore()
         page = environment["SCREENSHOT_SWEEP_PAGE"] ?? "tailscale"
         showsWrites = environment["SCREENSHOT_SWEEP_SHOWS_WRITES"] == "1"

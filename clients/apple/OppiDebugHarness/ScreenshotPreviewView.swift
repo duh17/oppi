@@ -52,6 +52,20 @@ enum ScreenshotVolatileDefaults {
         ])
     }
 
+    /// Pins the theme `SCREENSHOT_COLOR_SCHEME` names: a built-in (`dark`,
+    /// `light`, `oled`, `night`) or an imported one (`custom:Paper`, from the
+    /// settings fixtures). Call before `ThemeStore()`.
+    static func applyThemeScheme(_ scheme: String?) {
+        guard let scheme, ["dark", "light", "oled", "night"].contains(scheme) || scheme.hasPrefix("custom:") else { return }
+        if scheme.hasPrefix("custom:") { applyImportedThemes() }
+        applyTheme(ThemeID(rawValue: scheme))
+    }
+
+    /// The two imported fixture themes the settings captures use.
+    static func applyImportedThemes() {
+        apply(["\(AppIdentifiers.subsystem).customThemes": SettingsPageScreenshotContent.importedThemes])
+    }
+
     /// Call before `ThemeStore()`: its setters would persist the theme.
     static func applyDarkTheme(_ enabled: Bool) {
         guard enabled else { return }
@@ -254,6 +268,8 @@ struct ScreenshotPreviewView: View {
         case "workspace-top-bar":
             WorkspaceTopBarScreenshotPreview()
         case "settings-root", "settings-general", "settings-storage", "settings-chat", "settings-editor", "settings-chat-top-bar":
+            SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
+        case "settings-experiments":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         case "settings-appearance", "settings-appearance-gallery", "settings-appearance-gallery-light", "settings-appearance-gallery-dark":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
@@ -862,9 +878,9 @@ private struct SettingsPageScreenshotContent: View {
 
     init(screen: String, themeStore: ThemeStore) {
         self.screen = screen
-        if screen.hasPrefix("settings-appearance") {
-            ScreenshotVolatileDefaults.apply(["\(AppIdentifiers.subsystem).customThemes": Self.importedThemes])
-        }
+        // Every settings page can be captured in an imported theme
+        // (`SCREENSHOT_COLOR_SCHEME=custom:Paper`), not only Appearance.
+        ScreenshotVolatileDefaults.applyImportedThemes()
         // The App Settings index shows one paired server, so its Servers
         // section reads like a paired app's.
         let coordinator = screen == "settings-root"
@@ -886,6 +902,7 @@ private struct SettingsPageScreenshotContent: View {
             switch screen {
             case "settings-root": SettingsRootViewController(root: root)
             case "settings-editor": SettingsEditorViewController()
+            case "settings-experiments": SettingsExperimentsViewController(navigation: root.navigation)
             case "settings-general": SettingsGeneralViewController()
             case "settings-storage": SettingsStorageViewController()
             case "settings-chat-top-bar": SettingsChatTopBarViewController()
@@ -902,7 +919,7 @@ private struct SettingsPageScreenshotContent: View {
 
     /// Two imported themes, one light and one dark, as `CustomThemeStore` keeps
     /// them. Only the base colors differ; every other token follows from them.
-    private static var importedThemes: Data {
+    fileprivate static var importedThemes: Data {
         func theme(
             _ name: String, scheme: String,
             bg: String, bgDark: String, highlight: String, fg: String, dim: String, comment: String,
