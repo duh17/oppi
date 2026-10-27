@@ -841,12 +841,24 @@ private struct WorkspaceTopBarScreenshotPreview: View {
 /// bars can be compared.
 private struct SettingsPageScreenshotPreview: View {
     let screen: String
+    @Environment(\.appRootEnvironment) private var appRoot
+
+    var body: some View {
+        // The page shares the app's own `ThemeStore`, the one that owns the
+        // window: a theme chosen on the page then re-themes the window, as in
+        // the app. A store of its own would change only itself.
+        SettingsPageScreenshotContent(screen: screen, themeStore: appRoot?.themeStore)
+    }
+}
+
+private struct SettingsPageScreenshotContent: View {
+    let screen: String
 
     @State private var root: AppRootEnvironment
 
-    init(screen: String) {
+    init(screen: String, themeStore: ThemeStore?) {
         self.screen = screen
-        // Pin the theme in the argument domain, before `ThemeStore()` reads it:
+        // Pin the theme in the argument domain, before a fallback `ThemeStore()` reads it:
         // the pool simulator's own appearance is dark, so a light capture needs
         // an explicit light theme and not just a light color scheme.
         switch ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] {
@@ -875,7 +887,7 @@ private struct SettingsPageScreenshotPreview: View {
         _root = State(initialValue: AppRootEnvironment(
             coordinator: coordinator,
             navigation: AppNavigation(),
-            themeStore: ThemeStore(),
+            themeStore: themeStore ?? ThemeStore(),
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),
             chatReaderPayloadStore: ChatReaderPayloadStore(),

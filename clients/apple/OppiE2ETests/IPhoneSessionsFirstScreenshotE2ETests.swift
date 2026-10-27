@@ -40,7 +40,10 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     }
 
     override func configureE2ELaunch(_ application: XCUIApplication) {
+        // Manual, so Appearance lists one Theme row whatever an earlier run left
+        // the simulator on.
         application.launchArguments += [
+            "-dev.chenda.Oppi.theme.mode", "manual",
             "-dev.chenda.Oppi.theme.id", "light",
         ]
     }
@@ -952,12 +955,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         tap(app.buttons["settings.row.appearance"], named: "Appearance settings row", timeout: 5)
         XCTAssertTrue(app.navigationBars["Appearance"].waitForExistence(timeout: 10), "Appearance did not open")
 
-        // The simulator may have been left on Match System, which has Light
-        // and Dark rows and no Theme row: choose Manual first.
-        if !app.buttons["settings.appearance.theme"].waitForExistence(timeout: 2) {
-            tap(app.buttons["settings.appearance.themeSource"], named: "theme source menu", timeout: 5)
-            tap(app.buttons["Manual"], named: "Manual theme source", timeout: 5)
-        }
         tap(app.buttons["settings.appearance.theme"], named: "manual theme row", timeout: 5)
         XCTAssertTrue(app.navigationBars["Theme"].waitForExistence(timeout: 10), "Theme gallery did not open")
         let card = app.buttons["settings.appearance.theme.\(themeID)"]

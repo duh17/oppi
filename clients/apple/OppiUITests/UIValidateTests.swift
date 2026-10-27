@@ -20,11 +20,26 @@ final class UIValidateTests: XCTestCase {
         let resolvedReady = (readyIdentifier?.isEmpty == false) ? readyIdentifier! : "screenshot.ready"
         let outputDir = try resolveOutputDirectory(screen: resolvedScreen)
 
+        // A simulator an earlier test left in landscape would crop the capture.
+        XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = resolvedScreen
         for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("SCREENSHOT_") {
             app.launchEnvironment[key] = value
+        }
+        // The theme the capture asks for goes in as launch arguments, which land
+        // before `OppiApp` builds its `ThemeStore`. A simulator left on Match
+        // System would otherwise re-resolve the theme under the preview, and the
+        // preview's own pin comes too late to stop it.
+        switch (ProcessInfo.processInfo.environment["SCREENSHOT_THEME_MODE"],
+                ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"]) {
+        case ("system", _):
+            app.launchArguments += ["-dev.chenda.Oppi.theme.mode", "system"]
+        case (_, let scheme?) where scheme == "dark" || scheme == "light":
+            app.launchArguments += ["-dev.chenda.Oppi.theme.mode", "manual", "-dev.chenda.Oppi.theme.id", scheme]
+        default:
+            break
         }
         // A Dynamic Type size, such as UICTContentSizeCategoryAccessibilityXXL.
         if let size = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_CONTENT_SIZE"], !size.isEmpty {

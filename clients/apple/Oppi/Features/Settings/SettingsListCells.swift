@@ -10,7 +10,6 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
     private let iconView = UIImageView()
     private let titleLabel = UILabel()
     private let valueLabel = UILabel()
-    private var tapAction: UIAction?
     private var titleAfterIcon: NSLayoutConstraint?
     private var titleAtMargin: NSLayoutConstraint?
 
@@ -91,18 +90,12 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = value
-        if let tapAction { button.removeAction(tapAction, for: .touchUpInside) }
-        let tap = UIAction { _ in action() }
-        tapAction = tap
-        button.addAction(tap, for: .touchUpInside)
+        button.setTapAction(action)
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        if let tapAction {
-            button.removeAction(tapAction, for: .touchUpInside)
-            self.tapAction = nil
-        }
+        button.setTapAction(nil)
         button.accessibilityIdentifier = nil
         button.accessibilityLabel = nil
         button.accessibilityValue = nil
@@ -118,6 +111,19 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
 /// paints the pressed fill.
 final class SettingsRowButton: UIButton {
     var onHighlight: ((Bool) -> Void)?
+    private var tapAction: UIAction?
+
+    /// The row's tap, replacing the one a reused cell had; `nil` clears it.
+    func setTapAction(_ handler: (() -> Void)?) {
+        if let tapAction {
+            removeAction(tapAction, for: .touchUpInside)
+            self.tapAction = nil
+        }
+        guard let handler else { return }
+        let action = UIAction { _ in handler() }
+        tapAction = action
+        addAction(action, for: .touchUpInside)
+    }
 
     override var isHighlighted: Bool {
         didSet {

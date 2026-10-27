@@ -96,26 +96,17 @@ final class ThemeGalleryViewController: UIViewController {
         setNeedsUpdateProperties()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        // An imported theme may have come or gone on Custom Themes.
-        setNeedsUpdateProperties()
-    }
-
     @objc private func themeDidChange() { setNeedsUpdateProperties() }
 
     override func updateProperties() {
         super.updateProperties()
-        // The store's own theme, not the global `ThemeRuntimeState`: the store
-        // is what this screen edits, and reading it here is what re-runs the
-        // pass when a tapped card re-themes the app.
-        let appThemeID = themeStore.activeThemeID
+        let appThemeID = ThemeRuntimeState.currentThemeID()
         if appliedAppThemeID != appThemeID {
             appliedAppThemeID = appThemeID
             SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: appThemeID)
         }
-        // Reading the store here is what re-runs this pass on a choice made
-        // anywhere, including the tap on a card.
+        // Reading the store here re-runs this pass on a choice made anywhere,
+        // including the tap on a card.
         let chosen = slot.themeID(in: themeStore)
         let themes = slot.pickerThemes
         let builtIn = themes.filter { !$0.isImported }
@@ -130,10 +121,10 @@ final class ThemeGalleryViewController: UIViewController {
         }
         guard let dataSource else { return }
         let shown = Set(dataSource.snapshot().itemIdentifiers)
-        // The app theme is in the key: a card's frame, border and chrome
-        // follow it even though its own colors do not.
+        // A card is drawn from its own theme's palette, so only whether it is
+        // the chosen one can change what it shows.
         let changed = changedCards.changed(in: snapshot.itemIdentifiers) { themeID in
-            AnyHashable([AnyHashable(appThemeID), AnyHashable(themeID == chosen)])
+            AnyHashable(themeID == chosen)
         }
         snapshot.reconfigureItems(changed.filter(shown.contains))
         dataSource.apply(snapshot, animatingDifferences: !shown.isEmpty)
@@ -146,22 +137,27 @@ final class ThemeGalleryViewController: UIViewController {
     /// takes the whole row.
     private func makeLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout { _, environment in
+            let spacing: CGFloat = 12
+            let inset: CGFloat = 16
+            let width = environment.container.effectiveContentSize.width - 2 * inset
             let wide = environment.container.effectiveContentSize.width >= 640
             let columns = wide && !environment.traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 2 : 1
-            // Each card sizes itself to its content; a row is as tall as its
-            // tallest card.
+            // Each card sizes itself to its content. A row is as tall as its
+            // tallest card; a shorter neighbour (a one-line description beside
+            // a two-line one) keeps its own height.
             let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(
-                widthDimension: .fractionalWidth(1), heightDimension: .estimated(220)
+                widthDimension: .absolute((width - spacing * CGFloat(columns - 1)) / CGFloat(columns)),
+                heightDimension: .estimated(220)
             ))
             let group = NSCollectionLayoutGroup.horizontal(
                 layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(220)),
-                subitem: item,
+                repeatingSubitem: item,
                 count: columns
             )
-            group.interItemSpacing = .fixed(12)
+            group.interItemSpacing = .fixed(spacing)
             let section = NSCollectionLayoutSection(group: group)
-            section.interGroupSpacing = 12
-            section.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 16, bottom: 16, trailing: 16)
+            section.interGroupSpacing = spacing
+            section.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: inset, bottom: 16, trailing: inset)
             let header = NSCollectionLayoutBoundarySupplementaryItem(
                 layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(36)),
                 elementKind: UICollectionView.elementKindSectionHeader,
@@ -220,8 +216,6 @@ final class ThemeCardCell: UICollectionViewCell {
     private let nameLabel = UILabel()
     private let detailLabel = UILabel()
     private let checkmark = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
-    private var tapAction: UIAction?
-
     override init(frame: CGRect) {
         super.init(frame: frame)
         card.translatesAutoresizingMaskIntoConstraints = false
@@ -342,21 +336,18 @@ final class ThemeCardCell: UICollectionViewCell {
 
         button.accessibilityIdentifier = "settings.appearance.theme.\(themeID.rawValue)"
         button.accessibilityLabel = themeID.displayName
+        // The description is the one part of the preview worth speaking.
+        button.accessibilityValue = Self.detail(of: themeID)
         button.accessibilityTraits = selected ? [.button, .selected] : .button
-        if let tapAction { button.removeAction(tapAction, for: .touchUpInside) }
-        let tap = UIAction { _ in action() }
-        tapAction = tap
-        button.addAction(tap, for: .touchUpInside)
+        button.setTapAction(action)
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        if let tapAction {
-            button.removeAction(tapAction, for: .touchUpInside)
-            self.tapAction = nil
-        }
+        button.setTapAction(nil)
         button.accessibilityIdentifier = nil
         button.accessibilityLabel = nil
+        button.accessibilityValue = nil
         button.accessibilityTraits = .button
         card.transform = .identity
         card.alpha = 1
