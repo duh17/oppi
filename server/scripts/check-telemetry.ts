@@ -12,14 +12,28 @@
  * - catalog: naming, unit suffixes, one meaning per tag key, narrowed values,
  *   bucket edges, emit rules, storage, and SLOs are internally consistent.
  * - generated-swift: TelemetryCatalog.generated.swift matches the generator.
+ * - generated-docs: the event tables of dev/telemetry.md match the generator.
+ * - dashboards: every panel query and template-variable query of the Grafana
+ *   dashboards, and every provisioned alert rule query, is valid SQL against the
+ *   importer's schema, names only catalog events, and reads only `fields_json`
+ *   and `tags_json` keys the named events carry. A tag compared with a literal
+ *   (`json_extract(tags_json, '$.result') = 'cache_seeded'`, `IN (...)`) must
+ *   compare with a value the catalog allows for that tag. A query is checked
+ *   against the union of the events it names, so a key valid for one event of a
+ *   multi-event query passes; single-event queries are exact.
+ * - review-script: every event and `<event>.<field>` series literal in
+ *   telemetry-review.ts exists in the catalog.
+ * - importer: the importer reads the file names the event writer produces.
  *
- * Extension point: add a `Check` to `CHECKS` for each further consumer. The
- * Grafana dashboards and importer SQL (every event, field, tag key, and tag
- * literal they reference exists in the catalog) and the generated event tables
- * in `dev/telemetry.md` belong here.
+ * Extension point: add a `Check` to `CHECKS` for each further consumer.
  */
 
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 
 import {
   EVENT_DEFS,
@@ -30,6 +44,8 @@ import {
   type FieldUnit,
   type TagDef,
 } from "../src/telemetry/catalog.ts";
+import { telemetryEventFileName } from "../src/telemetry/event-writer.ts";
+import { DOCS_PATH, withGeneratedTables } from "./generate-telemetry-docs.ts";
 import { GENERATED_SWIFT_PATH, generateSwift } from "./generate-telemetry-catalog.ts";
 
 interface Check {
@@ -285,9 +301,273 @@ function generatedSwiftViolations(): string[] {
       ];
 }
 
+function generatedDocsViolations(): string[] {
+  const page = readFileSync(DOCS_PATH, "utf8");
+  const next = withGeneratedTables(page);
+  if (next === null) return [`${DOCS_PATH} is missing the telemetry-catalog begin/end markers`];
+  return next === page
+    ? []
+    : [
+        "dev/telemetry.md event tables are stale. Run: bun server/scripts/generate-telemetry-docs.ts",
+      ];
+}
+
+// ── Dashboards, alert rules, importer, review script ──
+
+const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const DASHBOARD_DIR = join(serverRoot, "docker/grafana/dashboards");
+const ALERT_RULES_PATH = join(serverRoot, "docker/grafana/provisioning/alerting/alert-rules.yml");
+const IMPORTER_PATH = join(serverRoot, "scripts/manual/telemetry-import-sqlite.mjs");
+const REVIEW_SCRIPT_PATH = join(serverRoot, "scripts/telemetry-review.ts");
+
+const JSON_KEY = /json_extract\(\s*(fields_json|tags_json)\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)/g;
+const NAME_EQUALS = /\bname\s*(?:=|!=|<>)\s*'([^']*)'/g;
+const NAME_IN = /\bname\s+(?:NOT\s+)?IN\s*\(([^)]*)\)/gi;
+/** A tag read, optionally wrapped in COALESCE/NULLIF/TRIM, compared with a literal or literal list. */
+const TAG_COMPARE =
+  /json_extract\(\s*tags_json\s*,\s*'\$\.([A-Za-z0-9_]+)'\s*\)(?:\s*(?:\)|,\s*'[^']*'|,\s*\d+))*\s*(=|!=|<>|NOT\s+IN|IN)\s*(\([^)]*\)|'[^']*')/gi;
+
+const quoted = (text: string): string[] => [...text.matchAll(/'([^']*)'/g)].map((m) => m[1]!);
+
+/** Tag values the catalog allows for `key` on `event`; undefined when any value is allowed. */
+function tagValues(
+  tags: Readonly<Record<string, TagDef>>,
+  event: EventDef,
+  key: string,
+): readonly string[] | undefined {
+  return allowedValues(tags, event, key);
+}
+
+/**
+ * Violations of one SQL text: unknown events, field or tag keys the named
+ * events do not carry, and tag literals the catalog does not allow.
+ */
+export function sqlCatalogViolations(
+  where: string,
+  sql: string,
+  events: Readonly<Record<string, EventDef>> = EVENT_DEFS,
+  tags: Readonly<Record<string, TagDef>> = TAG_DEFS,
+): string[] {
+  const problems: string[] = [];
+  const named = new Set<string>();
+  for (const match of sql.matchAll(NAME_EQUALS)) named.add(match[1]!);
+  for (const match of sql.matchAll(NAME_IN))
+    for (const value of quoted(match[1]!)) named.add(value);
+
+  const known: Array<[string, EventDef]> = [];
+  for (const name of named) {
+    const event = Object.hasOwn(events, name) ? events[name] : undefined;
+    if (event) known.push([name, event]);
+    else problems.push(`${where}: event "${name}" is not in the catalog`);
+  }
+  const eventList = [...named].join(", ");
+
+  for (const match of sql.matchAll(JSON_KEY)) {
+    const [, column, key] = match;
+    const carried = known.some(([, event]) =>
+      column === "fields_json" ? key! in event.fields : key! in (event.tags ?? {}),
+    );
+    if (known.length === 0 && named.size === 0) {
+      problems.push(`${where}: reads ${column} "${key}" without naming an event`);
+    } else if (!carried && known.length > 0) {
+      problems.push(
+        `${where}: ${column === "fields_json" ? "field" : "tag"} "${key}" is not carried by ${eventList}`,
+      );
+    }
+  }
+
+  for (const match of sql.matchAll(TAG_COMPARE)) {
+    const key = match[1]!;
+    const literals = quoted(match[3]!);
+    const carriers = known.filter(([, event]) => key in (event.tags ?? {}));
+    if (carriers.length === 0) continue; // already reported as an unknown tag key
+    const perEvent = carriers.map(([, event]) => tagValues(tags, event, key));
+    if (perEvent.some((values) => values === undefined)) continue; // open vocabulary
+    const allowed = new Set(perEvent.flatMap((values) => values!));
+    for (const literal of literals) {
+      if (!allowed.has(literal)) {
+        problems.push(
+          `${where}: tag "${key}" is compared with "${literal}", which ${eventList} never has`,
+        );
+      }
+    }
+  }
+  return problems;
+}
+
+interface SqlSource {
+  where: string;
+  sql: string;
+}
+
+/** Every SQL text of a dashboard: panel targets (nested rows included) and template variables. */
+export function dashboardSql(file: string, dashboard: unknown): SqlSource[] {
+  const found: SqlSource[] = [];
+  const visit = (panels: unknown[]): void => {
+    for (const panel of panels as Array<Record<string, unknown>>) {
+      for (const target of (panel.targets as Array<Record<string, unknown>> | undefined) ?? []) {
+        for (const key of ["rawQueryText", "queryText"]) {
+          if (typeof target[key] === "string") {
+            found.push({
+              where: `${file}: "${String(panel.title ?? "")}" [${String(target.refId ?? "?")}] ${key}`,
+              sql: target[key] as string,
+            });
+          }
+        }
+      }
+      if (Array.isArray(panel.panels)) visit(panel.panels);
+    }
+  };
+  const root = dashboard as {
+    panels?: unknown[];
+    templating?: { list?: Array<Record<string, unknown>> };
+  };
+  visit(root.panels ?? []);
+  for (const variable of root.templating?.list ?? []) {
+    for (const key of ["query", "definition"]) {
+      if (typeof variable[key] === "string") {
+        found.push({
+          where: `${file}: variable "${String(variable.name)}" ${key}`,
+          sql: variable[key] as string,
+        });
+      }
+    }
+  }
+  return found;
+}
+
+/** `rawQueryText: >-` blocks of the provisioned alert rules (no YAML dependency: the blocks are indented text). */
+export function alertRuleSql(file: string, yaml: string): SqlSource[] {
+  const found: SqlSource[] = [];
+  const lines = yaml.split("\n");
+  for (let i = 0; i < lines.length; i += 1) {
+    const header = /^(\s*)rawQueryText:\s*>-?\s*$/.exec(lines[i]!);
+    if (!header) continue;
+    const indent = header[1]!.length;
+    const body: string[] = [];
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const line = lines[j]!;
+      if (line.trim() !== "" && line.length - line.trimStart().length <= indent) break;
+      body.push(line.trim());
+    }
+    found.push({ where: `${file}: alert query at line ${i + 1}`, sql: body.join(" ") });
+  }
+  return found;
+}
+
+/** Grafana macros and variables replaced by plain values so SQLite can prepare the text. */
+function expandForPrepare(sql: string): string {
+  return sql
+    .replace(/\$\{[A-Za-z_]+:sqlstring\}/g, "'x'")
+    .replace(/\$\{[A-Za-z_]+:csv\}/g, "x")
+    .replace(/\$\{?__(?:from|to|interval_ms)\}?/g, "1000");
+}
+
+/** Schema as the importer builds it: run it once against an empty directory. */
+function importerSchemaDb(): { db: DatabaseSync; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "oppi-check-telemetry-"));
+  const dbPath = join(dir, "telemetry.db");
+  execFileSync(
+    process.execPath,
+    [
+      IMPORTER_PATH,
+      "--telemetry-dir",
+      join(dir, "empty"),
+      "--db",
+      dbPath,
+      "--integrity-check",
+      "never",
+    ],
+    { stdio: "pipe" },
+  );
+  const db = new DatabaseSync(dbPath);
+  return {
+    db,
+    cleanup: () => {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+/** SQL texts that SQLite cannot prepare against the importer's schema (unknown table or column, syntax). */
+export function sqlPrepareViolations(sources: readonly SqlSource[]): string[] {
+  const { db, cleanup } = importerSchemaDb();
+  try {
+    const problems: string[] = [];
+    for (const source of sources) {
+      try {
+        db.prepare(expandForPrepare(source.sql));
+      } catch (err) {
+        problems.push(`${source.where}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return problems;
+  } finally {
+    cleanup();
+  }
+}
+
+export function dashboardViolations(): string[] {
+  const sources: SqlSource[] = [];
+  for (const file of readdirSync(DASHBOARD_DIR)
+    .filter((name) => name.endsWith(".json"))
+    .sort()) {
+    sources.push(
+      ...dashboardSql(file, JSON.parse(readFileSync(join(DASHBOARD_DIR, file), "utf8"))),
+    );
+  }
+  sources.push(...alertRuleSql("alert-rules.yml", readFileSync(ALERT_RULES_PATH, "utf8")));
+  if (sources.length === 0) return ["no dashboard or alert SQL found"];
+  return [
+    ...sources.flatMap((source) => sqlCatalogViolations(source.where, source.sql)),
+    ...sqlPrepareViolations(sources),
+  ];
+}
+
+const SERIES_LITERAL = /"((?:app|server)\.[a-z0-9_]+)(?:\.([a-z0-9_]+))?"/g;
+
+/** Event and `<event>.<field>` string literals of a script must exist in the catalog. */
+export function seriesLiteralViolations(
+  where: string,
+  source: string,
+  events: Readonly<Record<string, EventDef>> = EVENT_DEFS,
+): string[] {
+  const problems: string[] = [];
+  for (const match of source.matchAll(SERIES_LITERAL)) {
+    const [literal, name, field] = match;
+    const event = Object.hasOwn(events, name!) ? events[name!] : undefined;
+    if (!event) problems.push(`${where}: ${literal} names an event the catalog does not have`);
+    else if (field !== undefined && !(field in event.fields)) {
+      problems.push(`${where}: ${literal} names a field ${name} does not have`);
+    }
+  }
+  return problems;
+}
+
+function reviewScriptViolations(): string[] {
+  return seriesLiteralViolations("telemetry-review.ts", readFileSync(REVIEW_SCRIPT_PATH, "utf8"));
+}
+
+function importerViolations(): string[] {
+  const source = readFileSync(IMPORTER_PATH, "utf8");
+  const problems: string[] = [];
+  for (const origin of ["app", "server"] as const) {
+    const prefix = telemetryEventFileName(origin, 0).replace(/\d{4}-\d{2}-\d{2}\.jsonl$/, "");
+    if (!source.includes(`startsWith("${prefix}")`)) {
+      problems.push(`importer does not read ${origin} event files (prefix "${prefix}")`);
+    }
+  }
+  return problems;
+}
+
 const CHECKS: Check[] = [
   { name: "catalog", run: () => catalogViolations() },
   { name: "generated-swift", run: generatedSwiftViolations },
+  { name: "generated-docs", run: generatedDocsViolations },
+  { name: "dashboards", run: dashboardViolations },
+  { name: "review-script", run: reviewScriptViolations },
+  { name: "importer", run: importerViolations },
 ];
 
 function main(): void {

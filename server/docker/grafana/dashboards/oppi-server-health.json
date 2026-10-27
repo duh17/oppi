@@ -10,7 +10,7 @@
   "panels": [
     {
       "title": "Event Loop Lag (p99 trend, max gate)",
-      "description": "Sampler-interval event-loop delay from server resource samples. p99 is server.event_loop_lag_ms, an ungated trend. max is server.event_loop_max_ms, the stall spike and the release gate (TM99 100ms). These are raw sampler fields, not ops-metric aggregates.",
+      "description": "Sampler-interval event-loop delay from server.resources. p99 (event_loop_p99_ms) is an ungated trend. max (event_loop_max_ms) is the stall spike and the release gate (TM99 100ms).",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -43,9 +43,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, event_loop_p99 AS p99, event_loop_max AS max\nFROM server_metric_samples\nWHERE ts_ms >= ${__from} AND ts_ms <= ${__to}\n  AND event_loop_p99 IS NOT NULL\nORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.event_loop_p99_ms') AS p99, json_extract(fields_json, '$.event_loop_max_ms') AS max FROM events WHERE name = 'server.resources' AND json_extract(fields_json, '$.event_loop_p99_ms') IS NOT NULL AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -129,9 +130,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, cpu_user, cpu_system, cpu_total FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.cpu_user_pct') AS cpu_user, json_extract(fields_json, '$.cpu_system_pct') AS cpu_system, json_extract(fields_json, '$.cpu_total_pct') AS cpu_total FROM events WHERE name = 'server.resources' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -231,9 +233,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, mem_heap_used, mem_heap_total, mem_rss, mem_external FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.heap_used_mb') AS mem_heap_used, json_extract(fields_json, '$.heap_total_mb') AS mem_heap_total, json_extract(fields_json, '$.rss_mb') AS mem_rss, json_extract(fields_json, '$.external_mb') AS mem_external FROM events WHERE name = 'server.resources' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -342,9 +345,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, sessions_busy, sessions_ready, sessions_starting FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.sessions_busy') AS sessions_busy, json_extract(fields_json, '$.sessions_ready') AS sessions_ready, json_extract(fields_json, '$.sessions_starting') AS sessions_starting FROM events WHERE name = 'server.resources' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -356,7 +360,7 @@
           "placement": "bottom"
         }
       },
-      "description": "Stacked busy, ready, and starting counts from the resource sample. Their sum is sessions_total."
+      "description": "Stacked busy, ready, and starting counts from server.resources. Their sum is sessions_total."
     },
     {
       "title": "WebSocket Connections",
@@ -407,9 +411,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, ws_connections FROM server_metric_samples WHERE ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.ws_connections') AS ws_connections FROM events WHERE name = 'server.resources' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -471,9 +476,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ws_ping_rtt_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.rtt_ms') AS value FROM events WHERE name = 'server.ws_ping' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -488,7 +494,7 @@
     },
     {
       "title": "WebSocket Handshake (ms)",
-      "description": "Server-side WebSocket upgrade duration. Compare with iOS chat.ws_wait_for_connected_ms for user-visible connection readiness.",
+      "description": "Server-side WebSocket upgrade duration (server.ws_handshake) and time to the first client message (server.ws_first_message). Compare with iOS app.ws_wait for user-visible connection readiness.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -554,9 +560,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.ws_handshake_ms' THEN value END AS handshake, CASE WHEN metric = 'server.ws_first_message_ms' THEN value END AS first_msg FROM server_ops_metric_samples WHERE metric IN ('server.ws_handshake_ms', 'server.ws_first_message_ms') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN name = 'server.ws_handshake' THEN json_extract(fields_json, '$.duration_ms') END AS handshake, CASE WHEN name = 'server.ws_first_message' THEN json_extract(fields_json, '$.duration_ms') END AS first_msg FROM events WHERE name IN ('server.ws_handshake', 'server.ws_first_message') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -571,7 +578,7 @@
     },
     {
       "title": "WebSocket Session Stats",
-      "description": "Messages sent/received per connection, session duration.",
+      "description": "One row per closed connection (server.ws_session): stream, duration, messages sent and received, and close code.",
       "type": "table",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -658,9 +665,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT d.ts_ms / 1000 AS time, ROUND(d.value / 1000.0, 1) AS duration_s, s.value AS sent, r.value AS received, json_extract(c.tags_json, '$.code') AS close_code FROM server_ops_metric_samples d LEFT JOIN server_ops_metric_samples s ON s.metric = 'server.ws_messages_sent' AND ABS(s.ts_ms - d.ts_ms) < 100 LEFT JOIN server_ops_metric_samples r ON r.metric = 'server.ws_messages_received' AND ABS(r.ts_ms - d.ts_ms) < 100 LEFT JOIN server_ops_metric_samples c ON c.metric = 'server.ws_close_code' AND ABS(c.ts_ms - d.ts_ms) < 100 WHERE d.metric = 'server.ws_session_duration_ms' AND d.ts_ms >= ${__from} AND d.ts_ms <= ${__to} ORDER BY d.ts_ms DESC LIMIT 50",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(tags_json, '$.stream') AS stream, ROUND(json_extract(fields_json, '$.duration_ms') / 1000.0, 1) AS duration_s, json_extract(fields_json, '$.messages_sent') AS sent, json_extract(fields_json, '$.messages_received') AS received, json_extract(tags_json, '$.close_code') AS close_code FROM events WHERE name = 'server.ws_session' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms DESC LIMIT 50",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -675,7 +683,7 @@
     },
     {
       "title": "Agent Active Work Duration (not UX latency)",
-      "description": "Full agent turn wall-clock time from agent_start to agent_end. Long values usually mean active work; call it a UX problem only when correlated with high TTFT, no progress, tool hangs, errors, or disconnected clients.",
+      "description": "Full agent turn wall-clock time (server.turn duration_ms). Long values usually mean active work; call it a UX problem only when correlated with high TTFT, no progress, tool hangs, errors, or disconnected clients.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -722,9 +730,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_duration_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.duration_ms') AS value FROM events WHERE name = 'server.turn' AND json_extract(fields_json, '$.duration_ms') IS NOT NULL AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -739,7 +748,7 @@
     },
     {
       "title": "Server TTFT / first output wait (ms)",
-      "description": "Server-side wait from agent_start to first text_delta. This is responsiveness; keep it separate from full active work duration.",
+      "description": "Server-side wait from agent_start to first text_delta (server.turn_ttft). This is responsiveness; keep it separate from full active work duration.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -786,9 +795,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.turn_ttft_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.duration_ms') AS value FROM events WHERE name = 'server.turn_ttft' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -802,8 +812,8 @@
       }
     },
     {
-      "title": "Turn Cost (\u00b5$, summed)",
-      "description": "SUM(value) of sum-aggregated server.turn_cost per interval. Value is microdollars (usage.cost * 1_000_000), not a per-turn average.",
+      "title": "Turn Cost (µ$, summed)",
+      "description": "SUM(cost_usd_micros) of sum-aggregated server.turn_usage per interval, in microdollars, not a per-turn average.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -822,7 +832,7 @@
             "mode": "fixed"
           },
           "custom": {
-            "axisLabel": "\u00b5$",
+            "axisLabel": "µ$",
             "drawStyle": "points",
             "lineWidth": 0,
             "fillOpacity": 0,
@@ -842,7 +852,7 @@
             "properties": [
               {
                 "id": "displayName",
-                "value": "Cost (\u00b5$)"
+                "value": "Cost (µ$)"
               }
             ]
           }
@@ -850,9 +860,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, SUM(value) AS value FROM server_ops_metric_samples WHERE metric = 'server.turn_cost' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, SUM(json_extract(fields_json, '$.cost_usd_micros')) AS value FROM events WHERE name = 'server.turn_usage' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -867,7 +878,7 @@
     },
     {
       "title": "Ask Round-Trip (ms)",
-      "description": "Ask extension round-trip latency. Measures the full cycle from ask dispatch to user response received.",
+      "description": "Ask extension round-trip latency (server.ask_round_trip): the full cycle from ask dispatch to user response received. Cancelled asks are included.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -914,9 +925,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ask_round_trip_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.duration_ms') AS value FROM events WHERE name = 'server.ask_round_trip' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -931,7 +943,7 @@
     },
     {
       "title": "Session Title Gen (ms)",
-      "description": "Auto-title generation latency. Runs after first user message to generate session title.",
+      "description": "Auto-title generation latency (server.session_title). Runs after the first user message to generate the session title.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -978,9 +990,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.session_title_gen_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.duration_ms') AS value FROM events WHERE name = 'server.session_title' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -995,7 +1008,7 @@
     },
     {
       "title": "Turn Tokens",
-      "description": "SUM(value) of sum-aggregated input and output token counters per interval. Not one point per turn.",
+      "description": "SUM(input_tokens) and SUM(output_tokens) of sum-aggregated server.turn_usage per interval. Not one point per turn.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1004,8 +1017,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 64
+        "x": 12,
+        "y": 56
       },
       "fieldConfig": {
         "defaults": {
@@ -1068,9 +1081,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, SUM(CASE WHEN metric = 'server.turn_input_tokens' THEN value ELSE 0 END) AS input, SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) AS output FROM server_ops_metric_samples WHERE metric IN ('server.turn_input_tokens', 'server.turn_output_tokens') AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, SUM(json_extract(fields_json, '$.input_tokens')) AS input, SUM(json_extract(fields_json, '$.output_tokens')) AS output FROM events WHERE name = 'server.turn_usage' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1085,7 +1099,7 @@
     },
     {
       "title": "Turn Tool Calls + Errors",
-      "description": "Tool call count and errors per agent turn. High tool counts can explain long active work duration; errors are reliability signals.",
+      "description": "Tool calls per agent turn and failed turns (server.turn status=error). High tool counts can explain long active work duration; errors are reliability signals.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1094,7 +1108,7 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
+        "x": 0,
         "y": 64
       },
       "fieldConfig": {
@@ -1158,9 +1172,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.turn_tool_calls' THEN value END AS tool_calls, CASE WHEN metric = 'server.turn_error' THEN value END AS errors FROM server_ops_metric_samples WHERE metric IN ('server.turn_tool_calls', 'server.turn_error') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.tool_calls') AS tool_calls, CASE WHEN json_extract(tags_json, '$.status') = 'error' THEN 1 END AS errors FROM events WHERE name = 'server.turn' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1184,8 +1199,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 80
+        "x": 12,
+        "y": 64
       },
       "fieldConfig": {
         "defaults": {
@@ -1222,9 +1237,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.session_subscribe_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.duration_ms') AS value FROM events WHERE name = 'server.session_subscribe' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1248,8 +1264,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 80
+        "x": 0,
+        "y": 72
       },
       "fieldConfig": {
         "defaults": {
@@ -1287,9 +1303,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.ws_ping_timeout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, 1 AS value FROM events WHERE name = 'server.ws_ping_timeout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1304,7 +1321,7 @@
     },
     {
       "title": "Catch-up Replay",
-      "description": "Events replayed during catch-up and ring misses requiring full reload.",
+      "description": "Events replayed during catch-up (server.catchup result=replayed) and ring misses requiring a full reload (result=miss).",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1313,8 +1330,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 88
+        "x": 12,
+        "y": 72
       },
       "fieldConfig": {
         "defaults": {
@@ -1377,9 +1394,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN metric = 'server.catchup_events' THEN value END AS events, CASE WHEN metric = 'server.catchup_miss' THEN value END AS misses FROM server_ops_metric_samples WHERE metric IN ('server.catchup_events', 'server.catchup_miss') AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, CASE WHEN json_extract(tags_json, '$.result') = 'replayed' THEN json_extract(fields_json, '$.events') END AS events, CASE WHEN json_extract(tags_json, '$.result') = 'miss' THEN 1 END AS misses FROM events WHERE name = 'server.catchup' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1394,7 +1412,7 @@
     },
     {
       "title": "Broadcast Fanout",
-      "description": "MAX(value) of max-aggregated server.broadcast_fanout. Value is already the peak subscriber count in the flush bucket; the panel keeps the peak in each Grafana interval.",
+      "description": "MAX(subscribers) of max-aggregated server.broadcast_fanout: the peak subscriber count in each flush window, kept as the peak in each Grafana interval.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1403,8 +1421,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 88
+        "x": 0,
+        "y": 80
       },
       "fieldConfig": {
         "defaults": {
@@ -1442,9 +1460,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, MAX(value) AS value FROM server_ops_metric_samples WHERE metric = 'server.broadcast_fanout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time, MAX(json_extract(fields_json, '$.subscribers')) AS value FROM events WHERE name = 'server.broadcast_fanout' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY 1 ORDER BY 1",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1459,7 +1478,7 @@
     },
     {
       "title": "HTTP Request Latency (ms)",
-      "description": "Raw server.http_request_ms samples, not sum- or max-aggregated. Fast successful routine routes are omitted, so this is not request volume. Use HTTP by route for p50/p90/p99 and error rate.",
+      "description": "Raw server.http_request duration_ms, not aggregated. Fast successful routine routes are omitted, so this is not request volume. Use HTTP by route for p50/p90/p99 and error rate.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1468,8 +1487,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 96
+        "x": 12,
+        "y": 80
       },
       "fieldConfig": {
         "defaults": {
@@ -1506,9 +1525,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.http_request_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.duration_ms') AS value FROM events WHERE name = 'server.http_request' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1523,7 +1543,7 @@
     },
     {
       "title": "Auto Retries",
-      "description": "Automatic retry events triggered by transient failures.",
+      "description": "Automatic retry events (server.auto_retry); the value is the attempt number.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1532,8 +1552,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 96
+        "x": 0,
+        "y": 88
       },
       "fieldConfig": {
         "defaults": {
@@ -1571,9 +1591,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.auto_retry' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.attempt') AS value FROM events WHERE name = 'server.auto_retry' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1588,7 +1609,7 @@
     },
     {
       "title": "HTTP by route",
-      "description": "Raw server.http_request_ms samples grouped by method and path_pattern. p50/p90/p99 use nearest-rank ceil(p * n). samples is row count, not SUM(value). error_pct is status_code >= 400. Fast successful routine routes are omitted, so this is not request volume.",
+      "description": "Raw server.http_request duration_ms grouped by method and path_pattern. p50/p90/p99 use nearest-rank ceil(p * n). samples is row count. error_pct is status_code >= 400. Fast successful routine routes are omitted, so this is not request volume.",
       "type": "table",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1598,7 +1619,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 104
+        "y": 96
       },
       "fieldConfig": {
         "defaults": {
@@ -1613,9 +1634,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "WITH ranked AS (\n  SELECT\n    COALESCE(json_extract(tags_json, '$.method'), '?') AS method,\n    COALESCE(json_extract(tags_json, '$.path_pattern'), '?') AS path_pattern,\n    value,\n    CAST(COALESCE(json_extract(tags_json, '$.status_code'), '0') AS INTEGER) AS status_code,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n      ORDER BY value\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n    ) AS n\n  FROM server_ops_metric_samples\n  WHERE metric = 'server.http_request_ms'\n    AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n)\nSELECT\n  method,\n  path_pattern,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 1) AS p50_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 1) AS p90_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 99 + 99) / 100) THEN value END), 1) AS p99_ms,\n  SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors,\n  ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / n, 1) AS error_pct\nFROM ranked\nGROUP BY method, path_pattern, n\nORDER BY samples DESC",
+          "rawQueryText": "WITH ranked AS (\n  SELECT\n    COALESCE(json_extract(tags_json, '$.method'), '?') AS method,\n    COALESCE(json_extract(tags_json, '$.path_pattern'), '?') AS path_pattern,\n    json_extract(fields_json, '$.duration_ms') AS value,\n    CAST(COALESCE(json_extract(tags_json, '$.status_code'), '0') AS INTEGER) AS status_code,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n      ORDER BY json_extract(fields_json, '$.duration_ms')\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n    ) AS n\n  FROM events\n  WHERE name = 'server.http_request'\n    AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n)\nSELECT\n  method,\n  path_pattern,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 1) AS p50_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 1) AS p90_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 99 + 99) / 100) THEN value END), 1) AS p99_ms,\n  SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors,\n  ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / n, 1) AS error_pct\nFROM ranked\nGROUP BY method, path_pattern, n\nORDER BY samples DESC",
           "queryType": "table",
-          "timeColumns": []
+          "timeColumns": [],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1625,7 +1647,7 @@
     },
     {
       "title": "HTTP response bytes by route",
-      "description": "Raw server.http_response_bytes samples grouped by method and path_pattern. Same tags and gating as server.http_request_ms; unregistered routes record path_pattern=unregistered. p50/p90 use nearest-rank ceil(p * n). max_bytes is MAX(value). samples is row count, not request volume.",
+      "description": "Raw server.http_request response_bytes grouped by method and path_pattern; same event and gating as the latency panels, and unregistered routes record path_pattern=unregistered. p50/p90 use nearest-rank ceil(p * n). max_bytes is MAX(response_bytes). samples is row count, not request volume.",
       "type": "table",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1635,7 +1657,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 114
+        "y": 106
       },
       "fieldConfig": {
         "defaults": {
@@ -1650,9 +1672,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "WITH ranked AS (\n  SELECT\n    COALESCE(json_extract(tags_json, '$.method'), '?') AS method,\n    COALESCE(json_extract(tags_json, '$.path_pattern'), '?') AS path_pattern,\n    value,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n      ORDER BY value\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n    ) AS n\n  FROM server_ops_metric_samples\n  WHERE metric = 'server.http_response_bytes'\n    AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n)\nSELECT\n  method,\n  path_pattern,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 0) AS p50_bytes,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 0) AS p90_bytes,\n  ROUND(MAX(value), 0) AS max_bytes\nFROM ranked\nGROUP BY method, path_pattern, n\nORDER BY samples DESC",
+          "rawQueryText": "WITH ranked AS (\n  SELECT\n    COALESCE(json_extract(tags_json, '$.method'), '?') AS method,\n    COALESCE(json_extract(tags_json, '$.path_pattern'), '?') AS path_pattern,\n    json_extract(fields_json, '$.response_bytes') AS value,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n      ORDER BY json_extract(fields_json, '$.response_bytes')\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n    ) AS n\n  FROM events\n  WHERE name = 'server.http_request'\n    AND json_extract(fields_json, '$.response_bytes') IS NOT NULL\n    AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n)\nSELECT\n  method,\n  path_pattern,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 0) AS p50_bytes,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 0) AS p90_bytes,\n  ROUND(MAX(value), 0) AS max_bytes\nFROM ranked\nGROUP BY method, path_pattern, n\nORDER BY samples DESC",
           "queryType": "table",
-          "timeColumns": []
+          "timeColumns": [],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1662,7 +1685,7 @@
     },
     {
       "title": "Compaction Duration (ms)",
-      "description": "Time spent compacting session event history.",
+      "description": "Time spent compacting session event history (server.compaction duration_ms).",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1672,7 +1695,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 124
+        "y": 116
       },
       "fieldConfig": {
         "defaults": {
@@ -1709,9 +1732,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.compaction_ms' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.duration_ms') AS value FROM events WHERE name = 'server.compaction' AND json_extract(fields_json, '$.duration_ms') IS NOT NULL AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1725,9 +1749,9 @@
       }
     },
     {
-      "title": "Compaction Results",
-      "description": "Compaction outcomes per event.",
-      "type": "timeseries",
+      "title": "Compaction results",
+      "description": "server.compaction by status and result (will_retry): count and average duration.",
+      "type": "table",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
         "type": "frser-sqlite-datasource"
@@ -1736,62 +1760,36 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 124
+        "y": 116
       },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          },
           "custom": {
-            "axisLabel": "count",
-            "drawStyle": "points",
-            "lineWidth": 0,
-            "fillOpacity": 0,
-            "pointSize": 5,
-            "showPoints": "always",
-            "spanNulls": false
-          },
-          "unit": "short",
-          "min": 0,
-          "decimals": 0
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "value"
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
             },
-            "properties": [
-              {
-                "id": "displayName",
-                "value": "Compaction Results"
-              }
-            ]
+            "inspect": false
           }
-        ]
+        },
+        "overrides": []
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ts_ms / 1000 AS time, value FROM server_ops_metric_samples WHERE metric = 'server.compaction_result' AND ts_ms >= ${__from} AND ts_ms <= ${__to} ORDER BY ts_ms",
+          "rawQueryText": "SELECT COALESCE(json_extract(tags_json, '$.status'), '?') AS status, COALESCE(json_extract(tags_json, '$.result'), '(none)') AS result, COUNT(*) AS compactions, ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 0) AS avg_ms FROM events WHERE name = 'server.compaction' AND ts_ms >= ${__from} AND ts_ms <= ${__to} GROUP BY status, result ORDER BY compactions DESC",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
-        "tooltip": {
-          "mode": "single"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
+        "cellHeight": "sm",
+        "showHeader": true
       }
     },
     {
-      "title": "Split WS Handshake by Path",
-      "description": "Server-side WebSocket upgrade duration split by legacy, workspace, session, and audio stream lanes.",
+      "title": "WS handshake by stream",
+      "description": "Server-side WebSocket upgrade duration (server.ws_handshake) averaged per interval, split by stream: session, dictation, app_events.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1801,7 +1799,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 132
+        "y": 124
       },
       "fieldConfig": {
         "defaults": {
@@ -1824,9 +1822,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(AVG(CASE WHEN COALESCE(tag_path, 'untagged_ws') = 'untagged_ws' THEN value END), 1) AS untagged_ws,\n  ROUND(AVG(CASE WHEN tag_path = 'bound_session_stream' THEN value END), 1) AS bound_session_stream,\n  ROUND(AVG(CASE WHEN tag_path = 'session_audio_stream' THEN value END), 1) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_handshake_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(AVG(CASE WHEN json_extract(tags_json, '$.stream') = 'session' THEN json_extract(fields_json, '$.duration_ms') END), 1) AS session,\n  ROUND(AVG(CASE WHEN json_extract(tags_json, '$.stream') = 'dictation' THEN json_extract(fields_json, '$.duration_ms') END), 1) AS dictation,\n  ROUND(AVG(CASE WHEN json_extract(tags_json, '$.stream') = 'app_events' THEN json_extract(fields_json, '$.duration_ms') END), 1) AS app_events\nFROM events\nWHERE name = 'server.ws_handshake'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -1840,9 +1839,98 @@
       }
     },
     {
-      "title": "Split WS Messages by Path",
-      "description": "Per-interval sent and received WebSocket messages by split stream lane. Untagged samples indicate old or malformed rows with no path tag.",
+      "title": "WS messages by stream",
+      "description": "Per-interval sent and received WebSocket messages (SUM of sum-aggregated server.ws_message_sent and server.ws_message_received) by stream.",
       "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 124
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN json_extract(tags_json, '$.stream') = 'session' THEN json_extract(fields_json, '$.messages') ELSE 0 END) AS session,\n  SUM(CASE WHEN json_extract(tags_json, '$.stream') = 'dictation' THEN json_extract(fields_json, '$.messages') ELSE 0 END) AS dictation,\n  SUM(CASE WHEN json_extract(tags_json, '$.stream') = 'app_events' THEN json_extract(fields_json, '$.messages') ELSE 0 END) AS app_events\nFROM events\nWHERE name IN ('server.ws_message_sent', 'server.ws_message_received')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "queryType": "table",
+          "timeColumns": ["time"],
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Session subscribe by status",
+      "description": "server.session_subscribe by status (ok or error): count and duration.",
+      "type": "table",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 132
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.status'), 'unknown') AS status,\n  COUNT(*) AS samples,\n  ROUND(AVG(json_extract(fields_json, '$.duration_ms')), 1) AS avg_ms,\n  ROUND(MIN(json_extract(fields_json, '$.duration_ms')), 1) AS min_ms,\n  ROUND(MAX(json_extract(fields_json, '$.duration_ms')), 1) AS max_ms\nFROM events\nWHERE name = 'server.session_subscribe'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY status\nORDER BY samples DESC, status",
+          "queryType": "table",
+          "timeColumns": [],
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "title": "WS close codes by stream",
+      "description": "Close-code counts by stream (one server.ws_session per connection). Watch for abnormal 1006 on the session and dictation streams.",
+      "type": "table",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
         "type": "frser-sqlite-datasource"
@@ -1855,56 +1943,6 @@
       },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "",
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "pointSize": 3,
-            "showPoints": "auto",
-            "spanNulls": false
-          },
-          "unit": "short",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN COALESCE(tag_path, 'untagged_ws') = 'untagged_ws' THEN value ELSE 0 END) AS untagged_ws,\n  SUM(CASE WHEN tag_path = 'bound_session_stream' THEN value ELSE 0 END) AS bound_session_stream,\n  SUM(CASE WHEN tag_path = 'session_audio_stream' THEN value ELSE 0 END) AS session_audio_stream\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_message_sent', 'server.ws_message_received')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
-          "queryType": "table",
-          "timeColumns": ["time"]
-        }
-      ],
-      "options": {
-        "tooltip": {
-          "mode": "multi"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "title": "Session Subscribe by Lane",
-      "description": "Bound session stream setup should show lane=bound_session; untagged samples indicate old or malformed stream setup traffic.",
-      "type": "table",
-      "datasource": {
-        "uid": "oppi-telemetry-sqlite",
-        "type": "frser-sqlite-datasource"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 140
-      },
-      "fieldConfig": {
-        "defaults": {
           "custom": {
             "align": "auto",
             "cellOptions": {
@@ -1916,96 +1954,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT\n  COALESCE(tag_level, 'untagged') AS lane,\n  COALESCE(tag_outcome, 'unknown') AS outcome,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_ms,\n  ROUND(MIN(value), 1) AS min_ms,\n  ROUND(MAX(value), 1) AS max_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.session_subscribe_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY lane, outcome\nORDER BY samples DESC, lane, outcome",
+          "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.stream'), 'unknown') AS stream,\n  COALESCE(json_extract(tags_json, '$.close_code'), 'unknown') AS close_code,\n  COUNT(*) AS closes,\n  datetime(MAX(ts_ms) / 1000, 'unixepoch', 'localtime') AS last_seen\nFROM events\nWHERE name = 'server.ws_session'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY stream, close_code\nORDER BY closes DESC, stream, close_code",
           "queryType": "table",
-          "timeColumns": []
-        }
-      ],
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
-      }
-    },
-    {
-      "title": "Catch-up by Ring",
-      "description": "Catch-up replay and misses split by workspace, session, and user event rings.",
-      "type": "timeseries",
-      "datasource": {
-        "uid": "oppi-telemetry-sqlite",
-        "type": "frser-sqlite-datasource"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 140
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "",
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "pointSize": 3,
-            "showPoints": "auto",
-            "spanNulls": false
-          },
-          "unit": "short",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  SUM(CASE WHEN metric = 'server.catchup_events' AND tag_ring = 'session' THEN value ELSE 0 END) AS session_events,\n  SUM(CASE WHEN metric = 'server.catchup_miss' AND tag_ring = 'session' THEN value ELSE 0 END) AS session_misses\nFROM server_ops_metric_samples\nWHERE metric IN ('server.catchup_events', 'server.catchup_miss')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
-          "queryType": "table",
-          "timeColumns": ["time"]
-        }
-      ],
-      "options": {
-        "tooltip": {
-          "mode": "multi"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      }
-    },
-    {
-      "title": "WS Close Codes by Path",
-      "description": "Close-code counts by split stream path. Watch for abnormal 1006 on workspace/session/audio lanes.",
-      "type": "table",
-      "datasource": {
-        "uid": "oppi-telemetry-sqlite",
-        "type": "frser-sqlite-datasource"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 148
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'untagged_ws') AS path,\n  COALESCE(tag_code, 'unknown') AS close_code,\n  SUM(value) AS closes,\n  datetime(MAX(ts_ms) / 1000, 'unixepoch', 'localtime') AS last_seen\nFROM server_ops_metric_samples\nWHERE metric = 'server.ws_close_code'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY path, close_code\nORDER BY closes DESC, path, close_code",
-          "queryType": "table",
-          "timeColumns": []
+          "timeColumns": [],
+          "refId": "A"
         }
       ],
       "options": {
@@ -2015,7 +1967,7 @@
     },
     {
       "title": "Audio Stream Inbound",
-      "description": "Session audio stream inbound binary KiB and control-message counts.",
+      "description": "Dictation stream inbound binary KiB (sum of binary_bytes) and control-message counts (server.ws_message_received, stream=dictation).",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -2024,8 +1976,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 148
+        "x": 0,
+        "y": 140
       },
       "fieldConfig": {
         "defaults": {
@@ -2048,9 +2000,10 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(SUM(CASE WHEN metric = 'server.ws_binary_received_bytes' AND tag_path = 'session_audio_stream' THEN value ELSE 0 END) / 1024.0, 1) AS audio_kib,\n  SUM(CASE WHEN metric = 'server.ws_message_received' AND tag_path = 'session_audio_stream' AND tag_type != 'binary_audio' THEN value ELSE 0 END) AS control_messages\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_binary_received_bytes', 'server.ws_message_received')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+          "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  ROUND(SUM(COALESCE(json_extract(fields_json, '$.binary_bytes'), 0)) / 1024.0, 1) AS audio_kib,\n  SUM(CASE WHEN json_extract(tags_json, '$.message_type') != 'binary_audio' THEN json_extract(fields_json, '$.messages') ELSE 0 END) AS control_messages\nFROM events\nWHERE name = 'server.ws_message_received'\n  AND json_extract(tags_json, '$.stream') = 'dictation'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
           "queryType": "table",
-          "timeColumns": ["time"]
+          "timeColumns": ["time"],
+          "refId": "A"
         }
       ],
       "options": {
@@ -2071,12 +2024,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 156
+        "y": 148
       },
       "panels": [
         {
           "title": "Session create (total / SDK / bind)",
-          "description": "Raw session-create latencies. create_ms is the full SdkBackend.create duration; sdk_ms and bind_ms are its parts.",
+          "description": "Raw session-create latencies. create_ms is server.session_create (the full SdkBackend.create duration); sdk_ms and bind_ms are the parts recorded in server.sdk_session_setup.",
           "type": "timeseries",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2086,7 +2039,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 157
+            "y": 149
           },
           "fieldConfig": {
             "defaults": {
@@ -2109,9 +2062,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN metric = 'server.session_create_ms' THEN value END AS create_ms,\n  CASE WHEN metric = 'server.session_create_sdk_ms' THEN value END AS sdk_ms,\n  CASE WHEN metric = 'server.session_create_bind_ms' THEN value END AS bind_ms\nFROM server_ops_metric_samples\nWHERE metric IN ('server.session_create_ms', 'server.session_create_sdk_ms', 'server.session_create_bind_ms')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN name = 'server.session_create' THEN json_extract(fields_json, '$.duration_ms') END AS create_ms,\n  CASE WHEN name = 'server.sdk_session_setup' THEN json_extract(fields_json, '$.sdk_ms') END AS sdk_ms,\n  CASE WHEN name = 'server.sdk_session_setup' THEN json_extract(fields_json, '$.bind_ms') END AS bind_ms\nFROM events\nWHERE name IN ('server.session_create', 'server.sdk_session_setup')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
               "queryType": "table",
-              "timeColumns": ["time"]
+              "timeColumns": ["time"],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2126,7 +2080,7 @@
         },
         {
           "title": "Session end by reason",
-          "description": "Raw server.session_end counters. SUM(value) is the end count; value is 1 per ended session.",
+          "description": "server.session_end counted by reason.",
           "type": "table",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2136,7 +2090,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 157
+            "y": 149
           },
           "fieldConfig": {
             "defaults": {
@@ -2151,9 +2105,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.reason'), '?') AS reason,\n  SUM(value) AS ends\nFROM server_ops_metric_samples\nWHERE metric = 'server.session_end'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY reason\nORDER BY ends DESC",
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.reason'), '?') AS reason,\n  COUNT(*) AS ends\nFROM events\nWHERE name = 'server.session_end'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY reason\nORDER BY ends DESC",
               "queryType": "table",
-              "timeColumns": []
+              "timeColumns": [],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2171,12 +2126,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 157
+        "y": 149
       },
       "panels": [
         {
           "title": "Push send latency (ms)",
-          "description": "Raw server.push_send_ms samples: encrypted seal-and-relay latency, tagged by result in the stored JSON.",
+          "description": "server.push send_ms: encrypted seal-and-relay latency. Absent when the push never reached the relay.",
           "type": "timeseries",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2186,7 +2141,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 158
+            "y": 150
           },
           "fieldConfig": {
             "defaults": {
@@ -2209,9 +2164,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT ts_ms / 1000 AS time, value AS push_send_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.push_send_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.send_ms') AS push_send_ms\nFROM events\nWHERE name = 'server.push'\n  AND json_extract(fields_json, '$.send_ms') IS NOT NULL\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
               "queryType": "table",
-              "timeColumns": ["time"]
+              "timeColumns": ["time"],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2226,7 +2182,7 @@
         },
         {
           "title": "Push results",
-          "description": "Raw server.push_result counters. SUM(value) is the result count by event (blocked, done, error, pairing, Live Activity start/update/end) and relay result (delivered, gone, rejected, unavailable, failed, throttled, no_activity).",
+          "description": "server.push counted by notification (blocked, error, notify, pairing, Live Activity start/update/end) and relay result (delivered, gone, rejected, unavailable, failed, throttled, no_activity).",
           "type": "table",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2236,7 +2192,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 158
+            "y": 150
           },
           "fieldConfig": {
             "defaults": {
@@ -2251,9 +2207,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.event'), '?') AS event,\n  COALESCE(json_extract(tags_json, '$.result'), '?') AS result,\n  SUM(value) AS results\nFROM server_ops_metric_samples\nWHERE metric = 'server.push_result'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY event, result\nORDER BY results DESC",
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.notification'), '?') AS notification,\n  COALESCE(json_extract(tags_json, '$.result'), '?') AS result,\n  COUNT(*) AS results\nFROM events\nWHERE name = 'server.push'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY notification, result\nORDER BY results DESC",
               "queryType": "table",
-              "timeColumns": []
+              "timeColumns": [],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2271,12 +2228,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 158
+        "y": 150
       },
       "panels": [
         {
           "title": "Event ring utilization peak",
-          "description": "MAX(value) of max-aggregated server.event_ring_utilization. Value is already the peak fill ratio in the flush bucket.",
+          "description": "MAX(event_ring_peak_ratio) of server.resources: the fullest session event ring in each sample interval. Absent when no session holds a ring.",
           "type": "timeseries",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2286,7 +2243,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 159
+            "y": 151
           },
           "fieldConfig": {
             "defaults": {
@@ -2309,9 +2266,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  MAX(value) AS peak_ratio\nFROM server_ops_metric_samples\nWHERE metric = 'server.event_ring_utilization'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+              "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  MAX(json_extract(fields_json, '$.event_ring_peak_ratio')) AS peak_ratio\nFROM events\nWHERE name = 'server.resources'\n  AND json_extract(fields_json, '$.event_ring_peak_ratio') IS NOT NULL\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
               "queryType": "table",
-              "timeColumns": ["time"]
+              "timeColumns": ["time"],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2322,43 +2280,6 @@
               "displayMode": "list",
               "placement": "bottom"
             }
-          }
-        },
-        {
-          "title": "Event ring peak by ring",
-          "description": "MAX(value) of max-aggregated server.event_ring_utilization by ring. buckets is flush-bucket rows, not raw ring samples.",
-          "type": "table",
-          "datasource": {
-            "uid": "oppi-telemetry-sqlite",
-            "type": "frser-sqlite-datasource"
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 159
-          },
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "align": "auto",
-                "cellOptions": {
-                  "type": "auto"
-                }
-              }
-            },
-            "overrides": []
-          },
-          "targets": [
-            {
-              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.ring'), '?') AS ring,\n  COUNT(*) AS buckets,\n  ROUND(MAX(value), 3) AS peak_ratio\nFROM server_ops_metric_samples\nWHERE metric = 'server.event_ring_utilization'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY ring\nORDER BY peak_ratio DESC",
-              "queryType": "table",
-              "timeColumns": []
-            }
-          ],
-          "options": {
-            "showHeader": true,
-            "cellHeight": "sm"
           }
         }
       ]
@@ -2371,12 +2292,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 159
+        "y": 151
       },
       "panels": [
         {
           "title": "Server STT and finalize (ms)",
-          "description": "Raw server.dictation_stt_ms and server.dictation_finalize_ms. Front-page STT latency also appears on Release Preflight.",
+          "description": "server.dictation_finalize stt_ms and finalize_ms. Front-page STT latency also appears on Release Preflight.",
           "type": "timeseries",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2386,7 +2307,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 160
+            "y": 152
           },
           "fieldConfig": {
             "defaults": {
@@ -2409,9 +2330,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN metric = 'server.dictation_stt_ms' THEN value END AS stt_ms,\n  CASE WHEN metric = 'server.dictation_finalize_ms' THEN value END AS finalize_ms\nFROM server_ops_metric_samples\nWHERE metric IN ('server.dictation_stt_ms', 'server.dictation_finalize_ms')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  json_extract(fields_json, '$.stt_ms') AS stt_ms,\n  json_extract(fields_json, '$.finalize_ms') AS finalize_ms\nFROM events\nWHERE name = 'server.dictation_finalize'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
               "queryType": "table",
-              "timeColumns": ["time"]
+              "timeColumns": ["time"],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2426,7 +2348,7 @@
         },
         {
           "title": "Server STT real-time factor",
-          "description": "Raw server.dictation_stt_audio_ratio. Below 1.0 is faster than real time.",
+          "description": "server.dictation_finalize stt_audio_ratio. Below 1.0 is faster than real time.",
           "type": "timeseries",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2436,7 +2358,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 160
+            "y": 152
           },
           "fieldConfig": {
             "defaults": {
@@ -2459,9 +2381,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT ts_ms / 1000 AS time, value AS stt_audio_ratio\nFROM server_ops_metric_samples\nWHERE metric = 'server.dictation_stt_audio_ratio'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "rawQueryText": "SELECT ts_ms / 1000 AS time, json_extract(fields_json, '$.stt_audio_ratio') AS stt_audio_ratio\nFROM events\nWHERE name = 'server.dictation_finalize'\n  AND json_extract(fields_json, '$.stt_audio_ratio') IS NOT NULL\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
               "queryType": "table",
-              "timeColumns": ["time"]
+              "timeColumns": ["time"],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2476,7 +2399,7 @@
         },
         {
           "title": "Server dictation summary",
-          "description": "Raw dictation samples except retired retranscribe metrics. avg/min/max read value directly. server.dictation_error is a counter; its avg is not a latency.",
+          "description": "Every numeric field of the server dictation events, one row per event.field. avg/min/max read the field directly; the error rows count events, so their avg is not a latency.",
           "type": "table",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2486,7 +2409,7 @@
             "h": 8,
             "w": 24,
             "x": 0,
-            "y": 168
+            "y": 160
           },
           "fieldConfig": {
             "defaults": {
@@ -2501,9 +2424,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT\n  metric,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 2) AS avg_value,\n  ROUND(MIN(value), 2) AS min_value,\n  ROUND(MAX(value), 2) AS max_value\nFROM server_ops_metric_samples\nWHERE metric IN ('server.dictation_session_ms', 'server.dictation_audio_duration_ms', 'server.dictation_first_audio_ms', 'server.dictation_first_result_ms', 'server.dictation_first_result_audio_ms', 'server.dictation_result_updates', 'server.dictation_stt_ms', 'server.dictation_stt_audio_ratio', 'server.dictation_finalize_ms', 'server.dictation_error')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY metric\nORDER BY samples DESC",
+              "rawQueryText": "SELECT\n  metric,\n  COUNT(value) AS samples,\n  ROUND(AVG(value), 2) AS avg_value,\n  ROUND(MIN(value), 2) AS min_value,\n  ROUND(MAX(value), 2) AS max_value\nFROM (\n  SELECT 'server.dictation_finalize.session_ms' AS metric, json_extract(fields_json, '$.session_ms') AS value FROM events WHERE name = 'server.dictation_finalize' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_finalize.audio_duration_ms' AS metric, json_extract(fields_json, '$.audio_duration_ms') AS value FROM events WHERE name = 'server.dictation_finalize' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_finalize.result_updates' AS metric, json_extract(fields_json, '$.result_updates') AS value FROM events WHERE name = 'server.dictation_finalize' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_finalize.stt_ms' AS metric, json_extract(fields_json, '$.stt_ms') AS value FROM events WHERE name = 'server.dictation_finalize' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_finalize.stt_audio_ratio' AS metric, json_extract(fields_json, '$.stt_audio_ratio') AS value FROM events WHERE name = 'server.dictation_finalize' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_finalize.finalize_ms' AS metric, json_extract(fields_json, '$.finalize_ms') AS value FROM events WHERE name = 'server.dictation_finalize' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_first_audio.duration_ms' AS metric, json_extract(fields_json, '$.duration_ms') AS value FROM events WHERE name = 'server.dictation_first_audio' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_first_result.duration_ms' AS metric, json_extract(fields_json, '$.duration_ms') AS value FROM events WHERE name = 'server.dictation_first_result' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_first_result.audio_ms' AS metric, json_extract(fields_json, '$.audio_ms') AS value FROM events WHERE name = 'server.dictation_first_result' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_finalize.errors' AS metric, 1 AS value FROM events WHERE name = 'server.dictation_finalize' AND json_extract(tags_json, '$.status') = 'error' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  UNION ALL\n  SELECT 'server.dictation_stream_error' AS metric, 1 AS value FROM events WHERE name = 'server.dictation_stream_error' AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n)\nGROUP BY metric\nHAVING samples > 0\nORDER BY samples DESC",
               "queryType": "table",
-              "timeColumns": []
+              "timeColumns": [],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2521,12 +2445,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 160
+        "y": 152
       },
       "panels": [
         {
           "title": "MCP connect latency (ms)",
-          "description": "Raw server.mcp_connect_ms samples over time, split by status. Config errors record 0. A connected sample is not a failure.",
+          "description": "server.mcp_connect duration over time, split by status. Config errors record 0. An ok sample is not a failure.",
           "type": "timeseries",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2536,7 +2460,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 161
+            "y": 153
           },
           "fieldConfig": {
             "defaults": {
@@ -2559,11 +2483,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN json_extract(tags_json, '$.status') = 'connected' THEN value END AS connected_ms,\n  CASE WHEN json_extract(tags_json, '$.status') = 'failed' THEN value END AS failed_ms,\n  CASE WHEN json_extract(tags_json, '$.status') = 'error' THEN value END AS error_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.mcp_connect_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN json_extract(tags_json, '$.status') = 'ok' THEN json_extract(fields_json, '$.duration_ms') END AS ok_ms,\n  CASE WHEN json_extract(tags_json, '$.status') = 'error' THEN json_extract(fields_json, '$.duration_ms') END AS error_ms\nFROM events\nWHERE name = 'server.mcp_connect'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
               "queryType": "table",
-              "timeColumns": [
-                "time"
-              ]
+              "timeColumns": ["time"],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2577,8 +2500,8 @@
           }
         },
         {
-          "title": "MCP connect by status and reason",
-          "description": "Count of raw server.mcp_connect_ms samples by status and reason. COUNT(*) is the sample count; value is duration, not a counter. (none) means reason was omitted, including connected samples.",
+          "title": "MCP connect by status and error kind",
+          "description": "Count of server.mcp_connect events by status and error_kind (auth, connect, config). (none) means no error_kind, as on ok events.",
           "type": "table",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2588,7 +2511,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 161
+            "y": 153
           },
           "fieldConfig": {
             "defaults": {
@@ -2603,9 +2526,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.status'), '?') AS status,\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.reason')), ''), '(none)') AS reason,\n  COUNT(*) AS samples\nFROM server_ops_metric_samples\nWHERE metric = 'server.mcp_connect_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY status, reason\nORDER BY samples DESC",
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.status'), '?') AS status,\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.error_kind')), ''), '(none)') AS error_kind,\n  COUNT(*) AS samples\nFROM events\nWHERE name = 'server.mcp_connect'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY status, error_kind\nORDER BY samples DESC",
               "queryType": "table",
-              "timeColumns": []
+              "timeColumns": [],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2623,12 +2547,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 161
+        "y": 153
       },
       "panels": [
         {
           "title": "Schedule run duration (ms)",
-          "description": "Raw server.schedule_run_ms duration, split by status. Not the HTTP request that started a manual run.",
+          "description": "server.schedule_run duration, split by status. Not the HTTP request that started a manual run.",
           "type": "timeseries",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2638,7 +2562,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 162
+            "y": 154
           },
           "fieldConfig": {
             "defaults": {
@@ -2661,11 +2585,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN json_extract(tags_json, '$.status') = 'completed' THEN value END AS completed_ms,\n  CASE WHEN json_extract(tags_json, '$.status') = 'failed' THEN value END AS failed_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.schedule_run_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN json_extract(tags_json, '$.status') = 'ok' THEN json_extract(fields_json, '$.duration_ms') END AS ok_ms,\n  CASE WHEN json_extract(tags_json, '$.status') = 'error' THEN json_extract(fields_json, '$.duration_ms') END AS error_ms\nFROM events\nWHERE name = 'server.schedule_run'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
               "queryType": "table",
-              "timeColumns": [
-                "time"
-              ]
+              "timeColumns": ["time"],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2680,7 +2603,7 @@
         },
         {
           "title": "Schedule runs by status, kind, and reason",
-          "description": "Count of raw server.schedule_run_ms samples by status, kind, and reason. A completed run is not a failure. (none) means reason was omitted.",
+          "description": "Count of server.schedule_run events by status, run_kind (due or manual), and reason. An ok run is not a failure. (none) means no reason.",
           "type": "table",
           "datasource": {
             "uid": "oppi-telemetry-sqlite",
@@ -2690,7 +2613,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 162
+            "y": 154
           },
           "fieldConfig": {
             "defaults": {
@@ -2705,9 +2628,10 @@
           },
           "targets": [
             {
-              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.status'), '?') AS status,\n  COALESCE(json_extract(tags_json, '$.kind'), '?') AS kind,\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.reason')), ''), '(none)') AS reason,\n  COUNT(*) AS samples\nFROM server_ops_metric_samples\nWHERE metric = 'server.schedule_run_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY status, kind, reason\nORDER BY samples DESC",
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.status'), '?') AS status,\n  COALESCE(json_extract(tags_json, '$.run_kind'), '?') AS run_kind,\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.reason')), ''), '(none)') AS reason,\n  COUNT(*) AS samples\nFROM events\nWHERE name = 'server.schedule_run'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY status, run_kind, reason\nORDER BY samples DESC",
               "queryType": "table",
-              "timeColumns": []
+              "timeColumns": [],
+              "refId": "A"
             }
           ],
           "options": {
@@ -2735,5 +2659,5 @@
   "title": "Oppi Server Health",
   "uid": "oppi-server-health",
   "version": 4,
-  "description": "Server resource health, connection and agent workload, plus collapsed drill-down for session lifecycle, push, event ring, MCP connect, schedule runs, and dictation. Event-loop p99 is the ungated trend; max is the stall gate. Sum-aggregated counters use SUM(value). Max-aggregated gauges use MAX(value). HTTP timings and response bytes are raw samples."
+  "description": "Server resource health, connection and agent workload, plus collapsed drill-down for session lifecycle, push, event ring, MCP connect, schedule runs, and dictation. Everything reads the telemetry catalog's `events` table (server.* events; fields in fields_json, tags in tags_json). Event-loop p99 is the ungated trend; max is the stall gate. Events with catalog storage aggregation (server.turn_usage, server.ws_message_*, server.broadcast_fanout) hold a flush-window sum or peak per record: SUM or MAX them, and do not count rows. HTTP timings and response bytes are raw events."
 }

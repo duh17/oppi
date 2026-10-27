@@ -18,9 +18,9 @@ groups:
           severity: p0
           component: timeline
         annotations:
-          summary: "timeline_apply_ms p95 exceeded 40ms (24h window)"
+          summary: "app.timeline_apply p95 exceeded 40ms (24h window)"
           description: >-
-            The 95th percentile of chat.timeline_apply_ms over the last 24 hours
+            The 95th percentile of app.timeline_apply duration_ms over the last 24 hours
             exceeds 40ms. This indicates a render pipeline regression — each apply
             should complete within a 2-frame budget (33ms). Investigate recent
             commits touching ChatTimelineCollectionView+DataSource.swift or
@@ -36,14 +36,14 @@ groups:
               queryType: table
               rawQueryText: >-
                 SELECT COALESCE(
-                  (SELECT value FROM chat_metric_samples
-                   WHERE metric = 'chat.timeline_apply_ms'
+                  (SELECT json_extract(fields_json, '$.duration_ms') AS value FROM events
+                   WHERE name = 'app.timeline_apply'
                      AND ts_ms BETWEEN $__from AND $__to
                    ORDER BY value
                    LIMIT 1
                    OFFSET (SELECT CAST(COUNT(*) * 0.95 AS INTEGER)
-                           FROM chat_metric_samples
-                           WHERE metric = 'chat.timeline_apply_ms'
+                           FROM events
+                           WHERE name = 'app.timeline_apply'
                              AND ts_ms BETWEEN $__from AND $__to)),
                   0) AS value
           - refId: B
@@ -86,8 +86,8 @@ groups:
         annotations:
           summary: "Average jank_pct exceeded 5% (24h window)"
           description: >-
-            The average chat.jank_pct over the last 24 hours exceeds 5%.
-            Current target is near 0%. Check the jank breakdown by phase
+            The average app.timeline_jank jank_pct over the last 24 hours exceeds
+            5%. Current target is near 0%. Check the jank breakdown by build
             on the Release Preflight dashboard. Common causes: main-thread
             work in snapshot apply, heavy cell configuration, layout thrash.
         data:
@@ -100,9 +100,9 @@ groups:
               refId: A
               queryType: table
               rawQueryText: >-
-                SELECT COALESCE(ROUND(AVG(value), 2), 0) AS value
-                FROM chat_metric_samples
-                WHERE metric = 'chat.jank_pct'
+                SELECT COALESCE(ROUND(AVG(json_extract(fields_json, '$.jank_pct')), 2), 0) AS value
+                FROM events
+                WHERE name = 'app.timeline_jank'
                   AND ts_ms BETWEEN $__from AND $__to
           - refId: B
             relativeTimeRange:
@@ -142,10 +142,10 @@ groups:
           severity: p0
           component: markdown
         annotations:
-          summary: "markdown_streaming_ms p95 exceeded 16ms (24h window)"
+          summary: "app.markdown_streaming p95 exceeded 16ms (24h window)"
           description: >-
-            The 95th percentile of chat.markdown_streaming_ms over the last
-            24 hours exceeds 16ms (one frame budget). This metric is actively
+            The 95th percentile of app.markdown_streaming duration_ms over the last
+            24 hours exceeds 16ms (two frames at 120 Hz). This metric is actively
             iterated — the Mar 26 streaming markdown commit pushed over-budget
             applies from 25% to 41%. Check incremental markdown parser changes.
         data:
@@ -159,14 +159,14 @@ groups:
               queryType: table
               rawQueryText: >-
                 SELECT COALESCE(
-                  (SELECT value FROM chat_metric_samples
-                   WHERE metric = 'chat.markdown_streaming_ms'
+                  (SELECT json_extract(fields_json, '$.duration_ms') AS value FROM events
+                   WHERE name = 'app.markdown_streaming'
                      AND ts_ms BETWEEN $__from AND $__to
                    ORDER BY value
                    LIMIT 1
                    OFFSET (SELECT CAST(COUNT(*) * 0.95 AS INTEGER)
-                           FROM chat_metric_samples
-                           WHERE metric = 'chat.markdown_streaming_ms'
+                           FROM events
+                           WHERE name = 'app.markdown_streaming'
                              AND ts_ms BETWEEN $__from AND $__to)),
                   0) AS value
           - refId: B
@@ -215,7 +215,8 @@ groups:
         annotations:
           summary: "More than 3 turn errors in the last hour"
           description: >-
-            The server recorded more than 3 turn_error events in the last hour.
+            The server recorded more than 3 server.turn events with status=error in the
+            last hour.
             This means agent sessions are failing. Check server logs for the
             error details — common causes: provider API errors, container OOM,
             session timeout.
@@ -230,8 +231,9 @@ groups:
               queryType: table
               rawQueryText: >-
                 SELECT COUNT(*) AS value
-                FROM server_ops_metric_samples
-                WHERE metric = 'server.turn_error'
+                FROM events
+                WHERE name = 'server.turn'
+                  AND json_extract(tags_json, '$.status') = 'error'
                   AND ts_ms BETWEEN $__from AND $__to
           - refId: B
             relativeTimeRange:
@@ -273,7 +275,7 @@ groups:
         annotations:
           summary: "More than 5 WS ping timeouts in the last hour"
           description: >-
-            The server recorded more than 5 ws_ping_timeout events in the
+            The server recorded more than 5 server.ws_ping_timeout events in the
             last hour. This indicates connection reliability issues — clients
             are experiencing disconnects. Check network conditions and server
             resource utilization (CPU/memory on the Server Health dashboard).
@@ -288,8 +290,8 @@ groups:
               queryType: table
               rawQueryText: >-
                 SELECT COUNT(*) AS value
-                FROM server_ops_metric_samples
-                WHERE metric = 'server.ws_ping_timeout'
+                FROM events
+                WHERE name = 'server.ws_ping_timeout'
                   AND ts_ms BETWEEN $__from AND $__to
           - refId: B
             relativeTimeRange:
@@ -337,7 +339,7 @@ groups:
         annotations:
           summary: "Daily token cost exceeded 3x the 7-day average"
           description: >-
-            The total server.turn_cost over the last 24 hours is more than
+            The total server.turn_usage cost_usd_micros over the last 24 hours is more than
             3x the 7-day daily average. This could indicate runaway sessions,
             a model configuration change, or an unusually heavy workload.
             Check the Server Health dashboard for token usage breakdown.
@@ -363,13 +365,13 @@ groups:
                 FROM (
                   SELECT
                     COALESCE(
-                      (SELECT SUM(value) FROM server_ops_metric_samples
-                       WHERE metric = 'server.turn_cost'
+                      (SELECT SUM(json_extract(fields_json, '$.cost_usd_micros')) FROM events
+                       WHERE name = 'server.turn_usage'
                          AND ts_ms >= ($__to - 86400000)
                          AND ts_ms <= $__to), 0) AS current_cost,
                     COALESCE(
-                      (SELECT SUM(value) / 7.0 FROM server_ops_metric_samples
-                       WHERE metric = 'server.turn_cost'
+                      (SELECT SUM(json_extract(fields_json, '$.cost_usd_micros')) / 7.0 FROM events
+                       WHERE name = 'server.turn_usage'
                          AND ts_ms >= $__from
                          AND ts_ms < ($__to - 86400000)), 0) AS baseline
                 )

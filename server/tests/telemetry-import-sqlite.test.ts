@@ -72,6 +72,38 @@ async function runWatchUntilImportLogs(
   });
 }
 
+function appEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    v: 2,
+    ts: 1000,
+    origin: "app",
+    name: "app.session_load",
+    fields: { duration_ms: 1200 },
+    tags: {},
+    sessionId: "s1",
+    workspaceId: "w1",
+    client: {
+      kind: "ios",
+      appVersion: "1.2.0",
+      buildNumber: "412",
+      gitCommit: "abc123def456",
+      deviceModel: "iPhone17,1",
+    },
+    ...overrides,
+  };
+}
+
+function serverResourcesEvent(): Record<string, unknown> {
+  return {
+    v: 2,
+    ts: 10,
+    origin: "server",
+    name: "server.resources",
+    fields: { rss_mb: 300 },
+    tags: { host_scope: "host" },
+  };
+}
+
 describe("telemetry SQLite importer", () => {
   let tempDir: string | undefined;
 
@@ -148,7 +180,7 @@ describe("telemetry SQLite importer", () => {
       const meta = db.prepare("SELECT parser_version FROM ingested_files").get() as {
         parser_version: number;
       };
-      expect(meta.parser_version).toBe(6);
+      expect(meta.parser_version).toBe(7);
     } finally {
       db.close();
     }
@@ -187,7 +219,7 @@ describe("telemetry SQLite importer", () => {
             parser_version: number;
           }
         ).parser_version,
-      ).toBe(6);
+      ).toBe(7);
     } finally {
       db.close();
     }
@@ -196,22 +228,10 @@ describe("telemetry SQLite importer", () => {
   it("appends only new lines for hot files instead of reimporting the entire file", () => {
     tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
     const dbPath = join(tempDir, "telemetry.db");
-    const filePath = join(tempDir, "chat-metrics-2026-04-29.jsonl");
+    const filePath = join(tempDir, "app-events-2026-10-27.jsonl");
 
-    const line1 = JSON.stringify({
-      receivedAt: 100,
-      generatedAt: 90,
-      appVersion: "1.1.0",
-      buildNumber: "29",
-      samples: [{ ts: 1000, metric: "chat.ttft_ms", value: 1200, unit: "ms" }],
-    });
-    const line2 = JSON.stringify({
-      receivedAt: 200,
-      generatedAt: 190,
-      appVersion: "1.1.0",
-      buildNumber: "29",
-      samples: [{ ts: 2000, metric: "chat.ttft_ms", value: 800, unit: "ms" }],
-    });
+    const line1 = JSON.stringify(appEvent({ ts: 1000, fields: { duration_ms: 1200 } }));
+    const line2 = JSON.stringify(appEvent({ ts: 2000, fields: { duration_ms: 800 } }));
 
     writeFileSync(filePath, `${line1}\n`);
     runImport(tempDir, dbPath);
@@ -221,15 +241,13 @@ describe("telemetry SQLite importer", () => {
 
     const db = new DatabaseSync(dbPath);
     try {
-      expect(
-        (db.prepare("SELECT count(*) AS c FROM chat_metric_samples").get() as { c: number }).c,
-      ).toBe(2);
+      expect((db.prepare("SELECT count(*) AS c FROM events").get() as { c: number }).c).toBe(2);
       expect(
         db
           .prepare(
             "SELECT line_count, processed_offset_bytes, source_file FROM ingested_files WHERE source_file = ?",
           )
-          .get("chat-metrics-2026-04-29.jsonl") as {
+          .get("app-events-2026-10-27.jsonl") as {
           line_count: number;
           processed_offset_bytes: number;
           source_file: string;
@@ -237,7 +255,7 @@ describe("telemetry SQLite importer", () => {
       ).toMatchObject({
         line_count: 2,
         processed_offset_bytes: Buffer.byteLength(`${line1}\n${line2}\n`),
-        source_file: "chat-metrics-2026-04-29.jsonl",
+        source_file: "app-events-2026-10-27.jsonl",
       });
     } finally {
       db.close();
@@ -248,14 +266,8 @@ describe("telemetry SQLite importer", () => {
     tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
     const dbPath = join(tempDir, "telemetry.db");
     writeFileSync(
-      join(tempDir, "server-metrics-2026-05-28.jsonl"),
-      JSON.stringify({
-        ts: 1,
-        cpu: { user: 1, system: 2, total: 3 },
-        memory: { heapUsed: 4, heapTotal: 5, rss: 6, external: 7 },
-        sessions: { busy: 0, ready: 1, starting: 0, total: 1 },
-        wsConnections: 1,
-      }) + "\n",
+      join(tempDir, "server-events-2026-10-27.jsonl"),
+      JSON.stringify(serverResourcesEvent()) + "\n",
     );
 
     const output = await runWatchUntilImportLogs(tempDir, dbPath, 3);
@@ -272,17 +284,8 @@ describe("telemetry SQLite importer", () => {
     mkdirSync(dirA);
     mkdirSync(dirB);
 
-    const fileName = "chat-metrics-2026-04-29.jsonl";
-    const contents =
-      JSON.stringify({
-        receivedAt: 100,
-        generatedAt: 90,
-        appVersion: "1.1.0",
-        buildNumber: "29",
-        samples: [{ ts: 1000, metric: "chat.ttft_ms", value: 1200, unit: "ms" }],
-      }) + "\n";
-
-    writeFileSync(join(dirA, fileName), contents);
+    const fileName = "app-events-2026-10-27.jsonl";
+    writeFileSync(join(dirA, fileName), JSON.stringify(appEvent({ ts: 1000 })) + "\n");
     cpSync(join(dirA, fileName), join(dirB, fileName));
 
     runImport(dirA, dbPath);
@@ -290,9 +293,7 @@ describe("telemetry SQLite importer", () => {
 
     const db = new DatabaseSync(dbPath);
     try {
-      expect(
-        (db.prepare("SELECT count(*) AS c FROM chat_metric_samples").get() as { c: number }).c,
-      ).toBe(1);
+      expect((db.prepare("SELECT count(*) AS c FROM events").get() as { c: number }).c).toBe(1);
       expect(
         (db.prepare("SELECT count(*) AS c FROM ingested_files").get() as { c: number }).c,
       ).toBe(1);
@@ -308,79 +309,22 @@ describe("telemetry SQLite importer", () => {
     }
   });
 
-  it("migrates older server ops tables before importing flattened tags", () => {
+  it("stores each v2 event with its origin, client identity, fields, and tags", () => {
     tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
     const dbPath = join(tempDir, "telemetry.db");
-    const oldDb = new DatabaseSync(dbPath);
-    oldDb.exec(`
-      CREATE TABLE server_ops_metric_samples (
-        id TEXT PRIMARY KEY,
-        source_file TEXT NOT NULL,
-        line_number INTEGER NOT NULL,
-        sample_index INTEGER NOT NULL,
-        ts_ms INTEGER NOT NULL,
-        metric TEXT NOT NULL,
-        value REAL NOT NULL,
-        tags_json TEXT
-      );
-    `);
-    oldDb.close();
-
     writeFileSync(
-      join(tempDir, "server-ops-metrics-2026-05-08.jsonl"),
-      JSON.stringify({
-        samples: [
-          {
-            ts: 1,
-            metric: "server.ws_handshake_ms",
-            value: 12,
-            tags: { path: "bound_session_stream" },
-          },
-        ],
-      }) + "\n",
+      join(tempDir, "app-events-2026-10-27.jsonl"),
+      JSON.stringify(
+        appEvent({
+          ts: 1_793_000_000_000,
+          fields: { duration_ms: 412, items: 87 },
+          tags: { load_path: "cache_hit" },
+        }),
+      ) + "\n",
     );
-
-    runImport(tempDir, dbPath);
-
-    const db = new DatabaseSync(dbPath);
-    try {
-      const row = db.prepare("SELECT tag_path FROM server_ops_metric_samples").get() as {
-        tag_path: string;
-      };
-      expect(row.tag_path).toBe("bound_session_stream");
-    } finally {
-      db.close();
-    }
-  });
-
-  it("flattens server ops metric tags used by split-stream dashboards", () => {
-    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
-    const dbPath = join(tempDir, "telemetry.db");
     writeFileSync(
-      join(tempDir, "server-ops-metrics-2026-05-08.jsonl"),
-      JSON.stringify({
-        flushedAt: 1_778_254_400_000,
-        samples: [
-          {
-            ts: 1_778_254_400_001,
-            metric: "server.ws_message_sent",
-            value: 1,
-            tags: { path: "bound_session_stream", type: "text_delta", level: "bound_session" },
-          },
-          {
-            ts: 1_778_254_400_002,
-            metric: "server.catchup_events",
-            value: 3,
-            tags: { lane: "session", ring: "session", outcome: "success" },
-          },
-          {
-            ts: 1_778_254_400_003,
-            metric: "server.ws_close_code",
-            value: 1,
-            tags: { path: "session_audio_stream", code: "1000" },
-          },
-        ],
-      }) + "\n",
+      join(tempDir, "server-events-2026-10-27.jsonl"),
+      JSON.stringify(serverResourcesEvent()) + "\n",
     );
 
     runImport(tempDir, dbPath);
@@ -389,113 +333,106 @@ describe("telemetry SQLite importer", () => {
     try {
       const rows = db
         .prepare(
-          `
-        SELECT metric, tag_path, tag_type, tag_level, tag_lane, tag_ring, tag_code, tag_outcome
-        FROM server_ops_metric_samples
-        ORDER BY ts_ms
-      `,
-        )
-        .all() as Array<{
-        metric: string;
-        tag_path: string | null;
-        tag_type: string | null;
-        tag_level: string | null;
-        tag_lane: string | null;
-        tag_ring: string | null;
-        tag_code: string | null;
-        tag_outcome: string | null;
-      }>;
-
-      expect(rows).toEqual([
-        {
-          metric: "server.ws_message_sent",
-          tag_path: "bound_session_stream",
-          tag_type: "text_delta",
-          tag_level: "bound_session",
-          tag_lane: null,
-          tag_ring: null,
-          tag_code: null,
-          tag_outcome: null,
-        },
-        {
-          metric: "server.catchup_events",
-          tag_path: null,
-          tag_type: null,
-          tag_level: null,
-          tag_lane: "session",
-          tag_ring: "session",
-          tag_code: null,
-          tag_outcome: "success",
-        },
-        {
-          metric: "server.ws_close_code",
-          tag_path: "session_audio_stream",
-          tag_type: null,
-          tag_level: null,
-          tag_lane: null,
-          tag_ring: null,
-          tag_code: "1000",
-          tag_outcome: null,
-        },
-      ]);
-    } finally {
-      db.close();
-    }
-  });
-
-  it("imports event-loop lag from server resource samples and leaves missing samples null", () => {
-    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
-    const dbPath = join(tempDir, "telemetry.db");
-    writeFileSync(
-      join(tempDir, "server-metrics-2026-10-08.jsonl"),
-      JSON.stringify({
-        ts: 10,
-        cpu: { user: 1, system: 2, total: 3 },
-        memory: { heapUsed: 4, heapTotal: 5, rss: 6, external: 7 },
-        sessions: { busy: 0, ready: 1, starting: 0, total: 1 },
-        wsConnections: 2,
-        eventLoop: { p50: 1.5, p95: 9, p99: 21, max: 148 },
-      }) +
-        "\n" +
-        JSON.stringify({
-          ts: 11,
-          cpu: { total: 1 },
-          memory: { rss: 2, heapUsed: 3 },
-          sessions: { total: 1 },
-          wsConnections: 0,
-        }) +
-        "\n",
-    );
-
-    runImport(tempDir, dbPath);
-
-    const db = new DatabaseSync(dbPath);
-    try {
-      const rows = db
-        .prepare(
-          `
-          SELECT ts_ms, event_loop_p50, event_loop_p95, event_loop_p99, event_loop_max
-          FROM server_metric_samples
-          ORDER BY ts_ms
-        `,
+          `SELECT ts_ms, origin, name, session_id, workspace_id, client_kind, app_version,
+                  build_number, git_commit, device_model,
+                  json_extract(fields_json, '$.duration_ms') AS duration_ms,
+                  json_extract(tags_json, '$.load_path') AS load_path,
+                  fields_json, tags_json
+           FROM events ORDER BY origin`,
         )
         .all();
       expect(rows).toEqual([
         {
-          ts_ms: 10,
-          event_loop_p50: 1.5,
-          event_loop_p95: 9,
-          event_loop_p99: 21,
-          event_loop_max: 148,
+          ts_ms: 1_793_000_000_000,
+          origin: "app",
+          name: "app.session_load",
+          session_id: "s1",
+          workspace_id: "w1",
+          client_kind: "ios",
+          app_version: "1.2.0",
+          build_number: "412",
+          git_commit: "abc123def456",
+          device_model: "iPhone17,1",
+          duration_ms: 412,
+          load_path: "cache_hit",
+          fields_json: '{"duration_ms":412,"items":87}',
+          tags_json: '{"load_path":"cache_hit"}',
         },
         {
-          ts_ms: 11,
-          event_loop_p50: null,
-          event_loop_p95: null,
-          event_loop_p99: null,
-          event_loop_max: null,
+          ts_ms: 10,
+          origin: "server",
+          name: "server.resources",
+          session_id: null,
+          workspace_id: null,
+          client_kind: null,
+          app_version: null,
+          build_number: null,
+          git_commit: null,
+          device_model: null,
+          duration_ms: null,
+          load_path: null,
+          fields_json: '{"rss_mb":300}',
+          tags_json: '{"host_scope":"host"}',
         },
       ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ignores pre-v2 files and skips lines that are not v2 events", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    writeFileSync(
+      join(tempDir, "chat-metrics-2026-10-20.jsonl"),
+      JSON.stringify({ samples: [{ ts: 1, metric: "chat.ttft_ms", value: 1, unit: "ms" }] }) +
+        "\n",
+    );
+    writeFileSync(
+      join(tempDir, "app-events-2026-10-27.jsonl"),
+      [
+        JSON.stringify({ ts: 1, metric: "chat.ttft_ms", value: 1 }),
+        "not json",
+        JSON.stringify({ ...appEvent({ ts: 5 }), v: 3 }),
+        JSON.stringify(appEvent({ ts: 6 })),
+      ].join("\n") + "\n",
+    );
+
+    runImport(tempDir, dbPath);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      expect(db.prepare("SELECT ts_ms FROM events").all()).toEqual([{ ts_ms: 6 }]);
+      expect(
+        (db.prepare("SELECT count(*) AS c FROM ingested_files").get() as { c: number }).c,
+      ).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("leaves legacy tables of an existing database in place", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    const oldDb = new DatabaseSync(dbPath);
+    oldDb.exec(`
+      CREATE TABLE chat_metric_samples (id TEXT PRIMARY KEY, metric TEXT);
+      INSERT INTO chat_metric_samples VALUES ('a', 'chat.ttft_ms');
+    `);
+    oldDb.close();
+    writeFileSync(
+      join(tempDir, "app-events-2026-10-27.jsonl"),
+      JSON.stringify(appEvent({ ts: 6 })) + "\n",
+    );
+
+    runImport(tempDir, dbPath);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      expect(db.prepare("SELECT metric FROM chat_metric_samples").all()).toEqual([
+        { metric: "chat.ttft_ms" },
+      ]);
+      expect((db.prepare("SELECT count(*) AS c FROM events").get() as { c: number }).c).toBe(1);
     } finally {
       db.close();
     }

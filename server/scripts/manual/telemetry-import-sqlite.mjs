@@ -18,7 +18,9 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const INGEST_PARSER_VERSION = 6;
+// 7: one `events` table for v2 telemetry records (`app-events-*`, `server-events-*`).
+// Pre-v2 files and the tables built from them are no longer read.
+const INGEST_PARSER_VERSION = 7;
 const DEFAULT_BROKEN_BACKUP_KEEP_COUNT = 1;
 const DEFAULT_LOCK_STALE_MS = 10 * 60 * 1000;
 
@@ -85,72 +87,24 @@ function ensureSchema(db) {
       processed_offset_bytes INTEGER NOT NULL DEFAULT 0
     );
 
-    CREATE TABLE IF NOT EXISTS chat_metric_samples (
+    CREATE TABLE IF NOT EXISTS events (
       id TEXT PRIMARY KEY,
       source_file TEXT NOT NULL,
       line_number INTEGER NOT NULL,
-      sample_index INTEGER NOT NULL,
       ts_ms INTEGER NOT NULL,
-      metric TEXT NOT NULL,
-      value REAL NOT NULL,
-      unit TEXT NOT NULL,
-      generated_at_ms INTEGER,
-      received_at_ms INTEGER,
-      app_version TEXT,
-      build_number TEXT,
-      os_version TEXT,
-      device_model TEXT,
+      origin TEXT NOT NULL,
+      name TEXT NOT NULL,
       session_id TEXT,
       workspace_id TEXT,
-      tags_json TEXT
+      client_kind TEXT,
+      app_version TEXT,
+      build_number TEXT,
+      git_commit TEXT,
+      device_model TEXT,
+      fields_json TEXT NOT NULL,
+      tags_json TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_chat_metric_metric_ts ON chat_metric_samples(metric, ts_ms);
-    CREATE INDEX IF NOT EXISTS idx_chat_metric_ts ON chat_metric_samples(ts_ms);
-    CREATE INDEX IF NOT EXISTS idx_chat_metric_build_ts ON chat_metric_samples(build_number, ts_ms);
-
-    CREATE TABLE IF NOT EXISTS server_metric_samples (
-      id TEXT PRIMARY KEY,
-      source_file TEXT NOT NULL,
-      line_number INTEGER NOT NULL,
-      ts_ms INTEGER NOT NULL,
-      cpu_user REAL NOT NULL,
-      cpu_system REAL NOT NULL,
-      cpu_total REAL NOT NULL,
-      mem_heap_used REAL NOT NULL,
-      mem_heap_total REAL NOT NULL,
-      mem_rss REAL NOT NULL,
-      mem_external REAL NOT NULL,
-      sessions_busy INTEGER NOT NULL,
-      sessions_ready INTEGER NOT NULL,
-      sessions_starting INTEGER NOT NULL,
-      sessions_total INTEGER NOT NULL,
-      ws_connections INTEGER NOT NULL,
-      event_loop_p50 REAL,
-      event_loop_p95 REAL,
-      event_loop_p99 REAL,
-      event_loop_max REAL
-    );
-    CREATE INDEX IF NOT EXISTS idx_server_metric_ts ON server_metric_samples(ts_ms);
-
-    CREATE TABLE IF NOT EXISTS server_ops_metric_samples (
-      id TEXT PRIMARY KEY,
-      source_file TEXT NOT NULL,
-      line_number INTEGER NOT NULL,
-      sample_index INTEGER NOT NULL,
-      ts_ms INTEGER NOT NULL,
-      metric TEXT NOT NULL,
-      value REAL NOT NULL,
-      tags_json TEXT,
-      tag_path TEXT,
-      tag_type TEXT,
-      tag_level TEXT,
-      tag_lane TEXT,
-      tag_ring TEXT,
-      tag_code TEXT,
-      tag_outcome TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_ts ON server_ops_metric_samples(metric, ts_ms);
-    CREATE INDEX IF NOT EXISTS idx_server_ops_ts ON server_ops_metric_samples(ts_ms);
+    CREATE INDEX IF NOT EXISTS idx_events_name_ts ON events(name, ts_ms);
 
     CREATE TABLE IF NOT EXISTS metrickit_payloads (
       id TEXT PRIMARY KEY,
@@ -186,42 +140,6 @@ function ensureSchema(db) {
       "ALTER TABLE ingested_files ADD COLUMN processed_offset_bytes INTEGER NOT NULL DEFAULT 0",
     );
   }
-
-  const serverMetricColumns = db.prepare("PRAGMA table_info(server_metric_samples)").all();
-  const serverMetricColumnNames = new Set(serverMetricColumns.map((column) => column.name));
-  for (const column of [
-    "event_loop_p50",
-    "event_loop_p95",
-    "event_loop_p99",
-    "event_loop_max",
-  ]) {
-    if (!serverMetricColumnNames.has(column)) {
-      db.exec(`ALTER TABLE server_metric_samples ADD COLUMN ${column} REAL`);
-    }
-  }
-
-  const serverOpsColumns = db.prepare("PRAGMA table_info(server_ops_metric_samples)").all();
-  const serverOpsColumnNames = new Set(serverOpsColumns.map((column) => column.name));
-  const serverOpsTagColumns = [
-    "tag_path",
-    "tag_type",
-    "tag_level",
-    "tag_lane",
-    "tag_ring",
-    "tag_code",
-    "tag_outcome",
-  ];
-  for (const column of serverOpsTagColumns) {
-    if (!serverOpsColumnNames.has(column)) {
-      db.exec(`ALTER TABLE server_ops_metric_samples ADD COLUMN ${column} TEXT`);
-    }
-  }
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_path_ts ON server_ops_metric_samples(metric, tag_path, ts_ms);
-    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_level_ts ON server_ops_metric_samples(metric, tag_level, ts_ms);
-    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_lane_ts ON server_ops_metric_samples(metric, tag_lane, ts_ms);
-    CREATE INDEX IF NOT EXISTS idx_server_ops_metric_ring_ts ON server_ops_metric_samples(metric, tag_ring, ts_ms);
-  `);
 }
 
 function brokenBackupKeepCountFromEnv() {
@@ -243,11 +161,9 @@ function normalizedSourceFile(fileName) {
 }
 
 function detectKind(fileName) {
-  if (fileName.startsWith("chat-metrics-") && fileName.endsWith(".jsonl")) return "chat";
-  if (fileName.startsWith("server-metrics-") && fileName.endsWith(".jsonl")) return "server";
-  if (fileName.startsWith("server-ops-metrics-") && fileName.endsWith(".jsonl"))
-    return "server_ops";
-  if (fileName.startsWith("metrickit-") && fileName.endsWith(".jsonl")) return "metrickit";
+  if (!fileName.endsWith(".jsonl")) return null;
+  if (fileName.startsWith("app-events-") || fileName.startsWith("server-events-")) return "events";
+  if (fileName.startsWith("metrickit-")) return "metrickit";
   return null;
 }
 
@@ -259,9 +175,7 @@ function toJson(value) {
   return value && typeof value === "object" ? JSON.stringify(value) : null;
 }
 
-function tagValue(tags, key) {
-  if (!tags || typeof tags !== "object") return null;
-  const value = tags[key];
+function stringOrNull(value) {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
@@ -387,123 +301,22 @@ function planIngest(state, meta) {
   };
 }
 
-function ingestChatFile(db, sourceFile, lines, options) {
+/**
+ * One `events` row per v2 telemetry record (`{ v: 2, ts, origin, name, fields,
+ * tags, sessionId?, workspaceId?, client? }`). Dashboards read `fields_json` and
+ * `tags_json` with `json_extract`. A line that is not a v2 record (unparsable,
+ * another `v`, or without a numeric `ts` and a string `name`) is skipped.
+ */
+function ingestEventsFile(db, sourceFile, lines, options) {
   const { replaceExisting = false, lineNumberStart = 0 } = options;
   if (replaceExisting) {
-    db.prepare("DELETE FROM chat_metric_samples WHERE source_file = ?").run(sourceFile);
+    db.prepare("DELETE FROM events WHERE source_file = ?").run(sourceFile);
   }
 
   const ins = db.prepare(`
-    INSERT OR REPLACE INTO chat_metric_samples (
-      id, source_file, line_number, sample_index, ts_ms, metric, value, unit,
-      generated_at_ms, received_at_ms, app_version, build_number, os_version,
-      device_model, session_id, workspace_id, tags_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  let count = 0;
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex];
-    if (!line.trim()) continue;
-    const payload = JSON.parse(line);
-    const samples = Array.isArray(payload.samples) ? payload.samples : [];
-    const lineNumber = lineNumberStart + lineIndex + 1;
-    for (let sampleIndex = 0; sampleIndex < samples.length; sampleIndex += 1) {
-      const sample = samples[sampleIndex] ?? {};
-      const ts = Number(sample.ts);
-      const value = Number(sample.value);
-      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== "string") {
-        continue;
-      }
-
-      ins.run(
-        fileId([sourceFile, lineNumber, sampleIndex]),
-        sourceFile,
-        lineNumber,
-        sampleIndex,
-        ts,
-        sample.metric,
-        value,
-        typeof sample.unit === "string" ? sample.unit : "count",
-        safeNumber(Number(payload.generatedAt)),
-        safeNumber(Number(payload.receivedAt)),
-        payload.appVersion ?? null,
-        payload.buildNumber ?? null,
-        payload.osVersion ?? null,
-        payload.deviceModel ?? null,
-        sample.sessionId ?? null,
-        sample.workspaceId ?? null,
-        toJson(sample.tags),
-      );
-      count += 1;
-    }
-  }
-
-  return count;
-}
-
-function ingestServerFile(db, sourceFile, lines, options) {
-  const { replaceExisting = false, lineNumberStart = 0 } = options;
-  if (replaceExisting) {
-    db.prepare("DELETE FROM server_metric_samples WHERE source_file = ?").run(sourceFile);
-  }
-
-  const ins = db.prepare(`
-    INSERT OR REPLACE INTO server_metric_samples (
-      id, source_file, line_number, ts_ms, cpu_user, cpu_system, cpu_total,
-      mem_heap_used, mem_heap_total, mem_rss, mem_external,
-      sessions_busy, sessions_ready, sessions_starting, sessions_total, ws_connections,
-      event_loop_p50, event_loop_p95, event_loop_p99, event_loop_max
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  let count = 0;
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex];
-    if (!line.trim()) continue;
-    const row = JSON.parse(line);
-    const ts = Number(row.ts);
-    if (!Number.isFinite(ts)) continue;
-
-    const lineNumber = lineNumberStart + lineIndex + 1;
-    ins.run(
-      fileId([sourceFile, lineNumber]),
-      sourceFile,
-      lineNumber,
-      ts,
-      Number(row.cpu?.user ?? 0),
-      Number(row.cpu?.system ?? 0),
-      Number(row.cpu?.total ?? 0),
-      Number(row.memory?.heapUsed ?? 0),
-      Number(row.memory?.heapTotal ?? 0),
-      Number(row.memory?.rss ?? 0),
-      Number(row.memory?.external ?? 0),
-      Number(row.sessions?.busy ?? 0),
-      Number(row.sessions?.ready ?? 0),
-      Number(row.sessions?.starting ?? 0),
-      Number(row.sessions?.total ?? 0),
-      Number(row.wsConnections ?? 0),
-      safeNumber(Number(row.eventLoop?.p50)),
-      safeNumber(Number(row.eventLoop?.p95)),
-      safeNumber(Number(row.eventLoop?.p99)),
-      safeNumber(Number(row.eventLoop?.max)),
-    );
-    count += 1;
-  }
-
-  return count;
-}
-
-function ingestServerOpsFile(db, sourceFile, lines, options) {
-  const { replaceExisting = false, lineNumberStart = 0 } = options;
-  if (replaceExisting) {
-    db.prepare("DELETE FROM server_ops_metric_samples WHERE source_file = ?").run(sourceFile);
-  }
-
-  const ins = db.prepare(`
-    INSERT OR REPLACE INTO server_ops_metric_samples (
-      id, source_file, line_number, sample_index, ts_ms, metric, value, tags_json,
-      tag_path, tag_type, tag_level, tag_lane, tag_ring, tag_code, tag_outcome
+    INSERT OR REPLACE INTO events (
+      id, source_file, line_number, ts_ms, origin, name, session_id, workspace_id,
+      client_kind, app_version, build_number, git_commit, device_model, fields_json, tags_json
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
@@ -511,37 +324,36 @@ function ingestServerOpsFile(db, sourceFile, lines, options) {
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
     if (!line.trim()) continue;
-    const payload = JSON.parse(line);
-    const samples = Array.isArray(payload.samples) ? payload.samples : [];
-    const lineNumber = lineNumberStart + lineIndex + 1;
-    for (let sampleIndex = 0; sampleIndex < samples.length; sampleIndex += 1) {
-      const sample = samples[sampleIndex] ?? {};
-      const ts = Number(sample.ts);
-      const value = Number(sample.value);
-      if (!Number.isFinite(ts) || !Number.isFinite(value) || typeof sample.metric !== "string") {
-        continue;
-      }
-
-      const tags = sample.tags && typeof sample.tags === "object" ? sample.tags : null;
-      ins.run(
-        fileId([sourceFile, lineNumber, sampleIndex]),
-        sourceFile,
-        lineNumber,
-        sampleIndex,
-        ts,
-        sample.metric,
-        value,
-        toJson(tags),
-        tagValue(tags, "path"),
-        tagValue(tags, "type"),
-        tagValue(tags, "level"),
-        tagValue(tags, "lane"),
-        tagValue(tags, "ring"),
-        tagValue(tags, "code"),
-        tagValue(tags, "outcome"),
-      );
-      count += 1;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
     }
+    if (record?.v !== 2 || !Number.isFinite(record.ts) || typeof record.name !== "string") {
+      continue;
+    }
+
+    const client = record.client && typeof record.client === "object" ? record.client : {};
+    const lineNumber = lineNumberStart + lineIndex + 1;
+    ins.run(
+      fileId([sourceFile, lineNumber]),
+      sourceFile,
+      lineNumber,
+      record.ts,
+      record.origin === "server" ? "server" : "app",
+      record.name,
+      stringOrNull(record.sessionId),
+      stringOrNull(record.workspaceId),
+      stringOrNull(client.kind),
+      stringOrNull(client.appVersion),
+      stringOrNull(client.buildNumber),
+      stringOrNull(client.gitCommit),
+      stringOrNull(client.deviceModel),
+      JSON.stringify(record.fields ?? {}),
+      JSON.stringify(record.tags ?? {}),
+    );
+    count += 1;
   }
 
   return count;
@@ -607,9 +419,7 @@ function ingestMetricKitFile(db, sourceFile, lines, options) {
 }
 
 function ingestLinesForKind(db, kind, sourceFile, lines, options) {
-  if (kind === "chat") return ingestChatFile(db, sourceFile, lines, options);
-  if (kind === "server") return ingestServerFile(db, sourceFile, lines, options);
-  if (kind === "server_ops") return ingestServerOpsFile(db, sourceFile, lines, options);
+  if (kind === "events") return ingestEventsFile(db, sourceFile, lines, options);
   if (kind === "metrickit") return ingestMetricKitFile(db, sourceFile, lines, options);
   throw new Error(`Unsupported telemetry kind: ${kind}`);
 }

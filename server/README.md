@@ -301,9 +301,12 @@ Benchmark conventions, baselines, and comparison workflow live in [bench/README.
 
 ## Local release telemetry dashboard (SQLite + Grafana)
 
-This stack reads telemetry JSONL files that oppi-server writes to:
+This stack reads the telemetry JSONL files that oppi-server writes to:
 
-- `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/*.jsonl`
+- `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/app-events-*.jsonl` and `server-events-*.jsonl`: v2 event records, imported into one `events` table
+- `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/metrickit-*.jsonl`: MetricKit payloads, imported into `metrickit_payloads`
+
+Every event is declared in the telemetry catalog (`src/telemetry/catalog.ts`); [dev/telemetry.md](../dev/telemetry.md) lists them all. Pre-catalog files (`chat-metrics-*`, `server-ops-metrics-*`, `server-metrics-*`) are not imported.
 
 ### 1) Start telemetry stack (auto-import + Grafana)
 
@@ -319,16 +322,17 @@ This starts two services:
 
 Importer behavior:
 
-- reads telemetry JSONL from `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/*.jsonl`
+- reads `app-events-*`, `server-events-*`, and `metrickit-*` JSONL from `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/`
 - writes SQLite into a Docker-managed volume mounted at `/var/lib/oppi-telemetry-db/telemetry.db`
 - runs one import immediately on startup
 - runs SQLite integrity checks on startup and recovery by default, not on every watch tick
 - continues in watch mode; `OPPI_TELEMETRY_IMPORT_INTERVAL_MS` defaults to `15000`
 - ingests append-only daily JSONL files incrementally instead of reimporting the whole hot file each cycle
 - normalizes source-file keys so Docker and host imports target the same rows
-- flattens common server-ops tags (`path`, `type`, `level`, `lane`, `ring`, `code`, `outcome`) for split-stream Grafana panels. `provider`, `model`, and `runtime` stay in `tags_json`
-- copies resource-sample `eventLoop.p50`, `p95`, `p99`, and `max` into `event_loop_p50`, `event_loop_p95`, `event_loop_p99`, and `event_loop_max`; missing values stay NULL
-- reimports a JSONL file when the importer parser version changes, so new columns fill in on the next import
+- stores one row per v2 event in `events` (`ts_ms`, `origin`, `name`, `session_id`, `workspace_id`, `client_kind`, `app_version`, `build_number`, `git_commit`, `device_model`, `fields_json`, `tags_json`; indexed on `(name, ts_ms)`). Dashboards read an event's numbers with `json_extract(fields_json, '$.duration_ms')` and its tags with `json_extract(tags_json, '$.status')`; there are no flattened tag columns
+- skips lines that are not v2 records
+- leaves the legacy tables (`chat_metric_samples`, `server_metric_samples`, `server_ops_metric_samples`) of an existing database in place and unused; a fresh database does not create them
+- reimports a JSONL file when the importer parser version changes (now 7), so a changed schema fills in on the next import
 - keeps at most `OPPI_TELEMETRY_BROKEN_DB_KEEP_COUNT` malformed-db backups; the default is `1`
 - uses a short-lived lock file so overlapping importer runs skip rather than clobber each other
 
@@ -341,10 +345,23 @@ The stack provisions this datasource and these dashboards automatically:
 
 - datasource: `Oppi Telemetry SQLite`
 - dashboards: `Oppi Release Preflight`, `Oppi Server Health`, and `Oppi Model Routing` (folder: `Oppi`)
-- Release Preflight: experience metrics, including workspace load, session switch, thread load by phase, client network handshake and ping RTT, server STT latency, voice playback, device CPU and memory by screen and app state, and collapsed command, quick-session, and share-publish drill-down
-- Server Health: event-loop p99 trend and max gate, per-route HTTP latency and response bytes, and collapsed session-create, push (by event and relay result), event-ring, MCP connect, schedule-run, and server-dictation drill-down
+- Release Preflight: experience metrics, including workspace load, session switch, thread load by phase, client network handshake and ping RTT, server STT latency, dictation setup phases, voice playback, rendering cost against the 120 Hz frame budget (8.3 ms), device CPU and memory by screen and app state, memory warnings (footprint before and after) and main-thread stalls, and collapsed command, quick-session, and share-publish drill-down
+- Server Health: event-loop p99 trend and max gate, per-route HTTP latency and response bytes, WebSocket panels split by `stream` (`session`, `dictation`, `app_events`), and collapsed session-create, push (by notification and relay result), event-ring, MCP connect, schedule-run, and server-dictation drill-down
 - Model Routing: provider, model, and runtime workload. Missing runtime is an explicit untagged bucket. The Runtime dropdown filters the panels.
-- Sum-aggregated counters use `SUM(value)`. Max-aggregated gauges (`broadcast_fanout`, `event_ring_utilization`) use `MAX(value)`. HTTP timings and response bytes are raw samples; `telemetry:review -- --http` prints latency and byte columns. `telemetry:review -- --models` includes the runtime breakdown.
+- Alert rules (`docker/grafana/provisioning/alerting/alert-rules.yml`) read the same `events` table.
+- Events with catalog storage aggregation (`server.turn_usage`, `server.ws_message_sent`, `server.ws_message_received`) hold a flush-window sum per row: use `SUM(json_extract(fields_json, '$.x'))`, not a row count. `server.broadcast_fanout` holds the window's peak: use `MAX`. Every other event is one row per occurrence. `server.http_request` omits fast successful routine routes, so its row count is not request volume. `telemetry:review -- --http` prints latency and byte columns. `telemetry:review -- --models` includes the runtime breakdown.
+
+`npm run check` fails when a dashboard, alert rule, or the importer disagrees with the catalog (`scripts/check-telemetry.ts`): an event, field, tag key, or tag value that the catalog does not have, or SQL that does not run against the importer's schema.
+
+### Check the dashboards against a running Grafana
+
+```bash
+cd server
+npm run telemetry:grafana:check                    # last 7 days, all three dashboards
+npm run telemetry:grafana:check -- --days 1 oppi-server-health
+```
+
+The script runs every panel and template-variable query through Grafana (`OPPI_GRAFANA_URL`, default `http://localhost:${OPPI_GRAFANA_PORT:-13001}`; `OPPI_GRAFANA_ADMIN_USER` and `OPPI_GRAFANA_ADMIN_PASSWORD`, default `admin`/`admin`). It exits 1 when any query errors; empty panels are listed separately and do not fail the run, because a panel is empty when the window holds no such events. It is a dev tool and not part of `npm run check`.
 
 ### 2) Stop telemetry stack
 

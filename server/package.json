@@ -82,6 +82,7 @@
     "telemetry:import:watch": "node scripts/manual/telemetry-import-sqlite.mjs --watch",
     "telemetry:grafana:up": "docker compose -f docker-compose.telemetry.yml up -d",
     "telemetry:grafana:down": "docker compose -f docker-compose.telemetry.yml down",
+    "telemetry:grafana:check": "bun scripts/telemetry-grafana-check.ts",
     "telemetry:review": "bun scripts/telemetry-review.ts",
     "telemetry:review:gate": "bun scripts/telemetry-review.ts --days 3 --gate",
     "telemetry:client-logs": "bun scripts/client-log-review.ts",
