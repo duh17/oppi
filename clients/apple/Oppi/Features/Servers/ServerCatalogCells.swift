@@ -221,8 +221,7 @@ final class ServerCatalogStateCell: UICollectionViewListCell {
 /// unless connected, its connection state ("Name — state", the state also the
 /// action's accessibility value); then Usage for the shown server. Choosing a
 /// server asks for its lock, then makes it the active one once its connection
-/// is ready, as the SwiftUI `ServerCatalogServerRow` did. The menu is rebuilt
-/// each time it opens, so it lists current states.
+/// is ready. The menu is rebuilt each time it opens, so it lists current states.
 @MainActor
 enum ServerCatalogServerMenu {
     /// - Parameters:

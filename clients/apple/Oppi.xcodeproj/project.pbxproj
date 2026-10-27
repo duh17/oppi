@@ -1168,7 +1168,6 @@
 		8386BF24BFE6E1D58EC70875 /* Color+Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EF4632B78DA7C5328C09774 /* Color+Theme.swift */; };
 		83C0CB9F1C2789452F69A6E6 /* MacUnixWebSocketTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B374378449E6A5661B21D69C /* MacUnixWebSocketTransportTests.swift */; };
 		83EE8DD064542522ECB7CD2C /* MacWebSocketFrameCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DA62DE78DD7E384238541A0 /* MacWebSocketFrameCodecTests.swift */; };
-		83F61A7ACA63F9605BB07943 /* ServerCatalogServerRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3695F252E62C1CCE438CB4AB /* ServerCatalogServerRow.swift */; };
 		8400815B59E1F88006EB49D4 /* SessionRowMetricsFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7F12D2F846F78355EE4902B /* SessionRowMetricsFormattingTests.swift */; };
 		841EC03CB73287F5CD587A0B /* ChatSessionManager+iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF5C50651C26D2AE36A4926D /* ChatSessionManager+iOS.swift */; };
 		84240E956D453D3B88647D97 /* ToolPresentationConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43BB23251B4592B564F31A88 /* ToolPresentationConfigTests.swift */; };
@@ -2830,7 +2829,6 @@
 		35FA3411D780C1DB10CED7BC /* AUDIT-RESULTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "AUDIT-RESULTS.md"; sourceTree = "<group>"; };
 		3622E44BB9790DF1FDF51AEF /* ThemeGalleryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeGalleryViewController.swift; sourceTree = "<group>"; };
 		3676B62608949F0D8D754EF1 /* TelemetryModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryModeTests.swift; sourceTree = "<group>"; };
-		3695F252E62C1CCE438CB4AB /* ServerCatalogServerRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerCatalogServerRow.swift; sourceTree = "<group>"; };
 		369CC8375740648865129C00 /* MacReviewCommentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacReviewCommentTests.swift; sourceTree = "<group>"; };
 		36A3CDD9C63ABD1B3FC156EC /* AnchoredCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnchoredCollectionView.swift; sourceTree = "<group>"; };
 		36A3D874CE198C3D073E6DFC /* ShareQuickSessionSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareQuickSessionSender.swift; sourceTree = "<group>"; };
@@ -5848,7 +5846,6 @@
 		7452965CA265FB93F34AD2BA /* Skills */ = {
 			isa = PBXGroup;
 			children = (
-				3695F252E62C1CCE438CB4AB /* ServerCatalogServerRow.swift */,
 				C68739E3DF0F96110AB008AD /* ServerResourceDetailLoader.swift */,
 				5C3CF4C076077FF51CEA017E /* ServerSkillBrowserViewController.swift */,
 				E8EC4E9708FCCEC9B43283F9 /* ServerSkillDetailViewController.swift */,
@@ -10082,7 +10079,6 @@
 				AB4FD57C56F8F68ECBE76730 /* ServerAboutPage.swift in Sources */,
 				396E3B5D03E080C97523441A /* ServerBadgePage.swift in Sources */,
 				F3338F39BED88AAA657C22AB /* ServerCatalogCells.swift in Sources */,
-				83F61A7ACA63F9605BB07943 /* ServerCatalogServerRow.swift in Sources */,
 				62AA80D4BEC3839E52DDF93E /* ServerConnection+AppEvents.swift in Sources */,
 				4E6739FA7C0E7F1F5E53A948 /* ServerConnection+Ask.swift in Sources */,
 				84ABC61E8FD4BAD2D15DA5B0 /* ServerConnection+FileSuggestions.swift in Sources */,

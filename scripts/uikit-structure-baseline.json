@@ -244,9 +244,6 @@
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Skills/ServerCatalogServerRow.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/SessionInboxComposeChrome.swift": {
       "import SwiftUI": 1
     },
