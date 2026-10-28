@@ -207,7 +207,7 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
             ),
             SettingsSectionModel(
                 .lock,
-                footer: ScopedLockToggle.footer(for: "this server and its workspaces and sessions"),
+                footer: ScopedLockToggleRow.footer(for: "this server and its workspaces and sessions"),
                 scope: .device,
                 items: [.lock]
             ),

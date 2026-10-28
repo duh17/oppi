@@ -198,9 +198,6 @@
     "clients/apple/Oppi/Features/Settings/ScopedLockToggle.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Settings/ScopedLockToggleRow.swift": {
-      "toggleRow(": 1
-    },
     "clients/apple/Oppi/Features/Settings/SettingsChatTopBarViewController.swift": {
       "AppPreferences.*.set": 2,
       ".settingsToggle(": 1

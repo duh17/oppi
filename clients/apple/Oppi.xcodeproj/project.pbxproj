@@ -1563,7 +1563,6 @@
 		A980E139A897C42DB213D124 /* ChatFileBrowserPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9402D3A1420052E7D10E6207 /* ChatFileBrowserPanel.swift */; };
 		A99BB8F6185B36A705ED7BAF /* SessionTreeFilterMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = B930A35F0EFC44135FE2316B /* SessionTreeFilterMode.swift */; };
 		A9A7340A043A2C76476A5846 /* MarkdownTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C2526925920C92F7FEF2A86 /* MarkdownTextTests.swift */; };
-		A9A8154BE649075B539CB2B8 /* ScopedLockToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A5FA18027F3E607BD011DB /* ScopedLockToggle.swift */; };
 		A9F35E3987DEAA4B95EB9B1E /* SettingsPrivacyPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07E5AFF3D3CB7105F738C5F9 /* SettingsPrivacyPage.swift */; };
 		AA080BD3319C6F4015A25EC2 /* OppiDictationSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02DD35AC5EAD9EDB72F81297 /* OppiDictationSession.swift */; };
 		AA118CF311F7D0EC8F3D3104 /* SettingsKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F198130CE96267406A407D5 /* SettingsKit.swift */; };
@@ -3876,7 +3875,6 @@
 		B75EE4D488F34EB13AC9CB46 /* MarkdownResourceAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownResourceAccess.swift; sourceTree = "<group>"; };
 		B76A7EAFBF2AA6CA035725D0 /* MacMarkdownImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMarkdownImageView.swift; sourceTree = "<group>"; };
 		B78713D9528ECB1CE85A99E3 /* VoiceInputSessionMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputSessionMonitor.swift; sourceTree = "<group>"; };
-		B7A5FA18027F3E607BD011DB /* ScopedLockToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScopedLockToggle.swift; sourceTree = "<group>"; };
 		B7B4CAE2A5865A269549911F /* MathCoreGraphicsRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathCoreGraphicsRenderer.swift; sourceTree = "<group>"; };
 		B7E1D2BE22C3BAAFF3AFDFCB /* DiffGutterAttributeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffGutterAttributeTests.swift; sourceTree = "<group>"; };
 		B7EE849BEB7E7A817E246994 /* ToolExpandScrollMatrixSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolExpandScrollMatrixSupport.swift; sourceTree = "<group>"; };
@@ -5932,7 +5930,6 @@
 				1C205E3385FAAEA4B0231751 /* DictationDictionaryViewController.swift */,
 				EDBFEEC725B5A2E1482C6F7F /* QuickCommentEditorViewController.swift */,
 				B6EFE4ED9993A40D59656566 /* QuickCommentsViewController.swift */,
-				B7A5FA18027F3E607BD011DB /* ScopedLockToggle.swift */,
 				D1FDEBA49247BDB2EA26218C /* ScopedLockToggleRow.swift */,
 				D33FE470FD2679473DE5D398 /* SettingsActionStateCells.swift */,
 				32AAB031C25B95FFD1597293 /* SettingsAppearanceViewController.swift */,
@@ -10292,7 +10289,6 @@
 				22FA3421CD15D60A812E5ACA /* SchedulePresentation.swift in Sources */,
 				4528F5D5ACC374384689B213 /* ScheduleTriggerDraft.swift in Sources */,
 				8C77168A4AD57B5C476ADA8B /* ScopedLockService.swift in Sources */,
-				A9A8154BE649075B539CB2B8 /* ScopedLockToggle.swift in Sources */,
 				EADBE5931853C9D27CA0F15F /* ScopedLockToggleRow.swift in Sources */,
 				85BAC081D7A9ED1AA4BC8CB6 /* ScopedLockViews.swift in Sources */,
 				ADF06B8FAEBE776D8AFCBE9B /* ScreenAwakeController.swift in Sources */,

@@ -611,7 +611,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         case .git:
             String(localized: "Shows branch, changed files, and line stats above the chat.")
         case .lock:
-            ScopedLockToggle.footer(for: "this workspace and its sessions")
+            ScopedLockToggleRow.footer(for: "this workspace and its sessions")
         case .summary, .pages, .error, .delete:
             nil
         }
