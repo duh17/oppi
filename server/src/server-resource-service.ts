@@ -1,4 +1,3 @@
-import { packageHasDurableEntry } from "./durable-extension-loader.js";
 import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -370,6 +369,9 @@ export class ServerResourceService {
   async hasDurableEntry(id: string): Promise<boolean> {
     const context = await this.resolveContext();
     const resource = this.findResourceById("extension", context.extensions, id);
+    // Loaded on demand: the durable loader pulls in pi-durable, which a server with durable
+    // sessions off (and the CLI) must never load.
+    const { packageHasDurableEntry } = await import("./durable-extension-loader.js");
     return packageHasDurableEntry(resource.path, resource.metadata);
   }
 
