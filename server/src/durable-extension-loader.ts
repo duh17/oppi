@@ -261,6 +261,23 @@ export function bundledDurableExtensionPackages(dir: string = BUNDLED_PACKAGES_D
   return { packages, errors };
 }
 
+/**
+ * Whether the package of the Pi extension at `path` declares a durable entry (`oppi.durable`),
+ * which only a durable reload can load or drop. A package whose manifest is invalid has none.
+ */
+export function packageHasDurableEntry(
+  path: string,
+  metadata: { packageRoot?: string; baseDir?: string } | undefined,
+): boolean {
+  const root = packageRoot(path, metadata);
+  if (!root) return false;
+  try {
+    return readDurableManifest(root) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 function packageRoot(
   path: string,
   metadata: { packageRoot?: string; baseDir?: string } | undefined,

@@ -22,7 +22,7 @@ import {
   parsePublicUrl,
   parseTrustedPeers,
 } from "../proxy-config.js";
-import { extractAutoTitle } from "./auto-title-extension-migration.js";
+import { extractAutoTitle, hasAutoTitle } from "./auto-title-extension-migration.js";
 import { parsePushEvents } from "../push/events.js";
 import { isRevision } from "../settings/revision.js";
 import { parseRelayOrigins } from "../push/relay-origin.js";
@@ -1233,8 +1233,10 @@ export class ConfigStore {
     this.workspacesDir = join(this.dataDir, "workspaces");
 
     this.ensureDirectories();
-    // Before the load, which drops the `autoTitle` key this step backs up and carries over.
-    extractAutoTitle(this.dataDir);
+    // Before the load, which drops the `autoTitle` key this step backs up and carries over. Under
+    // the config lock like every other config write, and only when there is something to do, so
+    // a read-only command never waits on a lock.
+    if (hasAutoTitle(this.dataDir)) this.withLock(() => extractAutoTitle(this.dataDir));
     this.config = this.loadConfig();
   }
 

@@ -63,7 +63,8 @@ export interface AutoNamePackageOptions {
  *   brings nothing back: the ledger remembers the offer.
  *
  * A user's own `~/.pi/agent/extensions/auto-name` is the same extension, so the package is
- * not listed beside it. A failure is logged and retried at the next start; it never stops the server.
+ * not listed beside it, and an entry listed before the user linked their copy is removed at the
+ * next start. A failure is logged and retried at the next start; it never stops the server.
  */
 export async function setUpAutoNamePackage(options: AutoNamePackageOptions): Promise<void> {
   const agentDir = options.agentDir ?? getAgentDir();
@@ -80,7 +81,10 @@ export async function setUpAutoNamePackage(options: AutoNamePackageOptions): Pro
     if (carryover) writeModel(agentDir, carryover.model);
 
     await editPackages(agentDir, (packages) => {
-      const next = packages.map((entry) => repointed(entry, packageDir));
+      // A user's own copy and the shipped one are the same extension: one copy, theirs.
+      const next = userInstall
+        ? packages.filter((entry) => !isShipped(entry))
+        : packages.map((entry) => repointed(entry, packageDir));
       if (carryover && !userInstall) {
         const index = next.findIndex(isShipped);
         const enabled = entryFor(

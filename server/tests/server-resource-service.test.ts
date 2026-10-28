@@ -414,6 +414,40 @@ describe("ServerResourceService mutations and skill details", () => {
     expect(settings.packages[0]?.skills).toEqual([]);
   });
 
+  it("says whether the package behind an extension declares a durable entry", async () => {
+    const fixture = makeFixture();
+    const packages = ["classic-only", "with-durable", "broken-manifest"].map((name) => {
+      const dir = join(fixture.root, name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "index.ts"), "export default function () {}\n");
+      writeFileSync(join(dir, "durable.ts"), "export default {};\n");
+      const oppi =
+        name === "classic-only"
+          ? undefined
+          : name === "with-durable"
+            ? { durable: { entry: "./durable.ts" } }
+            : { durable: { entry: "durable.ts" } }; // not "./": an invalid manifest
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({ name, version: "1.0.0", pi: { extensions: ["./index.ts"] }, oppi }),
+      );
+      return dir;
+    });
+    writeFileSync(
+      join(fixture.agentDir, "settings.json"),
+      JSON.stringify({ packages: packages.map((source) => ({ source })) }),
+    );
+
+    const service = makeService(fixture);
+    const listed = (await service.listExtensions()).extensions;
+    const durable = async (name: string): Promise<boolean> =>
+      service.hasDurableEntry(listed.find((extension) => extension.name === name)!.id);
+
+    expect(await durable("classic-only")).toBe(false);
+    expect(await durable("with-durable")).toBe(true);
+    expect(await durable("broken-manifest")).toBe(false);
+  });
+
   it("reads skill detail through a symlinked user skill directory", async () => {
     const fixture = makeFixture();
     const externalSkills = join(fixture.root, "external-skills");

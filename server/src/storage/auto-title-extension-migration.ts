@@ -33,6 +33,12 @@ export type AutoTitleExtraction =
   /** `autoTitle` was on with a model: it is dropped and its model waits in the carry-over file. */
   | { status: "carried"; backupPath: string; model: string };
 
+/** Whether config.json still has `autoTitle`: the cheap check before taking the config lock. */
+export function hasAutoTitle(dataDir: string): boolean {
+  const config = readConfigObject(join(dataDir, "config.json"));
+  return config !== undefined && "autoTitle" in config;
+}
+
 /**
  * The server no longer titles sessions itself: the `auto-name` Pi extension does. The config
  * store drops keys it no longer knows, so this runs before it loads config.json, wherever a
@@ -43,6 +49,9 @@ export type AutoTitleExtraction =
  * 2. `autoTitle` on with a model titled sessions: keep its model in the carry-over file.
  *    Anything else titled nothing, so there is nothing to carry.
  * 3. Remove `autoTitle` from config.json.
+ *
+ * Callers hold the config lock (`ConfigStore` does), so a server and a CLI command starting
+ * together cannot both rewrite config.json, and neither overwrites a save in flight.
  *
  * Writing Pi's settings is asynchronous, so the next `oppi serve` applies the carry-over
  * (`setUpAutoNamePackage`). Removing `autoTitle` is what marks this step done: a second call

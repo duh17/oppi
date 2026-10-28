@@ -80,9 +80,13 @@ export interface OppiDurableHost {
   liveVoice(env: ExecutionEnv | undefined): ((text: string) => void) | undefined;
   /**
    * The Oppi Session of the conversation `api` is for, for a hook or task (which has no execution
-   * env): its name, and a way to set it (the same write as renaming it in the app). Only the
-   * calling conversation's own Session is reachable. Undefined for a conversation the server has
-   * not bound to a Session, or until the server binds naming.
+   * env): its name, and a way to set it (the same write as renaming it in the app). It reads the
+   * conversation id from `api`, the object pi-durable hands the hook or task, so it names that
+   * conversation's Session and takes no id of its own. The host cannot tell a hand-built `api`
+   * from pi-durable's (pi-durable marks none), and extension code runs in the server process
+   * with its permissions anyway; this keeps an honest extension from naming another Session by
+   * mistake. Undefined for a conversation the server has not bound to a Session, or until the
+   * server binds naming.
    */
   sessionName(
     api: DocumentReader & { readonly conversationId: ConversationId },

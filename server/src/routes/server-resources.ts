@@ -365,10 +365,13 @@ export function createServerResourceRoutes(
         });
       }
       // Durable sessions load a Pi package's durable entry when their store opens and on reload,
-      // so the toggle reaches them only through a reload (`oppi extensions reload`).
+      // so the toggle reaches them only through a reload (`oppi extensions reload`). A package
+      // with no durable entry changes nothing there: its toggle stays a settings write.
       if (ctx.sessions.durableSessionsAvailable()) {
         try {
-          await ctx.sessions.reloadDurableExtensions();
+          if (await ctx.serverResources.hasDurableEntry(id)) {
+            await ctx.sessions.reloadDurableExtensions();
+          }
         } catch (reloadError: unknown) {
           log.warn("server_resources.durable_extensions_reload_failed", {
             extensionId: id,

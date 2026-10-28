@@ -127,6 +127,28 @@ describe("autoTitle in config.json, before the config loads", () => {
     expect(readConfig()).not.toHaveProperty("autoTitle");
   });
 
+  it("runs under the config lock, as every other config write does", () => {
+    seedConfig({ enabled: true, model: "anthropic/claude-haiku-5" });
+    const before = readFileSync(join(dataDir, "config.json"), "utf8");
+    // A lock a dead process left behind: taking the lock fails at once.
+    mkdirSync(join(dataDir, "config.json.lock"));
+    writeFileSync(join(dataDir, "config.json.lock", "pid"), "2147483646\n");
+
+    expect(() => new Storage(dataDir)).toThrow(/Stale config lock/);
+
+    expect(readFileSync(join(dataDir, "config.json"), "utf8")).toBe(before);
+    expect(existsSync(join(dataDir, "backups"))).toBe(false);
+  });
+
+  it("does not take the lock when there is nothing to carry over", () => {
+    seedConfig(undefined);
+    mkdirSync(join(dataDir, "config.json.lock"));
+    writeFileSync(join(dataDir, "config.json.lock", "pid"), "2147483646\n");
+
+    // Reading the config needs no lock: only a write waits on it.
+    expect(() => new Storage(dataDir)).not.toThrow();
+  });
+
   it("refuses to load the config when it cannot back it up, leaving it as it was", () => {
     seedConfig({ enabled: true, model: "anthropic/claude-haiku-5" });
     const before = readFileSync(join(dataDir, "config.json"), "utf8");
@@ -266,6 +288,21 @@ describe("the shipped auto-name package in Pi's settings", () => {
     expect(JSON.parse(readFileSync(join(agentDir, "auto-name.json"), "utf8")).model).toBe(
       "anthropic/claude-haiku-5",
     );
+  });
+
+  it("removes the shipped entry once the user links their own copy, so there is one", async () => {
+    await serve();
+    expect(readSettings().packages).toEqual([{ source: AUTO_NAME, extensions: [] }]);
+
+    mkdirSync(join(agentDir, "extensions"), { recursive: true });
+    symlinkSync(AUTO_NAME, join(agentDir, "extensions", "auto-name"));
+    await serve();
+
+    expect(readSettings().packages).toEqual([]);
+    // Nothing relists it beside the user's copy, and other entries stay.
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:other"] }));
+    await serve();
+    expect(readSettings().packages).toEqual(["npm:other"]);
   });
 
   it("does nothing, and does not fail, when the install lacks the package", async () => {

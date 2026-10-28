@@ -1,3 +1,4 @@
+import { packageHasDurableEntry } from "./durable-extension-loader.js";
 import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -360,6 +361,16 @@ export class ServerResourceService {
       if (!current) throw new ServerResourceNotFoundError("extension");
       return copyExtensionSummary(current.summary);
     });
+  }
+
+  /**
+   * Whether the Pi package behind extension `id` declares a durable entry, so toggling it
+   * changes what durable sessions load. A classic-only extension does not.
+   */
+  async hasDurableEntry(id: string): Promise<boolean> {
+    const context = await this.resolveContext();
+    const resource = this.findResourceById("extension", context.extensions, id);
+    return packageHasDurableEntry(resource.path, resource.metadata);
   }
 
   private async resolveContext(): Promise<ResolutionContext> {

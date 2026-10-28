@@ -58,6 +58,7 @@ function makeRoutes(sessions: ReturnType<typeof makeRouteSessions> = makeRouteSe
       contributedTools: ["review"],
     })),
     setExtensionEnabled: vi.fn(async () => ({ ...extension, state: "off" as const })),
+    hasDurableEntry: vi.fn(async () => true),
     getPiSystemPrompt: vi.fn(async () => ({
       source: "default" as const,
       path: "~/.pi/agent/SYSTEM.md",
@@ -131,6 +132,25 @@ describe("server resource routes", () => {
     vi.spyOn(process.stderr, "write").mockReturnValue(true);
     reload.mockRejectedValueOnce(new Error("store busy"));
     expect((await toggle()).statusCode).toBe(200);
+  });
+
+  it("leaves durable extensions alone when the toggled package has no durable entry", async () => {
+    const sessions = makeRouteSessions();
+    sessions.durableSessionsAvailable = () => true;
+    const reload = vi.fn(async () => ({}));
+    sessions.reloadDurableExtensions = reload;
+    const { routes, serverResources } = makeRoutes(sessions);
+    serverResources.hasDurableEntry.mockResolvedValueOnce(false);
+
+    const response = await dispatch(
+      routes,
+      "PUT",
+      `/server/resources/extensions/${extension.id}/enabled`,
+      jsonRequest({ enabled: true }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("leaves durable extensions alone when the server offers no durable sessions", async () => {
