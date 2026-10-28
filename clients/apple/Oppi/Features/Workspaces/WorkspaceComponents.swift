@@ -19,47 +19,6 @@ struct WorkspaceIcon: View {
     }
 }
 
-
-// MARK: - RuntimeBadge
-
-struct RuntimeBadge: View {
-    var compact: Bool = false
-    var icon: ServerBadgeIcon = .defaultValue
-    var tint: ThemeShapeStyle = .themeComment
-
-    private var resolvedSymbolName: String {
-        if UIImage(systemName: icon.symbolName) != nil {
-            return icon.symbolName
-        }
-        return "desktopcomputer"
-    }
-
-    private var badgeSize: CGFloat {
-        compact ? 20 : 24
-    }
-
-    private var symbolSize: CGFloat {
-        compact ? 10 : 12
-    }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(tint.opacity(0.16))
-
-            Circle()
-                .stroke(tint.opacity(0.5), lineWidth: 1)
-
-            Image(systemName: resolvedSymbolName)
-                .font(.system(size: symbolSize, weight: .bold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(tint)
-        }
-        .frame(width: badgeSize, height: badgeSize)
-        .accessibilityLabel("Server badge")
-    }
-}
-
 enum ServerBadgeConnectionState: Sendable, Equatable {
     case connected
     case connecting
@@ -124,6 +83,7 @@ enum ServerBadgeConnectionState: Sendable, Equatable {
         }
     }
 
+    /// The state's color; `uiColor(_:)` (SessionListCollection) maps its role to UIKit.
     var tintColor: ThemeShapeStyle {
         switch self {
         case .connected: return .themeGreen

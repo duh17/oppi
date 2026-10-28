@@ -496,7 +496,7 @@ final class SettingsServerRowCell: UICollectionViewListCell {
     }
 }
 
-/// A server's mark on a tinted circle: the UIKit form of `RuntimeBadge`.
+/// A server's mark on a tinted circle.
 final class SettingsServerBadgeView: UIView {
     private let symbol = UIImageView()
 

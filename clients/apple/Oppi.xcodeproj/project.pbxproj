@@ -2009,6 +2009,7 @@
 		D993578E31BEA34254DC48AB /* ToolPresentationSegmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63C02E41E96E86410E52D141 /* ToolPresentationSegmentTests.swift */; };
 		D9AF65AE2AC6569F27AE9E0A /* ServerSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C976B172E11C921BD3A8880 /* ServerSelection.swift */; };
 		D9B756F4895E7D8AC7C5A08E /* SettingsPrivacyPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1396525F0A8F6565D6979401 /* SettingsPrivacyPageTests.swift */; };
+		D9C14FE7613E98CC7AC23BF0 /* HostSwitcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90C19FDB493969B9D31AF38F /* HostSwitcher.swift */; };
 		D9DE65D096F5B9BE98B741CE /* OrgAttributedStringRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E669818A177E15546B537121 /* OrgAttributedStringRenderer.swift */; };
 		D9DE81CB670D8B8D705201C0 /* AppleOnDeviceSpeechSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23CBA2F41AEF0DAB6E73837C /* AppleOnDeviceSpeechSettingsTests.swift */; };
 		D9E4B0B2DAA1001776C341CA /* DeviceKeyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DF59844CC02911865351D62 /* DeviceKeyProvider.swift */; };
@@ -3589,6 +3590,7 @@
 		906C7972C7E4D2F4605C188E /* OppiMac.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OppiMac.entitlements; sourceTree = "<group>"; };
 		9076AE2969F386F75A21C0E8 /* FreshnessState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreshnessState.swift; sourceTree = "<group>"; };
 		90ACA06659FCB4108760A9FF /* MarkdownTableColumnLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTableColumnLayout.swift; sourceTree = "<group>"; };
+		90C19FDB493969B9D31AF38F /* HostSwitcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostSwitcher.swift; sourceTree = "<group>"; };
 		90C597F7B3D9C1A3F74F4886 /* ChatViewController+Leaves.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatViewController+Leaves.swift"; sourceTree = "<group>"; };
 		90D9E984389470189D63C3A0 /* AuthenticatedRangeHTTPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedRangeHTTPServer.swift; sourceTree = "<group>"; };
 		91B23AB83CBF132755213BF1 /* ServerSkillFileTree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerSkillFileTree.swift; sourceTree = "<group>"; };
@@ -6762,6 +6764,7 @@
 		AAC4D262523818774DA3E971 /* Servers */ = {
 			isa = PBXGroup;
 			children = (
+				90C19FDB493969B9D31AF38F /* HostSwitcher.swift */,
 				55CCA9ED967ADB4D79F157C3 /* ModelProviderSheets.swift */,
 				52598F592CE04540CE4651EE /* ModelProvidersViewController.swift */,
 				E33E11C7F239F16F65BC9E89 /* PairedDeviceRoster.swift */,
@@ -10025,6 +10028,7 @@
 				439551DD2905ACD7AD8E3C84 /* HorizontalPanPassthroughScrollView.swift in Sources */,
 				BB355B8755937E98D064A766 /* HostDirectory.swift in Sources */,
 				B8188E35AE65E1581B28F0CA /* HostFactory.swift in Sources */,
+				D9C14FE7613E98CC7AC23BF0 /* HostSwitcher.swift in Sources */,
 				47B73E553EC1285F6B496269 /* IOSChatSessionRuntimeAdapter.swift in Sources */,
 				FB5B245B7FF1F509144A70E1 /* IPadReadableContentWidth.swift in Sources */,
 				9A82B09D7DE878F8B5F4E317 /* IconAsset.swift in Sources */,
