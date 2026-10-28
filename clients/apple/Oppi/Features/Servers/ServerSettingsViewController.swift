@@ -540,7 +540,9 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
         case .pairedDevices:
             track(navigator.push { ServerPairedDevicesPage(model: model, server: server) })
         case .about:
-            track(navigator.push { ServerAboutPage(model: model, server: server) })
+            let about = ServerAboutViewController(model: model, server: server, root: root)
+            Router.push(about, from: self)
+            track(about)
         case .badge:
             // Read inside the page's own graph, so a new icon redraws its preview.
             track(navigator.push { ServerBadgePage(server: store.server(for: server.id) ?? server) })

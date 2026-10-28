@@ -337,7 +337,15 @@ extension ServerSettingsModel {
                     status: "idle",
                     restartMode: "automatic"
                 )
-                : nil
+                : nil,
+            voiceBackends: [
+                .init(feature: "dictation", label: "Dictation", state: "ready", target: "http://127.0.0.1:7936"),
+                .init(
+                    feature: "readAloud", label: "Read aloud", state: "unreachable",
+                    target: "http://127.0.0.1:7937", detail: "connect ECONNREFUSED 127.0.0.1:7937"
+                ),
+                .init(feature: "liveVoice", label: "Live Voice", state: "needs_credentials", detail: "Sign in to xAI to start calls."),
+            ]
         )
         model.isLoading = false
         model.providerSetupState = .configured

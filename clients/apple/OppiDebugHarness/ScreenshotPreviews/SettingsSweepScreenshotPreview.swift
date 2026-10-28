@@ -17,7 +17,8 @@ import SwiftUI
 /// `agents-pi`, `agent-icon-picker`, `agent-edit`, `agent-edit-tools`, `-skills`, `-extensions`, `-workspaces` (the pages it pushes), `pi-tools`, `schedule-edit`, `schedule-edit-cron`, `schedule-edit-existing`,
 /// `schedule-time-zone`, `workspaces` (the server's workspace list), `workspaces-empty`, `workspace-create`, `workspace-create-configure`, `server-settings`
 /// (Server Settings for the fixture server, loaded), `server-settings-loading` (its
-/// summary and loading rows, before the first answer).
+/// summary and loading rows, before the first answer), `server-about` (a page
+/// Server Settings pushes, over the same fixture model).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -143,9 +144,11 @@ struct SettingsSweepScreenshotPreview: View {
             name: "mac-studio",
             serverFingerprint: "sha256:preview-host"
         )
-        guard let server = PairedServer(from: credentials, sortOrder: 0) else {
+        guard var server = PairedServer(from: credentials, sortOrder: 0) else {
             preconditionFailure("The sweep preview needs a server fingerprint")
         }
+        // This device's pairing, so the roster marks "dev-iphone" as this device.
+        server.deviceCredential = DeviceCredential(deviceId: "dev-iphone", accessToken: "preview", expiresAt: .max, refreshChallenge: nil)
         self.server = server
 
         Self.installFixtureRoutes(page: page)
@@ -175,7 +178,7 @@ struct SettingsSweepScreenshotPreview: View {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if page.hasPrefix("mcp") || page.hasPrefix("server-settings") {
+        if page.hasPrefix("mcp") || page.hasPrefix("server-") {
             // The MCP screens wait for `apiClientReady`, so their connection is
             // a ready one whose requests the fixture answers, as the Router and
             // Metrics previews build theirs.
@@ -280,6 +283,16 @@ struct SettingsSweepScreenshotPreview: View {
                         ? .screenshotFixture(coordinator: coordinator, serverId: server.id, currentDeviceId: "dev-iphone", updateAvailable: true)
                         : .screenshotLoading(coordinator: coordinator, serverId: server.id)
                 )
+            }
+            .ignoresSafeArea()
+        case "server-about":
+            RouterPreviewControllerStack(root: root) { [root, server, coordinator, page] in
+                let model = ServerSettingsModel.screenshotFixture(
+                    coordinator: coordinator, serverId: server.id, currentDeviceId: "dev-iphone", updateAvailable: true
+                )
+                return switch page {
+                default: ServerAboutViewController(model: model, server: server, root: root)
+                }
             }
             .ignoresSafeArea()
         case "onboarding-add-server", "onboarding-tailscale":
