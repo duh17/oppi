@@ -81,21 +81,39 @@ extension ScopedLockGate where Accessory == EmptyView {
 /// `ScopedLockGate`'s cover for UIKit screens: the screen shows this in place
 /// of its content while `target` is locked, and tears its content down.
 /// Unlock authorizes `target`. Draws what `ScopedLockCoverView` draws.
+///
+/// A cover that cannot unlock (a reader with content but no lock origin)
+/// closes instead: `init(title:closeTitle:onClose:)` replaces Unlock with that
+/// action. `accessory` sits under the button (the server cover's Switch Server).
 @MainActor
 final class ScopedLockCoverViewController: UIViewController {
+    private enum Action {
+        case unlock(ScopedLockTarget)
+        case close(title: String, handler: @MainActor () -> Void)
+    }
+
     /// The locked item's name.
     var coverTitle: String {
         didSet { if coverTitle != oldValue { setNeedsUpdateProperties() } }
     }
 
-    private let target: ScopedLockTarget
+    private let action: Action
+    private let accessory: UIView?
     private let symbol = UIImageView()
     private let titleLabel = UILabel()
     private let lockedLabel = UILabel()
     private let unlockButton = UIButton(configuration: .borderedProminent())
 
-    init(target: ScopedLockTarget, title: String) {
-        self.target = target
+    init(target: ScopedLockTarget, title: String, accessory: UIView? = nil) {
+        action = .unlock(target)
+        self.accessory = accessory
+        coverTitle = title
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    init(title: String, closeTitle: String, onClose: @escaping @MainActor () -> Void) {
+        action = .close(title: closeTitle, handler: onClose)
+        accessory = nil
         coverTitle = title
         super.init(nibName: nil, bundle: nil)
     }
@@ -121,14 +139,19 @@ final class ScopedLockCoverViewController: UIViewController {
         unlockButton.accessibilityIdentifier = "scopedLock.unlock"
         unlockButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            let target = target
-            Task { _ = await ScopedLockService.shared.authorize(target) }
+            switch action {
+            case .unlock(let target):
+                Task { _ = await ScopedLockService.shared.authorize(target) }
+            case .close(_, let handler):
+                handler()
+            }
         }, for: .primaryActionTriggered)
         // SwiftUI's `minWidth: 180` sat on the label, inside the large
         // button's 20 pt sides.
         unlockButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
 
         let stack = UIStackView(arrangedSubviews: [symbol, titleLabel, lockedLabel, unlockButton])
+        if let accessory { stack.addArrangedSubview(accessory) }
         stack.axis = .vertical
         stack.alignment = .center
         stack.spacing = 14
@@ -155,10 +178,16 @@ final class ScopedLockCoverViewController: UIViewController {
 
         let method = AppLockService.shared.method
         var configuration = unlockButton.configuration ?? .borderedProminent()
-        configuration.title = method == .passcode
-            ? String(localized: "Unlock")
-            : String(localized: "Unlock with \(method.name)")
-        configuration.image = UIImage(systemName: method.systemImage)
+        switch action {
+        case .unlock:
+            configuration.title = method == .passcode
+                ? String(localized: "Unlock")
+                : String(localized: "Unlock with \(method.name)")
+            configuration.image = UIImage(systemName: method.systemImage)
+        case .close(let title, _):
+            configuration.title = title
+            configuration.image = UIImage(systemName: "xmark")
+        }
         configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(scale: .medium)
         configuration.imagePadding = 8
         configuration.buttonSize = .large

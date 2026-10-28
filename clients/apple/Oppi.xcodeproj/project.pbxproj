@@ -211,6 +211,7 @@
 		168CBB80BA438E0685074386 /* WorkspaceReviewDiffPreviewPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C7FC651B794DB6F32B3C20E /* WorkspaceReviewDiffPreviewPlan.swift */; };
 		1695B9EE4ABD50E896294793 /* AttentionNotificationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0B6F4135E11090ABC6E45EC /* AttentionNotificationServiceTests.swift */; };
 		16BE9211D10A2430BFDF1B46 /* WorkspaceGitSummaryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5479F254C51BF9A7ECBC99 /* WorkspaceGitSummaryStoreTests.swift */; };
+		16C037E670E3499E62FA6998 /* LockedServerSwitchButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 083A7C5C98AC70AFAB02B4AF /* LockedServerSwitchButton.swift */; };
 		16DEE66539EC2653242C5886 /* ForkHelperTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4660343EB2C2590CC6C8CA0 /* ForkHelperTests.swift */; };
 		170390F078016430802BE7D9 /* TLSPinning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 758B3FBB44FF9BFB8D721E67 /* TLSPinning.swift */; };
 		17083285BE7E2F10D5587E5F /* PendingImageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADA0E901A20AE20AE19855D /* PendingImageTests.swift */; };
@@ -2573,6 +2574,7 @@
 		07D6D176BA726AD604D6BB90 /* ServerConnectionForegroundRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionForegroundRecoveryTests.swift; sourceTree = "<group>"; };
 		07E5AFF3D3CB7105F738C5F9 /* SettingsPrivacyPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPrivacyPage.swift; sourceTree = "<group>"; };
 		0819880F1B11944637823460 /* FullScreenMarkdownAsyncRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenMarkdownAsyncRenderTests.swift; sourceTree = "<group>"; };
+		083A7C5C98AC70AFAB02B4AF /* LockedServerSwitchButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockedServerSwitchButton.swift; sourceTree = "<group>"; };
 		084B2A70F28072B154483FBB /* ToolMarkdownRowPerfProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolMarkdownRowPerfProbe.swift; sourceTree = "<group>"; };
 		0865C695FE3D85A4AEFD276B /* ComposerBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerBarController.swift; sourceTree = "<group>"; };
 		088F078E3443736CC8735B6D /* SyntaxLanguage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxLanguage.swift; sourceTree = "<group>"; };
@@ -7433,6 +7435,7 @@
 				FAC87BE0E2DF86F69B80DEF2 /* AppRootViewController.swift */,
 				7B007D6FF128D712BF02A12C /* ChatRouteViewController.swift */,
 				6609D29B2B1F5805C30C2A9D /* HostFactory.swift */,
+				083A7C5C98AC70AFAB02B4AF /* LockedServerSwitchButton.swift */,
 				2145A25C0C6EDA4CD5B6FEDC /* NavigationBreadcrumb.swift */,
 				F10DAFC602A678F0A1BACE53 /* OppiApp.swift */,
 				BCFC039AD80C3C8631DA5C1E /* Router.swift */,
@@ -10163,6 +10166,7 @@
 				3BD273930F9709369C6CF1FC /* LocalDataProtection.swift in Sources */,
 				D5C3C33D538A9BE989661DA7 /* LocalHTTPCache.swift in Sources */,
 				64D27A8C61D8782F2EB2BF6E /* LocalSessionRow.swift in Sources */,
+				16C037E670E3499E62FA6998 /* LockedServerSwitchButton.swift in Sources */,
 				A6100B5AE84B043B8D1F81AD /* ManualEntryViewController.swift in Sources */,
 				7018CF011FD94959E9C150ED /* MarkdownBlockSerializer.swift in Sources */,
 				2FEE8ED2BFC6D6EBC443A9B3 /* MarkdownNode.swift in Sources */,

@@ -232,7 +232,11 @@ enum ShellRouteScreens {
     }
 
     static func serverLockCover(serverId: String, root: AppRootEnvironment) -> UIViewController {
-        HostFactory.content(ShellServerLockCover(serverId: serverId), root: root)
+        ScopedLockCoverViewController(
+            target: .server(serverId),
+            title: root.coordinator.serverStore.server(for: serverId)?.name ?? String(localized: "Server"),
+            accessory: LockedServerSwitchButton(root: root)
+        )
     }
 
     /// A locked session's cover in place of its chat.
@@ -299,64 +303,6 @@ struct ShellRouteView: View {
             WorkspaceUtilityDestinationView(target: target)
         case .sessionThread(let target):
             SessionThreadDetailView(target: target)
-        }
-    }
-}
-
-/// The active server's lock cover over the whole shell.
-private struct ShellServerLockCover: View {
-    let serverId: String
-
-    @Environment(ServerStore.self) private var serverStore
-    @State private var locks = ScopedLockService.shared
-
-    var body: some View {
-        ScopedLockCoverView(
-            title: serverStore.server(for: serverId)?.name ?? String(localized: "Server"),
-            isAuthenticating: locks.isAuthenticating
-        ) {
-            Task { _ = await locks.authorize(.server(serverId)) }
-        } accessory: {
-            LockedServerSwitchMenu()
-        }
-    }
-}
-
-/// On a locked server's cover: switch to another paired server instead of
-/// unlocking this one. A locked target server asks first.
-private struct LockedServerSwitchMenu: View {
-    @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(ServerStore.self) private var serverStore
-
-    private var otherServers: [PairedServer] {
-        serverStore.servers.filter { $0.id != coordinator.activeServerId }
-    }
-
-    var body: some View {
-        if !otherServers.isEmpty {
-            Menu {
-                ForEach(otherServers) { server in
-                    Button {
-                        switchTo(server)
-                    } label: {
-                        Label(server.name, systemImage: server.resolvedBadgeIcon.symbolName)
-                    }
-                }
-            } label: {
-                Label("Switch Server", systemImage: "arrow.left.arrow.right")
-            }
-            .accessibilityIdentifier("scopedLock.switchServer")
-        }
-    }
-
-    private func switchTo(_ server: PairedServer) {
-        let coordinator = coordinator
-        let perform: @MainActor () -> Void = {
-            guard coordinator.restoreActiveServer(server.id) else { return }
-            Task { await coordinator.prepareSelectedServerShell(for: server) }
-        }
-        if ScopedLockService.shared.gate(.server(server.id), onUnlock: perform) {
-            perform()
         }
     }
 }
