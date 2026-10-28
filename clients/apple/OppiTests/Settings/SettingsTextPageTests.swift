@@ -55,6 +55,10 @@ struct SettingsTextPageTests {
         #expect(code.accessibilityLabel == "Code Text Size")
         #expect(code.accessibilityValue == "110 percent")
         #expect(try #require(slider(.messageSize, in: h.page)).accessibilityIdentifier == "settings.text.messageSize")
+        // The slider reads the whole row, so its title and percent are inside the one element that names them.
+        let row = try #require(cell(.codeSize, in: h.page))
+        let rowFrame = UIAccessibility.convertToScreenCoordinates(row.bounds, in: row)
+        #expect(code.accessibilityFrame == rowFrame)
     }
 
     @Test("Dragging a slider writes the size in whole steps, and VoiceOver adjusts it one step at a time")

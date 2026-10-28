@@ -4,6 +4,27 @@ import UIKit
 /// by a tenth of its range.
 final class SettingsSteppedSlider: UISlider {
     var step: Float = 0.05
+    /// The row the slider speaks for. Its title and value are drawn by labels
+    /// outside the slider, so the slider's accessibility frame is the whole row:
+    /// the text it names lies inside the one element that reads it, and the
+    /// audit does not call that text inaccessible.
+    weak var row: UIView?
+
+    override var accessibilityFrame: CGRect {
+        get {
+            guard let row else { return super.accessibilityFrame }
+            return UIAccessibility.convertToScreenCoordinates(row.bounds, in: row)
+        }
+        set { super.accessibilityFrame = newValue }
+    }
+
+    /// Activation stays on the track itself.
+    override var accessibilityActivationPoint: CGPoint {
+        get {
+            UIAccessibility.convertToScreenCoordinates(CGRect(origin: CGPoint(x: bounds.midX, y: bounds.midY), size: .zero), in: self).origin
+        }
+        set { super.accessibilityActivationPoint = newValue }
+    }
 
     override func accessibilityIncrement() { adjust(by: step) }
     override func accessibilityDecrement() { adjust(by: -step) }
@@ -64,7 +85,9 @@ final class SettingsSliderRowCell: UICollectionViewListCell {
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
-        // The labels paint the row; the slider is its one accessible element.
+        // The labels paint the row; the slider is its one accessible element, and
+        // its frame is the whole row.
+        slider.row = self
         accessibilityElements = [slider]
         arrangeForTextSize()
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in

@@ -16,7 +16,11 @@ final class SettingsTypographyPreviewView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         codeCaption.text = String(localized: "Code and tool output")
-        codeSample.text = "let files = try await workspace.changedFiles()\nprint(files.count)"
+        // Short lines, so the sample is not wrapped at a phone's width.
+        codeSample.text = "let files = try await\n    workspace.changedFiles()\nprint(files.count)"
+        // The one fixed-size text on the page (it follows Code Text Size, as code does in chat):
+        // UIValidate waives the audit's findings on this label only.
+        codeSample.accessibilityIdentifier = "settings.text.preview.code"
         messageCaption.text = String(localized: "Assistant message")
         messageSample.text = String(localized: "I found the settings path and kept the global preference device-local.")
         for caption in [codeCaption, messageCaption] {

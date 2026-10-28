@@ -286,7 +286,7 @@ enum UIValidateDump {
                     + "the chrome the composer shares (MicButtonChromeView); the row's label names the preview"
             ),
             SampledPreview(
-                identifier: "settings.text.preview",
+                identifier: "settings.text.preview.code",
                 reason: "the code sample deliberately follows Code Text Size, not Dynamic Type, as code does in chat"
             ),
         ]
