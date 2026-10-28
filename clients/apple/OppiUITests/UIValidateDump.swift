@@ -104,6 +104,10 @@ enum UIValidateDump {
             let element = app.descendants(matching: .any)[preview.identifier]
             return element.exists ? (preview.identifier, element.frame, preview.reason) : nil
         }
+        // The Extensions rows: each cell's label reads "<name>, <detail>".
+        let extensionRows = app.collectionViews["workspace.edit.extensions.list"].cells.allElementsBoundByIndex
+            .filter { $0.exists && $0.identifier.isEmpty }
+            .map { (label: $0.label, frame: $0.frame) }
         do {
             try app.performAccessibilityAudit(for: .all) { issue in
                 box.issues.append(
@@ -114,7 +118,7 @@ enum UIValidateDump {
                         element: describeElement(issue.element),
                         waivedReason: waivedReason(
                             for: issue, previewFrames: previewFrames, sampledPreviews: sampledPreviews,
-                            elementlessWaived: &box.elementlessWaived
+                            extensionRows: extensionRows, elementlessWaived: &box.elementlessWaived
                         )
                     )
                 )
@@ -236,6 +240,11 @@ enum UIValidateDump {
     /// Only issues whose element sits inside the preview's frames are waived; the editor and
     /// `SessionRowView` are unchanged since 7665a92f0.
     ///
+    /// The Workspace Extensions rows draw their detail line (where the extension lives) in the
+    /// monospaced design through `UIFont.scaledMonospaced`, which scales through
+    /// `UIFontMetrics(forTextStyle:)` like every other label; the audit reports `dynamicType` on it
+    /// anyway. Only a static text inside a row of that list whose label is the row's detail is waived.
+    ///
     /// Two settings previews draw real app text that is fixed-size on purpose
     /// (`SampledPreview`): Voice's mic control and Text's code sample. The audit
     /// finds their text by looking at the screen, so it often reports `dynamicType`
@@ -248,10 +257,18 @@ enum UIValidateDump {
         for issue: XCUIAccessibilityAuditIssue,
         previewFrames: [CGRect],
         sampledPreviews: [(identifier: String, frame: CGRect, reason: String)],
+        extensionRows: [(label: String, frame: CGRect)],
         elementlessWaived: inout Set<String>
     ) -> String? {
         if issue.auditType == .textClipped, issue.element?.elementType == .searchField {
             return "textClipped on the system search field, which draws its text in full"
+        }
+        if issue.auditType == .dynamicType,
+           let element = issue.element, element.elementType == .staticText,
+           extensionRows.contains(where: {
+               $0.label.hasSuffix(", \(element.label)") && $0.frame.insetBy(dx: -1, dy: -1).contains(element.frame)
+           }) {
+            return "UIFontMetrics-scaled monospaced detail; audit misreads the monospaced design"
         }
         if issue.auditType == .dynamicType || issue.auditType == .elementDetection {
             for preview in sampledPreviews {
