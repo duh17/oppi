@@ -28,6 +28,9 @@ struct AppRootEnvironment {
     let composerDraftStore: ComposerDraftStore
     let chatReaderPayloadStore: ChatReaderPayloadStore
     let sessionRows: SessionRowDisplayStore
+    /// Every declared setting's state: the one place settings are validated,
+    /// saved, rolled back, and reloaded (`SettingsCatalog`).
+    let settings: SettingsStore
     /// The app's one Live Voice call, which outlives the chat that started it.
     let liveVoiceCalls: LiveVoiceCallCenter
     /// The one owner of every open. UIKit reaches it here; SwiftUI through
@@ -45,6 +48,7 @@ struct AppRootEnvironment {
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
         liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
+        settings: SettingsStore? = nil,
         opener: AppOpener
     ) {
         self.coordinator = coordinator
@@ -54,6 +58,7 @@ struct AppRootEnvironment {
         self.composerDraftStore = composerDraftStore
         self.chatReaderPayloadStore = chatReaderPayloadStore
         self.sessionRows = sessionRows
+        self.settings = settings ?? .live(coordinator: coordinator)
         self.liveVoiceCalls = liveVoiceCalls
         self.opener = opener
     }
@@ -67,7 +72,8 @@ struct AppRootEnvironment {
         composerDraftStore: ComposerDraftStore,
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
-        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter()
+        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
+        settings: SettingsStore? = nil
     ) {
         self.init(
             coordinator: coordinator,
@@ -78,6 +84,7 @@ struct AppRootEnvironment {
             chatReaderPayloadStore: chatReaderPayloadStore,
             sessionRows: sessionRows,
             liveVoiceCalls: liveVoiceCalls,
+            settings: settings,
             opener: AppOpener(
                 coordinator: coordinator,
                 navigation: navigation,
@@ -97,6 +104,7 @@ extension AppRootEnvironment: Equatable {
             && lhs.composerDraftStore === rhs.composerDraftStore
             && lhs.chatReaderPayloadStore === rhs.chatReaderPayloadStore
             && lhs.sessionRows === rhs.sessionRows
+            && lhs.settings === rhs.settings
             && lhs.liveVoiceCalls === rhs.liveVoiceCalls
             && lhs.opener === rhs.opener
     }

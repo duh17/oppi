@@ -1,8 +1,8 @@
 import Testing
 @testable import Oppi
 
-@Suite("AutoTitleSettingsView model filtering")
-struct AutoTitleSettingsViewModelFilteringTests {
+@Suite("AutoTitleModelCatalog filtering")
+struct AutoTitleModelCatalogFilteringTests {
 
     private func model(id: String, name: String, provider: String) -> ModelInfo {
         ModelInfo(id: id, name: name, provider: provider, contextWindow: 128_000)
@@ -20,13 +20,13 @@ struct AutoTitleSettingsViewModelFilteringTests {
         #expect(groups.flatMap(\.models).map(\.name) == ["Sonnet", "Gemini Pro"])
     }
 
-    @Test func firstCompatibleModelIDNormalizesProviderPrefix() {
+    @Test func groupedModelsCarryTheProviderPrefixedID() {
         let models = [
             model(id: "gpt-5.3-codex", name: "Codex", provider: "openai-codex"),
             model(id: "claude-sonnet-4-6", name: "Sonnet", provider: "anthropic")
         ]
 
-        let first = AutoTitleModelCatalog.firstCompatibleModelID(from: models)
+        let first = AutoTitleModelCatalog.compatibleModelGroups(from: models).flatMap(\.models).first?.fullId
         #expect(first == "anthropic/claude-sonnet-4-6")
     }
 

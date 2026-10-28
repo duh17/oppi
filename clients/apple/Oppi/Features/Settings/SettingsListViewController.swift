@@ -51,7 +51,10 @@ struct SettingsSectionModel<Section: Hashable & Sendable, Item: Hashable & Senda
 ///   `decorate(footer:section:)`: swipe actions, and an icon or tone on a
 ///   section heading.
 ///
-/// The kit is presentational: a page keeps its own data and saves it itself.
+/// A page keeps its own data, except for the settings it declares in
+/// `SettingsCatalog`: those are read and written through its `settings` store
+/// by `settingToggleRow` and `settingChoiceRow` (`SettingsDeclaredRows.swift`),
+/// which draw their state, scope, and failures from the declaration.
 @MainActor
 class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & Sendable>: UIViewController, UICollectionViewDelegate {
     private(set) lazy var collectionView: UICollectionView = {
@@ -64,8 +67,11 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     }()
     private(set) var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     /// Where the page's settings are kept. A section says its scope only when
-    /// it differs from this.
-    let pageScope: SettingsScope
+    /// it differs from this. `nil` for a page that mixes scopes: every section
+    /// with a scope says it.
+    let pageScope: SettingsScope?
+    /// The store behind the page's declared settings (`SettingsCatalog`).
+    let settings: SettingsStore?
     private let showsHeaders: Bool
     private let showsFooters: Bool
     private var appliedThemeID: ThemeID?
@@ -74,7 +80,9 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
 
     /// - Parameters:
     ///   - listIdentifier: the list's accessibility identifier, `settings.<page>.list`.
-    ///   - scope: where the page's settings are kept. Every page says it.
+    ///   - scope: where the page's settings are kept. Every page says it; a
+    ///     page that mixes scopes says `nil`, and each section names its own.
+    ///   - settings: the store a page with declared settings reads and writes.
     ///   - headers: whether sections can show a header.
     ///   - footers: whether sections can show a footer. A page with a section
     ///     scope needs them, since the scope sentence is part of the footer.
@@ -82,12 +90,14 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     init(
         title: String,
         listIdentifier: String,
-        scope: SettingsScope,
+        scope: SettingsScope?,
+        settings: SettingsStore? = nil,
         headers: Bool = false,
         footers: Bool = false,
         largeTitle: Bool = false
     ) {
         pageScope = scope
+        self.settings = settings
         showsHeaders = headers
         showsFooters = footers
         super.init(nibName: nil, bundle: nil)
@@ -153,7 +163,10 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     }
 
     /// Makes `cell` a switch row: the title, and a trailing switch. `identifier`
-    /// is the switch's, which is what `app.switches[id]` finds.
+    /// is the switch's, which is what `app.switches[id]` finds. For a switch
+    /// that is not a setting's value (a draft's field, a reorder list's
+    /// visibility); a setting declared in `SettingsCatalog` uses
+    /// `settingToggleRow`, and the settings-write guard counts the rest.
     func toggleRow(
         _ cell: UICollectionViewListCell,
         title: String,
@@ -165,7 +178,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         var content = content(.plain)
         content.text = title
         cell.contentConfiguration = content
-        cell.accessories = [.settingsToggle(isOn, identifier: identifier, label: title, isEnabled: isEnabled, onChange: onChange)]
+        cell.accessories = [.settingsToggle(isOn, identifier: identifier, label: title, isEnabled: isEnabled, reusing: cell, onChange: onChange)]
     }
 
     // MARK: - Lifecycle
@@ -224,6 +237,14 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         }
     }
 
+    /// The failure line under a declared setting that failed: the reason and
+    /// Retry, from the store, keyed by the setting's id.
+    private(set) lazy var settingFailureCell = UICollectionView.CellRegistration<SettingsStateRowCell, String> { [weak self] cell, _, id in
+        guard let settings = self?.settings else { return }
+        let retry: (() -> Void)? = settings.canRetry(id: id) ? { settings.retry(id: id) } : nil
+        cell.configure(.failure(settings.failureReason(id: id) ?? "", retry: retry), identifier: "\(id).failure")
+    }
+
     private lazy var plainCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
         // Reuse clears everything a previous row set.
@@ -236,7 +257,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     }
 
     private func installDataSource() {
-        _ = plainCell
+        _ = (plainCell, settingFailureCell)
         prepareRegistrations()
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, kind, indexPath in
             self?.configureSupplementary(view, kind: kind, at: indexPath)

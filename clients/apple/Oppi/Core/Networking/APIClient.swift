@@ -925,19 +925,24 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(AutoTitleConfig.self, from: data)
     }
 
-    /// Update the auto-title configuration. With `baseRevision`, the server refuses the save
-    /// (409 `revision_conflict`) when the setting changed since that revision.
+    /// Update the auto-title configuration. Only the fields given are sent, so one
+    /// setting's save never overwrites another's. With `baseRevision`, the server refuses the
+    /// save (409 `revision_conflict`) when the setting changed since that revision.
     @discardableResult
-    func setAutoTitleConfig(_ config: AutoTitleConfig, baseRevision: Int? = nil) async throws -> AutoTitleConfig {
+    func setAutoTitleConfig(
+        enabled: Bool? = nil,
+        model: String? = nil,
+        baseRevision: Int? = nil
+    ) async throws -> AutoTitleConfig {
         let data = try await put(
             "/server/auto-title",
-            body: AutoTitleWriteRequest(enabled: config.enabled, model: config.model, baseRevision: baseRevision)
+            body: AutoTitleWriteRequest(enabled: enabled, model: model, baseRevision: baseRevision)
         )
         return try JSONDecoder().decode(AutoTitleConfig.self, from: data)
     }
 
     private struct AutoTitleWriteRequest: Encodable {
-        let enabled: Bool
+        let enabled: Bool?
         let model: String?
         let baseRevision: Int?
     }

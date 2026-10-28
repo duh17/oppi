@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "description": "Every setting the server owns: server-wide, per-workspace, and per-device rows the server stores. Hand-maintained copy of the registry in server/src/settings/registry.ts; server/tests/settings-registry.test.ts requires both to list the same keys with the same scope, storage, default and revisioned. Change a row together with its registry entry. No client test reads this file yet.",
+    "description": "Every setting the server owns: server-wide, per-workspace, and per-device rows the server stores. Hand-maintained copy of the registry in server/src/settings/registry.ts; server/tests/settings-registry.test.ts requires both to list the same keys with the same scope, storage, default and revisioned. Change a row together with its registry entry. The Apple client declares its settings in OppiCore/Settings/SettingsCatalog.swift, and SettingsCatalogContractTests requires every server-backed declaration to match a row here: its scope, its field, and its revisioned flag.",
     "scope": "server = one value for the whole server; workspace = one value per workspace; device = one value per paired device, stored on the server.",
     "storage": "config = config.json; settings-file = <dataDir>/settings/*.json; workspace = the workspace record; pi = Pi's settings.json (the terminal sees it too); push-registration = the device's stored push registration.",
     "default": "null means no value to default to: derived when the workspace is created, owned by Pi, or required on write.",

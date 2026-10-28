@@ -57,7 +57,7 @@
  "AuthenticatedMediaPlaybackAudioTests": 0.2,
  "AuthenticatedMediaPlaybackProbeTests": 0.09,
  "AuthenticatedMediaSourceShareTests": 0.01,
- "AutoTitleSettingsViewModelFilteringTests": 0,
+ "AutoTitleModelCatalogFilteringTests": 0,
  "BashEmbeddedLanguageDetectorTests": 0.01,
  "BashToolRowViewTests": 0.54,
  "BiometricServiceTests": 0,

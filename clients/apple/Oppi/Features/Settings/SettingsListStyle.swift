@@ -107,37 +107,6 @@ struct SettingsStyle {
     }
 }
 
-/// Where a setting is kept, which a page says only when it differs from what
-/// the page as a whole says.
-enum SettingsScope: Hashable, Sendable {
-    /// This device only.
-    case device
-    /// The server, for every device that uses it. The name is the server's.
-    case server(String)
-    /// One workspace. The name is the workspace's.
-    case workspace(String)
-    /// This device's own value, stored on the server. The name is the server's.
-    case deviceOnServer(String)
-
-    /// The one sentence a section shows when its scope is not its page's.
-    var sentence: String {
-        switch self {
-        case .device: String(localized: "Saved on this device.")
-        case .server(let name): String(localized: "Applies to every device on \(name).")
-        case .workspace: String(localized: "Applies to this workspace.")
-        case .deviceOnServer(let name): String(localized: "For this device, kept on \(name).")
-        }
-    }
-
-    /// The footer a section shows: the scope sentence when the section's scope
-    /// is not the page's, then the section's own footer.
-    static func footer(_ footer: String?, scope: SettingsScope?, pageScope: SettingsScope) -> String? {
-        guard let scope, scope != pageScope else { return footer }
-        guard let footer, !footer.isEmpty else { return scope.sentence }
-        return scope.sentence + " " + footer
-    }
-}
-
 /// The list every settings page draws: pinned at the readable form width and
 /// painted in the theme.
 @MainActor
@@ -206,22 +175,32 @@ extension UICellAccessory {
     /// A disabled switch keeps a row's saved value visible while the row cannot
     /// be changed. `label` names the switch for VoiceOver and `app.switches[label]`
     /// where the row's text is not its name.
+    ///
+    /// `cell`: the row the switch sits in. A row redrawn from a changed value
+    /// (a save that rolled back) keeps the one switch it had and sets it, so a
+    /// replaced switch can never linger beside the new one showing the old
+    /// position. Without it, every call makes a new switch.
     static func settingsToggle(
         _ isOn: Bool,
         identifier: String? = nil,
         label: String? = nil,
         isEnabled: Bool = true,
+        reusing cell: UICollectionViewListCell? = nil,
         onChange: @escaping (Bool) -> Void
     ) -> UICellAccessory {
-        let toggle = UISwitch()
+        let held = cell.map(SettingsSwitchHolder.holder(of:))
+        let toggle = held?.toggle ?? UISwitch()
         toggle.isOn = isOn
         toggle.isEnabled = isEnabled
         toggle.accessibilityIdentifier = identifier
         toggle.accessibilityLabel = label
-        toggle.addAction(UIAction { action in
+        if let previous = held?.action { toggle.removeAction(previous, for: .valueChanged) }
+        let action = UIAction { action in
             guard let toggle = action.sender as? UISwitch else { return }
             onChange(toggle.isOn)
-        }, for: .valueChanged)
+        }
+        held?.action = action
+        toggle.addAction(action, for: .valueChanged)
         return .customView(configuration: .init(customView: toggle, placement: .trailing()))
     }
 
@@ -245,6 +224,21 @@ extension UICellAccessory {
         config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 8, bottom: 10, trailing: 0)
         button.configuration = config
         return .customView(configuration: .init(customView: button, placement: .trailing()))
+    }
+}
+
+/// The one switch a settings row keeps across redraws, with its current action.
+@MainActor
+private final class SettingsSwitchHolder {
+    private static var key: UInt8 = 0
+    let toggle = UISwitch()
+    var action: UIAction?
+
+    static func holder(of cell: UICollectionViewListCell) -> SettingsSwitchHolder {
+        if let held = objc_getAssociatedObject(cell, &key) as? SettingsSwitchHolder { return held }
+        let holder = SettingsSwitchHolder()
+        objc_setAssociatedObject(cell, &key, holder, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return holder
     }
 }
 

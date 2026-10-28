@@ -10,7 +10,8 @@ import SwiftUI
 /// `ssh-hosts`, `ssh-hosts-empty` (the list with no saved host), `ssh-setup`,
 /// `mcp`, `mcp-workspace`,
 /// `mcp-detail`, `mcp-add`, `mcp-sign-in`, `quick-comments`, `quick-comment-editor`,
-/// `auto-title`, `theme-import`, `dictionary`, `dictionary-workspace`,
+/// `sessions` (Settings › Sessions over the fixture server's auto-title settings), `sessions-save-fails`
+/// (the same, with every settings write answered 500), `theme-import`, `dictionary`, `dictionary-workspace`,
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
@@ -168,8 +169,8 @@ struct SettingsSweepScreenshotPreview: View {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if page.hasPrefix("mcp") {
-            // The MCP screens wait for `apiClientReady`, so their connection is
+        if page.hasPrefix("mcp") || page.hasPrefix("sessions") {
+            // The MCP and Sessions screens wait for `apiClientReady`, so their connection is
             // a ready one whose requests the fixture answers, as the Router and
             // Metrics previews build theirs.
             if coordinator.switchToServer(server) {
@@ -309,6 +310,9 @@ struct SettingsSweepScreenshotPreview: View {
                 )
             }
             .ignoresSafeArea()
+        case "sessions", "sessions-save-fails":
+            RouterPreviewControllerStack(root: root) { [root] in SettingsSessionsViewController(root: root) }
+                .ignoresSafeArea()
         case "ssh-hosts", "ssh-hosts-empty":
             RouterPreviewControllerStack(root: root) { SSHTerminalHostListViewController() }
                 .ignoresSafeArea()
@@ -438,7 +442,6 @@ struct SettingsSweepScreenshotPreview: View {
             QuickCommentEditorView(
                 template: QuickCommentTemplate.builtInDefaults[0], isNew: false, onSave: { _ in }, onCancel: {}
             )
-        case "auto-title": AutoTitleSettingsView()
         case "dictionary": DictationDictionaryView(workspaceId: nil)
         case "dictionary-workspace": DictationDictionaryView(workspaceId: "preview-ws")
         default:
@@ -585,7 +588,7 @@ struct SettingsSweepScreenshotPreview: View {
                 ModelInfo(id: "claude-haiku-5", name: "Claude Haiku 5", provider: "anthropic", contextWindow: 200_000),
                 ModelInfo(id: "gpt-5-mini", name: "GPT-5 mini", provider: "openai", contextWindow: 400_000),
             ])),
-            "/server/auto-title": json(APIClient.AutoTitleConfig(enabled: true, model: "anthropic/claude-haiku-5")),
+            "/server/auto-title": json(APIClient.AutoTitleConfig(enabled: true, model: "anthropic/claude-haiku-5", revision: 4)),
             "/dictation/dictionary/global": Data(#"{"revision":3,"phrases":["Oppi","Tailscale","Herdr","Kypu","SwiftUI","Nerd Font Symbols Mono Extended Family Name That Is Long Enough To Wrap Past The Row"],"provider":"xai"}"#.utf8),
             "/dictation/dictionary/workspaces/preview-ws": Data(#"{"revision":1,"phrases":["oppi-dev","WorkspaceStore"],"provider":null}"#.utf8),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),
@@ -638,6 +641,8 @@ struct SettingsSweepScreenshotPreview: View {
             "/mcp/auth/flows/mcp-flow": json(McpFlowBody(flow: mcpFlow)),
             "/mcp/auth/flows/mcp-flow/cancel": Data(#"{"flow":{"flowId":"mcp-flow","scopeId":"global","serverName":"github","launchMode":"phone_browser","status":"cancelled","createdAt":1,"updatedAt":2,"expiresAt":9999999999999}}"#.utf8),
         ]
+        // `sessions-save-fails`: every write answers 500, so a change rolls back.
+        SettingsSweepFixtureURLProtocol.failsWrites = page == "sessions-save-fails"
         // The catalog request answers 404, so a sync fails.
         if page == "extensions-offline" || page == "extensions-unavailable" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/extensions"] = nil
@@ -718,6 +723,8 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
     /// The editor's tagged read: a strong ETag on every `origin=skill` GET.
     private static let skillSourceETag = "\"sha256-\(String(repeating: "a", count: 64))\""
     nonisolated(unsafe) static var writeDelay: TimeInterval = 0
+    /// Answers every write 500 with a server error body.
+    nonisolated(unsafe) static var failsWrites = false
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -746,20 +753,21 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
         let methodPrefix = "\(request.httpMethod ?? "GET") "
         let body = Self.routes.first { $0.key.hasPrefix(methodPrefix) && path.hasSuffix($0.key.dropFirst(methodPrefix.count)) }?.value
             ?? Self.routes.first { $0.key.hasPrefix("/") && path.hasSuffix($0.key) }?.value
+        let failure = Self.failsWrites && request.httpMethod != "GET"
         var headers = ["Content-Type": "application/json"]
         if request.httpMethod == "GET", request.url?.query?.contains("origin=skill") == true {
             headers["ETag"] = Self.skillSourceETag
         }
         let response = HTTPURLResponse(
             url: request.url ?? URL(fileURLWithPath: "/"),
-            statusCode: body == nil ? 404 : 200,
+            statusCode: failure ? 500 : (body == nil ? 404 : 200),
             httpVersion: "HTTP/1.1",
             headerFields: headers
         )
         if let response {
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         }
-        client?.urlProtocol(self, didLoad: body ?? Data(#"{"error":"not found"}"#.utf8))
+        client?.urlProtocol(self, didLoad: failure ? Data(#"{"error":"The server could not save the setting."}"#.utf8) : (body ?? Data(#"{"error":"not found"}"#.utf8)))
         client?.urlProtocolDidFinishLoading(self)
     }
 

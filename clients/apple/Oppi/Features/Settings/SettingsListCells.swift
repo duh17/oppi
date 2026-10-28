@@ -265,8 +265,27 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
         isEnabled: Bool = true,
         options: [(title: String, selected: Bool, action: () -> Void)]
     ) {
+        configure(
+            title: title,
+            identifier: identifier,
+            isEnabled: isEnabled,
+            value: options.first(where: \.selected)?.title,
+            menu: UIMenu(children: options.map { option in
+                UIAction(title: option.title, state: option.selected ? .on : .off) { _ in option.action() }
+            })
+        )
+    }
+
+    /// The same row with a menu the caller built (grouped choices) and the
+    /// text the row shows for the current one.
+    func configure(
+        title: String,
+        identifier: String,
+        isEnabled: Bool = true,
+        value current: String?,
+        menu: UIMenu
+    ) {
         let style = SettingsStyle.current
-        let current = options.first(where: \.selected)?.title
         titleLabel.text = title
         titleLabel.textColor = style.title
         valueLabel.text = current
@@ -278,9 +297,7 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = current
-        button.menu = UIMenu(children: options.map { option in
-            UIAction(title: option.title, state: option.selected ? .on : .off) { _ in option.action() }
-        })
+        button.menu = menu
     }
 
     override func prepareForReuse() {

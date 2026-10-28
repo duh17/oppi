@@ -52,7 +52,8 @@ func makeTestAppRoot(
     themeStore: ThemeStore = ThemeStore(),
     composerDraftStore: ComposerDraftStore? = nil,
     sessionRows: SessionRowDisplayStore = SessionRowDisplayStore(fixed: SessionRowDisplay()),
-    liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter()
+    liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
+    settings: SettingsStore? = nil
 ) -> AppRootEnvironment {
     AppRootEnvironment(
         coordinator: coordinator ?? ConnectionCoordinator(serverStore: ServerStore()),
@@ -66,7 +67,8 @@ func makeTestAppRoot(
         ),
         chatReaderPayloadStore: ChatReaderPayloadStore(),
         sessionRows: sessionRows,
-        liveVoiceCalls: liveVoiceCalls
+        liveVoiceCalls: liveVoiceCalls,
+        settings: settings
     )
 }
 
@@ -74,7 +76,11 @@ func makeTestAppRoot(
 /// screen's server switch to it succeeds at once, reading through `apiClient`.
 /// The server lives only in memory, never in the Keychain.
 @MainActor
-func makeTestAppRoot(readyServerId serverId: String, apiClient: APIClient) throws -> AppRootEnvironment {
+func makeTestAppRoot(
+    readyServerId serverId: String,
+    apiClient: APIClient,
+    settings: SettingsStore? = nil
+) throws -> AppRootEnvironment {
     let credentials = ServerCredentials(
         host: "ready-server.test",
         port: 7749,
@@ -89,7 +95,7 @@ func makeTestAppRoot(readyServerId serverId: String, apiClient: APIClient) throw
     let coordinator = ConnectionCoordinator(serverStore: serverStore)
     coordinator.ensureConnection(for: server).setAPIClientForTesting(apiClient)
     #expect(coordinator.restoreActiveServer(server.id))
-    return makeTestAppRoot(coordinator: coordinator)
+    return makeTestAppRoot(coordinator: coordinator, settings: settings)
 }
 
 extension ExtensionSurfaceStore {

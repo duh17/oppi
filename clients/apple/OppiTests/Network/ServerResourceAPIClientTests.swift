@@ -42,9 +42,8 @@ struct ServerResourceAPIClientTests {
         let older = try await client.getAutoTitleConfig()
         #expect(older.revision == nil)
 
-        let config = APIClient.AutoTitleConfig(enabled: true, model: "anthropic/haiku")
-        let lastWriterWins = try await client.setAutoTitleConfig(config)
-        let guarded = try await client.setAutoTitleConfig(config, baseRevision: 3)
+        let lastWriterWins = try await client.setAutoTitleConfig(enabled: true, model: "anthropic/haiku")
+        let guarded = try await client.setAutoTitleConfig(model: "anthropic/haiku", baseRevision: 3)
 
         #expect(lastWriterWins.revision == 4)
         #expect(guarded.revision == 4)
@@ -52,6 +51,9 @@ struct ServerResourceAPIClientTests {
         #expect(bodies[0]["baseRevision"] == nil)
         #expect(bodies[1]["baseRevision"] as? Int == 3)
         #expect(bodies[1]["revision"] == nil)
+        // Only the fields given are sent, so a save never overwrites another setting's field.
+        #expect(bodies[1]["enabled"] == nil)
+        #expect(bodies[1]["model"] as? String == "anthropic/haiku")
     }
 
     @Test func serverMetricsSettingsTolerateRevisionAndSendBaseRevisionOnlyWhenGiven() async throws {

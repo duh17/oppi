@@ -324,7 +324,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         case .chat:
             navigator.push(SettingsChatViewController())
         case .sessions:
-            navigator.push { SettingsSessionsPage() }
+            navigator.push(SettingsSessionsViewController(root: root))
         case .voice:
             navigator.push { SettingsVoicePage() }
         case .tailscale:

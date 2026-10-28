@@ -11,7 +11,7 @@ enum AppPreferenceStore {
     /// Session behavior preferences (auto-title, etc.).
     enum Session {
         /// Which backend generates session titles.
-        enum AutoTitleProvider: String, CaseIterable, Identifiable, Sendable {
+        enum AutoTitleProvider: String, CaseIterable, Identifiable, Sendable, Codable {
             /// Server generates the title using a configured model.
             case server
             /// On-device Foundation model generates the title.
@@ -31,13 +31,15 @@ enum AppPreferenceStore {
         }
 
         static let autoTitleProviderKey = "\(AppIdentifiers.subsystem).session.autoTitle.provider"
+        /// What nothing stored means; `SettingsCatalog.autoNameProvider` uses this same constant.
+        static let autoTitleProviderDefault = AutoTitleProvider.server
 
         static var autoTitleProvider: AutoTitleProvider {
             if let raw = UserDefaults.standard.string(forKey: autoTitleProviderKey),
                let provider = AutoTitleProvider(rawValue: raw) {
                 return provider
             }
-            return .server
+            return autoTitleProviderDefault
         }
 
         static func setAutoTitleProvider(_ provider: AutoTitleProvider) {
