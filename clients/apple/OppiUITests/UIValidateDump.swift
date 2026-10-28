@@ -97,7 +97,6 @@ enum UIValidateDump {
             let element = app.descendants(matching: .any)[identifier]
             return element.exists ? element.frame : nil
         }
-        let barFrames = app.navigationBars.allElementsBoundByIndex.map(\.frame)
         do {
             try app.performAccessibilityAudit(for: .all) { issue in
                 box.issues.append(
@@ -106,7 +105,7 @@ enum UIValidateDump {
                         compact: issue.compactDescription,
                         detailed: issue.detailedDescription,
                         element: describeElement(issue.element),
-                        waivedReason: waivedReason(for: issue, previewFrames: previewFrames, barFrames: barFrames)
+                        waivedReason: waivedReason(for: issue, previewFrames: previewFrames)
                     )
                 )
                 return true
@@ -220,36 +219,22 @@ enum UIValidateDump {
     /// on every `ScreenSearchController` screen, at the default text size too, while
     /// the screenshots draw it in full at every size. The field is UIKit's own.
     ///
-    /// The Session Rows editor's preview draws `SessionRowView` over sample data, a row the
-    /// editor does not own. The audit reports `dynamicType` (its fixed-size labels), `textClipped`
-    /// (the row and the "PREVIEW · SAMPLE DATA" label at accessibility sizes) and `hitRegion`
-    /// (its non-interactive subviews) there at every size, `sufficientElementDescription` for
-    /// its cost label, and `contrast` for its dimmed detail labels on the iPad's dark theme. They
-    /// predate the Auto-Name removal: the editor and `SessionRowView` are unchanged by it.
-    private static func waivedReason(
-        for issue: XCUIAccessibilityAuditIssue,
-        previewFrames: [CGRect],
-        barFrames: [CGRect]
-    ) -> String? {
+    /// The Session Rows editor's preview draws `SessionRowView` over sample data. The audit
+    /// reports known debt there: the dimmed labels' `contrast`, fixed-size `dynamicType` labels,
+    /// `hitRegion` of non-interactive subviews, the cost label's `sufficientElementDescription`,
+    /// and `textClipped` of the row and the "PREVIEW · SAMPLE DATA" label at accessibility sizes.
+    /// Only issues whose element sits inside the preview's frames are waived; the editor and
+    /// `SessionRowView` are unchanged since 7665a92f0.
+    private static func waivedReason(for issue: XCUIAccessibilityAuditIssue, previewFrames: [CGRect]) -> String? {
         if issue.auditType == .textClipped, issue.element?.elementType == .searchField {
             return "textClipped on the system search field, which draws its text in full"
-        }
-        // The iPad's dark theme draws every navigation bar title under this finding, Settings →
-        // General (no Session Rows involved) included.
-        if issue.auditType == .contrast, issue.element?.elementType == .staticText,
-           let frame = issue.element?.frame,
-           barFrames.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(frame) }) {
-            return "contrast on a navigation bar title, which every UIKit settings page shows on the iPad's dark theme"
         }
         if [.dynamicType, .textClipped, .hitRegion, .sufficientElementDescription, .contrast].contains(issue.auditType),
            let frame = issue.element?.frame,
            previewFrames.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(frame) }) {
-            return "\(auditTypeName(issue.auditType)) on the Session Rows preview's sample SessionRowView, which predates this change"
-        }
-        // The audit names no element for these; the editor shows the preview, whose fixed-size
-        // labels they match, so they are recorded here rather than dropped.
-        if issue.auditType == .textClipped, issue.element == nil, !previewFrames.isEmpty {
-            return "textClipped with no element reported, while the Session Rows editor shows its sample SessionRowView; predates this change"
+            return "\(auditTypeName(issue.auditType)) in the Session Rows preview: known debt in SessionRowView "
+                + "(dimmed-label contrast, fixed-size labels) and the \"PREVIEW · SAMPLE DATA\" label clipping, "
+                + "not a sample-data artifact; the editor is unchanged since 7665a92f0"
         }
         return nil
     }
