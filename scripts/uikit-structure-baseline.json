@@ -192,9 +192,6 @@
       "import SwiftUI": 1,
       "APIClient settings write": 3
     },
-    "clients/apple/Oppi/Features/Settings/QuickCommentsSettingsView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Settings/SSHPreflightViewController.swift": {
       "SettingsListStyle.pin(": 1,
       "SettingsListStyle.applyTheme(": 1

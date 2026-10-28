@@ -546,6 +546,7 @@ private struct RouterRoutesStack: UIViewControllerRepresentable {
 
 private struct RouterRoutesMenu: View {
     @Environment(\.screenNavigator) private var navigator
+    @Environment(\.appRootEnvironment) private var appRoot
     @Environment(ServerConnection.self) private var connection
     @State private var dismissedModals = 0
     @State private var editingAgent: StoredAgentDefinition?
@@ -555,7 +556,7 @@ private struct RouterRoutesMenu: View {
     var body: some View {
         List {
             Button("Quick Comments") {
-                navigator.push { QuickCommentsSettingsView() }
+                if let appRoot { navigator.push(QuickCommentsViewController(root: appRoot)) }
             }
             .accessibilityIdentifier("routerRoutes.quickComments")
 
@@ -947,7 +948,7 @@ private struct SettingsPageScreenshotContent: View {
             case "settings-appearance-gallery": ThemeGalleryViewController(themeStore: root.themeStore, slot: .manual)
             case "settings-appearance-gallery-light": ThemeGalleryViewController(themeStore: root.themeStore, slot: .light)
             case "settings-appearance-gallery-dark": ThemeGalleryViewController(themeStore: root.themeStore, slot: .dark)
-            default: SettingsChatViewController()
+            default: SettingsChatViewController(root: root)
             }
         }
         .ignoresSafeArea()

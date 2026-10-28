@@ -14,7 +14,10 @@ final class SettingsChatViewController: SettingsListViewController<SettingsChatV
         case quickComments
     }
 
-    init() {
+    private let root: AppRootEnvironment
+
+    init(root: AppRootEnvironment) {
+        self.root = root
         super.init(
             title: String(localized: "Chat"),
             listIdentifier: "settings.chat.list",
@@ -245,11 +248,7 @@ final class SettingsChatViewController: SettingsListViewController<SettingsChatV
     }
 
     private func openQuickComments() {
-        guard let root = HostFactory.root(near: self) else { return }
-        Router.push(
-            HostFactory.screen(root: root, bars: ScreenBars()) { QuickCommentsSettingsView() },
-            from: self
-        )
+        Router.push(QuickCommentsViewController(root: root), from: self)
     }
 }
 

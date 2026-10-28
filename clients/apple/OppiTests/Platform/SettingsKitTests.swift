@@ -230,7 +230,7 @@ extension SettingsKitTests {
                 }
             }
             // Every row has its text inspected: the index row has a title and a value.
-            #expect(checked >= (row == .index || row == .slider ? 2 : 1), "\(row): only \(checked) labels were checked")
+            #expect(checked >= (row == .index || row == .slider || row == .entry ? 2 : 1), "\(row): only \(checked) labels were checked")
         }
     }
 
@@ -256,7 +256,7 @@ extension SettingsKitTests {
 /// One of each kit row, with text long enough to wrap at the largest sizes.
 private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row> {
     enum Section: Hashable, Sendable { case rows }
-    enum Row: CaseIterable, Hashable, Sendable { case index, menu, action, state, slider, toggle, info }
+    enum Row: CaseIterable, Hashable, Sendable { case index, menu, action, state, slider, entry, toggle, info }
 
     init() {
         super.init(title: "Kit", listIdentifier: "test.kit.list", scope: .device)
@@ -293,8 +293,16 @@ private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section,
         ) { _ in }
     }
 
+    private lazy var entryRow = UICollectionView.CellRegistration<SettingsEntryRowCell, Row> { cell, _, _ in
+        cell.configure(
+            title: "Explain this part of the code in more detail",
+            caption: "Explain how this works, with a longer line of text under it.",
+            systemImage: "questionmark.bubble", identifier: "test.entry"
+        ) {}
+    }
+
     override func prepareRegistrations() {
-        _ = (indexRow, menuRow, actionRow, stateRow, sliderRow)
+        _ = (indexRow, menuRow, actionRow, stateRow, sliderRow, entryRow)
     }
 
     override func dequeue(_ item: Row, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -304,6 +312,7 @@ private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section,
         case .action: collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
         case .state: collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
         case .slider: collectionView.dequeueConfiguredReusableCell(using: sliderRow, for: indexPath, item: item)
+        case .entry: collectionView.dequeueConfiguredReusableCell(using: entryRow, for: indexPath, item: item)
         case .toggle, .info: super.dequeue(item, at: indexPath)
         }
     }

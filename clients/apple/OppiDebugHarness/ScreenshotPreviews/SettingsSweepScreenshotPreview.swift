@@ -443,6 +443,16 @@ struct SettingsSweepScreenshotPreview: View {
         case "skill-file-edit":
             // The editor needs the server's file-editing capability first.
             ServerInfoLoaded(client: client) { skillFilePage }
+        case "quick-comments":
+            RouterPreviewControllerStack(root: root) { [root] in QuickCommentsViewController(root: root) }
+                .ignoresSafeArea()
+        case "quick-comment-editor":
+            RouterPreviewControllerStack(root: root) {
+                QuickCommentEditorViewController(
+                    template: QuickCommentTemplate.builtInDefaults[0], isNew: false, onSave: { _ in }
+                )
+            }
+            .ignoresSafeArea()
         // Every other page is the root of a router stack, where its links push.
         default:
             RouterPreviewStack(root: root) { pushedPage }
@@ -506,11 +516,6 @@ struct SettingsSweepScreenshotPreview: View {
     @ViewBuilder
     private var pushedPage: some View {
         switch page {
-        case "quick-comments": QuickCommentsSettingsView()
-        case "quick-comment-editor":
-            QuickCommentEditorView(
-                template: QuickCommentTemplate.builtInDefaults[0], isNew: false, onSave: { _ in }, onCancel: {}
-            )
         case "dictionary": DictationDictionaryView(workspaceId: nil)
         case "dictionary-workspace": DictationDictionaryView(workspaceId: "preview-ws")
         default:

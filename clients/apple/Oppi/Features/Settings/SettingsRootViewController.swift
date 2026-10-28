@@ -322,7 +322,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         case .editor:
             navigator.push(SettingsEditorViewController())
         case .chat:
-            navigator.push(SettingsChatViewController())
+            navigator.push(SettingsChatViewController(root: root))
         case .sessions:
             navigator.push(SessionRowDisplayEditorViewController(root: root))
         case .voice:
