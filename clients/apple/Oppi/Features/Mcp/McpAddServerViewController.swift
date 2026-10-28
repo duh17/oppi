@@ -185,7 +185,7 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
         let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
             self?.configureField(cell, item: item)
         }
-        let editor = UICollectionView.CellRegistration<AgentNativeEditTextViewCell, Item> { [weak self] cell, _, item in
+        let editor = UICollectionView.CellRegistration<SettingsTextViewRowCell, Item> { [weak self] cell, _, item in
             self?.configureEditor(cell, item: item)
         }
         let menu = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
@@ -358,9 +358,9 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    private func configureEditor(_ cell: AgentNativeEditTextViewCell, item: Item) {
+    private func configureEditor(_ cell: SettingsTextViewRowCell, item: Item) {
         let lineHeight = UIFont.preferredFont(forTextStyle: .body).lineHeight
-        let insets = AgentNativeEditTextViewCell.verticalInsets
+        let insets = SettingsTextViewRowCell.verticalInsets
         func editor(
             _ text: String,
             _ placeholder: String,

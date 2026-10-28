@@ -43,7 +43,7 @@ final class AgentResourceSelectionViewController: SettingsListViewController<
             cell.configure(.message(emptyMessage() ?? ""))
         }
     }
-    private lazy var resourceRow = UICollectionView.CellRegistration<SelectionRowCell, Item> { [weak self] cell, _, item in
+    private lazy var resourceRow = UICollectionView.CellRegistration<SettingsSelectionRowCell, Item> { [weak self] cell, _, item in
         self?.configureResource(cell, item: item)
     }
 
@@ -188,7 +188,7 @@ final class AgentResourceSelectionViewController: SettingsListViewController<
         }
     }
 
-    private func configureResource(_ cell: SelectionRowCell, item: Item) {
+    private func configureResource(_ cell: SettingsSelectionRowCell, item: Item) {
         let row: Row
         switch item {
         case .resource(let id):
@@ -243,7 +243,7 @@ final class AgentWorkspaceSelectionViewController: SettingsListViewController<
             "No Compatible Workspace\nAdd a workspace that matches the required runtime, or choose Any runtime."
         ))
     }
-    private lazy var workspaceRow = UICollectionView.CellRegistration<SelectionRowCell, Item> { [weak self] cell, _, item in
+    private lazy var workspaceRow = UICollectionView.CellRegistration<SettingsSelectionRowCell, Item> { [weak self] cell, _, item in
         self?.configureWorkspace(cell, item: item)
     }
 
@@ -290,7 +290,7 @@ final class AgentWorkspaceSelectionViewController: SettingsListViewController<
         }
     }
 
-    private func configureWorkspace(_ cell: SelectionRowCell, item: Item) {
+    private func configureWorkspace(_ cell: SettingsSelectionRowCell, item: Item) {
         guard case .workspace(let id) = item, let workspace = draft.workspaces.first(where: { $0.id == id }) else { return }
         let isChosen = draft.selectedAllowedWorkspaceIds.contains(id)
         let matches = runtimeMatches(workspace)

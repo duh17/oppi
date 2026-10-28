@@ -9,7 +9,7 @@ import UIKit
 ///
 /// Used by the Agent editor's selection pages (tools, Skills, Extensions,
 /// workspaces) and the schedule time zone list.
-final class SelectionRowCell: UICollectionViewListCell {
+final class SettingsSelectionRowCell: UICollectionViewListCell {
     /// Where the row's mark sits.
     enum Mark {
         /// A circle at the leading edge, filled with a check when chosen: for

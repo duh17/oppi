@@ -130,7 +130,7 @@ final class AgentToolSelectionViewController: SettingsListViewController<
         default: cell.configure(.failure("Built-in tool catalog unavailable", retry: nil), identifier: "agent.nativeEdit.toolCatalog")
         }
     }
-    private lazy var toolRow = UICollectionView.CellRegistration<SelectionRowCell, Item> { [weak self] cell, _, item in
+    private lazy var toolRow = UICollectionView.CellRegistration<SettingsSelectionRowCell, Item> { [weak self] cell, _, item in
         self?.configureTool(cell, item: item)
     }
     private lazy var selectionActionsItem: UIBarButtonItem = {
@@ -259,7 +259,7 @@ final class AgentToolSelectionViewController: SettingsListViewController<
         selection.setMode(mode)
     }
 
-    private func configureTool(_ cell: SelectionRowCell, item: Item) {
+    private func configureTool(_ cell: SettingsSelectionRowCell, item: Item) {
         let state = selection.state()
         let tool: ServerToolSummary
         var source: String?

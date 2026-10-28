@@ -73,6 +73,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     let settings: SettingsStore?
     private let showsHeaders: Bool
     private let showsFooters: Bool
+    private let listEndsAtKeyboard: Bool
     private var appliedThemeID: ThemeID?
     private var changedRows = ChangedRows<Item>()
     private var models: [Section: SettingsSectionModel<Section, Item>] = [:]
@@ -86,6 +87,8 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     ///   - footers: whether sections can show a footer. A page with a section
     ///     scope needs them, since the scope sentence is part of the footer.
     ///   - largeTitle: a page that roots its stack keeps the large title.
+    ///   - endsAtKeyboard: a page that edits text in place ends its list at the
+    ///     keyboard (`SettingsListStyle.pin`), so the field scrolls above it.
     init(
         title: String,
         listIdentifier: String,
@@ -93,12 +96,14 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         settings: SettingsStore? = nil,
         headers: Bool = false,
         footers: Bool = false,
-        largeTitle: Bool = false
+        largeTitle: Bool = false,
+        endsAtKeyboard: Bool = false
     ) {
         pageScope = scope
         self.settings = settings
         showsHeaders = headers
         showsFooters = footers
+        listEndsAtKeyboard = endsAtKeyboard
         super.init(nibName: nil, bundle: nil)
         self.title = title
         navigationItem.largeTitleDisplayMode = largeTitle ? .always : .inline
@@ -185,7 +190,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.delegate = self
-        SettingsListStyle.pin(collectionView, in: view)
+        SettingsListStyle.pin(collectionView, in: view, endsAtKeyboard: listEndsAtKeyboard)
         installDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         setNeedsUpdateProperties()

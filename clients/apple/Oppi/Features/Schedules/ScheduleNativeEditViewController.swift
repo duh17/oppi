@@ -37,7 +37,7 @@ final class ScheduleNativeEditViewController: SettingsListViewController<
         return UIBarButtonItem(customView: spinner)
     }()
 
-    private lazy var textViewRow = UICollectionView.CellRegistration<AgentNativeEditTextViewCell, Item> { [weak self] cell, _, item in
+    private lazy var textViewRow = UICollectionView.CellRegistration<SettingsTextViewRowCell, Item> { [weak self] cell, _, item in
         self?.configureTextView(cell, item: item)
     }
     private lazy var dateRow = UICollectionView.CellRegistration<ScheduleDateRowCell, Item> { [weak self] cell, _, item in
@@ -84,7 +84,9 @@ final class ScheduleNativeEditViewController: SettingsListViewController<
             title: "Edit Schedule",
             listIdentifier: "schedule.nativeEdit.list",
             scope: .server(serverName),
-            headers: true
+            headers: true,
+            // The prompt editor scrolls above the keyboard.
+            endsAtKeyboard: true
         )
     }
 
@@ -95,8 +97,6 @@ final class ScheduleNativeEditViewController: SettingsListViewController<
         collectionView.keyboardDismissMode = .interactive
         // The prompt editor grows as its text does.
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
-        // The form ends at the keyboard, so the prompt editor can scroll above it.
-        endListAtKeyboard(collectionView)
         navigationItem.leftBarButtonItem = cancelItem
         loadTask = Task { [draft, apiClient] in await draft.loadAgents(apiClient: apiClient) }
     }
@@ -208,8 +208,8 @@ final class ScheduleNativeEditViewController: SettingsListViewController<
         }
     }
 
-    private func configureTextView(_ cell: AgentNativeEditTextViewCell, item: Item) {
-        let line = UIFont.preferredFont(forTextStyle: .body).lineHeight + AgentNativeEditTextViewCell.verticalInsets
+    private func configureTextView(_ cell: SettingsTextViewRowCell, item: Item) {
+        let line = UIFont.preferredFont(forTextStyle: .body).lineHeight + SettingsTextViewRowCell.verticalInsets
         let scroll: (UITextView) -> Void = { [weak self] in self?.scrollCaretVisible(in: $0) }
         switch item {
         case .name:
@@ -421,7 +421,7 @@ final class ScheduleTimeZonePickerViewController: SettingsListViewController<
     private var searchText = "" {
         didSet { setNeedsUpdateProperties() }
     }
-    private lazy var zoneRow = UICollectionView.CellRegistration<SelectionRowCell, String> { [weak self] cell, _, identifier in
+    private lazy var zoneRow = UICollectionView.CellRegistration<SettingsSelectionRowCell, String> { [weak self] cell, _, identifier in
         guard let self else { return }
         cell.configure(
             title: identifier.replacingOccurrences(of: "_", with: " "),

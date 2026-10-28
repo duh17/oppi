@@ -135,8 +135,8 @@ final class IconPickerViewController: UIViewController, UICollectionViewDelegate
         collectionView.delegate = self
         collectionView.keyboardDismissMode = .onDrag
         collectionView.accessibilityIdentifier = "\(source.accessibilityPrefix).list"
-        SettingsListStyle.pin(collectionView, in: view)
-        endListAtKeyboard(collectionView)
+        // The symbol search field scrolls above the keyboard.
+        SettingsListStyle.pin(collectionView, in: view, endsAtKeyboard: true)
         installGlyphInput()
         installDataSource()
         navigationItem.leftBarButtonItem = cancelItem

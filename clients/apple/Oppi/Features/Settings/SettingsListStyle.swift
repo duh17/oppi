@@ -111,15 +111,26 @@ struct SettingsStyle {
 /// painted in the theme.
 @MainActor
 enum SettingsListStyle {
-    static func pin(_ collectionView: UICollectionView, in view: UIView) {
+    /// Pins `collectionView` to `view`. With `endsAtKeyboard` the list ends at the
+    /// top of the keyboard rather than the bottom of the view, so a field or
+    /// editor in it can scroll above the keyboard; use it for a list that
+    /// edits text in place.
+    static func pin(_ collectionView: UICollectionView, in view: UIView, endsAtKeyboard: Bool = false) {
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(collectionView)
+        let bottom: NSLayoutConstraint
+        if endsAtKeyboard {
+            view.keyboardLayoutGuide.usesBottomSafeArea = false
+            bottom = collectionView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        } else {
+            bottom = collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        }
         let maxWidth = collectionView.widthAnchor.constraint(lessThanOrEqualToConstant: IPadReadableContentWidth.form)
         let fillWidth = collectionView.widthAnchor.constraint(equalTo: view.widthAnchor)
         fillWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             collectionView.topAnchor.constraint(equalTo: view.topAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            bottom,
             collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             maxWidth,
             fillWidth,

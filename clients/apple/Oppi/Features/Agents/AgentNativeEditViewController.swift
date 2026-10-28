@@ -44,7 +44,7 @@ final class AgentNativeEditViewController: SettingsListViewController<
         return UIBarButtonItem(customView: spinner)
     }()
 
-    private lazy var textViewRow = UICollectionView.CellRegistration<AgentNativeEditTextViewCell, Item> { [weak self] cell, _, item in
+    private lazy var textViewRow = UICollectionView.CellRegistration<SettingsTextViewRowCell, Item> { [weak self] cell, _, item in
         self?.configureTextView(cell, item: item)
     }
     private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, item in
@@ -77,7 +77,9 @@ final class AgentNativeEditViewController: SettingsListViewController<
             listIdentifier: "agent.nativeEdit.list",
             scope: .server(serverName),
             headers: true,
-            footers: true
+            footers: true,
+            // The prompt editor scrolls above the keyboard.
+            endsAtKeyboard: true
         )
     }
 
@@ -88,8 +90,6 @@ final class AgentNativeEditViewController: SettingsListViewController<
         collectionView.keyboardDismissMode = .interactive
         // The text editors grow as their text does.
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
-        // The form ends at the keyboard, so the prompt editor can scroll above it.
-        endListAtKeyboard(collectionView)
         navigationItem.leftBarButtonItem = cancelItem
         // The Chat Style menu names the Settings style it follows.
         NotificationCenter.default.addObserver(
@@ -265,7 +265,7 @@ final class AgentNativeEditViewController: SettingsListViewController<
         ) { [weak self] in self?.draft.usesCustomInstructions = $0 }
     }
 
-    private func configureTextView(_ cell: AgentNativeEditTextViewCell, item: Item) {
+    private func configureTextView(_ cell: SettingsTextViewRowCell, item: Item) {
         let lineHeight = UIFont.preferredFont(forTextStyle: .body).lineHeight
         switch item {
         case .name:
@@ -274,7 +274,7 @@ final class AgentNativeEditViewController: SettingsListViewController<
                 placeholder: "Name",
                 identifier: "agent.nativeEdit.name",
                 accessibilityLabel: "Name",
-                minHeight: lineHeight + AgentNativeEditTextViewCell.verticalInsets,
+                minHeight: lineHeight + SettingsTextViewRowCell.verticalInsets,
                 maxHeight: nil,
                 singleLine: true,
                 onChange: { [weak self] in self?.draft.name = $0 },
@@ -286,8 +286,8 @@ final class AgentNativeEditViewController: SettingsListViewController<
                 placeholder: "Description (optional)",
                 identifier: "agent.nativeEdit.description",
                 accessibilityLabel: "Description",
-                minHeight: lineHeight * 2 + AgentNativeEditTextViewCell.verticalInsets,
-                maxHeight: lineHeight * 5 + AgentNativeEditTextViewCell.verticalInsets,
+                minHeight: lineHeight * 2 + SettingsTextViewRowCell.verticalInsets,
+                maxHeight: lineHeight * 5 + SettingsTextViewRowCell.verticalInsets,
                 onChange: { [weak self] in self?.draft.description = $0 },
                 onCaretMove: { [weak self] in self?.scrollCaretVisible(in: $0) }
             )

@@ -4,7 +4,7 @@ import UIKit
 
 @MainActor
 @Suite("Selection row")
-struct SelectionRowCellTests {
+struct SettingsSelectionRowCellTests {
     @Test("a selection row re-measures when the text size changes live, and none of its text is cut off")
     func selectionRowsGrowWithTheTextSize() async throws {
         let page = SelectionRowsPage()
@@ -113,7 +113,7 @@ private final class SelectionRowsPage: SettingsListViewController<SelectionRowsP
         [SettingsSectionModel(.rows, items: Row.allCases)]
     }
 
-    private lazy var row = UICollectionView.CellRegistration<SelectionRowCell, Row> { cell, _, row in
+    private lazy var row = UICollectionView.CellRegistration<SettingsSelectionRowCell, Row> { cell, _, row in
         switch row {
         case .chosen:
             cell.configure(
