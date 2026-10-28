@@ -196,6 +196,8 @@ extension SettingsKitTests {
         // At the standard size the index row's value sits beside its title.
         let indexLines = try Self.indexRowLines(in: page)
         #expect(abs(indexLines.title.midY - indexLines.value.midY) < 1, "the value should share the title's line at .large")
+        let menuBefore = try Self.menuRowLines(in: page)
+        #expect(abs(menuBefore.title.midY - menuBefore.value.midY) < 1, "the choice should share the title's line at .large")
 
         page.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
         var after = before
@@ -212,6 +214,10 @@ extension SettingsKitTests {
         // At the largest size it sits under the title instead of squeezing it.
         let stacked = try Self.indexRowLines(in: page)
         #expect(stacked.value.minY >= stacked.title.maxY - 0.5, "the value should sit under the title at XXXL")
+        // The menu row's choice sits under its title too, inside the row instead of past its edge.
+        let menuStacked = try Self.menuRowLines(in: page)
+        #expect(menuStacked.value.minY >= menuStacked.title.maxY - 0.5, "the choice should sit under the title at XXXL")
+        #expect(menuStacked.value.maxX <= menuStacked.cellWidth + 0.5, "the choice runs off the row at XXXL")
 
         // Nothing the rows say is clipped or truncated at the larger size.
         page.view.layoutIfNeeded()
@@ -245,6 +251,17 @@ extension SettingsKitTests {
         return (title.convert(title.bounds, to: cell), value.convert(value.bounds, to: cell))
     }
 
+    /// The menu row's title and choice label frames in the cell's space, and the cell's width.
+    private static func menuRowLines(in page: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, value: CGRect, cellWidth: CGFloat) {
+        page.view.layoutIfNeeded()
+        let indexPath = try #require(page.dataSource?.indexPath(for: .menu))
+        let cell = try #require(page.collectionView.cellForItem(at: indexPath))
+        let labels = Self.labels(in: cell)
+        let title = try #require(labels.first { $0.text == "Voice Replies" })
+        let value = try #require(labels.first { $0.text == "Agent decides" })
+        return (title.convert(title.bounds, to: cell), value.convert(value.bounds, to: cell), cell.bounds.width)
+    }
+
     private static func labels(in view: UIView) -> [UILabel] {
         var found: [UILabel] = []
         if let label = view as? UILabel { found.append(label) }
@@ -272,9 +289,9 @@ private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section,
 
     private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Row> { cell, _, _ in
         cell.configure(
-            title: "Keep Awake After Activity",
+            title: "Voice Replies",
             identifier: "test.menu",
-            options: [("2 minutes", true, {}), ("5 minutes", false, {})]
+            options: [("Agent decides", true, {}), ("Manual", false, {})]
         )
     }
 

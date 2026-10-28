@@ -202,14 +202,19 @@ final class SettingsRowButton: UIButton {
 /// whole row one button whose menu lists the choices with a checkmark on the
 /// current one. Like `SettingsIndexRowCell`, the labels paint the row and the
 /// button is its one accessible element, so a tap, a VoiceOver activation, and
-/// `app.buttons[id]` all open the menu. At accessibility text sizes the choice
-/// stacks under the title instead of sharing its line.
+/// `app.buttons[id]` all open the menu. The choice sits beside the title when
+/// both fit on one line, and under it when they do not (a long choice, or a
+/// large text size), where it wraps instead of running off the row.
 final class SettingsMenuRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
     private let stack = UIStackView()
     private let titleLabel = UILabel()
     private let valueLabel = UILabel()
     private let chevron = UIImageView(image: UIImage(systemName: "chevron.up.chevron.down"))
+    private var isSideBySide = true
+
+    private static let spacing: CGFloat = 8
+    private static let chevronSpacing: CGFloat = 4
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -220,18 +225,16 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
         }
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         valueLabel.setContentHuggingPriority(.required, for: .horizontal)
-        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         // A symbol with a text style follows Dynamic Type on its own.
         chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
         chevron.setContentHuggingPriority(.required, for: .horizontal)
         chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         let value = UIStackView(arrangedSubviews: [valueLabel, chevron])
-        value.spacing = 4
+        value.spacing = Self.chevronSpacing
         value.alignment = .center
         value.setContentHuggingPriority(.required, for: .horizontal)
         stack.addArrangedSubview(titleLabel)
         stack.addArrangedSubview(value)
-        stack.spacing = 8
         for view in [stack, button] {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
@@ -251,19 +254,57 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
             button.topAnchor.constraint(equalTo: contentView.topAnchor),
             button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
-        arrangeForTextSize()
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
-            self.arrangeForTextSize()
-        }
+        arrange(sideBySide: true, force: true)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    private func arrangeForTextSize() {
-        let stacked = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
-        stack.axis = stacked ? .vertical : .horizontal
-        stack.alignment = stacked ? .leading : .center
+    /// The choice sits beside the title when both fit on one line in the stack
+    /// as laid out, and under it otherwise. The stack's width is the same either
+    /// way (its edges are pinned), so the choice cannot flip back and forth.
+    private func updateArrangement() {
+        guard stack.bounds.width > 0, !(valueLabel.text ?? "").isEmpty else {
+            arrange(sideBySide: true)
+            return
+        }
+        func lineWidth(_ label: UILabel) -> CGFloat {
+            ((label.text ?? "") as NSString).size(withAttributes: [.font: label.font as Any]).width
+        }
+        let needed = lineWidth(titleLabel) + Self.spacing
+            + lineWidth(valueLabel) + Self.chevronSpacing + chevron.intrinsicContentSize.width
+        arrange(sideBySide: needed <= stack.bounds.width)
+    }
+
+    private func arrange(sideBySide: Bool, force: Bool = false) {
+        guard force || sideBySide != isSideBySide else { return }
+        isSideBySide = sideBySide
+        stack.axis = sideBySide ? .horizontal : .vertical
+        stack.alignment = sideBySide ? .center : .leading
+        stack.spacing = sideBySide ? Self.spacing : 2
+        valueLabel.numberOfLines = sideBySide ? 1 : 0
+        // A stacked choice wraps, so it gives way before the title does.
+        valueLabel.setContentCompressionResistancePriority(sideBySide ? .required : .defaultLow, for: .horizontal)
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let before = isSideBySide
+        updateArrangement()
+        if before != isSideBySide { super.layoutSubviews() }
+    }
+
+    /// The row is laid out at the width it will have before its height is
+    /// measured, so the choice between beside and under uses the real width.
+    override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
+        if bounds.width != layoutAttributes.size.width {
+            bounds.size.width = layoutAttributes.size.width
+        }
+        layoutIfNeeded()
+        updateArrangement()
+        layoutIfNeeded()
+        return super.preferredLayoutAttributesFitting(layoutAttributes)
     }
 
     /// A disabled row keeps its current choice visible and cannot open its menu.
