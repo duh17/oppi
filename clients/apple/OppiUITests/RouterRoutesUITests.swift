@@ -336,7 +336,13 @@ final class RouterRoutesUITests: XCTestCase {
             ("settings.row.storage", "Storage & About", []),
         ]
         for page in pages {
-            reveal(app.buttons[page.row]).tap()
+            let row = reveal(app.buttons[page.row])
+            if page.row == "settings.row.sessions" {
+                // The row is named for the page it opens and shows the density it sets.
+                XCTAssertEqual(row.label, "Session Rows", "The Sessions row must be named for the page it opens")
+                XCTAssertEqual(row.value as? String, "Standard", "The Session Rows row must show its density")
+            }
+            row.tap()
             let bar = app.navigationBars[page.title]
             XCTAssertTrue(bar.waitForExistence(timeout: 5), "\(page.row) did not push \(page.title)")
             assertRunning()

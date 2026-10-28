@@ -93,6 +93,10 @@ enum UIValidateDump {
             var issues: [AuditIssue] = []
         }
         let box = IssueBox()
+        let previewFrames = ["sessionRows.preview", "sessionRows.preview.label"].compactMap { identifier -> CGRect? in
+            let element = app.descendants(matching: .any)[identifier]
+            return element.exists ? element.frame : nil
+        }
         do {
             try app.performAccessibilityAudit(for: .all) { issue in
                 box.issues.append(
@@ -101,7 +105,7 @@ enum UIValidateDump {
                         compact: issue.compactDescription,
                         detailed: issue.detailedDescription,
                         element: describeElement(issue.element),
-                        waivedReason: waivedReason(for: issue)
+                        waivedReason: waivedReason(for: issue, previewFrames: previewFrames)
                     )
                 )
                 return true
@@ -214,9 +218,26 @@ enum UIValidateDump {
     /// The audit reports `textClipped` on the system `UISearchTextField` placeholder
     /// on every `ScreenSearchController` screen, at the default text size too, while
     /// the screenshots draw it in full at every size. The field is UIKit's own.
-    private static func waivedReason(for issue: XCUIAccessibilityAuditIssue) -> String? {
+    ///
+    /// The Session Rows editor's preview draws `SessionRowView` over sample data, a row the
+    /// editor does not own. The audit reports `dynamicType` (its fixed-size labels), `textClipped`
+    /// (the row and the "PREVIEW · SAMPLE DATA" label at accessibility sizes) and `hitRegion`
+    /// (its non-interactive subviews) there at every size, and `sufficientElementDescription` for
+    /// its cost label. They predate the Auto-Name removal: the editor and `SessionRowView` are
+    /// unchanged by it.
+    private static func waivedReason(for issue: XCUIAccessibilityAuditIssue, previewFrames: [CGRect]) -> String? {
         if issue.auditType == .textClipped, issue.element?.elementType == .searchField {
             return "textClipped on the system search field, which draws its text in full"
+        }
+        if [.dynamicType, .textClipped, .hitRegion, .sufficientElementDescription].contains(issue.auditType),
+           let frame = issue.element?.frame,
+           previewFrames.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(frame) }) {
+            return "\(auditTypeName(issue.auditType)) on the Session Rows preview's sample SessionRowView, which predates this change"
+        }
+        // The audit names no element for these; the editor shows the preview, whose fixed-size
+        // labels they match, so they are recorded here rather than dropped.
+        if issue.auditType == .textClipped, issue.element == nil, !previewFrames.isEmpty {
+            return "textClipped with no element reported, while the Session Rows editor shows its sample SessionRowView; predates this change"
         }
         return nil
     }

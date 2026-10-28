@@ -119,8 +119,10 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
                 AnyHashable(tint),
                 AnyHashable(lockWord(ScopedLockService.shared.badge(.server(id)))),
             ])
-        case .addServer, .general, .chat, .sessions, .sshTerminal:
+        case .addServer, .general, .chat, .sshTerminal:
             return AnyHashable(0)
+        case .sessions:
+            return AnyHashable(AppPreferences.SessionRows.display.density)
         case .privacy:
             return AnyHashable(privacySummary)
         case .appearance:
@@ -212,7 +214,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         case .text: String(localized: "Text")
         case .editor: String(localized: "Editor")
         case .chat: String(localized: "Chat")
-        case .sessions: String(localized: "Sessions")
+        case .sessions: String(localized: "Session Rows")
         case .voice: String(localized: "Voice & Dictation")
         case .tailscale: String(localized: "Tailscale")
         case .sshTerminal: String(localized: "SSH Terminal")
@@ -245,6 +247,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         switch item {
         // General stays blank: it holds three unrelated switches, so no one
         // value of them says anything about the page.
+        case .sessions: AppPreferences.SessionRows.display.density.label
         case .privacy: privacySummary
         case .appearance: themeSummary
         case .text: FontPreferences.codeFont.displayName
