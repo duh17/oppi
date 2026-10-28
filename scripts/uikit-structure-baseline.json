@@ -216,8 +216,8 @@
       "toggleRow(": 4
     },
     "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift": {
-      "import SwiftUI": 1,
-      "AppPreferences.*.set": 1
+      "AppPreferences.*.set": 1,
+      "toggleRow(": 2
     },
     "clients/apple/Oppi/Features/Settings/SettingsTextPage.swift": {
       "import SwiftUI": 1,

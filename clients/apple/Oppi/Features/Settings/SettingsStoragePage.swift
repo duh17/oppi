@@ -1,17 +1,20 @@
 import UIKit
 
-/// Settings > Storage & About: the app version, the size of what Oppi caches
-/// from servers on this device, and Clear Local Cache behind a confirmation.
-/// The cache itself is `LocalCache`.
+/// Settings > Storage & About: the app version, the Support & Contact link, the
+/// size of what Oppi caches from servers on this device, and Clear Local Cache
+/// behind a confirmation. The cache itself is `LocalCache`.
 final class SettingsStorageViewController: SettingsListViewController<SettingsStorageViewController.Section, SettingsStorageViewController.Item> {
-    enum Section: Hashable, Sendable { case about, cache }
-    enum Item: Hashable, Sendable { case version, cacheSize, clearCache }
+    enum Section: Hashable, Sendable { case about, support, cache }
+    enum Item: Hashable, Sendable { case version, support, cacheSize, clearCache }
+
+    private let root: AppRootEnvironment
 
     /// Nil until the first measurement finishes.
     private var cacheSizeText: String?
     private var isClearing = false
 
-    init() {
+    init(root: AppRootEnvironment) {
+        self.root = root
         super.init(title: String(localized: "Storage & About"), listIdentifier: "settings.storage.list", scope: .device, footers: true)
     }
 
@@ -31,6 +34,11 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
         [
             SettingsSectionModel(.about, items: [.version]),
             SettingsSectionModel(
+                .support,
+                footer: String(localized: "Where to report a problem or ask for help. Opens using your Open Links setting."),
+                items: [.support]
+            ),
+            SettingsSectionModel(
                 .cache,
                 footer: String(localized: "Session history, server details, and file lists Oppi keeps on this device so screens open quickly."),
                 items: [.cacheSize, .clearCache]
@@ -40,7 +48,7 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
-        case .version: AnyHashable(0)
+        case .version, .support: AnyHashable(0)
         case .cacheSize: AnyHashable(cacheSizeText)
         case .clearCache: AnyHashable(isClearing)
         }
@@ -61,14 +69,27 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
         ) { [weak self] in self?.clear() }
     }
 
+    private lazy var supportRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, _ in
+        cell.configure(
+            title: String(localized: "Support & Contact"),
+            systemImage: "questionmark.circle",
+            identifier: "settings.supportContact",
+            hint: String(localized: "Opens Oppi's public support and contact page")
+        ) { [weak self] in
+            self?.root.opener.open(.webLink(AppSupportLinks.supportURL))
+        }
+    }
+
     override func prepareRegistrations() {
-        _ = actionRow
+        _ = (actionRow, supportRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        item == .clearCache
-            ? collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
-            : super.dequeue(item, at: indexPath)
+        switch item {
+        case .clearCache: collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
+        case .support: collectionView.dequeueConfiguredReusableCell(using: supportRow, for: indexPath, item: item)
+        case .version, .cacheSize: super.dequeue(item, at: indexPath)
+        }
     }
 
     /// The version and the cache size: read-only facts.
@@ -83,7 +104,7 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
             content.text = String(localized: "Local Cache")
             content.secondaryText = cacheSizeText ?? String(localized: "Calculating…")
             cell.accessibilityIdentifier = "settings.storage.cacheSize"
-        case .clearCache:
+        case .support, .clearCache:
             break
         }
         cell.contentConfiguration = content

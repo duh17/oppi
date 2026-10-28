@@ -84,6 +84,8 @@ final class SettingsActionRowCell: UICollectionViewListCell {
     /// - Parameters:
     ///   - isEnabled: a disabled row reads dimmed and says so to VoiceOver.
     ///   - isBusy: shows a spinner and holds the row still while its work runs.
+    ///   - hint: what the row does when that is not clear from its title (a link
+    ///     that leaves the app).
     func configure(
         title: String,
         systemImage: String? = nil,
@@ -91,6 +93,7 @@ final class SettingsActionRowCell: UICollectionViewListCell {
         identifier: String,
         isEnabled: Bool = true,
         isBusy: Bool = false,
+        hint: String? = nil,
         confirmation: Confirmation? = nil,
         action: @escaping () -> Void
     ) {
@@ -119,6 +122,7 @@ final class SettingsActionRowCell: UICollectionViewListCell {
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = isBusy ? String(localized: "In progress") : nil
+        button.accessibilityHint = hint
         button.accessibilityTraits = isActive ? .button : [.button, .notEnabled]
     }
 
@@ -155,6 +159,7 @@ final class SettingsActionRowCell: UICollectionViewListCell {
         button.accessibilityIdentifier = nil
         button.accessibilityLabel = nil
         button.accessibilityValue = nil
+        button.accessibilityHint = nil
         iconView.image = nil
         titleLabel.text = nil
         isHighlighted = false

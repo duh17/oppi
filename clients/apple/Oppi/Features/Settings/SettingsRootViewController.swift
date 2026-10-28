@@ -332,11 +332,11 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         case .sshTerminal:
             navigator.push(SSHTerminalHostListViewController())
         case .privacy:
-            navigator.push { SettingsPrivacyPage() }
+            navigator.push(SettingsPrivacyViewController(root: root))
         case .experiments:
             navigator.push(SettingsExperimentsViewController(navigation: navigation))
         case .storage:
-            navigator.push(SettingsStorageViewController())
+            navigator.push(SettingsStorageViewController(root: root))
         case .server:
             break
         }
