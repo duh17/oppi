@@ -43,7 +43,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         var sessions = try XCTUnwrap(fixture["sessions"] as? [[String: Any]])
         // Only the cross-workspace test gets the extra workspace and session, so
         // every other test replays the captured snapshot unchanged.
-        if name.contains("testWorkspaceListsShareLayoutAndMarkCrossWorkspaceThreads") { sessions.append([
+        if name.contains("testWorkspaceListsFoldThreadsAndLinkMembersToTheirRoot") { sessions.append([
             "key": Self.crossWorkspaceChildKey,
             "parentKey": Self.mirrorRootKey,
             "name": "Kypu mirror follow-up",
@@ -166,10 +166,12 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(waitForValue(strip, "Expanded"), "Strip did not report Expanded")
         let rootBody = app.buttons["session.nav.\(orchestrator)"]
         XCTAssertTrue(reveal(rootBody, in: inbox), "Thread root row missing")
+        // Read it now: revealing a child scrolls the list, and the root's cell may leave it.
+        let rootMinX = rootBody.frame.minX
         let working = app.buttons["session.nav.\(donkeyMaster)"]
         XCTAssertTrue(reveal(working, in: inbox), "Expanding should list the working child")
         XCTAssertTrue(working.label.contains("Donkey Master"), working.label)
-        XCTAssertGreaterThan(working.frame.minX, rootBody.frame.minX + 8, "Child rows are indented under their root")
+        XCTAssertGreaterThan(working.frame.minX, rootMinX + 8, "Child rows are indented under their root")
         let finished = app.buttons["session.nav.\(finishedFix)"]
         XCTAssertTrue(reveal(finished, in: inbox), "Expanding should list finished children too")
         XCTAssertTrue(finished.label.contains("Stopped"), "A child row keeps its status: \(finished.label)")
@@ -180,6 +182,8 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(app.buttons["Resume"].waitForExistence(timeout: 5), "A stopped child row did not offer Resume")
         finished.swipeRight()
         XCTAssertTrue(waitForNonExistence(app.buttons["Resume"], timeout: 5), "Swipe did not close")
+        // A swipe that closes the actions can go on to pull the sidebar in; close it.
+        dismissSidebarIfOpen()
         assertStillOnInbox("swiping a child row")
         try assertStopped(finishedFix, "after swiping its row")
 
@@ -448,6 +452,8 @@ final class SessionThreadsE2ETests: E2ETestCase {
             reveal(app.buttons["session.nav.\(localChild)"], in: oppiList, timeout: 3),
             "A collapsed thread must fold the child in its root's workspace"
         )
+        // Looking for the folded child scrolled the list; bring the strip back first.
+        XCTAssertTrue(reveal(workspaceStrip, in: oppiList), "Workspace thread strip missing")
         workspaceStrip.tap()
         XCTAssertTrue(waitForValue(workspaceStrip, "Expanded"), "Workspace strip did not expand")
         XCTAssertTrue(reveal(app.buttons["session.nav.\(localChild)"], in: oppiList), "Local child row missing once expanded")
@@ -474,17 +480,10 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertEqual(try e2eSession(sessionId: root)["status"] as? String, "stopped", "Opening the root must not start it")
     }
 
-    /// Session Threads is no longer an experiment: Settings → Experiments has no toggle for it,
-    /// and Session Rows always offers the Thread options.
-    func testSessionThreadsHaveNoExperimentToggle() throws {
+    /// Session Threads is always on, so Session Rows always offers the Thread options.
+    func testSessionRowsAlwaysOfferThreadOptions() throws {
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
-
-        openSettings()
-        openSettingsPage("experiments")
-        XCTAssertTrue(app.switches["settings.experiments.liveVoice"].waitForExistence(timeout: 10), "Experiments page missing")
-        XCTAssertFalse(app.switches["settings.sessionThreads"].exists, "Session Threads should not be an experiment")
-        try returnToInbox()
 
         try openRowEditor()
         revealInForm(toggle("laneGraph"))

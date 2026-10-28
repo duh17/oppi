@@ -212,11 +212,13 @@ final class SessionListEntryContentView: UIView, UIContentView {
     ) -> CGSize {
         // Compact density decides its rows from the width before sizing. The
         // row is laid out inside `layoutMarginsGuide`, so size it for the same
-        // margins. The cell's own `directionalLayoutMargins` are not those: this
+        // margins and the child indent. The cell's own `directionalLayoutMargins` are not those: this
         // view's margins settle against the safe area and readable width the
         // cell is actually laid out in, and a row sized for a narrower width
         // than it is drawn at keeps a taller height than it needs.
-        rowView.prepareLayout(width: targetSize.width - layoutMargins.left - layoutMargins.right)
+        rowView.prepareLayout(
+            width: targetSize.width - layoutMargins.left - layoutMargins.right - (leadingConstraint?.constant ?? 0)
+        )
         return super.systemLayoutSizeFitting(
             targetSize,
             withHorizontalFittingPriority: horizontalFittingPriority,

@@ -262,4 +262,50 @@ struct SessionRowRelayoutTests {
             "The cell kept the two-line height: \(itemHeight(list)) vs one line \(oneLineHeight)"
         )
     }
+
+    /// A thread's child row is indented by its depth, so its row is laid out
+    /// narrower than the cell. The list sizes Compact from the width the row
+    /// really has: sized for the full width, a row that only fits on one line
+    /// without the indent would settle one detail line, be drawn with two, and
+    /// keep the shorter height.
+    @Test func indentedChildRowIsSizedForItsIndentedWidth() throws {
+        let indent = CGFloat(SessionListEntryContentView.maxIndentLevels) * SessionListEntryContentView.indentPerLevel
+        func height(depth: Int, width: CGFloat) -> CGFloat {
+            let session = richSession()
+            let content = SessionListRowContent(
+                entry: SessionListEntry(session: session, thread: nil, outsideRoot: nil, depth: depth),
+                presentation: SessionRowPresentationBuilder.make(session: session, workspaceContext: "tools"),
+                statuses: [:]
+            )
+            let view = SessionListEntryContentView(configuration: SessionListEntryConfiguration(
+                row: content,
+                display: SessionRowDisplay(density: .compact),
+                themeID: .dark,
+                iconAssetCache: nil,
+                actions: rowActions
+            ))
+            return view.systemLayoutSizeFitting(
+                CGSize(width: width, height: 0),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
+
+        // The narrowest width where an unindented row fits its details on one line,
+        // while a row `indent` points narrower needs two.
+        let width = try #require(
+            stride(from: 300 as CGFloat, through: 700, by: 2).first {
+                height(depth: 0, width: $0) < height(depth: 0, width: $0 - indent) - 0.5
+            },
+            "No width separates one detail line from two"
+        )
+        let oneLine = height(depth: 0, width: width)
+        let twoLines = height(depth: 0, width: width - indent)
+
+        let child = height(depth: SessionListEntryContentView.maxIndentLevels, width: width)
+        #expect(
+            abs(child - twoLines) < 0.5,
+            "The indented row was sized as if it had the full width: \(child) vs \(twoLines) (one line is \(oneLine))"
+        )
+    }
 }

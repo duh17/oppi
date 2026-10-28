@@ -97,6 +97,9 @@ final class SessionInboxMessageCapsule: UIControl {
         self.content = content
         self.onDictate = onDictate
         super.init(frame: .zero)
+        // A bar item sizes its custom view from its intrinsic size; with the
+        // autoresizing mask on, the empty frame wins and the capsule collapses.
+        translatesAutoresizingMaskIntoConstraints = false
         addAction(UIAction { _ in onStart() }, for: .touchUpInside)
 
         placeholderLabel.font = .scaled(.subheadline)

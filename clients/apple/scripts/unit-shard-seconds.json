@@ -386,7 +386,6 @@
  "QuickSessionDraftIntakeTests": 0,
  "QuickSessionLaunchRoutingTests": 0.01,
  "QuickSessionLaunchSelectionTests": 0,
- "QuickSessionLauncherCoverageTests": 0,
  "QuickSessionNavTests": 0,
  "QuickSessionOpenIntentTests": 0,
  "QuickSessionPillTests": 0.07,

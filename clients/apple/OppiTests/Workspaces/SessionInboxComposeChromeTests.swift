@@ -153,6 +153,24 @@ final class SessionInboxMessageCapsuleTests {
         #expect(withMic - withoutMic == SessionInboxComposeChrome.compactBarMicWidth - 16, "The mic's slot replaces the leading padding")
     }
 
+    /// A bar item sizes a custom view from its intrinsic size. The capsule once kept
+    /// the autoresizing mask on, so the bar took its empty frame and drew a dot.
+    @Test func aBarItemSizesTheCapsuleToItsIntrinsicWidth() throws {
+        let capsule = capsule(SessionInboxMessageCapsule.Content(showsDictation: true, columnWidth: 393))
+        let window = try #require(retainedWindows.last)
+        let toolbar = UIToolbar(frame: CGRect(x: 0, y: 0, width: 393, height: 50))
+        window.addSubview(toolbar)
+        toolbar.items = [UIBarButtonItem(customView: capsule), .flexibleSpace()]
+        toolbar.layoutIfNeeded()
+        capsule.layoutIfNeeded()
+
+        #expect(capsule.intrinsicContentSize.width > SessionInboxComposeChrome.compactBarMicWidth)
+        #expect(
+            abs(capsule.frame.width - capsule.intrinsicContentSize.width) < 1,
+            "The bar drew the capsule \(capsule.frame.size), not its intrinsic \(capsule.intrinsicContentSize)"
+        )
+    }
+
     @Test func applyingNewContentRemeasuresTheCapsule() {
         let capsule = capsule(SessionInboxMessageCapsule.Content(showsDictation: true, columnWidth: 300))
         let before = capsule.intrinsicContentSize.width
