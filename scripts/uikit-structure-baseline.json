@@ -185,9 +185,6 @@
       "import SwiftUI": 1,
       "AppPreferences.*.set": 1
     },
-    "clients/apple/Oppi/Features/Settings/ChatDisplayPreviewCards.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Settings/DictationDictionaryModel.swift": {
       "APIClient settings write": 3
     },
@@ -200,6 +197,9 @@
     },
     "clients/apple/Oppi/Features/Settings/ScopedLockToggle.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/ScopedLockToggleRow.swift": {
+      "toggleRow(": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsChatTopBarViewController.swift": {
       "AppPreferences.*.set": 2,

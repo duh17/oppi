@@ -15,7 +15,6 @@ struct QuietWorkStripPreview: View {
                 mixedInspectionSession
                 chatSequence(style: .icons, title: "Icons")
                 chatSequence(style: .words, title: "Words")
-                WorkStripPreviewCard(style: .icons)
             }
             .padding(16)
             .foregroundStyle(.themeFg)

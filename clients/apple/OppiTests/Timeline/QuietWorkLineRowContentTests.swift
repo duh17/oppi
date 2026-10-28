@@ -259,7 +259,7 @@ struct QuietWorkLineRowContentTests {
     }
 
     @Test func settingsPreviewUsesAgreedSampleCounts() {
-        let sample = WorkStripPreviewCard.sampleWorkLine
+        let sample = SettingsChatViewController.workStripSample
         #expect(
             sample.wordsSummary(now: Date(timeIntervalSince1970: 7))
                 == "read 4 files  run 7 tools  write 1 file  edit +12 −3 · 7s"

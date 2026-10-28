@@ -212,6 +212,23 @@ final class SettingsChatViewController: SettingsListViewController<SettingsChatV
         }
     }
 
+    /// The counts the Work Strip preview shows.
+    static let workStripSample = QuietTimelineWorkLine(
+        id: "settings-work-strip-preview",
+        turnID: "settings-work-strip-preview",
+        sourceItemIDs: [],
+        buckets: [
+            .init(kind: .read, count: 4),
+            .init(kind: .tooling, count: 7),
+            .init(kind: .write, count: 1),
+            .init(kind: .edit, count: 1, editStats: .init(added: 12, removed: 3)),
+        ],
+        displayStyle: .icons,
+        isExpanded: false,
+        isLive: true,
+        liveStartedAt: Date(timeIntervalSince1970: 0)
+    )
+
     /// The real work strip and conversation pill, so the preview cannot drift
     /// from the timeline's geometry.
     private func configurePreview(_ cell: SettingsWorkPreviewCell, item: Item) {
@@ -221,7 +238,7 @@ final class SettingsChatViewController: SettingsListViewController<SettingsChatV
             cell.configureSpinner(labelColor: value)
         case .workStripPreview:
             cell.configureWorkLine(
-                WorkStripPreviewCard.sampleWorkLine,
+                Self.workStripSample,
                 style: AppPreferences.ChatDisplay.workStripStyle,
                 caption: String(localized: "Live Preview"),
                 symbol: "rectangle.compress.vertical",

@@ -306,8 +306,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
 
     // MARK: - Actions
 
-    /// A row's own push. The SwiftUI pages are named inside a closure, so this
-    /// UIKit file adds no SwiftUI import while they still go through the router.
+    /// A row's own push.
     private func open(_ item: Item) {
         let navigator = ScreenNavigator.forUIKitScreen(self, root: root)
         switch item {
