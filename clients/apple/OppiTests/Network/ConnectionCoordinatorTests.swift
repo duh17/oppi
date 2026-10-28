@@ -1288,7 +1288,7 @@ struct ConnectionCoordinatorTests {
             return (Data(body.utf8), response)
         }
 
-        // Models invite bootstrap or WorkspaceListView starting a catalog-only
+        // Models invite bootstrap or WorkspaceListViewController starting a catalog-only
         // refresh just before the selected-server inbox starts its full refresh.
         let firstRefresh = Task { await connectionB.refreshWorkspaceCatalog(force: true) }
         #expect(await requestLog.waitForCount(path: "/workspaces", expected: 1))
