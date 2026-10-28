@@ -159,8 +159,6 @@ struct SettingsStoreTests {
         transport.holdSaves(gate)
         let write = store.set(enabled, true)
         #expect(store.read(enabled) == .saving(shown: true, previous: false))
-        // The row cannot be changed again while it saves; the call says what it found.
-        #expect(await store.set(enabled, false).value == .saving(shown: true, previous: false))
         await gate.open()
         let settled = await write.value
 
@@ -169,6 +167,55 @@ struct SettingsStoreTests {
         // The other setting on the route took the new revision, so its next write is not stale.
         #expect(store.read(label) == .value("first", revision: 5))
         #expect(transport.saves == [.init(endpoint: .serverMetrics, fields: ["enabled": true], baseRevision: 4)])
+    }
+
+    @Test("A second writer asking for the value being saved waits for that save and shares its result")
+    func secondWriterOfTheSameValueSharesTheSave() async {
+        let transport = FakeSettingsTransport(revision: 4)
+        let store = await loaded(transport)
+        let gate = SettingsGate()
+        transport.holdSaves(gate)
+
+        let first = store.set(enabled, true)
+        await until { !transport.saves.isEmpty }
+        // The first save is in flight; asking for the same value joins it.
+        let second = store.set(enabled, true)
+        #expect(store.read(enabled) == .saving(shown: true, previous: false))
+        await gate.open()
+
+        let settledFirst = await first.value
+        let settledSecond = await second.value
+        #expect(settledFirst == .value(true, revision: 5))
+        #expect(settledSecond == settledFirst)
+        #expect(settledSecond != .saving(shown: true, previous: false))
+        #expect(transport.saves.count == 1)
+    }
+
+    @Test("A second writer asking for a different value queues behind the save in flight and returns its own result")
+    func secondWriterOfAnotherValueQueues() async {
+        let transport = FakeSettingsTransport(revision: 4)
+        let store = await loaded(transport)
+        let gate = SettingsGate()
+        transport.holdSaves(gate)
+
+        let first = store.set(enabled, true)
+        await until { !transport.saves.isEmpty }
+        // Save 1 (true) is in flight; false is a different value and must not be dropped.
+        let second = store.set(enabled, false)
+        #expect(store.read(enabled) == .saving(shown: true, previous: false))
+        #expect(transport.saves.count == 1)
+        await gate.open()
+
+        let settledFirst = await first.value
+        let settledSecond = await second.value
+        #expect(settledFirst == .value(true, revision: 5))
+        #expect(settledSecond == .value(false, revision: 6))
+        // Two saves went out, in order, each against the revision the last produced.
+        #expect(transport.saves == [
+            .init(endpoint: .serverMetrics, fields: ["enabled": true], baseRevision: 4),
+            .init(endpoint: .serverMetrics, fields: ["enabled": false], baseRevision: 5),
+        ])
+        #expect(store.read(enabled) == .value(false, revision: 6))
     }
 
     @Test("A failed write rolls back to the previous value with the reason, and Retry writes it again")

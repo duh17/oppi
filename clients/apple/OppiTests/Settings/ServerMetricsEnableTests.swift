@@ -251,11 +251,10 @@ struct ServerMetricsEnableTests {
         #expect(await coordinator.settings(for: "server-b").reload(metrics) == .value(true, revision: 11))
     }
 
-    @Test("A server's store is made once, is its own, and is dropped when the server is removed")
+    @Test("A server's store is made once, is its own, and a removed server's is dropped and never cached again")
     func storeLifecycle() async throws {
         let two = try makeTwoServers()
         let coordinator = two.coordinator
-        #expect(!coordinator.hasSettings(for: "server-a"))
 
         let first = coordinator.settings(for: "server-a")
         #expect(coordinator.settings(for: "server-a") === first)
@@ -263,10 +262,27 @@ struct ServerMetricsEnableTests {
         #expect(first.serverId == "server-a")
         #expect(coordinator.deviceSettings.serverId == nil)
 
+        let second = coordinator.settings(for: "server-b")
+        // A preview store refuses `remove(id:)` (it was never loaded), so the pairing list
+        // loses the server first, as the real removal leaves it; the removal then drops the store.
+        let remaining = try #require(coordinator.serverStore.servers.first { $0.id == "server-b" })
+        coordinator.serverStore.replaceServersForPreview([remaining])
         await coordinator.removeServer(id: "server-a")
 
-        #expect(!coordinator.hasSettings(for: "server-a"))
-        #expect(coordinator.hasSettings(for: "server-b"))
-        #expect(coordinator.settings(for: "server-a") !== first)
+        // The other server keeps its store; the removed one's is gone, and asking for it
+        // again hands out a store each time that the cache does not keep.
+        #expect(coordinator.settings(for: "server-b") === second)
+        let afterRemoval = coordinator.settings(for: "server-a")
+        #expect(afterRemoval !== first)
+        #expect(coordinator.settings(for: "server-a") !== afterRemoval)
+        #expect(afterRemoval.serverId == "server-a")
+    }
+
+    @Test("A store for an id no paired server has is not kept, and the app's own finds no connection for it")
+    func unknownServerGetsAnUnavailableStore() async {
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+        let ghost = coordinator.settings(for: "ghost")
+        #expect(coordinator.settings(for: "ghost") !== ghost)
+        #expect(await ghost.reload(SettingsCatalog.serverMetricsEnabled) == .failed(last: nil, reason: "The server is not reachable."))
     }
 }

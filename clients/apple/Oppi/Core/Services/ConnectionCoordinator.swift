@@ -94,16 +94,16 @@ final class ConnectionCoordinator {
 
     /// The settings store for one paired server: created on first use, the same one
     /// afterwards, dropped when the server is removed. A store never changes server,
-    /// so two screens on different servers never share state.
+    /// so two screens on different servers never share state. An id no paired server
+    /// has (a removed one, a screen still holding it) gets a store that is not kept:
+    /// it finds no connection, so its settings are unavailable, and it cannot
+    /// outlive the removal in the cache.
     func settings(for serverId: String) -> SettingsStore {
         if let store = serverSettings[serverId] { return store }
         let store = makeServerSettings(serverId)
-        serverSettings[serverId] = store
+        if serverStore.server(for: serverId) != nil { serverSettings[serverId] = store }
         return store
     }
-
-    /// Whether a server's settings store exists (a removed server has none).
-    func hasSettings(for serverId: String) -> Bool { serverSettings[serverId] != nil }
 
     /// The focused server's connection.
     /// Falls back to a disconnected sentinel if no server is active.

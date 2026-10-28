@@ -155,8 +155,22 @@ final class SettingsStore {
     @discardableResult
     func set<Value>(_ declaration: SettingDeclaration<Value>, _ value: Value) -> Task<SettingValue<Value>, Never> {
         let current = read(declaration)
-        // Nothing known to roll back to: still loading, saving, or unavailable.
-        guard current.canBeginSaving else { return Task { current } }
+        // Nothing known to roll back to: still loading, or unavailable.
+        guard current.canBeginSaving else {
+            // This setting is already saving. A writer asking for the value being saved
+            // waits for that save and shares what it settled to; one asking for another
+            // value queues behind it (writes to a route run in order) and returns its own
+            // result. Neither gets the in-flight state back.
+            if case .saving(let shown, _) = current, case .server(let endpoint, _) = declaration.storage, let inFlight = lastSave[endpoint] {
+                let sameValue = shown == value
+                return Task { @MainActor [weak self] in
+                    await inFlight.value
+                    guard let self else { return current }
+                    return sameValue ? read(declaration) : await set(declaration, value).value
+                }
+            }
+            return Task { current }
+        }
         retries[declaration.id] = nil
         if let reason = declaration.validate(value) {
             let refused = SettingValue<Value>.failed(last: current.current, reason: reason)
