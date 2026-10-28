@@ -1,14 +1,19 @@
 import Foundation
 
 extension SettingsStore {
-    /// The app's store: server settings go through the paired server's
-    /// connection, and a stored write runs the side effect its setting has.
-    static func live(coordinator: ConnectionCoordinator) -> SettingsStore {
+    /// The device store: device-scoped settings, with the side effect a stored
+    /// write has (the idle timer follows Keep Awake After Activity).
+    static func liveDevice() -> SettingsStore {
+        SettingsStore(serverId: nil, server: ServerAdapter { _ in nil }, afterWrite: liveAfterWrite(screenAwake: .shared))
+    }
+
+    /// One paired server's store: its settings go through that server's connection.
+    static func live(serverId: String, coordinator: ConnectionCoordinator) -> SettingsStore {
         SettingsStore(
-            server: ServerAdapter { [weak coordinator] serverId in
-                await coordinator?.apiClientReady(for: serverId)
-            },
-            afterWrite: liveAfterWrite(screenAwake: .shared)
+            serverId: serverId,
+            server: ServerAdapter { [weak coordinator] id in
+                await coordinator?.apiClientReady(for: id)
+            }
         )
     }
 

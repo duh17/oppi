@@ -12,26 +12,22 @@ struct SettingsServerTransportTests {
 
     private func makeStore(_ server: ScriptedMetricsServer) -> SettingsStore {
         let client = ScriptedMetricsServer.makeClient()
-        return SettingsStore(
-            device: DeviceAdapter(defaults: makeSettingsDefaults()),
-            server: ServerAdapter { _ in client }
-        )
+        return SettingsStore(serverId: "s1", server: ServerAdapter { _ in client })
     }
 
     @Test("A 409 revision_conflict reloads the setting and says it changed elsewhere, with nothing to retry")
     func conflictReloadsTheStoredValue() async {
         let server = ScriptedMetricsServer(enabled: false, revision: 4)
         let store = makeStore(server)
-        store.attach(serverId: "s1")
         _ = store.read(enabled)
         #expect(await waitForMainActorCondition { store.read(enabled).current != nil })
         #expect(store.read(enabled) == .value(false, revision: 4))
 
         // Another device saves between this device's load and its save.
         server.changeElsewhere()
-        await store.set(enabled, true).value
+        let latest = await store.set(enabled, true).value
 
-        #expect(store.read(enabled) == .failed(last: false, reason: "Changed on another device; showing the latest."))
+        #expect(latest == .failed(last: false, reason: "Changed on another device; showing the latest."))
         #expect(!store.canRetry(id: enabled.id))
         #expect(server.log == ["GET", "PUT base=4 enabled=true", "GET"])
     }
@@ -40,12 +36,11 @@ struct SettingsServerTransportTests {
     func saveSendsTheLoadedRevision() async {
         let server = ScriptedMetricsServer(enabled: false, revision: 4)
         let store = makeStore(server)
-        store.attach(serverId: "s1")
         _ = store.read(enabled)
         #expect(await waitForMainActorCondition { store.read(enabled).current != nil })
 
-        await store.set(enabled, true).value
-        await store.set(enabled, false).value
+        _ = await store.set(enabled, true).value
+        _ = await store.set(enabled, false).value
 
         #expect(server.log == ["GET", "PUT base=4 enabled=true", "PUT base=5 enabled=false"])
         #expect(store.read(enabled) == .value(false, revision: 6))
@@ -55,11 +50,10 @@ struct SettingsServerTransportTests {
     func unrevisionedServer() async {
         let server = ScriptedMetricsServer(enabled: false, revision: nil)
         let store = makeStore(server)
-        store.attach(serverId: "s1")
         _ = store.read(enabled)
         #expect(await waitForMainActorCondition { store.read(enabled).current != nil })
 
-        await store.set(enabled, true).value
+        _ = await store.set(enabled, true).value
 
         #expect(server.log == ["GET", "PUT enabled=true"])
         #expect(store.read(enabled) == .value(true, revision: nil))

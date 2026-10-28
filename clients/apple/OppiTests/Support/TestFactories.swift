@@ -45,7 +45,9 @@ func makeTestSession(
 }
 
 /// App root services for hosting tests, with no paired server. Drafts go to a
-/// throwaway file unless the test passes its own store.
+/// throwaway file unless the test passes its own store. `settings` replaces the
+/// device settings store (a test's, on a suite of its own); `serverSettings`
+/// makes each server's store (a test's, over a fake route).
 @MainActor
 func makeTestAppRoot(
     coordinator: ConnectionCoordinator? = nil,
@@ -53,10 +55,14 @@ func makeTestAppRoot(
     composerDraftStore: ComposerDraftStore? = nil,
     sessionRows: SessionRowDisplayStore = SessionRowDisplayStore(fixed: SessionRowDisplay()),
     liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
-    settings: SettingsStore? = nil
+    settings: SettingsStore? = nil,
+    serverSettings: ((String) -> SettingsStore)? = nil
 ) -> AppRootEnvironment {
-    AppRootEnvironment(
-        coordinator: coordinator ?? ConnectionCoordinator(serverStore: ServerStore()),
+    let coordinator = coordinator ?? ConnectionCoordinator(serverStore: ServerStore())
+    if let settings { coordinator.deviceSettings = settings }
+    if let serverSettings { coordinator.makeServerSettings = serverSettings }
+    return AppRootEnvironment(
+        coordinator: coordinator,
         navigation: AppNavigation(),
         themeStore: themeStore,
         quickCommentTemplateStore: QuickCommentTemplateStore(templates: []),
@@ -67,8 +73,7 @@ func makeTestAppRoot(
         ),
         chatReaderPayloadStore: ChatReaderPayloadStore(),
         sessionRows: sessionRows,
-        liveVoiceCalls: liveVoiceCalls,
-        settings: settings
+        liveVoiceCalls: liveVoiceCalls
     )
 }
 
@@ -79,7 +84,8 @@ func makeTestAppRoot(
 func makeTestAppRoot(
     readyServerId serverId: String,
     apiClient: APIClient,
-    settings: SettingsStore? = nil
+    settings: SettingsStore? = nil,
+    serverSettings: ((String) -> SettingsStore)? = nil
 ) throws -> AppRootEnvironment {
     let credentials = ServerCredentials(
         host: "ready-server.test",
@@ -95,7 +101,7 @@ func makeTestAppRoot(
     let coordinator = ConnectionCoordinator(serverStore: serverStore)
     coordinator.ensureConnection(for: server).setAPIClientForTesting(apiClient)
     #expect(coordinator.restoreActiveServer(server.id))
-    return makeTestAppRoot(coordinator: coordinator, settings: settings)
+    return makeTestAppRoot(coordinator: coordinator, settings: settings, serverSettings: serverSettings)
 }
 
 extension ExtensionSurfaceStore {

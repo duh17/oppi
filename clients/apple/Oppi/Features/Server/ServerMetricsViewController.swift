@@ -405,16 +405,14 @@ final class ServerMetricsViewController: UIViewController {
         isTogglingSampling = true
         render()
         let coordinator = coordinator
-        let settings = root.settings
+        // This server's own store: the one save path for the setting, which validates,
+        // rolls back a failed save, and reloads on a revision conflict.
+        let settings = coordinator.settings(for: serverId)
         Task { [weak self] in
-            // The one save path for this setting: the store validates, rolls back a
-            // failed save, and reloads on a revision conflict.
             let setting = SettingsCatalog.serverMetricsEnabled
-            settings.attach(serverId: serverId)
             // The document held since an earlier read (here or from Server Settings) may be stale.
             _ = await settings.reload(setting)
-            await settings.set(setting, enabled).value
-            let result = settings.read(setting)
+            let result = await settings.set(setting, enabled).value
             // The server's answer is the truth, even when it is not what was asked for:
             // the pill follows it.
             if let stored = result.current {

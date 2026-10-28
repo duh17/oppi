@@ -81,10 +81,29 @@ final class ConnectionCoordinator {
     /// The app's Live Voice call (set by `OppiApp`). Its socket is not one of a connection's
     /// streams, so removing a server ends the call here first.
     @ObservationIgnored weak var liveVoiceCalls: LiveVoiceCallCenter?
-    /// The app's one settings store. `AppRootEnvironment` publishes it to UIKit
-    /// screens, and a model that holds only the coordinator (Server Settings)
-    /// reaches the same one, so every write of a setting goes through one document.
-    @ObservationIgnored lazy var settings: SettingsStore = .live(coordinator: self)
+    /// The one store for device-scoped settings (no server context).
+    /// `AppRootEnvironment` publishes it. Tests replace it with a store on a
+    /// suite of their own.
+    @ObservationIgnored lazy var deviceSettings: SettingsStore = .liveDevice()
+    /// Makes a server's settings store. The app's makes one over the paired
+    /// server's connection; tests replace it to point at a fake route.
+    @ObservationIgnored lazy var makeServerSettings: (String) -> SettingsStore = { [unowned self] serverId in
+        .live(serverId: serverId, coordinator: self)
+    }
+    @ObservationIgnored private var serverSettings: [String: SettingsStore] = [:]
+
+    /// The settings store for one paired server: created on first use, the same one
+    /// afterwards, dropped when the server is removed. A store never changes server,
+    /// so two screens on different servers never share state.
+    func settings(for serverId: String) -> SettingsStore {
+        if let store = serverSettings[serverId] { return store }
+        let store = makeServerSettings(serverId)
+        serverSettings[serverId] = store
+        return store
+    }
+
+    /// Whether a server's settings store exists (a removed server has none).
+    func hasSettings(for serverId: String) -> Bool { serverSettings[serverId] != nil }
 
     /// The focused server's connection.
     /// Falls back to a disconnected sentinel if no server is active.
@@ -1107,6 +1126,7 @@ final class ConnectionCoordinator {
         // Revoke pending activation even when an inactive pairing is removed.
         selectionRevision += 1
         serverStore.remove(id: id)
+        serverSettings[id] = nil
         let removedLifetime = UUID()
         serverLifetimes[id] = removedLifetime
         connectionPreparationTasks.removeValue(forKey: id)?.task.cancel()

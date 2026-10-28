@@ -315,42 +315,38 @@ final class ServerSettingsModel {
     // MARK: - Server Metrics
 
     private func loadServerMetricsSetting(_ client: Client) async {
-        // The store holds the document every save of this setting is based on, so
-        // this read goes through it (fetching again) instead of beside it.
-        guard let settings = coordinator?.settings else { return }
-        let setting = SettingsCatalog.serverMetricsEnabled
-        settings.attach(serverId: client.serverId)
-        let state = await settings.reload(setting)
-        guard shouldApply(client.serverId) else { return }
+        // This server's store holds the document every save of the setting is based
+        // on, so this read goes through it (fetching again) instead of beside it.
+        guard let settings = coordinator?.settings(for: client.serverId) else { return }
+        let state = await settings.reload(SettingsCatalog.serverMetricsEnabled)
+        // A cancelled fetch leaves nothing to show, and is not a failure to report
+        // (`shouldApply(_:error:)` used to filter it out).
+        if case .loading = state { return }
+        guard !Task.isCancelled, shouldApply(client.serverId) else { return }
+        serverMetricsEnabled = state.current
+        serverMetricsError = state.failureReason ?? state.unavailableReason
         if let enabled = state.current {
-            serverMetricsEnabled = enabled
-            serverMetricsError = nil
             coordinator?.setServerMetricsEnabledCache(enabled, for: client.serverId)
-        } else {
-            serverMetricsEnabled = nil
-            serverMetricsError = state.failureReason ?? state.unavailableReason
         }
     }
 
-    /// Saves `serverMetrics.enabled` through `SettingsStore`, the one path that
-    /// writes it (this model and the Metrics page share the store, so neither
-    /// can base a save on a document the other has already moved on from). It
-    /// fetches the current document first, then saves: a failed save rolls back
-    /// with the reason, and a conflict reloads the latest value.
+    /// Saves `serverMetrics.enabled` through this server's `SettingsStore`, the one
+    /// path that writes it (the Metrics page uses the same store, so neither can
+    /// base a save on a document the other has already moved on from). It fetches
+    /// the current document first, then saves: a failed save rolls back with the
+    /// reason, and a conflict reloads the latest value.
     func setServerMetrics(_ enabled: Bool) async {
-        guard serverMetricsEnabled != nil, let serverId, let settings = coordinator?.settings else { return }
+        guard serverMetricsEnabled != nil, let serverId, let settings = coordinator?.settings(for: serverId) else { return }
         isSavingServerMetrics = true
         defer { if shouldApply(serverId) { isSavingServerMetrics = false } }
         let setting = SettingsCatalog.serverMetricsEnabled
-        settings.attach(serverId: serverId)
         _ = await settings.reload(setting)
-        await settings.set(setting, enabled).value
-        let result = settings.read(setting)
+        let result = await settings.set(setting, enabled).value
         // The server changed even if this screen moved on; the pill follows it.
         if let stored = result.current {
             coordinator?.setServerMetricsEnabledCache(stored, for: serverId)
         }
-        guard shouldApply(serverId) else { return }
+        guard !Task.isCancelled, shouldApply(serverId) else { return }
         if let stored = result.current { serverMetricsEnabled = stored }
         serverMetricsError = result.current == enabled ? nil : (result.failureReason ?? result.unavailableReason)
     }

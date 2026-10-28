@@ -9,16 +9,21 @@ struct SettingsStoreTests {
     private let label = testLabelSetting
     private let haptics = SettingsCatalog.hapticFeedback
 
-    private func makeStore(
-        _ transports: [String: FakeSettingsTransport],
+    /// One paired server's store, over a fake route.
+    private func makeServerStore(
+        _ transport: FakeSettingsTransport,
+        serverId: String = "s1",
+        afterWrite: @escaping @MainActor (String) -> Void = { _ in }
+    ) -> SettingsStore {
+        SettingsStore(serverId: serverId, server: ServerAdapter { _ in transport }, afterWrite: afterWrite)
+    }
+
+    /// The device store, on a suite of its own.
+    private func makeDeviceStore(
         defaults: UserDefaults = makeSettingsDefaults(),
         afterWrite: @escaping @MainActor (String) -> Void = { _ in }
     ) -> SettingsStore {
-        SettingsStore(
-            device: DeviceAdapter(defaults: defaults),
-            server: ServerAdapter { transports[$0] },
-            afterWrite: afterWrite
-        )
+        SettingsStore(serverId: nil, device: DeviceAdapter(defaults: defaults), server: ServerAdapter { _ in nil }, afterWrite: afterWrite)
     }
 
     /// Lets the store's own tasks run until `condition` holds.
@@ -26,54 +31,57 @@ struct SettingsStoreTests {
         for _ in 0..<400 where !condition() { try? await Task.sleep(for: .milliseconds(5)) }
     }
 
-    // MARK: - Device
-
-    @Test("A device setting reads and writes through the adapter and never touches a server")
-    func deviceSettingNeverTouchesTheServer() async {
-        let transport = FakeSettingsTransport()
-        let defaults = makeSettingsDefaults()
-        let store = makeStore(["s1": transport], defaults: defaults)
-        store.attach(serverId: "s1")
-
-        #expect(store.read(haptics) == .value(true, revision: nil))
-        await store.set(haptics, false).value
-        #expect(store.read(haptics) == .value(false, revision: nil))
-        #expect(defaults.object(forKey: AppPreferenceStore.Interaction.hapticFeedbackEnabledKey) as? Bool == false)
-
-        #expect(transport.saves.isEmpty)
-        #expect(transport.loads == 0)
+    /// A server store whose `label` and `enabled` are loaded.
+    private func loaded(_ transport: FakeSettingsTransport, serverId: String = "s1") async -> SettingsStore {
+        let store = makeServerStore(transport, serverId: serverId)
+        _ = (store.read(enabled), store.read(label))
+        await until { store.read(enabled).current != nil }
+        return store
     }
 
-    @Test("A stored write runs the hook with the setting's id, and a refused one does not")
+    // MARK: - Device
+
+    @Test("The device store reads and writes through the adapter, and set returns the settled value")
+    func deviceStoreWritesThroughTheAdapter() async {
+        let defaults = makeSettingsDefaults()
+        let store = makeDeviceStore(defaults: defaults)
+
+        #expect(store.read(haptics) == .value(true, revision: nil))
+        let settled = await store.set(haptics, false).value
+        #expect(settled == .value(false, revision: nil))
+        #expect(store.read(haptics) == .value(false, revision: nil))
+        #expect(defaults.object(forKey: AppPreferenceStore.Interaction.hapticFeedbackEnabledKey) as? Bool == false)
+    }
+
+    @Test("A stored write runs the store's hook with the setting's id, and a refused one does not")
     func afterWriteRunsForStoredWrites() async {
         var written: [String] = []
-        let store = makeStore(["s1": FakeSettingsTransport()], afterWrite: { written.append($0) })
-        store.attach(serverId: "s1")
+        let device = makeDeviceStore(afterWrite: { written.append($0) })
+        let transport = FakeSettingsTransport()
+        let server = makeServerStore(transport, afterWrite: { written.append($0) })
 
-        await store.set(SettingsCatalog.keepAwakeAfterActivity, .fiveMinutes).value
+        _ = await device.set(SettingsCatalog.keepAwakeAfterActivity, .fiveMinutes).value
         #expect(written == [SettingsCatalog.keepAwakeAfterActivity.id])
-        #expect(store.read(SettingsCatalog.keepAwakeAfterActivity) == .value(.fiveMinutes, revision: nil))
+        #expect(device.read(SettingsCatalog.keepAwakeAfterActivity) == .value(.fiveMinutes, revision: nil))
 
-        _ = store.read(label)
-        await until { store.read(label).current != nil }
-        await store.set(label, "").value
+        _ = server.read(label)
+        await until { server.read(label).current != nil }
+        _ = await server.set(label, "").value
         #expect(written == [SettingsCatalog.keepAwakeAfterActivity.id])
 
-        await store.set(label, "second").value
+        _ = await server.set(label, "second").value
         #expect(written == [SettingsCatalog.keepAwakeAfterActivity.id, label.id])
     }
 
     @Test("A refused value is not written, and the row says why")
     func validationRefusesBeforeAnyWrite() async {
         let transport = FakeSettingsTransport()
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = store.read(label)
-        await until { store.read(label).current != nil }
+        let store = await loaded(transport)
 
-        await store.set(label, "").value
+        let refused = await store.set(label, "").value
 
-        #expect(store.read(label) == .failed(last: "first", reason: "Give it a label."))
+        #expect(refused == .failed(last: "first", reason: "Give it a label."))
+        #expect(store.read(label) == refused)
         #expect(store.failureReason(id: label.id) == "Give it a label.")
         #expect(!store.canRetry(id: label.id))
         #expect(transport.saves.isEmpty)
@@ -84,8 +92,7 @@ struct SettingsStoreTests {
     @Test("A server setting loads on its first read, and every setting on the route shares the load")
     func serverLoadsOnFirstRead() async {
         let transport = FakeSettingsTransport(fields: ["enabled": true, "label": "shared"], revision: 4)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
+        let store = makeServerStore(transport)
 
         #expect(store.read(enabled) == .loading)
         #expect(store.read(label) == .loading)
@@ -99,10 +106,7 @@ struct SettingsStoreTests {
     @Test("reload fetches the document again, so a write after it is not based on a stale one")
     func reloadRefreshesTheDocumentBeforeAWrite() async {
         let transport = FakeSettingsTransport(revision: 4)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = store.read(enabled)
-        await until { store.read(enabled).current != nil }
+        let store = await loaded(transport)
 
         // The document moved on without this store: another writer, or a path that bypassed it.
         transport.changeElsewhere(["enabled": true])
@@ -112,16 +116,15 @@ struct SettingsStoreTests {
         #expect(fresh == .value(true, revision: 5))
         #expect(transport.loads == 2)
 
-        await store.set(enabled, false).value
+        let settled = await store.set(enabled, false).value
+        #expect(settled == .value(false, revision: 6))
         #expect(transport.saves == [.init(endpoint: .serverMetrics, fields: ["enabled": false], baseRevision: 5)])
-        #expect(store.read(enabled) == .value(false, revision: 6))
     }
 
     @Test("reload of a setting that was never read loads it")
     func reloadLoadsAnUnreadSetting() async {
         let transport = FakeSettingsTransport(fields: ["enabled": true], revision: 4)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
+        let store = makeServerStore(transport)
         #expect(await store.reload(enabled) == .value(true, revision: 4))
         #expect(transport.loads == 1)
     }
@@ -129,10 +132,7 @@ struct SettingsStoreTests {
     @Test("reload waits for a save in flight, and keeps a failed fetch's last value")
     func reloadWaitsForSavesAndSurvivesFailure() async {
         let transport = FakeSettingsTransport(revision: 4)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = store.read(enabled)
-        await until { store.read(enabled).current != nil }
+        let store = await loaded(transport)
 
         let gate = SettingsGate()
         transport.holdSaves(gate)
@@ -143,31 +143,29 @@ struct SettingsStoreTests {
         try? await Task.sleep(for: .milliseconds(30))
         #expect(transport.loads == 1)
         await gate.open()
-        await write.value
+        _ = await write.value
         #expect(await reloaded == .value(true, revision: 5))
 
         transport.failNextLoad(with: SettingsTestError())
         #expect(await store.reload(enabled) == .failed(last: true, reason: "The server said no."))
     }
 
-    @Test("A write shows the new value as saving, then the stored one with its revision")
+    @Test("A write shows the new value as saving, then the stored one with its revision, and returns it")
     func serverWriteSettlesToTheStoredValue() async {
         let transport = FakeSettingsTransport(revision: 4)
         let gate = SettingsGate()
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = (store.read(enabled), store.read(label))
-        await until { store.read(enabled).current != nil }
+        let store = await loaded(transport)
 
         transport.holdSaves(gate)
         let write = store.set(enabled, true)
         #expect(store.read(enabled) == .saving(shown: true, previous: false))
-        // The row cannot be changed again while it saves.
-        store.set(enabled, false)
+        // The row cannot be changed again while it saves; the call says what it found.
+        #expect(await store.set(enabled, false).value == .saving(shown: true, previous: false))
         await gate.open()
-        await write.value
+        let settled = await write.value
 
-        #expect(store.read(enabled) == .value(true, revision: 5))
+        #expect(settled == .value(true, revision: 5))
+        #expect(store.read(enabled) == settled)
         // The other setting on the route took the new revision, so its next write is not stale.
         #expect(store.read(label) == .value("first", revision: 5))
         #expect(transport.saves == [.init(endpoint: .serverMetrics, fields: ["enabled": true], baseRevision: 4)])
@@ -176,14 +174,12 @@ struct SettingsStoreTests {
     @Test("A failed write rolls back to the previous value with the reason, and Retry writes it again")
     func serverFailureRollsBackAndRetries() async {
         let transport = FakeSettingsTransport(revision: 4)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = store.read(enabled)
-        await until { store.read(enabled).current != nil }
+        let store = await loaded(transport)
 
         transport.failNextSave(with: SettingsTestError())
-        await store.set(enabled, true).value
-        #expect(store.read(enabled) == .failed(last: false, reason: "The server said no."))
+        let failed = await store.set(enabled, true).value
+        #expect(failed == .failed(last: false, reason: "The server said no."))
+        #expect(store.read(enabled) == failed)
         #expect(store.canRetry(id: enabled.id))
 
         await store.retry(id: enabled.id).value
@@ -195,56 +191,50 @@ struct SettingsStoreTests {
     @Test("A revision conflict reloads the server's value, says it changed elsewhere, and leaves the row editable")
     func conflictReloads() async {
         let transport = FakeSettingsTransport(revision: 4)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = store.read(label)
-        await until { store.read(label).current != nil }
+        let store = await loaded(transport)
 
         // Another device changed the label after this one loaded.
         transport.changeElsewhere(["label": "elsewhere"])
-        await store.set(label, "mine").value
+        let latest = await store.set(label, "mine").value
 
-        #expect(store.read(label) == .failed(last: "elsewhere", reason: "Changed on another device; showing the latest."))
+        #expect(latest == .failed(last: "elsewhere", reason: "Changed on another device; showing the latest."))
+        #expect(store.read(label) == latest)
         // A message, not a failure to retry: nothing to run again, and the row can be changed.
         #expect(!store.canRetry(id: label.id))
         #expect(transport.saves.count == 1)
         #expect(transport.loads == 2)
 
-        await store.set(label, "mine").value
-        #expect(store.read(label) == .value("mine", revision: 6))
+        let saved = await store.set(label, "mine").value
+        #expect(saved == .value("mine", revision: 6))
         #expect(transport.saves.map(\.baseRevision) == [4, 5])
     }
 
     @Test("A document older than the one held is ignored")
     func olderDocumentIsIgnored() async {
         let transport = FakeSettingsTransport(revision: 4)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = store.read(label)
-        await until { store.read(label).current != nil }
+        let store = await loaded(transport)
 
         // The conflict's reload is answered with a document from before the one held.
         transport.changeElsewhere(["label": "elsewhere"])
         transport.answerNextLoad(with: SettingsServerDocument(fields: ["enabled": false, "label": "ancient"], revision: 2))
-        await store.set(label, "mine").value
+        _ = await store.set(label, "mine").value
 
         // The ancient document did not become the base of the next write or the value shown.
         #expect(store.read(label).current == "first")
-        await store.set(label, "again").value
+        _ = await store.set(label, "again").value
         #expect(transport.saves.map(\.baseRevision) == [4, 4])
     }
 
     @Test("A setting first read after its route loaded reads that document instead of asking again")
     func laterSettingReadsTheLoadedDocument() async {
         let transport = FakeSettingsTransport(fields: ["enabled": true, "label": "shared"], revision: 4)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
+        let store = makeServerStore(transport)
         _ = store.read(enabled)
         await until { store.read(enabled).current != nil }
 
         // Not .loading, and no second request.
         #expect(store.read(label) == .value("shared", revision: 4))
-        await store.set(label, "changed").value
+        _ = await store.set(label, "changed").value
         #expect(transport.loads == 1)
         #expect(transport.saves == [.init(endpoint: .serverMetrics, fields: ["label": "changed"], baseRevision: 4)])
     }
@@ -252,31 +242,24 @@ struct SettingsStoreTests {
     @Test("A route with no revision is written without one and has no conflict path")
     func unrevisionedRoute() async {
         let transport = FakeSettingsTransport(revision: nil)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = store.read(enabled)
-        await until { store.read(enabled).current != nil }
+        let store = await loaded(transport)
         #expect(store.read(enabled) == .value(false, revision: nil))
 
-        await store.set(enabled, true).value
+        let settled = await store.set(enabled, true).value
 
-        #expect(store.read(enabled) == .value(true, revision: nil))
+        #expect(settled == .value(true, revision: nil))
         #expect(transport.saves == [.init(endpoint: .serverMetrics, fields: ["enabled": true], baseRevision: nil)])
     }
 
     @Test("Writes to one route run in order, each against the revision the last one produced")
     func writesToOneRouteAreSerial() async {
         let transport = FakeSettingsTransport(revision: 4)
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = store.read(enabled)
-        _ = store.read(label)
-        await until { store.read(enabled).current != nil }
+        let store = await loaded(transport)
 
         let first = store.set(enabled, true)
         let second = store.set(label, "second")
-        await first.value
-        await second.value
+        _ = await first.value
+        _ = await second.value
 
         #expect(transport.saves.map(\.baseRevision) == [4, 5])
         #expect(store.read(enabled) == .value(true, revision: 6))
@@ -287,11 +270,7 @@ struct SettingsStoreTests {
     func unreachableServerFailsWithRetry() async {
         let transport = FakeSettingsTransport()
         let reachable = Box(false)
-        let store = SettingsStore(
-            device: DeviceAdapter(defaults: makeSettingsDefaults()),
-            server: ServerAdapter { [reachable] _ in reachable.value ? transport : nil }
-        )
-        store.attach(serverId: "s1")
+        let store = SettingsStore(serverId: "s1", server: ServerAdapter { [reachable] _ in reachable.value ? transport : nil })
         _ = store.read(label)
         await until { store.read(label).failureReason != nil }
         #expect(store.read(label) == .failed(last: nil, reason: "The server is not reachable."))
@@ -307,8 +286,7 @@ struct SettingsStoreTests {
     func loadFailureThenRetry() async {
         let transport = FakeSettingsTransport()
         transport.failNextLoad(with: SettingsTestError())
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
+        let store = makeServerStore(transport)
         _ = store.read(enabled)
         await until { store.read(enabled).failureReason != nil }
         #expect(store.read(enabled) == .failed(last: nil, reason: "The server said no."))
@@ -318,76 +296,37 @@ struct SettingsStoreTests {
         #expect(store.read(enabled) == .value(false, revision: 4))
     }
 
-    // MARK: - Context
+    // MARK: - Two servers
 
-    @Test("With no server attached a server setting is unavailable and a device setting still works")
-    func noServer() async {
-        let store = makeStore([:])
-        #expect(store.read(label).unavailableReason != nil)
-        await store.set(label, "x").value
-        #expect(store.read(label).unavailableReason != nil)
-        await store.set(haptics, false).value
-        #expect(store.read(haptics) == .value(false, revision: nil))
-    }
+    @Test("Two servers' stores at once: a save in flight for one never touches the other's loads, saves, or documents")
+    func twoServersDoNotShareState() async {
+        let a = FakeSettingsTransport(fields: ["enabled": false, "label": "a"], revision: 1)
+        let b = FakeSettingsTransport(fields: ["enabled": false, "label": "b"], revision: 10)
+        let storeA = await loaded(a, serverId: "A")
+        let storeB = await loaded(b, serverId: "B")
 
-    @Test("A switch to another server drops what was loaded and ignores a write still in flight for the old one")
-    func contextSwitchDropsStaleResults() async {
-        let old = FakeSettingsTransport(fields: ["enabled": false, "label": "old"], revision: 1)
-        let new = FakeSettingsTransport(fields: ["enabled": true, "label": "new"], revision: 7)
-        let store = makeStore(["s1": old, "s2": new])
-        store.attach(serverId: "s1")
-        _ = store.read(label)
-        await until { store.read(label).current != nil }
-
+        // B's save is in flight...
         let gate = SettingsGate()
-        old.holdSaves(gate)
-        let write = store.set(label, "changed")
-        await until { !old.saves.isEmpty }
-        #expect(store.read(label) == .saving(shown: "changed", previous: "old"))
+        b.holdSaves(gate)
+        let writeB = storeB.set(enabled, true)
+        await until { !b.saves.isEmpty }
 
-        store.attach(serverId: "s2")
-        #expect(store.read(label) == .loading)
-        await until { store.read(label).current != nil }
-        #expect(store.read(label) == .value("new", revision: 7))
+        // ...while A reloads and saves, and both succeed.
+        #expect(await storeA.reload(label) == .value("a", revision: 1))
+        let settledA = await storeA.set(enabled, true).value
+        #expect(settledA == .value(true, revision: 2))
+        #expect(await storeA.reload(label) == .value("a", revision: 2))
+        #expect(storeB.read(enabled) == .saving(shown: true, previous: false))
 
         await gate.open()
-        await write.value
+        let settledB = await writeB.value
+        #expect(settledB == .value(true, revision: 11))
 
-        // The old server's answer landed after the switch and changed nothing.
-        #expect(store.read(label) == .value("new", revision: 7))
-        #expect(new.saves.isEmpty)
-    }
-
-    @Test("A load still in flight for the old server is ignored too, even when the app comes back to it")
-    func staleLoadIsIgnored() async {
-        let old = FakeSettingsTransport(fields: ["enabled": false, "label": "old"], revision: 1)
-        let gate = SettingsGate()
-        old.holdLoads(gate)
-        let store = makeStore(["s1": old, "s2": FakeSettingsTransport(fields: ["enabled": true, "label": "new"], revision: 7)])
-        store.attach(serverId: "s1")
-        _ = store.read(label)
-        await until { old.loads == 1 }
-
-        store.attach(serverId: "s2")
-        store.attach(serverId: "s1")
-        #expect(store.read(label) == .loading)
-        await gate.open()
-        // The first answer is for a context that ended; the second one, asked for after coming back, lands.
-        await until { store.read(label).current != nil }
-        #expect(store.read(label) == .value("old", revision: 1))
-        #expect(old.loads == 2)
-    }
-
-    @Test("Attaching the server it already has changes nothing")
-    func sameServerKeepsState() async {
-        let transport = FakeSettingsTransport()
-        let store = makeStore(["s1": transport])
-        store.attach(serverId: "s1")
-        _ = store.read(label)
-        await until { store.read(label).current != nil }
-        store.attach(serverId: "s1")
-        #expect(store.read(label) == .value("first", revision: 4))
-        #expect(transport.loads == 1)
+        // Each store holds its own server's documents; none of the other's leaked in.
+        #expect(await storeA.reload(enabled) == .value(true, revision: 2))
+        #expect(await storeB.reload(label) == .value("b", revision: 11))
+        #expect(a.saves == [.init(endpoint: .serverMetrics, fields: ["enabled": true], baseRevision: 1)])
+        #expect(b.saves == [.init(endpoint: .serverMetrics, fields: ["enabled": true], baseRevision: 10)])
     }
 }
 

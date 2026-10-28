@@ -28,8 +28,8 @@ struct AppRootEnvironment {
     let composerDraftStore: ComposerDraftStore
     let chatReaderPayloadStore: ChatReaderPayloadStore
     let sessionRows: SessionRowDisplayStore
-    /// Every declared setting's state: the one place settings are validated,
-    /// saved, rolled back, and reloaded (`SettingsCatalog`).
+    /// The device-scoped settings store (`SettingsCatalog`). A server's settings
+    /// come from `coordinator.settings(for:)`, one store per server.
     let settings: SettingsStore
     /// The app's one Live Voice call, which outlives the chat that started it.
     let liveVoiceCalls: LiveVoiceCallCenter
@@ -48,7 +48,6 @@ struct AppRootEnvironment {
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
         liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
-        settings: SettingsStore? = nil,
         opener: AppOpener
     ) {
         self.coordinator = coordinator
@@ -58,9 +57,7 @@ struct AppRootEnvironment {
         self.composerDraftStore = composerDraftStore
         self.chatReaderPayloadStore = chatReaderPayloadStore
         self.sessionRows = sessionRows
-        // A store passed in (a test's) becomes the coordinator's too: one store per app.
-        if let settings { coordinator.settings = settings }
-        self.settings = coordinator.settings
+        self.settings = coordinator.deviceSettings
         self.liveVoiceCalls = liveVoiceCalls
         self.opener = opener
     }
@@ -74,8 +71,7 @@ struct AppRootEnvironment {
         composerDraftStore: ComposerDraftStore,
         chatReaderPayloadStore: ChatReaderPayloadStore,
         sessionRows: SessionRowDisplayStore,
-        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
-        settings: SettingsStore? = nil
+        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter()
     ) {
         self.init(
             coordinator: coordinator,
@@ -86,7 +82,6 @@ struct AppRootEnvironment {
             chatReaderPayloadStore: chatReaderPayloadStore,
             sessionRows: sessionRows,
             liveVoiceCalls: liveVoiceCalls,
-            settings: settings,
             opener: AppOpener(
                 coordinator: coordinator,
                 navigation: navigation,
