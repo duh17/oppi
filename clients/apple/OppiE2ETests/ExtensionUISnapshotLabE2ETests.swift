@@ -703,10 +703,7 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.50)).doubleTap()
 
         // Then the native surface opens in the chat reader, which pushes the detail with Back chrome.
-        let detailBackButton = app.buttons
-            .matching(identifier: "extension-native-surface-\(identifierSuffix)-detail")
-            .matching(NSPredicate(format: "label == %@", "Back"))
-            .firstMatch
+        let detailBackButton = app.buttons["extension-native-surface-\(identifierSuffix)-detail-back"]
         XCTAssertTrue(
             detailBackButton.waitForExistence(timeout: 5),
             "Double tapping an expanded native surface viewport should open full-screen detail"
