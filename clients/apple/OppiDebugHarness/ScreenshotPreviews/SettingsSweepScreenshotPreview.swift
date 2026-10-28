@@ -14,7 +14,7 @@ import SwiftUI
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
-/// `agents-pi`, `workspace-create`, `workspace-create-configure`.
+/// `agents-pi`, `agent-icon-picker`, `workspace-create`, `workspace-create-configure`.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -338,6 +338,11 @@ struct SettingsSweepScreenshotPreview: View {
         case "agents-pi", "agents-pi-file":
             RouterPreviewControllerStack(root: root) { PiAgentDetailViewController(root: root) }
                 .ignoresSafeArea()
+        case "agent-icon-picker":
+            RouterPreviewControllerStack(root: root) { [connection] in
+                AgentIconPicker.viewController(agent: Self.agent, connection: connection) { _ in }
+            }
+            .ignoresSafeArea()
         case "extension-detail":
             RouterPreviewControllerStack(root: root) { [server, root, connection] in
                 ServerExtensionDetailViewController(

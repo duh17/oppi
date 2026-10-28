@@ -551,7 +551,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             accessories = [.customView(configuration: .init(customView: icon, placement: .trailing()))]
             identifier = "workspace.create.icon"
             label = "Workspace icon"
-            value = WorkspaceIconPickerView.description(model.icon)
+            value = WorkspaceIconPicker.description(model.icon)
             hint = "Opens the icon picker"
             action = { [weak self] in self?.showsIconPicker = true }
         case .showAdvanced:
@@ -771,10 +771,10 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         let model = model
         iconPicker.update(
             id: showsIconPicker ? "icon-picker" : nil,
-            presentation: WorkspaceIconPickerView.presentation(traitCollection),
+            presentation: .iconPicker(for: traitCollection),
             root: root,
             clear: { [weak self] in self?.showsIconPicker = false },
-            screen: { WorkspaceIconPickerView.screen(editing: model) }
+            screen: { WorkspaceIconPicker.screen(editing: model) }
         )
     }
 }

@@ -344,7 +344,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
                 cell,
                 identifier: "agents.detail.icon",
                 label: "Icon",
-                value: AgentIconPickerView.description(agent.definition.icon),
+                value: AgentIconPicker.description(agent.definition.icon),
                 hint: "Opens the Agent icon picker"
             ) { [weak self] in
                 self?.showsIconPicker = true
@@ -494,10 +494,15 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         )
         iconPicker.update(
             id: showsIconPicker && agent != nil ? "icon-picker" : nil,
-            presentation: AgentHostedScreens.iconPickerPresentation(traitCollection),
+            presentation: .iconPicker(for: traitCollection),
             root: root,
             clear: { [weak self] in self?.showsIconPicker = false },
-            screen: { AgentHostedScreens.iconPicker(agent, onSaved: saved) }
+            screen: {
+                .controller {
+                    guard let agent else { preconditionFailure("The icon picker presents only with its Agent") }
+                    return AgentIconPicker.viewController(agent: agent, connection: connection, onSaved: saved)
+                }
+            }
         )
         definitionReview.update(
             id: showsDefinitionReview && agent != nil ? "definition" : nil,

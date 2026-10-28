@@ -115,9 +115,6 @@
     "clients/apple/Oppi/Features/Agents/AgentHostedScreens.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Agents/AgentIconPickerView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditPages.swift": {
       "import SwiftUI": 1
     },
@@ -168,9 +165,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Icons/IconPickerView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpAddServerViewController.swift": {

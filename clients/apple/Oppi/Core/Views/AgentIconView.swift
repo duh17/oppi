@@ -307,47 +307,6 @@ struct IconChoiceView: View {
     }
 }
 
-struct AgentIconView: View {
-    let value: IconChoice?
-    let size: CGFloat
-    let frameSize: CGFloat?
-    let isDecorative: Bool
-    let assetCache: IconAssetCache?
-    let visualScale: CGFloat
-    let renderStyle: AgentIconRenderStyle
-
-    init(
-        value: IconChoice?,
-        size: CGFloat,
-        frameSize: CGFloat? = nil,
-        isDecorative: Bool = true,
-        assetCache: IconAssetCache? = nil,
-        visualScale: CGFloat = 1,
-        renderStyle: AgentIconRenderStyle = .standard
-    ) {
-        self.value = value
-        self.size = size
-        self.frameSize = frameSize
-        self.isDecorative = isDecorative
-        self.assetCache = assetCache
-        self.visualScale = visualScale
-        self.renderStyle = renderStyle
-    }
-
-    var body: some View {
-        IconChoiceView(
-            value: value,
-            purpose: .agent,
-            size: size,
-            frameSize: frameSize,
-            isDecorative: isDecorative,
-            assetCache: assetCache,
-            visualScale: visualScale,
-            renderStyle: renderStyle
-        )
-    }
-}
-
 @MainActor
 enum AgentIconRenderer {
     static func render(value: IconChoice?, size: CGFloat) -> UIImage {

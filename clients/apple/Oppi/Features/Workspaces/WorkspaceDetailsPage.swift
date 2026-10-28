@@ -7,6 +7,7 @@ struct WorkspaceDetailsPage: View {
 
     @Environment(\.screenNavigator) private var navigator
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.iconAssetCache) private var iconAssetCache
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(ServerStore.self) private var serverStore
@@ -75,7 +76,7 @@ struct WorkspaceDetailsPage: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Workspace icon")
-                .accessibilityValue(WorkspaceIconPickerView.description(draft.icon))
+                .accessibilityValue(WorkspaceIconPicker.description(draft.icon))
                 .accessibilityHint("Opens the icon picker")
                 .accessibilityIdentifier("workspace.edit.icon")
             }
@@ -118,15 +119,21 @@ struct WorkspaceDetailsPage: View {
                 .accessibilityIdentifier("workspace.edit.save")
             }
         }
-        .routerModal(
+        .routerScreenModal(
             isPresented: $isShowingIconPicker,
             presentation: .iconPicker(
-                horizontalSizeClass: horizontalSizeClass,
-                verticalSizeClass: verticalSizeClass
+                horizontal: UIUserInterfaceSizeClass(horizontalSizeClass),
+                vertical: UIUserInterfaceSizeClass(verticalSizeClass)
             )
         ) {
-            WorkspaceIconPickerView(icon: $draft.icon)
-                .environment(\.apiClient, apiClient)
+            .controller {
+                WorkspaceIconPicker.viewController(
+                    icon: draft.icon,
+                    apiClient: apiClient,
+                    assetCache: iconAssetCache,
+                    commit: { draft.icon = $0 }
+                )
+            }
         }
         .onAppear { isVisible = true }
         .onDisappear { isVisible = false }

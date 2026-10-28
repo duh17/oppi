@@ -146,8 +146,9 @@ struct AssistantTimelineRowContentViewTests {
             updatedAt: .now
         )
         let root = VStack {
-            AgentIconView(
+            IconChoiceView(
                 value: .genmoji(assetId: agentAssetId, contentDescription: "Agent glyph"),
+                purpose: .agent,
                 size: 24
             )
             WorkspaceRuntimeIcon(workspace: workspace, size: 24, frameSize: 32)

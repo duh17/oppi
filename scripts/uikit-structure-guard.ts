@@ -102,6 +102,10 @@ const settingsThemingExceptions: { file: string; reason: string }[] = [
     reason: "A grid of theme cards with its own layout, not a list of rows.",
   },
   {
+    file: "clients/apple/Oppi/Features/Icons/IconPickerViewController.swift",
+    reason: "The icon picker: a list for the chooser and search field above a grid of SF Symbols, laid out by its own compositional layout.",
+  },
+  {
     file: "clients/apple/Oppi/Features/SSHTerminal/HerdrAgentsView.swift",
     reason: "The terminal's list of Herdr agents: a picker over a live terminal, not a settings page.",
   },
