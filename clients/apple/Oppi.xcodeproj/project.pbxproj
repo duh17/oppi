@@ -85,6 +85,7 @@
 		08B71B833159309A2D9E5F20 /* CollapsedToolTimelineRowContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBC79E55351FBB91C420735C /* CollapsedToolTimelineRowContent.swift */; };
 		08BB4EBC6BA7328B0CA69DE7 /* WorkspaceDetailSortTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3E4708C3677D2364AFE9EFA /* WorkspaceDetailSortTests.swift */; };
 		094D52D2F399A952E849441C /* NotebookCellPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDFC5F5CE188409648C283C1 /* NotebookCellPresentationTests.swift */; };
+		096725F838F0CD582124EA54 /* TailnetServerSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4F3794F5D89742B818A8C1A /* TailnetServerSettingsTests.swift */; };
 		09A66EBDDC5802DDE35D45A4 /* GuidedControlComposerController+Source.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E9E361DB8ECF2B234779495 /* GuidedControlComposerController+Source.swift */; };
 		09C1BD5EDE3AE08DCF48FCC4 /* LiveNestedToolCalls.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB0FA22FB9526394205548C /* LiveNestedToolCalls.swift */; };
 		09E4800E3D9F819651788276 /* MacComposerDictationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8163D251F7507D0D12DD35A7 /* MacComposerDictationController.swift */; };
@@ -3698,6 +3699,7 @@
 		A4A7823A5C60628A22055031 /* MermaidTextUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidTextUtils.swift; sourceTree = "<group>"; };
 		A4CE2ABE3351FCA6E703FF4F /* AppPreferenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPreferenceStore.swift; sourceTree = "<group>"; };
 		A4DC1FCD6786843DD8EA8F1A /* HardwareKeybindingAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareKeybindingAdapterTests.swift; sourceTree = "<group>"; };
+		A4F3794F5D89742B818A8C1A /* TailnetServerSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailnetServerSettingsTests.swift; sourceTree = "<group>"; };
 		A50CDFFE19A416F3C9DAE48E /* NearbyPairingAdvertiserCallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyPairingAdvertiserCallbackTests.swift; sourceTree = "<group>"; };
 		A50E42F85C9350D05553E6AD /* WorkingIndicatorTimelineRowContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkingIndicatorTimelineRowContentTests.swift; sourceTree = "<group>"; };
 		A583A9541B9F603C8A3EEFD4 /* SSHTerminalFolderTerminal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalFolderTerminal.swift; sourceTree = "<group>"; };
@@ -5626,6 +5628,7 @@
 				744F52FE337FB5557EFAAC32 /* ServerNotificationsControllerTests.swift */,
 				C6D3C3C46365DFDD18357AAF /* ServerSettingsModelTests.swift */,
 				6B7B96D6E0AEE7633A3DC162 /* ServerSettingsRouteTests.swift */,
+				A4F3794F5D89742B818A8C1A /* TailnetServerSettingsTests.swift */,
 			);
 			path = Servers;
 			sourceTree = "<group>";
@@ -9484,6 +9487,7 @@
 				FFAE7C1A20640DA1706E27C9 /* TLSPinningTests.swift in Sources */,
 				BE680B1B4C3DFD777889D723 /* TableBodyLeakRegressionTests.swift in Sources */,
 				FEAD1D89D26316308BA9F66E /* TableColumnAlignmentTests.swift in Sources */,
+				096725F838F0CD582124EA54 /* TailnetServerSettingsTests.swift in Sources */,
 				2EB92D833D00D27FE8E2511F /* TailnetTests.swift in Sources */,
 				C7970FEE38143C98440703E4 /* TeXMathParserConformanceTests.swift in Sources */,
 				CF2AA293981200543601BC47 /* TeXMathParserErrorRecoveryTests.swift in Sources */,

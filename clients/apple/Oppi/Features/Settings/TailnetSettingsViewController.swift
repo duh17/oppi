@@ -455,13 +455,24 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
         Router.push(SSHPreflightViewController(coordinator: coordinator, initialPeer: peer, onPaired: onPaired), from: self)
     }
 
-    private func openServerSettings(for peer: TailnetPeer) {
+    /// The peer's own server, not the one that happens to be active: Server Settings follows
+    /// the active server, so this makes the peer's server active first (a locked one asks), as
+    /// App Settings' server rows do, then opens Server Settings for it.
+    func openServerSettings(for peer: TailnetPeer) {
         guard let server = coordinator.serverStore.servers.first(where: { peer.hasHost($0.host) }),
               let root = HostFactory.root(near: self) else { return }
-        Router.push(
-            ServerSettingsRouteViewController(target: ServerDetailsNavTarget(serverId: server.id), root: root),
-            from: self
-        )
+        let coordinator = coordinator
+        let navigation = root.navigation
+        let perform: @MainActor () -> Void = {
+            if coordinator.activeServerId != server.id {
+                guard coordinator.restoreActiveServer(server.id) else { return }
+                Task { await coordinator.prepareSelectedServerShell(for: server) }
+            }
+            navigation.openServerDetails(ServerDetailsNavTarget(serverId: server.id))
+        }
+        if ScopedLockService.shared.gate(.server(server.id), onUnlock: perform) {
+            perform()
+        }
     }
 
     private func startPairing(with peer: TailnetPeer) {
