@@ -949,14 +949,27 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             // Select all, then delete: a tap can land mid-text, and a Quick Session
             // composer restores a saved draft that the simulator keeps between
             // runs, so deleting backward from the caret would leave text behind.
-            // The key goes to the field only once it has keyboard focus.
+            // The key goes to the field only once it has keyboard focus, and under
+            // load the system can still drop the select-all, so wait for the field
+            // to empty and select all again if it did not.
             let focused = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "hasKeyboardFocus == true"),
                 object: element
             )
             XCTAssertEqual(XCTWaiter().wait(for: [focused], timeout: 5), .completed, "The field did not take keyboard focus")
-            element.typeKey("a", modifierFlags: .command)
-            element.typeText(XCUIKeyboardKey.delete.rawValue)
+            for attempt in 1...2 {
+                element.typeKey("a", modifierFlags: .command)
+                element.typeText(XCUIKeyboardKey.delete.rawValue)
+                // An empty text view reports no value, or an empty one.
+                let emptied = XCTNSPredicateExpectation(
+                    predicate: NSPredicate { object, _ in
+                        ((object as? XCUIElement)?.value as? String ?? "").isEmpty
+                    },
+                    object: element
+                )
+                if XCTWaiter().wait(for: [emptied], timeout: 3) == .completed { break }
+                XCTAssertLessThan(attempt, 2, "Select all and delete did not clear the field: \(element.value as? String ?? "")")
+            }
         }
         element.typeText(text)
         XCTAssertEqual(element.value as? String, text)

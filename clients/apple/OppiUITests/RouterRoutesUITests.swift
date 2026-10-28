@@ -405,12 +405,14 @@ final class RouterRoutesUITests: XCTestCase {
         revealSidebar(isSplit: isSplit)
         app.buttons["workspace.agents.open"].tap()
         let agents = app.navigationBars["Agents"]
+        dismissOfflineAgentsAlert()
         XCTAssertTrue(agents.waitForExistence(timeout: 5), "Agents did not open in the UIKit bar")
         app.buttons["agents.row.pi"].tap()
         XCTAssertTrue(app.navigationBars["Pi"].waitForExistence(timeout: 5), "Agents did not push Pi")
         attachScreenshot("shell-agents-pi")
         assertRunning()
         app.buttons["BackButton"].firstMatch.tap()
+        dismissOfflineAgentsAlert()
         XCTAssertTrue(agents.waitForExistence(timeout: 5), "Back must return to Agents")
         if !isSplit {
             app.buttons["BackButton"].tap()
@@ -628,6 +630,17 @@ final class RouterRoutesUITests: XCTestCase {
     /// vertical rail.
     private var cancelButton: XCUIElement {
         app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"])).firstMatch
+    }
+
+    /// The preview shell has no server, so each time the Agents list appears it
+    /// reports "Server is offline" in an alert that hides the screen behind it.
+    /// Whether that alert lands before or after a query is a race, so dismiss it
+    /// where the walk needs the list.
+    private func dismissOfflineAgentsAlert() {
+        let alert = app.alerts["Agents"]
+        guard alert.waitForExistence(timeout: 5) else { return }
+        alert.buttons["OK"].tap()
+        XCTAssertTrue(waitForDisappearance(of: alert), "The Agents alert did not close")
     }
 
     private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {
