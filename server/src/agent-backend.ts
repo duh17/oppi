@@ -13,7 +13,7 @@ import type { SessionRuntimeTransactionPermit } from "./session-runtime-transact
 import type { SessionTreeManager } from "./session-tree.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { LiveEntryRendererSet } from "./trace.js";
-import type { ChatAttachmentRef, MessageQueueState, SessionPromptCacheWarmer } from "./types.js";
+import type { ChatAttachmentRef, MessageQueueState } from "./types.js";
 
 type BackendToolDefinition = { label?: string; namespace?: { name: string } };
 
@@ -158,8 +158,4 @@ export interface AgentBackend {
   abortRetry(): void | Promise<void>;
   getEntryRenderers(): LiveEntryRendererSet | undefined;
   appendAssistantMessage(content: string, fallbackModel?: string): void;
-  promptCacheRuntime(): {
-    warmer?: SessionPromptCacheWarmer;
-    promptCache?: { short?: number; long?: number };
-  };
 }

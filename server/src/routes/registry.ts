@@ -895,13 +895,6 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
-    path: "/sessions/{sessionId}/thread",
-    operationId: "getSessionThread",
-    surface: "core",
-    auth: "owner",
-  },
-  {
-    method: "GET",
     path: "/sessions/{sessionId}/events",
     operationId: "getGenericSessionEvents",
     surface: "core",

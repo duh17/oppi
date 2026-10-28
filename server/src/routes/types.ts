@@ -50,10 +50,6 @@ export interface RouteContext {
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   refreshModelCatalog: (options?: { force?: boolean }) => Promise<void>;
   getModelCatalog: () => ModelInfo[];
-  /** Prompt-cache lifetimes (seconds per retention tier) for a stored `provider/id` model reference. */
-  getModelPromptCache?: (
-    model: string | undefined,
-  ) => { short?: number; long?: number } | undefined;
   getProviderQuotasStatus?: () => Promise<ProviderQuotasStatus>;
   /** Configured provider credentials (API key or refreshed OAuth token), e.g. xAI for read aloud. */
   getProviderAuth?: SttGetAuth;

@@ -900,56 +900,6 @@ struct AppTraceFetch: TelemetryEvent {
     }
 }
 
-/// How long from opening a thread until its snapshot was applied or failed?
-struct AppThreadLoad: TelemetryEvent {
-    static let name = "app.thread_load"
-
-    enum Phase: String, Sendable, CaseIterable {
-        case initial
-        case refresh
-    }
-
-    enum Status: String, Sendable, CaseIterable {
-        case ok
-        case error
-    }
-
-    let durationMs: Double
-    let phase: Phase
-    let status: Status
-    let errorKind: TelemetryTag.ErrorKind?
-
-    init(
-        durationMs: Double,
-        phase: Phase,
-        status: Status,
-        errorKind: TelemetryTag.ErrorKind? = nil
-    ) {
-        self.durationMs = durationMs
-        self.phase = phase
-        self.status = status
-        self.errorKind = errorKind
-    }
-
-    var fieldValues: [String: Double] {
-        var values: [String: Double] = [:]
-        values["duration_ms"] = durationMs
-        return values
-    }
-
-    var passesEmitPolicy: Bool {
-        true
-    }
-
-    var tagValues: [String: String] {
-        var values: [String: String] = [:]
-        values["phase"] = phase.rawValue
-        values["status"] = status.rawValue
-        if let errorKind { values["error_kind"] = errorKind.rawValue }
-        return values
-    }
-}
-
 /// How long until the workspace screen was usable?
 struct AppWorkspaceLoad: TelemetryEvent {
     static let name = "app.workspace_load"

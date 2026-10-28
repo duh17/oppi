@@ -150,7 +150,6 @@ describe("telemetry-review on v2 events", () => {
   it("gates on catalog SLOs, including lower-is-bad and the event-loop stall max", () => {
     expect(SLO_THRESHOLDS["server.resources.event_loop_max_ms"]?.tm99).toBe(100);
     expect(SLO_THRESHOLDS).not.toHaveProperty("server.resources.event_loop_p99_ms");
-    expect(SLO_THRESHOLDS).not.toHaveProperty("app.thread_load.duration_ms");
 
     const reviewOf = (values: ReviewData["values"]) =>
       review(

@@ -1930,24 +1930,6 @@ export class SdkBackend implements AgentBackend {
     });
   }
 
-  promptCacheRuntime(): ReturnType<AgentBackend["promptCacheRuntime"]> {
-    const session = this.piSession;
-    const status = session.cacheWarmingStatus;
-    return {
-      ...(status
-        ? {
-            warmer: {
-              state: status.state,
-              ...(status.decision ? { action: status.decision.action } : {}),
-              ...(status.nextWarmAt !== undefined ? { nextWarmAt: status.nextWarmAt } : {}),
-              ...(status.reason ? { reason: status.reason } : {}),
-            },
-          }
-        : {}),
-      ...(session.model?.promptCache ? { promptCache: session.model.promptCache } : {}),
-    };
-  }
-
   getEntryRenderers(): LiveEntryRendererSet | undefined {
     return createLiveEntryRendererLookup(
       this.piSession.extensionRunner,

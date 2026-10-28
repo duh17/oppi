@@ -215,7 +215,6 @@ User-visible wait time. Do not put full agent work duration in this group.
 | `app.fresh_content_lag` | How long until the timeline showed fresh content after connecting? | `duration_ms` ms<br>`cached` bool | `reason`*: `cache_hit`, `conversation_stream`, `reconnect_conversation_stream`, `reconnect_no_gap`, `reconnect_applied`, `reconnect_full_reload_scheduled`, `stream_seq`, `history_empty`, `history_applied_empty`, `history_deferred_to_live`, `history_unchanged`, `history_applied`, `history_replayed`, `history_first_message_fallback`<br>`transport`: `paired`, `lan`, `unix` | SLO `duration_ms` TM99 ≤ 1000 |
 | `app.session_switch` | How long from tapping a session row until chat content was visible? | `duration_ms` ms<br>`cached` bool | none | emit `duration_ms` < 60000<br>SLO `duration_ms` TM99 ≤ 600 |
 | `app.trace_fetch` | How long did fetching and decoding a trace page take? | `duration_ms` ms<br>`trace_events` count (optional) | `status`*: `ok`, `error`<br>`error_kind` | SLO `duration_ms` TM99 ≤ 1500 when status=ok |
-| `app.thread_load` | How long from opening a thread until its snapshot was applied or failed? | `duration_ms` ms | `phase`*: `initial`, `refresh`<br>`status`*: `ok`, `error`<br>`error_kind` | none |
 | `app.workspace_load` | How long until the workspace screen was usable? | `duration_ms` ms | `load_path`*: `open`, `return_from_chat` | emit `duration_ms` < 60000<br>SLO `duration_ms` TM99 ≤ 1000 |
 
 #### Connection Reliability
@@ -394,7 +393,6 @@ The front page should focus on events that directly map to user experience. Keep
 | `app.workspace_load` | Time until the workspace screen is usable. |
 | `app.session_load` | Time from selecting a session to chat content visible. |
 | `app.session_switch` | Session row tap-to-content latency. |
-| `app.thread_load` | Time from opening a thread until its snapshot is applied. |
 | `app.ttft` | User-perceived time to first assistant response token. |
 | `app.fresh_content_lag` | Delay between new stream content and visible timeline freshness. |
 
@@ -574,7 +572,7 @@ Read each event the way its catalog entry stores it:
 
 `telemetry:review -- --http` reads raw `server.http_request` events: `duration_ms` p50/p90/p99, event count, and `status_code >= 400` rate, plus `response_bytes` p50/p90/max, by method and `path_pattern`. Percentiles are nearest-rank.
 
-`app.thread_load` has no release SLO. `app.workspace_load` (TM99 1000 ms) and `app.session_switch` (TM99 600 ms) were gated from observed headroom; thread load had no installed-app samples to set a threshold against. The release gate for event-loop stalls is `server.resources.event_loop_max_ms` (TM99 100 ms), which sits between the 2026-10-06 TM99 of 50 ms and the 2026-10-07 TM99 of 111 ms; `event_loop_p99_ms` is a trend, not a second gate.
+`app.workspace_load` (TM99 1000 ms) and `app.session_switch` (TM99 600 ms) were gated from observed headroom. The release gate for event-loop stalls is `server.resources.event_loop_max_ms` (TM99 100 ms), which sits between the 2026-10-06 TM99 of 50 ms and the 2026-10-07 TM99 of 111 ms; `event_loop_p99_ms` is a trend, not a second gate.
 
 Importer notes:
 

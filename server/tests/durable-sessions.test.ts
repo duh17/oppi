@@ -62,7 +62,7 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
-import type { ServerMessage, Session, SessionThreadResponse } from "../src/types.js";
+import type { ServerMessage, Session } from "../src/types.js";
 import {
   makeRequest,
   makeResponse,
@@ -343,30 +343,14 @@ function requestIds(
   }
 }
 
-async function getThread(f: Fixture, sessionId: string): Promise<SessionThreadResponse> {
-  const routeContext = {
-    sessions: { mobileRenderer: { renderers: () => [] } },
-    storage: f.storage,
-    sessionRuntimes: {
-      getDurableThread: (id: string) => f.manager.getDurableThread(id),
-      getActiveSessionIds: () => f.manager.getActiveSessionIds(),
-      getActiveSession: (id: string) => f.manager.getActiveSession(id),
-      getPromptCacheRuntime: () => undefined,
-    },
-    ensureSessionContextWindow: (session: Session) => session,
-    getModelPromptCache: () => undefined,
-  } as unknown as RouteContext;
-  const dispatch = createSessionRoutes(routeContext, createRouteHelpers());
-  const res = makeResponse();
-  await dispatch({
-    method: "GET",
-    path: `/sessions/${sessionId}/thread`,
-    url: new URL(`http://localhost/sessions/${sessionId}/thread`),
-    req: makeRequest() as never,
-    res: res as never,
-  });
-  expect(res.statusCode).toBe(200);
-  return JSON.parse(res.body) as SessionThreadResponse;
+/** The thread containing `sessionId`, read from the Harness ownership edges. */
+async function getThread(
+  f: Fixture,
+  sessionId: string,
+): Promise<{ rootSessionId: string; sessionIds: string[] }> {
+  const thread = await (await f.threads()).threadSessions(sessionId);
+  expect(thread).toBeDefined();
+  return { rootSessionId: thread!.rootSessionId, sessionIds: [...thread!.sessionIds].sort() };
 }
 
 describe("durable-native threads", () => {
@@ -413,24 +397,9 @@ describe("durable-native threads", () => {
     for (const from of [f.parent.id, child.id]) {
       const thread = await getThread(f, from);
       expect(thread.rootSessionId).toBe(f.parent.id);
-      expect(thread.sessions.map((session) => session.id).sort()).toEqual(
-        [f.parent.id, child.id].sort(),
-      );
+      expect(thread.sessionIds).toEqual([f.parent.id, child.id].sort());
     }
     f.storage.saveSession(stored);
-
-    // A session the phone starts "in thread" has a launch edge but no owner; it still joins.
-    const phoneChild = f.session("Phone child");
-    phoneChild.launch = {
-      source: "human",
-      parentSessionId: f.parent.id,
-      status: "created",
-      requestedAt: Date.now(),
-    };
-    f.storage.saveSession(phoneChild);
-    expect((await getThread(f, child.id)).sessions.map((session) => session.id).sort()).toEqual(
-      [f.parent.id, child.id, phoneChild.id].sort(),
-    );
 
     childGate.open();
     await parentEnd;
@@ -1378,7 +1347,7 @@ describe("durable-native threads", () => {
       text: "LEAF_ANSWER",
       details: { name: "Leaf", sessionId: leaf!.id },
     });
-    expect((await getThread(f, leaf!.id)).sessions.map((session) => session.id).sort()).toEqual(
+    expect((await getThread(f, leaf!.id)).sessionIds).toEqual(
       [f.parent.id, plain.id, lead!.id, mid!.id, leaf!.id].sort(),
     );
   });
@@ -2948,9 +2917,7 @@ describe("durable-native threads", () => {
     for (const from of children) {
       const thread = await getThread(f, from.id);
       expect(thread.rootSessionId).toBe(from.id);
-      expect(thread.sessions.map((session) => session.id).sort()).toEqual(
-        children.map((child) => child.id).sort(),
-      );
+      expect(thread.sessionIds).toEqual(children.map((child) => child.id).sort());
     }
   });
 
@@ -3133,7 +3100,6 @@ describe("durable engine on create requests", () => {
       sessions: f.manager,
       sessionRuntimes: f.manager,
       ensureSessionContextWindow: (session: Session) => session,
-      getModelPromptCache: () => undefined,
     } as unknown as RouteContext;
     const res = makeResponse();
     const url = new URL(`http://localhost${path}`);
@@ -3191,14 +3157,7 @@ describe("durable engine on create requests", () => {
       .find((session) => session.launch?.parentSessionId === sessionId)!;
     expect(conversationOf(f.storage, child)).toBeDefined();
 
-    // Every summary the app reads names the engine: thread rows and workspace list rows.
-    const thread = await getThread(f, sessionId);
-    expect(thread.sessions.map((session) => [session.id, session.engine]).sort()).toEqual(
-      [
-        [sessionId, "durable"],
-        [child.id, "durable"],
-      ].sort(),
-    );
+    // Every summary the app reads names the engine, workspace list rows included.
     const list = await route(f, "GET", `/workspaces/${f.workspace.id}/sessions?status=active`);
     const rows = list.body.active as Array<{ id: string; engine?: string }>;
     expect(rows.find((row) => row.id === sessionId)?.engine).toBe("durable");

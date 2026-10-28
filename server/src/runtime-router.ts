@@ -122,23 +122,12 @@ export class SessionRuntimes implements AgentRuntimeTransport {
     return this.oppi.getEntryRenderers(sessionId);
   }
 
-  /** Oppi-owned live runtimes only; a Pi TUI mirror's warmer lives in the terminal. */
-  getPromptCacheRuntime(sessionId: string): ReturnType<SessionManager["getPromptCacheRuntime"]> {
-    if (this.isPiTui(this.storage.getSession(sessionId))) return undefined;
-    return this.oppi.getPromptCacheRuntime(sessionId);
-  }
-
   /**
    * Whether a Live Voice call can run on the session: the agent needs Oppi's `speak` tool or its
    * run events to answer out loud, and a terminal mirror has neither.
    */
   supportsLiveVoice(sessionId: string): boolean {
     return !this.isPiTui(this.storage.getSession(sessionId));
-  }
-
-  /** Harness ownership membership of a durable session's thread; undefined for every other session. */
-  getDurableThread(sessionId: string): ReturnType<SessionManager["getDurableThread"]> {
-    return this.oppi.getDurableThread(sessionId);
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {

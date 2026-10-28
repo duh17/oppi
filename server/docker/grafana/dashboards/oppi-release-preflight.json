@@ -2434,51 +2434,7 @@
       ],
       "title": "Workspace Load, Session Switch",
       "type": "timeseries",
-      "description": "Front-page session responsiveness. app.workspace_load is time until the workspace screen is usable; app.session_switch is row tap-to-content. app.thread_load p50/p90 by phase is the table below. Log-scale y axis: a single suspended-app sample (an hour or more) would otherwise flatten every normal load; 0 ms samples are not drawn."
-    },
-    {
-      "datasource": {
-        "type": "frser-sqlite-datasource",
-        "uid": "oppi-telemetry-sqlite"
-      },
-      "description": "Raw app.thread_load beside workspace load and session switch. p50/p90 use nearest-rank ceil(p * n) by phase (initial or refresh). errors is status=error; error_kinds counts failures by error_kind. No release SLO: no installed-app samples yet, so there is no TM99 to gate.",
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 147
-      },
-      "id": 102,
-      "options": {
-        "showHeader": true,
-        "cellHeight": "sm"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "frser-sqlite-datasource",
-            "uid": "oppi-telemetry-sqlite"
-          },
-          "queryType": "table",
-          "rawQueryText": "WITH ranked AS (\n  SELECT\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?') AS phase,\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.status')), ''), '?') AS status,\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.error_kind')), ''), '(none)') AS error_kind,\n    json_extract(fields_json, '$.duration_ms') AS value,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?')\n      ORDER BY json_extract(fields_json, '$.duration_ms')\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?')\n    ) AS n\n  FROM events\n  WHERE name = 'app.thread_load'\n    AND ts_ms BETWEEN $__from AND $__to\n),\nkinds AS (\n  SELECT phase, GROUP_CONCAT(error_kind || '=' || c, ', ') AS error_kinds\n  FROM (\n    SELECT phase, error_kind, COUNT(*) AS c\n    FROM ranked\n    WHERE status = 'error'\n    GROUP BY phase, error_kind\n    ORDER BY c DESC, error_kind\n  )\n  GROUP BY phase\n)\nSELECT\n  r.phase,\n  r.n AS samples,\n  ROUND(MAX(CASE WHEN r.rn = ((r.n * 50 + 99) / 100) THEN r.value END), 1) AS p50_ms,\n  ROUND(MAX(CASE WHEN r.rn = ((r.n * 90 + 99) / 100) THEN r.value END), 1) AS p90_ms,\n  SUM(CASE WHEN r.status = 'error' THEN 1 ELSE 0 END) AS errors,\n  k.error_kinds\nFROM ranked r\nLEFT JOIN kinds k ON k.phase = r.phase\nGROUP BY r.phase, r.n, k.error_kinds\nORDER BY r.phase",
-          "queryText": "WITH ranked AS (\n  SELECT\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?') AS phase,\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.status')), ''), '?') AS status,\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.error_kind')), ''), '(none)') AS error_kind,\n    json_extract(fields_json, '$.duration_ms') AS value,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?')\n      ORDER BY json_extract(fields_json, '$.duration_ms')\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?')\n    ) AS n\n  FROM events\n  WHERE name = 'app.thread_load'\n    AND ts_ms BETWEEN $__from AND $__to\n),\nkinds AS (\n  SELECT phase, GROUP_CONCAT(error_kind || '=' || c, ', ') AS error_kinds\n  FROM (\n    SELECT phase, error_kind, COUNT(*) AS c\n    FROM ranked\n    WHERE status = 'error'\n    GROUP BY phase, error_kind\n    ORDER BY c DESC, error_kind\n  )\n  GROUP BY phase\n)\nSELECT\n  r.phase,\n  r.n AS samples,\n  ROUND(MAX(CASE WHEN r.rn = ((r.n * 50 + 99) / 100) THEN r.value END), 1) AS p50_ms,\n  ROUND(MAX(CASE WHEN r.rn = ((r.n * 90 + 99) / 100) THEN r.value END), 1) AS p90_ms,\n  SUM(CASE WHEN r.status = 'error' THEN 1 ELSE 0 END) AS errors,\n  k.error_kinds\nFROM ranked r\nLEFT JOIN kinds k ON k.phase = r.phase\nGROUP BY r.phase, r.n, k.error_kinds\nORDER BY r.phase",
-          "timeColumns": [],
-          "refId": "A"
-        }
-      ],
-      "title": "Thread load by phase",
-      "type": "table"
+      "description": "Front-page session responsiveness. app.workspace_load is time until the workspace screen is usable; app.session_switch is row tap-to-content. Log-scale y axis: a single suspended-app sample (an hour or more) would otherwise flatten every normal load; 0 ms samples are not drawn."
     },
     {
       "datasource": {

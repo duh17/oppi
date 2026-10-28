@@ -21,7 +21,6 @@ import type {
   ConversationStreamServerMessage,
   MessageQueueState,
   Session,
-  SessionPromptCacheWarmer,
   ServerMessage,
   Workspace,
   ServerConfig,
@@ -1345,25 +1344,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   getEntryRenderers(sessionId: string): LiveEntryRendererSet | undefined {
     return this.active.get(this.sessionKey(sessionId))?.sdkBackend.getEntryRenderers();
-  }
-
-  /** Live prompt-cache warmer state and the running model's cache tiers. */
-  getPromptCacheRuntime(
-    sessionId: string,
-  ):
-    | { warmer?: SessionPromptCacheWarmer; promptCache?: { short?: number; long?: number } }
-    | undefined {
-    return this.active.get(this.sessionKey(sessionId))?.sdkBackend.promptCacheRuntime();
-  }
-
-  /**
-   * Membership of a durable session's thread, from the Harness ownership edges. Undefined
-   * for a session that is not bound to a durable conversation.
-   */
-  async getDurableThread(
-    sessionId: string,
-  ): Promise<{ rootSessionId: string; sessionIds: Set<string> } | undefined> {
-    return (await this.durableHarness).boundThreads?.threadSessions(sessionId);
   }
 
   getToolFullOutputPath(sessionId: string, toolCallId: string): string | null {

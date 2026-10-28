@@ -865,16 +865,6 @@ const EVENTS = {
       { field: "duration_ms", tm99: 1_500, label: "Trace fetch (ok)", where: { status: ["ok"] } },
     ],
   },
-  "app.thread_load": {
-    description: "How long from opening a thread until its snapshot was applied or failed?",
-    group: "ux",
-    fields: { duration_ms: "ms" },
-    tags: {
-      phase: { required: true, values: ["initial", "refresh"] },
-      status: { required: true, values: ["ok", "error"] },
-      error_kind: {},
-    },
-  },
   "app.workspace_load": {
     description: "How long until the workspace screen was usable?",
     group: "ux",

@@ -9,13 +9,12 @@ import {
   type ChatAttachmentRef,
   type ServerMessage,
   type Session,
-  type SessionPromptCacheStatus,
   type Workspace,
 } from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
-import { createSessionListRouteHandlers, sessionsWithLiveStatus } from "./session-list-handlers.js";
+import { createSessionListRouteHandlers } from "./session-list-handlers.js";
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
@@ -24,7 +23,6 @@ import { admitSessionRoute } from "../session-route-scope.js";
 import { parseClientCommand } from "../session-command-parse.js";
 import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
 import { isThinkingLevel } from "../thinking-levels.js";
-import { buildSessionThread, promptCacheRetention } from "../session-threads.js";
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
@@ -570,41 +568,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
-  function promptCacheFor(session: Session): SessionPromptCacheStatus | undefined {
-    const retention = promptCacheRetention();
-    const live = ctx.sessionRuntimes.getPromptCacheRuntime(session.id);
-    const tiers = live?.promptCache ?? ctx.getModelPromptCache?.(session.model);
-    const seconds = tiers?.[retention];
-    if (seconds === undefined && !live?.warmer) return undefined;
-    return {
-      retention,
-      ...(seconds !== undefined ? { ttlMs: seconds * 1000 } : {}),
-      ...(session.lastAgentReplyAt !== undefined
-        ? { lastRequestAt: session.lastAgentReplyAt }
-        : {}),
-      ...(live?.warmer ? { warmer: live.warmer } : {}),
-    };
-  }
-
-  async function handleGetSessionThread(sessionId: string, res: ServerResponse): Promise<void> {
-    // A durable session's thread is its Harness ownership tree; others keep launch edges.
-    const owned =
-      ctx.storage.getSession(sessionId)?.serverDurable?.conversationId === undefined
-        ? undefined
-        : await ctx.sessionRuntimes.getDurableThread(sessionId);
-    const thread = buildSessionThread(
-      sessionsWithLiveStatus(ctx),
-      sessionId,
-      promptCacheFor,
-      owned,
-    );
-    if (!thread) {
-      helpers.error(res, 404, "Session not found");
-      return;
-    }
-    helpers.json(res, thread);
-  }
-
   async function deleteKnownSession(session: Session, res: ServerResponse): Promise<void> {
     try {
       const result = await lifecycle.deleteSession(session);
@@ -758,12 +721,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     if (sessionStopMatch && method === "POST") {
       const session = requireSession(sessionStopMatch[1], res);
       if (session) await stopKnownSession(session, res);
-      return true;
-    }
-
-    const sessionThreadMatch = path.match(/^\/sessions\/([^/]+)\/thread$/);
-    if (sessionThreadMatch && method === "GET") {
-      await handleGetSessionThread(sessionThreadMatch[1], res);
       return true;
     }
 

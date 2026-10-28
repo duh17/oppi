@@ -1289,13 +1289,6 @@ export class DurableBackend implements AgentBackend {
   toolDefinition(): undefined {
     return undefined;
   }
-  promptCacheRuntime(): ReturnType<AgentBackend["promptCacheRuntime"]> {
-    const model = this.agent.model;
-    const promptCache = model
-      ? this.registry.find(model.provider, model.modelId)?.promptCache
-      : undefined;
-    return promptCache ? { promptCache } : {};
-  }
 
   private unsupported(operation: string): never {
     throw new DurableNotSupportedError(operation);
