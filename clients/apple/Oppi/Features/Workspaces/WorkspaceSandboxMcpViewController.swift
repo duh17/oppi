@@ -120,7 +120,7 @@ final class WorkspaceSandboxMcpViewController: SettingsListViewController<
         model.sandboxMcpServers?.first { $0.name == name }
     }
 
-    private lazy var serverRow = UICollectionView.CellRegistration<WorkspaceToggleRowCell, Item> { [weak self] cell, _, item in
+    private lazy var serverRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
         switch item {
         case .server(let name):
@@ -191,10 +191,11 @@ final class WorkspaceSandboxMcpViewController: SettingsListViewController<
     }
 
     /// A blocked or disabled server cannot be newly enabled, but a stale pick can be cleared.
-    private func configureRow(_ cell: WorkspaceToggleRowCell, name: String, detail: String, blocked: Bool, warning: Bool) {
+    private func configureRow(_ cell: UICollectionViewListCell, name: String, detail: String, blocked: Bool, warning: Bool) {
         let isSelected = model.sandboxMcpSelection.contains(name)
-        cell.configure(
-            row: WorkspaceToggleRowCell.Row(
+        detailToggleRow(
+            cell,
+            row: WorkspaceToggleRow(
                 title: name,
                 detail: detail,
                 dimsTitle: blocked,

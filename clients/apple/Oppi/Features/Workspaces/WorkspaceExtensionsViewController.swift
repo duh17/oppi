@@ -121,7 +121,7 @@ final class WorkspaceExtensionsViewController: SettingsListViewController<
         model.displayedEnabled(.extensions, path: ext.path, server: ext.enabled)
     }
 
-    private lazy var extensionRow = UICollectionView.CellRegistration<WorkspaceToggleRowCell, Item> { [weak self] cell, _, item in
+    private lazy var extensionRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
         guard let self, case .ext(let name) = item, let ext = extensionInfo(named: name) else { return }
         configureExtension(cell, ext: ext)
     }
@@ -150,11 +150,12 @@ final class WorkspaceExtensionsViewController: SettingsListViewController<
         return collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
     }
 
-    private func configureExtension(_ cell: WorkspaceToggleRowCell, ext: ExtensionInfo) {
+    private func configureExtension(_ cell: UICollectionViewListCell, ext: ExtensionInfo) {
         let enabled = isEnabled(ext)
         let path = ext.path
-        cell.configure(
-            row: WorkspaceToggleRowCell.Row(
+        detailToggleRow(
+            cell,
+            row: WorkspaceToggleRow(
                 title: ext.name,
                 detail: ext.subtitle,
                 dimsTitle: !enabled,

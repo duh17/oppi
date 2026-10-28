@@ -251,6 +251,9 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSidebarViewController.swift": {
       "UserDefaults.standard.set(": 1
     },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceToggleRows.swift": {
+      "toggleRow(": 1
+    },
     "clients/apple/OppiDebugHarness/AskCardIntentRegressionPreview.swift": {
       "import SwiftUI": 1
     },
