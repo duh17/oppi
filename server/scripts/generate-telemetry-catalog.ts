@@ -343,7 +343,7 @@ const NAME_PUNCTUATION_BYTES = [...NAME_TAG_PUNCTUATION]
 
 const LOCATION_RULES_SWIFT = NAME_LOCATION_RULES.map(
   (rule) =>
-    `        // ${rule.id}: ${rule.description}\n        try! NSRegularExpression(pattern: ${swiftString(rule.source)}, options: [${rule.ignoreCase ? ".caseInsensitive" : ""}]),`,
+    `        // ${rule.id}: ${rule.description}\n        rule(${swiftString(rule.source)}, [${rule.ignoreCase ? ".caseInsensitive" : ""}]),`,
 ).join("\n");
 
 /** Single-character `needs` of the location rules, as UTF-8 bytes (non-letters, so case never matters). */
@@ -457,6 +457,16 @@ enum TelemetryName {
     private static let locationRules: [NSRegularExpression] = [
 ${LOCATION_RULES_SWIFT}
     ]
+
+    /// Catalog patterns are fixed at generation time; an invalid one is a
+    /// programmer error and traps on first use.
+    private static func rule(_ pattern: String, _ options: NSRegularExpression.Options) -> NSRegularExpression {
+        do {
+            return try NSRegularExpression(pattern: pattern, options: options)
+        } catch {
+            preconditionFailure("invalid telemetry location rule \\(pattern): \\(error)")
+        }
+    }
 }
 
 /// One event in a \`POST /telemetry/events\` upload.

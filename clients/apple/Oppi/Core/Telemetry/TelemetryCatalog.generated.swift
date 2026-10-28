@@ -88,24 +88,34 @@ enum TelemetryName {
 
     private static let locationRules: [NSRegularExpression] = [
         // url_scheme: A URL (`https://host`).
-        try! NSRegularExpression(pattern: "://", options: []),
+        rule("://", []),
         // home_path: A home-relative path (`~/models`).
-        try! NSRegularExpression(pattern: "^~", options: []),
+        rule("^~", []),
         // absolute_path: An absolute path (`/Users/me/models`); a route template may start with `/`.
-        try! NSRegularExpression(pattern: "^/", options: []),
+        rule("^/", []),
         // localhost: `localhost` as a whole word.
-        try! NSRegularExpression(pattern: "(^|[^A-Za-z0-9])localhost($|[^A-Za-z0-9])", options: [.caseInsensitive]),
+        rule("(^|[^A-Za-z0-9])localhost($|[^A-Za-z0-9])", [.caseInsensitive]),
         // private_host_suffix: A private or tailnet host name (`mac-studio.tail1234.ts.net`).
-        try! NSRegularExpression(pattern: "\\.(local|lan|internal|localdomain|ts\\.net|home\\.arpa)$", options: [.caseInsensitive]),
+        rule("\\.(local|lan|internal|localdomain|ts\\.net|home\\.arpa)$", [.caseInsensitive]),
         // ipv4: An IPv4 address, with an optional port.
-        try! NSRegularExpression(pattern: "^\\d{1,3}(\\.\\d{1,3}){3}(:\\d+)?$", options: []),
+        rule("^\\d{1,3}(\\.\\d{1,3}){3}(:\\d+)?$", []),
         // ipv6: An IPv6 address (`fd7a:115c:a1e0::53`, `::1`): two or more colons, hex digits only.
-        try! NSRegularExpression(pattern: "^(?=([^:]*:){2})[0-9A-Fa-f:.]+$", options: []),
+        rule("^(?=([^:]*:){2})[0-9A-Fa-f:.]+$", []),
         // host_port: A host with an alphabetic top-level domain and a port (`stt.example.com:7936`).
-        try! NSRegularExpression(pattern: "^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}:\\d{2,5}$", options: []),
+        rule("^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}:\\d{2,5}$", []),
         // user_at_host: `user@host.tld`; a leading `@` scope (`@cf/meta/llama`) has no user.
-        try! NSRegularExpression(pattern: "^[^@]+@[^@]*\\.[A-Za-z]{2,}$", options: []),
+        rule("^[^@]+@[^@]*\\.[A-Za-z]{2,}$", []),
     ]
+
+    /// Catalog patterns are fixed at generation time; an invalid one is a
+    /// programmer error and traps on first use.
+    private static func rule(_ pattern: String, _ options: NSRegularExpression.Options) -> NSRegularExpression {
+        do {
+            return try NSRegularExpression(pattern: pattern, options: options)
+        } catch {
+            preconditionFailure("invalid telemetry location rule \(pattern): \(error)")
+        }
+    }
 }
 
 /// One event in a `POST /telemetry/events` upload.
