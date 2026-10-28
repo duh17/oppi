@@ -46,14 +46,11 @@ struct PaperMarkupCanvasSessionTests {
         let coverAccepted = ComposerShared.applyCanvasToComposer(
             attachment: attachment,
             recognizedText: "8 8 日 8",
-            text: Binding(
-                get: { coverText },
-                set: { coverText = $0 }
-            ),
-            pendingAttachments: Binding(
-                get: { coverAttachments },
-                set: { coverAttachments = $0 }
-            )
+            getText: { coverText },
+            setText: { coverText = $0 },
+            getAttachments: { coverAttachments },
+            setAttachments: { coverAttachments = $0 },
+            replacingAttachmentID: nil
         )
         #expect(coverAccepted)
         #expect(coverText == "existing prompt")

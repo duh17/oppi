@@ -892,10 +892,10 @@ struct ChatComposerDraftControllerTests {
 
         var pending: [PendingAttachment] = []
         var importError: String?
-        let binding = Binding(get: { pending }, set: { pending = $0 })
         await ComposerShared.importSelectedFiles(
             .success([source]),
-            into: binding,
+            getAttachments: { pending },
+            setAttachments: { pending = $0 },
             store: store,
             shouldAccept: { true },
             onFailure: { importError = $0 }
@@ -939,10 +939,10 @@ struct ChatComposerDraftControllerTests {
 
         var pending: [PendingAttachment] = []
         var importError: String?
-        let binding = Binding(get: { pending }, set: { pending = $0 })
         await ComposerShared.importSelectedFiles(
             .success([source]),
-            into: binding,
+            getAttachments: { pending },
+            setAttachments: { pending = $0 },
             store: nil,
             shouldAccept: { true },
             onFailure: { importError = $0 }
@@ -972,10 +972,10 @@ struct ChatComposerDraftControllerTests {
 
         var pending: [PendingAttachment] = []
         var importError: String?
-        let binding = Binding(get: { pending }, set: { pending = $0 })
         ComposerShared.finishPhotoLibraryImport(
             imported,
-            into: binding,
+            getAttachments: { pending },
+            setAttachments: { pending = $0 },
             store: store,
             shouldAccept: { false },
             onFailure: { importError = $0 }
@@ -996,10 +996,10 @@ struct ChatComposerDraftControllerTests {
 
         var pending: [PendingAttachment] = []
         var importError: String?
-        let binding = Binding(get: { pending }, set: { pending = $0 })
         await ComposerShared.importSelectedFiles(
             .success([source]),
-            into: binding,
+            getAttachments: { pending },
+            setAttachments: { pending = $0 },
             store: nil,
             shouldAccept: { true },
             onFailure: { importError = $0 }

@@ -82,13 +82,7 @@
     "clients/apple/Oppi/Features/Chat/ChatViewController+Actions.swift": {
       "AppPreferences.*.set": 1
     },
-    "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Composer/MicButtonLabel.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentInlineDraftPresenter.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Selection/ReviewCommentSelection.swift": {

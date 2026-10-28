@@ -76,9 +76,12 @@ struct VoiceInputManagerTests {
                 keyboardLanguage: "en-US",
                 owner: .inlineComposer,
                 baseText: "Keep draft",
-                textBeforeRecording: Binding(get: { prefix }, set: { prefix = $0 }),
-                suppressKeyboard: Binding(get: { suppressed }, set: { suppressed = $0 }),
-                focusRequestID: Binding(get: { focus }, set: { focus = $0 })
+                getTextBeforeRecording: { prefix },
+                setTextBeforeRecording: { prefix = $0 },
+                getSuppressKeyboard: { suppressed },
+                setSuppressKeyboard: { suppressed = $0 },
+                getFocusRequestID: { focus },
+                setFocusRequestID: { focus = $0 }
             )
         }
 
@@ -1083,13 +1086,15 @@ struct VoiceInputManagerTests {
         var prefix: String?
         var suppressed = false
         var focus = 0
-        let text = Binding(get: { draft }, set: { draft = $0 })
-        let before = Binding(get: { prefix }, set: { prefix = $0 })
-        let keyboard = Binding(get: { suppressed }, set: { suppressed = $0 })
+        let text = DraftValue(get: { draft }, set: { draft = $0 })
+        let before = DraftValue(get: { prefix }, set: { prefix = $0 })
+        let keyboard = DraftValue(get: { suppressed }, set: { suppressed = $0 })
         try await ComposerShared.startVoiceInput(
             manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
-            baseText: draft, text: text, textBeforeRecording: before,
-            suppressKeyboard: keyboard, focusRequestID: Binding(get: { focus }, set: { focus = $0 }),
+            baseText: draft, getText: text.get, setText: text.set,
+            getTextBeforeRecording: before.get, setTextBeforeRecording: before.set,
+            getSuppressKeyboard: keyboard.get, setSuppressKeyboard: keyboard.set,
+            getFocusRequestID: { focus }, setFocusRequestID: { focus = $0 },
             playActivationHaptic: {}
         )
         // The editor has already committed a partial preview before route loss.
@@ -1109,8 +1114,10 @@ struct VoiceInputManagerTests {
         await #expect(throws: VoiceInputError.self) {
             try await ComposerShared.startVoiceInput(
                 manager: manager, keyboardLanguage: "en-US", owner: .expandedComposer,
-                baseText: draft, text: text, textBeforeRecording: before,
-                suppressKeyboard: keyboard, focusRequestID: .constant(0), playActivationHaptic: {}
+                baseText: draft, getText: text.get, setText: text.set,
+                getTextBeforeRecording: before.get, setTextBeforeRecording: before.set,
+                getSuppressKeyboard: keyboard.get, setSuppressKeyboard: keyboard.set,
+                getFocusRequestID: { 0 }, setFocusRequestID: { _ in }, playActivationHaptic: {}
             )
         }
         #expect(prefix == nil, "A rejected retry must not change the shared draft bindings")
@@ -1119,8 +1126,10 @@ struct VoiceInputManagerTests {
         // and submits the stored binding, not currentComposerText's projection.
         if ComposerShared.ownsVoiceInput(manager, owner: owner), manager.isRecording || manager.isPreparing {
             await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
-                manager: manager, owner: owner, text: text, textBeforeRecording: before,
-                suppressKeyboard: keyboard
+                manager: manager, owner: owner,
+                getText: text.get, setText: text.set,
+                getTextBeforeRecording: before.get, setTextBeforeRecording: before.set,
+                getSuppressKeyboard: keyboard.get, setSuppressKeyboard: keyboard.set
             )
         }
         let submitted = draft
@@ -1130,8 +1139,10 @@ struct VoiceInputManagerTests {
         await finishCancel.open()
         await loss.value
         ComposerShared.discardFailedTake(
-            manager: manager, owner: owner, text: text, textBeforeRecording: before,
-            suppressKeyboard: keyboard
+            manager: manager, owner: owner,
+            getText: text.get, setText: text.set,
+            getTextBeforeRecording: before.get, setTextBeforeRecording: before.set,
+            getSuppressKeyboard: keyboard.get, setSuppressKeyboard: keyboard.set
         )
         #expect(draft.isEmpty)
     }
@@ -1156,14 +1167,15 @@ struct VoiceInputManagerTests {
         var inlineSuppressed = false
         var expandedSuppressed = false
         var haptics = 0
-        let text = Binding(get: { draft }, set: { draft = $0 })
-        let before = Binding(get: { prefix }, set: { prefix = $0 })
+        let text = DraftValue(get: { draft }, set: { draft = $0 })
+        let before = DraftValue(get: { prefix }, set: { prefix = $0 })
         let start = Task {
             try await ComposerShared.startVoiceInput(
                 manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
-                baseText: draft, text: text, textBeforeRecording: before,
-                suppressKeyboard: Binding(get: { inlineSuppressed }, set: { inlineSuppressed = $0 }),
-                focusRequestID: .constant(0), playActivationHaptic: { haptics += 1 }
+                baseText: draft, getText: text.get, setText: text.set,
+                getTextBeforeRecording: before.get, setTextBeforeRecording: before.set,
+                getSuppressKeyboard: { inlineSuppressed }, setSuppressKeyboard: { inlineSuppressed = $0 },
+                getFocusRequestID: { 0 }, setFocusRequestID: { _ in }, playActivationHaptic: { haptics += 1 }
             )
         }
         await entered.wait()
@@ -1176,9 +1188,10 @@ struct VoiceInputManagerTests {
         provider.makeSessionHandler = { _, _ in retry }
         try await ComposerShared.startVoiceInput(
             manager: manager, keyboardLanguage: "en-US", owner: .expandedComposer,
-            baseText: draft, text: text, textBeforeRecording: before,
-            suppressKeyboard: Binding(get: { expandedSuppressed }, set: { expandedSuppressed = $0 }),
-            focusRequestID: .constant(0), playActivationHaptic: { haptics += 1 }
+            baseText: draft, getText: text.get, setText: text.set,
+            getTextBeforeRecording: before.get, setTextBeforeRecording: before.set,
+            getSuppressKeyboard: { expandedSuppressed }, setSuppressKeyboard: { expandedSuppressed = $0 },
+            getFocusRequestID: { 0 }, setFocusRequestID: { _ in }, playActivationHaptic: { haptics += 1 }
         )
         let retryIdentity = manager.currentCaptureTakeIdentity()
         draft = "Take B edited draft new preview"
@@ -1265,16 +1278,16 @@ struct VoiceInputManagerTests {
         var suppressed = false
         var focusID = 0
         var rollbackCount = 0
-        let text = Binding(get: { draft }, set: {
+        let text = DraftValue(get: { draft }, set: {
             draft = $0
             if $0 == "Keep exact draft" { rollbackCount += 1 }
         })
         _ = try await ComposerShared.startVoiceInput(
             manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
-            baseText: draft, text: text,
-            textBeforeRecording: Binding(get: { prefix }, set: { prefix = $0 }),
-            suppressKeyboard: Binding(get: { suppressed }, set: { suppressed = $0 }),
-            focusRequestID: Binding(get: { focusID }, set: { focusID = $0 }),
+            baseText: draft, getText: text.get, setText: text.set,
+            getTextBeforeRecording: { prefix }, setTextBeforeRecording: { prefix = $0 },
+            getSuppressKeyboard: { suppressed }, setSuppressKeyboard: { suppressed = $0 },
+            getFocusRequestID: { focusID }, setFocusRequestID: { focusID = $0 },
             playActivationHaptic: {}
         )
         let take = manager.currentCaptureTakeIdentity()
@@ -1344,22 +1357,28 @@ struct VoiceInputManagerTests {
         var draft = "Keep exact draft"
         var prefix: String?
         var rollbackCount = 0
-        let text = Binding(get: { draft }, set: {
+        let text = DraftValue(get: { draft }, set: {
             draft = $0
             if $0 == "Keep exact draft" { rollbackCount += 1 }
         })
-        let prefixBinding = Binding(get: { prefix }, set: { prefix = $0 })
+        let prefixBinding = DraftValue(get: { prefix }, set: { prefix = $0 })
         _ = try await ComposerShared.startVoiceInput(
             manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
-            baseText: draft, text: text, textBeforeRecording: prefixBinding,
-            suppressKeyboard: .constant(false), focusRequestID: .constant(0), playActivationHaptic: {}
+            baseText: draft, getText: text.get, setText: text.set,
+            getTextBeforeRecording: prefixBinding.get, setTextBeforeRecording: prefixBinding.set,
+            getSuppressKeyboard: { false }, setSuppressKeyboard: { _ in },
+            getFocusRequestID: { 0 }, setFocusRequestID: { _ in }, playActivationHaptic: {}
         )
         session.yieldEvent(.partialTranscript("incomplete preview"))
         #expect(await waitForMainActorCondition { manager.currentTranscript == "incomplete preview" })
         draft = (prefix ?? "") + manager.currentTranscript
         let stop = Task {
             if composerStop {
-                await ComposerShared.stopVoiceInput(manager: manager, text: text, textBeforeRecording: prefixBinding)
+                await ComposerShared.stopVoiceInput(
+                    manager: manager,
+                    getText: text.get, setText: text.set,
+                    getTextBeforeRecording: prefixBinding.get, setTextBeforeRecording: prefixBinding.set
+                )
                 return ""
             }
             return await manager.stopRecording()
@@ -1421,12 +1440,14 @@ struct VoiceInputManagerTests {
         )
         var draft = "Keep exact draft"
         var prefix: String?
-        let text = Binding(get: { draft }, set: { draft = $0 })
-        let prefixBinding = Binding(get: { prefix }, set: { prefix = $0 })
+        let text = DraftValue(get: { draft }, set: { draft = $0 })
+        let prefixBinding = DraftValue(get: { prefix }, set: { prefix = $0 })
         _ = try await ComposerShared.startVoiceInput(
             manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer,
-            baseText: draft, text: text, textBeforeRecording: prefixBinding,
-            suppressKeyboard: .constant(false), focusRequestID: .constant(0), playActivationHaptic: {}
+            baseText: draft, getText: text.get, setText: text.set,
+            getTextBeforeRecording: prefixBinding.get, setTextBeforeRecording: prefixBinding.set,
+            getSuppressKeyboard: { false }, setSuppressKeyboard: { _ in },
+            getFocusRequestID: { 0 }, setFocusRequestID: { _ in }, playActivationHaptic: {}
         )
         incoming.continuation.yield(.dictationResult(text: "incomplete preview", snap: false))
         #expect(await waitForMainActorCondition { manager.currentTranscript == "incomplete preview" })
@@ -1493,8 +1514,8 @@ struct VoiceInputManagerTests {
             systemAccess: MockVoiceInputSystemAccess()
         )
         let draft = CaptureFailureTestDraft()
-        let text = Binding(get: { draft.text }, set: { draft.text = $0 })
-        let prefix = Binding(get: { draft.prefix }, set: { draft.prefix = $0 })
+        let text = DraftValue(get: { draft.text }, set: { draft.text = $0 })
+        let prefix = DraftValue(get: { draft.prefix }, set: { draft.prefix = $0 })
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -1619,8 +1640,10 @@ struct VoiceInputManagerTests {
         // Later typing must not be rolled back by the other presentation.
         draft.text = "Keep draft and new typing"
         ComposerShared.discardFailedTake(
-            manager: manager, owner: .expandedComposer, text: text, textBeforeRecording: prefix,
-            suppressKeyboard: .constant(false)
+            manager: manager, owner: .expandedComposer,
+            getText: text.get, setText: text.set,
+            getTextBeforeRecording: prefix.get, setTextBeforeRecording: prefix.set,
+            getSuppressKeyboard: { false }, setSuppressKeyboard: { _ in }
         )
         #expect(draft.text == "Keep draft and new typing")
         #expect(ComposerShared.captureFailure(manager, owner: .expandedComposer) == failure)
@@ -3231,4 +3254,10 @@ private func serverDictationConnection() -> ServerConnection {
     let connection = ServerConnection()
     connection.setSplitStreamCapabilitiesForTesting(dictationStream: true)
     return connection
+}
+
+/// A draft value the closure-based `ComposerShared` helpers read and write.
+private struct DraftValue<Value> {
+    let get: () -> Value
+    let set: (Value) -> Void
 }

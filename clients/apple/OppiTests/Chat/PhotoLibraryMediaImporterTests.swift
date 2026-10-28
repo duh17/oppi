@@ -245,12 +245,12 @@ struct PhotoLibraryMediaImporterTests {
         controller.attach(store: store, key: try fixture.key(), isEphemeral: false)
         controller.setMode(.ask)
         var importError: String?
-        let binding = Binding(
-            get: { controller.pendingAttachments },
-            set: { controller.setPendingAttachments($0) }
-        )
 
-        let rejected = ComposerShared.commitImportedAttachments([attachment], into: binding)
+        let rejected = ComposerShared.commitImportedAttachments(
+            [attachment],
+            getAttachments: { controller.pendingAttachments },
+            setAttachments: { controller.setPendingAttachments($0) }
+        )
         if !rejected.isEmpty {
             PhotoLibraryMediaImporter.discardImportedFiles(rejected, store: store)
             importError = ComposerShared.photoLibraryImportRefusedMessage
@@ -278,7 +278,6 @@ struct PhotoLibraryMediaImporterTests {
         )
         var pending: [PendingAttachment] = []
         var importError: String?
-        let binding = Binding(get: { pending }, set: { pending = $0 })
         let result = PhotoLibraryMediaImporter.ImportResult(attachments: [attachment], failures: [])
 
         let shouldAccept = false
@@ -286,7 +285,11 @@ struct PhotoLibraryMediaImporterTests {
             PhotoLibraryMediaImporter.discardImportedFiles(result.attachments, store: store)
             importError = ComposerShared.photoLibraryImportRefusedMessage
         } else {
-            _ = ComposerShared.commitImportedAttachments(result.attachments, into: binding)
+            _ = ComposerShared.commitImportedAttachments(
+                result.attachments,
+                getAttachments: { pending },
+                setAttachments: { pending = $0 }
+            )
         }
 
         #expect(pending.isEmpty)

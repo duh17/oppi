@@ -168,11 +168,11 @@ struct ChatViewComposerPromptSendTests {
         let (video, _, draftURL) = try fixture.makeImportedVideo(store: store)
         var pending: [PendingAttachment] = []
         var importError: String?
-        let binding = Binding(get: { pending }, set: { pending = $0 })
 
         ComposerShared.finishPhotoLibraryImport(
             .init(attachments: [video], failures: []),
-            into: binding,
+            getAttachments: { pending },
+            setAttachments: { pending = $0 },
             store: store,
             shouldAccept: { false },
             onFailure: { importError = $0 }

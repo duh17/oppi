@@ -1,5 +1,4 @@
 import Observation
-import SwiftUI
 import UIKit
 
 extension ReviewCommentSurfaceKind {
@@ -565,8 +564,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             await ComposerShared.cancelOwnedVoiceInput(
                 manager: manager,
                 owner: .reviewCommentInline,
-                textBeforeRecording: recordingPrefixBinding(),
-                suppressKeyboard: suppressKeyboardBinding()
+                setTextBeforeRecording: { [weak self] in self?.setRecordingPrefix($0) },
+                setSuppressKeyboard: { [weak self] in self?.setKeyboardSuppression($0) }
             )
         }
     }
@@ -756,17 +755,9 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
               manager.isRecording || manager.isPreparing else { return }
         Task { @MainActor in
             if manager.isRecording {
-                await ComposerShared.stopVoiceInput(
-                    manager: manager,
-                    text: textBinding(),
-                    textBeforeRecording: recordingPrefixBinding()
-                )
+                await stopVoiceInput(manager)
             } else {
-                await ComposerShared.cancelVoiceInput(
-                    manager: manager,
-                    textBeforeRecording: recordingPrefixBinding(),
-                    suppressKeyboard: suppressKeyboardBinding()
-                )
+                await cancelVoiceInput(manager)
             }
         }
     }
@@ -795,50 +786,50 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         focusInputIfLive()
     }
 
-    private func textBinding() -> Binding<String> {
-        Binding(
-            get: { self.inputTextView.text ?? "" },
-            set: { newValue in
-                self.applyInputTextPresentation(text: newValue)
-                self.updateSaveButton()
-                self.lastAppliedDictationText = nil
-                self.lastAppliedDictationRevision = -1
-                if self.updateInputTextHeight(animated: true) {
-                    self.updateFrame(animated: true)
-                }
-            }
+    /// The draft text as the voice helpers write it: a dictated commit
+    /// re-presents the field and re-measures the card.
+    private func setBodyText(_ newValue: String) {
+        applyInputTextPresentation(text: newValue)
+        updateSaveButton()
+        lastAppliedDictationText = nil
+        lastAppliedDictationRevision = -1
+        if updateInputTextHeight(animated: true) {
+            updateFrame(animated: true)
+        }
+    }
+
+    private func setRecordingPrefix(_ prefix: String?) {
+        textBeforeRecording = prefix
+        lastAppliedDictationText = nil
+        lastAppliedDictationRevision = -1
+    }
+
+    private func setKeyboardSuppression(_ suppressed: Bool) {
+        suppressKeyboard = suppressed
+        inputTextView.setKeyboardSuppressed(suppressed)
+        if suppressed {
+            focusInputIfLive()
+            updateFrame(animated: false)
+        }
+    }
+
+    private func stopVoiceInput(_ manager: VoiceInputManager) async {
+        await ComposerShared.stopVoiceInput(
+            manager: manager,
+            getText: { [weak self] in self?.inputTextView.text ?? "" },
+            setText: { [weak self] in self?.setBodyText($0) },
+            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+            setTextBeforeRecording: { [weak self] in self?.setRecordingPrefix($0) }
         )
     }
 
-    private func recordingPrefixBinding() -> Binding<String?> {
-        Binding(
-            get: { self.textBeforeRecording },
-            set: { prefix in
-                self.textBeforeRecording = prefix
-                self.lastAppliedDictationText = nil
-                self.lastAppliedDictationRevision = -1
-            }
-        )
-    }
-
-    private func suppressKeyboardBinding() -> Binding<Bool> {
-        Binding(
-            get: { self.suppressKeyboard },
-            set: { suppressed in
-                self.suppressKeyboard = suppressed
-                self.inputTextView.setKeyboardSuppressed(suppressed)
-                if suppressed {
-                    self.focusInputIfLive()
-                    self.updateFrame(animated: false)
-                }
-            }
-        )
-    }
-
-    private func focusRequestBinding() -> Binding<Int> {
-        Binding(
-            get: { 0 },
-            set: { _ in }
+    private func cancelVoiceInput(_ manager: VoiceInputManager) async {
+        await ComposerShared.cancelVoiceInput(
+            manager: manager,
+            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+            setTextBeforeRecording: { [weak self] in self?.setRecordingPrefix($0) },
+            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+            setSuppressKeyboard: { [weak self] in self?.setKeyboardSuppression($0) }
         )
     }
 
@@ -850,17 +841,9 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         }
         switch ComposerShared.micTapAction(for: manager.state) {
         case .stop:
-            await ComposerShared.stopVoiceInput(
-                manager: manager,
-                text: textBinding(),
-                textBeforeRecording: recordingPrefixBinding()
-            )
+            await stopVoiceInput(manager)
         case .cancelPreparing:
-            await ComposerShared.cancelVoiceInput(
-                manager: manager,
-                textBeforeRecording: recordingPrefixBinding(),
-                suppressKeyboard: suppressKeyboardBinding()
-            )
+            await cancelVoiceInput(manager)
         case .start:
             do {
                 try await ComposerShared.startVoiceInput(
@@ -868,9 +851,14 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                     keyboardLanguage: inputTextView.textInputMode?.primaryLanguage,
                     owner: .reviewCommentInline,
                     baseText: inputTextView.text ?? "",
-                    textBeforeRecording: recordingPrefixBinding(),
-                    suppressKeyboard: suppressKeyboardBinding(),
-                    focusRequestID: focusRequestBinding()
+                    getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+                    setTextBeforeRecording: { [weak self] in self?.setRecordingPrefix($0) },
+                    getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+                    setSuppressKeyboard: { [weak self] in self?.setKeyboardSuppression($0) },
+                    // The review card has no focus counter; the keyboard
+                    // suppression above focuses the field.
+                    getFocusRequestID: { 0 },
+                    setFocusRequestID: { _ in }
                 )
             } catch {
             }
@@ -893,9 +881,12 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                 await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
                     manager: manager,
                     owner: .reviewCommentInline,
-                    text: textBinding(),
-                    textBeforeRecording: recordingPrefixBinding(),
-                    suppressKeyboard: suppressKeyboardBinding(),
+                    getText: { [weak self] in self?.inputTextView.text ?? "" },
+                    setText: { [weak self] in self?.setBodyText($0) },
+                    getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
+                    setTextBeforeRecording: { [weak self] in self?.setRecordingPrefix($0) },
+                    getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
+                    setSuppressKeyboard: { [weak self] in self?.setKeyboardSuppression($0) },
                     restoreKeyboard: false
                 )
                 saveCurrentBody()

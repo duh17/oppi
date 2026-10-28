@@ -187,18 +187,12 @@ struct DictationHintWiringTests {
             keyboardLanguage: nil,
             owner: .expandedComposer,
             baseText: "",
-            textBeforeRecording: Binding(
-                get: { textBeforeRecording },
-                set: { textBeforeRecording = $0 }
-            ),
-            suppressKeyboard: Binding(
-                get: { suppressKeyboard },
-                set: { suppressKeyboard = $0 }
-            ),
-            focusRequestID: Binding(
-                get: { focusRequestID },
-                set: { focusRequestID = $0 }
-            ),
+            getTextBeforeRecording: { textBeforeRecording },
+            setTextBeforeRecording: { textBeforeRecording = $0 },
+            getSuppressKeyboard: { suppressKeyboard },
+            setSuppressKeyboard: { suppressKeyboard = $0 },
+            getFocusRequestID: { focusRequestID },
+            setFocusRequestID: { focusRequestID = $0 },
             prepare: {
                 _ = ComposerShared.prepareStandaloneVoiceInput(
                     manager: manager,

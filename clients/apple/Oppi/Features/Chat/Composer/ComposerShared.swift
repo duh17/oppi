@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
@@ -111,16 +110,21 @@ enum ComposerShared {
     /// while its take prefix is present, then retire that prefix so later typing
     /// or the second surface's observer cannot erase the user's edits.
     static func discardFailedTake(
-        manager: VoiceInputManager?, owner: VoiceInputOwner,
-        text: Binding<String>, textBeforeRecording: Binding<String?>,
-        suppressKeyboard: Binding<Bool>
+        manager: VoiceInputManager?,
+        owner: VoiceInputOwner,
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: @escaping (Bool) -> Void
     ) {
         guard captureFailure(manager, owner: owner) != nil else { return }
-        if let prefix = textBeforeRecording.wrappedValue {
-            text.wrappedValue = prefix
-            textBeforeRecording.wrappedValue = nil
+        if let prefix = getTextBeforeRecording() {
+            setText(prefix)
+            setTextBeforeRecording(nil)
         }
-        suppressKeyboard.wrappedValue = false
+        setSuppressKeyboard(false)
     }
 
     static func micTapAction(for state: VoiceInputManager.State) -> VoiceMicTapAction {
@@ -180,19 +184,18 @@ enum ComposerShared {
     static func applyCanvasToComposer(
         attachment: PendingAttachment,
         recognizedText _: String,
-        text _: Binding<String>,
-        pendingAttachments: Binding<[PendingAttachment]>,
-        replacingAttachmentID: String? = nil
+        getText _: @escaping () -> String,
+        setText _: @escaping (String) -> Void,
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
+        replacingAttachmentID: String?
     ) -> Bool {
-        pendingAttachments.wrappedValue = replacedPendingAttachments(
-            pendingAttachments.wrappedValue,
+        setAttachments(replacedPendingAttachments(
+            getAttachments(),
             with: attachment,
             replacingAttachmentID: replacingAttachmentID
-        )
-        guard pendingAttachments.wrappedValue.contains(where: { $0.id == attachment.id }) else {
-            return false
-        }
-        return true
+        ))
+        return getAttachments().contains(where: { $0.id == attachment.id })
     }
 
     static func replacedPendingAttachments(
@@ -233,16 +236,18 @@ enum ComposerShared {
     /// caller can discard their draft files and surface an error.
     static func commitImportedAttachments(
         _ attachments: [PendingAttachment],
-        into pendingAttachments: Binding<[PendingAttachment]>
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void
     ) -> [PendingAttachment] {
-        pendingAttachments.wrappedValue.append(contentsOf: attachments)
-        let acceptedIDs = Set(pendingAttachments.wrappedValue.map(\.id))
+        setAttachments(getAttachments() + attachments)
+        let acceptedIDs = Set(getAttachments().map(\.id))
         return attachments.filter { !acceptedIDs.contains($0.id) }
     }
 
     static func importPhotoLibraryProviders(
         _ providers: [NSItemProvider],
-        into pendingAttachments: Binding<[PendingAttachment]>,
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
         store: ComposerDraftStore?,
         shouldAccept: @escaping @MainActor () -> Bool,
         onFailure: @escaping @MainActor (String) -> Void
@@ -251,7 +256,8 @@ enum ComposerShared {
             let result = await PhotoLibraryMediaImporter.importProviders(providers, store: store)
             finishPhotoLibraryImport(
                 result,
-                into: pendingAttachments,
+                getAttachments: getAttachments,
+                setAttachments: setAttachments,
                 store: store,
                 shouldAccept: shouldAccept,
                 onFailure: onFailure
@@ -261,7 +267,8 @@ enum ComposerShared {
 
     static func finishPhotoLibraryImport(
         _ result: PhotoLibraryMediaImporter.ImportResult,
-        into pendingAttachments: Binding<[PendingAttachment]>,
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
         store: ComposerDraftStore?,
         shouldAccept: @MainActor () -> Bool,
         onFailure: @MainActor (String) -> Void
@@ -271,7 +278,11 @@ enum ComposerShared {
             onFailure(photoLibraryImportRefusedMessage)
             return
         }
-        let rejected = commitImportedAttachments(result.attachments, into: pendingAttachments)
+        let rejected = commitImportedAttachments(
+            result.attachments,
+            getAttachments: getAttachments,
+            setAttachments: setAttachments
+        )
         if !rejected.isEmpty {
             PhotoLibraryMediaImporter.discardImportedFiles(rejected, store: store)
             onFailure(photoLibraryImportRefusedMessage)
@@ -282,40 +293,48 @@ enum ComposerShared {
 
     static func addCapturedImage(
         _ image: UIImage,
-        to pendingAttachments: Binding<[PendingAttachment]>
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void
     ) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let pending = PendingImage.from(image)
-            DispatchQueue.main.async {
-                pendingAttachments.wrappedValue.append(pending.pendingAttachment)
-            }
+        appendEncodedImage(image, getAttachments: getAttachments, setAttachments: setAttachments)
+    }
+
+    /// Encodes `image` off the main actor, then appends it to the draft.
+    private static func appendEncodedImage(
+        _ image: UIImage,
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void
+    ) {
+        Task { @MainActor in
+            let pending = await Task.detached(priority: .userInitiated) { PendingImage.from(image) }.value
+            setAttachments(getAttachments() + [pending.pendingAttachment])
         }
     }
 
     static func removeAttachment(
         _ id: String,
-        from pendingAttachments: Binding<[PendingAttachment]>
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void
     ) {
-        pendingAttachments.wrappedValue.removeAll { $0.id == id }
+        var attachments = getAttachments()
+        attachments.removeAll { $0.id == id }
+        setAttachments(attachments)
     }
 
     static func handlePastedImages(
         _ images: [UIImage],
-        into pendingAttachments: Binding<[PendingAttachment]>
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void
     ) {
         for image in images {
-            DispatchQueue.global(qos: .userInitiated).async {
-                let pending = PendingImage.from(image)
-                DispatchQueue.main.async {
-                    pendingAttachments.wrappedValue.append(pending.pendingAttachment)
-                }
-            }
+            appendEncodedImage(image, getAttachments: getAttachments, setAttachments: setAttachments)
         }
     }
 
     static func loadSelectedFiles(
         _ result: Result<[URL], Error>,
-        into pendingAttachments: Binding<[PendingAttachment]>,
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
         store: ComposerDraftStore?,
         shouldAccept: @escaping @MainActor () -> Bool,
         onFailure: @escaping @MainActor (String) -> Void
@@ -323,7 +342,8 @@ enum ComposerShared {
         Task { @MainActor in
             await importSelectedFiles(
                 result,
-                into: pendingAttachments,
+                getAttachments: getAttachments,
+                setAttachments: setAttachments,
                 store: store,
                 shouldAccept: shouldAccept,
                 onFailure: onFailure
@@ -335,7 +355,8 @@ enum ComposerShared {
     /// chip. Non-video files still load as in-memory attachments.
     static func importSelectedFiles(
         _ result: Result<[URL], Error>,
-        into pendingAttachments: Binding<[PendingAttachment]>,
+        getAttachments: @escaping () -> [PendingAttachment],
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
         store: ComposerDraftStore?,
         shouldAccept: @escaping @MainActor () -> Bool,
         onFailure: @escaping @MainActor (String) -> Void
@@ -344,7 +365,8 @@ enum ComposerShared {
         let imported = await importSelectedFileURLs(urls, store: store)
         finishPhotoLibraryImport(
             imported,
-            into: pendingAttachments,
+            getAttachments: getAttachments,
+            setAttachments: setAttachments,
             store: store,
             shouldAccept: shouldAccept,
             onFailure: onFailure
@@ -426,35 +448,45 @@ enum ComposerShared {
 
     static func insertSlashCommand(
         _ command: SlashCommand,
-        into text: Binding<String>
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void
     ) {
-        text.wrappedValue = ComposerAutocomplete.insertSlashCommand(command, into: text.wrappedValue)
+        setText(ComposerAutocomplete.insertSlashCommand(command, into: getText()))
     }
 
     static func insertFileSuggestion(
         _ suggestion: FileSuggestion,
-        text: Binding<String>,
-        pendingRepoPointers: Binding<[PendingFileReference]>
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getPointers: @escaping () -> [PendingFileReference],
+        setPointers: @escaping ([PendingFileReference]) -> Void
     ) {
-        if let tokenRange = ComposerAutocomplete.activeAtTokenRange(in: text.wrappedValue) {
-            text.wrappedValue.replaceSubrange(tokenRange, with: "")
+        var text = getText()
+        if let tokenRange = ComposerAutocomplete.activeAtTokenRange(in: text) {
+            text.replaceSubrange(tokenRange, with: "")
+            setText(text)
         }
         if suggestion.isDirectory {
-            text.wrappedValue += "@\(suggestion.path)"
+            setText(text + "@\(suggestion.path)")
             return
         }
 
         let ref = PendingFileReference(path: suggestion.path, isDirectory: false, kind: .workspaceFile)
-        if !pendingRepoPointers.wrappedValue.contains(where: { $0.id == ref.id }) {
-            pendingRepoPointers.wrappedValue.append(ref)
+        var pointers = getPointers()
+        if !pointers.contains(where: { $0.id == ref.id }) {
+            pointers.append(ref)
+            setPointers(pointers)
         }
     }
 
     static func removeFile(
         _ id: String,
-        from pendingRepoPointers: Binding<[PendingFileReference]>
+        getPointers: @escaping () -> [PendingFileReference],
+        setPointers: @escaping ([PendingFileReference]) -> Void
     ) {
-        pendingRepoPointers.wrappedValue.removeAll { $0.id == id }
+        var pointers = getPointers()
+        pointers.removeAll { $0.id == id }
+        setPointers(pointers)
     }
 
     static func notifyFileSuggestionContext(
@@ -547,10 +579,14 @@ enum ComposerShared {
         keyboardLanguage: String?,
         owner: VoiceInputOwner,
         baseText: String,
-        text: Binding<String>? = nil,
-        textBeforeRecording: Binding<String?>? = nil,
-        suppressKeyboard: Binding<Bool>,
-        focusRequestID: Binding<Int>,
+        getText: (() -> String)? = nil,
+        setText: ((String) -> Void)? = nil,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: @escaping (Bool) -> Void,
+        getFocusRequestID: @escaping () -> Int,
+        setFocusRequestID: @escaping (Int) -> Void,
         prepare: (() async throws -> Void)? = nil,
         playTapHaptic: () -> Void = { AppHaptics.dictationTapAccepted() },
         playActivationHaptic: () -> Void = { AppHaptics.dictationActivated() }
@@ -560,9 +596,9 @@ enum ComposerShared {
         let startupID = try manager.beginComposerStartup()
         playTapHaptic()
         let prefix = dictationPrefix(for: baseText)
-        textBeforeRecording?.wrappedValue = prefix
-        suppressKeyboard.wrappedValue = true
-        focusRequestID.wrappedValue &+= 1
+        setTextBeforeRecording(prefix)
+        setSuppressKeyboard(true)
+        setFocusRequestID(getFocusRequestID() &+ 1)
 
         do {
             try await prepare?()
@@ -571,10 +607,10 @@ enum ComposerShared {
                 keyboardLanguage: keyboardLanguage,
                 source: owner.rawValue,
                 onCaptureFailure: { [weak manager] in
-                    guard manager?.composerStartupID == startupID, let text else { return }
-                    text.wrappedValue = baseText
-                    textBeforeRecording?.wrappedValue = nil
-                    suppressKeyboard.wrappedValue = false
+                    guard manager?.composerStartupID == startupID, let setText else { return }
+                    setText(baseText)
+                    setTextBeforeRecording(nil)
+                    setSuppressKeyboard(false)
                 }
             )
             guard manager.composerStartupID == startupID else { throw CancellationError() }
@@ -591,33 +627,37 @@ enum ComposerShared {
             // The retired surface must not clear shared bindings or report a
             // stale error after another presentation has admitted a new take.
             guard manager.composerStartupID == startupID else { throw CancellationError() }
-            textBeforeRecording?.wrappedValue = nil
-            suppressKeyboard.wrappedValue = false
+            setTextBeforeRecording(nil)
+            setSuppressKeyboard(false)
             throw error
         }
     }
 
     static func stopVoiceInput(
         manager: VoiceInputManager,
-        text: Binding<String>,
-        textBeforeRecording: Binding<String?>
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void
     ) async {
-        let prefix = textBeforeRecording.wrappedValue ?? ""
+        let prefix = getTextBeforeRecording() ?? ""
         let transcript = await manager.stopRecording()
-        textBeforeRecording.wrappedValue = nil
+        setTextBeforeRecording(nil)
         if !transcript.isEmpty {
-            text.wrappedValue = prefix + transcript
+            setText(prefix + transcript)
         }
     }
 
     static func cancelVoiceInput(
         manager: VoiceInputManager,
-        textBeforeRecording: Binding<String?>,
-        suppressKeyboard: Binding<Bool>
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: @escaping (Bool) -> Void
     ) async {
         await manager.cancelRecording()
-        textBeforeRecording.wrappedValue = nil
-        suppressKeyboard.wrappedValue = false
+        setTextBeforeRecording(nil)
+        setSuppressKeyboard(false)
     }
 
     /// Drop in-flight capture when the owning UI disappears.
@@ -706,9 +746,12 @@ enum ComposerShared {
     static func finishOwnedVoiceInputBeforeSubmit(
         manager: VoiceInputManager?,
         owner: VoiceInputOwner,
-        text: Binding<String>,
-        textBeforeRecording: Binding<String?>,
-        suppressKeyboard: Binding<Bool>? = nil,
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: ((Bool) -> Void)?,
         restoreKeyboard: Bool = true
     ) async -> Bool {
         guard let manager,
@@ -718,15 +761,17 @@ enum ComposerShared {
         if manager.isRecording {
             await stopVoiceInput(
                 manager: manager,
-                text: text,
-                textBeforeRecording: textBeforeRecording
+                getText: getText,
+                setText: setText,
+                getTextBeforeRecording: getTextBeforeRecording,
+                setTextBeforeRecording: setTextBeforeRecording
             )
         } else {
             await manager.cancelRecording()
-            textBeforeRecording.wrappedValue = nil
+            setTextBeforeRecording(nil)
         }
         if restoreKeyboard {
-            suppressKeyboard?.wrappedValue = false
+            setSuppressKeyboard?(false)
         }
         return true
     }
@@ -770,16 +815,16 @@ enum ComposerShared {
     static func cancelOwnedVoiceInput(
         manager: VoiceInputManager?,
         owner: VoiceInputOwner,
-        textBeforeRecording: Binding<String?>,
-        suppressKeyboard: Binding<Bool>? = nil
+        setTextBeforeRecording: @escaping (String?) -> Void,
+        setSuppressKeyboard: ((Bool) -> Void)?
     ) async -> Bool {
         guard let manager,
               ownsVoiceInput(manager, owner: owner),
               manager.isRecording || manager.isPreparing else { return false }
 
         await manager.cancelRecording()
-        textBeforeRecording.wrappedValue = nil
-        suppressKeyboard?.wrappedValue = false
+        setTextBeforeRecording(nil)
+        setSuppressKeyboard?(false)
         return true
     }
 
@@ -792,13 +837,15 @@ enum ComposerShared {
     }
 
     static func handleKeyboardRestore(
-        suppressKeyboard: Binding<Bool>,
-        textBeforeRecording: Binding<String?>,
+        getSuppressKeyboard: @escaping () -> Bool,
+        setSuppressKeyboard: @escaping (Bool) -> Void,
+        getTextBeforeRecording: @escaping () -> String?,
+        setTextBeforeRecording: @escaping (String?) -> Void,
         voiceInputManager: VoiceInputManager?,
-        expectedOwner: VoiceInputOwner? = nil
+        expectedOwner: VoiceInputOwner?
     ) {
-        suppressKeyboard.wrappedValue = false
-        textBeforeRecording.wrappedValue = nil
+        setSuppressKeyboard(false)
+        setTextBeforeRecording(nil)
         if let manager = voiceInputManager,
            expectedOwner.map({ ownsVoiceInput(manager, owner: $0) }) ?? true,
            manager.isRecording || manager.isPreparing {
@@ -810,223 +857,5 @@ enum ComposerShared {
                 }
             }
         }
-    }
-}
-
-extension ComposerShared {
-    private static func bind<Value>(_ get: @escaping () -> Value, _ set: @escaping (Value) -> Void) -> Binding<Value> {
-        Binding(get: { get() }, set: { set($0) })
-    }
-
-    static func startVoiceInput(
-        manager: VoiceInputManager,
-        keyboardLanguage: String?,
-        owner: VoiceInputOwner,
-        baseText: String,
-        getText: @escaping () -> String,
-        setText: @escaping (String) -> Void,
-        getTextBeforeRecording: @escaping () -> String?,
-        setTextBeforeRecording: @escaping (String?) -> Void,
-        getSuppressKeyboard: @escaping () -> Bool,
-        setSuppressKeyboard: @escaping (Bool) -> Void,
-        getFocusRequestID: @escaping () -> Int,
-        setFocusRequestID: @escaping (Int) -> Void,
-        prepare: (() async throws -> Void)? = nil
-    ) async throws {
-        _ = try await startVoiceInput(
-            manager: manager,
-            keyboardLanguage: keyboardLanguage,
-            owner: owner,
-            baseText: baseText,
-            text: bind(getText, setText),
-            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
-            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard),
-            focusRequestID: bind(getFocusRequestID, setFocusRequestID),
-            prepare: prepare
-        )
-    }
-
-    static func stopVoiceInput(
-        manager: VoiceInputManager,
-        getText: @escaping () -> String,
-        setText: @escaping (String) -> Void,
-        getTextBeforeRecording: @escaping () -> String?,
-        setTextBeforeRecording: @escaping (String?) -> Void
-    ) async {
-        await stopVoiceInput(
-            manager: manager,
-            text: bind(getText, setText),
-            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording)
-        )
-    }
-
-    static func cancelVoiceInput(
-        manager: VoiceInputManager,
-        getTextBeforeRecording: @escaping () -> String?,
-        setTextBeforeRecording: @escaping (String?) -> Void,
-        getSuppressKeyboard: @escaping () -> Bool,
-        setSuppressKeyboard: @escaping (Bool) -> Void
-    ) async {
-        await cancelVoiceInput(
-            manager: manager,
-            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
-            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard)
-        )
-    }
-
-    static func finishOwnedVoiceInputBeforeSubmit(
-        manager: VoiceInputManager?,
-        owner: VoiceInputOwner,
-        getText: @escaping () -> String,
-        setText: @escaping (String) -> Void,
-        getTextBeforeRecording: @escaping () -> String?,
-        setTextBeforeRecording: @escaping (String?) -> Void,
-        getSuppressKeyboard: @escaping () -> Bool,
-        setSuppressKeyboard: @escaping (Bool) -> Void,
-        restoreKeyboard: Bool = true
-    ) async {
-        _ = await finishOwnedVoiceInputBeforeSubmit(
-            manager: manager,
-            owner: owner,
-            text: bind(getText, setText),
-            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
-            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard),
-            restoreKeyboard: restoreKeyboard
-        )
-    }
-
-    static func cancelOwnedVoiceInput(
-        manager: VoiceInputManager?,
-        owner: VoiceInputOwner,
-        setTextBeforeRecording: @escaping (String?) -> Void,
-        setSuppressKeyboard: @escaping (Bool) -> Void
-    ) async {
-        _ = await cancelOwnedVoiceInput(
-            manager: manager,
-            owner: owner,
-            textBeforeRecording: bind({ nil }, setTextBeforeRecording),
-            suppressKeyboard: bind({ false }, setSuppressKeyboard)
-        )
-    }
-
-    static func handlePastedImages(_ images: [UIImage], getAttachments: @escaping () -> [PendingAttachment], setAttachments: @escaping ([PendingAttachment]) -> Void) {
-        handlePastedImages(images, into: bind(getAttachments, setAttachments))
-    }
-
-    static func insertSlashCommand(_ command: SlashCommand, getText: @escaping () -> String, setText: @escaping (String) -> Void) {
-        insertSlashCommand(command, into: bind(getText, setText))
-    }
-
-    static func insertFileSuggestion(
-        _ suggestion: FileSuggestion,
-        getText: @escaping () -> String,
-        setText: @escaping (String) -> Void,
-        getPointers: @escaping () -> [PendingFileReference],
-        setPointers: @escaping ([PendingFileReference]) -> Void
-    ) {
-        insertFileSuggestion(
-            suggestion,
-            text: bind(getText, setText),
-            pendingRepoPointers: bind(getPointers, setPointers)
-        )
-    }
-
-    static func removeAttachment(_ id: String, getAttachments: @escaping () -> [PendingAttachment], setAttachments: @escaping ([PendingAttachment]) -> Void) {
-        removeAttachment(id, from: bind(getAttachments, setAttachments))
-    }
-
-    static func removeFile(_ id: String, getPointers: @escaping () -> [PendingFileReference], setPointers: @escaping ([PendingFileReference]) -> Void) {
-        removeFile(id, from: bind(getPointers, setPointers))
-    }
-
-    static func importPhotoLibraryProviders(
-        _ providers: [NSItemProvider],
-        getAttachments: @escaping () -> [PendingAttachment],
-        setAttachments: @escaping ([PendingAttachment]) -> Void,
-        store: ComposerDraftStore?,
-        shouldAccept: @escaping @MainActor () -> Bool,
-        onFailure: @escaping @MainActor (String) -> Void
-    ) {
-        importPhotoLibraryProviders(
-            providers,
-            into: bind(getAttachments, setAttachments),
-            store: store,
-            shouldAccept: shouldAccept,
-            onFailure: onFailure
-        )
-    }
-
-    static func addCapturedImage(_ image: UIImage, getAttachments: @escaping () -> [PendingAttachment], setAttachments: @escaping ([PendingAttachment]) -> Void) {
-        addCapturedImage(image, to: bind(getAttachments, setAttachments))
-    }
-
-    static func applyCanvasToComposer(
-        attachment: PendingAttachment,
-        recognizedText: String,
-        getText: @escaping () -> String,
-        setText: @escaping (String) -> Void,
-        getAttachments: @escaping () -> [PendingAttachment],
-        setAttachments: @escaping ([PendingAttachment]) -> Void,
-        replacingAttachmentID: String?
-    ) -> Bool {
-        applyCanvasToComposer(
-            attachment: attachment,
-            recognizedText: recognizedText,
-            text: bind(getText, setText),
-            pendingAttachments: bind(getAttachments, setAttachments),
-            replacingAttachmentID: replacingAttachmentID
-        )
-    }
-
-    static func loadSelectedFiles(
-        _ result: Result<[URL], Error>,
-        getAttachments: @escaping () -> [PendingAttachment],
-        setAttachments: @escaping ([PendingAttachment]) -> Void,
-        store: ComposerDraftStore?,
-        shouldAccept: @escaping @MainActor () -> Bool,
-        onFailure: @escaping @MainActor (String) -> Void
-    ) {
-        loadSelectedFiles(
-            result,
-            into: bind(getAttachments, setAttachments),
-            store: store,
-            shouldAccept: shouldAccept,
-            onFailure: onFailure
-        )
-    }
-
-    static func discardFailedTake(
-        manager: VoiceInputManager?,
-        owner: VoiceInputOwner,
-        getText: @escaping () -> String,
-        setText: @escaping (String) -> Void,
-        getTextBeforeRecording: @escaping () -> String?,
-        setTextBeforeRecording: @escaping (String?) -> Void,
-        getSuppressKeyboard: @escaping () -> Bool,
-        setSuppressKeyboard: @escaping (Bool) -> Void
-    ) {
-        discardFailedTake(
-            manager: manager,
-            owner: owner,
-            text: bind(getText, setText),
-            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
-            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard)
-        )
-    }
-
-    static func handleKeyboardRestore(
-        getSuppressKeyboard: @escaping () -> Bool,
-        setSuppressKeyboard: @escaping (Bool) -> Void,
-        getTextBeforeRecording: @escaping () -> String?,
-        setTextBeforeRecording: @escaping (String?) -> Void,
-        voiceInputManager: VoiceInputManager?,
-        expectedOwner: VoiceInputOwner?
-    ) {
-        handleKeyboardRestore(
-            suppressKeyboard: bind(getSuppressKeyboard, setSuppressKeyboard),
-            textBeforeRecording: bind(getTextBeforeRecording, setTextBeforeRecording),
-            voiceInputManager: voiceInputManager,
-            expectedOwner: expectedOwner
-        )
     }
 }

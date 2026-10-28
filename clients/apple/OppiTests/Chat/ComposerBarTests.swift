@@ -179,18 +179,12 @@ struct ComposerBarTests {
                 keyboardLanguage: nil,
                 owner: .inlineComposer,
                 baseText: "hello",
-                textBeforeRecording: Binding(
-                    get: { textBeforeRecording },
-                    set: { textBeforeRecording = $0 }
-                ),
-                suppressKeyboard: Binding(
-                    get: { suppressKeyboard },
-                    set: { suppressKeyboard = $0 }
-                ),
-                focusRequestID: Binding(
-                    get: { focusRequestID },
-                    set: { focusRequestID = $0 }
-                ),
+                getTextBeforeRecording: { textBeforeRecording },
+                setTextBeforeRecording: { textBeforeRecording = $0 },
+                getSuppressKeyboard: { suppressKeyboard },
+                setSuppressKeyboard: { suppressKeyboard = $0 },
+                getFocusRequestID: { focusRequestID },
+                setFocusRequestID: { focusRequestID = $0 },
                 prepare: {
                     observedSuppressKeyboard = suppressKeyboard
                     observedTextBeforeRecording = textBeforeRecording
@@ -231,9 +225,12 @@ struct ComposerBarTests {
                 keyboardLanguage: "en-US",
                 owner: .inlineComposer,
                 baseText: "draft",
-                textBeforeRecording: Binding(get: { prefix }, set: { prefix = $0 }),
-                suppressKeyboard: Binding(get: { suppressed }, set: { suppressed = $0 }),
-                focusRequestID: Binding(get: { focus }, set: { focus = $0 }),
+                getTextBeforeRecording: { prefix },
+                setTextBeforeRecording: { prefix = $0 },
+                getSuppressKeyboard: { suppressed },
+                setSuppressKeyboard: { suppressed = $0 },
+                getFocusRequestID: { focus },
+                setFocusRequestID: { focus = $0 },
                 playActivationHaptic: { haptics += 1 }
             )
         }
@@ -265,8 +262,9 @@ struct ComposerBarTests {
         var focus = 0
         try await ComposerShared.startVoiceInput(
             manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer, baseText: "",
-            suppressKeyboard: Binding(get: { suppressed }, set: { suppressed = $0 }),
-            focusRequestID: Binding(get: { focus }, set: { focus = $0 }),
+            getTextBeforeRecording: { nil }, setTextBeforeRecording: { _ in },
+            getSuppressKeyboard: { suppressed }, setSuppressKeyboard: { suppressed = $0 },
+            getFocusRequestID: { focus }, setFocusRequestID: { focus = $0 },
             prepare: { #expect(haptics == 0) },
             playActivationHaptic: {
                 #expect(manager.isRecording)
@@ -294,7 +292,9 @@ struct ComposerBarTests {
         await #expect(throws: CancellationError.self) {
             try await ComposerShared.startVoiceInput(
                 manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer, baseText: "",
-                suppressKeyboard: .constant(false), focusRequestID: .constant(0),
+                getTextBeforeRecording: { nil }, setTextBeforeRecording: { _ in },
+                getSuppressKeyboard: { false }, setSuppressKeyboard: { _ in },
+                getFocusRequestID: { 0 }, setFocusRequestID: { _ in },
                 playActivationHaptic: { haptics += 1 }
             )
         }
@@ -322,9 +322,9 @@ struct ComposerBarTests {
         let didFinish = await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
             manager: manager,
             owner: .expandedComposer,
-            text: Binding(get: { text }, set: { text = $0 }),
-            textBeforeRecording: Binding(get: { textBeforeRecording }, set: { textBeforeRecording = $0 }),
-            suppressKeyboard: Binding(get: { suppressKeyboard }, set: { suppressKeyboard = $0 })
+            getText: { text }, setText: { text = $0 },
+            getTextBeforeRecording: { textBeforeRecording }, setTextBeforeRecording: { textBeforeRecording = $0 },
+            getSuppressKeyboard: { suppressKeyboard }, setSuppressKeyboard: { suppressKeyboard = $0 }
         )
 
         #expect(didFinish)
@@ -356,9 +356,9 @@ struct ComposerBarTests {
         let didFinish = await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
             manager: manager,
             owner: .inlineComposer,
-            text: Binding(get: { text }, set: { text = $0 }),
-            textBeforeRecording: Binding(get: { textBeforeRecording }, set: { textBeforeRecording = $0 }),
-            suppressKeyboard: Binding(get: { suppressKeyboard }, set: { suppressKeyboard = $0 }),
+            getText: { text }, setText: { text = $0 },
+            getTextBeforeRecording: { textBeforeRecording }, setTextBeforeRecording: { textBeforeRecording = $0 },
+            getSuppressKeyboard: { suppressKeyboard }, setSuppressKeyboard: { suppressKeyboard = $0 },
             restoreKeyboard: false
         )
 
@@ -389,8 +389,8 @@ struct ComposerBarTests {
         let didCancel = await ComposerShared.cancelOwnedVoiceInput(
             manager: manager,
             owner: .inlineComposer,
-            textBeforeRecording: Binding(get: { textBeforeRecording }, set: { textBeforeRecording = $0 }),
-            suppressKeyboard: Binding(get: { suppressKeyboard }, set: { suppressKeyboard = $0 })
+            setTextBeforeRecording: { textBeforeRecording = $0 },
+            setSuppressKeyboard: { suppressKeyboard = $0 }
         )
 
         #expect(didCancel)
@@ -414,8 +414,10 @@ struct ComposerBarTests {
         var suppressKeyboard = true
 
         ComposerShared.handleKeyboardRestore(
-            suppressKeyboard: Binding(get: { suppressKeyboard }, set: { suppressKeyboard = $0 }),
-            textBeforeRecording: Binding(get: { textBeforeRecording }, set: { textBeforeRecording = $0 }),
+            getSuppressKeyboard: { suppressKeyboard },
+            setSuppressKeyboard: { suppressKeyboard = $0 },
+            getTextBeforeRecording: { textBeforeRecording },
+            setTextBeforeRecording: { textBeforeRecording = $0 },
             voiceInputManager: manager,
             expectedOwner: .expandedComposer
         )
@@ -555,7 +557,9 @@ struct ComposerBarTests {
         }
         try await ComposerShared.startVoiceInput(
             manager: manager, keyboardLanguage: "en-US", owner: .inlineComposer, baseText: "",
-            suppressKeyboard: .constant(false), focusRequestID: .constant(0),
+            getTextBeforeRecording: { nil }, setTextBeforeRecording: { _ in },
+            getSuppressKeyboard: { false }, setSuppressKeyboard: { _ in },
+            getFocusRequestID: { 0 }, setFocusRequestID: { _ in },
             playTapHaptic: { taps += 1 },
             playActivationHaptic: {
                 #expect(manager.isRecording)
