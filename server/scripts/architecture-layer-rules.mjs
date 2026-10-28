@@ -43,6 +43,9 @@ const SERVER_MIRROR_RESUME_IMPORT_ALLOWED_FILES = new Set([
 
 // ConfigStore.updateConfig writes any Partial<ServerConfig>. Settings reach config.json through
 // the settings registry (server/src/settings/**); persistence modules own the rest.
+// The match is textual: a `.updateConfig(` call on any receiver, comments ignored. It does not
+// follow an alias (`const save = store.updateConfig`) or a computed name (`store["updateConfig"]`),
+// and it does not cover `mutate`/`mutateConfig`, the locked read-merge-write other code uses.
 const SERVER_CONFIG_UPDATE_ALLOWED_PREFIXES = ["server/src/storage/", "server/src/settings/"];
 const SERVER_CONFIG_UPDATE_CALL = /\.\s*updateConfig\s*\(/g;
 
@@ -111,9 +114,7 @@ function findTestSourcePathUse(stripped) {
   for (const match of stripped.matchAll(IOS_TEST_FILE_LITERAL)) {
     const before = stripped.slice(Math.max(0, match.index - 80), match.index);
     const after = stripped.slice(match.index + match[0].length, match.index + match[0].length + 4);
-    const defaultArgument =
-      /\b(?:file|filePath)\s*:\s*(?:StaticString|String)\s*=\s*$/.test(before) &&
-      /^\s*[,)]/.test(after);
+    const defaultArgument = /\b(?:file|filePath)\s*:\s*(?:StaticString|String)\s*=\s*$/.test(before) && /^\s*[,)]/.test(after);
     if (!defaultArgument) {
       return { index: match.index };
     }
@@ -153,7 +154,9 @@ const IOS_VIEW_LAYER_PATH_PREFIXES = [
 const IOS_FORBIDDEN_VIEW_NETWORK_TYPES = ["APIClient", "WebSocketClient"];
 
 // Only the open owner system-opens URLs (browser preference, non-HTTP schemes).
-const IOS_SYSTEM_URL_OPEN_ALLOWED_FILES = new Set(["clients/apple/Oppi/App/AppOpener.swift"]);
+const IOS_SYSTEM_URL_OPEN_ALLOWED_FILES = new Set([
+  "clients/apple/Oppi/App/AppOpener.swift",
+]);
 const IOS_IN_APP_BROWSER_ALLOWED_FILES = new Set([
   "clients/apple/Oppi/App/AppOpener.swift",
   "clients/apple/Oppi/Features/Settings/TailnetSettingsViewController.swift", // Authentication always stays in-app.
@@ -1186,7 +1189,8 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         pattern: /\bperformWhenUnlocked\b/,
         allowed: IOS_UNLOCK_DEFERRAL_ALLOWED_FILES.has(file),
         reason: "Opens must wait for App Lock in one place.",
-        remediation: "Call AppOpener.open; it waits for unlock, launch, and the target server.",
+        remediation:
+          "Call AppOpener.open; it waits for unlock, launch, and the target server.",
       },
       {
         rule: "timeline-text-link-interception",
@@ -1327,12 +1331,7 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
   // Pool builds use a shared compilation cache with prefix mapping, which compiles #filePath
   // to /^src/...; a test that opens a file through it finds nothing.
   const testFiles = files
-    ? files
-        .map(normalizeRepoPath)
-        .filter(
-          (file) =>
-            IOS_TEST_TARGET_ROOTS.some((root) => file.startsWith(root)) && file.endsWith(".swift"),
-        )
+    ? files.map(normalizeRepoPath).filter((file) => IOS_TEST_TARGET_ROOTS.some((root) => file.startsWith(root)) && file.endsWith(".swift"))
     : IOS_TEST_TARGET_ROOTS.flatMap((root) =>
         listFilesRecursively(path.join(repoRoot, root), ".swift").map((absolutePath) =>
           normalizeRepoPath(path.relative(repoRoot, absolutePath)),
@@ -1351,8 +1350,7 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         file,
         line: location.line,
         column: location.column,
-        reason:
-          "Tests use #filePath/#file only as a failure-location default argument; pool builds compile it to a mapped /^src path, so a path built from it opens nothing.",
+        reason: "Tests use #filePath/#file only as a failure-location default argument; pool builds compile it to a mapped /^src path, so a path built from it opens nothing.",
         remediation:
           "Load the file from the test bundle (add it as a resource of the test target; see TestFixtures/ProtocolFixtures in OppiTests).",
       }),

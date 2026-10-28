@@ -54,7 +54,8 @@ export function createServerMetricsRoutes(
         return true;
       }
       if (method === "GET") {
-        helpers.json(res, control.settings());
+        // The sampler latches the switch at startup, so what is running wins over config.json.
+        helpers.json(res, { ...control.settings(), enabled: control.isEnabled() });
         return true;
       }
       if (method === "PUT") {

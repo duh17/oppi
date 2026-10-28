@@ -556,6 +556,30 @@ describe("architecture layer rule helpers", () => {
     }
   });
 
+  it("flags updateConfig calls outside storage and settings, and ignores comments", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-config-update-"));
+
+    try {
+      const call =
+        "export const save = (foo: { updateConfig(u: object): void }) => foo.updateConfig({});\n";
+      write(join(repoRoot, "server/src/routes/x.ts"), call);
+      write(join(repoRoot, "server/src/storage/x.ts"), call);
+      write(join(repoRoot, "server/src/settings/x.ts"), call);
+      write(
+        join(repoRoot, "server/src/commented.ts"),
+        "// foo.updateConfig({}) was removed\n/* foo.updateConfig({}) */\nexport const ok = 1;\n",
+      );
+
+      const flagged = findServerLayerViolations(repoRoot)
+        .filter((violation) => violation.rule === "config-update-boundary")
+        .map((violation) => violation.file);
+
+      expect(flagged).toEqual(["server/src/routes/x.ts"]);
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("flags Pi TUI runtime ownership checks outside approved modules", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "oppi-arch-pi-tui-check-"));
 

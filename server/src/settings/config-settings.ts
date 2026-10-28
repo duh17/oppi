@@ -5,6 +5,7 @@
  * the setting as it is; omitting it keeps last-writer-wins.
  */
 import type { ServerConfig } from "../types.js";
+import { isRevision } from "./revision.js";
 import {
   SettingValidationError,
   type AutoTitlePatch,
@@ -59,7 +60,7 @@ export function readConfigSetting<K extends RevisionedConfigKey>(
 /** `baseRevision` from a request body: absent is last-writer-wins, anything else must be a count. */
 export function parseBaseRevision(value: unknown): number | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+  if (!isRevision(value)) {
     throw new SettingValidationError("baseRevision: expected a non-negative safe integer");
   }
   return value;

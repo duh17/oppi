@@ -1,3 +1,5 @@
+import { isRevision } from "./settings/revision.js";
+
 export const MOBILE_OUTPUT_GUIDE_SETTINGS_VERSION = 1 as const;
 export const MOBILE_OUTPUT_GUIDE_SETTINGS_MAX_ERROR_LENGTH = 2048;
 
@@ -90,7 +92,7 @@ export function boundMobileOutputGuideSettingsError(error: unknown): string {
 }
 
 function assertRevision(value: unknown, field: string): asserts value is number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+  if (!isRevision(value)) {
     throw new MobileOutputGuideSettingsValidationError(
       `${field}: expected a non-negative safe integer`,
     );

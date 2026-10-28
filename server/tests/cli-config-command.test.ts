@@ -207,6 +207,24 @@ describe("config command agent safety", () => {
     ).toBeUndefined();
   });
 
+  it("keeps an auto-title revision when the whole object is set again", async () => {
+    const dataDir = makeDataDir();
+    const storage = createCliConfigStorage(dataDir);
+    storage.mutateConfig(() => ({ autoTitle: { enabled: true, revision: 4 } }));
+
+    const set = await runCli(["config", "set", "autoTitle", '{"enabled":false}'], {
+      dataDir,
+      captureHuman: true,
+      forceJson: true,
+    });
+
+    expect(set.ok).toBe(true);
+    expect(createCliConfigStorage(dataDir).getConfig().autoTitle).toEqual({
+      enabled: false,
+      revision: 4,
+    });
+  });
+
   it("reports invalid validation as structured data with a clean JSON run", async () => {
     const dataDir = makeDataDir();
     const badPath = join(dataDir, "bad-config.json");

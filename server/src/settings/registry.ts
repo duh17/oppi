@@ -1,14 +1,15 @@
 /**
  * The one table of every setting the server owns: scope, storage, default, validation, and
  * whether writes carry a revision. Routes and stores validate through these definitions, and
- * `protocol/settings.json` is the hand-maintained copy the clients read; the server test
- * `settings-registry.test.ts` requires the two to agree.
+ * `protocol/settings.json` is the hand-maintained copy for the clients; the server test
+ * `settings-registry.test.ts` keeps the two in step. No client test reads it yet.
  *
  * An entry exists only for a setting that exists. Add the entry and the fixture row together.
  */
 import { hostMountValidationError } from "../host.js";
 import { DEFAULT_ICON_CHOICE, validateIconChoice } from "../icon-choice.js";
 import { validateMobileOutputGuideSettingsReplacement } from "../mobile-output-guide-settings.js";
+import { splitCanonicalModelId } from "../model-resolution.js";
 import { parsePushEvents } from "../push/events.js";
 import { validateDictionaryPhrases } from "../storage/dictation-dictionary-store.js";
 import type { IconChoice, PushEvent, WorkspaceSandboxConfig } from "../types.js";
@@ -75,10 +76,8 @@ function validateAutoTitle(value: unknown): AutoTitlePatch {
   if (value.model === null) {
     patch.model = null;
   } else if (value.model !== undefined) {
-    // The title generator splits on the first slash: provider, then a model id that may hold more.
     const model = typeof value.model === "string" ? value.model.trim() : "";
-    const slash = model.indexOf("/");
-    if (slash <= 0 || slash === model.length - 1) return fail("model must be provider/id or null");
+    if (!splitCanonicalModelId(model)) return fail("model must be provider/id or null");
     patch.model = model;
   }
   return patch;
@@ -100,9 +99,7 @@ function validatePiDefaultTools(value: unknown): string[] | null {
 }
 
 function validatePiDefaultModel(value: unknown): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return fail("model must be a non-empty string");
-  }
+  if (typeof value !== "string") return fail("model must be a string");
   return value;
 }
 

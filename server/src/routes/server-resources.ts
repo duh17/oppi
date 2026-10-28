@@ -3,7 +3,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createLogger } from "../logger.js";
 import { revisionConflictBody } from "../settings/config-settings.js";
 import { httpStatusForPiResourceError } from "../settings/pi-resource-errors.js";
-import { SettingValidationError, validateSetting } from "../settings/registry.js";
+import { isRevision } from "../settings/revision.js";
+import { SettingValidationError, validateSetting, type SettingKey } from "../settings/registry.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
@@ -103,13 +104,13 @@ async function parseJsonObject(
   return body;
 }
 
-function isBaseRevision(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-function validGuideReplacement(value: unknown): { enabled: boolean } | undefined {
+/** The validated value, or undefined for one the setting refuses (no validator returns undefined here). */
+function acceptedValue<K extends SettingKey>(
+  key: K,
+  value: unknown,
+): ReturnType<typeof validateSetting<K>> | undefined {
   try {
-    return validateSetting("mobileOutputGuide", value);
+    return validateSetting(key, value);
   } catch (cause: unknown) {
     if (cause instanceof SettingValidationError) return undefined;
     throw cause;
@@ -402,13 +403,13 @@ export function createServerResourceRoutes(
       error(res, helpers, "Request body must be valid JSON within 16 KiB");
       return;
     }
-    if (!body) {
+    const defaultTools = acceptedValue("piDefaultTools", body?.defaultTools);
+    if (defaultTools === undefined) {
       logRouteRejected("mutation", "pi_config", "validation");
       error(res, helpers, "Request body must be exactly { defaultTools: string[] | null }");
       return;
     }
     try {
-      const defaultTools = validateSetting("piDefaultTools", body.defaultTools);
       helpers.json(res, await ctx.serverResources.setPiDefaultTools(defaultTools));
     } catch (cause: unknown) {
       errorForPiConfig(res, helpers, "mutation", cause);
@@ -431,12 +432,12 @@ export function createServerResourceRoutes(
       error(res, helpers, "Request body must be valid JSON within 16 KiB");
       return;
     }
-    if (!body) {
+    const model = acceptedValue("piDefaultModel", body?.model);
+    if (model === undefined) {
       error(res, helpers, "Request body must be exactly { model: string }");
       return;
     }
     try {
-      const model = validateSetting("piDefaultModel", body.model);
       await ctx.refreshModelCatalog();
       const candidate = ctx.getModelCatalog().find((item) => item.id === model);
       if (!candidate) {
@@ -473,8 +474,8 @@ export function createServerResourceRoutes(
       error(res, helpers, "Request body must be valid JSON within 16 KiB");
       return;
     }
-    const replacement = body && validGuideReplacement({ enabled: body.enabled });
-    if (!body || !replacement || !isBaseRevision(body.baseRevision)) {
+    const replacement = body && acceptedValue("mobileOutputGuide", { enabled: body.enabled });
+    if (!body || !replacement || !isRevision(body.baseRevision)) {
       logRouteRejected("guide_persistence", "mobile_output_guide", "validation");
       error(
         res,

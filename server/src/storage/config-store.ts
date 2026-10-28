@@ -23,6 +23,7 @@ import {
   parseTrustedPeers,
 } from "../proxy-config.js";
 import { parsePushEvents } from "../push/events.js";
+import { isRevision } from "../settings/revision.js";
 import { parseRelayOrigins } from "../push/relay-origin.js";
 import type {
   DevicePairingInfo,
@@ -62,7 +63,7 @@ const PAIRING_METHODS = new Set<string>(["invite", "tailscale", "custom"]);
 /** A saved setting's revision: absent reads as 0 (undefined); anything else must be a count. */
 function readSettingRevision(value: unknown, path: string, errors: string[]): number | undefined {
   if (value === undefined) return undefined;
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
+  if (isRevision(value)) return value;
   errors.push(`${path}.revision: expected a non-negative safe integer`);
   return undefined;
 }
