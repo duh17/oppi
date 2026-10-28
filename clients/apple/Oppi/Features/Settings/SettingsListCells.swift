@@ -75,12 +75,15 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// A disabled row cannot open: its title is dimmed, it has no chevron, and
+    /// `value` is where it says why ("No server paired").
     func configure(
         title: String,
         systemImage: String?,
         value: String?,
         valueNeedsAttention: Bool = false,
         identifier: String,
+        isEnabled: Bool = true,
         action: @escaping () -> Void
     ) {
         let style = SettingsStyle.current
@@ -90,12 +93,15 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         stackAtMargin?.isActive = systemImage == nil
         iconView.tintColor = style.accent
         titleLabel.text = title
-        titleLabel.textColor = style.title
+        titleLabel.textColor = isEnabled ? style.title : style.title.withAlphaComponent(0.4)
+        iconView.tintColor = isEnabled ? style.accent : style.accent.withAlphaComponent(0.4)
         valueLabel.text = value
         // A value that asks for something ("Needs setup") is drawn in the warning color.
         valueLabel.textColor = valueNeedsAttention ? style.warning : style.value
         valueLabel.isHidden = value == nil
-        accessories = [.disclosureIndicator()]
+        accessories = isEnabled ? [.disclosureIndicator()] : []
+        button.isEnabled = isEnabled
+        button.accessibilityTraits = isEnabled ? .button : [.button, .notEnabled]
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = value

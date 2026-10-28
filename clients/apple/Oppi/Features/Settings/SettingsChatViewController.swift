@@ -362,6 +362,33 @@ final class SettingsWorkPreviewCell: UICollectionViewListCell {
         install(spinner, size: CGSize(width: 20, height: 20))
     }
 
+    /// The composer's mic as it looks while dictating, in the chosen Dictation
+    /// Animation. It follows that setting on its own and does not listen.
+    func configureMic(labelColor: UIColor) {
+        let style = AppPreferences.Appearance.dictationIndicatorStyle
+        caption.text = String(localized: "Preview")
+        caption.textColor = labelColor
+        captionIcon.image = UIImage(systemName: "mic")
+        captionIcon.tintColor = labelColor
+        let mic = MicButtonChromeView()
+        mic.isUserInteractionEnabled = false
+        mic.isAccessibilityElement = false
+        mic.apply(
+            isRecording: true,
+            isProcessing: false,
+            voiceSpectrum: .zero,
+            languageLabel: "EN",
+            accentColor: SettingsStyle.current.accent,
+            engineBadge: .onDevice,
+            diameter: ComposerInputMetrics.controlDiameter,
+            animated: false
+        )
+        install(mic, size: CGSize(width: ComposerInputMetrics.controlDiameter, height: ComposerInputMetrics.controlDiameter))
+        isAccessibilityElement = true
+        accessibilityLabel = String(localized: "Dictation animation preview")
+        accessibilityValue = style.displayName
+    }
+
     /// Any preview view under a caption (Text's sample fonts).
     func configurePreview(_ view: UIView, caption text: String, symbol: String, labelColor: UIColor) {
         caption.text = text
@@ -419,5 +446,8 @@ final class SettingsWorkPreviewCell: UICollectionViewListCell {
         super.prepareForReuse()
         content?.removeFromSuperview()
         content = nil
+        isAccessibilityElement = false
+        accessibilityLabel = nil
+        accessibilityValue = nil
     }
 }

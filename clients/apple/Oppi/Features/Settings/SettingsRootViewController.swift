@@ -326,7 +326,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         case .sessions:
             navigator.push(SessionRowDisplayEditorViewController(root: root))
         case .voice:
-            navigator.push { SettingsVoicePage() }
+            navigator.push(SettingsVoiceViewController(root: root))
         case .tailscale:
             navigator.push(TailnetSettingsViewController(coordinator: coordinator))
         case .sshTerminal:
