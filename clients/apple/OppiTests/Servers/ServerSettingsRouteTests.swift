@@ -139,6 +139,34 @@ struct ServerSettingsRouteTests {
         })
     }
 
+    @Test("The pages the page itself opens are tracked, pinned to its server, and closed by a switch")
+    func openedPagesAreTrackedAndClosed() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        h.route.loadViewIfNeeded()
+        let first = try #require(h.route.page)
+
+        first.select(.about)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.navigation.viewControllers.count == 2 })
+        let about = try #require(h.navigation.viewControllers.last as? ServerAboutViewController)
+        #expect(about.server.id == "server-a")
+        #expect(about.model === first.model)
+
+        // The next page is pushed once the previous push settles (as a person would).
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.navigation.transitionCoordinator == nil })
+        first.select(.pairedDevices)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.navigation.viewControllers.last is ServerPairedDevicesViewController })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.navigation.transitionCoordinator == nil })
+        first.select(.badge)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.navigation.viewControllers.last is ServerBadgeViewController })
+        #expect(first.pushedScreens.count == 3)
+
+        _ = h.root.coordinator.restoreActiveServer("server-b")
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.route.pinnedServerId == "server-b" })
+        #expect(h.navigation.viewControllers == [h.route])
+    }
+
     @Test("A routed screen above Server Settings survives a switch, with or without a pushed page below it")
     func routedScreenSurvivesASwitch() async throws {
         let h = try makeHarness()

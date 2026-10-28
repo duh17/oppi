@@ -151,16 +151,10 @@
     "clients/apple/Oppi/Features/Server/WorkspaceBreakdownSection.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Servers/BadgePickerViews.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Servers/ModelProvidersView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/PairingApprovalPrompt.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Servers/ServerBadgePage.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ServerSettingsViewController.swift": {

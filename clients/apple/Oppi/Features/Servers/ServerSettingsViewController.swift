@@ -518,39 +518,33 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
 
     // MARK: - Actions
 
-    /// Each page named here belongs to the pinned server: the SwiftUI pages take
-    /// this page's model and server by value, and are tracked so the route can
-    /// close them with this page. Model Providers is a routed screen and is not.
+    /// Each page named here belongs to the pinned server: the pages take this page's
+    /// model and server, and are tracked so the route can close them with this page.
+    /// Model Providers is a routed screen and is not.
     private func open(_ item: Item) {
-        let navigator = ScreenNavigator.forUIKitScreen(self, root: root)
-        let server = server
-        let model = model
-        let store = coordinator.serverStore
+        let server = current
         switch item {
         case .modelProviders:
             root.navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
         case .workspaces:
-            let workspaces = WorkspaceListViewController(server: server, root: root)
-            navigator.push(workspaces)
-            track(workspaces)
+            push(WorkspaceListViewController(server: server, root: root))
         case .dictionary:
-            let dictionary = DictationDictionaryViewController.make(root: root, serverId: server.id)
-            navigator.push(dictionary)
-            track(dictionary)
+            push(DictationDictionaryViewController.make(root: root, serverId: server.id))
         case .pairedDevices:
-            let devices = ServerPairedDevicesViewController(model: model, server: server, root: root)
-            Router.push(devices, from: self)
-            track(devices)
+            push(ServerPairedDevicesViewController(model: model, server: server, root: root))
         case .about:
-            let about = ServerAboutViewController(model: model, server: server, root: root)
-            Router.push(about, from: self)
-            track(about)
+            push(ServerAboutViewController(model: model, server: server, root: root))
         case .badge:
-            // Read inside the page's own graph, so a new icon redraws its preview.
-            track(navigator.push { ServerBadgePage(server: store.server(for: server.id) ?? server) })
+            push(ServerBadgeViewController(server: server, root: root))
         default:
             break
         }
+    }
+
+    /// Pushes a page of this server's and tracks it.
+    private func push(_ screen: UIViewController) {
+        Router.push(screen, from: self)
+        track(screen)
     }
 
     private func retryLoad() {

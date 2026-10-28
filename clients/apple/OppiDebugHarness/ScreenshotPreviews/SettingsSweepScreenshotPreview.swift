@@ -17,7 +17,8 @@ import SwiftUI
 /// `agents-pi`, `agent-icon-picker`, `agent-edit`, `agent-edit-tools`, `-skills`, `-extensions`, `-workspaces` (the pages it pushes), `pi-tools`, `schedule-edit`, `schedule-edit-cron`, `schedule-edit-existing`,
 /// `schedule-time-zone`, `workspaces` (the server's workspace list), `workspaces-empty`, `workspace-create`, `workspace-create-configure`, `server-settings`
 /// (Server Settings for the fixture server, loaded), `server-settings-loading` (its
-/// summary and loading rows, before the first answer), `server-about`, `server-paired-devices` (a page
+/// summary and loading rows, before the first answer), `server-about` (About This Server: an
+/// update available, voice backends), `server-paired-devices`, `server-badge` (the pages
 /// Server Settings pushes, over the same fixture model).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
@@ -285,14 +286,15 @@ struct SettingsSweepScreenshotPreview: View {
                 )
             }
             .ignoresSafeArea()
-        case "server-about", "server-paired-devices":
+        case "server-about", "server-paired-devices", "server-badge":
             RouterPreviewControllerStack(root: root) { [root, server, coordinator, page] in
                 let model = ServerSettingsModel.screenshotFixture(
                     coordinator: coordinator, serverId: server.id, currentDeviceId: "dev-iphone", updateAvailable: true
                 )
                 return switch page {
                 case "server-about": ServerAboutViewController(model: model, server: server, root: root)
-                default: ServerPairedDevicesViewController(model: model, server: server, root: root)
+                case "server-paired-devices": ServerPairedDevicesViewController(model: model, server: server, root: root)
+                default: ServerBadgeViewController(server: server, root: root)
                 }
             }
             .ignoresSafeArea()
