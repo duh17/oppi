@@ -1658,6 +1658,7 @@
 		B43E49465DC9F54E81A5C2C5 /* TimelineReducerAskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0568D4E6AE1774A817C312B8 /* TimelineReducerAskTests.swift */; };
 		B4436B6F266B3CF3A0979606 /* ToolSegmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F794058E6634723333C473 /* ToolSegmentStore.swift */; };
 		B44649DFDED88387D91CF60B /* SpinnerStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6E090E49055686ACBC122E5 /* SpinnerStyle.swift */; };
+		B458A240306EBCC2D45A3B69 /* DictationDictionaryPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA78B50756C0AA1BAD96A92 /* DictationDictionaryPageTests.swift */; };
 		B4651367FCF22E58A93DA9ED /* ComposerBarChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 505D763E8D99E1DC00C63704 /* ComposerBarChrome.swift */; };
 		B4B8DD5105B3D1A07311D0A3 /* MacPendingAttachmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C88513D18E6AFDE4E730CA88 /* MacPendingAttachmentTests.swift */; };
 		B4ECC45E1EE5B42C367061C0 /* MermaidSequenceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1E894886D53C5996B0BF12 /* MermaidSequenceRenderer.swift */; };
@@ -4056,6 +4057,7 @@
 		CE4915EA491A69D211F8D463 /* CodeEditorKeyBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorKeyBar.swift; sourceTree = "<group>"; };
 		CE5D1D0320E4A7CBFF23A38D /* SessionThreadViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionThreadViews.swift; sourceTree = "<group>"; };
 		CE6987CB77C4BE671312351D /* DailyCostChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyCostChart.swift; sourceTree = "<group>"; };
+		CEA78B50756C0AA1BAD96A92 /* DictationDictionaryPageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationDictionaryPageTests.swift; sourceTree = "<group>"; };
 		CEB0FA22FB9526394205548C /* LiveNestedToolCalls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveNestedToolCalls.swift; sourceTree = "<group>"; };
 		CEF35BE07CADBFD0BA554CB6 /* WorkspaceReview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceReview.swift; sourceTree = "<group>"; };
 		CF38FDCA194DE712792710FA /* MacSessionTraceStoreToolOutputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionTraceStoreToolOutputTests.swift; sourceTree = "<group>"; };
@@ -7750,6 +7752,7 @@
 			isa = PBXGroup;
 			children = (
 				F2D35258FFD6FED87DF977F3 /* DictationDictionaryModelTests.swift */,
+				CEA78B50756C0AA1BAD96A92 /* DictationDictionaryPageTests.swift */,
 				6E5C0F7263C0C928B87DD51E /* QuickCommentsPageTests.swift */,
 				16FD3A7B910A879C4CE5D614 /* ServerMetricsEnableTests.swift */,
 				F6EAAE1683447D78C3103180 /* SettingsAdaptersTests.swift */,
@@ -9176,6 +9179,7 @@
 				82CB656AF7ABE4152988ABCC /* DeviceResourceSamplerTests.swift in Sources */,
 				2CC3612392730BC7B2A34551 /* DictationDictionaryAPIClientTests.swift in Sources */,
 				781DE707CDACF5A4F4B7DBE0 /* DictationDictionaryModelTests.swift in Sources */,
+				B458A240306EBCC2D45A3B69 /* DictationDictionaryPageTests.swift in Sources */,
 				1915FBFD1AC73B45D2678757 /* DictationDictionarySelectionTests.swift in Sources */,
 				E249A865CCD4ABF0217FF971 /* DictationHintExtractorTests.swift in Sources */,
 				F806F439C292B4C5B105C34B /* DiffEngineTests.swift in Sources */,

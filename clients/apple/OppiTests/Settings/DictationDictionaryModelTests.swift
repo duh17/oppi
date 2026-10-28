@@ -119,7 +119,8 @@ struct DictationDictionaryModelTests {
         await model.save()
 
         #expect(server.writes.isEmpty)
-        #expect(model.notice?.contains("This Workspace") == true)
+        #expect(model.notice?.text.contains("This Workspace") == true)
+        #expect(model.notice?.offersRetry == false, "reloading would discard the draft the notice is about")
         #expect(model.hasChanges, "the drafts are kept")
     }
 
@@ -137,7 +138,8 @@ struct DictationDictionaryModelTests {
 
         #expect(model.globalDraft == ["Oppi", "Tailscale", "Ghostty"])
         #expect(model.global?.phrases == ["Oppi", "Tailscale"])
-        #expect(model.notice?.contains("mac-studio") == true)
+        #expect(model.notice?.text.contains("mac-studio") == true)
+        #expect(model.notice?.offersRetry == true)
         #expect(model.canSave, "the person can try again")
     }
 
@@ -150,7 +152,7 @@ struct DictationDictionaryModelTests {
         server.failWritesFor = ["w1"]
         await model.deleteWorkspacePhrases()
         #expect(model.workspaceDraft == ["oppi-dev"], "a refused delete keeps the draft")
-        #expect(model.notice != nil)
+        #expect(model.notice?.offersRetry == true, "the server refused it: Retry reloads")
 
         server.failWritesFor = []
         await model.deleteWorkspacePhrases()
@@ -171,7 +173,8 @@ struct DictationDictionaryModelTests {
 
         #expect(server.writes.isEmpty)
         #expect(model.workspaceDraft == ["oppi-dev"])
-        #expect(model.notice?.contains("All Workspaces") == true)
+        #expect(model.notice?.text.contains("All Workspaces") == true)
+        #expect(model.notice?.offersRetry == false)
     }
 
     @Test("Adding a phrase that already exists, or whose edited row moved, changes nothing and says why")
@@ -183,7 +186,7 @@ struct DictationDictionaryModelTests {
         model.phrase = "Oppi"
         model.addPhrase()
         #expect(model.globalDraft == ["Oppi", "Tailscale"])
-        #expect(model.notice != nil)
+        #expect(model.notice?.offersRetry == false, "a duplicate is fixed by editing; reloading would drop the draft")
         #expect(model.isComposing, "the editor stays open to fix it")
     }
 

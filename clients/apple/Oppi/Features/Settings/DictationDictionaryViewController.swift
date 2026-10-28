@@ -149,9 +149,10 @@ final class DictationDictionaryViewController: SettingsListViewController<Dictat
         case .failed:
             AnyHashable(String(describing: model.loadState))
         case .notice:
-            AnyHashable(model.notice ?? "")
+            AnyHashable([model.notice?.text ?? "", model.notice?.offersRetry == true ? "retry" : ""])
         case .phrase(let scope, let value, _):
-            AnyHashable([value, caption(of: value, scope: scope) ?? ""])
+            // The position is an input: the row's id carries it, and a rename or delete above moves it.
+            AnyHashable([AnyHashable(value), AnyHashable(caption(of: value, scope: scope) ?? ""), AnyHashable(position(of: item) ?? -1)])
         case .scope:
             AnyHashable(model.addsToWorkspace)
         case .field:
@@ -189,7 +190,8 @@ final class DictationDictionaryViewController: SettingsListViewController<Dictat
                 cell.configure(.failure(reason, retry: { [weak self] in self?.model.load() }), identifier: "settings.dictionary.retry")
             }
         case .notice:
-            cell.configure(.failure(model.notice ?? "", retry: { [weak self] in self?.model.load() }), identifier: "settings.dictionary.notice")
+            let retry: (() -> Void)? = model.notice?.offersRetry == true ? { [weak self] in self?.model.load() } : nil
+            cell.configure(.failure(model.notice?.text ?? "", retry: retry), identifier: "settings.dictionary.notice")
         case .empty:
             cell.configure(.message(String(localized: "No phrases yet.")), identifier: nil)
         default:
@@ -200,14 +202,15 @@ final class DictationDictionaryViewController: SettingsListViewController<Dictat
     private lazy var entryRow = UICollectionView.CellRegistration<SettingsEntryRowCell, Item> { [weak self] cell, _, item in
         guard let self, case .phrase(let scope, let value, let occurrence) = item else { return }
         let caption = caption(of: value, scope: scope)
-        let index = index(of: value, occurrence: occurrence, scope: scope)
         cell.configure(
             title: value,
             caption: caption,
             isWarning: caption != nil,
-            identifier: "settings.dictionary.phrase.\(scope.rawValue).\(index ?? 0)"
+            identifier: "settings.dictionary.phrase.\(scope.rawValue).\(position(of: item) ?? 0)"
         ) { [weak self] in
-            guard let self, let index else { return }
+            // The row is not redrawn when a phrase above it changes, so its place is
+            // found now, not when it was drawn.
+            guard let self, let index = index(of: value, occurrence: occurrence, scope: scope) else { return }
             view.endEditing(true)
             model.beginEditing(workspaceScope: scope == .workspace, index: index)
             focusPhraseField()
@@ -325,6 +328,11 @@ final class DictationDictionaryViewController: SettingsListViewController<Dictat
     }
 
     // MARK: - Helpers
+
+    private func position(of item: Item) -> Int? {
+        guard case .phrase(let scope, let value, let occurrence) = item else { return nil }
+        return index(of: value, occurrence: occurrence, scope: scope)
+    }
 
     private func index(of value: String, occurrence: Int, scope: PhraseScope) -> Int? {
         let list = scope == .workspace ? model.workspaceDraft : model.globalDraft

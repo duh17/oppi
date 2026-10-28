@@ -25,6 +25,19 @@ final class DictationDictionaryModel {
         case failed(String)
     }
 
+    /// A problem the page shows above the lists. A `.validation` notice is about
+    /// the person's own draft (a duplicate, a list over a limit): the fix is to
+    /// edit it, and reloading would throw the draft away, so it has no Retry. A
+    /// `.server` notice is about the server (a save or delete it refused or
+    /// could not take): Retry reloads the lists.
+    struct Notice: Equatable {
+        enum Kind: Equatable { case validation, server }
+        let text: String
+        let kind: Kind
+
+        var offersRetry: Bool { kind == .server }
+    }
+
     let serverId: String
     let serverName: String
     let workspaceId: String?
@@ -44,7 +57,7 @@ final class DictationDictionaryModel {
     /// Changes whenever the editor opens or closes, so the field row knows its text was replaced.
     private(set) var composeGeneration = 0
     /// A problem with the last edit, save, or delete. The lists stay as they are.
-    private(set) var notice: String?
+    private(set) var notice: Notice?
     private(set) var isSaving = false
 
     @ObservationIgnored private let service: (any DictationDictionaryService)?
@@ -150,7 +163,7 @@ final class DictationDictionaryModel {
             value, workspaceScope: addsToWorkspace,
             global: &globalDraft, workspace: &workspaceDraft, editing: &editing
         ) else {
-            notice = String(localized: "Phrase was not added: it already exists in that list, or the edited row changed.")
+            notice = Notice(text: String(localized: "Phrase was not added: it already exists in that list, or the edited row changed."), kind: .validation)
             return
         }
         notice = nil
@@ -165,6 +178,7 @@ final class DictationDictionaryModel {
             global: &globalDraft, workspace: &workspaceDraft, editing: &editing
         )
         cancelComposing()
+        if notice?.kind == .validation { notice = nil }
     }
 
     // MARK: - Save
@@ -174,7 +188,7 @@ final class DictationDictionaryModel {
     func save() async {
         guard canSave, let service, let global else { return }
         if let reason = DictationDictionaryDraft.saveError(global: globalDraft, workspace: workspaceDraft) {
-            notice = reason
+            notice = Notice(text: reason, kind: .validation)
             return
         }
         isSaving = true
@@ -192,7 +206,10 @@ final class DictationDictionaryModel {
             }
             notice = nil
         } catch {
-            notice = String(localized: "Save failed, or the list changed on \(serverName). Your edits stay here. Retry reloads the lists from \(serverName) and discards them.")
+            notice = Notice(
+                text: String(localized: "Save failed, or the list changed on \(serverName). Your edits stay here. Retry reloads the lists from \(serverName) and discards them."),
+                kind: .server
+            )
         }
     }
 
@@ -211,9 +228,12 @@ final class DictationDictionaryModel {
             if editing?.workspace == true { cancelComposing() }
             notice = nil
         } catch let error as DictationDictionaryDraft.DeleteBlocked {
-            notice = error.reason
+            notice = Notice(text: error.reason, kind: .validation)
         } catch {
-            notice = String(localized: "Delete failed, or the list changed on \(serverName). This workspace's edits stay here.")
+            notice = Notice(
+                text: String(localized: "Delete failed, or the list changed on \(serverName). This workspace's edits stay here. Retry reloads the lists from \(serverName) and discards them."),
+                kind: .server
+            )
         }
     }
 }
