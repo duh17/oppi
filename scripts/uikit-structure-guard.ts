@@ -109,7 +109,6 @@ const settingsThemingExceptions: { file: string; reason: string }[] = [
 ];
 const settingsThemingExempt = [settingsBase, settingsStyle, ...settingsThemingExceptions.map((entry) => entry.file)];
 
-
 const constructs: Construct[] = [
   { name: "NavigationStack", pattern: /\bNavigationStack\b/g, disallowed: true },
   { name: "NavigationSplitView", pattern: /\bNavigationSplitView\b/g, disallowed: true },

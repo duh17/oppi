@@ -141,6 +141,44 @@ struct ServerSkillsViewControllerTests {
         #expect(store.skills(forServer: serverId).first?.state == .enabled)
     }
 
+    @Test("Retry on an unavailable Skills catalog says why, sends one new request, and loads the list")
+    func retryReloadsAnUnavailableCatalog() async throws {
+        SkillsCatalogURLProtocol.reset()
+        // A fresh server id: the shared cache holds no catalog for it.
+        let retryServerId = UUID().uuidString
+        let root = try makeTestAppRoot(readyServerId: retryServerId, apiClient: SkillsCatalogURLProtocol.makeClient())
+        let screen = ServerSkillsViewController(root: root)
+        let window = try show(UINavigationController(rootViewController: screen))
+        defer { hide(window) }
+        defer { Task { await TimelineCache.shared.removeServer(retryServerId) } }
+
+        var retry: UIButton?
+        #expect(await waitForMainActorCondition(timeout: .seconds(10)) {
+            screen.view.layoutIfNeeded()
+            retry = Self.button(withIdentifier: "skills.retry", in: screen.view)
+            return retry != nil
+        })
+        let button = try #require(retry)
+        #expect(button.accessibilityLabel?.localizedCaseInsensitiveContains("unavailable") == true)
+        #expect(Self.button(withIdentifier: "skills.row.release", in: screen.view) == nil)
+
+        // The server comes back, but nothing reloads by itself.
+        let settled = SkillsCatalogURLProtocol.skillsRequests
+        SkillsCatalogURLProtocol.catalogAvailable = true
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            screen.view.layoutIfNeeded()
+            return Self.button(withIdentifier: "skills.retry", in: screen.view) != nil
+                && SkillsCatalogURLProtocol.skillsRequests == settled
+        })
+
+        button.sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            screen.view.layoutIfNeeded()
+            return Self.button(withIdentifier: "skills.row.release", in: screen.view) != nil
+        })
+        #expect(SkillsCatalogURLProtocol.skillsRequests == settled + 1)
+    }
+
     private func makeClient() throws -> APIClient {
         APIClient(
             baseURL: try #require(URL(string: "https://ready-server.test:7749")),
@@ -181,4 +219,98 @@ struct ServerSkillsViewControllerTests {
         }
         return nil
     }
+}
+
+/// Answers the Skills catalog request with a 404 until `catalogAvailable`, then
+/// with one `release` skill; every other request gets a 404. Counts the catalog
+/// requests, so a test can tell a request Retry sent from one it did not.
+private final class SkillsCatalogURLProtocol: URLProtocol, @unchecked Sendable {
+    static let host = "skills-catalog.test"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var requests = 0
+    nonisolated(unsafe) private static var available = false
+
+    static var skillsRequests: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
+    static var catalogAvailable: Bool {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return available
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            available = newValue
+        }
+    }
+
+    static func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        requests = 0
+        available = false
+    }
+
+    static func makeClient() -> APIClient {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [SkillsCatalogURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "https://\(host)") ?? URL(fileURLWithPath: "/"),
+            token: "test-token",
+            configuration: config
+        )
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == host
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        var body = Data(#"{"error":"not found"}"#.utf8)
+        var status = 404
+        if url.path.hasSuffix("/server/resources/skills") {
+            Self.lock.lock()
+            Self.requests += 1
+            let isAvailable = Self.available
+            Self.lock.unlock()
+            if isAvailable {
+                let catalog = ServerSkillsCatalog(skills: [
+                    ServerSkillSummary(
+                        id: "release", name: "release", description: "Review release readiness.",
+                        provenance: .init(kind: .piAgent, label: "~/.pi/agent/skills"), path: nil,
+                        state: .enabled, loadError: nil, warnings: [], editable: false
+                    ),
+                ])
+                body = (try? JSONEncoder().encode(catalog)) ?? body
+                status = 200
+            }
+        }
+        guard let response = HTTPURLResponse(
+            url: url,
+            statusCode: status,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

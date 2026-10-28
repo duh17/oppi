@@ -104,6 +104,23 @@ struct SettingsKitTests {
             let style = SettingsStyle(palette: id.palette, isDark: true)
             #expect(SettingsStyle.contrast(style.card, style.page, isDark: true) >= SettingsStyle.minimumCardContrast, "\(id)")
         }
+        // Whichever color is chosen reads at least as well as the one passed over.
+        for id in [ThemeID.dark, .oled, .night, .light] {
+            let isDark = id != .light
+            let palette = id.palette
+            let style = SettingsStyle(palette: palette, isDark: isDark)
+            let other = style.card == system ? UIColor(palette.bgHighlight) : system
+            let chosen = SettingsStyle.contrast(style.card, style.page, isDark: isDark)
+            let passedOver = SettingsStyle.contrast(other, style.page, isDark: isDark)
+            if isDark {
+                #expect(chosen >= passedOver, "\(id) passed over a color that reads better")
+            } else if style.card == system {
+                // A light theme keeps white while it reads, or while nothing reads better.
+                #expect(chosen >= SettingsStyle.minimumCardContrast || chosen >= passedOver, "\(id)")
+            } else {
+                #expect(chosen > passedOver, "\(id) left white for a color that reads no better")
+            }
+        }
 
         // A dark bg near #1C1C1E is the system card's own color: any highlight that
         // differs more wins, and one that does not leaves the system card.
@@ -176,6 +193,9 @@ extension SettingsKitTests {
             return nil
         }
         let before = try #require(await heights())
+        // At the standard size the index row's value sits beside its title.
+        let indexLines = try Self.indexRowLines(in: page)
+        #expect(abs(indexLines.title.midY - indexLines.value.midY) < 1, "the value should share the title's line at .large")
 
         page.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
         var after = before
@@ -189,10 +209,14 @@ extension SettingsKitTests {
             #expect((after[row] ?? 0) > (before[row] ?? .greatestFiniteMagnitude), "\(row) did not grow: \(before[row] ?? 0) -> \(after[row] ?? 0)")
         }
 
+        // At the largest size it sits under the title instead of squeezing it.
+        let stacked = try Self.indexRowLines(in: page)
+        #expect(stacked.value.minY >= stacked.title.maxY - 0.5, "the value should sit under the title at XXXL")
+
         // Nothing the rows say is clipped or truncated at the larger size.
         page.view.layoutIfNeeded()
-        var checked = 0
         for row in rows {
+            var checked = 0
             guard let indexPath = page.dataSource?.indexPath(for: row), let cell = page.collectionView.cellForItem(at: indexPath) else {
                 Issue.record("\(row) has no cell")
                 continue
@@ -205,9 +229,20 @@ extension SettingsKitTests {
                     #expect(label.intrinsicContentSize.width <= label.bounds.width + 1, "\(row): \"\(label.text ?? "")\" is truncated")
                 }
             }
+            // Every row has its text inspected: the index row has a title and a value.
+            #expect(checked >= (row == .index ? 2 : 1), "\(row): only \(checked) labels were checked")
         }
-        // The check looked at text in every row, not at nothing.
-        #expect(checked >= rows.count, "only \(checked) labels were checked")
+    }
+
+    /// The index row's title and value label frames, in the cell's space.
+    private static func indexRowLines(in page: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, value: CGRect) {
+        page.view.layoutIfNeeded()
+        let indexPath = try #require(page.dataSource?.indexPath(for: .index))
+        let cell = try #require(page.collectionView.cellForItem(at: indexPath))
+        let labels = Self.labels(in: cell)
+        let title = try #require(labels.first { $0.text == "Terminal Colors" })
+        let value = try #require(labels.first { $0.text == "Standard" })
+        return (title.convert(title.bounds, to: cell), value.convert(value.bounds, to: cell))
     }
 
     private static func labels(in view: UIView) -> [UILabel] {
@@ -232,7 +267,7 @@ private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section,
     }
 
     private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Row> { cell, _, _ in
-        cell.configure(title: "Terminal Colors", systemImage: "paintpalette", value: "Host's Ghostty theme", identifier: "test.index") {}
+        cell.configure(title: "Terminal Colors", systemImage: "paintpalette", value: "Standard", identifier: "test.index") {}
     }
 
     private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Row> { cell, _, _ in

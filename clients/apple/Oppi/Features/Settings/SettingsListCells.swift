@@ -15,6 +15,13 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
     private let valueLabel = UILabel()
     private var stackAfterIcon: NSLayoutConstraint?
     private var stackAtMargin: NSLayoutConstraint?
+    private var isSideBySide = true
+
+    private static let iconWidth: CGFloat = 24
+    private static let iconSpacing: CGFloat = 12
+    /// The gap between the title and the value, beside or under it.
+    private static let textSpacing: CGFloat = 8
+    private static let stackedSpacing: CGFloat = 2
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -37,21 +44,20 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         valueLabel.font = .preferredFont(forTextStyle: .body)
         valueLabel.adjustsFontForContentSizeCategory = true
         valueLabel.setContentHuggingPriority(.required, for: .horizontal)
-        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        arrange(sideBySide: true)
+        arrange(sideBySide: true, force: true)
         button.accessibilityTraits = .button
         // The labels paint the row; the button above them is its one accessible
         // element, so the row reads as a single control.
         accessibilityElements = [button]
         // One of the two text starts is active, by whether the row has a symbol.
-        let afterIcon = textStack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12)
+        let afterIcon = textStack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: Self.iconSpacing)
         stackAfterIcon = afterIcon
         stackAtMargin = textStack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor)
         NSLayoutConstraint.activate([
             afterIcon,
             iconView.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
             iconView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 24),
+            iconView.widthAnchor.constraint(equalToConstant: Self.iconWidth),
             textStack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
             textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 12),
@@ -87,48 +93,59 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         valueLabel.text = value
         valueLabel.textColor = style.value
         valueLabel.isHidden = value == nil
-        updateArrangement(forRowWidth: bounds.width)
         accessories = [.disclosureIndicator()]
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
         button.accessibilityValue = value
         button.setTapAction(action)
+        setNeedsLayout()
     }
 
-    /// The room the disclosure chevron takes at the row's trailing edge at the
-    /// standard text size; it grows with the text size.
-    private static let accessoryAllowance: CGFloat = 40
-    /// Spare width the fit check keeps back, so a row that only just fits does
-    /// not wrap its title.
-    private static let fitSlack: CGFloat = 16
-
-    /// The value sits beside the title when both fit side by side in a row this
-    /// wide, and under it otherwise.
-    private func updateArrangement(forRowWidth width: CGFloat) {
-        guard width > 0, !valueLabel.isHidden else {
+    /// The value sits beside the title when both fit on one line in the text
+    /// stack as laid out, and under it otherwise. The stack's width is the same
+    /// either way (its leading and trailing edges are pinned), so the choice
+    /// cannot flip back and forth.
+    private func updateArrangement() {
+        guard !valueLabel.isHidden, textStack.bounds.width > 0 else {
             arrange(sideBySide: true)
             return
         }
         func lineWidth(_ label: UILabel) -> CGFloat {
             ((label.text ?? "") as NSString).size(withAttributes: [.font: label.font as Any]).width
         }
-        let margins = contentView.directionalLayoutMargins
-        let iconWidth: CGFloat = iconView.isHidden ? 0 : 36
-        let accessory = UIFontMetrics(forTextStyle: .body).scaledValue(for: Self.accessoryAllowance, compatibleWith: traitCollection)
-        let available = width - margins.leading - margins.trailing - iconWidth - accessory - Self.fitSlack
-        arrange(sideBySide: lineWidth(titleLabel) + 8 + lineWidth(valueLabel) <= available)
+        let needed = lineWidth(titleLabel) + Self.textSpacing + lineWidth(valueLabel)
+        arrange(sideBySide: needed <= textStack.bounds.width)
     }
 
-    private func arrange(sideBySide: Bool) {
+    private func arrange(sideBySide: Bool, force: Bool = false) {
+        guard force || sideBySide != isSideBySide else { return }
+        isSideBySide = sideBySide
         textStack.axis = sideBySide ? .horizontal : .vertical
         textStack.alignment = sideBySide ? .center : .leading
-        textStack.spacing = sideBySide ? 8 : 2
+        textStack.spacing = sideBySide ? Self.textSpacing : Self.stackedSpacing
         valueLabel.textAlignment = sideBySide ? .right : .natural
         valueLabel.numberOfLines = sideBySide ? 1 : 0
+        // A stacked value wraps, so it gives way before the title does.
+        valueLabel.setContentCompressionResistancePriority(sideBySide ? .required : .defaultLow, for: .horizontal)
+        setNeedsLayout()
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let before = isSideBySide
+        updateArrangement()
+        if before != isSideBySide { super.layoutSubviews() }
+    }
+
+    /// The row is laid out at the width it will have before its height is
+    /// measured, so the choice between beside and under uses the real width.
     override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
-        updateArrangement(forRowWidth: layoutAttributes.size.width)
+        if bounds.width != layoutAttributes.size.width {
+            bounds.size.width = layoutAttributes.size.width
+        }
+        layoutIfNeeded()
+        updateArrangement()
+        layoutIfNeeded()
         return super.preferredLayoutAttributesFitting(layoutAttributes)
     }
 
