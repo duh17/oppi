@@ -69,7 +69,7 @@ The workspace **Extensions** picker starts from the extensions Pi resolves for t
 
 `auto-name` is a Pi extension that names an unnamed session from its first message: a small model writes a 2–6 word title and the extension calls Pi's `setSessionName()`, which Oppi lists and shows like any other name. It replaces the built-in **Auto-Name** setting and works in terminal Pi, Oppi sessions, and durable sessions. It never renames a session that has a name (yours, one given at creation such as `oppi session create --name`, or another extension's), titles only a session's first message, and when no title can be made (no model, no credentials, a 15-second timeout) leaves the session unnamed and logs the reason once.
 
-Oppi ships the package in its npm install, at `extensions/pi/auto-name` next to the server's `src`, and does not enable it. Link it where Pi discovers extensions:
+Oppi ships the package in its npm install, at `extensions/pi/auto-name` next to the server's `src`, and does not enable it. Link it where Pi discovers extensions (the link points into the install, so run the command again after the install moves, such as a Node version switch under nvm):
 
 ```bash
 ln -sfn "$(dirname "$(readlink -f "$(command -v oppi)")")/../extensions/pi/auto-name" ~/.pi/agent/extensions/auto-name
