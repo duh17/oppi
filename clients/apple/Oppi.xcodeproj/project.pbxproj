@@ -405,6 +405,7 @@
 		2C6893808C457DEE3E3A22C8 /* TestDoubles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A257B5363B745C40F77A350 /* TestDoubles.swift */; };
 		2C7AA88147FB545AE226393F /* ServerConnectionStreamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EC7508C9CCED1104481EC3A /* ServerConnectionStreamTests.swift */; };
 		2C89043A0D54115769552330 /* AskRequestStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 357625D6E77C502A3C54C15B /* AskRequestStore.swift */; };
+		2C8EDCC1673B830B966418C3 /* PinnedServerRouteViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0702317C8754DFE10F12AB /* PinnedServerRouteViewController.swift */; };
 		2C9FEB98FEA047F7EE089E48 /* SessionIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6084B6BC1910E8561BFD799A /* SessionIdentityTests.swift */; };
 		2CC3612392730BC7B2A34551 /* DictationDictionaryAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16C8F48B6720C10D4938523A /* DictationDictionaryAPIClientTests.swift */; };
 		2CC4984B567D40371B9899B5 /* DocumentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07455A7D1D33D7830E8197C5 /* DocumentRenderer.swift */; };
@@ -3909,6 +3910,7 @@
 		BA73F8952DA811631CE45052 /* MarkdownTableMarkupRewriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTableMarkupRewriter.swift; sourceTree = "<group>"; };
 		BA83524385AB9BA7D8A7D0A5 /* OppiLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiLiveActivity.swift; sourceTree = "<group>"; };
 		BAC3EDB08D9E729159D979EB /* MacSessionComposerBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionComposerBar.swift; sourceTree = "<group>"; };
+		BB0702317C8754DFE10F12AB /* PinnedServerRouteViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedServerRouteViewController.swift; sourceTree = "<group>"; };
 		BB3D29F13D78371746017409 /* IconAssetCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconAssetCache.swift; sourceTree = "<group>"; };
 		BB41F5928046E96D634EA9AA /* BuiltInToolFacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuiltInToolFacts.swift; sourceTree = "<group>"; };
 		BB45322CC7906C889DDA0B15 /* ServerTransportAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTransportAPIClient.swift; sourceTree = "<group>"; };
@@ -6756,6 +6758,7 @@
 				52598F592CE04540CE4651EE /* ModelProvidersViewController.swift */,
 				E33E11C7F239F16F65BC9E89 /* PairedDeviceRoster.swift */,
 				81CE01DEC62EE15C7666474A /* PairingApprovalPrompt.swift */,
+				BB0702317C8754DFE10F12AB /* PinnedServerRouteViewController.swift */,
 				35F0F7021189F9C668C0B936 /* ProviderAuthFlow.swift */,
 				750CF7C886A3389903AFAE2B /* ProviderQuotaViews.swift */,
 				41015CE8773F5C90F6DA4F11 /* PushEnableFlow.swift */,
@@ -10198,6 +10201,7 @@
 				EABC8F45FACD30A99FA3B386 /* PiAvatar.swift in Sources */,
 				B55284ACBD6EB410E55DAA73 /* PiDefaultPromptViewController.swift in Sources */,
 				6FD29E679B0C1CDC7F99E031 /* PiToolsEditor.swift in Sources */,
+				2C8EDCC1673B830B966418C3 /* PinnedServerRouteViewController.swift in Sources */,
 				7152681E402F3680FA24C011 /* Preferences.swift in Sources */,
 				FD2528347F010184F5F431E8 /* PreviewComposerController.swift in Sources */,
 				5ECB6958F2C19EF63469EFF4 /* ProviderAuth.swift in Sources */,

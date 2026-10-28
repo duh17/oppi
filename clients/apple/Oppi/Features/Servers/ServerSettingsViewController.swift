@@ -35,8 +35,7 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
     let notifications: ServerNotificationsController
     private let root: AppRootEnvironment
     private let locks = ScopedLockService.shared
-    private var switcher: SessionListServerSwitcher?
-    private var switcherLoadedMetrics = false
+    private let switcher = PinnedServerSwitcher()
     private var pushed: [WeakScreen] = []
     private struct WeakScreen {
         weak var screen: UIViewController?
@@ -84,7 +83,7 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
     private var route: ServerSettingsRouteViewController? { parent as? ServerSettingsRouteViewController }
 
     /// The navigation item the bar shows: the route's when this page is embedded in it.
-    private var barItem: UINavigationItem { route?.navigationItem ?? navigationItem }
+    private var barItem: UINavigationItem { pinnedRouteNavigationItem }
 
     // MARK: - Lifecycle
 
@@ -120,30 +119,13 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
     /// The switcher for the pinned server. A switch changes the visible server,
     /// and the route then replaces this page.
     private func updateBar() {
-        let joinsRail = SessionListBarItems.joinsRail(traitCollection)
-        let hostModel = HostSwitcherModel(
-            coordinator: coordinator,
-            serverStore: coordinator.serverStore,
-            navigation: root.navigation,
-            current: current,
-            destination: .serverSettings
+        switcher.update(
+            server: current,
+            destination: .serverSettings,
+            root: root,
+            traits: traitCollection,
+            item: barItem
         )
-        if let switcher, switcher.joinsRail == joinsRail {
-            switcher.update(hostModel)
-        } else {
-            switcher = SessionListServerSwitcher(model: hostModel, joinsRail: joinsRail)
-        }
-        guard let switcher else { return }
-        let trailing = [joinsRail ? SessionListBarItems.railItem(switcher.item, priority: .keep) : switcher.item]
-        let item = barItem
-        if !(item.rightBarButtonItems ?? []).elementsEqual(trailing, by: ===) {
-            item.rightBarButtonItems = trailing
-        }
-        if !switcherLoadedMetrics {
-            switcherLoadedMetrics = true
-            // Once per connection: a known value is never refetched.
-            Task { await hostModel.loadServerMetricsEnabled() }
-        }
     }
 
     // MARK: - Snapshot
