@@ -69,9 +69,6 @@ enum DebugHarnessLaunch {
             return AnyView(UIHangHarnessView())
         }
         if ScreenshotPreviewConfig.isEnabled {
-            if ScreenshotPreviewConfig.screen == "usage" {
-                return AnyView(UsageChromePreview())
-            }
             return AnyView(ScreenshotPreviewView())
         }
         return nil

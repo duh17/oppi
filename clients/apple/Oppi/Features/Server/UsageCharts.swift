@@ -1,0 +1,184 @@
+import Charts
+import SwiftUI
+
+// The three charts Usage draws. Swift Charts is SwiftUI-only, so each is a leaf that
+// `UsageViewController` hosts through `HostFactory.content`: every input is a value
+// (data, palette colors, fonts, a callback), and a leaf reads no `@Environment` of its
+// own. The screen, the lists, and every other control around them are UIKit.
+
+/// The colors a chart leaf draws with, resolved from the theme's palette by the screen.
+struct UsageChartColors: Equatable {
+    let primary: Color
+    let secondary: Color
+    let tertiary: Color
+    /// A wash for an empty chart and the day tooltip.
+    let washEmpty: Color
+    let washTooltip: Color
+    /// Changes with the theme, so the chart redraws when it does.
+    let themeKey: String
+
+    init(palette: ThemePalette, themeKey: String) {
+        primary = palette.fg
+        secondary = palette.fgDim
+        tertiary = palette.comment
+        washEmpty = palette.comment.opacity(0.08)
+        washTooltip = palette.comment.opacity(0.1)
+        self.themeKey = themeKey
+    }
+}
+
+/// The daily stacked bars (`StatsDailyChart`, shared with the Mac): tap a bar to pick a day.
+struct UsageDailyChartLeaf: View {
+    let daily: [StatsDailyEntry]
+    let metric: StatsMetric
+    let colors: UsageChartColors
+    let onDaySelected: (String) -> Void
+
+    var body: some View {
+        StatsDailyChart(
+            daily: daily,
+            metric: metric,
+            style: StatsDailyChartStyle(
+                containerSpacing: 6,
+                titleFont: .subheadline.weight(.semibold),
+                titleColor: colors.primary,
+                emptyCornerRadius: 6,
+                emptyBackground: colors.washEmpty,
+                emptyHeight: 240,
+                emptyTextFont: .caption,
+                emptyTextColor: colors.tertiary,
+                chartHeight: 240,
+                axisLabelFont: .caption2,
+                axisLabelColor: colors.tertiary,
+                tooltipSpacing: 6,
+                tooltipPadding: 8,
+                tooltipCornerRadius: 8,
+                tooltipBackground: colors.washTooltip,
+                tooltipTitleFont: .caption.weight(.semibold),
+                tooltipTitleColor: colors.primary,
+                tooltipRowSpacing: 8,
+                providerGlyphSize: 11,
+                providerGlyphColor: colors.tertiary,
+                modelFont: .caption,
+                providerFont: .caption2,
+                valueFont: .caption,
+                providerColor: colors.tertiary,
+                valueColor: colors.tertiary
+            ),
+            onDaySelected: onDaySelected
+        )
+        .id(colors.themeKey)
+    }
+}
+
+/// The models' share of the metric as a donut, its total in the middle.
+struct UsageModelDonutLeaf: View {
+    let models: [AggregatedStatsModel]
+    let metric: StatsMetric
+    let totalText: String
+    let colors: UsageChartColors
+
+    var body: some View {
+        ZStack {
+            Chart(models) { item in
+                SectorMark(
+                    angle: .value(metric.chartTitle, item.value(for: metric)),
+                    innerRadius: .ratio(0.6),
+                    angularInset: 1.5
+                )
+                .foregroundStyle(modelColor(item.representativeModel))
+            }
+            .chartLegend(.hidden)
+            .frame(width: 140, height: 140)
+
+            VStack(spacing: 2) {
+                Text(totalText)
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .foregroundStyle(colors.primary)
+                Text("total")
+                    .font(.caption2)
+                    .foregroundStyle(colors.tertiary)
+            }
+            .frame(width: 80)
+        }
+        .frame(maxWidth: .infinity)
+        .id(colors.themeKey)
+    }
+}
+
+/// One day's cost by hour, stacked by model.
+struct UsageHourlyChartLeaf: View {
+    let entries: [StatsHourlyCost]
+    let colors: UsageChartColors
+
+    var body: some View {
+        Chart(entries) { entry in
+            BarMark(
+                x: .value("Hour", entry.hour),
+                y: .value("Cost", entry.cost)
+            )
+            .foregroundStyle(modelColor(entry.model))
+        }
+        .chartLegend(.hidden)
+        .chartXAxis {
+            AxisMarks(values: [0, 6, 12, 18, 23]) { value in
+                AxisValueLabel {
+                    if let hour = value.as(Int.self) {
+                        Text(statsHourLabel(hour))
+                            .font(.caption2)
+                            .foregroundStyle(colors.tertiary)
+                    }
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading) { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let cost = value.as(Double.self) {
+                        Text(SessionFormatting.costString(cost))
+                            .font(.caption2)
+                            .foregroundStyle(colors.tertiary)
+                    }
+                }
+            }
+        }
+        .chartXScale(domain: 0...23)
+        .frame(height: 160)
+        .id(colors.themeKey)
+    }
+}
+
+// MARK: - Hosting
+
+/// One chart leaf embedded in a UIKit view through `HostFactory.content`: installed on
+/// first use, then given new content as the data changes. The hosting view reports its
+/// own height (a daily chart grows by a tooltip), so the stack around it re-lays out.
+@MainActor
+final class UsageChartHost {
+    private var host: HostedContentController?
+
+    func show<Leaf: View>(_ leaf: Leaf, in slot: UIView, parent: UIViewController, root: AppRootEnvironment) {
+        if let host {
+            host.setContent(leaf)
+            return
+        }
+        let host = HostFactory.content(leaf, root: root)
+        host.sizingOptions = .intrinsicContentSize
+        host.view.backgroundColor = .clear
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        parent.addChild(host)
+        slot.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.topAnchor.constraint(equalTo: slot.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: slot.bottomAnchor),
+            host.view.leadingAnchor.constraint(equalTo: slot.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: slot.trailingAnchor),
+        ])
+        host.didMove(toParent: parent)
+        self.host = host
+    }
+}

@@ -15,7 +15,7 @@ import SwiftUI
 // (`SettingsRootViewController`), Workspace Settings
 // (`WorkspaceSettingsViewController`), Model Providers
 // (`ModelProvidersViewController`), Server Settings
-// (`ServerSettingsRouteViewController`), and Server Metrics
+// (`ServerSettingsRouteViewController`), Usage (`UsageRouteViewController`), and Server Metrics
 // (`ServerMetricsViewController`) are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
@@ -63,6 +63,9 @@ enum ShellRouteScreens {
         }
         if case .utility(.extensions) = route {
             return ServerExtensionsViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
+        }
+        if case .utility(.manageServers) = route {
+            return UsageRouteViewController(root: root, showsSidebarToggle: placement == .splitDetailRoot)
         }
         if case .sidebar = route {
             return WorkspaceSidebarViewController(root: root)
@@ -171,6 +174,10 @@ enum ShellRouteScreens {
         }
         if let serverSettings = screen as? ServerSettingsRouteViewController {
             serverSettings.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        if let usage = screen as? UsageRouteViewController {
+            usage.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
         if let files = screen as? FileBrowserViewController {
@@ -392,7 +399,8 @@ private struct WorkspaceUtilityDestinationView: View {
             // The shell hosts this route as SSHTerminalHostListViewController.
             EmptyView()
         case .manageServers:
-            ServerView()
+            // The shell hosts this route as UsageRouteViewController.
+            EmptyView()
         case .serverMetrics:
             // The shell hosts this route as ServerMetricsViewController.
             EmptyView()

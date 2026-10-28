@@ -121,22 +121,7 @@
       "SettingsListStyle.pin(": 1,
       "SettingsListStyle.applyTheme(": 1
     },
-    "clients/apple/Oppi/Features/Server/DailyCostChartView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Server/DailyDetailView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Server/ModelBreakdownSection.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Server/ServerView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Server/StatsHeroRow.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Server/WorkspaceBreakdownSection.swift": {
+    "clients/apple/Oppi/Features/Server/UsageCharts.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ModelProvidersView.swift": {

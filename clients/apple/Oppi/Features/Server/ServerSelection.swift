@@ -32,20 +32,4 @@ enum ServerSelection {
     ) -> PairedServer? {
         resolve(selectedId: activeId ?? frozenId, from: servers)
     }
-
-    static func metadataTaskIdentity(selectedId: String?) -> String { selectedId ?? "" }
-    static func taskIdentity(selectedId: String?, range: UsageRange) -> String {
-        "\(selectedId ?? "")-\(range.rawValue)"
-    }
-
-    /// Apply an in-flight host load only while that host is still visible.
-    /// Cancellation must not surface as a load failure on the next host.
-    static func shouldApplyHostResult(
-        requestedId: String,
-        visibleId: String?,
-        error: Error? = nil
-    ) -> Bool {
-        if error is CancellationError { return false }
-        return requestedId == visibleId
-    }
 }

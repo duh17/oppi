@@ -19,7 +19,9 @@ import SwiftUI
 /// (Server Settings for the fixture server, loaded), `server-settings-loading` (its
 /// summary and loading rows, before the first answer), `server-about` (About This Server: an
 /// update available, voice backends), `server-paired-devices`, `server-badge` (the pages
-/// Server Settings pushes, over the same fixture model).
+/// Server Settings pushes, over the same fixture model), `usage` (Usage for the fixture
+/// server: two weeks of daily bars, six models, three workspaces), `usage-setup` (no model
+/// provider signed in, so the setup card shows), `usage-detail` (a day opened under the chart).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -296,6 +298,21 @@ struct SettingsSweepScreenshotPreview: View {
                 case "server-paired-devices": ServerPairedDevicesViewController(model: model, server: server, root: root)
                 default: ServerBadgeViewController(server: server, root: root)
                 }
+            }
+            .ignoresSafeArea()
+        case "usage", "usage-setup", "usage-detail":
+            RouterPreviewControllerStack(root: root) { [root, server, page] in
+                let client = UsageFixtureClient(authenticated: page != "usage-setup")
+                let model = UsageModel(serverId: server.id) { client }
+                let screen = UsageViewController(server: server, root: root, model: model)
+                if page == "usage-detail" {
+                    // Once the page has loaded, as a tap on a bar would.
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(500))
+                        model.selectDay(UsageFixtureClient.detailDate)
+                    }
+                }
+                return screen
             }
             .ignoresSafeArea()
         case "onboarding-add-server", "onboarding-tailscale":
@@ -966,4 +983,102 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
         return String(decoding: sorted, as: UTF8.self)
     }
 }
+
+// MARK: - Usage fixture
+
+/// Usage's server, answered from memory: two weeks of stacked daily bars over three
+/// models, six models in the breakdown, three workspaces, and one day's hourly detail.
+/// `authenticated` false offers the provider setup card.
+struct UsageFixtureClient: UsageStatsClient {
+    var authenticated = true
+    static let detailDate = "2026-10-26"
+
+    private static let models = ["anthropic/claude-sonnet-5-5", "openai/gpt-5-mini", "xai/grok-4"]
+
+    func fetchStats(range: UsageRange) async throws -> ServerStats {
+        var daily: [StatsDailyEntry] = []
+        let calendar = Calendar(identifier: .gregorian)
+        let end = DateComponents(calendar: calendar, year: 2026, month: 10, day: 27).date ?? Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        for offset in stride(from: 13, through: 0, by: -1) {
+            let day = calendar.date(byAdding: .day, value: -offset, to: end) ?? end
+            var byModel: [String: DailyModelEntry] = [:]
+            var sessions = 0
+            var cost = 0.0
+            var tokens = 0
+            for (index, model) in Self.models.enumerated() {
+                let weight = Double((offset + index * 3) % 5 + 1)
+                let entry = DailyModelEntry(sessions: Int(weight), cost: weight * 0.42, tokens: Int(weight) * 90_000)
+                byModel[model] = entry
+                sessions += entry.sessions
+                cost += entry.cost
+                tokens += entry.tokens
+            }
+            daily.append(StatsDailyEntry(date: formatter.string(from: day), sessions: sessions, cost: cost, tokens: tokens, byModel: byModel))
+        }
+        func model(
+            _ name: String, _ sessions: Int, _ cost: Double, _ tokens: Int, _ input: Int, _ cacheRead: Int?, _ cacheWrite: Int?
+        ) -> StatsModelBreakdown {
+            StatsModelBreakdown(
+                model: name, sessions: sessions, cost: cost, tokens: tokens, inputTokens: input,
+                cacheRead: cacheRead, cacheWrite: cacheWrite, share: 0
+            )
+        }
+        let breakdown: [StatsModelBreakdown] = [
+            model("anthropic/claude-sonnet-5-5", 48, 31.4, 5_200_000, 800_000, 2_900_000, 410_000),
+            model("openai/gpt-5-mini", 31, 9.8, 2_100_000, 600_000, 900_000, 0),
+            model("xai/grok-4", 12, 6.1, 1_400_000, 400_000, nil, nil),
+            model("anthropic/claude-haiku-5", 22, 2.2, 1_900_000, 300_000, 1_100_000, 90_000),
+            model("openai/gpt-5", 9, 4.7, 700_000, 200_000, 300_000, 0),
+            model("google/gemini-3-pro", 6, 1.3, 500_000, 90_000, nil, nil),
+        ]
+        return ServerStats(
+            memory: StatsMemory(heapUsed: 0, heapTotal: 0, rss: 0, external: 0),
+            activeSessions: [],
+            daily: daily,
+            modelBreakdown: breakdown,
+            workspaceBreakdown: [
+                StatsWorkspaceBreakdown(id: "ws-oppi", name: "oppi", sessions: 61, cost: 38.2),
+                StatsWorkspaceBreakdown(id: "ws-kypu", name: "kypu", sessions: 24, cost: 9.4),
+                StatsWorkspaceBreakdown(id: "ws-long", name: "a-workspace-with-a-very-long-name-that-must-truncate-in-the-middle", sessions: 3, cost: 0.9),
+            ],
+            totals: StatsTotals(sessions: 128, cost: 55.5, tokens: 11_800_000)
+        )
+    }
+
+    func fetchDailyDetail(date: String) async throws -> DailyDetail {
+        let now = Double(Date().timeIntervalSince1970 * 1_000)
+        var hourly: [StatsDailyHourlyEntry] = []
+        for hour in [9, 10, 11, 14, 15, 16] {
+            let primaryCost: Double = Double(hour % 5 + 1) * 0.4
+            let secondaryCost: Double = Double(hour % 3 + 1) * 0.2
+            var byModel: [String: DailyModelEntry] = [:]
+            byModel[Self.models[0]] = DailyModelEntry(sessions: 1, cost: primaryCost, tokens: 25_000)
+            byModel[Self.models[1]] = DailyModelEntry(sessions: 0, cost: secondaryCost, tokens: 15_000)
+            hourly.append(StatsDailyHourlyEntry(
+                hour: hour, sessions: 1, cost: primaryCost + secondaryCost, tokens: 40_000, byModel: byModel
+            ))
+        }
+        return DailyDetail(
+            date: date,
+            totals: StatsTotals(sessions: 3, cost: 8.4, tokens: 240_000),
+            hourly: hourly,
+            sessions: [
+                StatsDailySession(id: "s-1", name: "Fix the Usage route", model: Self.models[0], cost: 4.2, tokens: 120_000, createdAt: now - 7_200_000, workspaceName: "oppi", status: "stopped"),
+                StatsDailySession(id: "s-2", name: nil, model: Self.models[1], cost: 2.9, tokens: 80_000, createdAt: now - 18_000_000, workspaceName: "kypu", status: "stopped"),
+                StatsDailySession(id: "s-3", name: "Review", model: Self.models[2], cost: 1.3, tokens: 40_000, createdAt: now - 30_000_000, workspaceName: nil, status: "stopped"),
+            ]
+        )
+    }
+
+    func listProviderAuthStatus() async throws -> [ProviderAuthProviderStatus] {
+        [ProviderAuthProviderStatus(
+            id: "anthropic", name: "Anthropic", supportsApiKey: true, oauth: nil, authenticated: authenticated,
+            credentialType: nil, expiresAt: nil, maskedKey: nil
+        )]
+    }
+}
+
 #endif
