@@ -327,7 +327,7 @@ final class RouterRoutesUITests: XCTestCase {
             ("settings.row.text", "Text", []),
             ("settings.row.editor", "Editor", []),
             ("settings.row.chat", "Chat", [("Quick Comments", "Quick Comments")]),
-            ("settings.row.sessions", "Sessions", [("Auto-Name", "Auto-Name"), ("settings.sessionRows", "Session Rows")]),
+            ("settings.row.sessions", "Session Rows", []),
             ("settings.row.voice", "Voice & Dictation", [("settings.dictationDictionary", "Dictionary")]),
             ("settings.tailscale", "Tailscale", []),
             ("settings.sshTerminal", "SSH Terminal", []),

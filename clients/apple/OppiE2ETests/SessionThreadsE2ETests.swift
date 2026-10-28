@@ -763,7 +763,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
 
     private func toggle(_ id: String) -> XCUIElement { app.switches["sessionRows.toggle.\(id)"] }
 
-    /// Opens Settings from the sidebar, then Sessions → Session Rows.
+    /// Opens Settings from the sidebar, then Sessions, which opens Session Rows.
     private func openRowEditor(viaEdgeSwipe: Bool = false) throws {
         openSettings(viaEdgeSwipe: viaEdgeSwipe)
         try openRowEditorFromSettings()
@@ -771,18 +771,15 @@ final class SessionThreadsE2ETests: E2ETestCase {
 
     private func openRowEditorFromSettings() throws {
         openSettingsPage("sessions")
-        let entry = app.buttons["settings.sessionRows"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 10), "Session Rows missing from Sessions settings")
-        entry.tap()
         XCTAssertTrue(rowEditor.waitForExistence(timeout: 10), "Session Rows did not open from Settings")
         XCTAssertTrue(previewBox.waitForExistence(timeout: 10), "Preview missing")
     }
 
-    /// Goes back to Sessions settings, then pops back to All Sessions.
+    /// Goes back to Settings, then pops back to All Sessions.
     private func closeRowEditor(returningUntil marker: XCUIElement? = nil) throws {
         app.navigationBars["Session Rows"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(waitForNonExistence(rowEditor, timeout: 10), "Editor did not close")
-        XCTAssertTrue(app.buttons["settings.sessionRows"].exists, "Closing the editor should return to Sessions settings")
+        XCTAssertTrue(app.buttons["settings.row.sessions"].exists, "Closing the editor should return to Settings")
         try returnToInbox(until: marker)
     }
 

@@ -909,39 +909,6 @@ actor APIClient: ClientLogUploading {
         try checkStatus(response, data: data)
     }
 
-    // MARK: - Auto-Title
-
-    /// Server-side auto-title configuration.
-    struct AutoTitleConfig: Codable, Sendable {
-        var enabled: Bool
-        var model: String?
-        /// Counts saves on the server; absent from servers that predate revisions.
-        var revision: Int?
-    }
-
-    /// Fetch the current auto-title configuration.
-    func getAutoTitleConfig() async throws -> AutoTitleConfig {
-        let data = try await get("/server/auto-title")
-        return try JSONDecoder().decode(AutoTitleConfig.self, from: data)
-    }
-
-    /// Update the auto-title configuration. With `baseRevision`, the server refuses the save
-    /// (409 `revision_conflict`) when the setting changed since that revision.
-    @discardableResult
-    func setAutoTitleConfig(_ config: AutoTitleConfig, baseRevision: Int? = nil) async throws -> AutoTitleConfig {
-        let data = try await put(
-            "/server/auto-title",
-            body: AutoTitleWriteRequest(enabled: config.enabled, model: config.model, baseRevision: baseRevision)
-        )
-        return try JSONDecoder().decode(AutoTitleConfig.self, from: data)
-    }
-
-    private struct AutoTitleWriteRequest: Encodable {
-        let enabled: Bool
-        let model: String?
-        let baseRevision: Int?
-    }
-
     // MARK: - Themes
 
     /// List available custom themes on the server.

@@ -10,7 +10,7 @@ import SwiftUI
 /// `ssh-hosts`, `ssh-hosts-empty` (the list with no saved host), `ssh-setup`,
 /// `mcp`, `mcp-workspace`,
 /// `mcp-detail`, `mcp-add`, `mcp-sign-in`, `quick-comments`, `quick-comment-editor`,
-/// `auto-title`, `theme-import`, `dictionary`, `dictionary-workspace`,
+/// `theme-import`, `dictionary`, `dictionary-workspace`,
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
@@ -438,7 +438,6 @@ struct SettingsSweepScreenshotPreview: View {
             QuickCommentEditorView(
                 template: QuickCommentTemplate.builtInDefaults[0], isNew: false, onSave: { _ in }, onCancel: {}
             )
-        case "auto-title": AutoTitleSettingsView()
         case "dictionary": DictationDictionaryView(workspaceId: nil)
         case "dictionary-workspace": DictationDictionaryView(workspaceId: "preview-ws")
         default:
@@ -585,7 +584,6 @@ struct SettingsSweepScreenshotPreview: View {
                 ModelInfo(id: "claude-haiku-5", name: "Claude Haiku 5", provider: "anthropic", contextWindow: 200_000),
                 ModelInfo(id: "gpt-5-mini", name: "GPT-5 mini", provider: "openai", contextWindow: 400_000),
             ])),
-            "/server/auto-title": json(APIClient.AutoTitleConfig(enabled: true, model: "anthropic/claude-haiku-5")),
             "/dictation/dictionary/global": Data(#"{"revision":3,"phrases":["Oppi","Tailscale","Herdr","Kypu","SwiftUI","Nerd Font Symbols Mono Extended Family Name That Is Long Enough To Wrap Past The Row"],"provider":"xai"}"#.utf8),
             "/dictation/dictionary/workspaces/preview-ws": Data(#"{"revision":1,"phrases":["oppi-dev","WorkspaceStore"],"provider":null}"#.utf8),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),

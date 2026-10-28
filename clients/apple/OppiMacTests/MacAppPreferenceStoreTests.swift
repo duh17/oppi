@@ -208,40 +208,6 @@ struct FontPreferenceStoreTests {
     }
 }
 
-@Suite("AppPreferenceStore.Session", .serialized)
-struct SessionPreferenceStoreTests {
-    @Test func usesTheSameAutoTitleKeyAsIOS() {
-        #expect(
-            AppPreferenceStore.Session.autoTitleProviderKey
-                == "\(AppIdentifiers.subsystem).session.autoTitle.provider"
-        )
-    }
-
-    @Test func defaultsAutoTitleProviderToServer() {
-        let key = AppPreferenceStore.Session.autoTitleProviderKey
-        let original = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { restoreObject(original, forKey: key) }
-
-        #expect(AppPreferenceStore.Session.autoTitleProvider == .server)
-        #expect(AppPreferenceStore.Session.isAutoTitleEnabled)
-    }
-
-    @Test func persistsAutoTitleProvider() {
-        let key = AppPreferenceStore.Session.autoTitleProviderKey
-        let original = UserDefaults.standard.object(forKey: key)
-        defer { restoreObject(original, forKey: key) }
-
-        AppPreferenceStore.Session.setAutoTitleProvider(.onDevice)
-        #expect(AppPreferenceStore.Session.autoTitleProvider == .onDevice)
-        #expect(UserDefaults.standard.string(forKey: key) == "onDevice")
-
-        AppPreferenceStore.Session.setAutoTitleProvider(.off)
-        #expect(AppPreferenceStore.Session.autoTitleProvider == .off)
-        #expect(!AppPreferenceStore.Session.isAutoTitleEnabled)
-    }
-}
-
 @Suite("AppPreferenceStore.ScreenAwake", .serialized)
 struct ScreenAwakePreferenceStoreTests {
     @Test func usesTheSameTimeoutKeyAndPresetsAsIOS() {
@@ -411,7 +377,7 @@ struct VoiceEnginePreferenceStoreTests {
 
 @Suite("Mac app settings preference controls")
 struct MacAppSettingsPreferenceControlTests {
-    @Test func exposesAvatarSpinnerTypographyAutoTitleAndVoiceControls() {
+    @Test func exposesAvatarSpinnerTypographyAndVoiceControls() {
         let titles = MacAppSettingsPreferenceControl.allCases.map(\.title)
         #expect(titles == [
             "Spinner Style",
@@ -420,7 +386,6 @@ struct MacAppSettingsPreferenceControlTests {
             "Code Text Size",
             "Message Text Size",
             "Monospaced messages",
-            "Auto-name Sessions",
             "Keep screen awake",
             "Voice Replies",
             "Dictation Engine",

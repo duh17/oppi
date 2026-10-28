@@ -12,7 +12,7 @@ import Foundation
 ///
 /// ## Usage
 ///
-///     AppPreferences.Session.setAutoTitleProvider(.server)
+///     AppPreferences.Voice.setEngineMode(.remote)
 ///
 /// Per-server settings live with their feature: `PushRegistration` and
 /// `LiveActivitySettings`.
@@ -582,30 +582,6 @@ enum AppPreferences {
         /// Load ordered list of recent model full IDs (most recent first).
         static func load() -> [String] {
             UserDefaults.standard.stringArray(forKey: key) ?? []
-        }
-    }
-
-    // MARK: - Session
-
-    /// Session behavior preferences (auto-title, etc.).
-    enum Session {
-        typealias AutoTitleProvider = AppPreferenceStore.Session.AutoTitleProvider
-
-        /// UserDefaults key for auto-title provider.
-        static let autoTitleProviderKey = AppPreferenceStore.Session.autoTitleProviderKey
-
-        /// The active auto-title provider.
-        static var autoTitleProvider: AutoTitleProvider {
-            AppPreferenceStore.Session.autoTitleProvider
-        }
-
-        static func setAutoTitleProvider(_ provider: AutoTitleProvider) {
-            AppPreferenceStore.Session.setAutoTitleProvider(provider)
-        }
-
-        /// Convenience: true when any provider is active.
-        static var isAutoTitleEnabled: Bool {
-            AppPreferenceStore.Session.isAutoTitleEnabled
         }
     }
 

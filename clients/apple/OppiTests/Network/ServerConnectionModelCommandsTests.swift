@@ -153,7 +153,7 @@ struct ServerConnectionModelCommandsTests {
         #expect((payload["requestId"] as? String)?.isEmpty == false)
     }
 
-    /// Auto-title can finish after the user opened another session. Renaming an
+    /// A rename can finish after the user opened another session. Renaming an
     /// unfocused session must address it over HTTP, not ride the focused stream.
     @Test func setSessionNameForUnfocusedSessionUsesItsHTTPCommandRoute() async throws {
         let (connection, _) = makeTestConnection(sessionId: "s2")

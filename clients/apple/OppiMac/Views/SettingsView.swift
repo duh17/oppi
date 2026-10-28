@@ -131,7 +131,6 @@ enum MacAppSettingsPreferenceControl: String, CaseIterable, Identifiable {
     case codeTextSize
     case messageTextSize
     case monoMessages
-    case autoTitle
     case keepScreenAwake
     case voiceReplies
     case dictationEngine
@@ -146,7 +145,6 @@ enum MacAppSettingsPreferenceControl: String, CaseIterable, Identifiable {
         case .codeTextSize: return "Code Text Size"
         case .messageTextSize: return "Message Text Size"
         case .monoMessages: return "Monospaced messages"
-        case .autoTitle: return "Auto-name Sessions"
         case .keepScreenAwake: return "Keep screen awake"
         case .voiceReplies: return "Voice Replies"
         case .dictationEngine: return "Dictation Engine"
@@ -358,11 +356,6 @@ struct AppSettingsView: View {
             }
 
             Section {
-                LabeledContent(MacAppSettingsPreferenceControl.autoTitle.title) {
-                    Text(AppPreferenceStore.Session.AutoTitleProvider.server.label)
-                }
-                .accessibilityIdentifier(MacAppSettingsPreferenceControl.autoTitle.accessibilityIdentifier)
-
                 Picker(
                     MacAppSettingsPreferenceControl.keepScreenAwake.title,
                     selection: $screenAwakePreset

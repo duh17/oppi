@@ -124,6 +124,7 @@ Example:
 
 ### Removed
 
+- **Client:** **Settings → Sessions → Auto-Name** is gone, with its Server, On-device, and Off choice and the on-device Apple Foundation Model naming. **Settings → Sessions** now opens **Session Rows** directly. Naming sessions is the `auto-name` extension's job ([Auto-Name](docs/extensions.md#auto-name)), switched with the Extensions toggle.
 - **Server/Protocol:** The server no longer generates session titles. `GET` and `PUT /server/auto-title`, `autoTitle` in `config.json` and `oppi config set`, and the `server.session_title` metric are gone; the `auto-name` Pi extension ([Auto-Name](docs/extensions.md#auto-name)) names sessions instead, and its on and off is the Extensions toggle, global or per workspace, so a title no longer depends on which device started the session.
 - **Server:** `POST /telemetry/chat-metrics` is gone, and the server no longer writes or reads `chat-metrics-*`, `server-ops-metrics-*`, or `server-metrics-*` files; existing ones are deleted when they pass retention. `OPPI_SERVER_OPS_METRICS_RETENTION_DAYS` and `OPPI_SERVER_OPS_METRICS_DAILY_FILE_MAX_BYTES` are removed.
 - **Server:** `oppi pair --show-token` is gone. It printed the owner token, which the server rejects over the network, so it never helped pair a device.

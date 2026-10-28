@@ -1,5 +1,4 @@
 import Foundation
-import FoundationModels
 import Observation
 import os.log
 
@@ -28,46 +27,13 @@ final class ChatActionHandler {
     /// Test seam: override async task launch to simulate scheduling races.
     var _launchTaskForTesting: (((@escaping @MainActor () async -> Void)) -> Void)?
 
-    /// Test seam: override auto title generation.
-    var _generateSessionTitleForTesting: ((String) async -> String?)?
-
     /// Test seam: override stop-turn transport.
     var _sendStopForTesting: ((ServerConnection) async throws -> Void)?
 
     /// Test seam: override force-stop transport.
     var _sendStopSessionForTesting: ((ServerConnection) async throws -> Void)?
 
-    private var autoTitleTasksBySessionId: [String: Task<Void, Never>] = [:]
-    private var autoTitleAttemptedSessionIds: Set<String> = []
-
-    private static let autoTitleMaxLength = 48
-    private static let autoTitleSourceLimit = 600
-    /// Key for auto-title provider (server / onDevice / off). Tests use this
-    /// to select the on-device path that invokes the test hook.
-    static let autoTitleProviderDefaultsKey = AppPreferences.Session.autoTitleProviderKey
-    /// The instructions, `autoTitlePrompt(for:)`, and `normalizeTitle(_:)` are one
-    /// contract with the server title generator (server/src/session-title-generator.ts).
-    /// Both sides' tests check it against protocol/session-title.json.
-    static let autoTitleInstructions = """
-        You generate concise coding session titles.
-        Return exactly one line containing only the title text.
-
-        Rules:
-        - 2 to 6 words.
-        - Start with a category verb or noun when the intent is clear:
-          "Fix", "Debug", "Add", "Refactor", "Review", "Investigate", "Polish", "Test", "Research".
-        - Capture one concrete objective using specific nouns from the request \
-        (feature name, bug symptom, file, subsystem, tool).
-        - Skip conversational filler like "please", "can you", "help me", or "I need to".
-        - No quotes, markdown, emojis, or trailing punctuation.
-
-        Examples:
-        - "fix the websocket reconnect state drift" -> Fix WebSocket Reconnect Drift
-        - "let's polish the review view icons" -> Polish Review View Icons
-        - "can you investigate why voice input language changes" -> Investigate Voice Input Language Bug
-        - "research code review agents" -> Research Code Review Agents
-        - "install our app" -> Install App
-        """
+    private static let sessionNameMaxLength = 48
 
     /// True while a send waits for the focused stream to (re)bind before dispatch.
     private(set) var isAwaitingSendReadiness = false
@@ -288,11 +254,6 @@ final class ChatActionHandler {
                     })
                     self.clearUnconfirmedTurn(clientTurnId: promptTurnId)
                     onSendSucceeded?()
-                    self.scheduleAutoSessionTitleIfNeeded(
-                        sessionId: sessionId,
-                        connection: connection,
-                        sessionStore: sessionStore
-                    )
                 } catch {
                     if self.wasDeliveredBeforeChatLeft(error) {
                         onSendSucceeded?()
@@ -679,7 +640,7 @@ final class ChatActionHandler {
         sessionStore: SessionStore,
         sessionId: String
     ) {
-        guard let normalized = Self.normalizeManualSessionName(name) else { return }
+        guard let normalized = Self.normalizeSessionName(name) else { return }
 
         let session = sessionStore.sessions.first(where: { $0.id == sessionId })
         let previousName = session?.name
@@ -705,106 +666,8 @@ final class ChatActionHandler {
 
     // MARK: - Helpers
 
-    private func scheduleAutoSessionTitleIfNeeded(
-        sessionId: String,
-        connection: ServerConnection,
-        sessionStore: SessionStore?
-    ) {
-        let provider = AppPreferences.Session.autoTitleProvider
-
-        // Off → skip entirely. Server → server handles it via get_state sync.
-        guard provider == .onDevice else { return }
-        guard let sessionStore else { return }
-        guard !autoTitleAttemptedSessionIds.contains(sessionId) else { return }
-
-        // Use the session's recorded first message — not whatever the user
-        // just typed.  This is the single source of truth and survives view
-        // recreation, so even if this function fires on a later turn the
-        // title always reflects the original intent.
-        guard let session = sessionStore.sessions.first(where: { $0.id == sessionId }),
-              (session.name?.trimmingCharacters(in: .whitespacesAndNewlines))?.isEmpty ?? true else {
-            return
-        }
-
-        let source = (session.firstMessage ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !source.isEmpty else { return }
-
-        autoTitleAttemptedSessionIds.insert(sessionId)
-        autoTitleTasksBySessionId[sessionId]?.cancel()
-
-        autoTitleTasksBySessionId[sessionId] = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.autoTitleTasksBySessionId[sessionId] = nil }
-
-            let generated = await self.generateSessionTitle(from: source)
-            guard !Task.isCancelled, let generated else { return }
-
-            guard var latest = sessionStore.sessions.first(where: { $0.id == sessionId }),
-                  (latest.name?.trimmingCharacters(in: .whitespacesAndNewlines))?.isEmpty ?? true else {
-                return
-            }
-
-            let previousName = latest.name
-            latest.name = generated
-            sessionStore.upsert(latest)
-
-            do {
-                try await connection.setSessionName(generated, sessionId: sessionId)
-            } catch {
-                log.error("Auto title set_session_name failed: \(error.localizedDescription, privacy: .public)")
-                if var rollback = sessionStore.sessions.first(where: { $0.id == sessionId }),
-                   rollback.name == generated {
-                    rollback.name = previousName
-                    sessionStore.upsert(rollback)
-                }
-            }
-        }
-    }
-
-    private func generateSessionTitle(from firstMessage: String) async -> String? {
-        if let hook = _generateSessionTitleForTesting {
-            let candidate = await hook(firstMessage)
-            return Self.normalizeTitle(candidate)
-        }
-
-        return await Task.detached(priority: .utility) {
-            await Self.generateSessionTitleOffMain(from: firstMessage)
-        }.value
-    }
-
-    private static func generateSessionTitleOffMain(from firstMessage: String) async -> String? {
-        let model = SystemLanguageModel.default
-        guard case .available = model.availability else {
-            log.error("Auto title: Foundation model not available")
-            return nil
-        }
-
-        do {
-            let session = LanguageModelSession(instructions: autoTitleInstructions)
-            let response = try await session.respond(to: autoTitlePrompt(for: firstMessage))
-            return normalizeTitle(response.content)
-        } catch {
-            log.error("Auto title error: \(error.localizedDescription, privacy: .public)")
-            return nil
-        }
-    }
-
-    /// Hand the first message over as data to title, so the model titles it
-    /// instead of answering it.
-    static func autoTitlePrompt(for firstMessage: String) -> String {
-        let source = firstMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-            .prefix(autoTitleSourceLimit)
-        return """
-            Create a concise session title from the first user message.
-
-            <first_user_message>
-            \(source)
-            </first_user_message>
-            """
-    }
-
-    /// Normalize a title: first line, strip common LLM artifacts, cap length.
-    static func normalizeTitle(_ raw: String?) -> String? {
+    /// Normalize a name the user typed: first line, strip wrapping quotes and trailing punctuation, cap length.
+    private static func normalizeSessionName(_ raw: String?) -> String? {
         guard var title = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
               !title.isEmpty else { return nil }
 
@@ -827,8 +690,8 @@ final class ChatActionHandler {
             .joined(separator: " ")
 
         // Cap length at word boundary
-        if title.count > autoTitleMaxLength {
-            let endIndex = title.index(title.startIndex, offsetBy: autoTitleMaxLength)
+        if title.count > sessionNameMaxLength {
+            let endIndex = title.index(title.startIndex, offsetBy: sessionNameMaxLength)
             title = String(title[..<endIndex])
             if let lastSpace = title.lastIndex(where: { $0.isWhitespace }) {
                 title = String(title[..<lastSpace])
@@ -837,10 +700,6 @@ final class ChatActionHandler {
         }
 
         return title.isEmpty ? nil : title
-    }
-
-    private static func normalizeManualSessionName(_ raw: String) -> String? {
-        normalizeTitle(raw)
     }
 
     private func clientTurnId(
@@ -1004,14 +863,6 @@ final class ChatActionHandler {
     func cleanup() {
         forceStopTask?.cancel()
         forceStopTask = nil
-
-        // Do NOT cancel auto-title tasks here.  They are lightweight on-device
-        // model calls that should be allowed to complete even when the user
-        // navigates away.  Cancelling them was the root cause of the
-        // "auto-rename fires on wrong message" bug: the task would get killed
-        // on onDisappear, and when the view was recreated the ephemeral
-        // autoTitleAttemptedSessionIds guard was lost, causing the next send
-        // to re-trigger title generation from a later (wrong) message.
 
         reconnectFailureMessage = nil
         clearSendStageNow()

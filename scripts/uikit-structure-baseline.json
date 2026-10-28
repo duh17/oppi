@@ -267,11 +267,6 @@
       "import SwiftUI": 1,
       "AppPreferences.*.set": 1
     },
-    "clients/apple/Oppi/Features/Settings/AutoTitleSettingsView.swift": {
-      "import SwiftUI": 1,
-      "AppPreferences.*.set": 1,
-      "APIClient settings write": 1
-    },
     "clients/apple/Oppi/Features/Settings/ChatDisplayPreviewCards.swift": {
       "import SwiftUI": 1
     },
@@ -305,9 +300,6 @@
     "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift": {
       "import SwiftUI": 1,
       "AppPreferences.*.set": 1
-    },
-    "clients/apple/Oppi/Features/Settings/SettingsSessionsPage.swift": {
-      "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsTextPage.swift": {
       "import SwiftUI": 1,

@@ -36,7 +36,7 @@ The **New session in thread** bar opens Quick Session in the root's workspace; t
 
 ### Session rows
 
-**Settings → Sessions → Session Rows** sets **Standard** or **Compact** rows and turns optional details on or off: model, time, context usage, cost, files touched, and compactions. With Session Threads on, **Agent Summary** and **Lane Graph** control the Thread strip. Changes save for this device. **Restore Defaults** resets them. The title, status, questions, Incognito, workspace context, search matches, and Thread control always show.
+**Settings → Sessions** (it opens Session Rows) sets **Standard** or **Compact** rows and turns optional details on or off: model, time, context usage, cost, files touched, and compactions. With Session Threads on, **Agent Summary** and **Lane Graph** control the Thread strip. Changes save for this device. **Restore Defaults** resets them. A session gets a name from you, or from the optional [`auto-name` extension](extensions.md#auto-name). The title, status, questions, Incognito, workspace context, search matches, and Thread control always show.
 
 ## Prompt, steer, follow-up, and stop
 

@@ -6,49 +6,6 @@ import Foundation
 /// the iOS and Mac apps. Platform Settings views paint these values.
 enum AppPreferenceStore {
 
-    // MARK: - Session
-
-    /// Session behavior preferences (auto-title, etc.).
-    enum Session {
-        /// Which backend generates session titles.
-        enum AutoTitleProvider: String, CaseIterable, Identifiable, Sendable {
-            /// Server generates the title using a configured model.
-            case server
-            /// On-device Foundation model generates the title.
-            case onDevice
-            /// Title generation disabled.
-            case off
-
-            var id: String { rawValue }
-
-            var label: String {
-                switch self {
-                case .server: return "Server"
-                case .onDevice: return "On-device"
-                case .off: return "Off"
-                }
-            }
-        }
-
-        static let autoTitleProviderKey = "\(AppIdentifiers.subsystem).session.autoTitle.provider"
-
-        static var autoTitleProvider: AutoTitleProvider {
-            if let raw = UserDefaults.standard.string(forKey: autoTitleProviderKey),
-               let provider = AutoTitleProvider(rawValue: raw) {
-                return provider
-            }
-            return .server
-        }
-
-        static func setAutoTitleProvider(_ provider: AutoTitleProvider) {
-            UserDefaults.standard.set(provider.rawValue, forKey: autoTitleProviderKey)
-        }
-
-        static var isAutoTitleEnabled: Bool {
-            autoTitleProvider != .off
-        }
-    }
-
     // MARK: - Voice
 
     /// User-facing preferences for dictation engine selection and voice replies.

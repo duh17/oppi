@@ -184,8 +184,8 @@ extension ServerConnection {
     }
 
     /// Renames `sessionId`, never whichever session holds focus at send time.
-    /// On-device auto-title finishes seconds after the prompt, often after the user
-    /// opened another session; a focus-following send renamed that other session.
+    /// A rename can finish seconds after it starts, often after the user opened another
+    /// session; a focus-following send renamed that other session.
     /// The focused stream carries the rename only when bound to this session (the
     /// server rejects a mismatched envelope if focus moves mid-send); otherwise the
     /// session-addressed HTTP command does.
