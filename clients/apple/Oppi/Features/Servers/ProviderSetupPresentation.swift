@@ -1,4 +1,4 @@
-import SwiftUI
+import UIKit
 
 enum ProviderSetupState: Equatable {
     case unknown
@@ -24,44 +24,8 @@ enum ProviderSetupPromptPolicy {
     }
 }
 
-struct ProviderSetupPromptCard: View {
-    let message: String
-    let openAccessibilityIdentifier: String
-    let onConfigure: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Finish server setup", systemImage: "key.fill")
-                .font(.headline)
-                .foregroundStyle(.themeFg)
-
-            Text(message)
-                .font(.subheadline)
-                .foregroundStyle(.themeComment)
-
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-
-                Button("Configure Model Provider", action: onConfigure)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .accessibilityIdentifier(openAccessibilityIdentifier)
-
-                Spacer(minLength: 0)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(.themeComment.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(.themeComment.opacity(0.18), lineWidth: 1)
-        )
-    }
-}
-
-/// A setup card as a UIKit session-list cell's content, inset from the row
-/// edges. The list gives the cell a clear background and no separator.
+/// The setup card as an All Sessions cell's content (`ProviderSetupPromptConfiguration`, drawn by
+/// `ProviderSetupPromptView`).
 @MainActor
 enum ProviderSetupPromptListRow {
     static func providerSetup(
@@ -70,19 +34,12 @@ enum ProviderSetupPromptListRow {
         openAccessibilityIdentifier: String,
         onConfigure: @escaping () -> Void
     ) -> any UIContentConfiguration {
-        row(
-            ProviderSetupPromptCard(
-                message: message,
-                openAccessibilityIdentifier: openAccessibilityIdentifier,
-                onConfigure: onConfigure
-            ),
-            root: root
+        ProviderSetupPromptConfiguration(
+            themeID: root.themeStore.activeThemeID,
+            message: message,
+            identifier: openAccessibilityIdentifier,
+            onConfigure: onConfigure
         )
-    }
-
-    private static func row<Card: View>(_ card: Card, root: AppRootEnvironment) -> any UIContentConfiguration {
-        UIHostingConfiguration { card.appRootEnvironment(root) }
-            .margins(.all, EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
     }
 }
 
