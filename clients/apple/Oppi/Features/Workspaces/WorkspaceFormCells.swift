@@ -234,46 +234,6 @@ final class WorkspaceIconRowCell: UICollectionViewListCell {
     }
 }
 
-/// Keeps a list's bottom inset equal to how far the keyboard covers it, so the
-/// field being typed in stays on screen. Create it once the list is in the
-/// view; call `update()` from `viewDidLayoutSubviews()`, which the keyboard's
-/// layout guide triggers as it moves.
-@MainActor
-final class KeyboardContentInset {
-    private weak var view: UIView?
-    private weak var scrollView: UIScrollView?
-
-    init(view: UIView, scrollView: UIScrollView) {
-        self.view = view
-        self.scrollView = scrollView
-        scrollView.keyboardDismissMode = .interactive
-        // A zero-height view on the guide's top edge: its frame changes with
-        // the keyboard, which lays the screen out again.
-        let probe = UIView()
-        probe.translatesAutoresizingMaskIntoConstraints = false
-        probe.isUserInteractionEnabled = false
-        probe.isAccessibilityElement = false
-        view.addSubview(probe)
-        view.keyboardLayoutGuide.usesBottomSafeArea = false
-        NSLayoutConstraint.activate([
-            probe.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            probe.widthAnchor.constraint(equalToConstant: 0),
-            probe.heightAnchor.constraint(equalToConstant: 0),
-            probe.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
-        ])
-    }
-
-    func update() {
-        guard let view, let scrollView else { return }
-        let covered = max(0, view.bounds.maxY - view.keyboardLayoutGuide.layoutFrame.minY)
-        // The list already insets for the home indicator's safe area.
-        let inset = max(0, covered - view.safeAreaInsets.bottom)
-        guard scrollView.contentInset.bottom != inset else { return }
-        scrollView.contentInset.bottom = inset
-        scrollView.verticalScrollIndicatorInsets.bottom = inset
-    }
-}
-
 /// A one-line text field row: a small label above the field, so a long value
 /// (a description, a path) has the row's whole width and the label never
 /// squeezes it at a large text size. The field is the row's accessibility

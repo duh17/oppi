@@ -48,7 +48,6 @@ final class WorkspaceNetworkAccessViewController: SettingsListViewController<
     }
     /// A save that finishes after Back must not pop whatever is on top now.
     private var isOnScreen = false
-    private var keyboardInset: KeyboardContentInset?
 
     private lazy var saveItem: UIBarButtonItem = {
         let item = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in self?.save() })
@@ -66,7 +65,8 @@ final class WorkspaceNetworkAccessViewController: SettingsListViewController<
             listIdentifier: "workspace.edit.networkAccess.list",
             scope: .workspace(model.workspace.name),
             headers: true,
-            footers: true
+            footers: true,
+            endsAtKeyboard: true
         )
         traitOverrides.appRootEnvironment = root
     }
@@ -77,12 +77,6 @@ final class WorkspaceNetworkAccessViewController: SettingsListViewController<
         super.viewDidLoad()
         // The editor row grows as the text does.
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
-        keyboardInset = KeyboardContentInset(view: view, scrollView: collectionView)
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        keyboardInset?.update()
     }
 
     override func viewWillAppear(_ animated: Bool) {

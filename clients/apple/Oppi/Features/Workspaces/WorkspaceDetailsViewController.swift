@@ -30,7 +30,6 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
     }
     /// A save that finishes after Back must not pop whatever is on top now.
     private var isOnScreen = false
-    private var keyboardInset: KeyboardContentInset?
 
     private lazy var saveItem: UIBarButtonItem = {
         let item = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in self?.save() })
@@ -54,7 +53,8 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
             listIdentifier: "workspace.edit.details.list",
             scope: .workspace(settings.workspace.name),
             headers: true,
-            footers: true
+            footers: true,
+            endsAtKeyboard: true
         )
         traitOverrides.appRootEnvironment = root
     }
@@ -65,17 +65,11 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
         super.viewDidLoad()
         // The folder check grows and shrinks as the folder is typed.
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
-        keyboardInset = KeyboardContentInset(view: view, scrollView: collectionView)
         iconPicker.anchor = self
         // The icon picker's style follows the size classes.
         registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) { (screen: Self, _) in
             screen.setNeedsUpdateProperties()
         }
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        keyboardInset?.update()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -168,7 +162,7 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
             assetCache: connection.iconAssetCache,
             identifier: "workspace.edit.icon",
             label: String(localized: "Workspace icon"),
-            value: WorkspaceIconPickerView.description(icon),
+            value: WorkspaceIconPicker.description(icon),
             hint: String(localized: "Opens the icon picker")
         ) { [weak self] in self?.showsIconPicker = true }
     }
@@ -275,19 +269,21 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
     private func updateIconPicker() {
         let model = model
         let apiClient = connection.apiClient
+        let assetCache = connection.iconAssetCache
         iconPicker.update(
             id: showsIconPicker ? "icon-picker" : nil,
-            presentation: WorkspaceIconPickerView.presentation(traitCollection),
+            presentation: .iconPicker(for: traitCollection),
             root: root,
             clear: { [weak self] in self?.showsIconPicker = false },
             screen: {
-                WorkspaceIconPickerView.screen(
-                    icon: { model.draft.icon },
-                    setIcon: { model.setIcon($0) },
-                    upload: { data, description in
-                        try await WorkspaceIconPickerView.uploadGenmoji(data: data, contentDescription: description, apiClient: apiClient)
-                    }
-                )
+                .controller {
+                    WorkspaceIconPicker.viewController(
+                        icon: model.draft.icon,
+                        apiClient: apiClient,
+                        assetCache: assetCache,
+                        commit: { model.setIcon($0) }
+                    )
+                }
             }
         )
     }

@@ -578,7 +578,9 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
         case .modelProviders:
             root.navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
         case .workspaces:
-            track(navigator.push { WorkspaceListView(server: server) })
+            let workspaces = WorkspaceListViewController(server: server, root: root)
+            navigator.push(workspaces)
+            track(workspaces)
         case .dictionary:
             let dictionary = DictationDictionaryViewController.make(root: root, serverId: server.id)
             navigator.push(dictionary)
