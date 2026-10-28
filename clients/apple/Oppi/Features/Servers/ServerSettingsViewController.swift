@@ -538,7 +538,9 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
             navigator.push(dictionary)
             track(dictionary)
         case .pairedDevices:
-            track(navigator.push { ServerPairedDevicesPage(model: model, server: server) })
+            let devices = ServerPairedDevicesViewController(model: model, server: server, root: root)
+            Router.push(devices, from: self)
+            track(devices)
         case .about:
             let about = ServerAboutViewController(model: model, server: server, root: root)
             Router.push(about, from: self)

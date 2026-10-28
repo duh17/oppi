@@ -17,7 +17,7 @@ import SwiftUI
 /// `agents-pi`, `agent-icon-picker`, `agent-edit`, `agent-edit-tools`, `-skills`, `-extensions`, `-workspaces` (the pages it pushes), `pi-tools`, `schedule-edit`, `schedule-edit-cron`, `schedule-edit-existing`,
 /// `schedule-time-zone`, `workspaces` (the server's workspace list), `workspaces-empty`, `workspace-create`, `workspace-create-configure`, `server-settings`
 /// (Server Settings for the fixture server, loaded), `server-settings-loading` (its
-/// summary and loading rows, before the first answer), `server-about` (a page
+/// summary and loading rows, before the first answer), `server-about`, `server-paired-devices` (a page
 /// Server Settings pushes, over the same fixture model).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
@@ -285,13 +285,14 @@ struct SettingsSweepScreenshotPreview: View {
                 )
             }
             .ignoresSafeArea()
-        case "server-about":
+        case "server-about", "server-paired-devices":
             RouterPreviewControllerStack(root: root) { [root, server, coordinator, page] in
                 let model = ServerSettingsModel.screenshotFixture(
                     coordinator: coordinator, serverId: server.id, currentDeviceId: "dev-iphone", updateAvailable: true
                 )
                 return switch page {
-                default: ServerAboutViewController(model: model, server: server, root: root)
+                case "server-about": ServerAboutViewController(model: model, server: server, root: root)
+                default: ServerPairedDevicesViewController(model: model, server: server, root: root)
                 }
             }
             .ignoresSafeArea()

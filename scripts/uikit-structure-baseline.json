@@ -163,9 +163,6 @@
     "clients/apple/Oppi/Features/Servers/ServerBadgePage.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Servers/ServerPairedDevicesPage.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Servers/ServerSettingsViewController.swift": {
       "toggleRow(": 1
     },

@@ -50,12 +50,12 @@ final class PairedDevicesE2ETests: E2ETestCase {
         XCTAssertEqual(revoke.label, "Revoke \(throwawayDeviceName)", "Revoke button is not labelled for VoiceOver")
         let throwawayRow = rosterRow("server.pairedDevices.row.\(throwawayId)")
         XCTAssertTrue(throwawayRow.exists, "Other device row missing from roster")
-        XCTAssertTrue(throwawayRow.label.hasPrefix(throwawayDeviceName), "Other device name missing: \(throwawayRow.label)")
-        XCTAssertTrue(throwawayRow.label.contains("Enrolled"), "Other device row has no enrolled caption: \(throwawayRow.label)")
+        XCTAssertEqual(throwawayRow.label, throwawayDeviceName, "Other device name missing")
+        XCTAssertTrue(caption(of: throwawayRow).contains("Enrolled"), "Other device row has no enrolled caption: \(caption(of: throwawayRow))")
         let thisRow = rosterRow("server.pairedDevices.thisDevice")
         XCTAssertTrue(thisRow.exists, "This-device row missing")
-        XCTAssertTrue(thisRow.label.hasPrefix(appName), "Paired name '\(appName)' missing from roster: \(thisRow.label)")
-        XCTAssertTrue(thisRow.label.contains("This device"), "This-device marker missing: \(thisRow.label)")
+        XCTAssertEqual(thisRow.label, appName, "Paired name '\(appName)' missing from roster")
+        XCTAssertTrue(caption(of: thisRow).contains("This device"), "This-device marker missing: \(caption(of: thisRow))")
         XCTAssertFalse(
             app.buttons["server.pairedDevices.revoke.\(appId)"].exists,
             "This device must not offer Revoke"
@@ -74,8 +74,13 @@ final class PairedDevicesE2ETests: E2ETestCase {
         )
         try saveLabScreenshot(name: "paired-devices-revoke-confirmation")
 
-        // Compact iPhone popovers dismiss on an outside tap; that is Cancel.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
+        // The sheet's Cancel button; an iPad popover has none and dismisses on an outside tap.
+        let cancel = app.buttons["Cancel"]
+        if cancel.exists {
+            tap(cancel, named: "Cancel revoke")
+        } else {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
+        }
         XCTAssertFalse(app.staticTexts["Revoke \(throwawayDeviceName)?"].exists, "Cancel did not dismiss confirmation")
         XCTAssertTrue(revoke.exists, "Cancel removed the device row")
 
@@ -104,6 +109,11 @@ final class PairedDevicesE2ETests: E2ETestCase {
 
     private func rosterRow(_ identifier: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    /// A roster row reads its name as the label and how it paired as the value.
+    private func caption(of row: XCUIElement) -> String {
+        (row.value as? String) ?? ""
     }
 
     private func openServerSettings() {
