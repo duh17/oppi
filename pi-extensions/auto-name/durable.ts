@@ -4,7 +4,7 @@ import {
   GenerationTask,
   hook,
 } from "@earendil-works/pi-durable";
-import { oppiHost, oppiSessionId } from "oppi/durable";
+import { oppiHost } from "oppi/durable";
 import { autoName, userText } from "./core.js";
 
 // Durable port of `index.ts`. A hook on the generation task sees the conversation's first request,
@@ -29,13 +29,9 @@ export default defineExtension({
           request.messages.some((message) => message.role === "assistant")
         )
           return;
-        const sessionId = await oppiSessionId(api, api.conversationId, context);
-        const naming = sessionId
-          ? oppiHost().sessionName(sessionId)
-          : undefined;
-        if (!sessionId || !naming || naming.get() || tried.has(sessionId))
-          return;
-        tried.add(sessionId);
+        const naming = await oppiHost().sessionName(api, context);
+        if (!naming || naming.get() || tried.has(naming.sessionId)) return;
+        tried.add(naming.sessionId);
 
         const model = (
           await api.snapshot(AgentDoc, api.conversationId, context)

@@ -1706,8 +1706,12 @@ export class SdkBackend implements AgentBackend {
 
       // A name Oppi holds from creation (`oppi session create --name`, an Agent's session name)
       // is the session's name. Pi does not know it, so give it over, or an extension that names
-      // unnamed sessions (auto-name) would overwrite it.
-      if (!isResume && session.name && !createResult.session.sessionName) {
+      // unnamed sessions (auto-name) would overwrite it. A session that already talked gets its
+      // name from its Pi file instead (an adopted terminal session keeps the name it has there).
+      const talked = createResult.session.sessionManager
+        .getBranch()
+        .some((entry) => entry.type === "message" && entry.message.role === "user");
+      if (session.name && !createResult.session.sessionName && !talked) {
         createResult.session.setSessionName(session.name);
       }
 

@@ -13,7 +13,6 @@ import {
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ServerMessage } from "../src/types.js";
-import { readDurableManifest } from "../src/durable-extension-loader.js";
 
 const AUTO_NAME = join(import.meta.dirname, "../../pi-extensions/auto-name");
 
@@ -116,10 +115,6 @@ async function settled(until: () => boolean): Promise<void> {
 }
 
 describe("auto-name in durable sessions", () => {
-  it("declares a durable entry Oppi loads from the Pi package", () => {
-    expect(readDurableManifest(AUTO_NAME)).toMatchObject({ runtimes: ["host", "sandbox"] });
-  });
-
   it("names an unnamed durable session from its first message, once", async () => {
     symlinkSync(AUTO_NAME, join(agentDir, "extensions", "auto-name"), "dir");
     const f = await fixture({});

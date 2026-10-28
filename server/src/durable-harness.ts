@@ -86,6 +86,7 @@ import type { LiveVoiceRuntimePort } from "./live-voice-speech.js";
 import { LIVE_VOICE_EXTENSION } from "../extensions/durable/live-voice/contract.js";
 import { OPPI_CALLER_SESSION_ID_ENV } from "./session-caller-identity.js";
 import { properLockfile } from "./pi-lockfile.js";
+import { DurableSessionDoc } from "./durable-session-doc.js";
 import { requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { ConversationStreamServerMessage, Session } from "./types.js";
 
@@ -281,10 +282,17 @@ const durableHost: OppiDurableHost = {
     const sessionId = runtime.sessionIdOf(caller.host.storeId, caller.conversationId);
     return port && sessionId ? (text) => port.spoke(sessionId, text) : undefined;
   },
-  sessionName: (sessionId) => {
+  sessionName: async (api, context) => {
     const naming = boundSessionNaming;
-    return naming
-      ? { get: () => naming.name(sessionId), set: (name) => naming.setName(sessionId, name) }
+    if (!naming) return undefined;
+    const sessionId = (await api.snapshot(DurableSessionDoc, api.conversationId, context))
+      ?.sessionId;
+    return sessionId
+      ? {
+          sessionId,
+          get: () => naming.name(sessionId),
+          set: (name) => naming.setName(sessionId, name),
+        }
       : undefined;
   },
   files: fileToolsHost,
