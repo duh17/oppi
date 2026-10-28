@@ -679,6 +679,30 @@ struct InAppNowPlayingChromeTests {
         }, "Back did not dismiss the modal and report it once")
     }
 
+    /// Back, the back swipe, and playback ending can all ask to leave while the
+    /// page animates out; the page asks its host once.
+    @Test func nowPlayingPageLeavesOnlyOnce() async throws {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
+        var leaves = 0
+        let page = InAppNowPlayingPlayerViewController(audioPlayer: player, onLeave: { leaves += 1 })
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = page
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        page.view.layoutIfNeeded()
+        let back = try #require(firstSubview(withAccessibilityIdentifier: "fullscreen-audio.back", in: page.view) as? UIControl)
+
+        back.sendActions(for: .primaryActionTriggered)
+        back.sendActions(for: .primaryActionTriggered)
+        player._setPlaybackStateForTesting(playing: nil, loading: nil)
+
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(500)) {
+            page.updatePropertiesIfNeeded()
+            return leaves == 1
+        })
+    }
+
     @Test func nowPlayingBackButtonLeaves() throws {
         let player = AudioPlayerService()
         player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)

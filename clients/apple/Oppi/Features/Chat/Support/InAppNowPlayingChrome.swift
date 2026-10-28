@@ -227,7 +227,10 @@ final class InAppNowPlayingPlayerViewController: UIViewController, RouterModalCo
         )
     }
 
+    /// Once: Back and playback ending can both ask during the dismissal animation.
     private func leave() {
+        guard !didLeave else { return }
+        didLeave = true
         if let onLeave {
             onLeave()
         } else {
@@ -274,7 +277,6 @@ final class InAppNowPlayingPlayerViewController: UIViewController, RouterModalCo
         guard view.window != nil, !didLeave,
               InAppNowPlayingChrome.shouldDismissPlayer(hasActivePlayback: hasActivePlayback)
         else { return }
-        didLeave = true
         leave()
     }
 }
