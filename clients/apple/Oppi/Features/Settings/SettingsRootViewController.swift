@@ -314,7 +314,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         case .addServer:
             presentAddServer()
         case .general:
-            navigator.push(SettingsGeneralViewController())
+            navigator.push(SettingsGeneralViewController(root: root))
         case .appearance:
             navigator.push(SettingsAppearanceViewController(root: root))
         case .text:
@@ -324,7 +324,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         case .chat:
             navigator.push(SettingsChatViewController())
         case .sessions:
-            navigator.push(SettingsSessionsViewController(root: root))
+            navigator.push { SettingsSessionsPage() }
         case .voice:
             navigator.push { SettingsVoicePage() }
         case .tailscale:

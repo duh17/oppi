@@ -3,15 +3,15 @@ import Testing
 @testable import Oppi
 
 /// The store over the real `APIClient` transport and a scripted HTTP server:
-/// what goes on the wire, and what a 409 `revision_conflict` does to the row.
+/// what goes on the wire for Server Metrics, and what a 409 `revision_conflict`
+/// does to the row.
 @Suite("Settings over the real transport", .serialized)
 @MainActor
 struct SettingsServerTransportTests {
-    private let model = SettingsCatalog.autoNameServerModel
-    private let enabled = SettingsCatalog.autoNameServerEnabled
+    private let enabled = SettingsCatalog.serverMetricsEnabled
 
-    private func makeStore(_ server: ScriptedAutoTitleServer) -> SettingsStore {
-        let client = ScriptedAutoTitleServer.makeClient(server)
+    private func makeStore(_ server: ScriptedMetricsServer) -> SettingsStore {
+        let client = ScriptedMetricsServer.makeClient()
         return SettingsStore(
             device: DeviceAdapter(defaults: makeSettingsDefaults()),
             server: ServerAdapter { _ in client }
@@ -20,43 +20,40 @@ struct SettingsServerTransportTests {
 
     @Test("A 409 revision_conflict reloads the setting and says it changed elsewhere, with nothing to retry")
     func conflictReloadsTheStoredValue() async {
-        let server = ScriptedAutoTitleServer(enabled: false, model: "anthropic/claude-haiku-5", revision: 4)
+        let server = ScriptedMetricsServer(enabled: false, revision: 4)
         let store = makeStore(server)
         store.attach(serverId: "s1")
-        _ = store.read(model)
-        #expect(await waitForMainActorCondition { store.read(model).current != nil })
-        #expect(store.read(model) == .value("anthropic/claude-haiku-5", revision: 4))
+        _ = store.read(enabled)
+        #expect(await waitForMainActorCondition { store.read(enabled).current != nil })
+        #expect(store.read(enabled) == .value(false, revision: 4))
 
         // Another device saves between this device's load and its save.
-        server.changeElsewhere(model: "openai/gpt-5")
-        await store.set(model, "google/gemini-2.5-pro").value
+        server.changeElsewhere()
+        await store.set(enabled, true).value
 
-        #expect(store.read(model) == .failed(last: "openai/gpt-5", reason: "Changed on another device; showing the latest."))
-        #expect(!store.canRetry(id: model.id))
-        #expect(server.log == [
-            "GET", "PUT base=4 model=google/gemini-2.5-pro", "GET",
-        ])
+        #expect(store.read(enabled) == .failed(last: false, reason: "Changed on another device; showing the latest."))
+        #expect(!store.canRetry(id: enabled.id))
+        #expect(server.log == ["GET", "PUT base=4 enabled=true", "GET"])
     }
 
-    @Test("A save sends the revision it loaded, only its own field, and takes the revision the server answers")
+    @Test("A save sends the revision it loaded and takes the revision the server answers")
     func saveSendsTheLoadedRevision() async {
-        let server = ScriptedAutoTitleServer(enabled: false, model: "anthropic/claude-haiku-5", revision: 4)
+        let server = ScriptedMetricsServer(enabled: false, revision: 4)
         let store = makeStore(server)
         store.attach(serverId: "s1")
-        _ = (store.read(enabled), store.read(model))
+        _ = store.read(enabled)
         #expect(await waitForMainActorCondition { store.read(enabled).current != nil })
 
         await store.set(enabled, true).value
-        await store.set(model, "openai/gpt-5-mini").value
+        await store.set(enabled, false).value
 
-        #expect(server.log == ["GET", "PUT base=4 enabled=true", "PUT base=5 model=openai/gpt-5-mini"])
-        #expect(store.read(enabled) == .value(true, revision: 6))
-        #expect(store.read(model) == .value("openai/gpt-5-mini", revision: 6))
+        #expect(server.log == ["GET", "PUT base=4 enabled=true", "PUT base=5 enabled=false"])
+        #expect(store.read(enabled) == .value(false, revision: 6))
     }
 
     @Test("A server that sends no revision is written without one")
     func unrevisionedServer() async {
-        let server = ScriptedAutoTitleServer(enabled: false, model: "anthropic/claude-haiku-5", revision: nil)
+        let server = ScriptedMetricsServer(enabled: false, revision: nil)
         let store = makeStore(server)
         store.attach(serverId: "s1")
         _ = store.read(enabled)
@@ -69,38 +66,34 @@ struct SettingsServerTransportTests {
     }
 }
 
-/// `GET`/`PUT /server/auto-title` with optimistic concurrency, as the server
-/// does it: a `baseRevision` that is not the stored revision is a 409. The
-/// script is the server's state and a log of the requests it saw.
-private final class ScriptedAutoTitleServer: @unchecked Sendable {
+/// `GET`/`PUT /server/metrics/settings` with optimistic concurrency, as the
+/// server does it: a `baseRevision` that is not the stored revision is a 409.
+/// The script is the server's state and a log of the requests it saw.
+private final class ScriptedMetricsServer: @unchecked Sendable {
     private let lock = NSLock()
     private var enabled: Bool
-    private var model: String
     private var revision: Int?
     private var requests: [String] = []
 
-    init(enabled: Bool, model: String, revision: Int?) {
+    init(enabled: Bool, revision: Int?) {
         self.enabled = enabled
-        self.model = model
         self.revision = revision
-        AutoTitleURLProtocol.server = self
+        MetricsURLProtocol.server = self
     }
 
     /// One line per request: `GET`, or `PUT` with what it carried.
     var log: [String] { lock.withLock { requests } }
 
-    func changeElsewhere(model: String) {
-        lock.withLock {
-            self.model = model
-            revision = (revision ?? 0) + 1
-        }
+    /// Another device saves: the revision moves on.
+    func changeElsewhere() {
+        lock.withLock { revision = (revision ?? 0) + 1 }
     }
 
-    static func makeClient(_ server: ScriptedAutoTitleServer) -> APIClient {
+    static func makeClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [AutoTitleURLProtocol.self]
+        config.protocolClasses = [MetricsURLProtocol.self]
         return APIClient(
-            baseURL: URL(string: "https://\(AutoTitleURLProtocol.host)") ?? URL(fileURLWithPath: "/"),
+            baseURL: URL(string: "https://\(MetricsURLProtocol.host)") ?? URL(fileURLWithPath: "/"),
             token: "test-token",
             configuration: config
         )
@@ -115,29 +108,27 @@ private final class ScriptedAutoTitleServer: @unchecked Sendable {
                 var entry = "PUT"
                 if let base { entry += " base=\(base)" }
                 if let value = sent["enabled"] as? Bool { entry += " enabled=\(value)" }
-                if let value = sent["model"] as? String { entry += " model=\(value)" }
                 requests.append(entry)
                 if let base, base != revision {
-                    var current: [String: Any] = ["enabled": enabled, "model": model]
+                    var current: [String: Any] = ["enabled": enabled]
                     if let revision { current["revision"] = revision }
                     return (409, ["error": "settings revision conflict", "code": "revision_conflict", "current": current])
                 }
                 if let value = sent["enabled"] as? Bool { enabled = value }
-                if let value = sent["model"] as? String { model = value }
                 if let revision { self.revision = revision + 1 }
             } else {
                 requests.append("GET")
             }
-            var json: [String: Any] = ["enabled": enabled, "model": model]
+            var json: [String: Any] = ["enabled": enabled]
             if let revision { json["revision"] = revision }
             return (200, json)
         }
     }
 }
 
-private final class AutoTitleURLProtocol: URLProtocol, @unchecked Sendable {
-    static let host = "auto-title.test"
-    nonisolated(unsafe) static var server: ScriptedAutoTitleServer?
+private final class MetricsURLProtocol: URLProtocol, @unchecked Sendable {
+    static let host = "metrics-settings.test"
+    nonisolated(unsafe) static var server: ScriptedMetricsServer?
 
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == host }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }

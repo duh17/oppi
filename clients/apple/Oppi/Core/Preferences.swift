@@ -119,49 +119,14 @@ enum AppPreferences {
 
     /// User-facing preference for where regular web links open.
     enum Browser {
-        enum LinkOpeningMode: String, CaseIterable, Identifiable {
-            case inApp
-            case external
-
-            var id: String { rawValue }
-
-            var label: String {
-                switch self {
-                case .inApp: return "In-App Browser"
-                case .external: return "External Browser"
-                }
-            }
-
-            var detail: String {
-                switch self {
-                case .inApp:
-                    return "Open web links in Oppi's built-in Safari sheet. Oppi cannot read browser cookies or page data."
-                case .external:
-                    return "Open web links in your default browser outside Oppi."
-                }
-            }
-
-            var openActionTitle: String {
-                switch self {
-                case .inApp: return "Open In-App Browser"
-                case .external: return "Open in External Browser"
-                }
-            }
-        }
-
-        private static let linkOpeningModeKey = "\(AppIdentifiers.subsystem).browser.linkOpeningMode"
+        typealias LinkOpeningMode = AppPreferenceStore.Browser.LinkOpeningMode
 
         static var linkOpeningMode: LinkOpeningMode {
-            guard let raw = UserDefaults.standard.string(forKey: linkOpeningModeKey),
-                  let mode = LinkOpeningMode(rawValue: raw)
-            else {
-                return .inApp
-            }
-            return mode
+            AppPreferenceStore.Browser.linkOpeningMode
         }
 
         static func setLinkOpeningMode(_ mode: LinkOpeningMode) {
-            UserDefaults.standard.set(mode.rawValue, forKey: linkOpeningModeKey)
+            AppPreferenceStore.Browser.setLinkOpeningMode(mode)
         }
     }
 
@@ -583,14 +548,12 @@ enum AppPreferences {
 
     /// User-facing preference for optional tactile feedback.
     enum Interaction {
-        private static let hapticFeedbackEnabledKey = "\(AppIdentifiers.subsystem).interaction.hapticFeedback.enabled"
-
         static var isHapticFeedbackEnabled: Bool {
-            UserDefaults.standard.object(forKey: hapticFeedbackEnabledKey) as? Bool ?? true
+            AppPreferenceStore.Interaction.isHapticFeedbackEnabled
         }
 
         static func setHapticFeedbackEnabled(_ enabled: Bool) {
-            UserDefaults.standard.set(enabled, forKey: hapticFeedbackEnabledKey)
+            AppPreferenceStore.Interaction.setHapticFeedbackEnabled(enabled)
         }
     }
 

@@ -12,28 +12,23 @@ struct SettingsCatalogTests {
         #expect(Set(places).count == places.count)
     }
 
-    @Test("Auto-Name's provider is the device preference on its existing key and default")
-    func autoNameProviderIsThePreference() {
-        let provider = SettingsCatalog.autoNameProvider
-        #expect(provider.key == AppPreferenceStore.Session.autoTitleProviderKey)
-        #expect(provider.default == AppPreferenceStore.Session.autoTitleProviderDefault)
-        #expect(provider.storage == .device(perServer: false))
-    }
-
-    @Test("A model must be chosen")
-    func modelValidation() {
-        let model = SettingsCatalog.autoNameServerModel
-        #expect(model.validate("  ") != nil)
-        #expect(model.validate("anthropic/claude-haiku-5") == nil)
+    @Test("General's settings are the device preferences on their existing keys and defaults")
+    func generalSettingsArePreferences() {
+        #expect(SettingsCatalog.hapticFeedback.key == AppPreferenceStore.Interaction.hapticFeedbackEnabledKey)
+        #expect(SettingsCatalog.hapticFeedback.default == AppPreferenceStore.Interaction.hapticFeedbackEnabledDefault)
+        #expect(SettingsCatalog.keepAwakeAfterActivity.key == AppPreferenceStore.ScreenAwake.timeoutPresetKey)
+        #expect(SettingsCatalog.keepAwakeAfterActivity.default == AppPreferenceStore.ScreenAwake.timeoutPresetDefault)
+        #expect(SettingsCatalog.openLinks.key == AppPreferenceStore.Browser.linkOpeningModeKey)
+        #expect(SettingsCatalog.openLinks.default == AppPreferenceStore.Browser.linkOpeningModeDefault)
     }
 
     @Test("A setting's scope follows its storage and the names it is shown under")
     func scopeFollowsStorage() {
         #expect(SettingStorage.device(perServer: false).scope(serverName: "mac-studio", workspaceName: nil) == .device)
         #expect(SettingStorage.device(perServer: true).scope(serverName: "mac-studio", workspaceName: nil) == .deviceOnServer("mac-studio"))
-        #expect(SettingStorage.server(.autoTitle, revisioned: true).scope(serverName: "mac-studio", workspaceName: nil) == .server("mac-studio"))
+        #expect(SettingStorage.server(.serverMetrics, revisioned: true).scope(serverName: "mac-studio", workspaceName: nil) == .server("mac-studio"))
         #expect(SettingStorage.workspace(field: "name").scope(serverName: "mac-studio", workspaceName: "oppi") == .workspace("oppi"))
-        #expect(SettingStorage.deviceOnServer(.autoTitle, field: "x").scope(serverName: "mac-studio", workspaceName: nil) == .deviceOnServer("mac-studio"))
-        #expect(SettingStorage.piOwned(.autoTitle, level: .global).scope(serverName: "mac-studio", workspaceName: nil) == .server("mac-studio"))
+        #expect(SettingStorage.deviceOnServer(.serverMetrics, field: "x").scope(serverName: "mac-studio", workspaceName: nil) == .deviceOnServer("mac-studio"))
+        #expect(SettingStorage.piOwned(.serverMetrics, level: .global).scope(serverName: "mac-studio", workspaceName: nil) == .server("mac-studio"))
     }
 }

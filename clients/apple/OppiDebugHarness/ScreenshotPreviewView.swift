@@ -902,7 +902,7 @@ private struct SettingsPageScreenshotContent: View {
             case "settings-editor": SettingsEditorViewController()
             case "settings-experiments": SettingsExperimentsViewController(navigation: root.navigation)
             case "settings-editor-key-bar": SettingsEditorKeyBarViewController(preferences: .shared)
-            case "settings-general": SettingsGeneralViewController()
+            case "settings-general": SettingsGeneralViewController(root: root)
             case "settings-storage": SettingsStorageViewController()
             case "settings-chat-top-bar": SettingsChatTopBarViewController()
             case "settings-appearance": SettingsAppearanceViewController(root: root)

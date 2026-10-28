@@ -6,13 +6,6 @@ struct SettingChoice<Value: Equatable & Sendable> {
     var title: String
 }
 
-/// A titled run of choices, drawn inline in the menu (models under their
-/// provider). A nil title is an ungrouped run.
-struct SettingChoiceGroup<Value: Equatable & Sendable> {
-    var title: String?
-    var choices: [SettingChoice<Value>]
-}
-
 /// Rows drawn from a `SettingDeclaration`: the title, the identifier, the
 /// scope, the value, and what the row does while saving or after a failure all
 /// come from the declaration and the store, so every setting behaves the same.
@@ -80,52 +73,31 @@ extension SettingsListViewController {
 
     // MARK: - Choice
 
-    /// Configures `cell` as the menu row of a declared setting. `groups` are
-    /// the values it can take; the row shows the title of the current one, or
-    /// `placeholder` when none matches. While the choices themselves are still
-    /// arriving, `choicesLoading` is the text the row shows (when no current
-    /// choice has a title) and the row stays disabled, so the menu is never
-    /// opened empty.
+    /// Configures `cell` as the menu row of a declared setting. `choices` are the
+    /// values it can take; the row shows the title of the current one.
     func settingChoiceRow<Value>(
         _ cell: SettingsMenuRowCell,
         _ declaration: SettingDeclaration<Value>,
-        groups: [SettingChoiceGroup<Value>],
-        placeholder: String? = nil,
-        choicesLoading: String? = nil
+        choices: [SettingChoice<Value>]
     ) {
         let state = settings?.read(declaration) ?? .unavailable(reason: Self.noStore)
         let current = state.current
-        let menu = UIMenu(children: groups.map { group in
-            let actions = group.choices.map { choice in
-                UIAction(title: choice.title, state: choice.value == current ? .on : .off) { [weak self] _ in
-                    self?.settings?.set(declaration, choice.value)
-                }
-            }
-            return UIMenu(title: group.title ?? "", options: .displayInline, children: actions)
-        })
-        let selected = groups.lazy.flatMap(\.choices).first { $0.value == current }?.title
         let shown: String? = switch state {
         case .unavailable: Self.unavailableTitle
         case .loading: String(localized: "Loading…")
-        case .value, .saving, .failed: selected ?? choicesLoading ?? placeholder
+        case .value, .saving, .failed: choices.first { $0.value == current }?.title
         }
         cell.configure(
             title: declaration.copy.title,
             identifier: declaration.id,
-            isEnabled: state.canBeginSaving && choicesLoading == nil,
+            isEnabled: state.canBeginSaving,
             value: shown,
-            menu: menu
+            menu: UIMenu(children: choices.map { choice in
+                UIAction(title: choice.title, state: choice.value == current ? .on : .off) { [weak self] _ in
+                    self?.settings?.set(declaration, choice.value)
+                }
+            })
         )
-    }
-
-    /// One ungrouped list of choices.
-    func settingChoiceRow<Value>(
-        _ cell: SettingsMenuRowCell,
-        _ declaration: SettingDeclaration<Value>,
-        choices: [SettingChoice<Value>],
-        placeholder: String? = nil
-    ) {
-        settingChoiceRow(cell, declaration, groups: [SettingChoiceGroup(title: nil, choices: choices)], placeholder: placeholder)
     }
 
     private static var unavailableTitle: String { String(localized: "Unavailable") }

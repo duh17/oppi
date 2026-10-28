@@ -4,15 +4,15 @@ import Foundation
 /// route in `protocol/settings.json`; a declaration names the route and the
 /// field of its JSON document it owns.
 enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
-    /// `GET`/`PUT /server/auto-title`: `{ enabled, model, revision? }`.
-    case autoTitle = "/server/auto-title"
+    /// `GET`/`PUT /server/metrics/settings`: `{ enabled, revision? }`.
+    case serverMetrics = "/server/metrics/settings"
 
     /// The route's row in `protocol/settings.json`, where the server lists the
     /// setting's scope and whether its saves carry a revision.
     /// `SettingsCatalogContractTests` holds the declarations to that row.
     var registryKey: String {
         switch self {
-        case .autoTitle: "autoTitle"
+        case .serverMetrics: "serverMetrics"
         }
     }
 }
@@ -135,48 +135,64 @@ struct SettingDescriptor: Hashable, Sendable {
 /// no row, no store entry, and no server field to agree on. See
 /// `dev/architecture-client.md`, "Settings pages".
 enum SettingsCatalog {
-    // MARK: - Sessions
+    // MARK: - General (this device)
 
-    /// Which backend names a session on this device. A device setting on the
-    /// existing `AppPreferenceStore` key, so `AppPreferences` and the chat read
-    /// the same value; it never writes a server field.
-    static let autoNameProvider = SettingDeclaration<AppPreferenceStore.Session.AutoTitleProvider>(
-        id: "settings.sessions.autoNameProvider",
-        key: AppPreferenceStore.Session.autoTitleProviderKey,
+    /// Short taps as you use Oppi. A device setting on the existing
+    /// `AppPreferenceStore` key and default, so `AppPreferences` and the store
+    /// read one value.
+    static let hapticFeedback = SettingDeclaration<Bool>(
+        id: "settings.general.haptics",
+        key: AppPreferenceStore.Interaction.hapticFeedbackEnabledKey,
         storage: .device(perServer: false),
-        default: AppPreferenceStore.Session.autoTitleProviderDefault,
-        copy: SettingCopy(title: String(localized: "Auto-Name"))
-    )
-
-    /// Whether the server names sessions from their first message, for every
-    /// device that uses it.
-    static let autoNameServerEnabled = SettingDeclaration<Bool>(
-        id: "settings.sessions.autoNameServerEnabled",
-        key: "enabled",
-        storage: .server(.autoTitle, revisioned: true),
-        default: false,
+        default: AppPreferenceStore.Interaction.hapticFeedbackEnabledDefault,
         copy: SettingCopy(
-            title: String(localized: "Name Sessions on Server"),
-            footer: String(localized: "The server names a new session from its first message, whichever device started it. It needs a model.")
+            title: String(localized: "Haptic Feedback"),
+            footer: String(localized: "Adds short taps as you use Oppi. Also follows your iOS System Haptics setting.")
         )
     )
 
-    /// The model the server names sessions with (`provider/model`). Empty means
-    /// none is chosen yet, and the server names nothing.
-    static let autoNameServerModel = SettingDeclaration<String>(
-        id: "settings.sessions.autoNameServerModel",
-        key: "model",
-        storage: .server(.autoTitle, revisioned: true),
-        default: "",
-        validate: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? String(localized: "Choose a model.") : nil },
-        copy: SettingCopy(title: String(localized: "Model"))
+    /// How long the screen stays on after a dictation or an agent's work stops.
+    static let keepAwakeAfterActivity = SettingDeclaration<AppPreferenceStore.ScreenAwake.TimeoutPreset>(
+        id: "settings.general.keepAwake",
+        key: AppPreferenceStore.ScreenAwake.timeoutPresetKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.ScreenAwake.timeoutPresetDefault,
+        copy: SettingCopy(
+            title: String(localized: "Keep Awake After Activity"),
+            footer: String(localized: "Oppi keeps the screen on while you dictate or an agent is working. This sets how long it stays on afterward.")
+        )
+    )
+
+    /// Where web links open.
+    static let openLinks = SettingDeclaration<AppPreferenceStore.Browser.LinkOpeningMode>(
+        id: "settings.general.openLinks",
+        key: AppPreferenceStore.Browser.linkOpeningModeKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.Browser.linkOpeningModeDefault,
+        copy: SettingCopy(title: String(localized: "Open Links"))
+    )
+
+    // MARK: - Server Metrics
+
+    /// Whether the server samples its CPU, memory, and disk, for every device
+    /// that uses it (`serverMetrics` in `protocol/settings.json`).
+    static let serverMetricsEnabled = SettingDeclaration<Bool>(
+        id: "server.metrics.enabled",
+        key: "enabled",
+        storage: .server(.serverMetrics, revisioned: true),
+        default: false,
+        copy: SettingCopy(
+            title: String(localized: "Server Metrics"),
+            footer: String(localized: "Samples this server's CPU, memory, and disk every 30 seconds. Samples stay on the server.")
+        )
     )
 
     /// Every declared setting, type-erased. Ids and storage keys are unique
     /// across it (`SettingsCatalogTests`).
     static let all: [SettingDescriptor] = [
-        autoNameProvider.descriptor,
-        autoNameServerEnabled.descriptor,
-        autoNameServerModel.descriptor,
+        hapticFeedback.descriptor,
+        keepAwakeAfterActivity.descriptor,
+        openLinks.descriptor,
+        serverMetricsEnabled.descriptor,
     ]
 }

@@ -405,25 +405,28 @@ final class ServerMetricsViewController: UIViewController {
         isTogglingSampling = true
         render()
         let coordinator = coordinator
+        let settings = root.settings
         Task { [weak self] in
-            var failure: Error?
-            do {
-                guard let client = await coordinator.apiClientReady(for: serverId) else {
-                    throw ServerMetricsLoadError.notConnected
-                }
-                let saved = try await client.setServerMetricsEnabled(enabled)
-                coordinator.setServerMetricsEnabledCache(saved, for: serverId)
-            } catch {
-                failure = error
+            // The one save path for this setting: the store validates, rolls back a
+            // failed save, and reloads on a revision conflict.
+            let setting = SettingsCatalog.serverMetricsEnabled
+            settings.attach(serverId: serverId)
+            _ = await settings.settled(setting)
+            await settings.set(setting, enabled).value
+            let result = settings.read(setting)
+            // The server's answer is the truth, even when it is not what was asked for:
+            // the pill follows it.
+            if let stored = result.current {
+                coordinator.setServerMetricsEnabledCache(stored, for: serverId)
             }
             // The pill moved to another host meanwhile; this answer is not its.
             guard let self, self.loadedServerId == serverId else { return }
             self.isTogglingSampling = false
-            if let failure {
-                self.errorMessage = failure.localizedDescription
-                self.render()
-            } else {
+            if result.current == enabled {
                 self.reload()
+            } else {
+                self.errorMessage = result.failureReason ?? result.unavailableReason ?? ServerMetricsLoadError.notConnected.localizedDescription
+                self.render()
             }
         }
     }

@@ -28,6 +28,10 @@ import Observation
 /// server setting starts loading on its first read, unless another setting on
 /// its route has already loaded the document: then it reads from that one.
 ///
+/// `afterWrite` runs on the main actor once a write has been stored (the
+/// setting's id): the one place a setting's side effect lives, so a page never
+/// writes and then pokes something else itself.
+///
 /// Only the device and server adapters exist so far; a declaration with any
 /// other storage reads as unavailable until its adapter is added here.
 @MainActor @Observable
@@ -48,6 +52,8 @@ final class SettingsStore {
     @ObservationIgnored private let device: DeviceAdapter
     @ObservationIgnored private let server: ServerAdapter
     @ObservationIgnored private let serverName: @MainActor (String) -> String?
+    @ObservationIgnored private let afterWrite: @MainActor (String) -> Void
+    @ObservationIgnored private var loadTasks: [SettingEndpoint: Task<Void, Never>] = [:]
     @ObservationIgnored private var serverId: String?
     /// Changes whenever the context does, including back to the same server, so
     /// a result requested before a switch never lands after it.
@@ -61,11 +67,13 @@ final class SettingsStore {
     init(
         device: DeviceAdapter = DeviceAdapter(),
         server: ServerAdapter,
-        serverName: @escaping @MainActor (String) -> String? = { _ in nil }
+        serverName: @escaping @MainActor (String) -> String? = { _ in nil },
+        afterWrite: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.device = device
         self.server = server
         self.serverName = serverName
+        self.afterWrite = afterWrite
     }
 
     // MARK: - Context
@@ -80,6 +88,7 @@ final class SettingsStore {
         documents = [:]
         loading = []
         lastSave = [:]
+        loadTasks = [:]
         retries = [:]
     }
 
@@ -117,6 +126,16 @@ final class SettingsStore {
         }
     }
 
+    /// The setting's state once it is no longer loading: waits for the load a
+    /// first read started. For a caller that must know the stored value before it
+    /// changes it (a button, not a row that draws `loading`).
+    func settled<Value>(_ declaration: SettingDeclaration<Value>) async -> SettingValue<Value> {
+        let state = read(declaration)
+        guard state == .loading, case .server(let endpoint, _) = declaration.storage else { return state }
+        await loadTasks[endpoint]?.value
+        return read(declaration)
+    }
+
     /// Whether `retry` has something to run for a setting that failed.
     func canRetry(id: String) -> Bool { retries[id] != nil }
 
@@ -145,6 +164,7 @@ final class SettingsStore {
             do {
                 try device.write(declaration, value)
                 states[declaration.id] = nil
+                afterWrite(declaration.id)
             } catch {
                 states[declaration.id] = current.rolledBack(reason: Self.reason(error))
             }
@@ -161,11 +181,6 @@ final class SettingsStore {
 
     /// Runs again what failed: the write that was rolled back, or the load that
     /// never arrived.
-    @discardableResult
-    func retry<Value>(_ declaration: SettingDeclaration<Value>) -> Task<Void, Never> {
-        retry(id: declaration.id)
-    }
-
     @discardableResult
     func retry(id: String) -> Task<Void, Never> {
         guard let action = retries.removeValue(forKey: id) else { return Task {} }
@@ -203,6 +218,7 @@ final class SettingsStore {
                     )
                 }
                 accept(document, for: endpoint)
+                afterWrite(declaration.id)
             } catch is CancellationError {
                 return
             } catch SettingsError.revisionConflict {
@@ -233,7 +249,7 @@ final class SettingsStore {
         guard let serverId, !loading.contains(endpoint) else { return }
         loading.insert(endpoint)
         let requestedContext = context
-        Task { @MainActor [weak self] in
+        loadTasks[endpoint] = Task { @MainActor [weak self] in
             _ = await self?.reload(endpoint, serverId: serverId, requestedContext: requestedContext)
         }
     }

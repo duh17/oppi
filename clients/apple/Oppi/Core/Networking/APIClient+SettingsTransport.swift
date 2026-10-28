@@ -6,8 +6,8 @@ import Foundation
 extension APIClient: SettingsServerTransport {
     func loadSettings(_ endpoint: SettingEndpoint) async throws -> SettingsServerDocument {
         switch endpoint {
-        case .autoTitle:
-            return try await getAutoTitleConfig().settingsDocument
+        case .serverMetrics:
+            return try await serverMetricsSettings().settingsDocument
         }
     }
 
@@ -17,13 +17,12 @@ extension APIClient: SettingsServerTransport {
         baseRevision: Int?
     ) async throws -> SettingsServerDocument {
         switch endpoint {
-        case .autoTitle:
+        case .serverMetrics:
+            guard let enabled = fields["enabled"]?.boolValue else {
+                throw SettingsError.invalidStoredValue(String(localized: "Server Metrics needs an on or off value."))
+            }
             do {
-                return try await setAutoTitleConfig(
-                    enabled: fields["enabled"]?.boolValue,
-                    model: fields["model"]?.stringValue,
-                    baseRevision: baseRevision
-                ).settingsDocument
+                return try await saveServerMetricsSettings(enabled: enabled, baseRevision: baseRevision).settingsDocument
             } catch let APIError.codedServer(status, _, code) where status == 409 && code == "revision_conflict" {
                 throw SettingsError.revisionConflict
             }
@@ -31,11 +30,8 @@ extension APIClient: SettingsServerTransport {
     }
 }
 
-private extension APIClient.AutoTitleConfig {
+private extension APIClient.ServerMetricsSettings {
     var settingsDocument: SettingsServerDocument {
-        SettingsServerDocument(
-            fields: ["enabled": .bool(enabled), "model": model.map(JSONValue.string) ?? .null],
-            revision: revision
-        )
+        SettingsServerDocument(fields: ["enabled": .bool(enabled)], revision: revision)
     }
 }

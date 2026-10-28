@@ -11,7 +11,7 @@ enum AppPreferenceStore {
     /// Session behavior preferences (auto-title, etc.).
     enum Session {
         /// Which backend generates session titles.
-        enum AutoTitleProvider: String, CaseIterable, Identifiable, Sendable, Codable {
+        enum AutoTitleProvider: String, CaseIterable, Identifiable, Sendable {
             /// Server generates the title using a configured model.
             case server
             /// On-device Foundation model generates the title.
@@ -31,15 +31,13 @@ enum AppPreferenceStore {
         }
 
         static let autoTitleProviderKey = "\(AppIdentifiers.subsystem).session.autoTitle.provider"
-        /// What nothing stored means; `SettingsCatalog.autoNameProvider` uses this same constant.
-        static let autoTitleProviderDefault = AutoTitleProvider.server
 
         static var autoTitleProvider: AutoTitleProvider {
             if let raw = UserDefaults.standard.string(forKey: autoTitleProviderKey),
                let provider = AutoTitleProvider(rawValue: raw) {
                 return provider
             }
-            return autoTitleProviderDefault
+            return .server
         }
 
         static func setAutoTitleProvider(_ provider: AutoTitleProvider) {
@@ -196,7 +194,7 @@ enum AppPreferenceStore {
     /// Keep the display awake while a session is working. Key matches iOS
     /// `AppPreferences.ScreenAwake`.
     enum ScreenAwake {
-        enum TimeoutPreset: Int, CaseIterable, Identifiable, Sendable {
+        enum TimeoutPreset: Int, CaseIterable, Identifiable, Sendable, Codable {
             case off = 0
             case oneMinute = 60
             case twoMinutes = 120
@@ -222,13 +220,15 @@ enum AppPreferenceStore {
         }
 
         static let timeoutPresetKey = "\(AppIdentifiers.subsystem).screenAwake.timeoutPreset"
+        /// What nothing stored means; `SettingsCatalog.keepAwakeAfterActivity` uses this same constant.
+        static let timeoutPresetDefault = TimeoutPreset.twoMinutes
 
         static var timeoutPreset: TimeoutPreset {
             if let raw = UserDefaults.standard.object(forKey: timeoutPresetKey) as? Int,
                let preset = TimeoutPreset(rawValue: raw) {
                 return preset
             }
-            return .twoMinutes
+            return timeoutPresetDefault
         }
 
         static var keepAwakeDuration: Duration? {
@@ -237,6 +237,75 @@ enum AppPreferenceStore {
 
         static func setTimeoutPreset(_ preset: TimeoutPreset) {
             UserDefaults.standard.set(preset.rawValue, forKey: timeoutPresetKey)
+        }
+    }
+
+    // MARK: - Interaction
+
+    /// Optional tactile feedback. Key matches iOS `AppPreferences.Interaction`.
+    enum Interaction {
+        static let hapticFeedbackEnabledKey = "\(AppIdentifiers.subsystem).interaction.hapticFeedback.enabled"
+        /// What nothing stored means; `SettingsCatalog.hapticFeedback` uses this same constant.
+        static let hapticFeedbackEnabledDefault = true
+
+        static var isHapticFeedbackEnabled: Bool {
+            UserDefaults.standard.object(forKey: hapticFeedbackEnabledKey) as? Bool ?? hapticFeedbackEnabledDefault
+        }
+
+        static func setHapticFeedbackEnabled(_ enabled: Bool) {
+            UserDefaults.standard.set(enabled, forKey: hapticFeedbackEnabledKey)
+        }
+    }
+
+    // MARK: - Browser
+
+    /// Where regular web links open. Key matches iOS `AppPreferences.Browser`.
+    enum Browser {
+        enum LinkOpeningMode: String, CaseIterable, Identifiable, Sendable, Codable {
+            case inApp
+            case external
+
+            var id: String { rawValue }
+
+            var label: String {
+                switch self {
+                case .inApp: return "In-App Browser"
+                case .external: return "External Browser"
+                }
+            }
+
+            var detail: String {
+                switch self {
+                case .inApp:
+                    return "Open web links in Oppi's built-in Safari sheet. Oppi cannot read browser cookies or page data."
+                case .external:
+                    return "Open web links in your default browser outside Oppi."
+                }
+            }
+
+            var openActionTitle: String {
+                switch self {
+                case .inApp: return "Open In-App Browser"
+                case .external: return "Open in External Browser"
+                }
+            }
+        }
+
+        static let linkOpeningModeKey = "\(AppIdentifiers.subsystem).browser.linkOpeningMode"
+        /// What nothing stored means; `SettingsCatalog.openLinks` uses this same constant.
+        static let linkOpeningModeDefault = LinkOpeningMode.inApp
+
+        static var linkOpeningMode: LinkOpeningMode {
+            guard let raw = UserDefaults.standard.string(forKey: linkOpeningModeKey),
+                  let mode = LinkOpeningMode(rawValue: raw)
+            else {
+                return linkOpeningModeDefault
+            }
+            return mode
+        }
+
+        static func setLinkOpeningMode(_ mode: LinkOpeningMode) {
+            UserDefaults.standard.set(mode.rawValue, forKey: linkOpeningModeKey)
         }
     }
 

@@ -18,9 +18,17 @@ actor SettingsGate {
     }
 }
 
+/// A second setting on the Server Metrics route, for the tests that need two
+/// settings sharing one document (the route has only `enabled` in the app).
+let testLabelSetting = SettingDeclaration<String>(
+    id: "test.label", key: "label", storage: .server(.serverMetrics, revisioned: true), default: "",
+    validate: { $0.trimmingCharacters(in: .whitespaces).isEmpty ? "Give it a label." : nil },
+    copy: SettingCopy(title: "Label")
+)
+
 /// A server settings route kept in memory: it records every call, can be held,
-/// and can fail on demand. `revisioned` false answers documents with no
-/// revision, like a route that does not revision its settings.
+/// and can fail on demand. A `nil` revision answers documents with no revision,
+/// like a route that does not revision its settings.
 final class FakeSettingsTransport: SettingsServerTransport, @unchecked Sendable {
     struct Save: Equatable {
         var endpoint: SettingEndpoint
@@ -39,7 +47,7 @@ final class FakeSettingsTransport: SettingsServerTransport, @unchecked Sendable 
     private var loadGate: SettingsGate?
     private let revisioned: Bool
 
-    init(fields: [String: JSONValue] = ["enabled": false, "model": "anthropic/claude-haiku-5"], revision: Int? = 4) {
+    init(fields: [String: JSONValue] = ["enabled": false, "label": "first"], revision: Int? = 4) {
         document = SettingsServerDocument(fields: fields, revision: revision)
         revisioned = revision != nil
     }
