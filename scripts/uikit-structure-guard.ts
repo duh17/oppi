@@ -32,6 +32,17 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    calls `SettingsListStyle`; a list built another way (a different
  *    appearance, a layout helper) is not seen.
  *
+ *  - The settings-write ratchet (same file, same baseline) counts, in
+ *    `clients/apple/Oppi/Features/**`, the direct writes of a setting that
+ *    bypass `SettingsStore`: `AppPreferences.*.set…(`, `UserDefaults.standard.set(`,
+ *    `FontPreferences.set…(`, the `APIClient` calls that write a setting
+ *    (`settingsApiWrites` below), and `toggleRow(`, the plain switch row that
+ *    a declared setting replaces with `settingToggleRow`. A setting is declared
+ *    in `SettingsCatalog` and written by the store, so each page that moves
+ *    onto it lowers its count and the total only goes down. Limits: the guard
+ *    sees the call by name; a write through a stored closure, a wrapper type of
+ *    a page's own, or `UserDefaults` held in a variable is not seen.
+ *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
  *
@@ -48,6 +59,8 @@ type Construct = {
   exemptFiles?: string[];
   /** Counted only in files whose source also matches this. */
   fileMustMatch?: RegExp;
+  /** Counted only in files whose repo-relative path matches this. */
+  pathMustMatch?: RegExp;
 };
 type Counts = Record<string, number>;
 type Baseline = Record<string, Counts>;
@@ -109,6 +122,24 @@ const settingsThemingExceptions: { file: string; reason: string }[] = [
 ];
 const settingsThemingExempt = [settingsBase, settingsStyle, ...settingsThemingExceptions.map((entry) => entry.file)];
 
+/**
+ * The `APIClient` calls that write a setting. A page does not call them: the
+ * setting is declared in `SettingsCatalog` and `SettingsStore` writes it
+ * through its server adapter (`APIClient+SettingsTransport.swift`).
+ */
+const settingsApiWrites = [
+  "setAutoTitleConfig",
+  "setMobileOutputGuideConfiguration",
+  "setServerMetricsEnabled",
+  "setServerSkillEnabled",
+  "setServerExtensionEnabled",
+  "setPiResourceEnabled",
+  "setPiDefaultTools",
+  "setPiDefaultModel",
+  "saveDictationDictionary",
+];
+const featuresOnly = /^clients\/apple\/Oppi\/Features\//;
+
 const constructs: Construct[] = [
   { name: "NavigationStack", pattern: /\bNavigationStack\b/g, disallowed: true },
   { name: "NavigationSplitView", pattern: /\bNavigationSplitView\b/g, disallowed: true },
@@ -142,6 +173,38 @@ const constructs: Construct[] = [
     exemptFiles: settingsThemingExempt,
     // An inset-grouped list that also paints the theme's background itself.
     fileMustMatch: /\bpalette\.bg\b|\bthemeStore\.backgroundColor\b|\bSettingsListStyle\./,
+  },
+  // Settings written outside `SettingsStore`: see "Settings pages" in the guide.
+  {
+    name: "AppPreferences.*.set",
+    pattern: /\bAppPreferences\s*\.\s*\w+(?:\s*\.\s*\w+)*?\s*\.\s*set\w*\s*\(/g,
+    disallowed: false,
+    pathMustMatch: featuresOnly,
+  },
+  {
+    name: "UserDefaults.standard.set(",
+    pattern: /\bUserDefaults\s*\.\s*standard\s*\.\s*set\s*\(/g,
+    disallowed: false,
+    pathMustMatch: featuresOnly,
+  },
+  {
+    name: "FontPreferences.set",
+    pattern: /\bFontPreferences\s*\.\s*set\w*\s*\(/g,
+    disallowed: false,
+    pathMustMatch: featuresOnly,
+  },
+  {
+    name: "APIClient settings write",
+    pattern: new RegExp(`\\.\\s*(?:${settingsApiWrites.join("|")})\\s*\\(`, "g"),
+    disallowed: false,
+    pathMustMatch: featuresOnly,
+  },
+  {
+    name: "toggleRow(",
+    // The base's own definition is `func toggleRow(`; a declared setting calls `settingToggleRow(`.
+    pattern: /(?<![\w.])(?<!func\s)toggleRow\s*\(/g,
+    disallowed: false,
+    pathMustMatch: featuresOnly,
   },
 ];
 
@@ -177,8 +240,9 @@ function scan(): Hit[] {
   for (const absFile of scanRoots.flatMap(walkSwiftFiles)) {
     const file = relative(repoRoot, absFile);
     const stripped = stripSwiftCommentsAndStrings(readFileSync(absFile, "utf8"));
-    for (const { name, pattern, exemptFiles, fileMustMatch } of constructs) {
+    for (const { name, pattern, exemptFiles, fileMustMatch, pathMustMatch } of constructs) {
       if (exemptFiles?.includes(file)) continue;
+      if (pathMustMatch && !pathMustMatch.test(file)) continue;
       if (fileMustMatch && !fileMustMatch.test(stripped)) continue;
       for (const match of stripped.matchAll(pattern)) {
         const start = match.index + (match[0].length - match[0].trimStart().length);
@@ -247,7 +311,7 @@ for (const [file, counts] of Object.entries(current)) {
 }
 
 if (failures.length === 0) {
-  console.log("UIKit structure guard: PASS — no disallowed SwiftUI structure constructs, import SwiftUI and settings-list theming within baseline.");
+  console.log("UIKit structure guard: PASS — no disallowed SwiftUI structure constructs; import SwiftUI, settings-list theming and settings writes within baseline.");
   process.exit(0);
 }
 
@@ -271,5 +335,12 @@ UICollectionLayoutListConfiguration(appearance: .insetGrouped) outside the
 settings base mean a settings list is theming or laying itself out. Subclass
 SettingsListViewController instead (or, for a list that cannot, use
 SettingsListStyle.layoutConfiguration); see ${settingsGuide}. A screen that
-will never be a settings page goes in settingsThemingExceptions with a reason.`);
+will never be a settings page goes in settingsThemingExceptions with a reason.
+
+AppPreferences.*.set, UserDefaults.standard.set(, FontPreferences.set, an APIClient
+call that writes a setting, and toggleRow( in Features are settings written outside
+SettingsStore. Declare the setting in SettingsCatalog and read and write it through
+SettingsStore (settingToggleRow, settingChoiceRow on the settings base); see
+${settingsGuide}. The count only goes down: \`bun scripts/uikit-structure-guard.ts --update\`
+lowers the baseline after a page moves.`);
 process.exit(1);

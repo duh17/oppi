@@ -127,6 +127,15 @@
     "clients/apple/Oppi/Features/Agents/AgentNativeEditPages.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Agents/AgentNativeEditViewController.swift": {
+      "AppPreferences.*.set": 1
+    },
+    "clients/apple/Oppi/Features/Agents/PiToolsEditor.swift": {
+      "APIClient settings write": 1
+    },
+    "clients/apple/Oppi/Features/Chat/ChatViewController+Actions.swift": {
+      "AppPreferences.*.set": 1
+    },
     "clients/apple/Oppi/Features/Chat/ChatViewController+Leaves.swift": {
       "import SwiftUI": 1
     },
@@ -147,6 +156,12 @@
     },
     "clients/apple/Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/ModelPickerViewController.swift": {
+      "APIClient settings write": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
+      "AppPreferences.*.set": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
       "import SwiftUI": 1
@@ -171,6 +186,9 @@
     },
     "clients/apple/Oppi/Features/Mcp/McpSignInViewController.swift": {
       "SettingsListStyle.pin(": 1
+    },
+    "clients/apple/Oppi/Features/Onboarding/WhatsNewView.swift": {
+      "UserDefaults.standard.set(": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalColorPickerViewController.swift": {
       "SettingsListStyle.pin(": 1,
@@ -198,6 +216,9 @@
     },
     "clients/apple/Oppi/Features/Server/ModelBreakdownSection.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Server/ServerMetricsViewController.swift": {
+      "APIClient settings write": 1
     },
     "clients/apple/Oppi/Features/Server/ServerView.swift": {
       "import SwiftUI": 1
@@ -229,23 +250,28 @@
     "clients/apple/Oppi/Features/Servers/ServerPairedDevicesPage.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Servers/ServerSettingsModel.swift": {
+      "APIClient settings write": 2
+    },
     "clients/apple/Oppi/Features/Servers/ServerSettingsRootView.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/SessionRowDisplayEditor.swift": {
+      "AppPreferences.*.set": 1
     },
     "clients/apple/Oppi/Features/Sessions/SessionStatusPill.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Sessions/SessionThreadViews.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Settings/AutoTitleSettingsView.swift": {
-      "import SwiftUI": 1
+      "import SwiftUI": 1,
+      "AppPreferences.*.set": 1
     },
     "clients/apple/Oppi/Features/Settings/ChatDisplayPreviewCards.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/DictationDictionaryView.swift": {
-      "import SwiftUI": 1
+      "import SwiftUI": 1,
+      "APIClient settings write": 3
     },
     "clients/apple/Oppi/Features/Settings/QuickCommentsSettingsView.swift": {
       "import SwiftUI": 1
@@ -257,17 +283,33 @@
     "clients/apple/Oppi/Features/Settings/ScopedLockToggle.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift": {
-      "import SwiftUI": 1
+    "clients/apple/Oppi/Features/Settings/SettingsChatTopBarViewController.swift": {
+      "AppPreferences.*.set": 2
     },
-    "clients/apple/Oppi/Features/Settings/SettingsSessionsPage.swift": {
-      "import SwiftUI": 1
+    "clients/apple/Oppi/Features/Settings/SettingsChatViewController.swift": {
+      "AppPreferences.*.set": 3
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsEditorPage.swift": {
+      "toggleRow(": 7
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsExperimentsPage.swift": {
+      "toggleRow(": 4
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsGeneralPage.swift": {
+      "AppPreferences.*.set": 3,
+      "toggleRow(": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift": {
+      "import SwiftUI": 1,
+      "AppPreferences.*.set": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsTextPage.swift": {
-      "import SwiftUI": 1
+      "import SwiftUI": 1,
+      "FontPreferences.set": 4
     },
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
-      "import SwiftUI": 1
+      "import SwiftUI": 1,
+      "AppPreferences.*.set": 3
     },
     "clients/apple/Oppi/Features/Skills/ServerSkillBrowserViewController.swift": {
       "SettingsListStyle.pin(": 1
@@ -308,9 +350,15 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSandboxMcpPage.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsModel.swift": {
+      "APIClient settings write": 1
+    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsViewController.swift": {
       "SettingsListStyle.pin(": 1,
       "SettingsListStyle.applyTheme(": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceSidebarViewController.swift": {
+      "UserDefaults.standard.set(": 1
     },
     "clients/apple/OppiDebugHarness/AskCardIntentRegressionPreview.swift": {
       "import SwiftUI": 1
