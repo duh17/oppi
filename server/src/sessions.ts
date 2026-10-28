@@ -60,6 +60,7 @@ import type { TraceOutlineResult } from "./trace-outline.js";
 import type { SessionStopTimers } from "./session-stop.js";
 import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
+import type { DurableSessionNaming } from "./durable-harness.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
 import type { LiveVoiceSpeech } from "./live-voice-speech.js";
 
@@ -125,6 +126,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Injected by the server for auto-title generation on first message. */
   onFirstMessage: ((session: Session) => void) | null = null;
 
+  /** Injected by the server: names a Session for durable extensions (the auto-name extension). */
+  sessionNaming: DurableSessionNaming | null = null;
+
   /** Injected by the server for per-turn operational metrics. */
   opsMetrics: ServerTelemetry | null = null;
 
@@ -181,6 +185,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       runtime.bindSessions({
         sessionIdOf: (storeId, conversationId) =>
           storage.findSessionByDurableConversation(storeId, conversationId)?.id,
+      });
+      // Read at each use: the server sets `sessionNaming` after constructing this manager.
+      runtime.bindSessionNaming({
+        name: (sessionId) => this.sessionNaming?.name(sessionId),
+        setName: async (sessionId, name) => {
+          if (this.sessionNaming) await this.sessionNaming.setName(sessionId, name);
+        },
       });
       runtime.bindNotify({
         offersNotify: (sessionId) => this.notifyPort?.offersNotify(sessionId) ?? false,

@@ -57,6 +57,7 @@ import { isControlConversation } from "./control-session.js";
 import { readRequestDisplay, type DurableAgentController } from "./durable-agent-controller.js";
 import { controlConversationTools } from "./durable-control-conversation.js";
 import { DurableRuntime, type SessionHost } from "./durable-harness.js";
+import { DurableSessionDoc } from "./durable-session-doc.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 import { DurableEventProjection } from "./durable-event-projection.js";
@@ -533,6 +534,15 @@ export class DurableBackend implements AgentBackend {
           "A bound server durable session cannot switch execution runtime or sandbox workspace",
         );
       conversation = existing;
+      // The Session this conversation belongs to, for hooks and tasks of durable extensions. A
+      // conversation bound before the document existed gets it here.
+      if (
+        (await harness.snapshot(DurableSessionDoc, existing.id, BACKGROUND_CONTEXT))?.sessionId !==
+        session.id
+      )
+        await conversation.commit(async (tx) => {
+          (await tx.doc(DurableSessionDoc, existing.id)).sessionId = session.id;
+        }, BACKGROUND_CONTEXT);
       // A session bound to a worktree runs where the row says: one that moved off a removed
       // worktree must not keep writing in the old checkout. Main-checkout sessions (the id
       // "main" an HTTP create stores) keep the cwd their conversation stored: a missing
@@ -609,6 +619,7 @@ export class DurableBackend implements AgentBackend {
             const runtime = await tx.doc(DurableRuntime, id);
             runtime.kind = sandbox ? "sandbox" : "host";
             if (sandbox) runtime.workspaceId = workspace.id;
+            (await tx.doc(DurableSessionDoc, id)).sessionId = session.id;
             if (created) Object.assign(await tx.doc(OppiAgentDoc, id), created.doc);
           },
           // The resolved agent, committed with the conversation: one configure.

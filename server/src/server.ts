@@ -918,6 +918,21 @@ export class Server {
       onCredentialsChanged: () => this.models.refresh(),
     });
 
+    // Durable extensions (auto-name) name their own Session through this. Pi's session_info entry
+    // is the source of truth for a classic session; Oppi's Session.name is its projection.
+    this.sessions.sessionNaming = {
+      name: (sessionId) => this.storage.getSession(sessionId)?.name,
+      setName: async (sessionId, name) => {
+        await this.sessions.runCommand(sessionId, { type: "set_session_name", name });
+        const active = this.sessions.getActiveSession(sessionId);
+        if (active) {
+          active.name = name;
+          this.storage.saveSession(active);
+        }
+        this.appEventStreamMux.emitSessionSummaryById(sessionId);
+      },
+    };
+
     // Auto-title generator — generates concise task titles on first user message.
     this.titleGenerator = new SessionTitleGenerator({
       getConfig: () => this.storage.getConfig().autoTitle ?? { enabled: false },

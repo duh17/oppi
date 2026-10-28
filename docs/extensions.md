@@ -9,7 +9,7 @@ Related: [Extension native UI](extension-native-ui.md) (prompts, widgets, native
 
 ## What Oppi loads
 
-Pi owns skills and extensions. Oppi resolves them for the session's working directory through Pi's resource system. There is no workspace extension allowlist, and Oppi never writes `~/.pi/agent/settings.json`, runs `pi install`, or enables anything in standalone Pi. Installing Oppi does not install a Pi extension package.
+Pi owns skills and extensions. Oppi resolves them for the session's working directory through Pi's resource system. There is no workspace extension allowlist, and Oppi never writes `~/.pi/agent/settings.json`, runs `pi install`, or enables anything in standalone Pi. Installing Oppi does not install a Pi extension package; the one exception is the one-time [Auto-Name](#auto-name) upgrade.
 
 Pi's normal sources are auto-discovered directories (`~/.pi/agent/extensions/`, `.pi/extensions/`), `extensions` paths in `settings.json`, and packages installed with `pi install`.
 
@@ -64,6 +64,20 @@ The workspace **Extensions** picker starts from the extensions Pi resolves for t
 - Duplicates resolve by Pi's resource-loader precedence. Extensions named `ask` are allowed.
 - A toggle only applies to resources Pi resolves; a scanned file Pi cannot match fails with `Pi resource not found for cwd`.
 - For a host folder, the picker shows its [project trust](server-configuration.md#project-trust-in-managed-host-sessions). A `distrusted` folder lists no project-local extensions or settings and refuses toggles, because Pi ignores the project settings a toggle would write. An `ask` folder lists them, because an unanswered session prompt allows them.
+
+## Auto-Name
+
+`auto-name` is a Pi extension that names an unnamed session from its first message: a small model writes a 2–6 word title and the extension calls Pi's `setSessionName()`, which Oppi lists and shows like any other name. It replaces the built-in **Auto-Name** setting and works in terminal Pi, Oppi sessions, and durable sessions. It never renames a session that has a name (yours, one given at creation such as `oppi session create --name`, or another extension's), titles only a session's first message, and when no title can be made (no model, no credentials, a 15-second timeout) leaves the session unnamed and logs the reason once.
+
+Oppi ships the package in its npm install, at `extensions/pi/auto-name` next to the server's `src`, and does not enable it. Link it where Pi discovers extensions:
+
+```bash
+ln -sfn "$(dirname "$(readlink -f "$(command -v oppi)")")/../extensions/pi/auto-name" ~/.pi/agent/extensions/auto-name
+```
+
+- **On and off:** it is an ordinary extension, so **Server Settings → Extensions** turns it on or off for every session, and a workspace's **Extensions** list turns it on or off for that workspace's classic sessions ([Skills and Extensions pages](#skills-and-extensions-pages)). In terminal Pi it follows `pi config`. Durable sessions load the user-scope package, so they follow the server-wide setting; `oppi extensions disable auto-name` also leaves it out of durable sessions ([Durable extensions](#durable-extensions)).
+- **Model:** `~/.pi/agent/auto-name.json` holds `{ "model": "provider/model-id" }`, read for each title. Without it the extension uses the cheapest small model (an id with `haiku`, `flash`, `mini`, `nano`, `lite`, or `small`; non-reasoning first) of the session's own provider, else the session's own model. A configured model that is not available names nothing; there is no silent fallback to a model you did not choose. A title is one request of about 30 output tokens to that provider, so it follows the same [privacy boundary](privacy.md#model-providers-and-server-extensions) as the session's other model calls.
+- **Upgrading from the built-in setting:** if `config.json` had `autoTitle.enabled: true` with a model, the first `oppi serve` on the new version writes that model to `auto-name.json` and links the package into `~/.pi/agent/extensions/auto-name` (keeping an `auto-name.json` or link that is already there), then removes `autoTitle` from `config.json`. It copies `config.json` to `$OPPI_DATA_DIR/backups/config-pre-auto_title_to_extension_v1-<time>.json` first, and if anything fails it changes nothing else and logs the backup path. `autoTitle` that was off, or on without a model (which titled nothing), is only removed. Update the app and the server together: an older app opens a Settings page for the removed `/server/auto-title` endpoints and gets an error.
 
 ## Make an extension work on a phone
 
@@ -257,6 +271,7 @@ Durable sessions do not use this channel: their background jobs and subagent rep
 | `ask` | `ask` | Multiple questions, `multiSelect`, custom answers. Uses `ctx.ui.ask()` (native AskCard) in Oppi, `ctx.ui.custom()` in terminal Pi, and `select()`/`input()` elsewhere. `ctx.ui.ask()` is Oppi-defined, so the extension checks for it first. |
 | `subagents` | `subagent` | A launch returns at once; one async `oppi session wait` per parent updates the widget (Done when idle, Needs attention on a pending dialog). Supervised launches start a parent turn on settle or attention and otherwise check in about every 4 minutes to keep the prompt cache warm. Durable sessions have a built-in `subagent` tool and do not need it. |
 | `background-jobs` | `background_job` | A shell command still running after 15 seconds, or ending in `&`, becomes a job shown in the composer pill, and its output arrives as a follow-up. Polling a running job is blocked. It reports through the [pending wake API](#pending-wake-extension-api) and keeps the final turn open unless `oppi session get` confirms the session does not auto-stop. A job that dies with its process (restart, reload, Stop) is reported once with the next turn and is not rerun. |
+| `auto-name` | none | Names an unnamed session from its first message with a small model, in terminal Pi, classic sessions, and durable sessions. Not enabled by Oppi; see [Auto-Name](#auto-name). |
 | `browser-automation-video` | A browser tool | Records WebM with `agent-browser`, converts it to H.264 MP4, stores it with `ctx.attachments.addFile()` when available, and returns it in `details.media[]`. |
 
 Oppi loads no `ask` tool of its own. Install or enable an extension named `ask` when a workspace or classic Pi Control session needs one.
@@ -352,7 +367,7 @@ export default defineExtension({
 });
 ```
 
-An extension that shows Oppi UI imports it from `oppi/durable`: `requestUI` for dialogs, and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards.
+An extension that shows Oppi UI imports it from `oppi/durable`: `requestUI` for dialogs, and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards. A hook or task that needs the Oppi Session of its conversation reads `oppiSessionId(api, api.conversationId, context)` and names it with `oppiHost().sessionName(id)` (`get()` and `set(name)`), as `auto-name` does from a generation hook.
 
 - **Where Oppi looks:** enabled user-scope Pi packages, resolved as Pi resolves classic extensions (`~/.pi/agent/extensions/<name>/`, packages from `settings.json` and `pi install`, the same enable and disable settings). Project `.pi/extensions` packages and single-file extensions have no durable entry.
 - **Shared modules:** `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `typebox`, and `oppi/durable` resolve to the server's own copies, so your documents and tasks belong to the server's durable store. Ship the entry and every file it imports in the package's `files`.

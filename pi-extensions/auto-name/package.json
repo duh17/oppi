@@ -1,0 +1,51 @@
+{
+  "name": "auto-name",
+  "version": "0.1.0",
+  "description": "Pi extension that names an unnamed session from its first message with a small model, in terminal Pi and Oppi sessions, classic and durable.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Chaos Donkey",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "oppi",
+    "session-name"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/duh17/oppi.git",
+    "directory": "pi-extensions/auto-name"
+  },
+  "bugs": "https://github.com/duh17/oppi/issues",
+  "homepage": "https://github.com/duh17/oppi/tree/main/pi-extensions/auto-name#readme",
+  "files": [
+    "index.ts",
+    "durable.ts",
+    "core.ts",
+    "README.md",
+    "package.json"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "oppi": {
+    "durable": {
+      "entry": "./durable.js",
+      "runtimes": [
+        "host",
+        "sandbox"
+      ]
+    }
+  }
+}

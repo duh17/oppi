@@ -51,6 +51,11 @@ COPY pi-extensions/background-jobs/package.json /opt/pi-extensions/background-jo
 COPY pi-extensions/background-jobs/jobs.ts /opt/pi-extensions/background-jobs/jobs.ts
 COPY pi-extensions/background-jobs/delivery.ts /opt/pi-extensions/background-jobs/delivery.ts
 COPY pi-extensions/subagents/subagents.ts /opt/pi-extensions/subagents/subagents.ts
+COPY pi-extensions/auto-name/core.ts /opt/pi-extensions/auto-name/core.ts
+COPY pi-extensions/auto-name/index.ts /opt/pi-extensions/auto-name/index.ts
+COPY pi-extensions/auto-name/durable.ts /opt/pi-extensions/auto-name/durable.ts
+COPY pi-extensions/auto-name/package.json /opt/pi-extensions/auto-name/package.json
+COPY pi-extensions/auto-name/README.md /opt/pi-extensions/auto-name/README.md
 RUN npm run build \
     && ln -sf /opt/server/dist/src/cli.js /usr/local/bin/oppi
 

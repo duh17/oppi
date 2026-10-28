@@ -1704,6 +1704,13 @@ export class SdkBackend implements AgentBackend {
         ...(effectiveToolPolicy.excluded ? { excludeTools: effectiveToolPolicy.excluded } : {}),
       });
 
+      // A name Oppi holds from creation (`oppi session create --name`, an Agent's session name)
+      // is the session's name. Pi does not know it, so give it over, or an extension that names
+      // unnamed sessions (auto-name) would overwrite it.
+      if (!isResume && session.name && !createResult.session.sessionName) {
+        createResult.session.setSessionName(session.name);
+      }
+
       if (agentDefinition && launchToolPolicy?.allowed) {
         const activeToolNames = createResult.session.agent.state.tools.map((tool) => tool.name);
         const missingTools = findUnavailableConfiguredAgentTools(

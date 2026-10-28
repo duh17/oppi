@@ -2,6 +2,7 @@ import type { Context, JsonValue } from "@earendil-works/chord";
 import type {
   Agent,
   ConversationId,
+  DocumentReader,
   TaskId,
   ToolExecutionApi,
   ToolExecutionResult,
@@ -12,6 +13,7 @@ import type { TSchema } from "typebox";
 import type { Job } from "../extensions/durable/background-jobs/contract.js";
 import type { SubagentWorktree } from "../extensions/durable/sessions/contract.js";
 import type { NotifyInput, NotifyOutcome } from "../extensions/durable/notify/contract.js";
+import { DurableSessionDoc } from "./durable-session-doc.js";
 
 /**
  * `oppi/durable`: the host API a durable extension imports for what only Oppi provides. The
@@ -77,8 +79,33 @@ export interface OppiDurableHost {
    * not make, or a conversation without a Session.
    */
   liveVoice(env: ExecutionEnv | undefined): ((text: string) => void) | undefined;
+  /**
+   * The name of Oppi Session `sessionId` and a way to set it (the same write as renaming it in
+   * the app). Undefined until the server binds it. Take the id from `oppiSessionId`, which
+   * names the Session of your own conversation.
+   */
+  sessionName(sessionId: string): DurableSessionName | undefined;
   /** Pi's file tools over the host or a sandbox session's Gondolin VM. */
   readonly files: OppiFileToolsHost;
+}
+
+/** A Session's name, as Oppi lists it. */
+export interface DurableSessionName {
+  /** Undefined while the Session has none. */
+  get(): string | undefined;
+  set(name: string): Promise<void>;
+}
+
+/**
+ * The Oppi Session id of conversation `id`, for a hook or task (which have no execution env):
+ * undefined for a conversation the server has not bound to a Session.
+ */
+export async function oppiSessionId(
+  read: DocumentReader,
+  id: ConversationId,
+  context: Context,
+): Promise<string | undefined> {
+  return (await read.snapshot(DurableSessionDoc, id, context))?.sessionId;
 }
 
 const HOST = Symbol.for("oppi.durable.host");

@@ -21,6 +21,8 @@ import {
 } from "./cli/status.js";
 import { Storage } from "./storage.js";
 import { MAX_PAIRING_TOKEN_TTL_MS } from "./storage/auth-store.js";
+import { runAutoTitleToExtensionMigration } from "./storage/auto-title-extension-migration.js";
+import { DEFAULT_DATA_DIR } from "./storage/config-store.js";
 import { SHORT_INVITE_MAX_TTL_MS } from "./device-pairing.js";
 import { Server } from "./server.js";
 import {
@@ -1391,6 +1393,8 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
   switch (command) {
     case "serve":
     case "start":
+      // Before the config loads: the store drops keys it no longer knows.
+      runAutoTitleToExtensionMigration({ dataDir: dataDir ?? DEFAULT_DATA_DIR });
       await cmdServe(new Storage(dataDir, { migrateWorkspaceFolders: true }), flags.host);
       break;
 

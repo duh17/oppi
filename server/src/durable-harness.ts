@@ -242,6 +242,12 @@ export interface DurableSessionBinding {
   sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
 }
 
+/** What `oppiHost().sessionName` reads and writes: the name of an Oppi Session. */
+export interface DurableSessionNaming {
+  name(sessionId: string): string | undefined;
+  setName(sessionId: string, name: string): Promise<void>;
+}
+
 /**
  * What Oppi's built-ins get from `oppiHost()`: the subagent and control hosts scoped to the
  * conversation that runs a tool call's env, and the file tools over the host or a sandbox VM. One object for
@@ -275,8 +281,16 @@ const durableHost: OppiDurableHost = {
     const sessionId = runtime.sessionIdOf(caller.host.storeId, caller.conversationId);
     return port && sessionId ? (text) => port.spoke(sessionId, text) : undefined;
   },
+  sessionName: (sessionId) => {
+    const naming = boundSessionNaming;
+    return naming
+      ? { get: () => naming.name(sessionId), set: (name) => naming.setName(sessionId, name) }
+      : undefined;
+  },
   files: fileToolsHost,
 };
+/** The one naming port of the process, like the host that exposes it. */
+let boundSessionNaming: DurableSessionNaming | undefined;
 let durableHostBound = false;
 
 function readStoreMeta(directory: string): DurableStoreMeta | undefined {
@@ -1594,6 +1608,13 @@ export class DurableHarness {
   }
   bindNotify(binding: SessionNotifyPort): void {
     this.notifyBinding = binding;
+  }
+  /**
+   * Session names for `oppiHost().sessionName`. A hook or task has no execution env to find its
+   * runtime by, so the host reads one process-wide binding: the latest server's.
+   */
+  bindSessionNaming(binding: DurableSessionNaming): void {
+    boundSessionNaming = binding;
   }
   /** Live Voice for `speak` and for each attachment's call-state toggle. */
   bindLiveVoice(binding: LiveVoiceRuntimePort): void {
