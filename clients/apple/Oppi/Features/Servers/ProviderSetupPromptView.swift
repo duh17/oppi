@@ -7,16 +7,22 @@ import UIKit
 @MainActor
 final class ProviderSetupPromptView: UIView {
     private let stack = UIStackView()
-    private let titleLabel = UILabel()
-    private let messageLabel = UILabel()
+    private let symbol = UIImageView()
+    private let titleLabel = WrappingLabel()
+    private let messageLabel = WrappingLabel()
     private let button = UIButton(configuration: .borderedProminent())
     private var onConfigure: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         titleLabel.numberOfLines = 0
+        titleLabel.font = UIFont.scaled(.headline, .semibold)
         titleLabel.adjustsFontForContentSizeCategory = true
         messageLabel.numberOfLines = 0
+        messageLabel.lineBreakMode = .byWordWrapping
+        for label in [titleLabel, messageLabel] {
+            label.setContentCompressionResistancePriority(.required, for: .vertical)
+        }
         messageLabel.font = .preferredFont(forTextStyle: .subheadline)
         messageLabel.adjustsFontForContentSizeCategory = true
         button.addAction(UIAction { [weak self] _ in self?.onConfigure?() }, for: .touchUpInside)
@@ -31,7 +37,13 @@ final class ProviderSetupPromptView: UIView {
         stack.layer.cornerRadius = 16
         stack.layer.cornerCurve = .continuous
         stack.layer.borderWidth = 1
-        [titleLabel, messageLabel, buttonRow].forEach(stack.addArrangedSubview)
+        symbol.setContentHuggingPriority(.required, for: .horizontal)
+        symbol.setContentCompressionResistancePriority(.required, for: .horizontal)
+        symbol.isAccessibilityElement = false
+        let titleRow = UIStackView(arrangedSubviews: [symbol, titleLabel])
+        titleRow.alignment = .top
+        titleRow.spacing = 6
+        [titleRow, messageLabel, buttonRow].forEach(stack.addArrangedSubview)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -53,10 +65,11 @@ final class ProviderSetupPromptView: UIView {
     ) {
         self.onConfigure = onConfigure
         let colors = SessionRowStyle.for(themeID).colors
-        titleLabel.attributedText = SessionRowText.symbolAndText(
-            "key.fill", String(localized: "Finish server setup"),
-            style: .headline, symbolWeight: .semibold, textWeight: .semibold, spacing: 6, color: colors.fg
-        )
+        titleLabel.text = String(localized: "Finish server setup")
+        titleLabel.textColor = colors.fg
+        symbol.image = UIImage(systemName: "key.fill")
+        symbol.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .headline, scale: .default)
+        symbol.tintColor = colors.fg
         messageLabel.text = message
         messageLabel.textColor = colors.comment
         var configuration = UIButton.Configuration.borderedProminent()

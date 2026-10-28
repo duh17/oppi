@@ -31,7 +31,7 @@ struct UsageColors {
 
 enum UsageText {
     static func heading(_ text: String, colors: UsageColors) -> UILabel {
-        let label = UILabel()
+        let label = WrappingLabel()
         label.text = text
         label.font = .preferredFont(forTextStyle: .subheadline).withWeight(.semibold)
         label.adjustsFontForContentSizeCategory = true
@@ -42,7 +42,7 @@ enum UsageText {
     }
 
     static func caption(_ text: String, colors: UsageColors, style: UIFont.TextStyle = .caption1) -> UILabel {
-        let label = UILabel()
+        let label = WrappingLabel()
         label.text = text
         label.font = .preferredFont(forTextStyle: style)
         label.adjustsFontForContentSizeCategory = true
@@ -134,9 +134,9 @@ final class UsageHeroView: UIView {
 
 private final class UsageMetricBox: UIControl {
     let metric: StatsMetric
-    private let titleLabel = UILabel()
-    private let valueLabel = UILabel()
-    private let trendLabel = UILabel()
+    private let titleLabel = WrappingLabel()
+    private let valueLabel = WrappingLabel()
+    private let trendLabel = WrappingLabel()
     private let marker = UIView()
 
     init(metric: StatsMetric) {
@@ -215,7 +215,7 @@ private final class UsageMetricBox: UIControl {
 /// A provider's logo as a template image, or its monogram when there is no logo.
 final class UsageProviderGlyphView: UIView {
     private let imageView = UIImageView()
-    private let monogram = UILabel()
+    private let monogram = WrappingLabel()
     private let side: CGFloat
 
     init(side: CGFloat) {
@@ -302,12 +302,12 @@ final class UsageShareBar: UIView {
 /// its prompt-cache line. One accessibility element that reads all of it.
 final class UsageModelRowView: UIView {
     private let glyph = UsageProviderGlyphView(side: 14)
-    private let nameLabel = UILabel()
-    private let providerLabel = UILabel()
-    private let valueLabel = UILabel()
-    private let shareLabel = UILabel()
+    private let nameLabel = WrappingLabel()
+    private let providerLabel = WrappingLabel()
+    private let valueLabel = WrappingLabel()
+    private let shareLabel = WrappingLabel()
     private let bar = UsageShareBar()
-    private let cacheLabel = UILabel()
+    private let cacheLabel = WrappingLabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -396,9 +396,9 @@ final class UsageModelRowView: UIView {
 /// One workspace in the breakdown: its name, its sessions, and its cost.
 final class UsageWorkspaceRowView: UIView {
     private let icon = UIImageView(image: UIImage(systemName: "folder.fill"))
-    private let nameLabel = UILabel()
-    private let sessionsLabel = UILabel()
-    private let costLabel = UILabel()
+    private let nameLabel = WrappingLabel()
+    private let sessionsLabel = WrappingLabel()
+    private let costLabel = WrappingLabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -459,11 +459,11 @@ final class UsageWorkspaceRowView: UIView {
 /// One session in a day's detail: provider glyph, name, model, workspace, cost, and time.
 final class UsageSessionRowView: UIView {
     private let glyph = UsageProviderGlyphView(side: 12)
-    private let nameLabel = UILabel()
-    private let modelLabel = UILabel()
-    private let detailLabel = UILabel()
-    private let costLabel = UILabel()
-    private let timeLabel = UILabel()
+    private let nameLabel = WrappingLabel()
+    private let modelLabel = WrappingLabel()
+    private let detailLabel = WrappingLabel()
+    private let costLabel = WrappingLabel()
+    private let timeLabel = WrappingLabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -536,12 +536,12 @@ final class UsageDailyDetailView: UIView {
     let chartSlot = UIView()
     var onClose: (() -> Void)?
 
-    private let titleLabel = UILabel()
-    private let totalsLabel = UILabel()
+    private let titleLabel = WrappingLabel()
+    private let totalsLabel = WrappingLabel()
     private let closeButton = UIButton(type: .system)
-    private let sessionsHeading = UILabel()
+    private let sessionsHeading = WrappingLabel()
     private let sessionList = UIStackView()
-    private let moreLabel = UILabel()
+    private let moreLabel = WrappingLabel()
     private let stack = UIStackView()
 
     override init(frame: CGRect) {
@@ -627,8 +627,8 @@ final class UsageDailyDetailView: UIView {
 final class UsageMessageView: UIView {
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let icon = UIImageView(image: UIImage(systemName: "exclamationmark.triangle"))
-    private let titleLabel = UILabel()
-    private let messageLabel = UILabel()
+    private let titleLabel = WrappingLabel()
+    private let messageLabel = WrappingLabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)

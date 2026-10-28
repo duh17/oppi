@@ -68,44 +68,42 @@ struct UsageDailyChartLeaf: View {
             onDaySelected: onDaySelected
         )
         .id(colors.themeKey)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(UsageChartIdentifier.daily)
     }
 }
 
-/// The models' share of the metric as a donut, its total in the middle.
+/// The identifiers of the chart leaves, which the accessibility audit's waiver finds
+/// them by (`UIValidateDump`).
+enum UsageChartIdentifier {
+    static let prefix = "server.usage.chart."
+    static let daily = prefix + "daily"
+    static let donut = prefix + "donut"
+    static let hourly = prefix + "hourly"
+}
+
+/// The models' share of the metric as a donut. Its total is a UIKit label over (or under)
+/// it, so the number follows Dynamic Type instead of shrinking into the ring.
 struct UsageModelDonutLeaf: View {
     let models: [AggregatedStatsModel]
     let metric: StatsMetric
-    let totalText: String
     let colors: UsageChartColors
 
     var body: some View {
-        ZStack {
-            Chart(models) { item in
-                SectorMark(
-                    angle: .value(metric.chartTitle, item.value(for: metric)),
-                    innerRadius: .ratio(0.6),
-                    angularInset: 1.5
-                )
-                .foregroundStyle(modelColor(item.representativeModel))
-            }
-            .chartLegend(.hidden)
-            .frame(width: 140, height: 140)
-
-            VStack(spacing: 2) {
-                Text(totalText)
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .foregroundStyle(colors.primary)
-                Text("total")
-                    .font(.caption2)
-                    .foregroundStyle(colors.tertiary)
-            }
-            .frame(width: 80)
+        Chart(models) { item in
+            SectorMark(
+                angle: .value(metric.chartTitle, item.value(for: metric)),
+                innerRadius: .ratio(0.6),
+                angularInset: 1.5
+            )
+            .foregroundStyle(modelColor(item.representativeModel))
         }
+        .chartLegend(.hidden)
+        .frame(width: 140, height: 140)
         .frame(maxWidth: .infinity)
         .id(colors.themeKey)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(UsageChartIdentifier.donut)
     }
 }
 
@@ -149,6 +147,8 @@ struct UsageHourlyChartLeaf: View {
         .chartXScale(domain: 0...23)
         .frame(height: 160)
         .id(colors.themeKey)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(UsageChartIdentifier.hourly)
     }
 }
 

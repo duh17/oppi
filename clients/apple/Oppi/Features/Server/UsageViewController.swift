@@ -31,14 +31,17 @@ final class UsageViewController: UIViewController {
     private let detailSpinner = UIActivityIndicatorView(style: .medium)
     private let detailView = UsageDailyDetailView()
     private let modelsSection = UIStackView()
-    private let modelsHeading = UILabel()
+    private let modelsHeading = WrappingLabel()
     private let donutSlot = UIView()
+    /// The total in the ring's middle, or under it at large text sizes (`donutTotalBelow`).
+    private let donutTotalCenter = WrappingLabel()
+    private let donutTotalBelow = WrappingLabel()
     private let modelList = UIStackView()
     private let modelsToggle = UIButton(type: .system)
     private let workspacesSection = UIStackView()
-    private let workspacesHeading = UILabel()
+    private let workspacesHeading = WrappingLabel()
     private let workspaceList = UIStackView()
-    private let noWorkspaces = UILabel()
+    private let noWorkspaces = WrappingLabel()
 
     private let chartHost = UsageChartHost()
     private let donutHost = UsageChartHost()
@@ -98,6 +101,7 @@ final class UsageViewController: UIViewController {
     private func buildLayout() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
+        scrollView.accessibilityIdentifier = "server.usage.scroll"
         let refresh = UIRefreshControl()
         refresh.addAction(UIAction { [weak self, weak refresh] _ in
             Task {
@@ -130,7 +134,19 @@ final class UsageViewController: UIViewController {
         modelsSection.axis = .vertical
         modelsSection.spacing = 12
         modelsSection.alignment = .fill
-        [modelsHeading, donutSlot, modelList, modelsToggle].forEach(modelsSection.addArrangedSubview)
+        for label in [donutTotalCenter, donutTotalBelow] {
+            label.numberOfLines = 0
+            label.textAlignment = .center
+            label.accessibilityIdentifier = "server.usage.donut.total"
+            label.translatesAutoresizingMaskIntoConstraints = false
+        }
+        donutSlot.addSubview(donutTotalCenter)
+        NSLayoutConstraint.activate([
+            donutTotalCenter.centerXAnchor.constraint(equalTo: donutSlot.centerXAnchor),
+            donutTotalCenter.centerYAnchor.constraint(equalTo: donutSlot.centerYAnchor),
+            donutTotalCenter.widthAnchor.constraint(lessThanOrEqualToConstant: 84),
+        ])
+        [modelsHeading, donutSlot, donutTotalBelow, modelList, modelsToggle].forEach(modelsSection.addArrangedSubview)
         modelsHeading.font = .preferredFont(forTextStyle: .subheadline).bold()
         modelsHeading.adjustsFontForContentSizeCategory = true
         modelsHeading.accessibilityTraits = .header
@@ -209,7 +225,6 @@ final class UsageViewController: UIViewController {
 
         let rangeIndex = UsageRange.allCases.firstIndex(of: model.range) ?? 0
         if rangeControl.selectedSegmentIndex != rangeIndex { rangeControl.selectedSegmentIndex = rangeIndex }
-        rangeControl.selectedSegmentTintColor = nil
 
         let stats = model.stats
         message.isHidden = stats != nil
@@ -284,11 +299,12 @@ final class UsageViewController: UIViewController {
             if renderedDonut != key {
                 renderedDonut = key
                 donutHost.show(
-                    UsageModelDonutLeaf(models: models, metric: model.metric, totalText: model.metric.formatted(total), colors: chartColors),
+                    UsageModelDonutLeaf(models: models, metric: model.metric, colors: chartColors),
                     in: donutSlot, parent: self, root: root
                 )
             }
         }
+        renderDonutTotal(model.metric.formatted(total), visible: total > 0, colors: colors)
         modelList.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for item in model.visibleModels {
             let row = UsageModelRowView()
@@ -307,6 +323,26 @@ final class UsageViewController: UIViewController {
             return outgoing
         }
         modelsToggle.configuration = configuration
+    }
+
+    /// The total sits in the ring at ordinary text sizes and under it from XXL up, where it
+    /// would not fit the ring's 84 pt middle.
+    private func renderDonutTotal(_ total: String, visible: Bool, colors: UsageColors) {
+        let below = traitCollection.preferredContentSizeCategory >= .extraExtraLarge
+        let text = NSMutableAttributedString(
+            string: total,
+            attributes: [.font: UIFont.scaled(.caption1, .semibold, monospacedDigits: true), .foregroundColor: colors.fg]
+        )
+        text.append(NSAttributedString(
+            string: "\n" + String(localized: "total"),
+            attributes: [.font: UIFont.preferredFont(forTextStyle: .caption2), .foregroundColor: colors.comment]
+        ))
+        for label in [donutTotalCenter, donutTotalBelow] {
+            label.attributedText = text
+            label.adjustsFontForContentSizeCategory = true
+        }
+        donutTotalCenter.isHidden = !visible || below
+        donutTotalBelow.isHidden = !visible || !below
     }
 
     private func renderWorkspaces(_ workspaces: [StatsWorkspaceBreakdown], colors: UsageColors) {

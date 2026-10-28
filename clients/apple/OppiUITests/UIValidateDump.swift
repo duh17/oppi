@@ -104,6 +104,12 @@ enum UIValidateDump {
             let element = app.descendants(matching: .any)[preview.identifier]
             return element.exists ? (preview.identifier, element.frame, preview.reason) : nil
         }
+        // The Usage charts: Swift Charts' own accessibility nodes live inside these frames.
+        let chartFrames = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "server.usage.chart."))
+            .allElementsBoundByIndex
+            .filter { $0.exists }
+            .map(\.frame)
         // The Extensions rows: each cell's label reads "<name>, <detail>".
         let extensionRows = app.collectionViews["workspace.edit.extensions.list"].cells.allElementsBoundByIndex
             .filter { $0.exists && $0.identifier.isEmpty }
@@ -118,7 +124,8 @@ enum UIValidateDump {
                         element: describeElement(issue.element),
                         waivedReason: waivedReason(
                             for: issue, previewFrames: previewFrames, sampledPreviews: sampledPreviews,
-                            extensionRows: extensionRows, elementlessWaived: &box.elementlessWaived
+                            extensionRows: extensionRows, chartFrames: chartFrames,
+                            elementlessWaived: &box.elementlessWaived
                         )
                     )
                 )
@@ -259,8 +266,10 @@ enum UIValidateDump {
         previewFrames: [CGRect],
         sampledPreviews: [(identifier: String, frame: CGRect, reason: String)],
         extensionRows: [(label: String, frame: CGRect)],
+        chartFrames: [CGRect],
         elementlessWaived: inout Set<String>
     ) -> String? {
+        if let reason = chartWaiver(for: issue, chartFrames: chartFrames) { return reason }
         if issue.auditType == .textClipped, issue.element?.elementType == .searchField {
             return "textClipped on the system search field, which draws its text in full"
         }
@@ -290,6 +299,30 @@ enum UIValidateDump {
                 + "not a sample-data artifact; the editor is unchanged since 7665a92f0"
         }
         return nil
+    }
+
+    /// Usage's three charts are Swift Charts leaves (`UsageCharts.swift`, framework-required
+    /// SwiftUI; the daily one is `StatsDailyChart`, shared with the Mac). The framework makes
+    /// each bar and axis label its own accessibility node, too small to hit and with no
+    /// description, and draws the axis text without exposing it as an element, so the audit
+    /// reports `hitRegion`, `sufficientElementDescription`, `dynamicType`, `textClipped`,
+    /// `contrast`, and `elementDetection` on them. Only an issue whose element sits inside a
+    /// chart leaf's frame is waived, and an `elementDetection` with no element while a chart is
+    /// on screen; everything else on the page, the UIKit views around the charts, is audited as
+    /// everywhere else. The same findings were on the SwiftUI Usage screen before it moved.
+    private static func chartWaiver(for issue: XCUIAccessibilityAuditIssue, chartFrames: [CGRect]) -> String? {
+        guard !chartFrames.isEmpty else { return nil }
+        let types: [XCUIAccessibilityAuditType] = [
+            .hitRegion, .sufficientElementDescription, .dynamicType, .textClipped, .contrast, .elementDetection,
+        ]
+        guard types.contains(issue.auditType) else { return nil }
+        let reason = "\(auditTypeName(issue.auditType)) on a Swift Charts node in a Usage chart leaf: the "
+            + "framework's own bar and axis accessibility, the same chart as before the UIKit move"
+        if let frame = issue.element?.frame {
+            // Intersects, not contains: a bar scrolled half under the bar is the chart's all the same.
+            return chartFrames.contains { $0.intersects(frame) } ? reason : nil
+        }
+        return issue.auditType == .elementDetection ? reason : nil
     }
 
     /// A settings preview whose text is fixed-size by design.
