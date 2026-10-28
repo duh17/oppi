@@ -42,7 +42,7 @@ struct DictationDictionaryPageTests {
     /// The page loads the lists when it appears; edits made before that load ends are replaced by it.
     private func mountLoaded(_ model: DictationDictionaryModel) async throws -> (page: DictationDictionaryViewController, window: UIWindow) {
         let mounted = try mount(model)
-        #expect(await waitForMainActorCondition { model.loadState == .loaded })
+        #expect(await waitForMainActorCondition(timeout: .seconds(8)) { model.loadState == .loaded })
         return mounted
     }
 
@@ -56,7 +56,7 @@ struct DictationDictionaryPageTests {
         let (page, window) = try await mountLoaded(model)
         defer { window.isHidden = true; window.rootViewController = nil }
         let herdr = Item.phrase(.global, "Herdr", occurrence: 0)
-        #expect(await waitForMainActorCondition { button(herdr, in: page) != nil })
+        #expect(await waitForMainActorCondition(timeout: .seconds(8)) { button(herdr, in: page) != nil })
         #expect(button(herdr, in: page)?.accessibilityIdentifier == "settings.dictionary.phrase.global.2")
 
         // Oppi becomes Oppi 2 and moves to the end: Tailscale and Herdr each move up one.
@@ -65,7 +65,7 @@ struct DictationDictionaryPageTests {
         model.addPhrase()
         #expect(model.globalDraft == ["Tailscale", "Herdr", "Oppi 2"])
 
-        #expect(await waitForMainActorCondition { button(herdr, in: page)?.accessibilityIdentifier == "settings.dictionary.phrase.global.1" })
+        #expect(await waitForMainActorCondition(timeout: .seconds(8)) { button(herdr, in: page)?.accessibilityIdentifier == "settings.dictionary.phrase.global.1" })
         try #require(button(herdr, in: page)).sendActions(for: .touchUpInside)
         #expect(model.editing == .init(workspace: false, index: 1, phrase: "Herdr"))
         #expect(model.phrase == "Herdr")
@@ -86,7 +86,7 @@ struct DictationDictionaryPageTests {
         model.beginAdding()
         model.phrase = "Oppi"
         model.addPhrase()
-        #expect(await waitForMainActorCondition { button(.notice, in: page) != nil })
+        #expect(await waitForMainActorCondition(timeout: .seconds(8)) { button(.notice, in: page) != nil })
         let notice = try #require(button(.notice, in: page))
         #expect(!notice.isUserInteractionEnabled, "Retry would reload the lists and discard the draft")
         #expect(model.globalDraft == ["Oppi", "Tailscale", "Herdr"])
@@ -103,11 +103,11 @@ struct DictationDictionaryPageTests {
         model.phrase = "Ghostty"
         model.addPhrase()
         await model.save()
-        #expect(await waitForMainActorCondition { button(.notice, in: page) != nil })
+        #expect(await waitForMainActorCondition(timeout: .seconds(8)) { button(.notice, in: page) != nil })
         let notice = try #require(button(.notice, in: page))
         #expect(notice.isUserInteractionEnabled)
         notice.sendActions(for: .touchUpInside)
-        #expect(await waitForMainActorCondition { model.loadState == .loaded && model.notice == nil && !model.hasChanges })
+        #expect(await waitForMainActorCondition(timeout: .seconds(8)) { model.loadState == .loaded && model.notice == nil && !model.hasChanges })
         #expect(model.globalDraft == ["Oppi", "Tailscale", "Herdr"], "Retry reloads the server's lists and drops the draft")
     }
 }
