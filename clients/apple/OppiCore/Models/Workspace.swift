@@ -31,7 +31,7 @@ enum ProjectTrustState: String, Codable, Sendable, Equatable {
         case .ask:
             "A session asks on your phone before loading this folder\u{2019}s project settings, skills, extensions, and MCP servers. No answer within 15 seconds allows that session."
         case .distrusted:
-            "Sessions ignore this folder\u{2019}s project settings, skills, extensions, and MCP servers. Change this in Pi on the host."
+            "Sessions ignore this folder\u{2019}s project settings, skills, extensions, and MCP servers. Change this in Pi on the server."
         }
     }
 }
