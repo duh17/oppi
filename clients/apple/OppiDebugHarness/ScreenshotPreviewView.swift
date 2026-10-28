@@ -583,14 +583,21 @@ private struct RouterRoutesMenu: View {
                 editsSchedule = true
             }
             .accessibilityIdentifier("routerRoutes.editSchedule")
-            .routerModal(
+            .routerScreenModal(
                 isPresented: $editsSchedule,
                 presentation: .fullScreen.inNavigation(),
-                onDismiss: { dismissedModals += 1 }
-            ) {
-                ScheduleNativeEditView(schedule: RouterRoutesFixtures.schedule) { _, _ in }
-                    .environment(\.apiClient, RouterRoutesFixtures.api)
-            }
+                onDismiss: { dismissedModals += 1 },
+                screen: { [connection] in
+                    .controller {
+                        ScheduleNativeEditViewController(
+                            schedule: RouterRoutesFixtures.schedule,
+                            apiClient: RouterRoutesFixtures.api,
+                            connection: connection,
+                            serverName: "mac-studio"
+                        ) { _, _ in }
+                    }
+                }
+            )
 
             Section("Last save sent") {
                 Text(saves.lastSave)

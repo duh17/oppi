@@ -193,12 +193,6 @@
       "SettingsListStyle.pin(": 1,
       "SettingsListStyle.applyTheme(": 1
     },
-    "clients/apple/Oppi/Features/Schedules/ScheduleHostedScreens.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Schedules/ScheduleNativeEditView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Server/DailyCostChartView.swift": {
       "import SwiftUI": 1
     },

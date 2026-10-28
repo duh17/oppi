@@ -14,7 +14,8 @@ import SwiftUI
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
-/// `agents-pi`, `agent-icon-picker`, `agent-edit`, `workspace-create`, `workspace-create-configure`.
+/// `agents-pi`, `agent-icon-picker`, `agent-edit`, `agent-edit-tools`, `-skills`, `-extensions`, `-workspaces` (the pages it pushes), `pi-tools`, `schedule-edit`, `schedule-edit-cron`, `schedule-edit-existing`,
+/// `schedule-time-zone`, `workspace-create`, `workspace-create-configure`.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -213,8 +214,10 @@ struct SettingsSweepScreenshotPreview: View {
         case "agents":
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
-        case "agent-edit":
+        case "agent-edit", "agent-edit-tools", "agent-edit-skills", "agent-edit-extensions", "agent-edit-workspaces":
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace, Self.sandboxWorkspace]
+        case "schedule-edit", "schedule-edit-cron", "schedule-edit-existing":
+            connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
         case "pairing-approval":
             connection.pendingPairingApprovals = [Self.pendingApproval]
         default:
@@ -349,12 +352,50 @@ struct SettingsSweepScreenshotPreview: View {
                 AgentIconPicker.viewController(agent: Self.agent, connection: connection) { _ in }
             }
             .ignoresSafeArea()
+        case "schedule-edit", "schedule-edit-cron", "schedule-edit-existing":
+            RouterPreviewControllerStack(root: root) { [connection, client, server, page] in
+                ScheduleNativeEditViewController(
+                    schedule: Self.editSchedule(page: page), apiClient: client, connection: connection,
+                    serverName: server.name
+                ) { _, _ in }
+            }
+            .ignoresSafeArea()
+        case "schedule-time-zone":
+            RouterPreviewControllerStack(root: root) { [server] in
+                ScheduleTimeZonePickerViewController(
+                    selection: "America/Los_Angeles", serverName: server.name
+                ) { _ in }
+            }
+            .ignoresSafeArea()
         case "agent-edit":
-            // Drive the pushed pages with `agent.nativeEdit.tools`, `.skills`, `.extensions`, `.workspaces`.
             RouterPreviewControllerStack(root: root) { [connection, client, server] in
                 AgentNativeEditViewController(
                     agent: Self.editAgent, apiClient: client, connection: connection, serverName: server.name
                 ) { _ in }
+            }
+            .ignoresSafeArea()
+        case "pi-tools":
+            // Pi's Tools page, as the root: exact built-in tools and an optional tool turned on.
+            RouterPreviewControllerStack(root: root) { [server] in
+                let tools = PiToolsEditor()
+                tools.applyLoaded(
+                    ["read", "+codemode"],
+                    builtInTools: Self.builtInTools,
+                    optionalTools: [ServerToolSummary(name: "codemode", description: "Run scripts that call other tools.")]
+                )
+                return AgentToolSelectionViewController(selection: .pi(tools, serverName: server.name))
+            }
+            .ignoresSafeArea()
+        case "agent-edit-tools", "agent-edit-skills", "agent-edit-extensions", "agent-edit-workspaces":
+            // The pages Edit Agent pushes, as the root, over the same draft.
+            RouterPreviewControllerStack(root: root) { [connection, server, page] () -> UIViewController in
+                let draft = AgentNativeEditDraft(agent: Self.editAgent, connection: connection, serverName: server.name)
+                switch page {
+                case "agent-edit-tools": return AgentToolSelectionViewController(selection: .agent(draft))
+                case "agent-edit-skills": return AgentResourceSelectionViewController(kind: .skills, draft: draft)
+                case "agent-edit-extensions": return AgentResourceSelectionViewController(kind: .extensions, draft: draft)
+                default: return AgentWorkspaceSelectionViewController(draft: draft)
+                }
             }
             .ignoresSafeArea()
         case "extension-detail":
@@ -542,6 +583,25 @@ struct SettingsSweepScreenshotPreview: View {
         ),
         createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
     )
+
+    /// `schedule-edit` is an hourly schedule that starts a session; `-cron` a custom
+    /// cron schedule whose expression the server would refuse; `-existing` one that
+    /// sends its prompt to a session.
+    private static func editSchedule(page: String) -> AgentSchedule {
+        var edited = schedule
+        switch page {
+        case "schedule-edit-cron":
+            edited.trigger = .cron(expression: "61 * * * *", timeZone: "America/Los_Angeles")
+        case "schedule-edit-existing":
+            edited.action = .existingSession(
+                workspaceId: "preview-ws", sessionId: "preview-session",
+                prompt: "Check in on the nightly build.", streamingBehavior: .followUp
+            )
+        default:
+            break
+        }
+        return edited
+    }
 
     private static let builtInTools = [
         ServerToolSummary(name: "read", description: "Read a file from the workspace.", defaultEnabled: true),

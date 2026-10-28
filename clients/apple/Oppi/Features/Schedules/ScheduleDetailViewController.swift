@@ -493,15 +493,26 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
 
     private func updateModals() {
         let schedule = schedule
+        let connection = connection
+        let root = root
         nativeEditor.update(
             id: showNativeEdit && schedule != nil ? "native-edit" : nil,
             presentation: .fullScreen.inNavigation(),
             root: root,
             clear: { [weak self] in self?.showNativeEdit = false },
             screen: {
-                ScheduleHostedScreens.nativeEdit(schedule) { [weak self] updated, summary in
-                    self?.schedule = updated
-                    self?.onChanged(summary)
+                .controller {
+                    // Opened only from the loaded schedule's Edit.
+                    guard let schedule else { preconditionFailure("The editor presents only with its schedule") }
+                    return ScheduleNativeEditViewController(
+                        schedule: schedule,
+                        apiClient: connection.apiClient,
+                        connection: connection,
+                        serverName: root.activeServerName
+                    ) { [weak self] updated, summary in
+                        self?.schedule = updated
+                        self?.onChanged(summary)
+                    }
                 }
             }
         )
@@ -510,7 +521,20 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
             presentation: .sheet,
             root: root,
             clear: { [weak self] in self?.showPromptReader = false },
-            screen: { ScheduleHostedScreens.promptReader(schedule) }
+            screen: {
+                .controller {
+                    // Opened only from the loaded schedule's prompt row.
+                    guard let schedule else { preconditionFailure("The prompt review opens only for a loaded schedule") }
+                    return ReviewableControlMarkdownViewController(
+                        content: SchedulePresentation.prompt(in: schedule.action),
+                        domain: .schedules,
+                        targetId: schedule.id,
+                        targetName: schedule.name,
+                        sourceLabel: "\(schedule.name) prompt",
+                        sourcePath: "Schedules/\(schedule.id)/Prompt.md"
+                    )
+                }
+            }
         )
     }
 
