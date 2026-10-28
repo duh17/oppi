@@ -654,6 +654,31 @@ struct InAppNowPlayingChromeTests {
         })
     }
 
+    /// The session lists present the page as a modal: Back dismisses it and
+    /// reports the dismissal once.
+    @Test func nowPlayingModalBackDismissesIt() async throws {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
+        let presenter = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = presenter
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let page = InAppNowPlayingPlayerViewController(audioPlayer: player)
+        var dismissals = 0
+
+        Router.present(page, presentation: .fullScreen, from: presenter, onDismiss: { dismissals += 1 })
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            presenter.presentedViewController === page && page.viewIfLoaded?.window != nil
+        })
+        let back = try #require(firstSubview(withAccessibilityIdentifier: "fullscreen-audio.back", in: page.view) as? UIControl)
+        back.sendActions(for: .primaryActionTriggered)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            presenter.presentedViewController == nil && dismissals == 1
+        }, "Back did not dismiss the modal and report it once")
+    }
+
     @Test func nowPlayingBackButtonLeaves() throws {
         let player = AudioPlayerService()
         player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)

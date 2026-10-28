@@ -222,9 +222,11 @@ enum SessionListHostedChrome {
 
     /// The full-screen player over the list.
     static func presentNowPlayingPlayer(_ audioPlayer: AudioPlayerService, from presenter: UIViewController) {
-        Router.present(presentation: .fullScreen, from: presenter) {
-            InAppNowPlayingPlayerScreen(audioPlayer: audioPlayer)
-        }
+        Router.present(
+            InAppNowPlayingPlayerViewController(audioPlayer: audioPlayer),
+            presentation: .fullScreen,
+            from: presenter
+        )
     }
 
     private static func barHost(

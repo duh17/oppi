@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 enum InAppNowPlayingChrome {
@@ -184,29 +183,32 @@ enum InAppNowPlayingChrome {
 /// that leaves when playback ends. Hosts ``AudioLyricsPlayerViewController``
 /// with the current item, title, and timed text, and follows them while the
 /// service changes (it reads them in `updateProperties()`).
+///
+/// Presented over a list with `Router.present(_:presentation: .fullScreen,
+/// from:)` (it is a `RouterModalContainer`), or pushed by the chat reader with
+/// an `onLeave` that pops that screen.
 @MainActor
-final class InAppNowPlayingPlayerViewController: UIViewController {
+final class InAppNowPlayingPlayerViewController: UIViewController, RouterModalContainer {
+    var onDismissed: (() -> Void)?
     private let audioPlayer: AudioPlayerService
-    private let onLeave: @MainActor () -> Void
-    private let player: AudioLyricsPlayerViewController
+    private let onLeave: (@MainActor () -> Void)?
+    private lazy var player = AudioLyricsPlayerViewController(configuration: configuration())
     private var didLeave = false
 
     /// `onLeave` closes the page: Back, the back swipe, and playback ending.
-    init(audioPlayer: AudioPlayerService, onLeave: @escaping @MainActor () -> Void) {
+    /// Nil closes this controller's own presentation.
+    init(audioPlayer: AudioPlayerService, onLeave: (@MainActor () -> Void)? = nil) {
         self.audioPlayer = audioPlayer
         self.onLeave = onLeave
-        player = AudioLyricsPlayerViewController(configuration: Self.configuration(audioPlayer, onLeave: onLeave))
         super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    private static func configuration(
-        _ audioPlayer: AudioPlayerService,
-        onLeave: @escaping @MainActor () -> Void
-    ) -> AudioLyricsPlayerViewController.Configuration {
-        .init(
+    private func configuration() -> AudioLyricsPlayerViewController.Configuration {
+        let audioPlayer = audioPlayer
+        return .init(
             title: audioPlayer.nowPlayingPresentation?.title ?? "Now Playing",
             lyrics: nil,
             itemID: audioPlayer.playingItemID ?? audioPlayer.loadingItemID ?? "",
@@ -221,8 +223,16 @@ final class InAppNowPlayingPlayerViewController: UIViewController {
             showsCloseButton: false,
             usesNavigationBackButton: true,
             timedText: audioPlayer.nowPlayingTimedText,
-            dismiss: { onLeave() }
+            dismiss: { [weak self] in self?.leave() }
         )
+    }
+
+    private func leave() {
+        if let onLeave {
+            onLeave()
+        } else {
+            Router.finish(self)
+        }
     }
 
     override func viewDidLoad() {
@@ -244,9 +254,18 @@ final class InAppNowPlayingPlayerViewController: UIViewController {
         leaveIfPlaybackEnded(hasActivePlayback: audioPlayer.hasActivePlayback)
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // Once per presentation: UIKit can report the disappearance again.
+        if isBeingDismissed || presentingViewController == nil, let onDismissed {
+            self.onDismissed = nil
+            onDismissed()
+        }
+    }
+
     override func updateProperties() {
         super.updateProperties()
-        player.apply(Self.configuration(audioPlayer, onLeave: onLeave))
+        player.apply(configuration())
         // Read unconditionally so UIKit re-runs this pass when playback ends.
         leaveIfPlaybackEnded(hasActivePlayback: audioPlayer.hasActivePlayback)
     }
@@ -256,32 +275,7 @@ final class InAppNowPlayingPlayerViewController: UIViewController {
               InAppNowPlayingChrome.shouldDismissPlayer(hasActivePlayback: hasActivePlayback)
         else { return }
         didLeave = true
-        onLeave()
-    }
-}
-
-/// SwiftUI placement of ``InAppNowPlayingPlayerViewController`` for the one
-/// closure-form `Router.present` that still hosts it
-/// (`SessionListHostedChrome.presentNowPlayingPlayer`, owned by the session
-/// list work). Delete with that call, which should present the controller.
-struct InAppNowPlayingPlayerScreen: View {
-    let audioPlayer: AudioPlayerService
-
-    var body: some View {
-        Host(audioPlayer: audioPlayer)
-            .background { Color.themeBg.ignoresSafeArea() }
-    }
-
-    private struct Host: UIViewControllerRepresentable {
-        let audioPlayer: AudioPlayerService
-        @Environment(\.dismiss) private var dismiss
-
-        func makeUIViewController(context: Context) -> InAppNowPlayingPlayerViewController {
-            let dismiss = dismiss
-            return InAppNowPlayingPlayerViewController(audioPlayer: audioPlayer, onLeave: { dismiss() })
-        }
-
-        func updateUIViewController(_ controller: InAppNowPlayingPlayerViewController, context: Context) {}
+        leave()
     }
 }
 
