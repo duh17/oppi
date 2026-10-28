@@ -22,7 +22,11 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         openWorkspace(named: workspaceName)
         updateCurrentWorkspaceName(to: updatedWorkspaceName)
 
-        createSession()
+        // `createSession()` makes its session in the lab's own workspace; this
+        // journey needs one in the workspace it just created.
+        let workspaceId = try e2eWorkspaceId(named: updatedWorkspaceName)
+        let created = try createLabSessions(count: 1, workspaceId: workspaceId, stopAfterCreate: false)
+        enterSession(id: try XCTUnwrap(created.first, "Lab session create returned no id"))
         let sessionId = waitForFocusedSessionId(timeout: 30)
         sendMessageAndWaitForResponse(localEchoPrompt("CRUD_SESSION_OK"))
         XCTAssertTrue(
@@ -40,21 +44,8 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
     // MARK: - Workspace Create
 
     private func openWorkspaceCreateSheet() {
-        let directCreateButton = app.buttons["workspace.create.open"]
-        if directCreateButton.waitForExistence(timeout: 3) {
-            tap(directCreateButton, named: "create workspace button")
-        } else {
-            let firstWorkspace = app.buttons["workspace.create.first.open"]
-            if firstWorkspace.waitForExistence(timeout: 1) {
-                tap(firstWorkspace, named: "create first workspace button")
-            } else {
-                let serverSwitcher = app.buttons
-                    .matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:"))
-                    .firstMatch
-                tap(serverSwitcher, named: "server switcher", timeout: 10)
-                tap(directCreateButton, named: "create workspace menu button", timeout: 5)
-            }
-        }
+        // The workspace sidebar's New Workspace row.
+        tap(app.buttons["workspace.create.sidebar.open"], named: "create workspace sidebar button", timeout: 10)
 
         let manualButton = app.buttons["workspace.create.manual"]
         XCTAssertTrue(manualButton.waitForExistence(timeout: 15), "Manual path button not shown")
@@ -102,7 +93,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
             "Create workspace sheet did not dismiss after submit"
         )
 
-        if !app.collectionViews["workspace.list"].waitForExistence(timeout: 5) {
+        if !waitForWorkspaceList(in: app, timeout: 5) {
             navigateToWorkspaceHome()
         }
         XCTAssertTrue(
@@ -149,7 +140,8 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
     }
 
     private func deleteWorkspaceFromManageList(named workspaceName: String) throws {
-        navigateToWorkspaceHome()
+        // The server switcher is in the All Sessions bar, not the sidebar.
+        try ensureAtSessionsInbox()
 
         let serverSwitcher = app.buttons
             .matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:"))
@@ -246,31 +238,14 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
 
     // MARK: - Navigation Helpers
 
+    /// The workspace sidebar: the shared recovery backs out of a sheet or a
+    /// workspace page and reveals the drawer or split sidebar.
     private func navigateToWorkspaceHome() {
-        let workspaceList = app.collectionViews["workspace.list"]
-        if workspaceList.waitForExistence(timeout: 1) {
-            return
+        do {
+            try ensureAtWorkspaceHome()
+        } catch {
+            XCTFail("Workspace home not reachable: \(error)")
         }
-
-        let doneButton = app.buttons["Done"]
-        if doneButton.waitForExistence(timeout: 1) && doneButton.isHittable {
-            tap(doneButton, named: "dismiss extension sheet")
-        }
-
-        for _ in 0..<4 {
-            if workspaceList.waitForExistence(timeout: 0.5) {
-                return
-            }
-
-            let backButton = app.navigationBars.buttons["BackButton"]
-            if backButton.exists && backButton.isHittable {
-                tap(backButton, named: "navigation back button")
-            } else {
-                break
-            }
-        }
-
-        XCTAssertTrue(workspaceList.waitForExistence(timeout: 10), "Workspace home list not reachable")
     }
 
     private func openWorkspace(named workspaceName: String) {

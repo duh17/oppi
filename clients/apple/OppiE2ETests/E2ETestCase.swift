@@ -402,10 +402,9 @@ class E2ETestCase: XCTestCase {
 
     private func workspaceListSurfaceExists(in application: XCUIApplication) -> Bool {
         application.collectionViews["workspace.sidebar.scroll"].exists
-            || application.collectionViews["workspace.list"].exists
     }
 
-    private func waitForWorkspaceList(
+    func waitForWorkspaceList(
         in application: XCUIApplication,
         timeout: TimeInterval
     ) -> Bool {
@@ -418,15 +417,14 @@ class E2ETestCase: XCTestCase {
     }
 
     private func workspaceListElement(in application: XCUIApplication) -> XCUIElement {
-        let sidebarScroll = application.collectionViews["workspace.sidebar.scroll"]
-        return sidebarScroll.exists ? sidebarScroll : application.collectionViews["workspace.list"]
+        application.collectionViews["workspace.sidebar.scroll"]
     }
 
     // MARK: - State Recovery
 
     /// Ensures the app is at the workspace home screen before each test.
     /// Handles recovery from chat sessions, workspace detail, or modal sheets.
-    private func ensureAtWorkspaceHome() throws {
+    func ensureAtWorkspaceHome() throws {
         if waitForWorkspaceList(in: app, timeout: 0.5) {
             return
         }
@@ -448,7 +446,7 @@ class E2ETestCase: XCTestCase {
     }
 
     /// Ensures the app is at the global sessions inbox before each test.
-    private func ensureAtSessionsInbox() throws {
+    func ensureAtSessionsInbox() throws {
         dismissWorkspaceDrawerIfNeeded()
         if waitForSessionsInbox(in: app, timeout: 0.5) { return }
 
