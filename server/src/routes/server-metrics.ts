@@ -64,7 +64,8 @@ export function createServerMetricsRoutes(
           const patch = validateSetting("serverMetrics", body);
           const result = control.apply(patch, parseBaseRevision(body.baseRevision));
           if (!result.ok) {
-            helpers.json(res, revisionConflictBody("serverMetrics", result.current), 409);
+            const current = { ...result.current, enabled: control.isEnabled() };
+            helpers.json(res, revisionConflictBody("serverMetrics", current), 409);
           } else {
             helpers.json(res, result.current);
           }

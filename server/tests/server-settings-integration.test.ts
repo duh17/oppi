@@ -77,5 +77,16 @@ describe("settings through a running server", () => {
 
     const response = await request("GET", "/server/metrics/settings");
     expect(await response.json()).toEqual({ enabled: false, revision: 3 });
+
+    // A refused stale write names the same state the GET does.
+    const stale = await request("PUT", "/server/metrics/settings", {
+      enabled: true,
+      baseRevision: 2,
+    });
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { current: unknown }).current).toEqual({
+      enabled: false,
+      revision: 3,
+    });
   }, 30_000);
 });
