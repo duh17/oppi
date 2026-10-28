@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 /** Isolated native two-server iOS journey. Run from the checkout with:
  * bun server/scripts/e2e-two-server.ts
+ * TWO_SERVER_TEST=<E2E test class> picks the journey (default OfflinePairedServerE2ETests).
  * The ordinary clients/apple/scripts/e2e.sh run owns the first server; this wrapper owns only the second.
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -21,6 +22,9 @@ let second: ChildProcess | undefined;
 let first: ChildProcess | undefined;
 let approver: ChildProcess | undefined;
 let stoppedForTest = false;
+// The iOS test class to run against the two servers. Only the offline journey asks the harness to stop the second.
+const testClass = process.env.TWO_SERVER_TEST ?? "OfflinePairedServerE2ETests";
+const needsOfflineTransition = testClass === "OfflinePairedServerE2ETests";
 let failed = true;
 const controlPath = `/offline/${randomUUID()}`;
 const fixturePath = "/tmp/oppi-e2e-two-server.json";
@@ -131,7 +135,7 @@ try {
   await writeFile(fixturePath, JSON.stringify({ invite, stopURL: controlURL, firstPort: String(firstPort) }), { mode: 0o600, flag: "wx" });
   ownsFixture = true;
   console.log(`[two-server] isolated first port=${firstPort} second port=${secondPort} second PID=${second.pid} data=${dataDir}`);
-  first = spawn(e2eScript, ["--native", "--record-video=always", "--only-testing", "OppiE2ETests/OfflinePairedServerE2ETests"], {
+  first = spawn(e2eScript, ["--native", "--record-video=always", "--only-testing", `OppiE2ETests/${testClass}`], {
     cwd: root, stdio: "inherit",
     env: {
       ...process.env, OPPI_ROOT: root, E2E_PORT: String(firstPort),
@@ -141,8 +145,8 @@ try {
     },
   });
   const exit = await new Promise<number>((ok, fail) => { first?.once("error", fail); first?.once("exit", (code) => ok(code ?? 1)); });
-  failed = exit !== 0 || !stoppedForTest;
-  if (!stoppedForTest) console.error("[two-server] test did not request offline transition");
+  failed = exit !== 0 || (needsOfflineTransition && !stoppedForTest);
+  if (needsOfflineTransition && !stoppedForTest) console.error("[two-server] test did not request offline transition");
   if (exit !== 0) console.error(`[two-server] e2e.sh exited ${exit}`);
 } catch (error) {
   console.error("[two-server]", error);
