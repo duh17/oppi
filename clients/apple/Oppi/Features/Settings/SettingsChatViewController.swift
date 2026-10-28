@@ -362,6 +362,17 @@ final class SettingsWorkPreviewCell: UICollectionViewListCell {
         install(spinner, size: CGSize(width: 20, height: 20))
     }
 
+    /// Any preview view under a caption (Text's sample fonts).
+    func configurePreview(_ view: UIView, caption text: String, symbol: String, labelColor: UIColor) {
+        caption.text = text
+        caption.textColor = labelColor
+        captionIcon.image = UIImage(systemName: symbol)
+        captionIcon.tintColor = labelColor
+        install(view, size: nil, minimumHeight: 0)
+        // A preview that fills the row, where a work strip hugs its content.
+        view.trailingAnchor.constraint(equalTo: container.trailingAnchor).isActive = true
+    }
+
     func configureWorkLine(
         _ workLine: QuietTimelineWorkLine,
         style: AppPreferences.ChatDisplay.WorkStripStyle? = nil,
@@ -384,7 +395,7 @@ final class SettingsWorkPreviewCell: UICollectionViewListCell {
         install(row, size: nil)
     }
 
-    private func install(_ view: UIView, size: CGSize?) {
+    private func install(_ view: UIView, size: CGSize?, minimumHeight: CGFloat = 44) {
         content?.removeFromSuperview()
         content = view
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -399,7 +410,7 @@ final class SettingsWorkPreviewCell: UICollectionViewListCell {
             constraints.append(view.widthAnchor.constraint(equalToConstant: size.width))
             constraints.append(view.heightAnchor.constraint(equalToConstant: size.height))
         } else {
-            constraints.append(view.heightAnchor.constraint(greaterThanOrEqualToConstant: 44))
+            constraints.append(view.heightAnchor.constraint(greaterThanOrEqualToConstant: minimumHeight))
         }
         NSLayoutConstraint.activate(constraints)
     }

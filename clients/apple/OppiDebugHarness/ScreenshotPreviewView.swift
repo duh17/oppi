@@ -294,7 +294,7 @@ struct ScreenshotPreviewView: View {
             )
         case "workspace-top-bar":
             WorkspaceTopBarScreenshotPreview()
-        case "settings-root", "settings-general", "settings-storage", "settings-privacy", "settings-chat", "settings-editor", "settings-chat-top-bar", "settings-experiments", "settings-editor-key-bar":
+        case "settings-root", "settings-general", "settings-storage", "settings-privacy", "settings-text", "settings-chat", "settings-editor", "settings-chat-top-bar", "settings-experiments", "settings-editor-key-bar":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         case "settings-appearance", "settings-appearance-gallery", "settings-appearance-gallery-light", "settings-appearance-gallery-dark":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
@@ -940,6 +940,7 @@ private struct SettingsPageScreenshotContent: View {
             case "settings-general": SettingsGeneralViewController(root: root)
             case "settings-storage": SettingsStorageViewController(root: root)
             case "settings-privacy": SettingsPrivacyViewController(root: root)
+            case "settings-text": SettingsTextViewController()
             case "settings-chat-top-bar": SettingsChatTopBarViewController()
             case "settings-appearance": SettingsAppearanceViewController(root: root)
             case "settings-appearance-gallery": ThemeGalleryViewController(themeStore: root.themeStore, slot: .manual)

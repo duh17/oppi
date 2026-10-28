@@ -220,8 +220,8 @@
       "toggleRow(": 2
     },
     "clients/apple/Oppi/Features/Settings/SettingsTextPage.swift": {
-      "import SwiftUI": 1,
-      "FontPreferences.set": 4
+      "FontPreferences.set": 4,
+      "toggleRow(": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
       "import SwiftUI": 1,
