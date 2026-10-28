@@ -475,6 +475,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         }
         let editing = editingAgent
         let connection = connection
+        let root = root
         nativeEditor.update(
             id: editing.map { AnyHashable($0.id) },
             presentation: .fullScreen.inNavigation(),
@@ -487,6 +488,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
                         agent: editing,
                         apiClient: connection.apiClient,
                         connection: connection,
+                        serverName: root.activeServerName,
                         onSaved: saved
                     )
                 }
@@ -510,13 +512,16 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             root: root,
             clear: { [weak self] in self?.showsDefinitionReview = false },
             screen: { [weak self] in
-                AgentHostedScreens.reviewableMarkdown(
-                    content: agent.flatMap { self?.definitionMarkdown($0) } ?? "",
-                    targetId: agent?.id ?? "",
-                    targetName: agent?.name ?? "",
-                    sourceLabel: "\(agent?.name ?? "") definition",
-                    sourcePath: "Agents/\(agent?.id ?? "")/Definition.md"
-                )
+                .controller {
+                    ReviewableControlMarkdownViewController(
+                        content: agent.flatMap { self?.definitionMarkdown($0) } ?? "",
+                        domain: .agents,
+                        targetId: agent?.id ?? "",
+                        targetName: agent?.name ?? "",
+                        sourceLabel: "\(agent?.name ?? "") definition",
+                        sourcePath: "Agents/\(agent?.id ?? "")/Definition.md"
+                    )
+                }
             }
         )
         scheduleSheet.update(

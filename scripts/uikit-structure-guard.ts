@@ -94,10 +94,6 @@ const settingsThemingExceptions: { file: string; reason: string }[] = [
     reason: "A sharing sheet's selection list, presented from a chat.",
   },
   {
-    file: "clients/apple/Oppi/Features/Agents/AgentNativeEditViewController.swift",
-    reason: "The agent editor: a draft form with text views and its own save flow.",
-  },
-  {
     file: "clients/apple/Oppi/Features/Settings/ThemeGalleryViewController.swift",
     reason: "A grid of theme cards with its own layout, not a list of rows.",
   },

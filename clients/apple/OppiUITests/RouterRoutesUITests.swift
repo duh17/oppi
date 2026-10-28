@@ -68,7 +68,7 @@ final class RouterRoutesUITests: XCTestCase {
         let editAgent = app.navigationBars["Edit Agent"]
         XCTAssertTrue(editAgent.waitForExistence(timeout: 5), "Edit Agent did not present")
         attachScreenshot("full-screen-edit-agent")
-        let toolsRow = app.cells["agent.nativeEdit.tools"]
+        let toolsRow = app.buttons["agent.nativeEdit.tools"]
         XCTAssertTrue(text(of: toolsRow).contains("1 selected"), "Fixture agent starts with one tool: \(text(of: toolsRow))")
         assertRunning()
 
@@ -109,7 +109,8 @@ final class RouterRoutesUITests: XCTestCase {
             app.staticTexts["Adds these instructions after the server's default system prompt."].waitForExistence(timeout: 5),
             "Turning on a custom prompt must describe Append"
         )
-        app.segmentedControls["agent.nativeEdit.promptMode"].buttons["Replace"].tap()
+        app.buttons["agent.nativeEdit.promptMode"].tap()
+        app.buttons["Replace"].firstMatch.tap()
         XCTAssertTrue(
             app.staticTexts["Uses these instructions instead of the server's default system prompt."].waitForExistence(timeout: 5),
             "Replace must describe replacing the default prompt"
@@ -205,7 +206,7 @@ final class RouterRoutesUITests: XCTestCase {
             let editor = app.navigationBars[editorTitle]
             XCTAssertTrue(editor.waitForExistence(timeout: 5), "\(editorTitle) did not present")
 
-            tapRowLabel(modelRow, "Model")
+            tapRow(modelRow)
             let models = app.navigationBars["Models"]
             XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not open from \(editorTitle)")
             attachScreenshot("model-picker-\(editorTitle)")
@@ -214,7 +215,7 @@ final class RouterRoutesUITests: XCTestCase {
             XCTAssertTrue(waitForDisappearance(of: models), "Swipe-down must close the model picker")
 
             // The binding cleared on swipe-down, so the row opens it again.
-            tapRowLabel(modelRow, "Model")
+            tapRow(modelRow)
             XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not reopen from \(editorTitle)")
             dragToBottom(models)
             XCTAssertTrue(waitForDisappearance(of: models))
@@ -578,27 +579,20 @@ final class RouterRoutesUITests: XCTestCase {
     }
 
     private func openTimeZonePicker() {
-        tapRowLabel("schedule.nativeEdit.timeZone", "Time Zone")
+        tapRow("schedule.nativeEdit.timeZone")
     }
 
-    /// SwiftUI editors' plain-style rows only take taps on their text; the
-    /// row's center is empty space between label and value. UIKit list rows
-    /// (Edit Agent) are cells that take a tap anywhere. On the Duo's shorter
-    /// outer display a row can start below the fold.
-    private func tapRowLabel(_ row: String, _ label: String) {
-        // A UIKit cell below the fold is not in the hierarchy until scrolled to.
-        var element = app.cells[row].exists ? app.cells[row] : app.buttons[row]
+    /// An editor row is one button, so a tap anywhere on it runs it. On the
+    /// Duo's shorter outer display a row can start below the fold, and a UIKit
+    /// row below the fold is not in the hierarchy until scrolled to.
+    private func tapRow(_ row: String) {
+        let element = app.buttons[row]
         var swipes = 0
         while !(element.exists && element.isHittable), swipes < 5 {
             app.swipeUp()
             swipes += 1
-            element = app.cells[row].exists ? app.cells[row] : app.buttons[row]
         }
-        if element.elementType == .cell {
-            element.tap()
-        } else {
-            element.staticTexts[label].firstMatch.tap()
-        }
+        element.tap()
     }
 
     private func text(of element: XCUIElement) -> String {

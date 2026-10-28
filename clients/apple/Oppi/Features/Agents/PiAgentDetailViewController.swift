@@ -251,14 +251,17 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             root: root,
             clear: { [weak self] in self?.showsFilePromptReview = false },
             screen: {
-                AgentHostedScreens.reviewableMarkdown(
-                    content: prompt?.content ?? "",
-                    targetId: "pi",
-                    targetName: "Pi",
-                    sourceLabel: "SYSTEM.md",
-                    sourcePath: prompt?.resolvedPath ?? "",
-                    targetPath: prompt?.resolvedPath
-                )
+                .controller {
+                    ReviewableControlMarkdownViewController(
+                        content: prompt?.content ?? "",
+                        domain: .agents,
+                        targetId: "pi",
+                        targetName: "Pi",
+                        sourceLabel: "SYSTEM.md",
+                        sourcePath: prompt?.resolvedPath ?? "",
+                        targetPath: prompt?.resolvedPath
+                    )
+                }
             }
         )
         defaultPromptViewer.update(
@@ -266,7 +269,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             presentation: .fullScreen,
             root: root,
             clear: { [weak self] in self?.showsDefaultPrompt = false },
-            screen: { AgentHostedScreens.defaultPrompt(prompt?.content ?? "") }
+            screen: { .controller { PiDefaultPromptViewController(content: prompt?.content ?? "") } }
         )
     }
 
@@ -276,7 +279,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     /// once more when the page closes.
     private func openTools() {
         tools.pickerDidOpen()
-        Router.push(AgentHostedScreens.piTools(tools, root: root), from: self)
+        Router.push(AgentToolSelectionViewController(selection: .pi(tools, serverName: root.activeServerName)), from: self)
     }
 
     private func openPrompt() {

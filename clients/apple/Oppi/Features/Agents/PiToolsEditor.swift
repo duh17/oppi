@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// Pi's default tools, shown on the Pi page (`PiAgentDetailViewController`)
-/// and edited on the hosted SwiftUI Tools page it pushes. Both screens read
+/// and edited on the Tools page it pushes (`AgentToolSelectionViewController`). Both screens read
 /// this observable model, so the selection and its saves live here. Every
 /// change saves at once, and closing the Tools page saves the selection it
 /// leaves with.

@@ -59,8 +59,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
         let codemode = app.switches["agent.nativeEdit.optionalTool.codemode"]
         XCTAssertTrue(codemode.waitForExistence(timeout: 5))
         XCTAssertEqual(codemode.value as? String, "1", "Tools must open with Pi's loaded selection")
-        // The row's own switch: a tap on the row's center misses it.
-        codemode.switches.firstMatch.tap()
+        codemode.tap()
         XCTAssertTrue(waitFor(codemode.value as? String == "0"), "The pushed page must show its own change")
         XCTAssertTrue(
             waitFor(lastWrite.contains("PUT /server/resources/pi/default-tools")),

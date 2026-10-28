@@ -572,7 +572,8 @@ private struct RouterRoutesMenu: View {
                         AgentNativeEditViewController(
                             agent: agent,
                             apiClient: RouterRoutesFixtures.api,
-                            connection: connection
+                            connection: connection,
+                            serverName: "mac-studio"
                         ) { _ in }
                     })
                 }

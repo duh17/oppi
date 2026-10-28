@@ -14,7 +14,7 @@ import SwiftUI
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
-/// `agents-pi`, `agent-icon-picker`, `workspace-create`, `workspace-create-configure`.
+/// `agents-pi`, `agent-icon-picker`, `agent-edit`, `workspace-create`, `workspace-create-configure`.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -161,7 +161,11 @@ struct SettingsSweepScreenshotPreview: View {
         connection.serverResourceStore.replaceSkills(Self.skills, serverId: server.id)
         // `extensions-unavailable` has no cached catalog; its page clears the disk cache first.
         if page != "extensions-unavailable" {
-            connection.serverResourceStore.replaceExtensions(Self.catalogExtensions(page: page), serverId: server.id)
+            connection.serverResourceStore.replaceExtensions(
+                Self.catalogExtensions(page: page),
+                builtInTools: page.hasPrefix("agent-edit") ? Self.builtInTools : [],
+                serverId: server.id
+            )
         }
         connection.serverResourceStore.switchServer(to: server.id)
         self.connection = connection
@@ -209,6 +213,8 @@ struct SettingsSweepScreenshotPreview: View {
         case "agents":
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
+        case "agent-edit":
+            connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace, Self.sandboxWorkspace]
         case "pairing-approval":
             connection.pendingPairingApprovals = [Self.pendingApproval]
         default:
@@ -341,6 +347,14 @@ struct SettingsSweepScreenshotPreview: View {
         case "agent-icon-picker":
             RouterPreviewControllerStack(root: root) { [connection] in
                 AgentIconPicker.viewController(agent: Self.agent, connection: connection) { _ in }
+            }
+            .ignoresSafeArea()
+        case "agent-edit":
+            // Drive the pushed pages with `agent.nativeEdit.tools`, `.skills`, `.extensions`, `.workspaces`.
+            RouterPreviewControllerStack(root: root) { [connection, client, server] in
+                AgentNativeEditViewController(
+                    agent: Self.editAgent, apiClient: client, connection: connection, serverName: server.name
+                ) { _ in }
             }
             .ignoresSafeArea()
         case "extension-detail":
@@ -525,6 +539,36 @@ struct SettingsSweepScreenshotPreview: View {
         definition: AgentDefinition(
             name: "Design Reviewer",
             instructions: AgentInstructions(text: "Review the change against the HIG.")
+        ),
+        createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
+    )
+
+    private static let builtInTools = [
+        ServerToolSummary(name: "read", description: "Read a file from the workspace.", defaultEnabled: true),
+        ServerToolSummary(name: "bash", description: "Run a shell command in the workspace.", defaultEnabled: true),
+        ServerToolSummary(name: "browser", description: "Drive a web page.", defaultEnabled: false),
+    ]
+
+    private static let sandboxWorkspace = Workspace(
+        id: "preview-sandbox", name: "Isolated experiments", runtime: .sandbox,
+        createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
+    )
+
+    /// An Agent with an exact selection of everything the editor's pages choose,
+    /// including a tool, a Skill, and an Extension the catalogs no longer list.
+    private static let editAgent = StoredAgentDefinition(
+        id: "agent-design", name: "Design Reviewer", icon: .defaultValue, description: "Reviews UI changes.",
+        status: .active, version: 2,
+        definition: AgentDefinition(
+            name: "Design Reviewer",
+            description: "Reviews UI changes.",
+            instructions: AgentInstructions(text: "Review the change against the HIG."),
+            resources: AgentResources(
+                skillPaths: ["/Users/preview/.pi/agent/skills/release/SKILL.md", "/Users/preview/.pi/agent/skills/retired/SKILL.md"],
+                extensionIds: ["workflow", "retired-extension"]
+            ),
+            sessionDefaults: AgentSessionDefaults(thinkingLevel: .high, tools: ["read", "retired-tool"]),
+            launchConstraints: AgentLaunchConstraints(allowedWorkspaceIds: ["preview-ws"], requiredRuntime: .host)
         ),
         createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
     )

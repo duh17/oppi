@@ -498,13 +498,14 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         tap(app.buttons["agents.detail.edit"], named: "native Agent Edit", timeout: 10)
 
         XCTAssertTrue(app.navigationBars["Edit Agent"].waitForExistence(timeout: 10))
-        let promptMode = app.segmentedControls["agent.nativeEdit.promptMode"]
-        XCTAssertTrue(promptMode.waitForExistence(timeout: 5), "Append/Replace control did not appear")
-        tap(promptMode.buttons["Replace"], named: "Replace prompt mode")
-        XCTAssertTrue(promptMode.buttons["Replace"].isSelected)
-        XCTAssertTrue(app.cells["agent.nativeEdit.model"].exists, "Model picker did not appear")
+        let promptMode = app.buttons["agent.nativeEdit.promptMode"]
+        XCTAssertTrue(promptMode.waitForExistence(timeout: 5), "Append/Replace menu did not appear")
+        tap(promptMode, named: "Prompt mode menu")
+        tap(app.buttons["Replace"].firstMatch, named: "Replace prompt mode")
+        XCTAssertEqual(promptMode.value as? String, "Replace")
+        XCTAssertTrue(app.buttons["agent.nativeEdit.model"].exists, "Model picker did not appear")
         XCTAssertTrue(app.buttons["agent.nativeEdit.thinking"].exists, "Thinking picker did not appear")
-        tap(app.cells["agent.nativeEdit.tools"], named: "Agent tools")
+        tap(app.buttons["agent.nativeEdit.tools"], named: "Agent tools")
         XCTAssertTrue(app.navigationBars["Agent Tools"].waitForExistence(timeout: 10))
         tap(app.buttons["agent.nativeEdit.toolMode"], named: "tool selection mode")
         tap(app.buttons["Choose tools"], named: "exact tool selection")

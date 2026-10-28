@@ -112,14 +112,13 @@
     "clients/apple/Oppi/Core/Views/WorkingSpinnerView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Agents/AgentHostedScreens.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Agents/AgentNativeEditPages.swift": {
-      "import SwiftUI": 1
+    "clients/apple/Oppi/Features/Agents/AgentNativeEditDraft.swift": {
+      "AppPreferences.*.set": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditViewController.swift": {
-      "AppPreferences.*.set": 1,
+      "toggleRow(": 1
+    },
+    "clients/apple/Oppi/Features/Agents/AgentToolSelectionViewController.swift": {
       ".settingsToggle(": 1
     },
     "clients/apple/Oppi/Features/Agents/PiToolsEditor.swift": {
