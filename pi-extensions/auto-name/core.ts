@@ -147,21 +147,44 @@ function parseModelId(
     : undefined;
 }
 
-const SMALL_MODEL = /haiku|flash|mini|nano|lite|small/i;
+/** A size word as its own part of the id: `gpt-5-mini` and `claude-haiku-5` match, `minimax-m2` does not. */
+const SMALL_MODEL = /(^|[-/.:])(haiku|flash|mini|nano|lite|small)($|[-/.:])/i;
+/** Ids of models that take the same id shape but not a chat title: images, voice, live, search, agents. */
+const NOT_A_TITLER =
+  /image|live|tts|audio|embed|realtime|search|computer-use|research|customtools/i;
 
 /**
- * A small model of `provider` (the session's own): non-reasoning first, then cheapest. A title
- * needs 30 tokens, and a reasoning model may spend them thinking. Undefined without one.
+ * Providers whose models cannot answer a plain completion, so a default title request would only
+ * fail. The user names a model of another provider in `auto-name.json`.
+ */
+const NO_DEFAULT_PROVIDERS = new Set(["openai-codex"]);
+
+/** `anthropic` of OpenRouter's `anthropic/claude-sonnet-5` (and of its `~anthropic/…` aliases). */
+function vendorOf(id: string): string | undefined {
+  const slash = id.indexOf("/");
+  return slash > 0 ? id.slice(0, slash).replace(/^~/, "") : undefined;
+}
+
+/**
+ * A small model of the session's provider: non-reasoning first, then cheapest. A title needs 30
+ * tokens, and a reasoning model may spend them thinking. On a provider that fronts many vendors
+ * (OpenRouter ids `vendor/model`), only the session model's own vendor counts, so a Claude
+ * session never titles through another vendor's model. `:batch` variants are skipped. Undefined
+ * without one.
  */
 export function pickSmallModel(
   available: readonly Model<Api>[],
-  provider: string,
+  session: { provider: string; id: string },
 ): Model<Api> | undefined {
+  const vendor = vendorOf(session.id);
   return available
     .filter(
       (model) =>
-        model.provider === provider &&
+        model.provider === session.provider &&
         (model.type ?? "chat") === "chat" &&
+        (vendor === undefined || vendorOf(model.id) === vendor) &&
+        !model.id.includes(":batch") &&
+        !NOT_A_TITLER.test(model.id) &&
         SMALL_MODEL.test(model.id),
     )
     .sort(
@@ -174,7 +197,7 @@ export function pickSmallModel(
 /**
  * The configured model, else a small model of the session's provider, else the session's own
  * model. A configured model that does not resolve is a problem, never a silent fallback to a
- * model the user did not name.
+ * model the user did not name, and neither is a provider that cannot title by default.
  */
 export async function chooseModel(
   models: TitleModels,
@@ -188,7 +211,11 @@ export async function chooseModel(
   }
   if (!session)
     return { problem: "no model configured and the session has none" };
-  const small = pickSmallModel(await models.available(), session.provider);
+  if (NO_DEFAULT_PROVIDERS.has(session.provider))
+    return {
+      problem: `${session.provider} models cannot title a session by default; set a model of another provider in ~/.pi/agent/auto-name.json, such as {"model":"anthropic/claude-haiku-5-5"}`,
+    };
+  const small = pickSmallModel(await models.available(), session);
   const model = small ?? models.find(session.provider, session.id);
   return (
     model ?? { problem: `no model available for provider ${session.provider}` }

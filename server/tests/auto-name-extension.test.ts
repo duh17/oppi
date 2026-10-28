@@ -206,6 +206,8 @@ describe("autoName", () => {
   });
 });
 
+const ANTHROPIC_SESSION = { provider: "anthropic", id: "claude-sonnet-5" };
+
 describe("default model", () => {
   it("is a small model of the session's provider, not the session's own", async () => {
     expect(
@@ -223,8 +225,8 @@ describe("default model", () => {
       id: "flash-cheap",
       cost: { input: 0.2, output: 0.5, cacheRead: 0, cacheWrite: 0 },
     });
-    expect(pickSmallModel([thinker, HAIKU, cheap, SONNET], "anthropic")).toBe(cheap);
-    expect(pickSmallModel([thinker], "anthropic")).toBe(thinker);
+    expect(pickSmallModel([thinker, HAIKU, cheap, SONNET], ANTHROPIC_SESSION)).toBe(cheap);
+    expect(pickSmallModel([thinker], ANTHROPIC_SESSION)).toBe(thinker);
   });
 
   it("never picks another provider's model", () => {
@@ -233,7 +235,7 @@ describe("default model", () => {
       provider: "omlx",
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     });
-    expect(pickSmallModel([local, SONNET], "anthropic")).toBeUndefined();
+    expect(pickSmallModel([local, SONNET], ANTHROPIC_SESSION)).toBeUndefined();
   });
 
   it("falls back to the session's own model when its provider has no small one", async () => {
@@ -248,7 +250,110 @@ describe("default model", () => {
       problem: expect.any(String),
     });
   });
+  it("matches a size word as a whole part of the id, and skips batch variants", () => {
+    const notSmall = model({ id: "minimax-m2" });
+    const batch = model({ id: "claude-haiku-5:batch" });
+    const nova = model({ id: "nova-lite-v1" });
+    expect(pickSmallModel([notSmall, batch], ANTHROPIC_SESSION)).toBeUndefined();
+    expect(pickSmallModel([notSmall, batch, nova], ANTHROPIC_SESSION)).toBe(nova);
+  });
+
+  it("skips models that take the same id shape but are not for a title", () => {
+    const image = model({ id: "gemini-3.1-flash-lite-image" });
+    const live = model({ id: "gemini-3.1-flash-live-preview" });
+    expect(pickSmallModel([image, live], ANTHROPIC_SESSION)).toBeUndefined();
+  });
+
+  it("names nothing, with a pointer to auto-name.json, for a provider that cannot title by default", async () => {
+    const result = await chooseModel(models(), undefined, {
+      provider: "openai-codex",
+      id: "gpt-6-sol",
+    });
+    expect(result).toMatchObject({ problem: expect.stringContaining("auto-name.json") });
+    // A model the user names is still used.
+    expect(
+      await chooseModel(models(), "anthropic/claude-haiku-5", {
+        provider: "openai-codex",
+        id: "gpt-6-sol",
+      }),
+    ).toBe(HAIKU);
+  });
 });
+
+// The default over pi-ai's own catalogs, which is what a real session's registry lists.
+describe("default model over pi-ai's catalogs", () => {
+  async function catalog(file: string, exportName: string): Promise<Model<Api>[]> {
+    const module = (await import(`@earendil-works/pi-ai/providers/${file}.models`)) as Record<
+      string,
+      Record<string, Model<Api>>
+    >;
+    return Object.values(module[exportName] as Record<string, Model<Api>>);
+  }
+
+  it("is a Haiku for an Anthropic session", async () => {
+    const picked = pickSmallModel(await catalog("anthropic", "ANTHROPIC_MODELS"), {
+      provider: "anthropic",
+      id: "claude-sonnet-5",
+    });
+    expect(picked?.id).toMatch(/haiku/);
+  });
+
+  it("is a Flash-Lite for a Google session, never an image or live model", async () => {
+    const picked = pickSmallModel(await catalog("google", "GOOGLE_MODELS"), {
+      provider: "google",
+      id: "gemini-3.1-pro-preview",
+    });
+    expect(picked?.id).toMatch(/flash-lite/);
+    expect(picked?.id).not.toMatch(/image|live/);
+  });
+
+  it("is a cheap non-reasoning mini or nano for an OpenAI session", async () => {
+    const picked = pickSmallModel(await catalog("openai", "OPENAI_MODELS"), {
+      provider: "openai",
+      id: "gpt-5.5",
+    });
+    expect(picked?.id).toMatch(/mini|nano/);
+    expect(picked?.reasoning).toBe(false);
+  });
+
+  it("stays with the session model's vendor on OpenRouter, and never takes a :batch variant", async () => {
+    const openrouter = await catalog("openrouter", "OPENROUTER_MODELS");
+    const claude = pickSmallModel(openrouter, {
+      provider: "openrouter",
+      id: "anthropic/claude-sonnet-5",
+    });
+    expect(claude?.id).toMatch(/^~?anthropic\/.*haiku/);
+    expect(claude?.id).not.toContain(":batch");
+
+    const mistral = openrouter.find((m) => m.id.startsWith("mistralai/"));
+    if (mistral) {
+      const picked = pickSmallModel(openrouter, { provider: "openrouter", id: mistral.id });
+      expect(picked === undefined || picked.id.startsWith("mistralai/")).toBe(true);
+    }
+    // A vendor with no small model gets none, not another vendor's.
+    const withoutSmallClaude = openrouter.filter(
+      (m) => !(/^~?anthropic\//.test(m.id) && SMALL.test(m.id)),
+    );
+    expect(
+      pickSmallModel(withoutSmallClaude, { provider: "openrouter", id: "anthropic/claude-opus-5" }),
+    ).toBeUndefined();
+  });
+
+  it("has no default for an OpenAI Codex session, and says to set auto-name.json", async () => {
+    const codex = await catalog("openai-codex", "OPENAI_CODEX_MODELS");
+    const result = await chooseModel(
+      models({
+        available: () => codex,
+        find: (provider, id) => codex.find((m) => m.provider === provider && m.id === id),
+      }),
+      undefined,
+      { provider: "openai-codex", id: "gpt-6-sol" },
+    );
+    expect(result).toMatchObject({ problem: expect.stringContaining("auto-name.json") });
+  });
+});
+
+const SMALL = /(^|[-/.:])(haiku|flash|mini|nano|lite|small)($|[-/.:])/i;
 
 describe("config file", () => {
   let dir: string;
