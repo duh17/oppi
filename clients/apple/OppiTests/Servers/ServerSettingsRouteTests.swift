@@ -11,8 +11,17 @@ struct ServerSettingsRouteTests {
     private struct Harness {
         var root: AppRootEnvironment
         var route: ServerSettingsRouteViewController
-        var navigation: UINavigationController
+        var navigation: RoutedStack
         var window: UIWindow
+    }
+
+    /// A stack that, like the shell's, knows which screens a route made.
+    private final class RoutedStack: UINavigationController, RoutedScreenStack {
+        var routed: [UIViewController] = []
+
+        func isRouted(_ screen: UIViewController) -> Bool {
+            routed.contains { $0 === screen }
+        }
     }
 
     private func makeServer(_ id: String, order: Int) throws -> PairedServer {
@@ -41,7 +50,8 @@ struct ServerSettingsRouteTests {
         #expect(coordinator.restoreActiveServer("server-a"))
         let root = makeTestAppRoot(coordinator: coordinator)
         let route = ServerSettingsRouteViewController(target: ServerDetailsNavTarget(serverId: "server-a"), root: root)
-        let navigation = UINavigationController(rootViewController: route)
+        let navigation = RoutedStack(rootViewController: route)
+        navigation.routed = [route]
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -64,6 +74,7 @@ struct ServerSettingsRouteTests {
         _ = h.root.coordinator.restoreActiveServer("server-b")
         let route = ServerSettingsRouteViewController(target: ServerDetailsNavTarget(serverId: "server-a"), root: h.root)
         h.navigation.setViewControllers([route], animated: false)
+        h.navigation.routed = [route]
 
         route.loadViewIfNeeded()
 
@@ -82,9 +93,19 @@ struct ServerSettingsRouteTests {
     }
 
     /// A screen the shell routed above Server Settings, as Model Providers is.
-    private func pushRoutedScreen(in navigation: UINavigationController) -> UIViewController {
+    private func pushRoutedScreen(in navigation: RoutedStack) -> UIViewController {
         let screen = UIViewController()
         screen.title = "Model Providers"
+        navigation.pushViewController(screen, animated: false)
+        navigation.routed.append(screen)
+        return screen
+    }
+
+    /// A page one of the page's own pages pushed, which nothing tracks (a workspace's settings
+    /// opened from Workspaces).
+    private func pushUntrackedPage(in navigation: UINavigationController, title: String) -> UIViewController {
+        let screen = UIViewController()
+        screen.title = title
         navigation.pushViewController(screen, animated: false)
         return screen
     }
@@ -139,6 +160,37 @@ struct ServerSettingsRouteTests {
         _ = h.root.coordinator.restoreActiveServer("server-a")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.route.pinnedServerId == "server-a" })
         #expect(h.navigation.viewControllers == [h.route, providers])
+    }
+
+    @Test("What a pushed page pushed in turn closes with it, up to the next routed screen")
+    func pagesPushedByPushedPagesCloseToo() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        h.route.loadViewIfNeeded()
+        let first = try #require(h.route.page)
+        // Workspaces, then a workspace's settings from it, then Model Providers routed above both.
+        let workspaces = pushPageOwnedBy(first, in: h.navigation, title: "Workspaces")
+        let workspaceSettings = pushUntrackedPage(in: h.navigation, title: "Workspace Settings")
+        let providers = pushRoutedScreen(in: h.navigation)
+        #expect(h.navigation.viewControllers == [h.route, workspaces, workspaceSettings, providers])
+
+        _ = h.root.coordinator.restoreActiveServer("server-b")
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.route.pinnedServerId == "server-b" })
+        #expect(h.navigation.viewControllers == [h.route, providers])
+    }
+
+    @Test("A page nobody asked about stays when nothing of Server Settings' is below it")
+    func unrelatedPushedPageStays() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        h.route.loadViewIfNeeded()
+        let other = pushUntrackedPage(in: h.navigation, title: "Something else")
+
+        _ = h.root.coordinator.restoreActiveServer("server-b")
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.route.pinnedServerId == "server-b" })
+        #expect(h.navigation.viewControllers == [h.route, other])
     }
 
     @Test("In a split view, a switch made from the primary column closes About in the detail and shows the new server")

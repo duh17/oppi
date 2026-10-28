@@ -125,14 +125,28 @@ final class ServerSettingsRouteViewController: UIViewController {
         self.page = page
     }
 
-    /// Takes only what `page` pushed off the stack. Screens the shell routed above this
-    /// one are not its to close, whatever order they are in.
+    /// Takes only what `page` pushed off the stack: its own pages, and the pages those pushed
+    /// in turn (Workspaces opens a workspace's settings, which is pinned to the old server too),
+    /// up to the next screen the shell routed. A routed screen above this one is not its to
+    /// close, whatever order they are in. A stack that cannot tell routed from pushed closes
+    /// only the tracked pages.
     private func closePushedPages(of page: ServerSettingsViewController) {
         guard let navigation = navigationController else { return }
         let owned = page.pushedScreens
-        let stack = navigation.viewControllers
-        let kept = stack.filter { screen in !owned.contains { $0 === screen } }
-        guard kept.count != stack.count else { return }
+        let routedStack = navigation as? RoutedScreenStack
+        var insideOwnedPages = false
+        var kept: [UIViewController] = []
+        for screen in navigation.viewControllers {
+            if owned.contains(where: { $0 === screen }) {
+                insideOwnedPages = true
+            } else if let routedStack, !routedStack.isRouted(screen), screen !== self, insideOwnedPages {
+                continue
+            } else {
+                if routedStack?.isRouted(screen) == true { insideOwnedPages = false }
+                kept.append(screen)
+            }
+        }
+        guard kept.count != navigation.viewControllers.count else { return }
         navigation.setViewControllers(kept, animated: false)
     }
 

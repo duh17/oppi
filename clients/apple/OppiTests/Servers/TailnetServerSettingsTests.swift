@@ -36,4 +36,23 @@ struct TailnetServerSettingsTests {
         #expect(coordinator.activeServerId == peerServer.id)
         #expect(root.navigation.workspaceStackRouteElements.last == .serverDetails(ServerDetailsNavTarget(serverId: peerServer.id)))
     }
+
+    @Test("In a sheet the Paired row is only a status: it switches nothing and opens nothing")
+    func pairedRowInASheetHasNoAction() throws {
+        let paired = try makeServer("mac-b.tail1234.ts.net", order: 0)
+        let serverStore = ServerStore()
+        serverStore.replaceServersForPreview([paired])
+        let coordinator = ConnectionCoordinator(serverStore: serverStore)
+        coordinator.ensureConnection(for: paired)
+        let peer = TailnetPeer(
+            id: "peer-b", hostName: "mac-b", dnsName: "mac-b.tail1234.ts.net", os: "macOS",
+            tailscaleIPs: ["100.64.0.2"], isOnline: true
+        )
+
+        let inSheet = TailnetSettingsViewController(coordinator: coordinator, onClose: {})
+        let inStack = TailnetSettingsViewController(coordinator: coordinator)
+
+        #expect(inSheet.peerRow(peer).rowAction == nil)
+        #expect(inStack.peerRow(peer).rowAction?.0 == "tailnet.paired.peer-b")
+    }
 }

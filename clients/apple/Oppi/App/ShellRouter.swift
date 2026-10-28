@@ -117,11 +117,18 @@ enum ShellRoutePlacement: Equatable {
 
 /// One UIKit stack of the workspace shell.
 ///
+/// A stack that knows which of its screens a route made, as against a page a screen
+/// pushed itself (`ScreenNavigator.push`, `Router.push`).
+@MainActor
+protocol RoutedScreenStack: UINavigationController {
+    func isRouted(_ screen: UIViewController) -> Bool
+}
+
 /// `setRoutes` shows exactly these routes, the first as the root, and keeps
 /// every screen whose route stays. A page a hosted screen pushed itself
 /// (`ScreenNavigator.push`) stays above it until a route below it changes.
 final class ShellNavigationController: UINavigationController, UINavigationControllerDelegate,
-    RouterRootClosing {
+    RouterRootClosing, RoutedScreenStack {
     private let root: AppRootEnvironment
     private let rootPlacement: ShellRoutePlacement
     /// The user left routed screens; the argument is how many routes, root
@@ -170,6 +177,10 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
 
     func closeRoot() {
         onCloseRoot?()
+    }
+
+    func isRouted(_ screen: UIViewController) -> Bool {
+        routeByScreen[ObjectIdentifier(screen)] != nil
     }
 
     private var routedScreens: [(route: ShellRoute, screen: UIViewController)] {

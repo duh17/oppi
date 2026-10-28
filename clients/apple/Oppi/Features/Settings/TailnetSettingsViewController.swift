@@ -387,7 +387,7 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
         return peerRow(peer)
     }
 
-    private func peerRow(_ peer: TailnetPeer) -> SetupRow {
+    func peerRow(_ peer: TailnetPeer) -> SetupRow {
         let fg = UIColor(palette.fg)
         let comment = UIColor(palette.comment)
         let address = SetupRow.Line(text: peer.dnsName.isEmpty ? peer.tailscaleIPs.first ?? "" : peer.dnsName, color: comment)
@@ -396,7 +396,12 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
         case .paired:
             row.trailing = .badge(String(localized: "Paired"), symbol: "checkmark.circle.fill", color: UIColor(palette.green))
             row.accessibilityLabel = "\(peer.displayName), \(String(localized: "Paired"))"
-            row.rowAction = ("tailnet.paired.\(peer.id)", { [weak self] in self?.openServerSettings(for: peer) })
+            // In a sheet (Add Server → Set Up a Computer) the row only says the computer is paired:
+            // opening that server's settings would switch the active server behind the sheets and
+            // route Server Settings under them, away from the flow the person is in.
+            if onClose == nil {
+                row.rowAction = ("tailnet.paired.\(peer.id)", { [weak self] in self?.openServerSettings(for: peer) })
+            }
         case .checking:
             row.trailing = .spinner
             row.accessibilityLabel = String(localized: "\(peer.displayName), checking for Oppi")
