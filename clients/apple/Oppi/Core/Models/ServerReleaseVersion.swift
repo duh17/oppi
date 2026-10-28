@@ -70,14 +70,14 @@ enum ServerUpdatePresentation {
         guard let update, update.isAppUpdatable else {
             // The installer restarts its own service; others need a restart.
             if update?.isInstallerManaged == true {
-                return "This install cannot be updated from the app. Run the command on the host."
+                return "This install cannot be updated from the app. Run the command on the server."
             }
-            return "This install cannot be updated from the app. Run the command on the host, then restart the server."
+            return "This install cannot be updated from the app. Run the command on the server, then restart it."
         }
         if update.isSourceLink {
-            return "This server runs from a linked source checkout. Rebuilding compiles that checkout and restarts this host. Running sessions are interrupted."
+            return "This server runs from a linked source checkout. Rebuilding compiles that checkout and restarts this server. Running sessions are interrupted."
         }
-        return "Updating installs a new oppi-server from npm and restarts this host. Running sessions are interrupted."
+        return "Updating installs a new oppi-server from npm and restarts this server. Running sessions are interrupted."
     }
 
     static func progressLabel(status: String, restartMode: String, isSourceLink: Bool) -> String {
@@ -85,7 +85,7 @@ enum ServerUpdatePresentation {
         if status == "restarting" {
             if restartMode == "manual" {
                 let done = isSourceLink ? "Build succeeded." : "Install succeeded."
-                return "\(done) Restart the Oppi server on the host to use the new version."
+                return "\(done) Restart the Oppi server to use the new version."
             }
             return "Restarting…"
         }
