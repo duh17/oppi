@@ -808,8 +808,10 @@ final class WorkspaceSettingsSummaryCell: UICollectionViewListCell {
         lockLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         folderLabel.font = .preferredFont(forTextStyle: .footnote)
         folderLabel.adjustsFontForContentSizeCategory = true
-        folderLabel.numberOfLines = 1
-        folderLabel.lineBreakMode = .byTruncatingMiddle
+        // A folder path has no spaces to wrap at, so it wraps by character: at a
+        // large text size it takes more lines instead of being cut off.
+        folderLabel.numberOfLines = 0
+        folderLabel.lineBreakMode = .byCharWrapping
         button.accessibilityTraits = .button
         // The labels paint the row; the button above them is its one accessible
         // element, so the row reads as a single control.

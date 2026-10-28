@@ -4,19 +4,23 @@ import UIKit
 /// the theme's title color, an optional current-value summary, and the system
 /// disclosure chevron. The whole row is one button, so a tap, a VoiceOver
 /// activation, and `app.buttons[id]` all run the row's push. Without a symbol
-/// the title starts at the row's margin. A long value wraps in the row's right
-/// 60%, so a summary can name several things.
+/// the title starts at the row's margin. The value sits beside the title when
+/// both fit on one line, and under it when they do not (a long summary, or a
+/// large text size), so neither is squeezed.
 final class SettingsIndexRowCell: UICollectionViewListCell {
     private let button = SettingsRowButton(type: .system)
     private let iconView = UIImageView()
+    private let textStack = UIStackView()
     private let titleLabel = UILabel()
     private let valueLabel = UILabel()
-    private var titleAfterIcon: NSLayoutConstraint?
-    private var titleAtMargin: NSLayoutConstraint?
+    private var stackAfterIcon: NSLayoutConstraint?
+    private var stackAtMargin: NSLayoutConstraint?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        for view in [iconView, titleLabel, valueLabel, button] {
+        textStack.addArrangedSubview(titleLabel)
+        textStack.addArrangedSubview(valueLabel)
+        for view in [iconView, textStack, button] {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
         }
@@ -29,43 +33,36 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         titleLabel.font = .preferredFont(forTextStyle: .body)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.numberOfLines = 0
-        // The title holds its width before the value does, so a short value
-        // beside it wraps or truncates instead of squeezing the title.
-        titleLabel.setContentCompressionResistancePriority(UILayoutPriority(751), for: .horizontal)
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         valueLabel.font = .preferredFont(forTextStyle: .body)
         valueLabel.adjustsFontForContentSizeCategory = true
-        valueLabel.textAlignment = .right
         valueLabel.setContentHuggingPriority(.required, for: .horizontal)
-        valueLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        valueLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        arrange(sideBySide: true)
         button.accessibilityTraits = .button
         // The labels paint the row; the button above them is its one accessible
         // element, so the row reads as a single control.
         accessibilityElements = [button]
-        // One of the two title starts is active, by whether the row has a symbol.
-        let afterIcon = titleLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12)
-        titleAfterIcon = afterIcon
-        titleAtMargin = titleLabel.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor)
+        // One of the two text starts is active, by whether the row has a symbol.
+        let afterIcon = textStack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12)
+        stackAfterIcon = afterIcon
+        stackAtMargin = textStack.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor)
         NSLayoutConstraint.activate([
             afterIcon,
             iconView.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
             iconView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 24),
-            titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 12),
-            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: valueLabel.leadingAnchor, constant: -8),
-            valueLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            valueLabel.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 12),
-            valueLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
-            valueLabel.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            valueLabel.widthAnchor.constraint(lessThanOrEqualTo: contentView.layoutMarginsGuide.widthAnchor, multiplier: 0.6),
+            textStack.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
+            textStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            textStack.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 12),
+            textStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             button.topAnchor.constraint(equalTo: contentView.topAnchor),
             button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             // A grouped list's separator starts where the row's title does.
-            separatorLayoutGuide.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            separatorLayoutGuide.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
         ])
     }
 
@@ -82,15 +79,15 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         let style = SettingsStyle.current
         iconView.image = systemImage.flatMap { UIImage(systemName: $0) }
         iconView.isHidden = systemImage == nil
-        titleAfterIcon?.isActive = systemImage != nil
-        titleAtMargin?.isActive = systemImage == nil
+        stackAfterIcon?.isActive = systemImage != nil
+        stackAtMargin?.isActive = systemImage == nil
         iconView.tintColor = style.accent
         titleLabel.text = title
         titleLabel.textColor = style.title
         valueLabel.text = value
         valueLabel.textColor = style.value
         valueLabel.isHidden = value == nil
-        updateValueLines(forRowWidth: bounds.width)
+        updateArrangement(forRowWidth: bounds.width)
         accessories = [.disclosureIndicator()]
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = title
@@ -98,16 +95,18 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         button.setTapAction(action)
     }
 
-    /// The room the disclosure chevron takes at the row's trailing edge.
+    /// The room the disclosure chevron takes at the row's trailing edge at the
+    /// standard text size; it grows with the text size.
     private static let accessoryAllowance: CGFloat = 40
+    /// Spare width the fit check keeps back, so a row that only just fits does
+    /// not wrap its title.
+    private static let fitSlack: CGFloat = 16
 
-    /// A value stays on the title's line when the title and the value fit side
-    /// by side in a row this wide, and wraps otherwise. A label that may wrap
-    /// takes its widest width in Auto Layout and squeezes the title, so only a
-    /// value that would not fit is allowed to.
-    private func updateValueLines(forRowWidth width: CGFloat) {
+    /// The value sits beside the title when both fit side by side in a row this
+    /// wide, and under it otherwise.
+    private func updateArrangement(forRowWidth width: CGFloat) {
         guard width > 0, !valueLabel.isHidden else {
-            valueLabel.numberOfLines = 1
+            arrange(sideBySide: true)
             return
         }
         func lineWidth(_ label: UILabel) -> CGFloat {
@@ -115,12 +114,21 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         }
         let margins = contentView.directionalLayoutMargins
         let iconWidth: CGFloat = iconView.isHidden ? 0 : 36
-        let available = width - margins.leading - margins.trailing - iconWidth - Self.accessoryAllowance
-        valueLabel.numberOfLines = lineWidth(titleLabel) + 8 + lineWidth(valueLabel) <= available ? 1 : 0
+        let accessory = UIFontMetrics(forTextStyle: .body).scaledValue(for: Self.accessoryAllowance, compatibleWith: traitCollection)
+        let available = width - margins.leading - margins.trailing - iconWidth - accessory - Self.fitSlack
+        arrange(sideBySide: lineWidth(titleLabel) + 8 + lineWidth(valueLabel) <= available)
+    }
+
+    private func arrange(sideBySide: Bool) {
+        textStack.axis = sideBySide ? .horizontal : .vertical
+        textStack.alignment = sideBySide ? .center : .leading
+        textStack.spacing = sideBySide ? 8 : 2
+        valueLabel.textAlignment = sideBySide ? .right : .natural
+        valueLabel.numberOfLines = sideBySide ? 1 : 0
     }
 
     override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
-        updateValueLines(forRowWidth: layoutAttributes.size.width)
+        updateArrangement(forRowWidth: layoutAttributes.size.width)
         return super.preferredLayoutAttributesFitting(layoutAttributes)
     }
 

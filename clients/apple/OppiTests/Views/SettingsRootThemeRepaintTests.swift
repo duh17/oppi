@@ -78,7 +78,7 @@ struct SettingsRootThemeRepaintTests {
             screen.view.layoutIfNeeded()
             if let list = Self.collectionView(in: screen.view) {
                 for cell in list.visibleCells {
-                    for case let label as UILabel in cell.contentView.subviews where label.text == title {
+                    for label in Self.labels(in: cell.contentView) where label.text == title {
                         if previous == nil || label.textColor != previous { return label.textColor }
                     }
                 }
@@ -94,6 +94,14 @@ struct SettingsRootThemeRepaintTests {
             if let found = collectionView(in: subview) { return found }
         }
         return nil
+    }
+
+    /// Every label under `view`, in view order.
+    static func labels(in view: UIView) -> [UILabel] {
+        var found: [UILabel] = []
+        if let label = view as? UILabel { found.append(label) }
+        for subview in view.subviews { found += labels(in: subview) }
+        return found
     }
 }
 
@@ -130,9 +138,10 @@ struct SettingsRootSeparatorTests {
             checked += 1
             let guide = cell.separatorLayoutGuide.layoutFrame
             let name = title.text ?? ""
+            let titleMinX = title.convert(title.bounds, to: cell).minX
             #expect(
-                abs(guide.minX - title.frame.minX) < 0.5,
-                "\(name) separator starts at \(guide.minX), title at \(title.frame.minX)"
+                abs(guide.minX - titleMinX) < 0.5,
+                "\(name) separator starts at \(guide.minX), title at \(titleMinX)"
             )
         }
         #expect(checked >= 8, "Only \(checked) rows laid out")
@@ -150,9 +159,7 @@ struct SettingsRootSeparatorTests {
 
     /// The row's title label: the widest plain label the cell paints first.
     private static func title(in cell: UICollectionViewCell) -> UILabel? {
-        cell.contentView.subviews
-            .compactMap { $0 as? UILabel }
-            .first { $0.text?.isEmpty == false }
+        SettingsRootThemeRepaintTests.labels(in: cell.contentView).first { $0.text?.isEmpty == false }
     }
 
     private static func collectionView(in view: UIView) -> UICollectionView? {

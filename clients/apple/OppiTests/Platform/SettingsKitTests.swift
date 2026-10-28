@@ -148,3 +148,132 @@ private final class ScopedPage: SettingsListViewController<ScopedPage.Section, I
         ]
     }
 }
+
+// MARK: - Live text size
+
+extension SettingsKitTests {
+    @Test("Every kit row re-measures when the text size changes live, and none of its text is cut off")
+    func kitRowsGrowWithTheTextSize() async throws {
+        let page = KitRowsPage()
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 2400)
+        window.rootViewController = page
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        page.traitOverrides.preferredContentSizeCategory = .large
+
+        let rows = KitRowsPage.Row.allCases
+        func heights() async -> [KitRowsPage.Row: CGFloat]? {
+            for _ in 0..<150 {
+                page.view.layoutIfNeeded()
+                let cells = rows.compactMap { row in
+                    page.dataSource?.indexPath(for: row).flatMap { page.collectionView.cellForItem(at: $0) }.map { (row, $0.bounds.height) }
+                }
+                if cells.count == rows.count { return Dictionary(uniqueKeysWithValues: cells) }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            return nil
+        }
+        let before = try #require(await heights())
+
+        page.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        var after = before
+        for _ in 0..<150 {
+            page.view.layoutIfNeeded()
+            after = (await heights()) ?? before
+            if rows.allSatisfy({ (after[$0] ?? 0) > (before[$0] ?? .greatestFiniteMagnitude) }) { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        for row in rows {
+            #expect((after[row] ?? 0) > (before[row] ?? .greatestFiniteMagnitude), "\(row) did not grow: \(before[row] ?? 0) -> \(after[row] ?? 0)")
+        }
+
+        // Nothing the rows say is clipped or truncated at the larger size.
+        page.view.layoutIfNeeded()
+        var checked = 0
+        for row in rows {
+            guard let indexPath = page.dataSource?.indexPath(for: row), let cell = page.collectionView.cellForItem(at: indexPath) else {
+                Issue.record("\(row) has no cell")
+                continue
+            }
+            for label in Self.labels(in: cell) where !(label.text ?? "").isEmpty && !label.isHidden && label.bounds.width > 0 {
+                checked += 1
+                let needed = label.sizeThatFits(CGSize(width: label.bounds.width, height: .greatestFiniteMagnitude))
+                #expect(needed.height <= label.bounds.height + 1, "\(row): \"\(label.text ?? "")\" is clipped (\(needed.height) > \(label.bounds.height))")
+                if label.numberOfLines == 1 {
+                    #expect(label.intrinsicContentSize.width <= label.bounds.width + 1, "\(row): \"\(label.text ?? "")\" is truncated")
+                }
+            }
+        }
+        // The check looked at text in every row, not at nothing.
+        #expect(checked >= rows.count, "only \(checked) labels were checked")
+    }
+
+    private static func labels(in view: UIView) -> [UILabel] {
+        var found: [UILabel] = []
+        if let label = view as? UILabel { found.append(label) }
+        for subview in view.subviews { found += labels(in: subview) }
+        return found
+    }
+}
+
+/// One of each kit row, with text long enough to wrap at the largest sizes.
+private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row> {
+    enum Section: Hashable, Sendable { case rows }
+    enum Row: CaseIterable, Hashable, Sendable { case index, menu, action, state, toggle, info }
+
+    init() {
+        super.init(title: "Kit", listIdentifier: "test.kit.list", scope: .device)
+    }
+
+    override func sections() -> [SettingsSectionModel<Section, Row>] {
+        [SettingsSectionModel(.rows, items: Row.allCases)]
+    }
+
+    private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Row> { cell, _, _ in
+        cell.configure(title: "Terminal Colors", systemImage: "paintpalette", value: "Host's Ghostty theme", identifier: "test.index") {}
+    }
+
+    private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Row> { cell, _, _ in
+        cell.configure(
+            title: "Keep Awake After Activity",
+            identifier: "test.menu",
+            options: [("2 minutes", true, {}), ("5 minutes", false, {})]
+        )
+    }
+
+    private lazy var actionRow = UICollectionView.CellRegistration<SettingsActionRowCell, Row> { cell, _, _ in
+        cell.configure(title: "Remove Saved Sudo Password", systemImage: "trash", tint: .destructive, identifier: "test.action") {}
+    }
+
+    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Row> { cell, _, _ in
+        cell.configure(.failure("Skills are unavailable. The selected server has no cached Skills catalog.", retry: {}))
+    }
+
+    override func prepareRegistrations() {
+        _ = (indexRow, menuRow, actionRow, stateRow)
+    }
+
+    override func dequeue(_ item: Row, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .index: collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
+        case .menu: collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
+        case .action: collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
+        case .state: collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
+        case .toggle, .info: super.dequeue(item, at: indexPath)
+        }
+    }
+
+    override func configure(_ cell: UICollectionViewListCell, item: Row) {
+        switch item {
+        case .toggle:
+            toggleRow(cell, title: "Close Brackets and Quotes", isOn: true) { _ in }
+        default:
+            var content = content(.info)
+            content.text = "Local Cache"
+            content.secondaryText = "Calculating a long local cache size"
+            cell.contentConfiguration = content
+        }
+    }
+}

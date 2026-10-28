@@ -215,7 +215,7 @@ Pick the row kind by what the row does, not by how it looks.
 
 | Kind | Use it for | Built with |
 |---|---|---|
-| Navigate | Opens another page. Title, optional accent symbol, optional value, chevron. A long value wraps. | `SettingsIndexRowCell` |
+| Navigate | Opens another page. Title, optional accent symbol, optional value, chevron. The value sits beside the title when both fit on a line, and under it when they do not (a long summary, or a large text size). | `SettingsIndexRowCell` |
 | Choice | Picks one of a few values. The whole row is a menu button showing the current choice. A disabled row shows its choice and cannot open. | `SettingsMenuRowCell` |
 | Toggle | An on/off setting. | `toggleRow(_:title:isOn:identifier:onChange:)` on the base (a plain cell plus `.settingsToggle`) |
 | Action | Does something now: connect, copy, save, remove, delete. Accent or destructive tint, optional symbol, optional spinner while it runs, optional confirmation (an alert, or an action sheet that anchors to the row as a popover on iPad). | `SettingsActionRowCell` |
