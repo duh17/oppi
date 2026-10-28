@@ -5,7 +5,6 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { E2E_FAUX_MODEL_ID, E2E_FAUX_PROVIDER_ID } from "../src/e2e-faux-provider.js";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 
@@ -52,24 +51,6 @@ describe("settings through a running server", () => {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   }
-
-  it("saves an auto-title model the model runtime knows and refuses one it does not", async () => {
-    const known = `${E2E_FAUX_PROVIDER_ID}/${E2E_FAUX_MODEL_ID}`;
-
-    const saved = await request("PUT", "/server/auto-title", { enabled: true, model: known });
-    expect(saved.status).toBe(200);
-    expect(await saved.json()).toEqual({ enabled: true, model: known, revision: 1 });
-
-    const unknown = await request("PUT", "/server/auto-title", {
-      model: `${E2E_FAUX_PROVIDER_ID}/no-such-model`,
-    });
-    expect(unknown.status).toBe(400);
-    expect(await (await request("GET", "/server/auto-title")).json()).toEqual({
-      enabled: true,
-      model: known,
-      revision: 1,
-    });
-  }, 30_000);
 
   it("reports the sampler that is running, not a config.json that says otherwise", async () => {
     // The sampler latched "off" at startup; the file now says "on" (as `oppi config set` would).

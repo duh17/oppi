@@ -66,7 +66,6 @@ export interface SessionMessageQueueCoordinatorDeps {
   resolveWorkspaceRoot?: (session: Session) => string | null | Promise<string | null>;
   maxTurnAttachmentBytes?: number;
   uploadStoreConfig?: UploadStoreConfigResolved;
-  onFirstMessage?: (session: Session) => void;
 }
 
 export class SessionMessageQueueCoordinator {
@@ -135,9 +134,7 @@ export class SessionMessageQueueCoordinator {
     active: SessionMessageQueueState,
     started: { kind: MessageQueueKind; item: QueueStoreItem; queueVersion: number },
   ): void {
-    if (recordStartedQueueItem(active.session, this.sdkQueueText(started.item))) {
-      this.deps.onFirstMessage?.(active.session);
-    }
+    recordStartedQueueItem(active.session, this.sdkQueueText(started.item));
     this.deps.broadcast(key, queueItemStartedMessage(started));
   }
 

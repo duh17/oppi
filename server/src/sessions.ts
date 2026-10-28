@@ -123,9 +123,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Injected by the server: who is offered the agent `notify` tool, and its send. */
   notifyPort: SessionNotifyPort | null = null;
 
-  /** Injected by the server for auto-title generation on first message. */
-  onFirstMessage: ((session: Session) => void) | null = null;
-
   /** Injected by the server: names a Session for durable extensions (the auto-name extension). */
   sessionNaming: DurableSessionNaming | null = null;
 
@@ -272,7 +269,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       broadcast: (key, message) => this.broadcast(key, message),
       stopSession: (sessionId) => this.stopSession(sessionId),
       autoStopSession: (sessionId, guard) => this.autoStopSession(sessionId, guard),
-      onFirstMessage: (session) => this.onFirstMessage?.(session),
       metrics: this.opsMetrics ?? undefined,
       getLiveVoiceExtension: () => {
         const speech = this.liveVoiceSpeech;

@@ -185,17 +185,6 @@ export interface ServerConfig {
   pushRegistrations?: PushRegistration[];
 
   /**
-   * Auto-title configuration. When enabled, generates concise task titles
-   * for sessions using a configurable model provider.
-   */
-  autoTitle?: {
-    enabled: boolean;
-    model?: string; // "provider/model-id" (e.g. "anthropic/claude-haiku-3")
-    /** Counts saves made through `PUT /server/auto-title`; absent reads as 0. */
-    revision?: number;
-  };
-
-  /**
    * Read-aloud (text-to-speech) for chat messages. Enabled by `provider: "xai"`
    * or a non-empty `endpoint`. Changes need a server restart: the running server
    * serves its loaded config, and apps read `capabilities.speech` on connect.

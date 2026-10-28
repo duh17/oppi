@@ -158,13 +158,11 @@ describe("SessionInputCoordinator runtime admission", () => {
     );
     Object.assign(active.sdkBackend ?? {}, { withModelTurnAdmission });
     const sendCommand = vi.fn(async () => undefined);
-    const onFirstMessage = vi.fn();
     const coordinator = new SessionInputCoordinator({
       config: TEST_CONFIG,
       getActiveSession: () => active,
       turnCoordinator,
       sendCommand,
-      onFirstMessage,
     });
 
     const rejected = coordinator.sendPrompt("s1", "transactional prompt", {
@@ -185,7 +183,6 @@ describe("SessionInputCoordinator runtime admission", () => {
     );
     expect(session.firstMessage).toBeUndefined();
     expect(active.turnCache.get("turn-retry")).toBeNull();
-    expect(onFirstMessage).not.toHaveBeenCalled();
 
     rejectAdmission = false;
     await expect(
@@ -198,7 +195,6 @@ describe("SessionInputCoordinator runtime admission", () => {
     expect(withModelTurnAdmission).toHaveBeenCalledTimes(2);
     expect(sendCommand).toHaveBeenCalledOnce();
     expect(session.firstMessage).toBe("transactional prompt");
-    expect(onFirstMessage).toHaveBeenCalledOnce();
     expect(active.turnCache.get("turn-retry")?.stage).toBe("dispatched");
     expect(broadcasts.filter((message) => message.type === "turn_ack")).toEqual([
       expect.objectContaining({ stage: "accepted", clientTurnId: "turn-retry" }),
@@ -230,13 +226,11 @@ describe("SessionInputCoordinator runtime admission", () => {
         onPreflightAccepted?.();
       },
     );
-    const onFirstMessage = vi.fn();
     const coordinator = new SessionInputCoordinator({
       config: TEST_CONFIG,
       getActiveSession: () => active,
       turnCoordinator,
       sendCommand,
-      onFirstMessage,
     });
 
     await expect(
@@ -249,7 +243,6 @@ describe("SessionInputCoordinator runtime admission", () => {
     expect(session.messages).toBeUndefined();
     expect(session.firstMessage).toBeUndefined();
     expect(session.messageCount).toBe(0);
-    expect(onFirstMessage).not.toHaveBeenCalled();
     expect(active.turnCache.get("turn-preflight-retry")).toBeNull();
     expect(broadcasts.filter((message) => message.type === "turn_ack")).toEqual([]);
 
@@ -264,7 +257,6 @@ describe("SessionInputCoordinator runtime admission", () => {
     expect(sendCommand).toHaveBeenCalledTimes(2);
     expect(session.firstMessage).toBe("preflight prompt");
     expect(session.messageCount).toBe(1);
-    expect(onFirstMessage).toHaveBeenCalledOnce();
     expect(active.turnCache.get("turn-preflight-retry")?.stage).toBe("dispatched");
     expect(broadcasts.filter((message) => message.type === "turn_ack")).toEqual([
       expect.objectContaining({ stage: "accepted", clientTurnId: "turn-preflight-retry" }),

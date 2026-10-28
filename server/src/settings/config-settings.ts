@@ -1,26 +1,19 @@
 /**
- * Save contract for the settings stored in `config.json` and revisioned: auto-title and server
- * metrics. A write is validated through its registry definition by the route, then applied here
+ * Save contract for the settings stored in `config.json` and revisioned: server metrics.
+ * A write is validated through its registry definition by the route, then applied here
  * under the config lock. A `baseRevision` that is not the saved revision is refused and leaves
  * the setting as it is; omitting it keeps last-writer-wins.
  */
 import type { ServerConfig } from "../types.js";
 import { isRevision } from "./revision.js";
-import {
-  SettingValidationError,
-  type AutoTitlePatch,
-  type ServerMetricsPatch,
-} from "./registry.js";
+import { SettingValidationError, type ServerMetricsPatch } from "./registry.js";
 
-type AutoTitleSettings = NonNullable<ServerConfig["autoTitle"]>;
 type ServerMetricsSettings = NonNullable<ServerConfig["serverMetrics"]>;
 
 /** A setting as the API returns it: its value and the revision that saved it. */
-export type RevisionedAutoTitle = AutoTitleSettings & { revision: number };
 export type RevisionedServerMetrics = ServerMetricsSettings & { revision: number };
 
 interface ConfigSettingShapes {
-  autoTitle: { patch: AutoTitlePatch; saved: RevisionedAutoTitle };
   serverMetrics: { patch: ServerMetricsPatch; saved: RevisionedServerMetrics };
 }
 
@@ -28,7 +21,6 @@ export type RevisionedConfigKey = keyof ConfigSettingShapes;
 
 /** What a conflict names in `error`, matching the Mobile Output Guide's `<name> setting changed`. */
 const CONFLICT_LABELS: Record<RevisionedConfigKey, string> = {
-  autoTitle: "Auto-title",
   serverMetrics: "Server Metrics",
 };
 
@@ -47,12 +39,8 @@ export interface ConfigSettingsWriter {
 
 export function readConfigSetting<K extends RevisionedConfigKey>(
   config: ServerConfig,
-  key: K,
+  _key: K,
 ): ConfigSettingShapes[K]["saved"] {
-  if (key === "autoTitle") {
-    const saved = config.autoTitle ?? { enabled: false };
-    return { ...saved, revision: saved.revision ?? 0 } as ConfigSettingShapes[K]["saved"];
-  }
   const saved = config.serverMetrics ?? { enabled: false };
   return { ...saved, revision: saved.revision ?? 0 } as ConfigSettingShapes[K]["saved"];
 }
@@ -90,18 +78,6 @@ export function applySetting<K extends RevisionedConfigKey>(
       return {};
     }
     const revision = current.revision + 1;
-    if (key === "autoTitle") {
-      const next = patch as AutoTitlePatch;
-      const saved = current as RevisionedAutoTitle;
-      const model = next.model === undefined ? saved.model : (next.model ?? undefined);
-      return {
-        autoTitle: {
-          enabled: next.enabled ?? saved.enabled,
-          ...(model === undefined ? {} : { model }),
-          revision,
-        },
-      };
-    }
     return { serverMetrics: { enabled: (patch as ServerMetricsPatch).enabled, revision } };
   });
   if (outcome.conflict) {

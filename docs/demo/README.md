@@ -48,10 +48,6 @@ Each clip is one completed action. Mirror clips put the terminal on the left and
 
 ![Server stats](server-combined.png)
 
-## Auto-name sessions
-
-![Settings](settings.png)
-
 ## HTML and markdown rendering
 
 ![Rendering](rendering-combined.png)

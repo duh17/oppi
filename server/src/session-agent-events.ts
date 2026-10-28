@@ -45,7 +45,7 @@ import { recordStartedQueueItem } from "./session-queue-utils.js";
 import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summary.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
 import { projectVisibleCustomMessage, type SessionEntry as TraceSessionEntry } from "./trace.js";
-import type { ServerMessage, Session, SessionSummary } from "./types.js";
+import type { ServerMessage, SessionSummary } from "./types.js";
 
 export interface SessionAgentEventState extends EventProcessorSessionState, TurnSessionState {
   subscribers: Set<(msg: ServerMessage) => void>;
@@ -67,7 +67,6 @@ export interface SessionAgentEventCoordinatorDeps {
   resetIdleTimer: (key: string) => void;
   handleSessionSettled?: (key: string) => void;
   markQueuedMessageStarted?: (key: string, message: PiMessage) => void;
-  onFirstMessage?: (session: Session) => void;
   refreshQueuedMessages?: (key: string) => void;
   schedulePostCompactionQueueFlush?: (key: string) => void;
   resumeQueuedCompactions?: (key: string) => void;
@@ -157,9 +156,7 @@ export class SessionAgentEventCoordinator {
               path: ref.workspacePath,
             })),
           );
-      if (text && recordStartedQueueItem(active.session, text)) {
-        this.deps.onFirstMessage?.(active.session);
-      }
+      if (text) recordStartedQueueItem(active.session, text);
       this.deps.broadcast(key, data);
       return;
     }

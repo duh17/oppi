@@ -134,7 +134,6 @@ import {
 } from "./version.js";
 import { ServerUpdateService } from "./server-update.js";
 import type { ServerRestartMode } from "./types/server-update.js";
-import { SessionTitleGenerator } from "./session-title-generator.js";
 import { DictationManager } from "./dictation-manager.js";
 import {
   DEFAULT_DICTATION_CONFIG,
@@ -491,7 +490,6 @@ export class Server {
   private extensionProviderCatalog!: ExtensionProviderCatalog;
   private providerAuth!: ProviderAuthManager;
   private mcp!: McpService;
-  private titleGenerator!: SessionTitleGenerator;
 
   // Track all WebSocket connections for lifecycle/resource accounting.
   private connections: Set<WebSocket> = new Set();
@@ -932,35 +930,6 @@ export class Server {
         this.appEventStreamMux.emitSessionSummaryById(sessionId);
       },
     };
-
-    // Auto-title generator — generates concise task titles on first user message.
-    this.titleGenerator = new SessionTitleGenerator({
-      getConfig: () => this.storage.getConfig().autoTitle ?? { enabled: false },
-      modelRuntime: this.modelRuntime,
-      getSession: (sessionId) => this.storage.getSession(sessionId) ?? undefined,
-      setSessionName: async (sessionId, name) => {
-        await this.sessions.runCommand(sessionId, { type: "set_session_name", name });
-
-        // Keep Oppi's Session.name as a projection for list/header broadcasts.
-        // Pi's session_info entry is the source of truth.
-        const active = this.sessions.getActiveSession(sessionId);
-        if (active) {
-          active.name = name;
-          this.storage.saveSession(active);
-        }
-      },
-      broadcastSessionUpdate: (sessionId) => {
-        this.appEventStreamMux.emitSessionSummaryById(sessionId);
-      },
-      onMetrics: (metrics) => {
-        this.opsMetrics.record(
-          "server.session_title",
-          { duration_ms: metrics.durationMs, tokens: metrics.tokens },
-          { model: metrics.model, status: metrics.status },
-        );
-      },
-    });
-    this.sessions.onFirstMessage = (session) => this.titleGenerator.tryGenerateTitle(session);
 
     // Model/auth routes depend on the asynchronous Pi ModelRuntime.
     this.routes = new RouteHandler({

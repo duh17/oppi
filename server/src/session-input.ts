@@ -82,7 +82,6 @@ export interface SessionInputCoordinatorDeps {
   ) => void | Promise<void>;
   enqueueQueuedMessage?: EnqueueQueuedMessage;
   resolveWorkspaceRoot?: (session: Session) => string | null | Promise<string | null>;
-  onFirstMessage?: (session: Session) => void;
   assertModelTurnAdmissionAllowed?: (key: string) => void;
 }
 
@@ -252,15 +251,11 @@ export class SessionInputCoordinator {
       }
 
       if (!queueKind && shouldRecordPromptLocally(active.session)) {
-        const capturedFirst = appendSessionMessage(active.session, {
+        appendSessionMessage(active.session, {
           role: "user",
           content: dispatchMessage,
           timestamp: opts?.timestamp ?? Date.now(),
         });
-
-        if (capturedFirst) {
-          this.deps.onFirstMessage?.(active.session);
-        }
       }
     };
     const dispatchAcceptedTurn = (): { clientTurnId?: string; duplicate: boolean } => {

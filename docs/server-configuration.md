@@ -42,7 +42,6 @@ Do not put these in config: owner tokens and pairing secrets (use `oppi pair` an
 | `providerQuotas.openaiUseCodexPlan` | Opt in to legacy Codex plan-wide usage on the OpenAI row (default `false`; restart; see [Provider quotas](provider-quotas.md)) |
 | `auth.tailscalePairing` | Same-user Tailscale pairing; `false` turns it off (default `true`; restart; see [Onboarding](onboarding.md#turn-off-tailscale-pairing)) |
 | `auth.module` | Absolute path to an owner auth module (restart; see [Auth module](#auth-module)) |
-| `autoTitle.enabled` / `autoTitle.model` | Automatic session titles |
 | `serverMetrics.enabled` | Server and host samples behind **Server Metrics** (default `false`; the Server Settings toggle applies at once; see [Server Metrics](#server-metrics)) |
 | `experimental.serverDurable` | Offer durable sessions (restart; [Using Oppi](usage.md#durable-sessions-experiment)) |
 

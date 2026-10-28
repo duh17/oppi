@@ -62,9 +62,6 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "json",
     desc: "Immediate proxy peer IP/CIDR JSON array as Oppi sees them",
   },
-  autoTitle: { type: "json", desc: "Auto-title config JSON object" },
-  "autoTitle.enabled": { type: "boolean", desc: "Enable automatic session titles" },
-  "autoTitle.model": { type: "string", desc: "Auto-title model" },
   providerQuotas: { type: "json", desc: "Provider quota display config JSON object" },
   "providerQuotas.openaiUseCodexPlan": {
     type: "boolean",
@@ -252,9 +249,7 @@ export function cmdConfig(
       }
 
       const coerced = coerceValue(value, meta.type);
-      storage.mutateConfig((current) =>
-        setConfigPath(current, key, keepSavedRevision(current, key, coerced)),
-      );
+      storage.mutateConfig((current) => setConfigPath(current, key, coerced));
       const displayValue = redactCredentialValue(coerced, configPathLeaf(key));
 
       output(
@@ -403,17 +398,6 @@ function setConfigPath(config: ServerConfig, path: string, value: unknown): Part
   if (!lastPart) throw new Error("Config key cannot be empty");
   cursor[lastPart] = value;
   return { [topLevel]: next[topLevel] } as Partial<ServerConfig>;
-}
-
-/**
- * Setting `autoTitle` as a whole object keeps the saved revision unless the object names one,
- * so a client's `baseRevision` does not collide with a reset to 0. (`serverMetrics` has only
- * the `enabled` key to set, which leaves its sibling revision alone.)
- */
-function keepSavedRevision(config: ServerConfig, key: string, value: unknown): unknown {
-  if (key !== "autoTitle" || !isRecord(value) || "revision" in value) return value;
-  const revision = config.autoTitle?.revision;
-  return revision === undefined ? value : { ...value, revision };
 }
 
 function configPathLeaf(path: string): string {

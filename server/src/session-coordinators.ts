@@ -94,7 +94,6 @@ export interface SessionCoordinatorBundleDeps {
   stopSession: (sessionId: string) => Promise<void>;
   autoStopSession: SessionLifecycleCoordinatorDeps["autoStopSession"];
   /** Called when a session's firstMessage is first captured. */
-  onFirstMessage?: (session: Session) => void;
   /** Server telemetry for session lifecycle timing. */
   metrics?: ServerTelemetry;
   durableHarness: Promise<DurableHarness>;
@@ -220,7 +219,6 @@ export function createSessionCoordinatorBundle(
     resolveWorkspaceRoot,
     maxTurnAttachmentBytes,
     uploadStoreConfig,
-    onFirstMessage: deps.onFirstMessage,
   });
 
   const inputCoordinator = new SessionInputCoordinator({
@@ -241,7 +239,6 @@ export function createSessionCoordinatorBundle(
         sdkImages,
       ),
     resolveWorkspaceRoot,
-    onFirstMessage: deps.onFirstMessage,
     assertModelTurnAdmissionAllowed: (key) => queueCoordinator.assertModelTurnAdmissionAllowed(key),
   });
 
@@ -256,7 +253,6 @@ export function createSessionCoordinatorBundle(
     refreshQueuedMessages: (key) => queueCoordinator.refreshQueuedMessages(key),
     markQueuedMessageStarted: (key, message) =>
       queueCoordinator.markQueuedMessageStarted(key, message),
-    onFirstMessage: deps.onFirstMessage,
     schedulePostCompactionQueueFlush: (key) =>
       queueCoordinator.schedulePostCompactionQueueFlush(key),
     resumeQueuedCompactions: (key) => commandCoordinator.resumeQueuedCompactions(key),

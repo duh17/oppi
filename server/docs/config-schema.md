@@ -132,22 +132,6 @@ oppi config set tls '{"mode":"self-signed"}'
 oppi config set tls '{"mode":"disabled","allowInsecureNetworkHttp":true}'
 ```
 
-### Auto title
-
-| Setting             | Type    | Default | Description                                                                                                                                                              |
-| ------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `autoTitle.enabled` | boolean | `false` | When `true`, auto-generates a 3-5 word task title from the first user message. Uses a standalone LLM call (no pi system prompt, no tool context).                        |
-| `autoTitle.model`   | string  | -       | Model to use for title generation. Format: `"provider/model-id"`. When omitted, server-side auto-title generation is disabled. A cheap/fast local model works well here. |
-
-```json
-{
-  "autoTitle": {
-    "enabled": true,
-    "model": "omlx/Qwen3.5-122B-A10B-4bit"
-  }
-}
-```
-
 ### ASR / dictation
 
 Configures routing for server-side dictation to an external STT backend.
@@ -209,7 +193,6 @@ Extensions own approval behavior. When a session needs approval before an action
   "runtimeEnv": {},
   "oppiDocsPrompt": { "enabled": true },
   "tls": { "mode": "tailscale" },
-  "autoTitle": { "enabled": true, "model": "omlx/Qwen3.5-122B-A10B-4bit" },
   "images": { "autoResize": true }
 }
 ```

@@ -118,8 +118,6 @@ const settingsOperationIds = [
   "getProviderQuotas",
   "getServerStats",
   "getDailyServerStats",
-  "getAutoTitleConfig",
-  "setAutoTitleConfig",
   "listServerSkills",
   "getServerSkill",
   "getServerSkillFile",

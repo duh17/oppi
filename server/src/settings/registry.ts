@@ -9,7 +9,6 @@
 import { hostMountValidationError } from "../host.js";
 import { DEFAULT_ICON_CHOICE, validateIconChoice } from "../icon-choice.js";
 import { validateMobileOutputGuideSettingsReplacement } from "../mobile-output-guide-settings.js";
-import { splitCanonicalModelId } from "../model-resolution.js";
 import { parsePushEvents } from "../push/events.js";
 import { validateDictionaryPhrases } from "../storage/dictation-dictionary-store.js";
 import type { IconChoice, PushEvent, WorkspaceSandboxConfig } from "../types.js";
@@ -37,12 +36,6 @@ export interface ServerSettingDefinition<T> {
   validate(value: unknown): T;
 }
 
-/** What `PUT /server/auto-title` accepts: absent fields keep their value, `model: null` clears. */
-export interface AutoTitlePatch {
-  enabled?: boolean;
-  model?: string | null;
-}
-
 export interface ServerMetricsPatch {
   enabled: boolean;
 }
@@ -64,23 +57,6 @@ function asSettingError<T>(validate: () => T): T {
     if (error instanceof SettingValidationError) throw error;
     return fail(error instanceof Error ? error.message : String(error));
   }
-}
-
-function validateAutoTitle(value: unknown): AutoTitlePatch {
-  if (!isRecord(value)) return fail("auto-title settings must be an object");
-  const patch: AutoTitlePatch = {};
-  if (value.enabled !== undefined) {
-    if (typeof value.enabled !== "boolean") return fail("enabled must be a boolean");
-    patch.enabled = value.enabled;
-  }
-  if (value.model === null) {
-    patch.model = null;
-  } else if (value.model !== undefined) {
-    const model = typeof value.model === "string" ? value.model.trim() : "";
-    if (!splitCanonicalModelId(model)) return fail("model must be provider/id or null");
-    patch.model = model;
-  }
-  return patch;
 }
 
 function validateServerMetrics(value: unknown): ServerMetricsPatch {
@@ -253,13 +229,6 @@ export function validateWorkspaceWrite(input: object, kind: WorkspaceWriteKind):
 // ─── The table ───
 
 const SETTINGS = {
-  autoTitle: {
-    scope: "server",
-    storage: "config",
-    default: { enabled: false } as AutoTitlePatch,
-    revisioned: true,
-    validate: validateAutoTitle,
-  },
   serverMetrics: {
     scope: "server",
     storage: "config",

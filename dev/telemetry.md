@@ -359,7 +359,6 @@ HTTP routes, WebSocket plumbing, push, MCP, schedules, and session lifecycle dri
 | `server.session_create` | How long did creating a session runtime take? | `duration_ms` ms | none | none |
 | `server.sdk_session_setup` | How did classic SDK session creation split between SDK setup and extension bind? | `sdk_ms` ms<br>`bind_ms` ms | none | none |
 | `server.session_end` | Why did sessions end? | none | `reason`*: `completed`, `stopped`, `error`, `idle_timeout`, `server_restart`, `store_failed`, `other` | none |
-| `server.session_title` | How long did automatic session title generation take? | `duration_ms` ms<br>`tokens` count | `model`<br>`status`*: `ok`, `error`, `timeout` | none |
 | `server.http_request` | How long did an HTTP request take and how many body bytes did it write? Fast successful routine routes are omitted. | `duration_ms` ms<br>`response_bytes` bytes (optional) | `method`*<br>`path_pattern`*<br>`status_code`* | none |
 | `server.mcp_connect` | How long did the first MCP connect take on a durable session, and did it fail? | `duration_ms` ms | `status`*: `ok`, `error`<br>`error_kind`: `auth`, `connect`, `config` | none |
 | `server.schedule_run` | How long did dispatching a schedule run take, and why did it fail? | `duration_ms` ms | `run_kind`*<br>`status`*: `ok`, `error`<br>`reason`: `lease_lost`, `not_found`, `launch_in_progress`, `other` | none |

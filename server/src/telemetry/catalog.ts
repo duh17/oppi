@@ -1493,12 +1493,6 @@ const EVENTS = {
       },
     },
   },
-  "server.session_title": {
-    description: "How long did automatic session title generation take?",
-    group: "server_ops",
-    fields: { duration_ms: "ms", tokens: "count" },
-    tags: { model: {}, status: { required: true, values: ["ok", "error", "timeout"] } },
-  },
   "server.ask_round_trip": {
     description: "How long from a direct ask UI request to the user's answer?",
     group: "media",

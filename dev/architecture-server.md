@@ -64,7 +64,7 @@ graph TD
     Lifecycle[SessionLifecycleService]
     Lists[SessionListService]
     Trace[SessionTraceService]
-    ModelAccess[Title generation + built-in pricing]
+    ModelAccess[Built-in pricing]
     AgentLaunch[AgentLaunchService]
     ScheduleRunner[AgentScheduleRunner]
   end
@@ -191,7 +191,7 @@ Tool presentation facts and full-output lifetime are documented in [Tool inspect
 
 `server/src/settings/registry.ts` declares every setting the server owns: key, scope (`server`, `workspace`, `device`), storage (`config`, `settings-file`, `workspace`, `pi`, `push-registration`), default, `revisioned`, and `validate(value)`, which throws `SettingValidationError` (a 400) for a value it refuses. Routes and stores validate through the definition rather than keeping their own copy of a check. `protocol/settings.json` is the hand-maintained copy for the clients; `server/tests/settings-registry.test.ts` keeps the two in step (the same keys, with the same scope, storage, default, and `revisioned`). No client test reads it yet. A new setting adds its entry and its fixture row together, and an entry exists only for a setting that exists.
 
-Auto-title, Server Metrics, and the Mobile Output Guide share one save contract. GET and PUT responses carry `revision`; a PUT may carry `baseRevision`, and a stale one answers `409 { error, code: "revision_conflict", current }` and changes nothing. Auto-title and Server Metrics keep the revision beside the value in `config.json` (`applySetting` in `server/src/settings/config-settings.ts` checks and bumps it under the config lock); omitting `baseRevision` is last-writer-wins. The Mobile Output Guide requires it. The Dictionary keeps its own `revision` contract. `oppi config set` writes `config.json` without bumping a revision.
+Server Metrics and the Mobile Output Guide share one save contract. GET and PUT responses carry `revision`; a PUT may carry `baseRevision`, and a stale one answers `409 { error, code: "revision_conflict", current }` and changes nothing. Server Metrics keeps the revision beside the value in `config.json` (`applySetting` in `server/src/settings/config-settings.ts` checks and bumps it under the config lock); omitting `baseRevision` is last-writer-wins. The Mobile Output Guide requires it. The Dictionary keeps its own `revision` contract. `oppi config set` writes `config.json` without bumping a revision.
 
 Pi owns the Skills and Extensions settings, so the server-global and workspace-scoped routes map failures through one function, `httpStatusForPiResourceError` in `server/src/settings/pi-resource-errors.ts`, by error class rather than message text.
 

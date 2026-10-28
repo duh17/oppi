@@ -124,6 +124,7 @@ Example:
 
 ### Removed
 
+- **Server/Protocol:** The server no longer generates session titles. `GET` and `PUT /server/auto-title`, `autoTitle` in `config.json` and `oppi config set`, and the `server.session_title` metric are gone; the `auto-name` Pi extension ([Auto-Name](docs/extensions.md#auto-name)) names sessions instead, and its on and off is the Extensions toggle, global or per workspace, so a title no longer depends on which device started the session.
 - **Server:** `POST /telemetry/chat-metrics` is gone, and the server no longer writes or reads `chat-metrics-*`, `server-ops-metrics-*`, or `server-metrics-*` files; existing ones are deleted when they pass retention. `OPPI_SERVER_OPS_METRICS_RETENTION_DAYS` and `OPPI_SERVER_OPS_METRICS_DAILY_FILE_MAX_BYTES` are removed.
 - **Server:** `oppi pair --show-token` is gone. It printed the owner token, which the server rejects over the network, so it never helped pair a device.
 - **Protocol:** `changeStats.addedLines` and `changeStats.removedLines` on a session are no longer sent. They were always `0`, kept only for Build 55.
@@ -131,6 +132,8 @@ Example:
 
 ### Migration notes
 
+- **Migration:** A server whose `config.json` had `autoTitle.enabled: true` with a model keeps its titles: the first `oppi serve` on this version links the `auto-name` extension into `~/.pi/agent/extensions/auto-name`, writes the model to `~/.pi/agent/auto-name.json`, and removes `autoTitle` from `config.json`, after copying `config.json` to `<data dir>/backups/`. `autoTitle` that was off, or on without a model, is only removed. See [Auto-Name](docs/extensions.md#auto-name).
+- **Compatibility:** Update the app and the server together. The server no longer serves `/server/auto-title`, so an app that still has the Auto-Name settings page cannot load or save it.
 - **Compatibility:** Live Voice with `asr.liveVoiceBackend` set to `yuwp` needs a Yuwp that serves `/v1/realtime` (Yuwp master e465d24 or later); restart Yuwp.app after updating it. Against an older Yuwp a call fails to start with a speech-recognition error. Dictation still uses Yuwp's HTTP streaming API and needs no change.
 - **Compatibility:** This server no longer supports Builds 55 and older; update the app to Build 56 or later. It stopped sending the older shapes those builds need: user images in session history do not show, because they are stored references these builds cannot read; a session list fails to load in Builds 53 and 54 when a session has a control domain they do not know (`extensions` or `themes`); and Build 55 and older fail to load sessions that have change stats, which no longer carry `addedLines` and `removedLines`.
 - **Compatibility:** **Edit with Oppi** on the Mac needs a rebuilt Mac app against this server: an installed Mac build requires `control` metadata in the create response, which Oppi Control sessions on the durable engine do not carry. iOS builds that already send `domain`, `intent`, `targetId`, and `targetName` keep working.

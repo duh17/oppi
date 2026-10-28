@@ -677,7 +677,7 @@ describe("oppi.control tools", () => {
     f.run.mockImplementation(async (argv, options) => {
       await options.onWrite!({
         method: "PUT",
-        path: "/server/auto-title",
+        path: "/server/quiet-hours",
         body: { enabled: true, delayMs: 5000 },
       });
       return { envelope: { ok: true, data: {} }, wrote: true };
@@ -686,10 +686,10 @@ describe("oppi.control tools", () => {
     await f.responder.stop();
 
     const [card] = f.responder.cards;
-    expect(card?.title).toBe("Change Server Auto Title?");
+    expect(card?.title).toBe("Change Server Quiet Hours?");
     expect(card?.options).toEqual(["Apply Change", YES_ALL, "Cancel"]);
     expect(card?.message).toContain("**Enabled:** `true`");
-    expect(card?.message?.split("\n").at(-1)).toBe("Details: `PUT /server/auto-title`");
+    expect(card?.message?.split("\n").at(-1)).toBe("Details: `PUT /server/quiet-hours`");
   });
 
   it("passes an id that starts with a dash to the API instead of reading it as a flag", async () => {
@@ -1417,7 +1417,7 @@ describe("confirm card text", () => {
   });
 
   it("says what it did not read, not that it read something", () => {
-    const unread = cardOf({ method: "PUT", path: "/server/auto-title", body: { enabled: true } });
+    const unread = cardOf({ method: "PUT", path: "/server/quiet-hours", body: { enabled: true } });
     expect(unread.message).toContain("does not read the current record");
     expect(unread.message).not.toContain("since Oppi read it");
     const failed = cardOf({

@@ -4,11 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  SERVER_SETTING_DEFINITIONS,
-  SettingValidationError,
-  validateSetting,
-} from "../src/settings/registry.js";
+import { SERVER_SETTING_DEFINITIONS } from "../src/settings/registry.js";
 
 interface FixtureSetting {
   key: string;
@@ -50,19 +46,4 @@ describe("settings registry and protocol/settings.json", () => {
       expect(row?.validation).not.toBe("");
     },
   );
-});
-
-describe("registry validation", () => {
-  it("accepts auto-title models only as provider/id and clears with null", () => {
-    expect(validateSetting("autoTitle", { enabled: true, model: " anthropic/haiku " })).toEqual({
-      enabled: true,
-      model: "anthropic/haiku",
-    });
-    expect(validateSetting("autoTitle", { model: null })).toEqual({ model: null });
-    for (const model of ["haiku", "/haiku", "anthropic/", "", "  ", 7]) {
-      expect(() => validateSetting("autoTitle", { model })).toThrow(SettingValidationError);
-    }
-    expect(() => validateSetting("autoTitle", { enabled: "yes" })).toThrow(SettingValidationError);
-    expect(() => validateSetting("autoTitle", [])).toThrow(SettingValidationError);
-  });
 });

@@ -41,7 +41,7 @@ export type AutoTitleMigrationResult =
   | { status: "dropped"; backupPath: string }
   /** `autoTitle` was on with a model: the extension is installed with that model, and it is dropped. */
   | { status: "enabled"; backupPath: string; model: string }
-  /** Nothing changed except the backup; `autoTitle` stays in config.json. */
+  /** The migration changed nothing but the backup; the config store then drops the unknown key. */
   | { status: "failed"; error: string; backupPath?: string };
 
 /**
@@ -55,8 +55,8 @@ export type AutoTitleMigrationResult =
  *
  * Keyed by `autoTitle` itself (the migration ends by removing it, so a second start finds
  * nothing) and named by `AUTO_TITLE_TO_EXTENSION_MIGRATION_KEY` in its backup and log. The
- * backup copy of config.json comes first; if any step fails the config is left as it was and the
- * server starts without naming, with the backup path in the log.
+ * backup copy of config.json comes first; if any step fails the migration leaves the config as it
+ * was and the server starts without naming, with the backup path in the log.
  */
 export function runAutoTitleToExtensionMigration(
   options: AutoTitleMigrationOptions,

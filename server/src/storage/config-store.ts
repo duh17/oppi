@@ -269,7 +269,6 @@ function normalizeConfig(
     "authAccessTokens",
     "push",
     "pushRegistrations",
-    "autoTitle",
     "asr",
     "tts",
     "providerQuotas",
@@ -834,20 +833,6 @@ function normalizeConfig(
     }
     config.pushRegistrations = registrations;
   }
-  // Auto-title configuration
-  if ("autoTitle" in obj && isRecord(obj.autoTitle)) {
-    const at = obj.autoTitle;
-    const autoTitle: NonNullable<ServerConfig["autoTitle"]> = {
-      enabled: typeof at.enabled === "boolean" ? at.enabled : false,
-    };
-    if (typeof at.model === "string" && at.model.trim().length > 0) {
-      autoTitle.model = at.model.trim();
-    }
-    const revision = readSettingRevision(at.revision, "config.autoTitle", errors);
-    if (revision !== undefined) autoTitle.revision = revision;
-    config.autoTitle = autoTitle;
-  }
-
   // ASR / dictation pipeline config
   if ("asr" in obj && isRecord(obj.asr)) {
     const asr = obj.asr;
