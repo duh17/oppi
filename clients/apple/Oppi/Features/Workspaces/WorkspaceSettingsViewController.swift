@@ -498,7 +498,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         case .mcpServers:
             (String(localized: "MCP Servers"), "network", model.mcpSummary, "workspace.edit.mcpServers")
         case .dictionary:
-            (String(localized: "Dictionary"), "text.book.closed", nil, "workspace.edit.dictionary")
+            (String(localized: "Dictation Dictionary"), "text.book.closed", nil, "workspace.edit.dictionary")
         default:
             (String(localized: "Network Access"), "lock.shield", model.networkAccessSummary, "workspace.edit.networkAccess")
         }
@@ -691,10 +691,13 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                 Router.push(McpServersViewController(scopeId: workspaceId, root: root), from: self)
             }
         case .dictionary:
-            navigator.push {
-                DictationDictionaryView(workspaceId: workspaceId)
-                    .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-            }
+            guard let serverId = connection.currentServerId else { return }
+            Router.push(
+                DictationDictionaryViewController.make(
+                    root: root, serverId: serverId, workspace: (id: workspaceId, name: workspace.name)
+                ),
+                from: self
+            )
         case .networkAccess:
             navigator.push {
                 WorkspaceNetworkAccessPage(model: model)

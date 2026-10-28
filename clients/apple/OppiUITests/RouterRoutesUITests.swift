@@ -311,7 +311,7 @@ final class RouterRoutesUITests: XCTestCase {
         assertRunning()
         for (row, title) in [
             ("server.manageWorkspaces", "Workspaces"),
-            ("server.dictationDictionary", "Dictionary"),
+            ("server.dictationDictionary", "Dictation Dictionary"),
             ("server.row.pairedDevices", "Paired Devices"),
             ("server.row.about", "About This Server"),
             ("server.row.badge", "Badge Icon"),
@@ -329,7 +329,7 @@ final class RouterRoutesUITests: XCTestCase {
             ("settings.row.editor", "Editor", []),
             ("settings.row.chat", "Chat", [("Quick Comments", "Quick Comments")]),
             ("settings.row.sessions", "Session Rows", []),
-            ("settings.row.voice", "Voice & Dictation", [("settings.dictationDictionary", "Dictionary")]),
+            ("settings.row.voice", "Voice & Dictation", [("settings.dictationDictionary", "Dictation Dictionary")]),
             ("settings.tailscale", "Tailscale", []),
             ("settings.sshTerminal", "SSH Terminal", []),
             ("settings.row.privacy", "Privacy & Security", []),
@@ -443,7 +443,7 @@ final class RouterRoutesUITests: XCTestCase {
             ("workspace.edit.skills", "Skills"),
             ("workspace.edit.extensions", "Extensions"),
             ("workspace.edit.mcpServers", "MCP Servers"),
-            ("workspace.edit.dictionary", "Dictionary"),
+            ("workspace.edit.dictionary", "Dictation Dictionary"),
         ] {
             pushAndReturn(row: row, title: title, to: settings)
         }

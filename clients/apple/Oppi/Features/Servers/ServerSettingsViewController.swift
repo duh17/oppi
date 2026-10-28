@@ -580,7 +580,9 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
         case .workspaces:
             track(navigator.push { WorkspaceListView(server: server) })
         case .dictionary:
-            track(navigator.push { DictationDictionaryView(workspaceId: nil) })
+            let dictionary = DictationDictionaryViewController.make(root: root, serverId: server.id)
+            navigator.push(dictionary)
+            track(dictionary)
         case .pairedDevices:
             track(navigator.push { ServerPairedDevicesPage(model: model, server: server) })
         case .about:

@@ -149,7 +149,7 @@ final class SettingsVoiceViewController: SettingsListViewController<SettingsVoic
     }
 
     private func openDictionary() {
-        let navigator = ScreenNavigator.forUIKitScreen(self, root: root)
-        navigator.push { DictationDictionaryView(workspaceId: nil) }
+        guard let server = dictionaryServer else { return }
+        Router.push(DictationDictionaryViewController.make(root: root, serverId: server.id), from: self)
     }
 }

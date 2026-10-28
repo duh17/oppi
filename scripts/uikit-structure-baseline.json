@@ -188,9 +188,11 @@
     "clients/apple/Oppi/Features/Settings/ChatDisplayPreviewCards.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Settings/DictationDictionaryView.swift": {
-      "import SwiftUI": 1,
+    "clients/apple/Oppi/Features/Settings/DictationDictionaryModel.swift": {
       "APIClient settings write": 3
+    },
+    "clients/apple/Oppi/Features/Settings/DictationDictionaryViewController.swift": {
+      "toggleRow(": 1
     },
     "clients/apple/Oppi/Features/Settings/SSHPreflightViewController.swift": {
       "SettingsListStyle.pin(": 1,

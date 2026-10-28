@@ -453,6 +453,15 @@ struct SettingsSweepScreenshotPreview: View {
                 )
             }
             .ignoresSafeArea()
+        case "dictionary", "dictionary-workspace":
+            RouterPreviewControllerStack(root: root) { [root, server, page] in
+                DictationDictionaryViewController.make(
+                    root: root,
+                    serverId: server.id,
+                    workspace: page == "dictionary" ? nil : (id: "preview-ws", name: "oppi-dev")
+                )
+            }
+            .ignoresSafeArea()
         // Every other page is the root of a router stack, where its links push.
         default:
             RouterPreviewStack(root: root) { pushedPage }
@@ -516,8 +525,6 @@ struct SettingsSweepScreenshotPreview: View {
     @ViewBuilder
     private var pushedPage: some View {
         switch page {
-        case "dictionary": DictationDictionaryView(workspaceId: nil)
-        case "dictionary-workspace": DictationDictionaryView(workspaceId: "preview-ws")
         default:
             Text("Unknown SCREENSHOT_SWEEP_PAGE \(page)")
         }

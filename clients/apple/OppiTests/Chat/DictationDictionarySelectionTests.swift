@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import Testing
 @testable import Oppi
 
@@ -75,46 +74,37 @@ struct DictationDictionarySelectionTests {
         #expect(DictationDictionaryDraft.saveError(global: ["\u{FEFF}hidden"], workspace: []) != nil)
     }
 
-    @Test func forgetBlockedByInvalidGlobalDraftKeepsWorkspaceDraftAndSkipsPUT() async {
-        var draft = ["local phrase"]
-        let binding = Binding(get: { draft }, set: { draft = $0 })
+    @MainActor @Test func deleteBlockedByInvalidGlobalDraftSkipsPUT() async {
         var putCount = 0
         do {
-            _ = try await DictationDictionaryDraft.forgetWorkspace(
-                global: (0...100).map { "name\($0)" }, workspaceDraft: binding
+            _ = try await DictationDictionaryDraft.deleteWorkspacePhrases(
+                global: (0...100).map { "name\($0)" }
             ) {
                 putCount += 1
                 return DictationDictionaryList(revision: 2, phrases: [], provider: nil)
             }
-            Issue.record("Forget must be blocked by the invalid All Workspaces draft")
-        } catch let error as DictationDictionaryDraft.ForgetBlocked {
+            Issue.record("Delete must be blocked by the invalid All Workspaces draft")
+        } catch let error as DictationDictionaryDraft.DeleteBlocked {
             #expect(error.reason.contains("All Workspaces"))
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
         #expect(putCount == 0)
-        #expect(draft == ["local phrase"])
     }
 
-    @Test func forgetKeepsDraftOnPUTFailureAndClearsOnlyAfterSuccess() async {
-        var draft = ["local phrase"]
-        let binding = Binding(get: { draft }, set: { draft = $0 })
+    @MainActor @Test func deletePropagatesPUTFailureAndReturnsTheSavedListOnSuccess() async {
         struct Offline: Error {}
         do {
-            _ = try await DictationDictionaryDraft.forgetWorkspace(
-                global: ["global phrase"], workspaceDraft: binding
-            ) { throw Offline() }
-            Issue.record("Forget should propagate the PUT failure")
+            _ = try await DictationDictionaryDraft.deleteWorkspacePhrases(global: ["global phrase"]) { throw Offline() }
+            Issue.record("Delete should propagate the PUT failure")
         } catch is Offline {
-            #expect(draft == ["local phrase"])
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
-        let result = try? await DictationDictionaryDraft.forgetWorkspace(
-            global: ["global phrase"], workspaceDraft: binding
-        ) { DictationDictionaryList(revision: 2, phrases: [], provider: nil) }
+        let result = try? await DictationDictionaryDraft.deleteWorkspacePhrases(global: ["global phrase"]) {
+            DictationDictionaryList(revision: 2, phrases: [], provider: nil)
+        }
         #expect(result?.revision == 2)
-        #expect(draft.isEmpty)
     }
 
     @Test func swipeDeleteInvalidatesEditAndDuplicateRenamePreservesSource() {
