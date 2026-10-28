@@ -50,7 +50,7 @@ struct SessionRowRelayoutTests {
     private var rowActions: SessionListRowActions {
         SessionListRowActions(
             open: { _ in },
-            openThread: { _ in },
+            toggleThread: { _ in },
             stop: { _ in },
             resume: { _ in },
             delete: { _ in nil },

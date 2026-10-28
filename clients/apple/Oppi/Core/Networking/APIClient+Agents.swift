@@ -169,7 +169,6 @@ extension APIClient {
         model: String? = nil,
         thinkingLevel: ThinkingLevel? = nil,
         sessionName: String? = nil,
-        parentSessionId: String? = nil,
         engine: SessionEngine = .classic,
         idempotencyKey: String = "ios-agent-launch-\(UUID().uuidString)"
     ) async throws -> AgentSessionLaunchResponse {
@@ -189,7 +188,6 @@ extension APIClient {
             let target: TargetBody
             let overrides: OverridesBody?
             let sessionName: String?
-            let parentSessionId: String?
             let engine: SessionEngine?
             let idempotencyKey: String
         }
@@ -204,7 +202,6 @@ extension APIClient {
             target: TargetBody(workspaceId: workspaceId, worktreeId: worktreeId?.nilIfBlank),
             overrides: overrides,
             sessionName: sessionName?.nilIfBlank,
-            parentSessionId: parentSessionId?.nilIfBlank,
             engine: engine == .durable ? engine : nil,
             idempotencyKey: idempotencyKey
         )

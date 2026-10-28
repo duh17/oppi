@@ -137,10 +137,6 @@
     "clients/apple/Oppi/Features/Sessions/SessionStatusPill.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Sessions/SessionThreadViews.swift": {
-      "import SwiftUI": 1,
-      "AppPreferences.*.set": 1
-    },
     "clients/apple/Oppi/Features/Settings/DictationDictionaryModel.swift": {
       "APIClient settings write": 3
     },
@@ -162,7 +158,7 @@
       "toggleRow(": 7
     },
     "clients/apple/Oppi/Features/Settings/SettingsExperimentsPage.swift": {
-      "toggleRow(": 4
+      "toggleRow(": 3
     },
     "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift": {
       "AppPreferences.*.set": 1,

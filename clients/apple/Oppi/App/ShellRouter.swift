@@ -30,7 +30,6 @@ enum ShellRoute: Hashable {
     case serverResourceDetail(ServerResourceDetailNavTarget)
     case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
-    case sessionThread(SessionThreadNavTarget)
 
     /// Bars the router applies. No route asks for a large title: App Settings
     /// is `SettingsRootViewController`, which sets its own.
@@ -66,7 +65,6 @@ enum ShellRoute: Hashable {
         case .serverResourceDetail(let target): self = .serverResourceDetail(target)
         case .serverSkillBrowser(let target): self = .serverSkillBrowser(target)
         case .serverSkillFile(let target): self = .serverSkillFile(target)
-        case .sessionThread(let target): self = .sessionThread(target)
         }
     }
 
@@ -82,7 +80,6 @@ enum ShellRoute: Hashable {
         case .serverSkillFile(let target): self = .serverSkillFile(target)
         case .serverDetails(let target): self = .serverDetails(target)
         case .modelProviders(let target): self = .modelProviders(target)
-        case .sessionThread(let target): self = .sessionThread(target)
         }
     }
 

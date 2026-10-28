@@ -1022,15 +1022,21 @@ final class SessionListBottomBar {
         )
         if composeParams != params || composeHost == nil {
             composeParams = params
-            composeHost = SessionListHostedChrome.composeCapsule(
-                updating: composeHost,
-                root: root,
+            let content = SessionInboxCompactComposeBar(
                 showsDictation: showsDictation,
                 hasActivePlayback: hasActivePlayback,
                 columnWidth: columnWidth,
                 onStart: onStart,
                 onDictate: onDictate
             )
+            if let composeHost {
+                composeHost.setContent(content)
+            } else {
+                let host = HostFactory.content(content, root: root)
+                host.sizingOptions = .intrinsicContentSize
+                host.view.backgroundColor = .clear
+                composeHost = host
+            }
         }
         guard toolbar.showsNowPlayingPill, let player else { return }
         if let pill {

@@ -146,7 +146,7 @@ final class WorkspaceDetailViewController: UIViewController {
 
     lazy var rowActions = SessionListRowActions(
         open: { [weak self] session in self?.openSession(session) },
-        openThread: { [weak self] rootSession in self?.openThread(rootSession) },
+        toggleThread: { [weak self] rootSession in self?.toggleThread(rootSession) },
         stop: { [weak self] session in
             Task { await self?.setRunning(false, session) }
         },
@@ -665,6 +665,8 @@ extension WorkspaceDetailViewController {
         var isCreating = false
         var expandedStoppedGroupIDs: Set<String> = []
         var collapsedStoppedGroupIDs: Set<String> = []
+        /// Thread roots whose child rows are listed (the strip's chevron points down).
+        var expandedThreadRoots: Set<String> = []
         var localSessions: [LocalSession] = []
         var worktrees: [WorkspaceWorktree] = []
         var selectedWorktreeId = WorkspaceWorktree.mainId

@@ -7,7 +7,6 @@ struct AgentQuickSessionSubmitKey: Equatable {
     let workspaceId: String
     let worktreeId: String
     let agentId: String
-    let parentSessionId: String?
     let prompt: String
     let attachmentIds: [String]
     let modelId: String?
@@ -43,12 +42,6 @@ enum QuickSessionError: LocalizedError {
 /// message), a saved Agent launches and is prompted here, then Quick Session
 /// closes and opens the new chat.
 extension QuickSessionModel {
-    /// Parent id for a launch on `serverId`; a session id only means something on its own server.
-    private func threadParentSessionId(onServer serverId: String) -> String? {
-        guard let threadParent, threadParent.serverId == serverId else { return nil }
-        return threadParent.sessionId
-    }
-
     func handleSend(startsLiveVoice: Bool = false) {
         guard !isCreating else { return }
         // A saved Agent may still be resolving; sending now would launch it as a plain session.
@@ -136,7 +129,6 @@ extension QuickSessionModel {
         let coordinator = coordinator
         let serverId = selectedServerId ?? coordinator.activeServerId ?? "default"
         let attachments = pendingAttachments
-        let parentSessionId = threadParentSessionId(onServer: serverId)
         let launchEngine = self.engine
         let incognito = launchesIncognito
 
@@ -170,7 +162,6 @@ extension QuickSessionModel {
                         thinking: thinking.rawValue,
                         ephemeral: incognito ? true : nil,
                         worktreeId: plan.worktreeId,
-                        parentSessionId: parentSessionId,
                         engine: launchEngine
                     )
                     session = response.session
@@ -191,7 +182,6 @@ extension QuickSessionModel {
                         workspaceId: workspace.id,
                         worktreeId: plan.worktreeId,
                         agentId: agentId,
-                        parentSessionId: parentSessionId,
                         prompt: plan.prompt,
                         attachmentIds: attachments.map(\.id),
                         modelId: modelId,
@@ -223,7 +213,6 @@ extension QuickSessionModel {
                                 worktreeId: plan.worktreeId,
                                 model: modelId,
                                 thinkingLevel: agentThinking,
-                                parentSessionId: parentSessionId,
                                 engine: launchEngine,
                                 idempotencyKey: attempt.launchIdempotencyKey
                             )

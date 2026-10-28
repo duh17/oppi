@@ -118,12 +118,6 @@ struct ModelProvidersNavTarget: Hashable, Sendable {
     let serverId: String
 }
 
-/// Thread detail: one launch tree and how its sessions interacted.
-struct SessionThreadNavTarget: Hashable, Sendable {
-    let serverId: String
-    let rootSessionId: String
-}
-
 /// Detail-column target for the regular-width workspace split shell.
 ///
 /// The sidebar keeps the workspace catalog visible. The detail pane hosts the
@@ -147,7 +141,6 @@ enum WorkspaceSplitDetailPathElement: Hashable {
     case serverSkillFile(ServerSkillFileNavTarget)
     case serverDetails(ServerDetailsNavTarget)
     case modelProviders(ModelProvidersNavTarget)
-    case sessionThread(SessionThreadNavTarget)
 }
 
 /// A screen on the compact workspace stack, above the all-sessions inbox.
@@ -164,7 +157,6 @@ enum WorkspaceStackRouteElement: Hashable {
     case serverResourceDetail(ServerResourceDetailNavTarget)
     case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
-    case sessionThread(SessionThreadNavTarget)
 }
 
 struct WorkspaceStackDiagnosticContext: Equatable, Sendable {
@@ -219,11 +211,6 @@ final class AppNavigation {
     /// Session-list search lives on navigation so it survives compact inbox
     /// remount after Back and split detail replacement on iPad.
     var inboxSessionSearch = SessionListSearchNavigationPersistence.State()
-    /// Session Threads experiment (Settings → Experiments), off by default. Held here
-    /// so a change reaches every mounted session list; saved for this device.
-    var sessionThreadsEnabled: Bool = AppPreferences.Experiments.sessionThreadsEnabled {
-        didSet { AppPreferences.Experiments.setSessionThreadsEnabled(sessionThreadsEnabled) }
-    }
     var workspaceSessionSearchByID: [String: SessionListSearchNavigationPersistence.State] = [:]
 
     /// Launch phase gate. While `.resolving`, the app root shows a blank
@@ -697,7 +684,7 @@ final class AppNavigation {
             return .coveringPage(sourceSessionId: coveringSourceSessionId(for: target))
         case .workspace, .fileBrowser, .workspaceConfiguration, .utility,
              .serverDetails, .modelProviders, .serverResourceDetail,
-             .serverSkillBrowser, .serverSkillFile, .sessionThread:
+             .serverSkillBrowser, .serverSkillFile:
             return .other
         }
     }
@@ -722,7 +709,7 @@ final class AppNavigation {
         case .linkedFile(let target):
             return .coveringPage(sourceSessionId: coveringSourceSessionId(for: target))
         case .fileBrowser, .serverResourceDetail, .serverSkillBrowser,
-             .serverSkillFile, .serverDetails, .modelProviders, .sessionThread:
+             .serverSkillFile, .serverDetails, .modelProviders:
             return .other
         }
     }
@@ -944,19 +931,6 @@ final class AppNavigation {
             workspaceStackRouteElements.append(.modelProviders(target))
         case .split:
             splitDetailPathElements.append(.modelProviders(target))
-            splitColumnVisibility = .all
-        }
-    }
-
-    func openSessionThread(_ target: SessionThreadNavTarget) {
-        let root = ScopedLockService.shared.sessionTarget(serverId: target.serverId, sessionId: target.rootSessionId)
-        guard scopedLockAllows(root, retry: { self.openSessionThread(target) }) else { return }
-        selectedTab = .workspaces
-        switch workspaceNavigationPresentation {
-        case .stack:
-            workspaceStackRouteElements.append(.sessionThread(target))
-        case .split:
-            splitDetailPathElements.append(.sessionThread(target))
             splitColumnVisibility = .all
         }
     }
@@ -1279,7 +1253,6 @@ final class AppNavigation {
         case .serverResourceDetail(let target): serverResourceDetailDiagnosticContext(target)
         case .serverSkillBrowser: serverSkillBrowserDiagnosticContext
         case .serverSkillFile: serverSkillFileDiagnosticContext
-        case .sessionThread(let target): sessionThreadDiagnosticContext(target)
         }
     }
 
@@ -1296,14 +1269,7 @@ final class AppNavigation {
         case .serverSkillFile: serverSkillFileDiagnosticContext
         case .serverDetails: serverDetailsDiagnosticContext
         case .modelProviders: modelProvidersDiagnosticContext
-        case .sessionThread(let target): sessionThreadDiagnosticContext(target)
         }
-    }
-
-    private static func sessionThreadDiagnosticContext(
-        _ target: SessionThreadNavTarget
-    ) -> WorkspaceStackDiagnosticContext {
-        WorkspaceStackDiagnosticContext(screen: "session_thread", sessionId: target.rootSessionId, workspaceId: nil)
     }
 
     private static func workspaceInboxDiagnosticContext(
@@ -1456,7 +1422,6 @@ final class AppNavigation {
             case .serverSkillFile(let target): .serverSkillFile(target)
             case .serverDetails(let target): .serverDetails(target)
             case .modelProviders(let target): .modelProviders(target)
-            case .sessionThread(let target): .sessionThread(target)
             }
             routeElements.append(stackElement)
         }
@@ -1514,8 +1479,6 @@ final class AppNavigation {
                 detailPathElements.append(.serverDetails(target))
             case .modelProviders(let target):
                 detailPathElements.append(.modelProviders(target))
-            case .sessionThread(let target):
-                detailPathElements.append(.sessionThread(target))
             }
         }
 
@@ -1579,31 +1542,20 @@ struct QuickSessionLaunchContext: Equatable, Sendable {
     let agentId: String?
     let workspaceId: String?
     let worktreeId: String?
-    /// Thread launch: the new session becomes a child of this session.
-    let threadParent: QuickSessionThreadParent?
 
     /// A missing workspace follows last-used / default on `serverId`; a missing Agent
-    /// follows Quick Session's remembered pick. A thread launch names the parent session.
+    /// follows Quick Session's remembered pick.
     init(
         serverId: String,
         agentId: String? = nil,
         workspaceId: String? = nil,
-        worktreeId: String? = nil,
-        threadParent: QuickSessionThreadParent? = nil
+        worktreeId: String? = nil
     ) {
         self.serverId = serverId
         self.agentId = agentId
         self.workspaceId = workspaceId
         self.worktreeId = worktreeId
-        self.threadParent = threadParent
     }
-}
-
-/// Session a Quick Session launch attaches to, so the new session joins its thread.
-struct QuickSessionThreadParent: Equatable, Sendable {
-    let serverId: String
-    let sessionId: String
-    let title: String
 }
 
 /// Atomic navigation intent for quick session deep-link.

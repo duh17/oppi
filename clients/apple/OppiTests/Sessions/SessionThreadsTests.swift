@@ -145,33 +145,91 @@ struct SessionThreadsTests {
         #expect(SessionThreadGrouping.isBlocked(rollup, attention: attentionFree))
     }
 
-    @Test func lanesAndWaterfallTakeEachMembersStatus() {
+    @Test func lanesTakeEachMembersStatus() {
         var members = orchestration
         members[3].status = .ready
         members[3].programStatus = ProgramStatus(state: .blocked, kind: .question, since: Date(timeIntervalSince1970: 60))
         members[1].programStatus = ProgramStatus(state: .done, since: Date(timeIntervalSince1970: 30))
-        let thread = snapshot(members)
 
         func status(_ member: Session) -> SessionStatusKind {
             SessionStatusKind.resolve(session: member, seenAt: nil)
         }
-        let waterfall = SessionThreadWaterfall.build(snapshot: thread, now: Date(timeIntervalSince1970: 100), status: status)
         let graph = SessionThreadLaneGraph.layout(
             members: members, rootId: "root", now: Date(timeIntervalSince1970: 100), status: status
         )
 
-        #expect(waterfall.rows.first { $0.id == "review" }?.status == .question)
-        #expect(waterfall.rows.first { $0.id == "master" }?.status == .working)
         #expect(graph.segments.first { $0.id == "review" }?.status == .question)
+        #expect(graph.segments.first { $0.id == "master" }?.status == .working)
         // Done, still unseen, and stopped lifecycle: the outcome shows until seen.
         #expect(graph.segments.first { $0.id == "fix" }?.status == .done)
     }
 
-    // MARK: Lanes
+    // MARK: Expanded threads
 
-    private func snapshot(_ sessions: [Session]) -> SessionThreadSnapshot {
-        SessionThreadSnapshot(rootSessionId: "root", sessions: sessions)
+    @Test func expandingAThreadListsEveryDescendantAfterItsRootInOutlineOrder() {
+        let root = session("root", status: .ready, created: 0)
+        let late = session("late", parent: "root", created: 60)
+        let early = session("early", parent: "root", created: 10)
+        let grandchild = session("grandchild", parent: "early", created: 12)
+        let great = session("great", parent: "grandchild", created: 13)
+        let solo = session("solo", created: 5)
+        let entries = SessionListEntries.threads(
+            listed: [solo, root, late, early, grandchild, great], loaded: []
+        )
+
+        let rows = SessionListEntries.expanding(entries, expandedRoots: ["root"])
+
+        #expect(rows.map(\.id) == ["solo", "root", "early", "grandchild", "great", "late"])
+        #expect(rows.map(\.depth) == [0, 0, 1, 2, 3, 1])
+        #expect(rows.map(\.isExpanded) == [false, true, false, false, false, false])
+        #expect(rows.dropFirst(2).allSatisfy { $0.thread == nil && $0.outsideRoot == nil }, "Children are ordinary rows")
     }
+
+    @Test func collapsedAndUnknownRootsListNothingExtra() {
+        let root = session("root", status: .ready, created: 0)
+        let child = session("child", parent: "root", created: 10)
+        let entries = SessionListEntries.threads(listed: [root, child], loaded: [])
+
+        #expect(SessionListEntries.expanding(entries, expandedRoots: []) == entries)
+        #expect(SessionListEntries.expanding(entries, expandedRoots: ["child", "elsewhere"]) == entries)
+        #expect(SessionListEntries.expanding(entries, expandedRoots: ["root"]).map(\.id) == ["root", "child"])
+    }
+
+    /// A thread is the whole launch tree: members running in another workspace are rows too.
+    @Test func expandingAWorkspaceListThreadIncludesMembersFromOtherWorkspaces() {
+        let root = session("root", workspace: "a", status: .ready, created: 10)
+        let local = session("local", parent: "root", workspace: "a", created: 20)
+        let remote = session("remote", parent: "root", workspace: "b", created: 30)
+        let remoteChild = session("remote-child", parent: "remote", workspace: "b", created: 40)
+        let entries = SessionListEntries.threads(listed: [root, local], loaded: [root, local, remote, remoteChild])
+
+        let rows = SessionListEntries.expanding(entries, expandedRoots: ["root"])
+
+        #expect(rows.map(\.id) == ["root", "local", "remote", "remote-child"])
+        #expect(rows.map(\.depth) == [0, 1, 1, 2])
+        #expect(rows.map(\.session.workspaceId) == ["a", "a", "b", "b"])
+    }
+
+    @Test func outlineListsEveryDescendantOnceEvenAroundAParentCycle() {
+        let root = session("root", status: .ready, created: 0)
+        // a and b name each other as parent; neither reaches the root.
+        let rollup = SessionThreadRollup(
+            root: root,
+            members: [
+                root,
+                session("a", parent: "b", created: 1),
+                session("b", parent: "a", created: 2),
+                session("c", parent: "gone", created: 3),
+            ]
+        )
+
+        let outline = rollup.outline
+        #expect(Set(outline.map(\.session.id)) == ["a", "b", "c"])
+        #expect(outline.count == 3)
+        #expect(outline.first { $0.session.id == "c" }?.depth == 1, "An absent parent hangs the member off the root")
+    }
+
+    // MARK: Lanes
 
     private var orchestration: [Session] {
         [
@@ -263,270 +321,5 @@ struct SessionThreadsTests {
         #expect(groups.map(\.id) == ["worker", "reviewer", "pi"])
         #expect(groups.map(\.count) == [3, 2, 1])
         #expect(groups.first?.agentIcon == .emoji("🛠️"))
-    }
-
-    @Test func waterfallOrdersRowsDepthFirstOnClockTime() {
-        let members = [
-            session("root", status: .ready, created: 0, last: 40),
-            session("late", parent: "root", created: 60, last: 80),
-            session("early", parent: "root", created: 10, last: 20),
-            session("grandchild", parent: "early", created: 12, last: 18),
-        ]
-        let thread = snapshot(members)
-
-        let waterfall = SessionThreadWaterfall.build(snapshot: thread, now: Date(timeIntervalSince1970: 100))
-
-        #expect(waterfall.rows.map(\.id) == ["root", "early", "grandchild", "late"])
-        #expect(waterfall.rows.map(\.depth) == [0, 1, 2, 1])
-        // Clock time from the root's launch to the latest activity (80), not `now`.
-        #expect(waterfall.rows[1].start == 10.0 / 80)
-        #expect(waterfall.rows[1].end == 20.0 / 80)
-        #expect(waterfall.rows[0].idleFrom == 40.0 / 80)
-        #expect(waterfall.rows[0].end == 1)
-    }
-
-    // MARK: Prompt cache
-
-    @Test(arguments: [
-        (SessionStatus.busy, nil as SessionPromptCacheWarmer?, 60.0, SessionPromptCacheEstimate.inUse),
-        (.ready, SessionPromptCacheWarmer(state: .scheduled, action: .warm, nextWarmAt: Date(timeIntervalSince1970: 400)), 200.0,
-         .keptWarm(nextRefresh: Date(timeIntervalSince1970: 400))),
-        (.ready, SessionPromptCacheWarmer(state: .refreshing), 1_000.0, .keptWarm(nextRefresh: nil)),
-        // Pi decided to let it expire, or the refresh time passed without a newer snapshot: use the TTL.
-        (.ready, SessionPromptCacheWarmer(state: .scheduled, action: .stop, nextWarmAt: Date(timeIntervalSince1970: 400)), 200.0,
-         .warm(until: Date(timeIntervalSince1970: 400))),
-        (.ready, SessionPromptCacheWarmer(state: .scheduled, action: .warm, nextWarmAt: Date(timeIntervalSince1970: 350)), 1_000.0,
-         .cold),
-        (.ready, nil, 200.0, .warm(until: Date(timeIntervalSince1970: 400))),
-        (.ready, nil, 500.0, .cold),
-        // A stopped session's warmer no longer runs; fall back to the TTL.
-        (.stopped, SessionPromptCacheWarmer(state: .scheduled), 500.0, .cold),
-    ])
-    func cacheEstimateFollowsWarmerThenTTL(
-        status: SessionStatus,
-        warmer: SessionPromptCacheWarmer?,
-        now: TimeInterval,
-        expected: SessionPromptCacheEstimate
-    ) {
-        let target = session("s", status: status, created: 0, last: 100)
-        let cache = SessionPromptCacheStatus(ttl: 300, lastRequestAt: Date(timeIntervalSince1970: 100), warmer: warmer)
-
-        #expect(SessionPromptCacheEstimate.estimate(session: target, status: cache, now: Date(timeIntervalSince1970: now)) == expected)
-    }
-
-    @Test func cacheEstimateUsesTheNewestReplyAndNeedsATTL() {
-        var target = session("s", status: .ready, created: 0, last: 100)
-        target.lastAgentReplyAt = Date(timeIntervalSince1970: 350)
-        let cache = SessionPromptCacheStatus(ttl: 300, lastRequestAt: Date(timeIntervalSince1970: 100))
-        let now = Date(timeIntervalSince1970: 500)
-
-        #expect(SessionPromptCacheEstimate.estimate(session: target, status: cache, now: now)
-            == .warm(until: Date(timeIntervalSince1970: 650)))
-        #expect(SessionPromptCacheEstimate.estimate(
-            session: target,
-            status: SessionPromptCacheStatus(ttl: nil, lastRequestAt: Date(timeIntervalSince1970: 100)),
-            now: now
-        ) == .unknown)
-        #expect(SessionPromptCacheEstimate.estimate(session: target, status: nil, now: now) == .unknown)
-    }
-
-    @Test func cacheHitRateCountsReadsAgainstAllPromptTokens() {
-        #expect(TokenUsage(input: 100, output: 50, cacheRead: 700, cacheWrite: 200).cacheHitRate == 0.7)
-        #expect(TokenUsage(input: 0, output: 10, cacheRead: nil, cacheWrite: nil).cacheHitRate == nil)
-    }
-
-    // MARK: Wire
-
-    @Test func snapshotDecodesParentLinksAndPromptCache() throws {
-        // Older servers still send `interactions` and `counterparts`; the thread ignores them.
-        let json = """
-        {
-          "rootSessionId": "root",
-          "sessions": [
-            {"id":"root","status":"ready","createdAt":1000,"lastActivity":2000,"messageCount":1,
-             "tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"cost":0},
-            {"id":"child","status":"busy","createdAt":1500,"lastActivity":2500,"messageCount":1,
-             "tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"cost":0.5,"parentSessionId":"root"}
-          ],
-          "interactions": [
-            {"id":1,"at":1600,"fromSessionId":"root","toSessionId":"child","kind":"steer"}
-          ],
-          "counterparts": [],
-          "promptCache": {
-            "root": {"retention":"short","ttlMs":300000,"lastRequestAt":2000,"warmer":{"state":"scheduled","action":"warm","nextWarmAt":2270000}},
-            "child": {"retention":"long","ttlMs":3600000,"warmer":{"state":"future_state"}}
-          }
-        }
-        """
-
-        let decoded = try JSONDecoder().decode(SessionThreadSnapshot.self, from: Data(json.utf8))
-
-        #expect(decoded.sessions.map(\.parentSessionId) == [nil, "root"])
-        #expect(decoded.promptCache["root"] == SessionPromptCacheStatus(
-            ttl: 300,
-            lastRequestAt: Date(timeIntervalSince1970: 2),
-            warmer: SessionPromptCacheWarmer(state: .scheduled, action: .warm, nextWarmAt: Date(timeIntervalSince1970: 2_270))
-        ))
-        // An unknown warmer state reads as inactive instead of failing the thread.
-        #expect(decoded.promptCache["child"]?.warmer?.state == .inactive)
-    }
-}
-
-/// Session Threads is an opt-in experiment: a device that never turned it on
-/// must list every session flat, and the choice must survive a relaunch.
-@Suite("Session Threads experiment", .serialized)
-@MainActor
-struct SessionThreadsExperimentTests {
-    private func withCleanDefaults(_ body: () -> Void) {
-        let defaults = UserDefaults.standard
-        let key = AppPreferences.Experiments.sessionThreadsKey
-        let original = defaults.object(forKey: key)
-        defer {
-            if let original { defaults.set(original, forKey: key) } else { defaults.removeObject(forKey: key) }
-        }
-        defaults.removeObject(forKey: key)
-        body()
-    }
-
-    private func session(_ id: String, parent: String? = nil, created: TimeInterval) -> Session {
-        Session(
-            id: id,
-            workspaceId: "ws",
-            name: id,
-            status: .ready,
-            createdAt: Date(timeIntervalSince1970: created),
-            lastActivity: Date(timeIntervalSince1970: created + 1),
-            messageCount: 1,
-            tokens: TokenUsage(input: 0, output: 0),
-            cost: 0,
-            parentSessionId: parent
-        )
-    }
-
-    @Test func unsetExperimentListsFlatAndEnablingGroupsThreads() {
-        withCleanDefaults {
-            let sessions = [session("root", created: 10), session("child", parent: "root", created: 20)]
-
-            let fresh = AppNavigation()
-            #expect(!fresh.sessionThreadsEnabled)
-            let flat = SessionListEntries.entries(
-                threadsEnabled: fresh.sessionThreadsEnabled, listed: sessions, loaded: sessions
-            )
-            #expect(flat.map(\.id) == ["root", "child"])
-            #expect(flat.allSatisfy { $0.thread == nil && $0.outsideRoot == nil })
-
-            fresh.sessionThreadsEnabled = true
-            let relaunched = AppNavigation()
-            #expect(relaunched.sessionThreadsEnabled, "The opt-in is saved on this device")
-            let grouped = SessionListEntries.entries(
-                threadsEnabled: relaunched.sessionThreadsEnabled, listed: sessions, loaded: sessions
-            )
-            #expect(grouped.map(\.id) == ["root"])
-            #expect(grouped[0].thread?.members.map(\.id) == ["root", "child"])
-        }
-    }
-}
-
-@Suite("Session thread load")
-struct SessionThreadLoadTests {
-    @Test func threadSnapshotIsNotGatedOnAgentNames() async {
-        let gate = NameGate()
-        let snapshot = SessionThreadSnapshot(rootSessionId: "root", sessions: [])
-        let fetch = await completedWithin(.seconds(2)) {
-            await SessionThreadLoad.fetch(
-                needsAgentNames: true,
-                listAgents: { await gate.park() },
-                getThread: { snapshot }
-            )
-        }
-        await gate.open()
-
-        #expect(fetch?.snapshot?.rootSessionId == "root")
-        #expect(fetch?.failure == nil)
-        #expect(await fetch?.agentNames?.value?["a"] == "Ada")
-    }
-
-    @Test func threadFailureIsNotGatedOnAgentNames() async {
-        let gate = NameGate()
-        let fetch = await completedWithin(.seconds(2)) {
-            await SessionThreadLoad.fetch(
-                needsAgentNames: true,
-                listAgents: { await gate.park() },
-                getThread: { throw URLError(.timedOut) }
-            )
-        }
-        await gate.open()
-
-        #expect(fetch?.snapshot == nil)
-        #expect(fetch?.failure?.errorKind == .timeout)
-        #expect(await fetch?.agentNames?.value?["a"] == "Ada")
-    }
-
-    @Test func threadFailureKeepsTheThreadErrorWhenNamesAreMissing() async {
-        struct ThreadDown: LocalizedError, Sendable {
-            var errorDescription: String? { "thread down" }
-        }
-        let fetch = await SessionThreadLoad.fetch(
-            needsAgentNames: true,
-            listAgents: { nil },
-            getThread: { throw ThreadDown() }
-        )
-
-        #expect(fetch.failure?.localizedDescription == "thread down")
-        #expect(fetch.failure?.errorKind == .other)
-        #expect(fetch.agentNames != nil)
-        #expect(await fetch.agentNames?.value == nil)
-    }
-
-    @Test func knownAgentNamesSkipTheNameLookup() async {
-        let fetch = await SessionThreadLoad.fetch(
-            needsAgentNames: false,
-            listAgents: { Issue.record("listAgents should not run"); return nil },
-            getThread: {
-                SessionThreadSnapshot(rootSessionId: "root", sessions: [])
-            }
-        )
-
-        #expect(fetch.snapshot?.rootSessionId == "root")
-        #expect(fetch.agentNames == nil)
-    }
-}
-
-/// Holds Agent-name lookup open until the test releases it.
-private actor NameGate {
-    private var isOpen = false
-    private var names: [String: String]?
-    private var waiters: [CheckedContinuation<[String: String]?, Never>] = []
-
-    func park() async -> [String: String]? {
-        if isOpen { return names }
-        return await withCheckedContinuation { waiters.append($0) }
-    }
-
-    func open(with names: [String: String]? = ["a": "Ada"]) {
-        isOpen = true
-        self.names = names
-        let pending = waiters
-        waiters = []
-        for waiter in pending { waiter.resume(returning: names) }
-    }
-}
-
-private func completedWithin<T: Sendable>(
-    _ timeout: Duration,
-    operation: @escaping @Sendable () async -> T
-) async -> T? {
-    await withTaskGroup(of: T?.self) { group in
-        group.addTask {
-            let value = await operation()
-            return Optional(value)
-        }
-        group.addTask {
-            try? await Task.sleep(for: timeout)
-            return nil
-        }
-        let winner = await group.next() ?? nil
-        group.cancelAll()
-        return winner
     }
 }

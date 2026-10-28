@@ -5,7 +5,6 @@ import UIKit
 enum QuickSessionPresentationSource: String, Sendable {
     case sessionListBar = "session_list_bar"
     case workspaceBar = "workspace_bar"
-    case threadBar = "thread_bar"
     case agents = "agents"
     /// App Intent / control widget, presented by the app root.
     case intent = "intent"

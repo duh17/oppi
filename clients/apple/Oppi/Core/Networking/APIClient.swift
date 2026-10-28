@@ -658,13 +658,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(Response.self, from: data).session
     }
 
-    /// Launch tree containing `sessionId` plus its recorded interactions.
-    func getSessionThread(sessionId: String) async throws -> SessionThreadSnapshot {
-        let encodedSessionId = try percentEncodePathSegment(sessionId)
-        let data = try await get("/sessions/\(encodedSessionId)/thread")
-        return try JSONDecoder().decode(SessionThreadSnapshot.self, from: data)
-    }
-
     struct SessionDialogsResponse: Decodable, Sendable, Equatable {
         let dialogs: [ExtensionUIRequest.DialogSnapshot]
         let serverNow: Int64?
@@ -1495,7 +1488,6 @@ actor APIClient: ClientLogUploading {
         worktreeId: String? = nil,
         attachments: [ChatAttachmentRef]? = nil,
         launchIdempotencyKey: String? = nil,
-        parentSessionId: String? = nil,
         engine: SessionEngine = .classic
     ) async throws -> CreateSessionResponse {
         struct Body: Encodable {
@@ -1507,7 +1499,6 @@ actor APIClient: ClientLogUploading {
             let worktreeId: String?
             let attachments: [ChatAttachmentRef]?
             let launchIdempotencyKey: String?
-            let parentSessionId: String?
             /// Omitted for classic, the server default.
             let engine: SessionEngine?
         }
@@ -1523,7 +1514,6 @@ actor APIClient: ClientLogUploading {
                 worktreeId: worktreeId,
                 attachments: attachments,
                 launchIdempotencyKey: launchIdempotencyKey,
-                parentSessionId: parentSessionId,
                 engine: engine == .durable ? engine : nil
             )
         )

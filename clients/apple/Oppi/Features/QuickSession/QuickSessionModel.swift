@@ -82,8 +82,6 @@ final class QuickSessionModel {
     var worktrees: [WorkspaceWorktree] = []
     var isLoadingWorktrees = false
     @ObservationIgnored var worktreeLoadGeneration: UInt64 = 0
-    /// Set when launched from a thread; the new session joins that thread.
-    var threadParent: QuickSessionThreadParent?
     /// A Live Voice start's workspace is the one it asked for, or Quick Session's own
     /// remembered pick, not a fallback.
     @ObservationIgnored var liveVoicePickIsRequested = false
@@ -445,9 +443,6 @@ final class QuickSessionModel {
             agentThinkingOverride = nil
             shouldRememberAgentSelection = true
         }
-        if threadParent?.serverId != serverId {
-            threadParent = nil
-        }
         selectedWorkspace = workspace
         selectedWorkspaceSelectionSource = "manual"
         selectedServerId = serverId
@@ -474,12 +469,7 @@ final class QuickSessionModel {
         worktreeLoadGeneration &+= 1
     }
 
-    // MARK: Thread, engine, incognito
-
-    /// Starts a standalone session instead of joining the thread.
-    func clearThreadParent() {
-        threadParent = nil
-    }
+    // MARK: Engine, incognito
 
     /// No change while the launch can only be Classic.
     func toggleEngine() {

@@ -4,7 +4,8 @@ import UIKit
 
 /// Thread control under a thread root row: who is working, optional lane
 /// graph and Agent summary, and totals. The list makes it the tap target
-/// that opens Thread detail; the root row above it opens the root chat.
+/// that folds the thread's child rows open or closed; the root row above it
+/// opens the root chat. The chevron turns down while the thread is open.
 ///
 /// Agent summary and totals count every member, root included, so they agree
 /// with the lane graph. The status counts and the working line cover the
@@ -22,6 +23,8 @@ final class SessionThreadStripView: UIControl {
         var hidesDetails = false
         /// A locked member: its cost stays out of the total.
         var hidesCost = false
+        /// The thread's child rows are listed under the root.
+        var isExpanded = false
 
         func status(_ session: Session) -> SessionStatusKind {
             statuses[session.id] ?? SessionThreadStatus.withoutSeenState(session)
@@ -164,11 +167,19 @@ final class SessionThreadStripView: UIControl {
         summaryLabel.text = summary
         summaryLabel.textColor = colors.comment
         chevron.tintColor = colors.comment
+        let chevronTransform = CGAffineTransform(rotationAngle: content.isExpanded ? .pi / 2 : 0)
+        if chevron.transform != chevronTransform {
+            let animates = window != nil && !UIAccessibility.isReduceMotionEnabled
+            UIView.animate(withDuration: animates ? 0.2 : 0) { self.chevron.transform = chevronTransform }
+        }
 
         let blocked = content.blockedMember.map { "\(content.status($0).label) from \($0.displayTitle). " } ?? ""
         let headlineStatus = statusRollup.headline.map { "\($0.label). " } ?? ""
         accessibilityLabel = blocked + headlineStatus + "Thread with \(rollup.members.count) sessions, \(summary)"
-        accessibilityValue = content.blockedMember.map { content.status($0).label } ?? ""
+        accessibilityValue = content.isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed")
+        accessibilityHint = content.isExpanded
+            ? String(localized: "Hides the thread's sessions")
+            : String(localized: "Shows the thread's sessions")
     }
 }
 

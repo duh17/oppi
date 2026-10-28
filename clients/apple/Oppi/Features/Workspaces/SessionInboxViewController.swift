@@ -48,6 +48,10 @@ final class SessionInboxViewController: UIViewController {
     private var collapsedStoppedGroupIDs: Set<String> = [] {
         didSet { setNeedsUpdateProperties() }
     }
+    /// Thread roots whose child rows are listed (the strip's chevron points down).
+    private var expandedThreadRoots: Set<String> = [] {
+        didSet { setNeedsUpdateProperties() }
+    }
     private var providerSetupState: ProviderSetupState = .unknown {
         didSet { setNeedsUpdateProperties() }
     }
@@ -93,8 +97,8 @@ final class SessionInboxViewController: UIViewController {
             guard let self, let item = item(for: session) else { return }
             open(item)
         },
-        openThread: { [weak self] rootSession in
-            self?.openThread(rootSession)
+        toggleThread: { [weak self] rootSession in
+            self?.toggleThread(rootSession)
         },
         stop: { [weak self] session in
             guard let self, let item = item(for: session) else { return }
@@ -321,11 +325,7 @@ final class SessionInboxViewController: UIViewController {
 
         // All Sessions lists every loaded session, so every thread root is here.
         let sessions = items.map(\.session)
-        let entries = SessionListEntries.entries(
-            threadsEnabled: navigation.sessionThreadsEnabled,
-            listed: sessions,
-            loaded: sessions
-        )
+        let entries = SessionListEntries.threads(listed: sessions, loaded: sessions)
         let connection = state.connection
         let attention = { (session: Session) in
             SessionListAttentionCounts(askCount: connection?.sessionListAskCount(for: session.id) ?? 0)
@@ -546,6 +546,7 @@ final class SessionInboxViewController: UIViewController {
         )
         expandedStoppedGroupIDs = reset.expandedStoppedGroupIDs
         collapsedStoppedGroupIDs = reset.collapsedStoppedGroupIDs
+        expandedThreadRoots = []
         // Another server's sessions replace the list; they are not edits of
         // this one. Emptying it makes this pass's snapshot apply without
         // animation. Animated, the old server's deleted headers fade out
@@ -610,7 +611,8 @@ final class SessionInboxViewController: UIViewController {
         itemsById = data.itemsById
         var next = List.Snapshot()
         func appendSessions(_ entries: [SessionListEntry], to section: Section, item: (String) -> Item) {
-            next.append(sessions: entries, to: section, item: item) { rowContent(for: $0, data: data) }
+            let rows = SessionListEntries.expanding(entries, expandedRoots: expandedThreadRoots)
+            next.append(sessions: rows, to: section, item: item) { rowContent(for: $0, data: data) }
         }
 
         if state.showsVersionNotice, let server = state.selectedServer {
@@ -818,10 +820,10 @@ final class SessionInboxViewController: UIViewController {
         )
     }
 
-    private func openThread(_ rootSession: Session) {
-        guard let serverId = coordinator.activeServerId else { return }
-        applySearchNavigation(.willOpenDestination)
-        navigation.openSessionThread(SessionThreadNavTarget(serverId: serverId, rootSessionId: rootSession.id))
+    private func toggleThread(_ root: Session) {
+        if expandedThreadRoots.remove(root.id) == nil {
+            expandedThreadRoots.insert(root.id)
+        }
     }
 
     /// Stops or resumes on the session's own route.

@@ -45,7 +45,6 @@ enum AppPreferences {
 
     /// Opt-in features, saved on this device. Every flag defaults to off.
     enum Experiments {
-        static let sessionThreadsKey = "\(AppIdentifiers.subsystem).experiments.sessionThreads"
         static let durableSessionsKey = "\(AppIdentifiers.subsystem).experiments.durableSessions"
         static let durableSessionsDefaultKey = "\(AppIdentifiers.subsystem).experiments.durableSessionsDefault"
         static let liveVoiceKey = "\(AppIdentifiers.subsystem).experiments.liveVoice"
@@ -62,26 +61,13 @@ enum AppPreferences {
         static var durableSessionsEnabled: Bool {
             UserDefaults.standard.bool(forKey: durableSessionsKey)
         }
-
-        /// Session Threads: launch-tree grouping, Thread strips, Thread detail, and
-        /// compose in every session list. Off lists every session as its own row.
-        static var sessionThreadsEnabled: Bool {
-            UserDefaults.standard.bool(forKey: sessionThreadsKey)
-        }
-
-        static func setSessionThreadsEnabled(_ enabled: Bool) {
-            UserDefaults.standard.set(enabled, forKey: sessionThreadsKey)
-        }
     }
 
     // MARK: - Session Rows
 
-    /// Device-local session list display: one saved row appearance and the
-    /// remembered thread detail view. Grouping (`Experiments.sessionThreadsEnabled`)
-    /// stays independent of both.
+    /// Device-local session list display: one saved row appearance.
     enum SessionRows {
         static let displayKey = "\(AppIdentifiers.subsystem).sessionRows.display"
-        static let threadDetailModeKey = "\(AppIdentifiers.subsystem).sessionRows.threadDetailMode"
         static let didChangeNotification = Notification.Name("oppi.sessionRows.displayDidChange")
 
         /// Missing, malformed, or unrecognized stored values fall back to today's rich rows.
@@ -98,20 +84,6 @@ enum AppPreferences {
             guard display != Self.display, let data = try? JSONEncoder().encode(display) else { return }
             UserDefaults.standard.set(data, forKey: displayKey)
             NotificationCenter.default.post(name: didChangeNotification, object: nil)
-        }
-
-        /// Thread detail view last chosen on this device.
-        static var threadDetailMode: SessionThreadDetailMode {
-            guard let raw = UserDefaults.standard.string(forKey: threadDetailModeKey),
-                  let mode = SessionThreadDetailMode(rawValue: raw)
-            else {
-                return .outline
-            }
-            return mode
-        }
-
-        static func setThreadDetailMode(_ mode: SessionThreadDetailMode) {
-            UserDefaults.standard.set(mode.rawValue, forKey: threadDetailModeKey)
         }
     }
 

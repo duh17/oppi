@@ -207,7 +207,6 @@ final class SessionRowDisplayEditorViewController: UIViewController {
     private var usesLoaded = false {
         didSet { setNeedsUpdateProperties() }
     }
-    private var appliedThreadsEnabled: Bool?
     private var switches: [Toggle: UISwitch] = [:]
 
     private var subject: SessionRowPreviewSubject {
@@ -265,7 +264,6 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         previewNote.textColor = colors.comment
         previewDivider.backgroundColor = .separator
 
-        let threadsEnabled = root.navigation.sessionThreadsEnabled
         let subject = subject
         previewLabel.text = usesLoaded
             ? String(localized: "PREVIEW \u{00B7} SNAPSHOT OF A LOADED SESSION")
@@ -276,7 +274,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
             themeID: themeID,
             iconAssetCache: root.coordinator.activeConnection.iconAssetCache
         )
-        if threadsEnabled, let thread = subject.thread {
+        if let thread = subject.thread {
             previewStrip.isHidden = false
             previewStrip.apply(
                 SessionThreadStripView.Content(rollup: thread.rollup, statuses: thread.statuses),
@@ -287,7 +285,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         } else {
             previewStrip.isHidden = true
         }
-        if threadsEnabled, usesLoaded, subject.thread == nil {
+        if usesLoaded, subject.thread == nil {
             previewNote.text = String(localized: "This session has no child sessions, so thread options do not show here.")
         } else if !usesLoaded {
             previewNote.text = String(localized: "Not your sessions. Nothing is fetched or opened for this preview.")
@@ -297,7 +295,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         previewData.isHidden = loaded == nil
         previewData.selectedSegmentIndex = usesLoaded ? 1 : 0
 
-        applySnapshot(threadsEnabled: threadsEnabled)
+        applySnapshot()
     }
 
     // MARK: Preview
@@ -413,22 +411,19 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         self.dataSource = dataSource
     }
 
-    private func applySnapshot(threadsEnabled: Bool) {
+    private func applySnapshot() {
         guard let dataSource else { return }
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
         snapshot.appendSections([.density, .details])
         snapshot.appendItems([.density], toSection: .density)
         snapshot.appendItems([.model, .time, .context, .cost, .files, .compactions].map(Item.toggle), toSection: .details)
-        if threadsEnabled {
-            snapshot.appendSections([.thread])
-            snapshot.appendItems([.agentSummary, .laneGraph].map(Item.toggle), toSection: .thread)
-        }
+        snapshot.appendSections([.thread])
+        snapshot.appendItems([.agentSummary, .laneGraph].map(Item.toggle), toSection: .thread)
         snapshot.appendSections([.restore])
         snapshot.appendItems([.restore], toSection: .restore)
         // Every control and the density footer follow the draft.
         snapshot.reconfigureItems(snapshot.itemIdentifiers)
-        dataSource.apply(snapshot, animatingDifferences: appliedThreadsEnabled != nil && appliedThreadsEnabled != threadsEnabled)
-        appliedThreadsEnabled = threadsEnabled
+        dataSource.apply(snapshot, animatingDifferences: false)
         refreshFooters()
     }
 

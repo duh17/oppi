@@ -58,6 +58,7 @@ extension WorkspaceDetailViewController {
         state.loadingArchiveBucketIDs = []
         state.expandedStoppedGroupIDs = []
         state.collapsedStoppedGroupIDs = []
+        state.expandedThreadRoots = []
         state.isRefreshingWorkspaceData = false
         state.workspaceLoad = nil
     }
@@ -130,7 +131,7 @@ extension WorkspaceDetailViewController {
     func setRunning(_ running: Bool, _ session: Session) async {
         guard let connection else { return }
         let succeeded = await SessionListLifecycle.setRunning(
-            running, session, scope: .workspace(workspaceId), connection: connection
+            running, session, scope: routeScope(for: session), connection: connection
         ) { showError($0) }
         if running, succeeded {
             removeArchiveSession(session.id)
@@ -149,7 +150,7 @@ extension WorkspaceDetailViewController {
         guard let connection, connection.apiClient != nil else { return }
         let deleted = await SessionListLifecycle.delete(
             session,
-            scope: .workspace(workspaceId),
+            scope: routeScope(for: session),
             serverId: serverId,
             connection: connection,
             drafts: root.composerDraftStore
@@ -157,9 +158,21 @@ extension WorkspaceDetailViewController {
         if deleted { removeArchiveSession(session.id) }
     }
 
+    /// A session of an open thread can run in another workspace; its routes follow its own.
+    private func routeScope(for session: Session) -> SessionRouteScope {
+        session.routeScope ?? .workspace(workspaceId)
+    }
+
     func openSession(_ session: Session) {
         guard let connection else { return }
         applySearchNavigation(.willOpenDestination)
+        if let scope = session.routeScope, scope != .workspace(workspaceId) {
+            connection.sessionStore.cacheSessionForNavigation(session)
+            navigation.openReferencedSession(
+                WorkspaceSessionNavTarget(serverId: serverId, sessionId: session.id, routeScope: scope)
+            )
+            return
+        }
         let workspace = currentWorkspace(connection)
         var normalized = session
         if normalized.workspaceId == nil || normalized.workspaceId?.isEmpty == true {
@@ -172,9 +185,10 @@ extension WorkspaceDetailViewController {
         routeToSession(normalized.id)
     }
 
-    func openThread(_ rootSession: Session) {
-        applySearchNavigation(.willOpenDestination)
-        navigation.openSessionThread(SessionThreadNavTarget(serverId: serverId, rootSessionId: rootSession.id))
+    func toggleThread(_ root: Session) {
+        if state.expandedThreadRoots.remove(root.id) == nil {
+            state.expandedThreadRoots.insert(root.id)
+        }
     }
 
     /// Opens the session's chat through `AppNavigation`. The screen always

@@ -142,105 +142,14 @@ struct SessionInboxCompactComposeBar: View {
     }
 }
 
-/// Whether the SwiftUI thread detail still has a destination pushed over it,
-/// so its Message launcher stays out of the toolbar. (The UIKit session lists
-/// keep their launcher installed: their bar items never show over a chat.)
-///
-/// Depth is the route that owns the screen, evaluated every time. A size-class
-/// change rebuilds `[thread, chat]` in one shot; a path
-/// count captured on appear would treat that covered count as the surface.
-///
-/// A thread is the index of its `SessionThreadNavTarget` in the active path
-/// (`workspaceStackRouteElements`, or the split detail path) plus one.
-///
-/// A missing owner is covered. Falling back to the live path count would report
-/// `count > count` and install Message on a composer.
-enum QuickSessionLauncherCoverage {
-    static func isCovered(
-        presentation: WorkspaceNavigationPresentation,
-        thread target: SessionThreadNavTarget,
-        workspaceStack: [WorkspaceStackRouteElement],
-        splitDetailElements: [WorkspaceSplitDetailPathElement]
-    ) -> Bool {
-        switch presentation {
-        case .split:
-            guard let index = index(of: target, in: splitDetailElements) else { return true }
-            return splitDetailElements.count > index + 1
-        case .stack:
-            guard let index = index(of: target, in: workspaceStack) else { return true }
-            return workspaceStack.count > index + 1
-        }
-    }
-
-    private static func index(
-        of target: SessionThreadNavTarget,
-        in stack: [WorkspaceStackRouteElement]
-    ) -> Int? {
-        stack.lastIndex { element in
-            if case .sessionThread(let stacked) = element { return stacked == target }
-            return false
-        }
-    }
-
-    private static func index(
-        of target: SessionThreadNavTarget,
-        in path: [WorkspaceSplitDetailPathElement]
-    ) -> Int? {
-        path.lastIndex { element in
-            if case .sessionThread(let stacked) = element { return stacked == target }
-            return false
-        }
-    }
-}
-
-/// The hosted Message capsule and the now-playing player for UIKit session
-/// lists. The capsule stays SwiftUI while the SwiftUI thread detail shares it;
-/// it returns its host so `SessionListBottomBar` updates it in place
-/// (`updating`) instead of rebuilding the bar item.
+/// The full-screen now-playing player over a UIKit session list.
 @MainActor
 enum SessionListHostedChrome {
-    /// The bottom bar's Message capsule.
-    static func composeCapsule(
-        updating host: HostedContentController?,
-        root: AppRootEnvironment,
-        showsDictation: Bool,
-        hasActivePlayback: Bool,
-        columnWidth: CGFloat,
-        onStart: @escaping () -> Void,
-        onDictate: @escaping () -> Void
-    ) -> HostedContentController {
-        let content = SessionInboxCompactComposeBar(
-            showsDictation: showsDictation,
-            hasActivePlayback: hasActivePlayback,
-            columnWidth: columnWidth,
-            trailingReserve: SessionInboxComposeChrome.messageCapsuleFolderReserve,
-            onStart: onStart,
-            onDictate: onDictate
-        )
-        return barHost(host, content: content, root: root)
-    }
-
-    /// The full-screen player over the list.
     static func presentNowPlayingPlayer(_ audioPlayer: AudioPlayerService, from presenter: UIViewController) {
         Router.present(
             InAppNowPlayingPlayerViewController(audioPlayer: audioPlayer),
             presentation: .fullScreen,
             from: presenter
         )
-    }
-
-    private static func barHost(
-        _ host: HostedContentController?,
-        content: SessionInboxCompactComposeBar,
-        root: AppRootEnvironment
-    ) -> HostedContentController {
-        if let host {
-            host.setContent(content)
-            return host
-        }
-        let host = HostFactory.content(content, root: root)
-        host.sizingOptions = .intrinsicContentSize
-        host.view.backgroundColor = .clear
-        return host
     }
 }

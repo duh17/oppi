@@ -38,7 +38,6 @@ extension QuickSessionModel {
         }
 
         shouldRememberAgentSelection = launchContext?.agentId == nil
-        threadParent = launchContext?.threadParent
 
         // Inbox workspace+worktree beats last-used. Agent launch still filters
         // to that server, then last used > explicit default > first available.

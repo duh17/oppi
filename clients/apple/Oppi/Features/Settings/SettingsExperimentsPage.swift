@@ -1,20 +1,17 @@
 import UIKit
 
 /// Settings > Experiments: opt-in features, each off by default and saved on
-/// this device. Session Threads lives on `AppNavigation` so every mounted
-/// session list sees a change; the rest are `AppPreferences.Experiments`
-/// defaults the features read when they start.
+/// this device: `AppPreferences.Experiments` defaults the features read when
+/// they start.
 final class SettingsExperimentsViewController: SettingsListViewController<SettingsExperimentsViewController.Section, SettingsExperimentsViewController.Item> {
-    enum Section: Hashable, Sendable { case sessionThreads, liveVoice, durableSessions }
+    enum Section: Hashable, Sendable { case liveVoice, durableSessions }
     enum Item: Hashable, Sendable {
-        case sessionThreads, liveVoice, durableSessions, durableSessionsDefault
+        case liveVoice, durableSessions, durableSessionsDefault
     }
 
-    private let navigation: AppNavigation
     private let defaults: UserDefaults
 
-    init(navigation: AppNavigation, defaults: UserDefaults = .standard) {
-        self.navigation = navigation
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         super.init(
             title: String(localized: "Experiments"),
@@ -26,9 +23,8 @@ final class SettingsExperimentsViewController: SettingsListViewController<Settin
 
     /// How many experiments are currently on, for the root row summary.
     @MainActor
-    static func enabledCount(sessionThreadsEnabled: Bool) -> Int {
+    static func enabledCount() -> Int {
         [
-            sessionThreadsEnabled,
             AppPreferences.Experiments.liveVoiceEnabled,
             AppPreferences.Experiments.durableSessionsEnabled,
         ].filter { $0 }.count
@@ -36,11 +32,6 @@ final class SettingsExperimentsViewController: SettingsListViewController<Settin
 
     override func sections() -> [SettingsSectionModel<Section, Item>] {
         [
-            SettingsSectionModel(
-                .sessionThreads,
-                footer: String(localized: "Groups sessions under the session that launched them, with Thread strips and a Thread view."),
-                items: [.sessionThreads]
-            ),
             SettingsSectionModel(
                 .liveVoice,
                 footer: String(localized: "Adds Live Voice to the composer's mic menu and Quick Session, to talk to a session hands-free. Needs a server with a voice backend."),
@@ -56,7 +47,6 @@ final class SettingsExperimentsViewController: SettingsListViewController<Settin
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
-        case .sessionThreads: AnyHashable(navigation.sessionThreadsEnabled)
         case .liveVoice: AnyHashable(isOn(AppPreferences.Experiments.liveVoiceKey))
         case .durableSessions: AnyHashable(isOn(AppPreferences.Experiments.durableSessionsKey))
         case .durableSessionsDefault: AnyHashable(isOn(AppPreferences.Experiments.durableSessionsDefaultKey))
@@ -76,10 +66,6 @@ final class SettingsExperimentsViewController: SettingsListViewController<Settin
 
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
         switch item {
-        case .sessionThreads:
-            toggleRow(cell, title: String(localized: "Session Threads"), isOn: navigation.sessionThreadsEnabled, identifier: "settings.sessionThreads") { [weak self] in
-                self?.navigation.sessionThreadsEnabled = $0
-            }
         case .liveVoice:
             toggleRow(cell, title: String(localized: "Live Voice"), isOn: isOn(AppPreferences.Experiments.liveVoiceKey), identifier: "settings.experiments.liveVoice") { [weak self] in
                 self?.set(AppPreferences.Experiments.liveVoiceKey, $0)

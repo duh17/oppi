@@ -553,8 +553,6 @@
  "SessionStreamCoordinatorCatchUpTests": 0,
  "SessionStreamCoordinatorConsumeSeqTests": 0,
  "SessionStreamCoordinatorSeqStateTests": 0,
- "SessionThreadLoadTests": 0,
- "SessionThreadsExperimentTests": 0,
  "SessionThreadsTests": 0.04,
  "SessionTimelineNavigationTests": 3.01,
  "SessionToolOutputAccessTests": 0.03,

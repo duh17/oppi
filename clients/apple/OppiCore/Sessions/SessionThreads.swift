@@ -9,6 +9,32 @@ struct SessionThreadRollup: Sendable, Equatable {
     let members: [Session]
 
     var descendants: ArraySlice<Session> { members.dropFirst() }
+
+    /// Descendants as an outline: each session is followed by its own children in
+    /// launch order, and `depth` is 1 for a direct child of the root. A member whose
+    /// parent is not a member hangs off the root, so every descendant appears exactly once.
+    var outline: [(session: Session, depth: Int)] {
+        var childrenByParent: [String: [Session]] = [:]
+        let memberIds = Set(members.map(\.id))
+        for session in descendants {
+            let parentId = session.parentSessionId.flatMap { memberIds.contains($0) ? $0 : nil } ?? root.id
+            childrenByParent[parentId, default: []].append(session)
+        }
+        var rows: [(session: Session, depth: Int)] = []
+        var visited: Set<String> = [root.id]
+        func visit(_ parentId: String, depth: Int) {
+            for child in childrenByParent[parentId] ?? [] where visited.insert(child.id).inserted {
+                rows.append((child, depth))
+                visit(child.id, depth: depth + 1)
+            }
+        }
+        visit(root.id, depth: 1)
+        // A parent cycle among descendants never reaches the root: list what is left.
+        for session in descendants where visited.insert(session.id).inserted {
+            rows.append((session, 1))
+        }
+        return rows
+    }
     var latestActivity: Date { members.lazy.map(\.lastActivity).max() ?? root.lastActivity }
     var totalCost: Double { members.reduce(0) { $0 + $1.cost } }
     /// Distinct workspaces the loaded members run in; above 1 marks a cross-workspace thread.
@@ -118,6 +144,10 @@ struct SessionListEntry: Sendable, Equatable, Identifiable {
     let thread: SessionThreadRollup?
     /// Root of this session's thread when that root is not in this list.
     let outsideRoot: Session?
+    /// Indent level of a child row listed under its expanded thread root; 0 for every list row.
+    var depth = 0
+    /// The thread this row roots is open, so its children are listed after it.
+    var isExpanded = false
 
     var id: String { session.id }
     /// `ForEach` id for stopped sections; see `SessionListPresentation.stoppedRowID`.
@@ -147,17 +177,35 @@ struct SessionListEntry: Sendable, Equatable, Identifiable {
 }
 
 enum SessionListEntries {
+    /// One plain row per session: search results, which never fold into threads.
     static func flat(_ sessions: [Session]) -> [SessionListEntry] {
         sessions.map { SessionListEntry(session: $0, thread: nil, outsideRoot: nil) }
     }
 
-    /// Rows for a list: launch-tree threads when the experiment is on, otherwise
-    /// one flat row per session.
-    static func entries(threadsEnabled: Bool, listed: [Session], loaded: [Session]) -> [SessionListEntry] {
-        threadsEnabled ? threads(listed: listed, loaded: loaded) : flat(listed)
+    /// The rows of `entries` with each thread in `expandedRoots` open: its root row,
+    /// then every descendant as its own row, indented by `depth`, in outline order.
+    /// Members that run in another workspace are listed too: a thread is the whole launch
+    /// tree, not the part this list's workspace shows. Other entries pass through.
+    static func expanding(_ entries: [SessionListEntry], expandedRoots: Set<String>) -> [SessionListEntry] {
+        guard !expandedRoots.isEmpty else { return entries }
+        var rows: [SessionListEntry] = []
+        rows.reserveCapacity(entries.count)
+        for entry in entries {
+            guard let thread = entry.thread, expandedRoots.contains(entry.session.id) else {
+                rows.append(entry)
+                continue
+            }
+            var root = entry
+            root.isExpanded = true
+            rows.append(root)
+            for (session, depth) in thread.outline {
+                rows.append(SessionListEntry(session: session, thread: nil, outsideRoot: nil, depth: depth))
+            }
+        }
+        return rows
     }
 
-    /// Threads layout for the sessions a list shows (`listed`). Launch trees are
+    /// Thread rows for the sessions a list shows (`listed`). Launch trees are
     /// built over every loaded session (`loaded`), so a thread keeps members
     /// that run in another workspace or worktree. A listed root carries its
     /// whole tree; a listed descendant of a listed root folds away; a listed
@@ -337,126 +385,5 @@ struct SessionThreadAgentGroup: Sendable, Equatable, Identifiable {
             .compactMap { index, key in byKey[key].map { (index, $0) } }
             .sorted { $0.1.count != $1.1.count ? $0.1.count > $1.1.count : $0.0 < $1.0 }
             .map { SessionThreadAgentGroup(agentId: $0.1.agentId, agentIcon: $0.1.icon, sampleSessionId: $0.1.sample, count: $0.1.count) }
-    }
-}
-
-// MARK: - Waterfall
-
-/// Trace-viewer layout: one row per session in tree order (depth first,
-/// children by launch), each a bar on a shared clock-time axis from launch
-/// to last recorded activity. The bar summarizes; it is not an exact
-/// execution span.
-struct SessionThreadWaterfall: Sendable, Equatable {
-    struct Row: Sendable, Equatable, Identifiable {
-        let session: Session
-        let depth: Int
-        /// 0...1 on the time axis.
-        let start: Double
-        let end: Double
-        /// Where an idle root starts waiting; nil otherwise.
-        let idleFrom: Double?
-        let status: SessionStatusKind
-
-        var id: String { session.id }
-    }
-
-    let rows: [Row]
-    let startDate: Date
-    let endDate: Date
-
-    static func build(
-        snapshot: SessionThreadSnapshot,
-        now: Date,
-        status: (Session) -> SessionStatusKind = SessionThreadStatus.withoutSeenState
-    ) -> SessionThreadWaterfall {
-        let byId = Dictionary(snapshot.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        guard let root = byId[snapshot.rootSessionId] else {
-            return SessionThreadWaterfall(rows: [], startDate: now, endDate: now)
-        }
-        let children = Dictionary(grouping: snapshot.sessions.filter { $0.id != root.id }) {
-            $0.parentSessionId ?? root.id
-        }
-        var ordered: [(Session, Int)] = []
-        var visited: Set<String> = []
-        func visit(_ session: Session, _ depth: Int) {
-            guard visited.insert(session.id).inserted else { return }
-            ordered.append((session, depth))
-            for child in (children[session.id] ?? []).sorted(by: { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }) {
-                visit(child, depth + 1)
-            }
-        }
-        visit(root, 0)
-
-        // End at the latest activity, not `now`: a root idle for hours would
-        // otherwise squeeze the real work into the left edge. Running bars
-        // still reach the right edge.
-        let latest = snapshot.sessions.map(\.lastActivity).max() ?? now
-        let startDate = root.createdAt
-        let endDate = max(latest, startDate.addingTimeInterval(1))
-        let span = endDate.timeIntervalSince(startDate)
-        func x(_ date: Date) -> Double { min(1, max(0, date.timeIntervalSince(startDate) / span)) }
-
-        let rows = ordered.map { session, depth in
-            let stopped = session.status == .stopped
-            let idle = !stopped && !SessionThreadGrouping.isWorking(session)
-            return Row(
-                session: session,
-                depth: depth,
-                start: x(session.createdAt),
-                end: stopped ? x(session.lastActivity) : 1,
-                idleFrom: idle ? x(session.lastActivity) : nil,
-                status: status(session)
-            )
-        }
-        return SessionThreadWaterfall(rows: rows, startDate: startDate, endDate: endDate)
-    }
-}
-
-// MARK: - Prompt cache
-
-extension TokenUsage {
-    /// Share of prompt tokens served from cache: reads over reads + writes + uncached input.
-    var cacheHitRate: Double? {
-        let read = Double(cacheRead ?? 0)
-        let total = Double(input) + read + Double(cacheWrite ?? 0)
-        return total > 0 ? read / total : nil
-    }
-}
-
-enum SessionPromptCacheEstimate: Equatable, Sendable {
-    /// The session is running a turn, so its cache is in use.
-    case inUse
-    /// Pi's warmer is refreshing the entry before it expires.
-    case keptWarm(nextRefresh: Date?)
-    case warm(until: Date)
-    case cold
-    case unknown
-
-    /// Best effort: providers can evict early, so present `.warm` as likely.
-    static func estimate(
-        session: Session,
-        status: SessionPromptCacheStatus?,
-        now: Date
-    ) -> SessionPromptCacheEstimate {
-        if SessionThreadGrouping.isWorking(session) { return .inUse }
-        guard let status else { return .unknown }
-        // Kept warm only while Pi is refreshing now, or has a refresh it
-        // decided to send that is still ahead. Pi arms a timer after every
-        // request even when it has decided to let the cache expire.
-        if let warmer = status.warmer, session.status != .stopped {
-            switch warmer.state {
-            case .refreshing:
-                return .keptWarm(nextRefresh: nil)
-            case .scheduled where warmer.action == .warm && (warmer.nextWarmAt.map { $0 >= now } ?? true):
-                return .keptWarm(nextRefresh: warmer.nextWarmAt)
-            case .scheduled, .inactive:
-                break
-            }
-        }
-        // The live store's reply time can be newer than the fetched snapshot.
-        let lastRequestAt = [status.lastRequestAt, session.lastAgentReplyAt].compactMap { $0 }.max()
-        guard let ttl = status.ttl, let lastRequestAt else { return .unknown }
-        let until = lastRequestAt.addingTimeInterval(ttl)
-        return until > now ? .warm(until: until) : .cold
     }
 }

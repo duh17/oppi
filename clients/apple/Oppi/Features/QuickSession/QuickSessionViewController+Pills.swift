@@ -52,19 +52,6 @@ extension QuickSessionViewController {
             worktreePill.isEnabled = enabled
         }
 
-        let threadParent = model.threadParent
-        threadPill.setHiddenIfChanged(threadParent == nil)
-        if let threadParent {
-            threadPill.apply(QuickSessionPillButton.Content(
-                icon: .symbol("point.3.connected.trianglepath.dotted", color: colors.blue, style: .caption2, weight: .semibold),
-                title: threadParent.title,
-                titleColor: colors.fg,
-                trailingSymbol: "xmark"
-            ), colors: colors)
-            threadPill.accessibilityLabel = "In thread \(threadParent.title)"
-            threadPill.isEnabled = enabled
-        }
-
         updateEnginePill(colors: colors, enabled: enabled)
 
         // Incognito for this launch: the session keeps no history and is deleted

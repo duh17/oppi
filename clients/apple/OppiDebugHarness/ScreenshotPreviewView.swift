@@ -1014,7 +1014,7 @@ private struct SettingsPageScreenshotContent: View {
             switch screen {
             case "settings-root": SettingsRootViewController(root: root)
             case "settings-editor": SettingsEditorViewController()
-            case "settings-experiments": SettingsExperimentsViewController(navigation: root.navigation)
+            case "settings-experiments": SettingsExperimentsViewController()
             case "settings-editor-key-bar": SettingsEditorKeyBarViewController(preferences: .shared)
             case "settings-general": SettingsGeneralViewController(root: root)
             case "settings-storage": SettingsStorageViewController(root: root)

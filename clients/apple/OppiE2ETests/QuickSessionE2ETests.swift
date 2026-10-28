@@ -383,10 +383,6 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
     override var e2eRequiresFreshLaunch: Bool { true }
 
-    override func configureE2ELaunch(_ application: XCUIApplication) {
-        application.launchArguments += ["-dev.chenda.Oppi.experiments.sessionThreads", "YES"]
-    }
-
     override func seedE2EFixtures() throws {
         let workspaceId = try e2eWorkspaceId()
         let response = try e2eLabAPIJSON(
@@ -436,20 +432,18 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
         assertLauncherTapOpensQuickSession(on: "all sessions")
         dismissQuickSessionOverlay()
 
+        // A child row of an expanded thread covers the list the same way.
         let thread = app.buttons["thread.nav.\(rootId)"]
         XCTAssertTrue(thread.waitForExistence(timeout: 15), "Thread strip missing")
         thread.tap()
-        XCTAssertTrue(app.collectionViews["thread.detail"].waitForExistence(timeout: 15), "Thread detail did not open")
-        assertLauncherPresent(on: "thread detail")
-
-        // Stopped children fold into "finished". The root row is always in the outline.
-        let member = app.descendants(matching: .any)["thread.row.\(rootId)"]
-        XCTAssertTrue(member.waitForExistence(timeout: 15), "Thread root row missing")
-        member.tap()
-        assertChatPushedWithoutLauncher(from: "thread detail")
-        assertComposerBandTapDoesNothing(whileChatPushedFrom: "thread detail")
-        returnToThreadDetail()
-        assertLauncherTapOpensQuickSession(on: "thread detail")
+        let childRow = app.descendants(matching: .any)["session.nav.\(childId)"]
+        XCTAssertTrue(childRow.waitForExistence(timeout: 15), "Expanding the thread did not list its child")
+        assertLauncherPresent(on: "expanded thread")
+        childRow.tap()
+        assertChatPushedWithoutLauncher(from: "expanded thread")
+        assertComposerBandTapDoesNothing(whileChatPushedFrom: "expanded thread")
+        returnToInbox()
+        assertLauncherTapOpensQuickSession(on: "expanded thread")
     }
 
     @MainActor
@@ -519,18 +513,6 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed, "Quick Session did not dismiss")
     }
 
-    @MainActor
-    private func returnToThreadDetail() {
-        if app.buttons["chat.toolbar.files"].exists {
-            app.buttons["chat.toolbar.back"].tap()
-        }
-        XCTAssertTrue(
-            app.collectionViews["thread.detail"].waitForExistence(timeout: 10),
-            "Back did not return to thread detail"
-        )
-        XCTAssertFalse(app.buttons["chat.toolbar.files"].exists, "Chat stayed pushed over thread detail")
-    }
-
     /// Fixture sessions are stored before launch. Pull to refresh if the first
     /// snapshot raced an empty store, and expand today's stopped group if it is collapsed.
     @MainActor
@@ -569,8 +551,7 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
     private func returnToInbox() {
         for _ in 0..<4 {
             if app.collectionViews["workspace.sessionList"].exists,
-               !app.buttons["chat.toolbar.files"].exists,
-               !app.collectionViews["thread.detail"].exists {
+               !app.buttons["chat.toolbar.files"].exists {
                 return
             }
             if app.buttons["chat.toolbar.back"].exists {

@@ -9,10 +9,7 @@ import Testing
 struct SessionRowPreferencesTests {
     private func withCleanDefaults(_ body: () -> Void) {
         let defaults = UserDefaults.standard
-        let keys = [
-            AppPreferences.SessionRows.displayKey,
-            AppPreferences.SessionRows.threadDetailModeKey,
-        ]
+        let keys = [AppPreferences.SessionRows.displayKey]
         let originals = keys.map { defaults.object(forKey: $0) }
         defer {
             for (key, original) in zip(keys, originals) {
@@ -64,21 +61,6 @@ struct SessionRowPreferencesTests {
             stored["showsCost"] = false
             defaults.set(try? JSONSerialization.data(withJSONObject: stored), forKey: key)
             #expect(AppPreferences.SessionRows.display == .standard)
-        }
-    }
-
-    @Test func threadDetailModeIsRememberedAndUnknownValuesOpenOutline() {
-        withCleanDefaults {
-            #expect(AppPreferences.SessionRows.threadDetailMode == .outline)
-
-            AppPreferences.SessionRows.setThreadDetailMode(.waterfall)
-            #expect(AppPreferences.SessionRows.threadDetailMode == .waterfall)
-
-            // "timeline" was a mode until the interaction log was removed; it opens Outline now.
-            for retired in ["timeline", "gantt"] {
-                UserDefaults.standard.set(retired, forKey: AppPreferences.SessionRows.threadDetailModeKey)
-                #expect(AppPreferences.SessionRows.threadDetailMode == .outline)
-            }
         }
     }
 }

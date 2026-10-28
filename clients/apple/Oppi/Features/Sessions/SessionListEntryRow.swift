@@ -5,8 +5,8 @@ import UIKit
 /// actions stay the same everywhere.
 struct SessionListRowActions {
     let open: (Session) -> Void
-    /// Opens Thread detail for a root session.
-    let openThread: (Session) -> Void
+    /// Opens or closes the thread a root session starts: its descendants list under it.
+    let toggleThread: (Session) -> Void
     let stop: (Session) -> Void
     let resume: (Session) -> Void
     /// Nil when this list cannot delete the session.
@@ -30,8 +30,10 @@ extension Confirmation {
 /// the session row, then its Thread strip or a link to the thread it belongs
 /// to. The collection owns the row-body tap (selection), the trailing swipes,
 /// and the long-press menu (`SessionListRowMenus`). The row keeps its
-/// accessibility activation, and the strip or link opens Thread detail as a
-/// control of its own, so a swipe on it cancels navigation.
+/// accessibility activation. The strip folds the thread open and closed, and the
+/// link opens the thread's root chat; each is a control of its own, so a swipe
+/// on it cancels the tap. A child row listed under an open thread is an ordinary
+/// row, indented by its depth.
 struct SessionListEntryConfiguration: UIContentConfiguration {
     let row: SessionListRowContent
     let display: SessionRowDisplay
@@ -56,6 +58,8 @@ final class SessionListEntryContentView: UIView, UIContentView {
     private var stripView: SessionThreadStripView?
     private var linkView: SessionThreadLinkView?
     private var applied: SessionListEntryConfiguration
+    /// Where the row starts: the list's margin plus the indent of a thread's child row.
+    private var leadingConstraint: NSLayoutConstraint?
 
     var configuration: UIContentConfiguration {
         get { applied }
@@ -84,6 +88,8 @@ final class SessionListEntryContentView: UIView, UIContentView {
         directionalLayoutMargins = .zero
         preservesSuperviewLayoutMargins = true
         let margins = layoutMarginsGuide
+        let leading = stack.leadingAnchor.constraint(equalTo: margins.leadingAnchor)
+        leadingConstraint = leading
         // The cell is as tall as its content: stack views fit loosely, so a
         // tall proposed size would otherwise stretch them.
         let hug = heightAnchor.constraint(equalToConstant: 0)
@@ -92,16 +98,19 @@ final class SessionListEntryContentView: UIView, UIContentView {
             hug,
             stack.topAnchor.constraint(equalTo: topAnchor, constant: Self.verticalInset),
             bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: Self.verticalInset),
-            stack.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            leading,
             stack.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
         ])
         rowView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         apply(configuration)
     }
 
-    /// A Thread control under the row, inset to line up under its icon, that opens the thread.
-    private func addThreadControl<Control: UIControl>(_ control: Control) -> Control {
-        control.addAction(UIAction { [weak self] _ in self?.openThread() }, for: .touchUpInside)
+    /// A Thread control under the row, inset to line up under its icon.
+    private func addThreadControl<Control: UIControl>(
+        _ control: Control,
+        action: @escaping (SessionListEntryContentView) -> Void
+    ) -> Control {
+        control.addAction(UIAction { [weak self] _ in self.map(action) }, for: .touchUpInside)
         control.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(control)
         control.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -SessionThreadStripView.rowInset).isActive = true
@@ -109,6 +118,9 @@ final class SessionListEntryContentView: UIView, UIContentView {
     }
 
     static let verticalInset: CGFloat = 15
+    /// Indent per thread level; deeper threads stop indenting at `maxIndentLevels` so rows keep their width.
+    static let indentPerLevel: CGFloat = 16
+    static let maxIndentLevels = 4
 
     /// The separator starts under the title, past the identity icon.
     override func didMoveToSuperview() {
@@ -127,6 +139,7 @@ final class SessionListEntryContentView: UIView, UIContentView {
         let session = entry.session
         let style = SessionRowStyle.for(configuration.themeID)
         let status = row.status(of: session)
+        leadingConstraint?.constant = CGFloat(min(entry.depth, Self.maxIndentLevels)) * Self.indentPerLevel
 
         rowView.apply(
             SessionRowView.Content(
@@ -144,7 +157,7 @@ final class SessionListEntryContentView: UIView, UIContentView {
         rowView.accessibilityValue = status.isBlocked ? status.label : ""
 
         if let thread = entry.thread {
-            let stripView = stripView ?? addThreadControl(SessionThreadStripView())
+            let stripView = stripView ?? addThreadControl(SessionThreadStripView()) { $0.toggleThread() }
             self.stripView = stripView
             stripView.setHiddenIfChanged(false)
             stripView.accessibilityIdentifier = "thread.nav.\(thread.root.id)"
@@ -153,7 +166,8 @@ final class SessionListEntryContentView: UIView, UIContentView {
                     rollup: thread,
                     statuses: row.statuses,
                     hidesDetails: row.lockBadge(of: thread.root) == .locked,
-                    hidesCost: thread.members.contains { row.lockBadge(of: $0) == .locked }
+                    hidesCost: thread.members.contains { row.lockBadge(of: $0) == .locked },
+                    isExpanded: entry.isExpanded
                 ),
                 display: configuration.display,
                 style: style,
@@ -164,7 +178,7 @@ final class SessionListEntryContentView: UIView, UIContentView {
         }
 
         if entry.thread == nil, let root = entry.outsideRoot {
-            let linkView = linkView ?? addThreadControl(SessionThreadLinkView())
+            let linkView = linkView ?? addThreadControl(SessionThreadLinkView()) { $0.openRoot() }
             self.linkView = linkView
             linkView.setHiddenIfChanged(false)
             linkView.apply(
@@ -181,10 +195,14 @@ final class SessionListEntryContentView: UIView, UIContentView {
         accessibilityElements = ([rowView, stripView, linkView] as [UIView?]).compactMap { $0 }.filter { !$0.isHidden }
     }
 
-    private func openThread() {
-        let entry = applied.row.entry
-        guard let root = entry.thread?.root ?? entry.outsideRoot else { return }
-        applied.actions.openThread(root)
+    private func toggleThread() {
+        guard let root = applied.row.entry.thread?.root else { return }
+        applied.actions.toggleThread(root)
+    }
+
+    private func openRoot() {
+        guard let root = applied.row.entry.outsideRoot else { return }
+        applied.actions.open(root)
     }
 
     override func systemLayoutSizeFitting(

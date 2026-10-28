@@ -298,9 +298,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
     }
 
     private var experimentsSummary: String {
-        let count = SettingsExperimentsViewController.enabledCount(
-            sessionThreadsEnabled: navigation.sessionThreadsEnabled
-        )
+        let count = SettingsExperimentsViewController.enabledCount()
         return "\(count) on"
     }
 
@@ -333,7 +331,7 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
         case .privacy:
             navigator.push(SettingsPrivacyViewController(root: root))
         case .experiments:
-            navigator.push(SettingsExperimentsViewController(navigation: navigation))
+            navigator.push(SettingsExperimentsViewController())
         case .storage:
             navigator.push(SettingsStorageViewController(root: root))
         case .server:

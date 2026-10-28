@@ -128,12 +128,7 @@ struct SettingsExperimentsPageTests {
     @Test("Each toggle saves its own experiment and Start Sessions as Durable shows only with Durable Sessions")
     func togglesSaveTheirExperiments() async throws {
         let defaults = try #require(UserDefaults(suiteName: "SettingsExperimentsPageTests-\(UUID().uuidString)"))
-        let navigation = AppNavigation()
-        // Session Threads lives in the process-wide defaults: start it off, put it back after.
-        let sessionThreadsBefore = navigation.sessionThreadsEnabled
-        navigation.sessionThreadsEnabled = false
-        defer { navigation.sessionThreadsEnabled = sessionThreadsBefore }
-        let page = SettingsExperimentsViewController(navigation: navigation, defaults: defaults)
+        let page = SettingsExperimentsViewController(defaults: defaults)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 1200)
@@ -155,7 +150,7 @@ struct SettingsExperimentsPageTests {
         }
 
         // Everything starts off, and the default row is hidden until Durable Sessions is on.
-        for id in ["sessionThreads", "experiments.liveVoice", "experiments.durableSessions"] {
+        for id in ["experiments.liveVoice", "experiments.durableSessions"] {
             let found = await toggle("settings.\(id)")
             #expect(found?.isOn == false, "\(id) should start off")
         }
@@ -163,9 +158,6 @@ struct SettingsExperimentsPageTests {
 
         flip(try #require(await toggle("settings.experiments.liveVoice")))
         #expect(defaults.bool(forKey: AppPreferences.Experiments.liveVoiceKey))
-
-        flip(try #require(await toggle("settings.sessionThreads")))
-        #expect(navigation.sessionThreadsEnabled)
 
         flip(try #require(await toggle("settings.experiments.durableSessions")))
         #expect(defaults.bool(forKey: AppPreferences.Experiments.durableSessionsKey))
@@ -190,9 +182,9 @@ struct SettingsExperimentsPageTests {
             if let before { UserDefaults.standard.set(before, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
         }
         UserDefaults.standard.set(false, forKey: key)
-        let without = SettingsExperimentsViewController.enabledCount(sessionThreadsEnabled: false)
+        let without = SettingsExperimentsViewController.enabledCount()
         UserDefaults.standard.set(true, forKey: key)
-        #expect(SettingsExperimentsViewController.enabledCount(sessionThreadsEnabled: false) == without + 1)
+        #expect(SettingsExperimentsViewController.enabledCount() == without + 1)
     }
 
     /// Switches the user can see: a collection view keeps removed cells hidden in its reuse pool.

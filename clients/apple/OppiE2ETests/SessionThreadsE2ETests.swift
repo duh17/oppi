@@ -22,24 +22,13 @@ final class SessionThreadsE2ETests: E2ETestCase {
     nonisolated private static let mirrorRootKey = "8bac488b-aa9a-416c-bddd-921a9c51ad8d"
     private static let mirrorChildKey = "2549460f-9896-478b-a1b5-bff6afce5e01"
     /// Synthetic: an idle child of the mirror thread launched into another workspace,
-    /// so the thread spans two workspaces. Idle keeps it out of Outline's finished fold.
+    /// so the thread spans two workspaces.
     nonisolated private static let crossWorkspaceChildKey = "synthetic-cross-workspace-child"
     nonisolated private static let crossWorkspaceName = "kypu"
 
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
     override var e2eRequiresFreshLaunch: Bool { true }
-
-    /// Session Threads is opt-in. Launch with the experiment set the way a saved
-    /// preference reads at startup: on for the thread tests, so they start where a
-    /// user who enabled it does, and explicitly off for the opt-in test (the
-    /// simulator keeps earlier tests' saved choice, so "unset" is a unit-test fact).
-    override func configureE2ELaunch(_ application: XCUIApplication) {
-        let enabled = !name.contains("testSessionThreadsStayOffUntilEnabledInSettings")
-        application.launchArguments += ["-\(Self.sessionThreadsDefaultsKey)", enabled ? "YES" : "NO"]
-    }
-
-    nonisolated private static let sessionThreadsDefaultsKey = "dev.chenda.Oppi.experiments.sessionThreads"
 
     override func seedE2EFixtures() throws {
         let bundle = Bundle(for: SessionThreadsE2ETests.self)
@@ -150,114 +139,100 @@ final class SessionThreadsE2ETests: E2ETestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 
-    func testRealSnapshotThreadsOutlineAndWaterfall() throws {
+    /// Folding is the default: a thread is one strip under its root, and tapping the strip lists
+    /// every descendant as an indented row, each with its status, swipes, and its own chat.
+    func testThreadStripExpandsEveryDescendantInlineAndCollapses() throws {
         let orchestrator = try id(Self.orchestratorKey)
         let donkeyMaster = try id(Self.donkeyMasterKey)
-        let reviewCleanup = try id(Self.reviewCleanupKey)
-
+        let finishedFix = try id(Self.finishedFixKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
         beat(1)
 
-        // Flat List (Settings, Session List): children appear as their own rows.
-        try setSessionThreads(false)
+        let strip = app.buttons["thread.nav.\(orchestrator)"]
+        XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Orchestrator thread strip missing")
+        XCTAssertEqual(strip.value as? String, "Collapsed")
         XCTAssertTrue(
-            reveal(app.buttons["session.nav.\(donkeyMaster)"], in: inbox),
-            "Flat List should list the Donkey Master child row"
+            strip.label.contains("working"),
+            "An idle root with working children should summarize its working members: \(strip.label)"
         )
-        beat(2)
-        for _ in 0..<3 { inbox.swipeDown(velocity: .fast) }
-
-        // Threads: children fold under their root.
-        try setSessionThreads(true)
-        let threadRow = app.buttons["thread.nav.\(orchestrator)"]
-        XCTAssertTrue(reveal(threadRow, in: inbox), "Orchestrator thread row missing")
         XCTAssertFalse(
             app.buttons["session.nav.\(donkeyMaster)"].exists,
-            "Threads mode should not list child sessions as top-level rows"
+            "A collapsed thread should not list child sessions as rows"
         )
-        XCTAssertTrue(
-            (threadRow.label).contains("working"),
-            "An idle root with working children should summarize its working members: \(threadRow.label)"
-        )
-        beat(2.5)
 
-        // Outline.
-        threadRow.tap()
-        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "Thread detail did not open")
-        showOutline()
-        let detail = app.collectionViews["thread.detail"]
-        let rootRow = app.buttons["thread.row.\(orchestrator)"]
-        XCTAssertTrue(reveal(rootRow, in: detail), "Root outline row missing")
-        XCTAssertTrue(rootRow.label.contains("96% cached"), "Root row should show its real cache rate: \(rootRow.label)")
-        XCTAssertTrue(reveal(app.buttons["thread.row.\(donkeyMaster)"], in: detail))
-        beat(1.5)
-        let fold = app.buttons["thread.fold.\(orchestrator)"]
-        XCTAssertTrue(reveal(fold, in: detail), "Finished children fold missing")
-        XCTAssertEqual(fold.value as? String, "Collapsed")
-        // The collapsed row names which saved Agents did the finished work.
-        XCTAssertTrue(
-            fold.label.contains("Reviewer") || fold.label.contains("Worker"),
-            "Collapsed row should name its Agents: \(fold.label)"
-        )
-        fold.tap()
-        XCTAssertTrue(
-            reveal(app.buttons["thread.row.\(try id(Self.finishedFixKey))"], in: detail),
-            "Expanding the fold should list finished children"
-        )
+        // Expanded: every descendant is a row of its own, indented under the root.
+        strip.tap()
+        XCTAssertTrue(waitForValue(strip, "Expanded"), "Strip did not report Expanded")
+        let rootBody = app.buttons["session.nav.\(orchestrator)"]
+        XCTAssertTrue(reveal(rootBody, in: inbox), "Thread root row missing")
+        let working = app.buttons["session.nav.\(donkeyMaster)"]
+        XCTAssertTrue(reveal(working, in: inbox), "Expanding should list the working child")
+        XCTAssertTrue(working.label.contains("Donkey Master"), working.label)
+        XCTAssertGreaterThan(working.frame.minX, rootBody.frame.minX + 8, "Child rows are indented under their root")
+        let finished = app.buttons["session.nav.\(finishedFix)"]
+        XCTAssertTrue(reveal(finished, in: inbox), "Expanding should list finished children too")
+        XCTAssertTrue(finished.label.contains("Stopped"), "A child row keeps its status: \(finished.label)")
         beat(1.5)
 
-        // Waterfall: one row per session on clock time.
-        let waterfallPill = app.buttons["thread.mode.waterfall"]
-        XCTAssertTrue(reveal(waterfallPill, in: detail))
-        waterfallPill.tap()
-        let waterfallRow = app.descendants(matching: .any)["thread.waterfall.row.\(donkeyMaster)"]
-        XCTAssertTrue(reveal(waterfallRow, in: detail), "Waterfall should list the Donkey Master row")
-        XCTAssertTrue(waterfallRow.label.contains("Donkey Master"), "Waterfall row should name its Agent: \(waterfallRow.label)")
-        beat(2.5)
-        for _ in 0..<3 { detail.swipeDown(velocity: .fast) }
+        // A child row keeps the row's swipe actions.
+        finished.swipeLeft()
+        XCTAssertTrue(app.buttons["Resume"].waitForExistence(timeout: 5), "A stopped child row did not offer Resume")
+        finished.swipeRight()
+        XCTAssertTrue(waitForNonExistence(app.buttons["Resume"], timeout: 5), "Swipe did not close")
+        assertStillOnInbox("swiping a child row")
+        try assertStopped(finishedFix, "after swiping its row")
 
-        // A second real thread.
-        app.navigationBars.buttons.element(boundBy: 0).tap()
-        let reviewRow = app.buttons["thread.nav.\(reviewCleanup)"]
-        XCTAssertTrue(reveal(reviewRow, in: inbox), "Review cleanup thread row missing")
-        reviewRow.tap()
-        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15))
-        // An idle session can be stopped from the thread outline.
-        let reviewDetail = app.collectionViews["thread.detail"]
-        showOutline()
-        let summary = app.descendants(matching: .any)["thread.summary"]
-        XCTAssertTrue(reveal(summary, in: reviewDetail), "Thread header summary missing")
-        let idleSummary = summary.value as? String ?? ""
-        XCTAssertTrue(idleSummary.contains("Root: Idle"), "Header should call the idle root idle: \(idleSummary)")
-        let reviewRoot = app.buttons["thread.row.\(reviewCleanup)"]
-        XCTAssertTrue(reveal(reviewRoot, in: reviewDetail), "Idle review root row missing")
-        XCTAssertFalse(reviewRoot.label.contains("stopped"), "Review root should start idle: \(reviewRoot.label)")
-        reviewRoot.swipeLeft()
-        let stop = app.buttons["session.stop.\(reviewCleanup)"]
-        XCTAssertTrue(stop.waitForExistence(timeout: 5), "Idle session row did not offer Stop")
-        stop.tap()
-        let stopped = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label CONTAINS %@", "stopped"),
-            object: app.buttons["thread.row.\(reviewCleanup)"]
-        )
-        XCTAssertEqual(XCTWaiter().wait(for: [stopped], timeout: 10), .completed, "Stop did not stop the idle session")
-        XCTAssertEqual(
-            try e2eSession(sessionId: reviewCleanup)["status"] as? String,
-            "stopped",
-            "The server did not record the stop"
-        )
-        for _ in 0..<3 { reviewDetail.swipeDown(velocity: .fast) }
-        XCTAssertTrue(summary.waitForExistence(timeout: 5), "Thread header summary missing")
-        let stoppedSummary = summary.value as? String ?? ""
-        XCTAssertFalse(stoppedSummary.contains("Root: Idle"), "Header still calls the stopped root idle: \(stoppedSummary)")
-        XCTAssertTrue(stoppedSummary.contains("finished"), "Header summary lost its counts: \(stoppedSummary)")
-        beat(4)
+        // Tapping a child opens its own chat; the list keeps the thread open on return.
+        finished.tap()
+        try assertOpenedAsEndedHistory(finishedFix, via: "finished child row")
+        app.buttons["chat.toolbar.back"].tap()
+        XCTAssertTrue(inbox.waitForExistence(timeout: 10), "Back did not return to the inbox")
+        XCTAssertTrue(reveal(strip, in: inbox))
+        XCTAssertEqual(strip.value as? String, "Expanded", "The thread closed while its child chat was open")
+
+        // Collapsing folds the children away again.
+        strip.tap()
+        XCTAssertTrue(waitForValue(strip, "Collapsed"), "Strip did not report Collapsed")
+        XCTAssertTrue(waitForNonExistence(app.buttons["session.nav.\(donkeyMaster)"], timeout: 5), "Collapse left the child row")
+        XCTAssertTrue(waitForNonExistence(finished, timeout: 5))
+        beat(1)
     }
 
-    /// The root body opens the root's chat and only the labelled Thread strip opens Thread
-    /// detail. They are separate targets, and swiping either one never navigates. Stopped roots
-    /// and children open as ended history and stay stopped on the server.
+    /// An idle thread root can be stopped from its row while its thread is expanded, and the
+    /// stop reaches the server.
+    func testExpandedThreadRootsKeepStopAndTheirStatus() throws {
+        let reviewCleanup = try id(Self.reviewCleanupKey)
+        let inbox = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
+        let strip = app.buttons["thread.nav.\(reviewCleanup)"]
+        XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Review cleanup thread strip missing")
+        strip.tap()
+        XCTAssertTrue(waitForValue(strip, "Expanded"), "Strip did not report Expanded")
+        let rootRow = app.buttons["session.nav.\(reviewCleanup)"]
+        XCTAssertTrue(reveal(rootRow, in: inbox), "Idle review root row missing")
+        XCTAssertFalse(rootRow.label.contains("Stopped"), "Review root should start idle: \(rootRow.label)")
+        rootRow.swipeLeft()
+        let stop = app.buttons["Stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 5), "Idle session row did not offer Stop")
+        stop.tap()
+        let stopped = expectation(description: "server records the stop")
+        DispatchQueue.global().async { [self] in
+            for _ in 0..<40 {
+                if let status = try? e2eSession(sessionId: reviewCleanup)["status"] as? String, status == "stopped" {
+                    stopped.fulfill()
+                    return
+                }
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+        wait(for: [stopped], timeout: 15)
+        beat(1)
+    }
+
+    /// The root body opens the root's chat and only the labelled Thread strip folds the thread.
+    /// They are separate targets, and swiping either one never navigates. Stopped roots and
+    /// children open as ended history and stay stopped on the server.
     func testRootBodyAndThreadStripAreDisjointTargetsAndStoppedHistoryStaysStopped() throws {
         let orchestrator = try id(Self.orchestratorKey)
         let stoppedRoot = try id(Self.stoppedRootKey)
@@ -293,20 +268,20 @@ final class SessionThreadsE2ETests: E2ETestCase {
             target.swipeRight()
             XCTAssertTrue(waitForNonExistence(app.buttons["Stop"], timeout: 5), "Swipe did not close")
         }
+        XCTAssertEqual(strip.value as? String, "Collapsed", "A swipe on the strip folded the thread")
 
-        // One tap on the strip opens Thread detail, not the root chat.
+        // One tap on the strip folds the thread open; it does not open the root chat.
         strip.tap()
-        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "Strip did not open Thread detail")
+        XCTAssertTrue(waitForValue(strip, "Expanded"), "Strip tap did not expand the thread")
         XCTAssertFalse(app.buttons["chat.toolbar.files"].exists, "Strip must not open the root chat")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(inbox.waitForExistence(timeout: 10), "Back did not return to the inbox")
+        strip.tap()
+        XCTAssertTrue(waitForValue(strip, "Collapsed"))
 
-        // Stopped root: body tap is history-only; the strip opens the thread, whose stopped child is too.
+        // Stopped root: body tap is history-only; expanding its strip lists the stopped child, which is too.
         expandStoppedGroups()
         let stoppedBody = app.buttons["session.nav.\(stoppedRoot)"]
         XCTAssertTrue(reveal(stoppedBody, in: inbox, timeout: 20), "Stopped root body missing")
         stoppedBody.tap()
-        XCTAssertFalse(app.staticTexts["thread.title"].exists, "Root body must not open Thread detail")
         try assertOpenedAsEndedHistory(stoppedRoot, via: "stopped root body")
         app.buttons["chat.toolbar.back"].tap()
         XCTAssertTrue(inbox.waitForExistence(timeout: 10), "Back did not return to the inbox")
@@ -314,19 +289,13 @@ final class SessionThreadsE2ETests: E2ETestCase {
         let stoppedStrip = app.buttons["thread.nav.\(stoppedRoot)"]
         XCTAssertTrue(reveal(stoppedStrip, in: inbox), "Stopped root Thread strip missing")
         stoppedStrip.tap()
-        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "Stopped root strip did not open Thread detail")
-        showOutline()
-        let detail = app.collectionViews["thread.detail"]
-        // Finished children fold under their parent until expanded.
-        let fold = app.buttons["thread.fold.\(stoppedRoot)"]
-        XCTAssertTrue(reveal(fold, in: detail), "Finished children fold missing")
-        if fold.value as? String == "Collapsed" { fold.tap() }
-        let childRow = app.buttons["thread.row.\(stoppedChild)"]
-        XCTAssertTrue(reveal(childRow, in: detail), "Stopped child outline row missing")
+        XCTAssertTrue(waitForValue(stoppedStrip, "Expanded"), "Stopped root strip did not expand")
+        let childRow = app.buttons["session.nav.\(stoppedChild)"]
+        XCTAssertTrue(reveal(childRow, in: inbox), "Stopped child row missing under its root")
         childRow.tap()
         try assertOpenedAsEndedHistory(stoppedChild, via: "stopped child")
         app.buttons["chat.toolbar.back"].tap()
-        XCTAssertTrue(app.navigationBars["Thread"].waitForExistence(timeout: 10))
+        XCTAssertTrue(inbox.waitForExistence(timeout: 10), "Back did not return to the inbox")
         try assertStopped(stoppedRoot, "after opening its thread and child")
     }
 
@@ -334,11 +303,9 @@ final class SessionThreadsE2ETests: E2ETestCase {
 
     /// Session Rows (Settings → Sessions): the controls repaint an inert preview from the
     /// production row and apply at once; leaving the page keeps the choice on the mounted inbox
-    /// and workspace lists; the saved choice, the remembered thread view, and the saved layout
-    /// survive a relaunch.
+    /// and workspace lists; the saved choice survives a relaunch.
     func testSessionRowsPreviewAppliesImmediatelyAcrossListsAndRelaunch() throws {
         let orchestrator = try id(Self.orchestratorKey)
-        let donkeyMaster = try id(Self.donkeyMasterKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         let rootBody = app.buttons["session.nav.\(orchestrator)"]
         let strip = app.buttons["thread.nav.\(orchestrator)"]
@@ -409,7 +376,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
         previewFact("Refactor checkout flow").tap()
         XCTAssertTrue(rowEditor.exists, "Tapping the preview must not navigate")
         XCTAssertFalse(app.buttons["chat.toolbar.files"].exists)
-        XCTAssertFalse(app.staticTexts["thread.title"].exists)
 
         // Restore Defaults returns every control to its default.
         restoreButton.tap()
@@ -436,20 +402,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertFalse(workspaceRow.label.contains(rootCost), "Workspace list ignored the saved choice: \(workspaceRow.label)")
         try returnToInbox()
 
-        // Thread view memory and the saved layout, then relaunch.
-        strip.tap()
-        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15))
-        app.buttons["thread.mode.waterfall"].tap()
-        app.navigationBars.buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(reveal(strip, in: inbox))
-        strip.tap()
-        XCTAssertTrue(app.buttons["thread.mode.waterfall"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["thread.mode.waterfall"].isSelected, "Thread view was not remembered on reopen")
-        app.navigationBars.buttons.element(boundBy: 0).tap()
-        try setSessionThreads(false)
-        let childRow = app.buttons["session.nav.\(donkeyMaster)"]
-        XCTAssertTrue(reveal(childRow, in: inbox), "Flat List should list the child session as its own row")
-
         // Relaunch on the saved choice: a launch argument would override it.
         if let index = app.launchArguments.firstIndex(of: "-\(Self.sessionThreadsDefaultsKey)") {
             app.launchArguments.removeSubrange(index...(index + 1))
@@ -457,18 +409,10 @@ final class SessionThreadsE2ETests: E2ETestCase {
         app.terminate()
         app.launch()
         XCTAssertTrue(inbox.waitForExistence(timeout: 30), "Inbox did not return after relaunch")
-        XCTAssertTrue(reveal(childRow, in: inbox, timeout: 30), "Saved Flat List layout did not survive relaunch")
-        try setSessionThreads(true)
-        XCTAssertTrue(reveal(strip, in: inbox, timeout: 30), "Threads layout did not return")
-        XCTAssertFalse(childRow.exists, "Threads should fold the child session under its root")
+        XCTAssertTrue(reveal(strip, in: inbox, timeout: 30), "Thread strip did not return")
         XCTAssertTrue(reveal(rootBody, in: inbox, timeout: 30))
         XCTAssertFalse(rootBody.label.contains(rootCost), "Saved row appearance did not survive relaunch: \(rootBody.label)")
         XCTAssertFalse(strip.label.contains("$"), strip.label)
-        strip.tap()
-        XCTAssertTrue(app.buttons["thread.mode.waterfall"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.buttons["thread.mode.waterfall"].isSelected, "Thread view did not survive relaunch")
-        app.buttons["thread.mode.outline"].tap()
-        app.navigationBars.buttons.element(boundBy: 0).tap()
 
         // Leave the simulator's saved appearance at the defaults.
         try openRowEditor()
@@ -479,17 +423,15 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(rootBody.label.contains(rootCost), "Restored defaults did not return Cost: \(rootBody.label)")
     }
 
-    /// Workspace lists follow the same Layout as All Sessions. A thread is listed once, in its
-    /// root's workspace, and says how many workspaces it spans; its member in another workspace
-    /// stays a row there with an In thread link that opens the same thread, whose Outline names
-    /// that workspace. Flat List lists the child in the root's workspace again.
-    func testWorkspaceListsShareLayoutAndMarkCrossWorkspaceThreads() throws {
+    /// A thread is listed once, in its root's workspace, and says how many workspaces it spans.
+    /// Expanded, it lists its member from another workspace there too, naming that workspace.
+    /// That member stays a row in its own workspace with an In thread link that opens the root.
+    func testWorkspaceListsFoldThreadsAndLinkMembersToTheirRoot() throws {
         let root = try id(Self.mirrorRootKey)
         let localChild = try id(Self.mirrorChildKey)
         let remoteChild = try id(Self.crossWorkspaceChildKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
-        try setSessionThreads(true)
 
         // All Sessions: one thread row that names both workspaces.
         let inboxStrip = app.buttons["thread.nav.\(root)"]
@@ -497,142 +439,57 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(inboxStrip.label.contains("2 workspaces"), inboxStrip.label)
         XCTAssertFalse(app.buttons["session.nav.\(remoteChild)"].exists, "All Sessions must fold the remote child")
 
-        // Root's workspace: the same thread row; its local child folds under it.
+        // Root's workspace: the same thread row; its children list under it once expanded.
         let oppiList = try openWorkspaceList("oppi")
         let workspaceStrip = app.buttons["thread.nav.\(root)"]
         XCTAssertTrue(reveal(workspaceStrip, in: oppiList, timeout: 20), "Workspace list did not draw the Thread strip")
         XCTAssertTrue(workspaceStrip.label.contains("2 workspaces"), workspaceStrip.label)
         XCTAssertFalse(
             reveal(app.buttons["session.nav.\(localChild)"], in: oppiList, timeout: 3),
-            "Threads layout must fold the child in its root's workspace"
+            "A collapsed thread must fold the child in its root's workspace"
         )
+        workspaceStrip.tap()
+        XCTAssertTrue(waitForValue(workspaceStrip, "Expanded"), "Workspace strip did not expand")
+        XCTAssertTrue(reveal(app.buttons["session.nav.\(localChild)"], in: oppiList), "Local child row missing once expanded")
+        let remoteRow = app.buttons["session.nav.\(remoteChild)"]
+        XCTAssertTrue(reveal(remoteRow, in: oppiList), "The member from another workspace is part of the thread")
+        XCTAssertTrue(remoteRow.label.contains(Self.crossWorkspaceName), "The row should name its workspace: \(remoteRow.label)")
         try returnToInbox()
 
         // Other workspace: the child stays a row, linked to the thread by name and workspace.
         let kypuList = try openWorkspaceList(Self.crossWorkspaceName)
-        let remoteRow = app.buttons["session.nav.\(remoteChild)"]
-        XCTAssertTrue(reveal(remoteRow, in: kypuList, timeout: 20), "Remote child row missing from its own workspace")
+        let kypuRow = app.buttons["session.nav.\(remoteChild)"]
+        XCTAssertTrue(reveal(kypuRow, in: kypuList, timeout: 20), "Remote child row missing from its own workspace")
         let link = app.buttons["thread.link.\(remoteChild)"]
         XCTAssertTrue(link.exists, "Remote child has no In thread link")
         XCTAssertTrue(link.label.contains("Daily upstream mirror sync") && link.label.contains("oppi"), link.label)
         XCTAssertFalse(app.buttons["thread.nav.\(root)"].exists, "The thread must not be drawn twice")
 
+        // The link opens the thread's root chat.
         link.tap()
-        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "In thread link did not open Thread detail")
-        showOutline()
-        let detail = app.collectionViews["thread.detail"]
-        let outlineRow = app.buttons["thread.row.\(remoteChild)"]
-        XCTAssertTrue(reveal(outlineRow, in: detail), "Remote child missing from the Outline")
-        XCTAssertTrue(outlineRow.label.contains(Self.crossWorkspaceName), "Outline should name the other workspace: \(outlineRow.label)")
-        let rootRow = app.buttons["thread.row.\(root)"]
-        XCTAssertTrue(reveal(rootRow, in: detail))
-        XCTAssertFalse(rootRow.label.contains("oppi"), "The root's own workspace is not repeated: \(rootRow.label)")
-        try returnToInbox()
-
-        // Flat List reaches workspace lists too.
-        try setSessionThreads(false)
-        let flatList = try openWorkspaceList("oppi")
         XCTAssertTrue(
-            reveal(app.buttons["session.nav.\(localChild)"], in: flatList, timeout: 20),
-            "Flat List should list the child in the workspace list"
+            app.buttons["chat.toolbar.files"].waitForExistence(timeout: 15),
+            "In thread link did not open the root chat"
         )
-        XCTAssertFalse(app.buttons["thread.nav.\(root)"].exists, "Flat List draws no Thread strip")
-        try returnToInbox()
-        try setSessionThreads(true)
+        XCTAssertEqual(try e2eSession(sessionId: root)["status"] as? String, "stopped", "Opening the root must not start it")
     }
 
-    /// Session Threads is opt-in: with the experiment off All Sessions and workspace lists are
-    /// flat, Settings has no Layout picker, and Session Rows has no Thread options. Turning the
-    /// Experiments toggle on brings back strips, Thread detail, and the Thread options.
-    func testSessionThreadsStayOffUntilEnabledInSettings() throws {
-        let orchestrator = try id(Self.orchestratorKey)
-        let donkeyMaster = try id(Self.donkeyMasterKey)
+    /// Session Threads is no longer an experiment: Settings → Experiments has no toggle for it,
+    /// and Session Rows always offers the Thread options.
+    func testSessionThreadsHaveNoExperimentToggle() throws {
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
 
-        // Off: the child is its own row and nothing offers a thread.
-        XCTAssertTrue(
-            reveal(app.buttons["session.nav.\(donkeyMaster)"], in: inbox, timeout: 20),
-            "Child session should be its own row while Session Threads is off"
-        )
-        XCTAssertFalse(app.buttons["thread.nav.\(orchestrator)"].exists, "Thread strip drawn while Session Threads is off")
-        XCTAssertFalse(app.buttons["thread.link.\(donkeyMaster)"].exists, "In thread link drawn while Session Threads is off")
-
         openSettings()
         openSettingsPage("experiments")
-        XCTAssertTrue(settingsSwitch("settings.sessionThreads").isHittable, "Experiments → Session Threads missing")
-        XCTAssertEqual(app.switches["settings.sessionThreads"].value as? String, "0")
-        try returnToInbox()
-        try openRowEditor()
-        XCTAssertTrue(toggle("cost").exists, "Row options missing")
-        XCTAssertFalse(toggle("laneGraph").exists, "Thread options shown while Session Threads is off")
-        XCTAssertFalse(toggle("agentSummary").exists, "Thread options shown while Session Threads is off")
-        try closeRowEditor()
-
-        // On: the same list folds the child under a Thread strip.
-        try setSessionThreads(true)
-        let strip = app.buttons["thread.nav.\(orchestrator)"]
-        XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Thread strip missing after enabling Session Threads")
-        XCTAssertFalse(app.buttons["session.nav.\(donkeyMaster)"].exists, "Child should fold under its root when enabled")
-        strip.tap()
-        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "Thread detail did not open")
+        XCTAssertTrue(app.switches["settings.experiments.liveVoice"].waitForExistence(timeout: 10), "Experiments page missing")
+        XCTAssertFalse(app.switches["settings.sessionThreads"].exists, "Session Threads should not be an experiment")
         try returnToInbox()
 
         try openRowEditor()
         revealInForm(toggle("laneGraph"))
-        XCTAssertTrue(toggle("agentSummary").exists, "Thread options missing when enabled")
+        XCTAssertTrue(toggle("agentSummary").exists, "Thread options missing from Session Rows")
         try closeRowEditor()
-        try setSessionThreads(false)
-    }
-
-    /// Thread detail's compose bar starts a session that joins the thread as a child of the root.
-    func testThreadComposeStartsSessionInThread() throws {
-        let root = try id(Self.orchestratorKey)
-        let inbox = app.collectionViews["workspace.sessionList"]
-        XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
-        try setSessionThreads(true)
-
-        let strip = app.buttons["thread.nav.\(root)"]
-        XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Orchestrator thread strip missing")
-        strip.tap()
-        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "Thread detail did not open")
-        let before = try threadMemberIds(root: root)
-
-        tap(app.buttons["workspace.quickSession.start"], named: "thread compose bar")
-        let input = app.textViews["chat.input"]
-        XCTAssertTrue(input.waitForExistence(timeout: 30), "Quick Session did not open from the thread")
-        let threadPill = app.buttons["quickSession.threadParent"]
-        XCTAssertTrue(threadPill.waitForExistence(timeout: 5), "Quick Session does not show the thread it joins")
-        XCTAssertTrue(threadPill.label.contains("Investigate Unfinished Sonnet Worktree"), threadPill.label)
-        tap(input, named: "quick session input", timeout: 5)
-        input.typeText("E2E_THREAD_COMPOSE")
-        tap(app.buttons["chat.send"], named: "quick session send button", timeout: 5)
-        XCTAssertTrue(
-            app.buttons["chat.toolbar.files"].waitForExistence(timeout: 30),
-            "Chat did not open after starting a session from the thread"
-        )
-
-        let deadline = Date().addingTimeInterval(20)
-        var added: [String: Any]?
-        while added == nil, Date() < deadline {
-            added = try threadMembers(root: root).first { member in
-                guard let id = member["id"] as? String else { return false }
-                return !before.contains(id)
-            }
-            if added == nil { RunLoop.current.run(until: Date().addingTimeInterval(0.25)) }
-        }
-        let child = try XCTUnwrap(added, "New session never joined the thread")
-        XCTAssertEqual(child["parentSessionId"] as? String, root, "New session should be a child of the root")
-        XCTAssertEqual(child["workspaceName"] as? String, "oppi", "New session should run in the root's workspace")
-    }
-
-    private func threadMembers(root: String) throws -> [[String: Any]] {
-        let response = try e2eLabAPIJSON(method: "GET", path: "/sessions/\(root)/thread")
-        return response["sessions"] as? [[String: Any]] ?? []
-    }
-
-    private func threadMemberIds(root: String) throws -> Set<String> {
-        Set(try threadMembers(root: root).compactMap { $0["id"] as? String })
     }
 
     /// Opens a workspace's session list from the sidebar with its stopped groups expanded.
@@ -784,19 +641,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
         try returnToInbox(until: marker)
     }
 
-    /// Turns the Session Threads experiment (Settings → Experiments) on or off, then returns to All Sessions.
-    private func setSessionThreads(_ enabled: Bool) throws {
-        openSettings()
-        openSettingsPage("experiments")
-        let threadsSwitch = settingsSwitch("settings.sessionThreads")
-        XCTAssertTrue(threadsSwitch.isHittable, "Session Threads toggle missing from Settings")
-        if (threadsSwitch.value as? String == "1") != enabled {
-            flip(threadsSwitch)
-        }
-        XCTAssertEqual(threadsSwitch.value as? String, enabled ? "1" : "0", "Session Threads toggle did not change")
-        try returnToInbox()
-    }
-
     private func openSettings(viaEdgeSwipe: Bool = false) {
         if viaEdgeSwipe {
             let list = app.collectionViews["workspace.sessionList"]
@@ -929,7 +773,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
     private func assertStillOnInbox(_ what: String) {
         XCTAssertTrue(app.collectionViews["workspace.sessionList"].exists, "\(what) left the inbox")
         XCTAssertFalse(app.buttons["chat.toolbar.files"].exists, "\(what) opened a chat")
-        XCTAssertFalse(app.staticTexts["thread.title"].exists, "\(what) opened Thread detail")
     }
 
     /// Stopped day groups start collapsed once they are old enough, and lazy lists only mount
@@ -973,38 +816,32 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(marker.exists, "Could not return to All Sessions")
     }
 
-    /// A stopped session opened from the thread outline shows ended history.
+    /// A stopped session opened from its expanded thread shows ended history.
     /// Only an explicit Resume may start a stopped session.
-    func testStoppedOutlineRowOpensWithoutStartingUntilExplicitResume() throws {
+    func testStoppedThreadChildOpensWithoutStartingUntilExplicitResume() throws {
         let orchestrator = try id(Self.orchestratorKey)
         let finishedFix = try id(Self.finishedFixKey)
         try assertStopped(finishedFix, "before opening")
 
         let inbox = app.collectionViews["workspace.sessionList"]
-        let threadRow = app.buttons["thread.nav.\(orchestrator)"]
-        XCTAssertTrue(reveal(threadRow, in: inbox, timeout: 20), "Orchestrator thread row missing")
-        threadRow.tap()
-        XCTAssertTrue(app.staticTexts["thread.title"].waitForExistence(timeout: 15), "Thread detail did not open")
-        showOutline()
-        let detail = app.collectionViews["thread.detail"]
-
-        // Explicit Resume from a stopped outline row is the only action that starts a runtime.
-        let fold = app.buttons["thread.fold.\(orchestrator)"]
-        XCTAssertTrue(reveal(fold, in: detail), "Finished children fold missing")
-        if fold.value as? String == "Collapsed" { fold.tap() }
-        let finishedRow = app.buttons["thread.row.\(finishedFix)"]
-        XCTAssertTrue(reveal(finishedRow, in: detail), "Stopped outline row missing")
-        XCTAssertTrue(finishedRow.label.contains("stopped"), "Row should read stopped first: \(finishedRow.label)")
-        // Opening the stopped child is history-only too.
+        let strip = app.buttons["thread.nav.\(orchestrator)"]
+        XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Orchestrator thread strip missing")
+        strip.tap()
+        XCTAssertTrue(waitForValue(strip, "Expanded"), "Strip did not expand")
+        let finishedRow = app.buttons["session.nav.\(finishedFix)"]
+        XCTAssertTrue(reveal(finishedRow, in: inbox), "Stopped child row missing")
+        XCTAssertTrue(finishedRow.label.contains("Stopped"), "Row should read stopped first: \(finishedRow.label)")
+        // Opening the stopped child is history-only.
         finishedRow.tap()
-        try assertOpenedAsEndedHistory(finishedFix, via: "finished child outline row")
+        try assertOpenedAsEndedHistory(finishedFix, via: "finished child row")
         app.buttons["chat.toolbar.back"].tap()
-        XCTAssertTrue(app.navigationBars["Thread"].waitForExistence(timeout: 10), "Back did not return to the thread")
-        XCTAssertTrue(reveal(finishedRow, in: detail), "Stopped outline row missing after returning")
+        XCTAssertTrue(reveal(finishedRow, in: inbox), "Stopped child row missing after returning")
         try assertStopped(finishedFix, "before Resume")
+
+        // Explicit Resume from the row's swipe is the only action that starts a runtime.
         finishedRow.swipeLeft()
-        let resume = app.buttons["session.resume.\(finishedFix)"]
-        XCTAssertTrue(resume.waitForExistence(timeout: 5), "Stopped outline row did not offer Resume")
+        let resume = app.buttons["Resume"]
+        XCTAssertTrue(resume.waitForExistence(timeout: 5), "Stopped child row did not offer Resume")
         resume.tap()
         let resumed = expectation(description: "server records the explicit resume")
         DispatchQueue.global().async { [self] in
@@ -1019,13 +856,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
         }
         wait(for: [resumed], timeout: 15)
         beat(2)
-    }
-
-    /// Thread detail remembers its last view on this device; start from Outline explicitly.
-    private func showOutline() {
-        let outline = app.buttons["thread.mode.outline"]
-        XCTAssertTrue(outline.waitForExistence(timeout: 10), "Thread view pill missing")
-        if !outline.isSelected { outline.tap() }
     }
 
     /// The chat shows ended-session history with its Resume footer, and the session stays stopped.
@@ -1060,10 +890,10 @@ final class SessionThreadsE2ETests: E2ETestCase {
             let frame = element.frame
             return !frame.isEmpty && list.frame.contains(CGPoint(x: frame.minX + 4, y: frame.midY))
         }
-        // Inbox and thread rows can sit under the bottom toolbar (compose bar), where taps and
+        // Inbox rows can sit under the bottom toolbar (compose bar), where taps and
         // swipes land on the toolbar instead. Scroll such a row up before returning it.
         func settled() -> Bool {
-            guard ["workspace.sessionList", "thread.detail"].contains(list.identifier),
+            guard list.identifier == "workspace.sessionList",
                   element.frame.height < list.frame.height / 2 else { return true }
             for _ in 0..<3 where element.frame.maxY > list.frame.maxY - 150 {
                 let start = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))

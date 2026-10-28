@@ -22,21 +22,17 @@ The sidebar or drawer holds saved Agents and schedules, the workspace list, App 
 
 Open a session to see the chat timeline. Tap a tool row to inspect its command, output, diff, or file content. If an extension shows a card or sheet, answer it in the app.
 
-### Session Threads (experiment)
+### Session Threads
 
-Turn on **Settings → Experiments → Session Threads** (off by default, saved on this device) to group sessions that other sessions launched under the session that launched them. Tap a session row to open its chat, or the Thread strip under it to open the thread. The strip shows children that need you or are working, a lane graph, the saved Agents in the thread, and totals. A thread with work in progress stays in **Working**, and one with a blocked session sits in **Your Turn**. Turn the experiment off to return to one row per session.
+A session that other sessions launched shows as one row, with a **Thread strip** under it. The strip shows the children that need you or are working, a lane graph, the saved Agents in the thread, and totals. A thread with work in progress stays in **Working**, and one with a blocked session sits in **Your Turn**.
 
-A thread has three views, chosen with its pill (Oppi remembers your last choice):
+Tap the session row to open its chat. Tap the strip to open the thread in place: every session in it, children and grandchildren, appears as an indented row under the root, with its own status. Tap the strip again to close it. Each row is an ordinary session row: tap it to open that session, swipe or long-press it to stop, resume, lock, or delete it. The strip's chevron turns down while the thread is open, and VoiceOver reads **Expanded** or **Collapsed**.
 
-- **Outline**: the launch tree, with each session's model, cache hit rate, and estimated prompt-cache state (**in use**, **kept warm**, **warm** with minutes left, or **cold**; treat warm as likely, not certain). Swipe a row, or long-press it, to stop or resume it.
-- **Waterfall**: one row per session with a bar from launch to last activity on clock time (a summary, not exact execution time). Pinch to zoom; tap a row to open it.
-- **Timeline**: one lane per session, with launches, stops, and messages sent between sessions with `oppi session`. Filter chips hide each kind.
-
-The **New session in thread** bar opens Quick Session in the root's workspace; the new session joins the thread as a child of the root.
+A thread lists every session in it, even one that runs in another workspace; that row names its workspace. In that other workspace's own list the session is a row with an **In thread** link under it, and tapping the link opens the root session's chat.
 
 ### Session rows
 
-**Settings → Session Rows** (the row shows Standard or Compact) sets **Standard** or **Compact** rows and turns optional details on or off: model, time, context usage, cost, files touched, and compactions. With Session Threads on, **Agent Summary** and **Lane Graph** control the Thread strip. Changes save for this device. **Restore Defaults** resets them. A session gets a name from you, or from the optional [`auto-name` extension](extensions.md#auto-name). The title, status, questions, Incognito, workspace context, search matches, and Thread control always show.
+**Settings → Session Rows** (the row shows Standard or Compact) sets **Standard** or **Compact** rows and turns optional details on or off: model, time, context usage, cost, files touched, and compactions. **Agent Summary** and **Lane Graph** control the Thread strip. Changes save for this device. **Restore Defaults** resets them. A session gets a name from you, or from the optional [`auto-name` extension](extensions.md#auto-name). The title, status, questions, Incognito, workspace context, search matches, and Thread control always show.
 
 ## Prompt, steer, follow-up, and stop
 

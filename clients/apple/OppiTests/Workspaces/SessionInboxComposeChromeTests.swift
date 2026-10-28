@@ -89,58 +89,6 @@ struct SessionInboxComposeChromeTests {
     }
 }
 
-@Suite("Quick Session launcher coverage")
-struct QuickSessionLauncherCoverageTests {
-    private let thread = SessionThreadNavTarget(serverId: "srv", rootSessionId: "root")
-    private let chat = WorkspaceSessionNavTarget(serverId: "srv", sessionId: "chat")
-
-    /// A chat after the owning route hides Message. Removing that chat shows it.
-    /// A missing owner stays covered: the live path count is not the depth.
-    @Test func routeElementsCoverTheLauncherUntilTheChatIsRemoved() {
-        let stackCases: [(String, [WorkspaceStackRouteElement])] = [
-            ("thread + chat", [.sessionThread(thread), .session(chat)]),
-            ("utility + thread + chat", [.utility(.agents), .sessionThread(thread), .session(chat)]),
-        ]
-        for (name, covered) in stackCases {
-            expectCovered(name, presentation: .stack, stack: covered, covered: true)
-            expectCovered(
-                "\(name) without chat",
-                presentation: .stack,
-                stack: Array(covered.dropLast()),
-                covered: false
-            )
-        }
-        expectCovered(
-            "split thread + chat",
-            presentation: .split,
-            path: [.sessionThread(thread), .session(chat)],
-            covered: true
-        )
-        expectCovered("split thread", presentation: .split, path: [.sessionThread(thread)], covered: false)
-
-        expectCovered("missing thread", presentation: .stack, stack: [.session(chat)], covered: true)
-        expectCovered("missing split thread", presentation: .split, path: [.session(chat)], covered: true)
-    }
-
-    private func expectCovered(
-        _ name: String,
-        presentation: WorkspaceNavigationPresentation,
-        stack: [WorkspaceStackRouteElement] = [],
-        path: [WorkspaceSplitDetailPathElement] = [],
-        covered: Bool
-    ) {
-        #expect(
-            QuickSessionLauncherCoverage.isCovered(
-                presentation: presentation,
-                thread: thread,
-                workspaceStack: stack,
-                splitDetailElements: path
-            ) == covered,
-            "\(name)"
-        )
-    }
-}
-
 @Suite("Session inbox search scope")
 struct SessionInboxSearchScopeTests {
     @Test func allSessionsSearchOmitsWorkspaceId() {

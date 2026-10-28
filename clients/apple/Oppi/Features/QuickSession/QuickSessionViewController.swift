@@ -40,7 +40,6 @@ final class QuickSessionViewController: UIViewController {
     private let destinationRow = UIStackView()
     let workspacePill = QuickSessionPillButton()
     let worktreePill = QuickSessionPillButton()
-    let threadPill = QuickSessionPillButton()
     let enginePill = QuickSessionPillButton()
     let incognitoPill = QuickSessionPillButton(minimumWidth: ComposerInputMetrics.controlDiameter)
     let stackedPanel = UIView()
@@ -256,9 +255,6 @@ final class QuickSessionViewController: UIViewController {
         workspacePill.addAction(UIAction { [weak self] _ in self?.model.showWorkspacePicker.toggle() }, for: .primaryActionTriggered)
         worktreePill.accessibilityIdentifier = "quickSession.worktreePicker"
         worktreePill.addAction(UIAction { [weak self] _ in self?.model.showWorktreePicker.toggle() }, for: .primaryActionTriggered)
-        threadPill.accessibilityIdentifier = "quickSession.threadParent"
-        threadPill.accessibilityHint = "Removes the thread so the session starts on its own"
-        threadPill.addAction(UIAction { [weak self] _ in self?.model.clearThreadParent() }, for: .primaryActionTriggered)
         enginePill.accessibilityIdentifier = "quickSession.durableEngine"
         enginePill.addAction(UIAction { [weak self] _ in self?.model.toggleEngine() }, for: .primaryActionTriggered)
         incognitoPill.accessibilityIdentifier = "quickSession.incognito"
@@ -266,7 +262,7 @@ final class QuickSessionViewController: UIViewController {
         incognitoPill.accessibilityHint = "An incognito session keeps no history and is deleted when you leave it"
         incognitoPill.setContentCompressionResistancePriority(.required, for: .horizontal)
         incognitoPill.addAction(UIAction { [weak self] _ in self?.model.toggleIncognito() }, for: .primaryActionTriggered)
-        for pill in [workspacePill, worktreePill, threadPill, enginePill, incognitoPill] {
+        for pill in [workspacePill, worktreePill, enginePill, incognitoPill] {
             destinationRow.addArrangedSubview(pill)
         }
         destinationRowContainer.addSubview(destinationRow)

@@ -302,8 +302,6 @@ struct ShellRouteView: View {
             mountedByUIKitScreen
         case .utility(let target):
             WorkspaceUtilityDestinationView(target: target)
-        case .sessionThread(let target):
-            SessionThreadDetailView(target: target)
         }
     }
 }
