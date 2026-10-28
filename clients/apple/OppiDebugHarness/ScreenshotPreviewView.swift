@@ -1213,8 +1213,9 @@ private struct ModelProvidersScreenshotPreview: View {
 /// `root` (the app root's extension dialog, notice, and What's New, with
 /// trigger buttons and what the dialog sent), `document` (the document viewer
 /// modifier), `stash` (the staged-comment sheet), `inbox-now-playing` and
-/// `workspace-now-playing` (the full-screen player over active playback), and
-/// `quick-session` (its pickers, model sheet, and expanded composer). The
+/// `workspace-now-playing` (the full-screen player over active playback),
+/// `inbox-threads` and `workspace-threads` (the session lists over a launch tree that spans
+/// two workspaces; tap `thread.nav.thread-root` to open it), and `quick-session` (its pickers, model sheet, and expanded composer). The
 /// presenters and their modals share one app root over the fixture server, in
 /// the dark theme. Quick Session starts on plain Pi: an Agent an earlier run
 /// remembered would load its default from the stub server, which fails.
@@ -1224,13 +1225,18 @@ private struct RouterModalSitesPreview: View {
 
     init() {
         ScreenshotVolatileDefaults.applyDarkTheme(true)
+        // The dark default holds unless the capture names a theme.
+        ScreenshotVolatileDefaults.applyThemeScheme(ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"])
         // Quick Session starts on plain Pi: a remembered Agent would load its
         // default from the stub server, which fails.
         UserDefaults.standard.removeObject(forKey: "\(AppIdentifiers.subsystem).quickSession.lastAgentId")
         let site = ProcessInfo.processInfo.environment["SCREENSHOT_MODAL_SITE"] ?? "quick-session"
         self.site = site
         _root = State(initialValue: AppRootEnvironment(
-            coordinator: RouterModalSitesFixtures.makeCoordinator(playing: site.hasSuffix("now-playing")),
+            coordinator: RouterModalSitesFixtures.makeCoordinator(
+                playing: site.hasSuffix("now-playing"),
+                threads: site.hasSuffix("-threads")
+            ),
             navigation: AppNavigation(),
             themeStore: ThemeStore(),
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
@@ -1252,6 +1258,20 @@ private struct RouterModalSitesPreview: View {
         case "inbox-now-playing":
             RouterPreviewControllerStack(root: root) { SessionInboxViewController(root: root) }
                 .ignoresSafeArea()
+        case "inbox-threads":
+            RouterPreviewControllerStack(root: root) { SessionInboxViewController(root: root) }
+                .ignoresSafeArea()
+        case "workspace-threads":
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceDetailViewController(
+                    root: root,
+                    target: WorkspaceNavTarget(
+                        serverId: RouterModalSitesFixtures.serverId,
+                        workspace: RouterModalSitesFixtures.workspaces[0]
+                    )
+                )
+            }
+            .ignoresSafeArea()
         case "workspace-now-playing":
             RouterPreviewControllerStack(root: root) {
                 WorkspaceDetailViewController(
@@ -1541,7 +1561,7 @@ private enum RouterModalSitesFixtures {
     static let workspaces = [workspace(id: "oppi", icon: "iphone"), workspace(id: "kypu", icon: "figure.run")]
     static let serverId = "sha256:router-modal-sites"
 
-    static func makeCoordinator(playing: Bool) -> ConnectionCoordinator {
+    static func makeCoordinator(playing: Bool, threads: Bool = false) -> ConnectionCoordinator {
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         guard let server = PairedServer(from: ServerCredentials(
             host: "router-modal-sites.invalid",
@@ -1560,11 +1580,46 @@ private enum RouterModalSitesFixtures {
             connection.workspaceStore.upsert(workspace, serverId: server.id)
         }
         connection.sessionStore.switchServer(to: server.id)
+        if threads { connection.sessionStore.sessions = threadSessions }
         if playing {
             connection.audioPlayer._setPlaybackStateForTesting(playing: "router-modal-sites-audio", loading: nil)
             connection.audioPlayer._setNowPlayingItemTitleForTesting("Fixture narration")
         }
         return coordinator
+    }
+
+    /// One launch tree across two workspaces: an idle root with a working child, a finished
+    /// child with its own child, and a child that runs in kypu, plus a plain session.
+    private static var threadSessions: [Session] {
+        let now = Date()
+        func session(
+            _ id: String, _ name: String, workspace: String = "oppi", parent: String? = nil,
+            status: SessionStatus, minutesAgo: Double, cost: Double
+        ) -> Session {
+            Session(
+                id: id,
+                workspaceId: workspace,
+                workspaceName: workspace,
+                name: name,
+                status: status,
+                createdAt: now.addingTimeInterval(-minutesAgo * 60),
+                lastActivity: now.addingTimeInterval(-minutesAgo * 30),
+                currentTurnStartedAt: status == .busy ? now.addingTimeInterval(-90) : nil,
+                model: "anthropic/claude-opus-5-5",
+                messageCount: 6,
+                tokens: TokenUsage(input: 12_000, output: 2_400),
+                cost: cost,
+                parentSessionId: parent
+            )
+        }
+        return [
+            session("thread-root", "Plan the router migration", status: .ready, minutesAgo: 60, cost: 1.42),
+            session("child-working", "Migrate the chat routes", parent: "thread-root", status: .busy, minutesAgo: 40, cost: 0.61),
+            session("child-done", "Audit the old routes", parent: "thread-root", status: .stopped, minutesAgo: 35, cost: 0.33),
+            session("grandchild", "Write the route table", parent: "child-done", status: .stopped, minutesAgo: 30, cost: 0.12),
+            session("child-kypu", "Check the kypu client", workspace: "kypu", parent: "thread-root", status: .ready, minutesAgo: 25, cost: 0.2),
+            session("plain", "Fix the flaky upload test", status: .ready, minutesAgo: 10, cost: 0.18),
+        ]
     }
 
     private static let api: APIClient = {
