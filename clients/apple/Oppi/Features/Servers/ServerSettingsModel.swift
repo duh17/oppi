@@ -29,9 +29,7 @@ enum ServerDetailMobileOutputGuideState: Equatable {
 /// pinned to that server, and a different server gets a different page with its
 /// own model (`ServerSettingsRouteViewController`). So a response that lands
 /// after the person switched servers settles into the model that asked for it,
-/// and no other. `serverId` is that server; every async result is still applied
-/// only through `ServerSelection.shouldApplyHostResult`, which drops a cancelled
-/// request instead of reporting it as a failure.
+/// and no other. A cancelled request is dropped, not reported as a failure.
 ///
 /// Update polling is owned by the model and holds it weakly, so it ends when
 /// the page (and with it the model) goes away. A returning user gets a fresh
@@ -134,12 +132,10 @@ final class ServerSettingsModel {
             isLoading = false
             return
         }
-        guard shouldApply(client.serverId) else { return }
 
         do {
             let previousVersion = info?.version
             let next = try await client.api.serverInfo()
-            guard shouldApply(client.serverId) else { return }
             info = next
             error = nil
             // The host answered, so a stale "did not come back" no longer applies;
@@ -156,27 +152,24 @@ final class ServerSettingsModel {
                 startUpdatePolling(client: client, previousVersion: next.version)
             }
         } catch {
-            guard shouldApply(client.serverId, error: error) else { return }
+            guard !(error is CancellationError) else { return }
             self.error = error.localizedDescription
         }
 
         async let providers: () = loadProviderSummary(client)
         async let guide: () = loadMobileOutputGuide(client)
-        async let metrics: () = loadServerMetricsSetting(client)
         async let devices: () = loadPairedDevices(client)
-        _ = await (providers, guide, metrics, devices)
-        guard shouldApply(client.serverId) else { return }
+        _ = await (providers, guide, devices)
         isLoading = false
     }
 
     private func loadProviderSummary(_ client: Client) async {
         do {
             let statuses = try await client.api.listProviderAuthStatus()
-            guard shouldApply(client.serverId) else { return }
             providerSetupState = ProviderSetupState(providerStatuses: statuses)
             connectedProviderCount = statuses.filter(\.authenticated).count
         } catch {
-            guard shouldApply(client.serverId, error: error) else { return }
+            guard !(error is CancellationError) else { return }
             providerSetupState = .unavailable
             connectedProviderCount = 0
         }
@@ -192,17 +185,15 @@ final class ServerSettingsModel {
     }
 
     private func loadPairedDevices(_ client: Client) async {
-        guard shouldApply(client.serverId) else { return }
         isLoadingPairedDevices = true
-        defer { if shouldApply(client.serverId) { isLoadingPairedDevices = false } }
+        defer { isLoadingPairedDevices = false }
 
         do {
             let devices = try await client.api.listAuthDevices()
-            guard shouldApply(client.serverId) else { return }
             pairedDevices = devices
             pairedDevicesError = nil
         } catch {
-            guard shouldApply(client.serverId, error: error) else { return }
+            guard !(error is CancellationError) else { return }
             pairedDevicesError = error.localizedDescription
         }
     }
@@ -215,20 +206,17 @@ final class ServerSettingsModel {
             pairedDevicesError = "Unable to prepare server transport"
             return
         }
-        guard shouldApply(client.serverId) else { return }
         isRevokingDevice = true
-        defer { if shouldApply(client.serverId) { isRevokingDevice = false } }
+        defer { isRevokingDevice = false }
         do {
             try await client.api.revokeAuthDevice(id: row.id)
-            guard shouldApply(client.serverId) else { return }
             pairedDevices = (pairedDevices ?? []).filter { $0.id != row.id }
             pairedDevicesError = nil
             await loadPairedDevices(client)
         } catch {
-            guard shouldApply(client.serverId, error: error) else { return }
+            guard !(error is CancellationError) else { return }
             // Another device may have revoked it first; refresh so no stale row stays.
             await loadPairedDevices(client)
-            guard shouldApply(client.serverId) else { return }
             pairedDevicesError = error.localizedDescription
         }
     }
@@ -243,16 +231,14 @@ final class ServerSettingsModel {
     }
 
     private func loadMobileOutputGuide(_ client: Client) async {
-        guard shouldApply(client.serverId) else { return }
         isLoadingMobileOutputGuide = mobileOutputGuide == nil
-        defer { if shouldApply(client.serverId) { isLoadingMobileOutputGuide = false } }
+        defer { isLoadingMobileOutputGuide = false }
         do {
             let guide = try await client.api.getMobileOutputGuideConfiguration()
-            guard shouldApply(client.serverId) else { return }
             mobileOutputGuide = guide
             mobileOutputGuideError = nil
         } catch {
-            guard shouldApply(client.serverId, error: error) else { return }
+            guard !(error is CancellationError) else { return }
             mobileOutputGuideError = error.localizedDescription
         }
     }
@@ -262,52 +248,32 @@ final class ServerSettingsModel {
     /// failure puts the old value back with the reason, and a revision conflict
     /// reloads the latest.
     func setMobileOutputGuide(_ enabled: Bool) async {
-        guard let current = mobileOutputGuide,
-              !isSavingMobileOutputGuide,
-              let client = await prepareClient(),
-              shouldApply(client.serverId) else { return }
+        guard let current = mobileOutputGuide, !isSavingMobileOutputGuide else { return }
+        // Before the first await, so a second tap while the client is prepared is refused too.
         isSavingMobileOutputGuide = true
         pendingMobileOutputGuide = enabled
         mobileOutputGuideError = nil
         defer {
-            if shouldApply(client.serverId) {
-                isSavingMobileOutputGuide = false
-                pendingMobileOutputGuide = nil
-            }
+            isSavingMobileOutputGuide = false
+            pendingMobileOutputGuide = nil
+        }
+        guard let client = await prepareClient() else {
+            mobileOutputGuideError = "Unable to prepare server transport"
+            return
         }
         do {
-            let saved = try await client.api.setMobileOutputGuideConfiguration(
+            mobileOutputGuide = try await client.api.setMobileOutputGuideConfiguration(
                 enabled: enabled,
                 baseRevision: current.revision
             )
-            guard shouldApply(client.serverId) else { return }
-            mobileOutputGuide = saved
             mobileOutputGuideError = nil
         } catch let APIError.codedServer(status, _, code)
             where status == 409 && code == "revision_conflict" {
             await loadMobileOutputGuide(client)
         } catch {
-            guard shouldApply(client.serverId, error: error) else { return }
+            guard !(error is CancellationError) else { return }
             mobileOutputGuideError = error.localizedDescription
         }
-    }
-
-    // MARK: - Server Metrics
-
-    /// Fetches this server's metrics setting into its `SettingsStore`, the one
-    /// path that reads and writes it (the page's switch and the Metrics page
-    /// both go through it), and tells the connection's pill cache what the
-    /// server answered.
-    private func loadServerMetricsSetting(_ client: Client) async {
-        let state = await coordinator.settings(for: client.serverId).reload(SettingsCatalog.serverMetricsEnabled)
-        // Only what the server stored: a cancelled fetch (`loading`) says nothing, and a save in
-        // flight shows the value it is trying to store, which the server has not accepted.
-        switch state {
-        case .value, .failed: break
-        case .loading, .saving, .unavailable: return
-        }
-        guard !Task.isCancelled, shouldApply(client.serverId), let enabled = state.current else { return }
-        coordinator.setServerMetricsEnabledCache(enabled, for: client.serverId)
     }
 
     // MARK: - Update
@@ -319,28 +285,26 @@ final class ServerSettingsModel {
             error = "Unable to prepare server transport"
             return
         }
-        guard shouldApply(client.serverId) else { return }
         let previousVersion = info?.version
         updateInFlight = true
         updateDidNotReturn = false
         do {
             let started = try await client.api.startServerUpdate(version: version)
-            guard shouldApply(client.serverId) else { return }
             if var current = info {
                 current.update = started
                 info = current
             }
             startUpdatePolling(client: client, previousVersion: previousVersion)
         } catch {
-            guard shouldApply(client.serverId, error: error) else { return }
+            guard !(error is CancellationError) else { return }
             self.error = error.localizedDescription
             updateInFlight = false
         }
     }
 
     /// Polls `/server/info` until the update settles. The task holds the model
-    /// weakly and re-checks the host after every await, so it ends with the
-    /// view or a host switch instead of polling a server nobody is looking at.
+    /// weakly, so it ends with the page instead of polling a server nobody is
+    /// looking at.
     private func startUpdatePolling(client: Client, previousVersion: String?) {
         updatePollTask?.cancel()
         let serverId = client.serverId
@@ -357,10 +321,10 @@ final class ServerSettingsModel {
                     break
                 }
                 try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, self?.shouldApply(serverId) == true else { return }
+                guard !Task.isCancelled else { return }
                 do {
                     var next = try await api.serverInfo()
-                    guard !Task.isCancelled, let self, shouldApply(serverId) else { return }
+                    guard !Task.isCancelled, let self else { return }
                     let reported = next.update
                     // A same-version replacement server (failed exec) omits `update`
                     // until its install lookup resolves; keep the in-flight snapshot
@@ -399,9 +363,9 @@ final class ServerSettingsModel {
                     if notSettlingSince == nil { notSettlingSince = Date() }
                 }
             }
-            guard !Task.isCancelled, let self, shouldApply(serverId) else { return }
-            updateDidNotReturn = true
-            finishUpdatePolling()
+            guard !Task.isCancelled, let self else { return }
+            self.updateDidNotReturn = true
+            self.finishUpdatePolling()
         }
     }
 
@@ -411,15 +375,6 @@ final class ServerSettingsModel {
     }
 
     // MARK: - Transport
-
-    /// Whether a result requested for `requestedId` may still be shown.
-    private func shouldApply(_ requestedId: String, error: Error? = nil) -> Bool {
-        ServerSelection.shouldApplyHostResult(
-            requestedId: requestedId,
-            visibleId: serverId,
-            error: error
-        )
-    }
 
     private func noteServerVersionAfterUpdate(_ version: String, serverId: String) {
         coordinator.connection(for: serverId)?.noteServerVersionAfterUpdate(version)

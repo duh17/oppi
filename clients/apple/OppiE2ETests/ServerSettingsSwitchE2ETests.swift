@@ -103,5 +103,19 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
         tap(app.buttons["Current server: Offline E2E"], named: "Server Settings switcher")
         tap(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "e2e-server")).firstMatch, named: "first server in the Server Settings switcher")
         waitForSummary(named: "e2e-server", "Server Settings did not follow the switch back")
+
+        // Model Providers is a routed screen above Server Settings with a switcher of its own:
+        // switching there keeps it on screen (a provider sign-in would stay alive) and re-points
+        // Server Settings underneath it.
+        tap(app.buttons["server.modelProviders.open"], named: "Model Providers row", timeout: 10)
+        let providersBar = app.navigationBars["Model Providers"]
+        XCTAssertTrue(providersBar.waitForExistence(timeout: 10), "Model Providers did not open")
+        tap(first, named: "Model Providers switcher")
+        tap(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Offline E2E")).firstMatch, named: "second server in the Model Providers switcher")
+        XCTAssertTrue(app.buttons["Current server: Offline E2E"].waitForExistence(timeout: 10), "Model Providers did not follow its own switcher")
+        XCTAssertTrue(providersBar.exists, "A switch from Model Providers closed it")
+        app.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 10), "Back from Model Providers did not return to Server Settings")
+        waitForSummary(named: "Offline E2E", "Server Settings did not follow the switch made above it")
     }
 }

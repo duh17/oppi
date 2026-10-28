@@ -8,9 +8,10 @@ import UIKit
 /// whole life (its store, its model, and every action it runs). This screen
 /// resolves the visible server (`ServerSelection.resolveVisible`: the active
 /// server, else the one the route opened for) and shows that server's page.
-/// When the visible server changes it pops whatever was pushed above it,
-/// since those pages are pinned to the old server too, and replaces the page.
-/// A response that lands after the switch settles into the old page's own
+/// When the visible server changes it closes the pages that page pushed
+/// (About, Paired Devices, Badge Icon: pinned to the old server too) and
+/// replaces it. A routed screen above this one, such as Model Providers with
+/// a sign-in in progress, follows the visible server itself and stays. A response that lands after the switch settles into the old page's own
 /// model, which nothing shows any more.
 ///
 /// The switcher is the page's bar item (it writes it to this screen's
@@ -102,14 +103,14 @@ final class ServerSettingsRouteViewController: UIViewController {
 
     // MARK: - Page
 
-    /// Shows the visible server's page. A different server pops the pages above
-    /// this screen first, then replaces the page.
+    /// Shows the visible server's page. A different server closes the pages the
+    /// old page pushed, then replaces it.
     private func reconcile() {
         guard !isFinishing, isViewLoaded else { return }
         let server = visibleServer()
         guard !hasShownPage || server?.id != pinnedServerId else { return }
         hasShownPage = true
-        popToSelf()
+        if let page { closePushedPages(of: page) }
         removePage()
         pinnedServerId = server?.id
         // The old page's bar items are not the new page's.
@@ -124,11 +125,15 @@ final class ServerSettingsRouteViewController: UIViewController {
         self.page = page
     }
 
-    private func popToSelf() {
-        guard let navigation = navigationController,
-              navigation.viewControllers.contains(self),
-              navigation.topViewController !== self else { return }
-        navigation.popToViewController(self, animated: false)
+    /// Takes only what `page` pushed off the stack. Screens the shell routed above this
+    /// one are not its to close, whatever order they are in.
+    private func closePushedPages(of page: ServerSettingsViewController) {
+        guard let navigation = navigationController else { return }
+        let owned = page.pushedScreens
+        let stack = navigation.viewControllers
+        let kept = stack.filter { screen in !owned.contains { $0 === screen } }
+        guard kept.count != stack.count else { return }
+        navigation.setViewControllers(kept, animated: false)
     }
 
     private func removePage() {

@@ -65,7 +65,7 @@ struct ServerMetricsEnableTests {
     }
 
     private static func metricsSwitch(in view: UIView) -> UISwitch? {
-        if let toggle = view as? UISwitch, toggle.accessibilityIdentifier == "server.serverMetrics.enabled" { return toggle }
+        if let toggle = view as? UISwitch, toggle.accessibilityIdentifier == "server.metrics.enabled" { return toggle }
         for subview in view.subviews {
             if let found = metricsSwitch(in: subview) { return found }
         }

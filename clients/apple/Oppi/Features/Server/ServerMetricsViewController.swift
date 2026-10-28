@@ -412,12 +412,8 @@ final class ServerMetricsViewController: UIViewController {
             let setting = SettingsCatalog.serverMetricsEnabled
             // The document held since an earlier read (here or from Server Settings) may be stale.
             _ = await settings.reload(setting)
+            // The store's write hook keeps the pill's cache in step with what the server stored.
             let result = await settings.set(setting, enabled).value
-            // The server's answer is the truth, even when it is not what was asked for:
-            // the pill follows it.
-            if let stored = result.current {
-                coordinator.setServerMetricsEnabledCache(stored, for: serverId)
-            }
             // The pill moved to another host meanwhile; this answer is not its.
             guard let self, self.loadedServerId == serverId else { return }
             self.isTogglingSampling = false

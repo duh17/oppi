@@ -26,7 +26,7 @@ final class ServerMetricsE2ETests: E2ETestCase {
         tap(app.buttons["hostSwitcher.serverSettings"], named: "server settings", timeout: 5)
         XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 10), "Server settings did not open")
 
-        let toggle = app.switches["server.serverMetrics.enabled"]
+        let toggle = app.switches["server.metrics.enabled"]
         for _ in 0..<8 where !(toggle.exists && toggle.isHittable) {
             app.swipeUp()
         }

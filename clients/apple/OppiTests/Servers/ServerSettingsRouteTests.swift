@@ -72,17 +72,33 @@ struct ServerSettingsRouteTests {
         #expect(route.page?.model.serverId == "server-b")
     }
 
-    @Test("A switch pops the pages pushed above the route and shows the new server's page")
-    func switchPopsAndSwaps() async throws {
+    /// A page the Server Settings page pushed (About, Paired Devices, Badge Icon): pinned to its server.
+    private func pushPageOwnedBy(_ page: ServerSettingsViewController, in navigation: UINavigationController, title: String) -> UIViewController {
+        let screen = UIViewController()
+        screen.title = title
+        navigation.pushViewController(screen, animated: false)
+        page.track(screen)
+        return screen
+    }
+
+    /// A screen the shell routed above Server Settings, as Model Providers is.
+    private func pushRoutedScreen(in navigation: UINavigationController) -> UIViewController {
+        let screen = UIViewController()
+        screen.title = "Model Providers"
+        navigation.pushViewController(screen, animated: false)
+        return screen
+    }
+
+    @Test("A switch closes the pages Server Settings pushed and shows the new server's page")
+    func switchClosesItsPushedPagesAndSwaps() async throws {
         let h = try makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let first = try #require(h.route.page)
         #expect(first.server.id == "server-a")
-        // About, Paired Devices and Badge are pinned to the server they were opened for.
-        h.navigation.pushViewController(UIViewController(), animated: false)
-        h.navigation.pushViewController(UIViewController(), animated: false)
-        #expect(h.navigation.viewControllers.count == 3)
+        let about = pushPageOwnedBy(first, in: h.navigation, title: "About This Server")
+        let devices = pushPageOwnedBy(first, in: h.navigation, title: "Paired Devices")
+        #expect(h.navigation.viewControllers == [h.route, about, devices])
 
         _ = h.root.coordinator.restoreActiveServer("server-b")
 
@@ -102,13 +118,69 @@ struct ServerSettingsRouteTests {
         })
     }
 
+    @Test("A routed screen above Server Settings survives a switch, with or without a pushed page below it")
+    func routedScreenSurvivesASwitch() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        h.route.loadViewIfNeeded()
+        let first = try #require(h.route.page)
+        // Model Providers has its own switcher and keeps a provider sign-in alive across a switch.
+        let about = pushPageOwnedBy(first, in: h.navigation, title: "About This Server")
+        let providers = pushRoutedScreen(in: h.navigation)
+        #expect(h.navigation.viewControllers == [h.route, about, providers])
+
+        _ = h.root.coordinator.restoreActiveServer("server-b")
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.route.pinnedServerId == "server-b" })
+        #expect(h.navigation.viewControllers == [h.route, providers])
+        #expect(h.route.page?.server.id == "server-b")
+
+        // And with nothing of the old page's above it.
+        _ = h.root.coordinator.restoreActiveServer("server-a")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.route.pinnedServerId == "server-a" })
+        #expect(h.navigation.viewControllers == [h.route, providers])
+    }
+
+    @Test("In a split view, a switch made from the primary column closes About in the detail and shows the new server")
+    func switchFromThePrimaryColumnClosesAboutInTheDetail() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        // The detail column is the harness's stack; the primary column is another one, as on iPad,
+        // whose switcher runs the same `HostSwitcherModel.switchHost` every menu does.
+        let primary = UINavigationController(rootViewController: UIViewController())
+        let split = UISplitViewController(style: .doubleColumn)
+        split.setViewController(primary, for: .primary)
+        split.setViewController(h.navigation, for: .secondary)
+        h.window.rootViewController = split
+        h.window.makeKeyAndVisible()
+        h.route.loadViewIfNeeded()
+        let page = try #require(h.route.page)
+        let about = pushPageOwnedBy(page, in: h.navigation, title: "About This Server")
+        #expect(h.navigation.viewControllers == [h.route, about])
+
+        let coordinator = h.root.coordinator
+        let model = HostSwitcherModel(
+            coordinator: coordinator,
+            serverStore: coordinator.serverStore,
+            navigation: h.root.navigation,
+            current: try #require(coordinator.serverStore.server(for: "server-a")),
+            destination: .serverSettings
+        )
+        model.switchHost(try #require(coordinator.serverStore.server(for: "server-b")))
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.route.pinnedServerId == "server-b" })
+        #expect(h.navigation.viewControllers == [h.route])
+        #expect(h.route.page?.server.id == "server-b")
+        #expect(about.parent == nil)
+    }
+
     @Test("Nothing changes while the visible server stays the same")
     func sameServerKeepsThePage() async throws {
         let h = try makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
         let first = try #require(h.route.page)
-        h.navigation.pushViewController(UIViewController(), animated: false)
+        _ = pushPageOwnedBy(first, in: h.navigation, title: "About This Server")
 
         // Re-selecting the active server is not a change.
         _ = h.root.coordinator.restoreActiveServer("server-a")

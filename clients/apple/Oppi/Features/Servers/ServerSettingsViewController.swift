@@ -38,6 +38,10 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
     private let locks = ScopedLockService.shared
     private var switcher: SessionListServerSwitcher?
     private var switcherLoadedMetrics = false
+    private var pushed: [WeakScreen] = []
+    private struct WeakScreen {
+        weak var screen: UIViewController?
+    }
     private var loadTask: Task<Void, Never>?
     /// Counts the redraws a switch needs when its state did not change (a cancelled
     /// save, a refused unlock), so the switch returns to what the state says.
@@ -66,6 +70,17 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
     /// The pinned server as the pairing list has it now (a new badge icon or name).
     private var current: PairedServer { coordinator.serverStore.server(for: server.id) ?? server }
 
+    /// The pages this page pushed and that are still on screen: pinned to this server, so
+    /// the route closes them when it replaces this page.
+    var pushedScreens: [UIViewController] { pushed.compactMap(\.screen) }
+
+    /// Records a page this one pushed above itself.
+    func track(_ screen: UIViewController?) {
+        guard let screen else { return }
+        pushed.removeAll { $0.screen == nil }
+        pushed.append(WeakScreen(screen: screen))
+    }
+
     /// The Server Settings route this page is shown in, which also owns the bar.
     private var route: ServerSettingsRouteViewController? { parent as? ServerSettingsRouteViewController }
 
@@ -80,6 +95,8 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
         refresh.addAction(UIAction { [weak self, weak refresh] _ in
             Task {
                 await self?.model.load()
+                // The page's own switch reads the store; a pull reads the document again.
+                _ = await self?.settings?.reload(SettingsCatalog.serverMetricsEnabled)
                 refresh?.endRefreshing()
             }
         }, for: .valueChanged)
@@ -375,8 +392,7 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
                 }
             }
         case .serverMetrics:
-            // The id the row has always had; the declaration's own is `server.metrics.enabled`.
-            settingToggleRow(cell, SettingsCatalog.serverMetricsEnabled, identifier: "server.serverMetrics.enabled")
+            settingToggleRow(cell, SettingsCatalog.serverMetricsEnabled)
         case .pushSwitch:
             switchRow(
                 cell,
@@ -551,7 +567,8 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
     // MARK: - Actions
 
     /// Each page named here belongs to the pinned server: the SwiftUI pages take
-    /// this page's model and server by value.
+    /// this page's model and server by value, and are tracked so the route can
+    /// close them with this page. Model Providers is a routed screen and is not.
     private func open(_ item: Item) {
         let navigator = ScreenNavigator.forUIKitScreen(self, root: root)
         let server = server
@@ -561,16 +578,16 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
         case .modelProviders:
             root.navigation.openModelProviders(ModelProvidersNavTarget(serverId: server.id))
         case .workspaces:
-            navigator.push { WorkspaceListView(server: server) }
+            track(navigator.push { WorkspaceListView(server: server) })
         case .dictionary:
-            navigator.push { DictationDictionaryView(workspaceId: nil) }
+            track(navigator.push { DictationDictionaryView(workspaceId: nil) })
         case .pairedDevices:
-            navigator.push { ServerPairedDevicesPage(model: model, server: server) }
+            track(navigator.push { ServerPairedDevicesPage(model: model, server: server) })
         case .about:
-            navigator.push { ServerAboutPage(model: model, server: server) }
+            track(navigator.push { ServerAboutPage(model: model, server: server) })
         case .badge:
             // Read inside the page's own graph, so a new icon redraws its preview.
-            navigator.push { ServerBadgePage(server: store.server(for: server.id) ?? server) }
+            track(navigator.push { ServerBadgePage(server: store.server(for: server.id) ?? server) })
         default:
             break
         }
