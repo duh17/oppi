@@ -401,6 +401,7 @@ final class SettingsWorkPreviewCell: UICollectionViewListCell {
         )
         install(mic, size: CGSize(width: ComposerInputMetrics.controlDiameter, height: ComposerInputMetrics.controlDiameter))
         isAccessibilityElement = true
+        accessibilityIdentifier = "settings.voice.micPreview"
         accessibilityLabel = String(localized: "Dictation animation preview")
         accessibilityValue = style.displayName
     }
@@ -463,6 +464,7 @@ final class SettingsWorkPreviewCell: UICollectionViewListCell {
         content?.removeFromSuperview()
         content = nil
         isAccessibilityElement = false
+        accessibilityIdentifier = nil
         accessibilityLabel = nil
         accessibilityValue = nil
     }

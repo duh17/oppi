@@ -97,6 +97,10 @@ enum UIValidateDump {
             let element = app.descendants(matching: .any)[identifier]
             return element.exists ? element.frame : nil
         }
+        let sampledPreviews = SampledPreview.all.compactMap { preview -> (frame: CGRect, reason: String)? in
+            let element = app.descendants(matching: .any)[preview.identifier]
+            return element.exists ? (element.frame, preview.reason) : nil
+        }
         do {
             try app.performAccessibilityAudit(for: .all) { issue in
                 box.issues.append(
@@ -105,7 +109,7 @@ enum UIValidateDump {
                         compact: issue.compactDescription,
                         detailed: issue.detailedDescription,
                         element: describeElement(issue.element),
-                        waivedReason: waivedReason(for: issue, previewFrames: previewFrames)
+                        waivedReason: waivedReason(for: issue, previewFrames: previewFrames, sampledPreviews: sampledPreviews)
                     )
                 )
                 return true
@@ -225,9 +229,27 @@ enum UIValidateDump {
     /// and `textClipped` of the row and the "PREVIEW · SAMPLE DATA" label at accessibility sizes.
     /// Only issues whose element sits inside the preview's frames are waived; the editor and
     /// `SessionRowView` are unchanged since 7665a92f0.
-    private static func waivedReason(for issue: XCUIAccessibilityAuditIssue, previewFrames: [CGRect]) -> String? {
+    ///
+    /// Two settings previews draw real app text that is fixed-size on purpose
+    /// (`SampledPreview`): Voice's mic control and Text's code sample. The audit
+    /// finds their text by looking at the screen, so it often reports `dynamicType`
+    /// or `elementDetection` without an element. Those two types are waived on a page
+    /// only while its preview is on screen, and an issue that names an element is
+    /// waived only when the element sits inside the preview's frame. The reason is
+    /// in the waiver text; the rest of the page is audited as everywhere else.
+    private static func waivedReason(
+        for issue: XCUIAccessibilityAuditIssue,
+        previewFrames: [CGRect],
+        sampledPreviews: [(frame: CGRect, reason: String)]
+    ) -> String? {
         if issue.auditType == .textClipped, issue.element?.elementType == .searchField {
             return "textClipped on the system search field, which draws its text in full"
+        }
+        if issue.auditType == .dynamicType || issue.auditType == .elementDetection {
+            for preview in sampledPreviews {
+                let inside = issue.element.map { preview.frame.insetBy(dx: -1, dy: -1).contains($0.frame) } ?? true
+                if inside { return "\(auditTypeName(issue.auditType)) on a preview: \(preview.reason)" }
+            }
         }
         if [.dynamicType, .textClipped, .hitRegion, .sufficientElementDescription, .contrast].contains(issue.auditType),
            let frame = issue.element?.frame,
@@ -237,6 +259,25 @@ enum UIValidateDump {
                 + "not a sample-data artifact; the editor is unchanged since 7665a92f0"
         }
         return nil
+    }
+
+    /// A settings preview whose text is fixed-size by design.
+    private struct SampledPreview {
+        let identifier: String
+        let reason: String
+
+        static let all = [
+            SampledPreview(
+                identifier: "settings.voice.micPreview",
+                reason: "the mic's \"EN\" is a fixed-size glyph inside the 44 pt mic control, decorative, drawn by "
+                    + "the chrome the composer shares (MicButtonChromeView); the row's label names the preview"
+            ),
+            SampledPreview(
+                identifier: "settings.text.preview",
+                reason: "the code sample deliberately follows Code Text Size, not Dynamic Type, as code does in chat; "
+                    + "the preview is one accessibility element that reads both samples"
+            ),
+        ]
     }
 
     private static func auditTypeName(_ type: XCUIAccessibilityAuditType) -> String {

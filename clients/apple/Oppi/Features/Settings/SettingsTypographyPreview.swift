@@ -43,6 +43,7 @@ final class SettingsTypographyPreviewView: UIView {
         ])
         // One element: the cards are samples, not controls.
         isAccessibilityElement = true
+        accessibilityIdentifier = "settings.text.preview"
         accessibilityLabel = String(localized: "Text preview")
         accessibilityValue = [codeCaption.text, codeSample.text, messageCaption.text, messageSample.text]
             .compactMap { $0 }
