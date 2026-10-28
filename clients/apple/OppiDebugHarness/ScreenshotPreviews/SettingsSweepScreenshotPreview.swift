@@ -750,6 +750,7 @@ struct SettingsSweepScreenshotPreview: View {
                 ModelInfo(id: "gpt-5-mini", name: "GPT-5 mini", provider: "openai", contextWindow: 400_000),
             ])),
             "/server/metrics/settings": Data(#"{"enabled":true,"revision":3}"#.utf8),
+            "/server/mobile-output-guide": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/dictation/dictionary/global": Data(#"{"revision":3,"phrases":["Oppi","Tailscale","Herdr","Kypu","SwiftUI","Nerd Font Symbols Mono Extended Family Name That Is Long Enough To Wrap Past The Row"],"provider":"xai"}"#.utf8),
             "/dictation/dictionary/workspaces/preview-ws": Data(#"{"revision":1,"phrases":["oppi-dev","WorkspaceStore"],"provider":null}"#.utf8),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),

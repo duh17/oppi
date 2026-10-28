@@ -1,27 +1,5 @@
 import Foundation
 
-enum ServerDetailMobileOutputGuideState: Equatable {
-    case loading
-    case available(enabled: Bool, revision: Int, error: String?)
-    case failed(String)
-
-    static func resolve(
-        configuration: MobileOutputGuideConfiguration?,
-        isLoading: Bool,
-        error: String?
-    ) -> Self {
-        if let configuration {
-            return .available(
-                enabled: configuration.enabled,
-                revision: configuration.revision,
-                error: error
-            )
-        }
-        if isLoading { return .loading }
-        return .failed(error ?? "Mobile Output Guide setting is unavailable")
-    }
-}
-
 /// Everything Server Settings loads from one server, owned in one place so the
 /// root and its pushed pages read the same values instead of refetching.
 ///
@@ -45,13 +23,6 @@ final class ServerSettingsModel {
 
     private(set) var providerSetupState: ProviderSetupState = .unknown
     private(set) var connectedProviderCount = 0
-
-    private(set) var mobileOutputGuide: MobileOutputGuideConfiguration?
-    private(set) var isLoadingMobileOutputGuide = false
-    private(set) var isSavingMobileOutputGuide = false
-    /// The value being saved, shown disabled until the save settles (nil when none is in flight).
-    private(set) var pendingMobileOutputGuide: Bool?
-    private(set) var mobileOutputGuideError: String?
 
     private(set) var pairedDevices: [AuthDevice]?
     private(set) var isLoadingPairedDevices = false
@@ -110,16 +81,6 @@ final class ServerSettingsModel {
         )
     }
 
-    /// Loading while the page's first load is still out, until the guide's own answer
-    /// (or its failure) arrives: the row never flashes "Unavailable" before its request starts.
-    var mobileOutputGuideState: ServerDetailMobileOutputGuideState {
-        ServerDetailMobileOutputGuideState.resolve(
-            configuration: mobileOutputGuide,
-            isLoading: isLoadingMobileOutputGuide || (isLoading && mobileOutputGuideError == nil),
-            error: mobileOutputGuideError
-        )
-    }
-
     // MARK: - Loading
 
     func load() async {
@@ -157,9 +118,8 @@ final class ServerSettingsModel {
         }
 
         async let providers: () = loadProviderSummary(client)
-        async let guide: () = loadMobileOutputGuide(client)
         async let devices: () = loadPairedDevices(client)
-        _ = await (providers, guide, devices)
+        _ = await (providers, devices)
         isLoading = false
     }
 
@@ -218,61 +178,6 @@ final class ServerSettingsModel {
             // Another device may have revoked it first; refresh so no stale row stays.
             await loadPairedDevices(client)
             pairedDevicesError = error.localizedDescription
-        }
-    }
-
-    /// Retry for the Mobile Output Guide row.
-    func reloadMobileOutputGuide() async {
-        guard let client = await prepareClient() else {
-            mobileOutputGuideError = "Unable to prepare server transport"
-            return
-        }
-        await loadMobileOutputGuide(client)
-    }
-
-    private func loadMobileOutputGuide(_ client: Client) async {
-        isLoadingMobileOutputGuide = mobileOutputGuide == nil
-        defer { isLoadingMobileOutputGuide = false }
-        do {
-            let guide = try await client.api.getMobileOutputGuideConfiguration()
-            mobileOutputGuide = guide
-            mobileOutputGuideError = nil
-        } catch {
-            guard !(error is CancellationError) else { return }
-            mobileOutputGuideError = error.localizedDescription
-        }
-    }
-
-    /// Saves the guide against the revision this page loaded. The switch shows the
-    /// new value, disabled, until the save settles (`pendingMobileOutputGuide`); a
-    /// failure puts the old value back with the reason, and a revision conflict
-    /// reloads the latest.
-    func setMobileOutputGuide(_ enabled: Bool) async {
-        guard let current = mobileOutputGuide, !isSavingMobileOutputGuide else { return }
-        // Before the first await, so a second tap while the client is prepared is refused too.
-        isSavingMobileOutputGuide = true
-        pendingMobileOutputGuide = enabled
-        mobileOutputGuideError = nil
-        defer {
-            isSavingMobileOutputGuide = false
-            pendingMobileOutputGuide = nil
-        }
-        guard let client = await prepareClient() else {
-            mobileOutputGuideError = "Unable to prepare server transport"
-            return
-        }
-        do {
-            mobileOutputGuide = try await client.api.setMobileOutputGuideConfiguration(
-                enabled: enabled,
-                baseRevision: current.revision
-            )
-            mobileOutputGuideError = nil
-        } catch let APIError.codedServer(status, _, code)
-            where status == 409 && code == "revision_conflict" {
-            await loadMobileOutputGuide(client)
-        } catch {
-            guard !(error is CancellationError) else { return }
-            mobileOutputGuideError = error.localizedDescription
         }
     }
 
@@ -437,7 +342,6 @@ extension ServerSettingsModel {
         model.isLoading = false
         model.providerSetupState = .configured
         model.connectedProviderCount = 2
-        model.mobileOutputGuide = MobileOutputGuideConfiguration(enabled: true, revision: 3)
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
         model.pairedDevices = [
             AuthDevice(

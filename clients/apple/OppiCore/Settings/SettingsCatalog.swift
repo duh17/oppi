@@ -6,6 +6,8 @@ import Foundation
 enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
     /// `GET`/`PUT /server/metrics/settings`: `{ enabled, revision? }`.
     case serverMetrics = "/server/metrics/settings"
+    /// `GET`/`PUT /server/mobile-output-guide`: `{ enabled, revision }`; a write carries `baseRevision`.
+    case mobileOutputGuide = "/server/mobile-output-guide"
 
     /// The route's row in `protocol/settings.json`, where the server lists the
     /// setting's scope and whether its saves carry a revision.
@@ -13,6 +15,7 @@ enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
     var registryKey: String {
         switch self {
         case .serverMetrics: "serverMetrics"
+        case .mobileOutputGuide: "mobileOutputGuide"
         }
     }
 }
@@ -187,6 +190,22 @@ enum SettingsCatalog {
         )
     )
 
+    // MARK: - Mobile Output Guide
+
+    /// Whether new and reloaded sessions on the server get Oppi's link and
+    /// rich-content guide, for every device that uses it (`mobileOutputGuide`
+    /// in `protocol/settings.json`; its saves require the base revision).
+    static let mobileOutputGuideEnabled = SettingDeclaration<Bool>(
+        id: "server.mobileOutputGuide.enabled",
+        key: "enabled",
+        storage: .server(.mobileOutputGuide, revisioned: true),
+        default: false,
+        copy: SettingCopy(
+            title: String(localized: "Mobile Output Guide"),
+            footer: String(localized: "Adds Oppi's link and rich-content guide to new sessions and to sessions you reload. Oppi Control sessions don't use it, and sessions running in a terminal aren't changed.")
+        )
+    )
+
     /// Every declared setting, type-erased. Ids and storage keys are unique
     /// across it (`SettingsCatalogTests`).
     static let all: [SettingDescriptor] = [
@@ -194,5 +213,6 @@ enum SettingsCatalog {
         keepAwakeAfterActivity.descriptor,
         openLinks.descriptor,
         serverMetricsEnabled.descriptor,
+        mobileOutputGuideEnabled.descriptor,
     ]
 }

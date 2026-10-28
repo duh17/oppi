@@ -23,8 +23,7 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
     enum Item: Hashable, Sendable {
         case summary, summaryError
         case modelProviders, workspaces, dictionary, pairedDevices, about
-        case guideLoading, guideSwitch, guideFailed, guideError
-        case serverMetrics, settingFailure(String)
+        case mobileOutputGuide, serverMetrics, settingFailure(String)
         case pushSwitch, pushWorking, pushError
         case liveActivitySwitch, liveActivityWorking, liveActivityError, liveActivitySystemOff
         case badge, lock, remove
@@ -97,6 +96,7 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
                 await self?.model.load()
                 // The page's own switch reads the store; a pull reads the document again.
                 _ = await self?.settings?.reload(SettingsCatalog.serverMetricsEnabled)
+                _ = await self?.settings?.reload(SettingsCatalog.mobileOutputGuideEnabled)
                 refresh?.endRefreshing()
             }
         }, for: .valueChanged)
@@ -153,13 +153,6 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
         var summary: [Item] = [.summary]
         if model.error != nil { summary.append(.summaryError) }
 
-        var guide: [Item]
-        switch model.mobileOutputGuideState {
-        case .loading: guide = [.guideLoading]
-        case .available(_, _, let error): guide = error == nil ? [.guideSwitch] : [.guideSwitch, .guideError]
-        case .failed: guide = [.guideFailed]
-        }
-
         var notificationItems: [Item] = []
         if relayHost != nil {
             notificationItems.append(.pushSwitch)
@@ -186,8 +179,8 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
             ),
             SettingsSectionModel(
                 .mobileOutputGuide,
-                footer: String(localized: "Adds Oppi's link and rich-content guide to new sessions and to sessions you reload. Oppi Control sessions don't use it, and sessions running in a terminal aren't changed."),
-                items: guide
+                footer: SettingsCatalog.mobileOutputGuideEnabled.copy.footer,
+                items: settingRows(SettingsCatalog.mobileOutputGuideEnabled, .mobileOutputGuide) { .settingFailure($0) }
             ),
             SettingsSectionModel(
                 .serverMetrics,
@@ -253,20 +246,10 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
             return AnyHashable(pairedDeviceCount ?? "")
         case .about:
             return AnyHashable(model.aboutSummary ?? "")
-        case .dictionary, .guideLoading, .liveActivityError, .liveActivitySystemOff, .badge:
+        case .dictionary, .liveActivityError, .liveActivitySystemOff, .badge:
             return AnyHashable(0)
-        case .guideSwitch:
-            return AnyHashable([
-                AnyHashable(model.pendingMobileOutputGuide ?? model.mobileOutputGuide?.enabled ?? false),
-                AnyHashable(model.isSavingMobileOutputGuide),
-                AnyHashable(toggleRevision),
-            ])
-        case .guideFailed:
-            if case .failed(let message) = model.mobileOutputGuideState { return AnyHashable(message) }
-            return AnyHashable("")
-        case .guideError:
-            if case .available(_, _, let error) = model.mobileOutputGuideState { return AnyHashable(error ?? "") }
-            return AnyHashable("")
+        case .mobileOutputGuide:
+            return settingInputs(SettingsCatalog.mobileOutputGuideEnabled)
         case .serverMetrics:
             return settingInputs(SettingsCatalog.serverMetricsEnabled)
         case .settingFailure(let id):
@@ -354,12 +337,12 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
             collectionView.dequeueConfiguredReusableCell(using: summaryRow, for: indexPath, item: item)
         case .modelProviders, .workspaces, .dictionary, .pairedDevices, .about, .badge:
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
-        case .summaryError, .guideFailed, .guideError, .settingFailure, .pushWorking, .pushError,
+        case .summaryError, .settingFailure, .pushWorking, .pushError,
              .liveActivityWorking, .liveActivityError, .liveActivitySystemOff:
             collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
         case .remove:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
-        case .guideLoading, .guideSwitch, .serverMetrics, .pushSwitch, .liveActivitySwitch, .lock:
+        case .mobileOutputGuide, .serverMetrics, .pushSwitch, .liveActivitySwitch, .lock:
             super.dequeue(item, at: indexPath)
         }
     }
@@ -367,30 +350,8 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
     /// Switch rows and the loading row, which are plain list cells.
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
         switch item {
-        case .guideLoading:
-            var content = content(.plain)
-            content.text = String(localized: "Mobile Output Guide")
-            cell.contentConfiguration = content
-            let spinner = UIActivityIndicatorView(style: .medium)
-            spinner.startAnimating()
-            cell.accessories = [.customView(configuration: .init(customView: spinner, placement: .trailing()))]
-            cell.accessibilityIdentifier = "server.mobileOutputGuide.loading"
-        case .guideSwitch:
-            let shown = model.pendingMobileOutputGuide ?? model.mobileOutputGuide?.enabled ?? false
-            switchRow(
-                cell,
-                title: String(localized: "Mobile Output Guide"),
-                isOn: shown,
-                identifier: "server.mobileOutputGuide.enabled",
-                isEnabled: !model.isSavingMobileOutputGuide
-            ) { [weak self] isOn in
-                guard let self else { return }
-                let model = model
-                Task { [weak self] in
-                    await model.setMobileOutputGuide(isOn)
-                    self?.redrawToggles()
-                }
-            }
+        case .mobileOutputGuide:
+            settingToggleRow(cell, SettingsCatalog.mobileOutputGuideEnabled)
         case .serverMetrics:
             settingToggleRow(cell, SettingsCatalog.serverMetricsEnabled)
         case .pushSwitch:
@@ -498,15 +459,6 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
                 .failure(model.error ?? "", retry: { [weak self] in self?.retryLoad() }),
                 identifier: "server.summary.error"
             )
-        case .guideFailed:
-            guard case .failed(let message) = model.mobileOutputGuideState else { return }
-            cell.configure(
-                .failure(message, retry: { [model] in Task { await model.reloadMobileOutputGuide() } }),
-                identifier: "server.mobileOutputGuide.error"
-            )
-        case .guideError:
-            guard case .available(_, _, let error?) = model.mobileOutputGuideState else { return }
-            cell.configure(.failure(error, retry: nil), identifier: "server.mobileOutputGuide.error")
         case .settingFailure(let id):
             guard let settings else { return }
             let retry: (() -> Void)? = settings.canRetry(id: id) ? { settings.retry(id: id) } : nil

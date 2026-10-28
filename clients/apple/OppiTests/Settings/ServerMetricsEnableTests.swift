@@ -159,6 +159,25 @@ struct ServerMetricsEnableTests {
         #expect(h.root.coordinator.connection(for: serverId)?.serverMetricsEnabled == false)
     }
 
+    @Test("A conflict that brings another device's value updates the pill's cached flag too")
+    func conflictUpdatesTheCachedFlag() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        let metrics = SettingsCatalog.serverMetricsEnabled
+        let store = h.root.coordinator.settings(for: serverId)
+        _ = store.read(metrics)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { store.read(metrics).current != nil })
+        // Another device turns sampling on after this one loaded; this one writes against the old revision.
+        h.transport.beforeNextSave { h.transport.changeElsewhere(["enabled": true]) }
+
+        let latest = await store.set(metrics, true).value
+
+        #expect(latest == .failed(last: true, reason: "Changed on another device; showing the latest."))
+        // The save itself was refused, so only the conflict's reload can have moved the flag.
+        #expect(h.transport.saves.map(\.baseRevision) == [4])
+        #expect(h.root.coordinator.connection(for: serverId)?.serverMetricsEnabled == true)
+    }
+
     @Test("A change made elsewhere before the tap is fetched first, so the save is not a false conflict")
     func turnOnAfterAChangeElsewhere() async throws {
         let h = try makeHarness()

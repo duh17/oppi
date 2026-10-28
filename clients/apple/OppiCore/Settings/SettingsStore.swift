@@ -37,9 +37,10 @@ import Observation
 /// server setting starts loading on its first read, unless another setting on
 /// its route has already loaded the document: then it reads from that one.
 ///
-/// `afterWrite` runs on the main actor once a write has been stored (the
-/// setting's id): the one place a setting's side effect lives, so a page never
-/// writes and then pokes something else itself.
+/// `afterWrite` runs on the main actor once a write has settled the stored
+/// value (the setting's id): after it was stored, and after a revision
+/// conflict reloaded what another device stored. The one place a setting's
+/// side effect lives, so a page never writes and then pokes something else itself.
 ///
 /// Only the device and server adapters exist so far; a declaration with any
 /// other storage reads as unavailable until its adapter is added here.
@@ -294,6 +295,9 @@ final class SettingsStore {
                         reason: SettingsError.revisionConflict.reason
                     )
                     states[declaration.id] = latest
+                    // The value changed to what another device stored: whatever follows
+                    // the stored value (the Metrics pill's cache) follows this one too.
+                    afterWrite(declaration.id)
                     return latest
                 }
                 return states[declaration.id] as? SettingValue<Value> ?? held
