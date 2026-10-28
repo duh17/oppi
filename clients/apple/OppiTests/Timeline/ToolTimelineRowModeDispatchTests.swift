@@ -1614,11 +1614,11 @@ struct ToolTimelineRowModeDispatchTests {
         innerMarkdown.addSubview(source)
 
         var invalidatedRoots: [ObjectIdentifier] = []
-        ToolTimelineRowPresentationHelpers.swiftUIMarkdownRootInvalidationHookForTesting = { root in
+        ToolTimelineRowPresentationHelpers.markdownRootInvalidationHookForTesting = { root in
             invalidatedRoots.append(ObjectIdentifier(root))
         }
         defer {
-            ToolTimelineRowPresentationHelpers.swiftUIMarkdownRootInvalidationHookForTesting = nil
+            ToolTimelineRowPresentationHelpers.markdownRootInvalidationHookForTesting = nil
         }
 
         ToolTimelineRowPresentationHelpers.forceInvalidateEnclosingCollectionViewLayout(
@@ -1650,11 +1650,11 @@ struct ToolTimelineRowModeDispatchTests {
         markdown.layoutIfNeeded()
 
         var markdownFallbackCount = 0
-        ToolTimelineRowPresentationHelpers.swiftUIMarkdownRootInvalidationHookForTesting = { _ in
+        ToolTimelineRowPresentationHelpers.markdownRootInvalidationHookForTesting = { _ in
             markdownFallbackCount += 1
         }
         defer {
-            ToolTimelineRowPresentationHelpers.swiftUIMarkdownRootInvalidationHookForTesting = nil
+            ToolTimelineRowPresentationHelpers.markdownRootInvalidationHookForTesting = nil
         }
 
         let baseline = layout.invalidationCount
@@ -1672,7 +1672,7 @@ struct ToolTimelineRowModeDispatchTests {
         drainMainQueue(passes: 3)
         #expect(
             markdownFallbackCount == 0,
-            "Collection-view hosts must not take the SwiftUI markdown fallback"
+            "Collection-view hosts must not take the markdown-root fallback"
         )
     }
 }

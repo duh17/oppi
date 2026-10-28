@@ -300,7 +300,7 @@ func closeInlineComposer(in root: UIView) {
 
 /// Forgets every lock flag on `ScopedLockService.shared`.
 ///
-/// `ChatReaderDestinationView` reads the process-wide service and replaces the
+/// `ChatReaderViewController` reads the process-wide service and replaces the
 /// reader with the lock cover whenever any flag exists, because it cannot tell
 /// which chat an origin-less payload came from. The service loads its flags from
 /// the test host's `UserDefaults.standard`, so a flag already stored there (the

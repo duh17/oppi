@@ -972,8 +972,6 @@ private struct UIHangHarnessContent: View {
         .background(Color.themeBg.ignoresSafeArea())
         .toolbarVisibility(.hidden, for: .navigationBar)
         .environment(harnessNavigation)
-        .environment(\.chatReaderPayloadStore, chatReaderPayloadStore)
-        .environment(\.openChatReader, ChatReaderOpenAction { payload in openChatReader(payload) })
         .onAppear {
             // Back from a pushed chat reader appears again. A real chat restores the
             // viewport it left, so only the first appearance seeds rows, resets
@@ -1029,7 +1027,7 @@ private struct UIHangHarnessContent: View {
         chatReaderPayloadStore.removeAll()
         let route = chatReaderPayloadStore.store(payload)
         let store = chatReaderPayloadStore
-        navigator.push { ChatReaderDestinationView(target: route, store: store) }
+        navigator.push(ChatReaderViewController(target: route, store: store, navigation: harnessNavigation))
     }
 
     private var controlsBar: some View {

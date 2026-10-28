@@ -2,9 +2,9 @@ import UIKit
 
 /// Full-screen audio player: header, lyrics or script transcript, and transport.
 ///
-/// Presented directly for modal playback and hosted by ``AudioLyricsPlayerView``
-/// in SwiftUI navigation. Reads `AudioPlayerService` inside `updateProperties()`,
-/// so UIKit observation tracking follows playback without a SwiftUI body.
+/// Presented directly for modal playback, pushed by the chat reader, and
+/// embedded by the file viewer. Reads `AudioPlayerService` inside `updateProperties()`,
+/// so UIKit observation tracking follows playback.
 final class AudioLyricsPlayerViewController: UIViewController {
     struct Configuration {
         var title: String

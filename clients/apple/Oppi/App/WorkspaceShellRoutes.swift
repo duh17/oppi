@@ -4,7 +4,7 @@ import SwiftUI
 // (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
 // `ShellRouteView` hosted through `HostFactory`; All Sessions, the workspace
 // sidebar, a workspace's sessions, a session's chat
-// (`ChatRouteViewController`), Files (`FileBrowserViewController`), a linked
+// (`ChatRouteViewController`), a chat reader (`ChatReaderViewController`), Files (`FileBrowserViewController`), a linked
 // file (`WorkspaceLinkedFileViewController`), a Skill file
 // (`ServerSkillFileViewController`), Skills (`ServerSkillsViewController`) with
 // a Skill's page (`ServerSkillDetailViewController`) and its file browser
@@ -92,6 +92,9 @@ enum ShellRouteScreens {
         }
         if case .serverSkillFile(let target) = route {
             return ServerSkillFileViewController(target: target, root: root)
+        }
+        if case .chatReader(let target) = route {
+            return ChatReaderViewController(target: target, root: root)
         }
         if case .serverResourceDetail(let target) = route {
             switch target.kind {
@@ -190,6 +193,8 @@ enum ShellRouteScreens {
         }
         // The sidebar reads its own state.
         if screen is WorkspaceSidebarViewController { return }
+        // A reader's payload and lock are its own state.
+        if screen is ChatReaderViewController { return }
         // A Skill's page and files, an Extension's detail, and Model Providers read their own state.
         if screen is ServerSkillDetailViewController || screen is ServerSkillBrowserViewController
             || screen is ServerExtensionDetailViewController || screen is ModelProvidersViewController { return }
@@ -262,8 +267,6 @@ struct ShellRouteView: View {
     let placement: ShellRoutePlacement
     let openSidebar: (() -> Void)?
 
-    @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
-
     var body: some View {
         if placement == .splitDetailRoot {
             content
@@ -286,19 +289,16 @@ struct ShellRouteView: View {
         switch route {
         case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile, .serverSkillFile,
              .workspaceConfiguration, .modelProviders, .serverResourceDetail, .serverSkillBrowser,
-             .serverDetails:
+             .serverDetails, .chatReader:
             // UIKit screens (SessionInboxViewController,
             // WorkspaceSidebarViewController, WorkspaceDetailViewController,
             // ChatRouteViewController, FileBrowserViewController,
             // WorkspaceLinkedFileViewController, ServerSkillFileViewController,
             // WorkspaceSettingsViewController, ModelProvidersViewController,
             // ServerSkillDetailViewController, ServerExtensionDetailViewController,
-            // ServerSkillBrowserViewController, ServerSettingsRouteViewController).
+            // ServerSkillBrowserViewController, ServerSettingsRouteViewController,
+            // ChatReaderViewController).
             mountedByUIKitScreen
-        case .chatReader(let target):
-            if let chatReaderPayloadStore {
-                ChatReaderDestinationView(target: target, store: chatReaderPayloadStore)
-            }
         case .utility(let target):
             WorkspaceUtilityDestinationView(target: target)
         case .sessionThread(let target):

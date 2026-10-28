@@ -466,8 +466,7 @@ struct ChatRoutesHarnessView: View {
             // The chat opens its reader through app navigation; the shell that
             // pushes it is not here, so the harness does.
             guard let root, let target else { return }
-            let store = root.chatReaderPayloadStore
-            ChatRoutesFixture.push(root: root) { ChatReaderDestinationView(target: target, store: store) }
+            ChatRoutesFixture.push(ChatReaderViewController(target: target, root: root))
         }
         .task {
             while !Task.isCancelled {
@@ -1009,14 +1008,11 @@ private enum ChatRoutesFixture {
     }
 
     /// Pushes a screen onto the chat's navigation controller.
-    @MainActor static func push<Content: View>(
-        root: AppRootEnvironment,
-        @ViewBuilder content: @escaping () -> Content
-    ) {
+    @MainActor static func push(_ screen: UIViewController) {
         guard let timeline = timelineCollectionInWindows(),
               let navigation = sequence(first: timeline as UIResponder, next: \.next)
                 .lazy.compactMap({ $0 as? UINavigationController }).first else { return }
-        navigation.pushViewController(HostFactory.screen(root: root, content: content), animated: true)
+        navigation.pushViewController(screen, animated: true)
     }
 
     @MainActor private static func timelineCollectionInWindows() -> UICollectionView? {

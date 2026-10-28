@@ -364,11 +364,11 @@ function runAppleGuardrails(): GuardrailResult {
   }
 
   // Readers come from the helpers. The UIKit screens that embed one as a
-  // child are named here: the file viewer, the reviewable control Markdown
-  // screen, the editor's conflict review, and a skill's file.
+  // child are named here: the chat reader, the file viewer, the reviewable
+  // control Markdown screen, the editor's conflict review, and a skill's file.
   hits = filterAllowed(
     rgFiles("FullScreenCodeViewController\\(", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
-    /(^|\/)(FullScreenCodeViewController|EmbeddedFileViewerView|ToolTimelineRowHelpers|FileViewerViewController|WorkspaceFileEditChrome|ReviewableControlMarkdownViewController|SkillFileViewController)\.swift$/,
+    /(^|\/)(FullScreenCodeViewController|ChatReaderViewController|ToolTimelineRowHelpers|FileViewerViewController|WorkspaceFileEditChrome|ReviewableControlMarkdownViewController|SkillFileViewController)\.swift$/,
   );
   if (hits.length > 0) {
     err(

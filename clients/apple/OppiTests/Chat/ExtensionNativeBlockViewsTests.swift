@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -151,14 +150,14 @@ struct ExtensionNativeBlockViewsTests {
 
     @Test func fullScreenReaderFollowsLiveSurfaceAndKeepsLastAfterClear() async throws {
         let box = LiveSurfaceBox(surface: surface("first"))
-        let host = UIHostingController(rootView: ExtensionNativeSurfaceDetailSheet(
+        let host = ExtensionNativeSurfaceDetailViewController(
             surface: surface("tapped"),
             identifierSuffix: "jobs",
             title: "Jobs",
             subtitle: nil,
-            statusText: nil,
-            liveSurface: { box.surface }
-        ))
+            liveSurface: { box.surface },
+            onLeave: {}
+        )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -251,13 +250,13 @@ struct ExtensionNativeBlockViewsTests {
         drawer.layoutIfNeeded()
         try writeSnapshot(drawer, to: reports.appendingPathComponent("sql-explorer-widget-drawer.png"))
 
-        let sheet = UIHostingController(rootView: ExtensionNativeSurfaceDetailSheet(
+        let sheet = ExtensionNativeSurfaceDetailViewController(
             surface: surface,
             identifierSuffix: "data",
             title: "sales.db",
             subtitle: "3 rows · 12ms",
-            statusText: nil
-        ))
+            onLeave: {}
+        )
         window.rootViewController = sheet
         sheet.view.frame = window.bounds
         sheet.view.layoutIfNeeded()

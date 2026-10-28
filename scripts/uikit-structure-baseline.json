@@ -46,12 +46,6 @@
     "clients/apple/Oppi/Core/Theme/ThemeStore.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/EmbeddedFileViewerView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/FullScreenCodeSupport.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/ProviderIcon.swift": {
       "import SwiftUI": 1
     },
@@ -79,12 +73,6 @@
     "clients/apple/Oppi/Features/Chat/Selection/ReviewCommentSelection.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Support/ModelPickerViewController.swift": {
       "APIClient settings write": 1
     },
@@ -95,9 +83,6 @@
       "AppPreferences.*.set": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/USDZRealityCanvas.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {

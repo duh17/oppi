@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 // MARK: - Content and context
@@ -1348,7 +1347,8 @@ private extension NSLayoutConstraint {
 ///
 /// `.capped` hugs its content up to `maxHeight` and scrolls past it (the
 /// composer drawer viewport); `.fill` takes the space it is given (full-screen
-/// detail). The host reports content height changes so SwiftUI re-measures.
+/// detail). The host reports content height changes by invalidating its
+/// intrinsic size.
 final class ExtensionNativeBlockScrollView: UIView, UIGestureRecognizerDelegate {
     enum Sizing: Equatable {
         case capped(maxHeight: CGFloat)
@@ -1424,13 +1424,13 @@ final class ExtensionNativeBlockScrollView: UIView, UIGestureRecognizerDelegate 
         syncDoubleTapRecognizer()
         blockStack.apply(content, context: context)
         // The apply swaps arranged subviews; flush the stack views' arrangement
-        // constraints now, or the measurement SwiftUI takes right after this
-        // update (sizeThatFits) sees the previous, emptied arrangement.
+        // constraints now, or a measurement right after this update
+        // (`viewportHeight(for:)`) sees the previous, emptied arrangement.
         layoutIfNeeded()
         contentDidChange()
     }
 
-    /// Re-measure after content changed outside a SwiftUI update.
+    /// Re-measure after content changed outside `update`.
     func contentDidChange() {
         setNeedsLayout()
         invalidateIntrinsicContentSize()
@@ -1444,8 +1444,8 @@ final class ExtensionNativeBlockScrollView: UIView, UIGestureRecognizerDelegate 
         return CGSize(width: UIView.noIntrinsicMetric, height: viewportHeight(for: width))
     }
 
-    /// The host will show this viewport at `width`, the width SwiftUI
-    /// proposes. Blocks lay out what depends on width before it is measured.
+    /// The host will show this viewport at `width`. Blocks lay out what
+    /// depends on width before it is measured.
     func adoptLayoutWidth(_ width: CGFloat) {
         blockStack.adoptLayoutWidth(max(1, width - contentInsets.leading - contentInsets.trailing))
     }
@@ -1541,151 +1541,5 @@ final class ExtensionNativeBlockScrollView: UIView, UIGestureRecognizerDelegate 
         gestureRecognizer === doubleTapRecognizer
             && otherGestureRecognizer is UITapGestureRecognizer
             && otherGestureRecognizer.view?.isDescendant(of: scrollView) == true
-    }
-}
-
-// MARK: - SwiftUI bridge
-
-/// SwiftUI placement of the UIKit block renderer. Chrome (pills, drawer header,
-/// sheets) stays in SwiftUI; every block paints through UIKit.
-struct ExtensionNativeBlocksView: UIViewRepresentable {
-    let content: ExtensionNativeBlockContent
-    let sizing: ExtensionNativeBlockScrollView.Sizing
-    var contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
-    var spacing: CGFloat = 10
-    var accessibilityIdentifier: String?
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)?
-    var onDoubleTap: (() -> Void)?
-
-    @Environment(\.themeID) private var themeID
-
-    func makeUIView(context: Context) -> ExtensionNativeBlockScrollView {
-        ExtensionNativeBlockScrollView()
-    }
-
-    func updateUIView(_ uiView: ExtensionNativeBlockScrollView, context: Context) {
-        uiView.update(
-            content: content,
-            context: ExtensionNativeBlockContext(
-                themeID: themeID,
-                linkContext: linkContext,
-                onOpenURL: onOpenURL
-            ),
-            sizing: sizing,
-            contentInsets: contentInsets,
-            spacing: spacing,
-            accessibilityIdentifier: accessibilityIdentifier,
-            onDoubleTap: onDoubleTap
-        )
-    }
-
-    func sizeThatFits(
-        _ proposal: ProposedViewSize,
-        uiView: ExtensionNativeBlockScrollView,
-        context: Context
-    ) -> CGSize? {
-        guard case .capped = sizing else { return nil }
-        let width = proposal.width ?? uiView.bounds.width
-        guard width.isFinite, width > 0 else { return nil }
-        uiView.adoptLayoutWidth(width)
-        return CGSize(width: width, height: uiView.viewportHeight(for: width))
-    }
-}
-
-// MARK: - Full-screen detail
-
-/// One native surface full screen: the chat reader's page for an extension
-/// drawer's double tap (`ChatReaderPayload.extensionNative`).
-struct ExtensionNativeSurfaceDetailSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    let surface: ExtensionUINativeSurface
-    let identifierSuffix: String
-    let title: String
-    let subtitle: String?
-    let statusText: String?
-    var linkContext: ExtensionSurfaceLinkContext = .empty
-    var onOpenURL: ((URL) -> Bool)?
-    /// Reads the session's current snapshot for this surface id. Observation
-    /// re-renders the reader on each widget update, which the server already
-    /// throttles and size-limits; no extra data is fetched. When the surface is
-    /// cleared, the reader keeps the last snapshot it showed.
-    var liveSurface: (@MainActor () -> ExtensionUINativeSurface?)? = nil
-    var usesNavigationBackChrome = false
-
-    @State private var lastLiveSurface: ExtensionUINativeSurface?
-
-    private var displayedSurface: ExtensionUINativeSurface {
-        liveSurface?() ?? lastLiveSurface ?? surface
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
-                if usesNavigationBackChrome {
-                    Button(action: { dismiss() }, label: {
-                        Image(systemName: "chevron.backward")
-                            .font(.body.weight(.semibold))
-                    })
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(String(localized: "Back"))
-                    .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-back")
-                } else {
-                    Button("Done") {
-                        dismiss()
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-done")
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.headline.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let subtitle = subtitle.trimmedNonEmpty, subtitle != title {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.themeComment)
-                            .lineLimit(2)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 18)
-            .padding(.bottom, 12)
-
-            Divider()
-
-            ExtensionNativeBlocksView(
-                content: ExtensionNativeBlockContent(surface: displayedSurface),
-                sizing: .fill,
-                contentInsets: NSDirectionalEdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18),
-                spacing: 12,
-                linkContext: linkContext,
-                onOpenURL: onOpenURL
-            )
-        }
-        .themedScrollSurface()
-        .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail")
-        .onChange(of: liveSurface?()) { _, current in
-            if let current { lastLiveSurface = current }
-        }
-        .horizontalBackSwipeGesture(isEnabled: usesNavigationBackChrome) {
-            dismiss()
-        }
-    }
-}
-
-private extension Optional where Wrapped == String {
-    var trimmedNonEmpty: String? {
-        guard let trimmed = self?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
-            return nil
-        }
-        return trimmed
     }
 }

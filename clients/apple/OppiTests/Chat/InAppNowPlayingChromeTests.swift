@@ -151,10 +151,6 @@ struct InAppNowPlayingChromeTests {
         ) == .start)
     }
 
-    @Test func loadingControlIncludesAnExplicitCancelGlyph() {
-        #expect(AudioLoadingCancelControl.cancelSymbolName == "xmark")
-    }
-
     @Test func selectedLanguageIsIncludedInThePlaybackRequest() {
         let timedText = TimedText.LoadResult(
             tracks: [
@@ -628,6 +624,46 @@ struct InAppNowPlayingChromeTests {
         #expect(stopIsVisible(showsCloseButton: true, usesNavigationBackButton: false))
         #expect(stopIsVisible(showsCloseButton: false, usesNavigationBackButton: true))
         #expect(!stopIsVisible(showsCloseButton: false, usesNavigationBackButton: false))
+    }
+
+    /// The Now Playing page stays while something plays and leaves, once, the
+    /// moment playback ends; Back leaves too.
+    @Test func nowPlayingPageLeavesWhenPlaybackEnds() async {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
+        var leaves = 0
+        let page = InAppNowPlayingPlayerViewController(audioPlayer: player, onLeave: { leaves += 1 })
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = page
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        page.view.layoutIfNeeded()
+
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { leaves == 0 })
+
+        player._setPlaybackStateForTesting(playing: nil, loading: nil)
+        // Observation marks the page's properties dirty; the display link that
+        // would run the pass does not tick in a unit-test window.
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            page.updatePropertiesIfNeeded()
+            return leaves == 1
+        })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            page.updatePropertiesIfNeeded()
+            return leaves == 1
+        })
+    }
+
+    @Test func nowPlayingBackButtonLeaves() throws {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
+        var leaves = 0
+        let page = InAppNowPlayingPlayerViewController(audioPlayer: player, onLeave: { leaves += 1 })
+        page.loadViewIfNeeded()
+        let back = try #require(firstSubview(withAccessibilityIdentifier: "fullscreen-audio.back", in: page.view) as? UIControl)
+
+        back.sendActions(for: .primaryActionTriggered)
+        #expect(leaves == 1)
     }
 }
 

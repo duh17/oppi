@@ -701,10 +701,8 @@ struct AssistantMarkdownLayoutTests {
         """
 
         let root: UIView
-        /// The host's height for the surface: what a UIKit host measures, or
-        /// the frame SwiftUI gave the bridged view.
+        /// The host's height for the surface, as a UIKit host measures it.
         var measure: () -> CGFloat
-        var hostingController: UIViewController?
         func fitting(_ view: UIView) -> CGFloat {
             view.systemLayoutSizeFitting(
                 CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
@@ -740,47 +738,37 @@ struct AssistantMarkdownLayoutTests {
             root = cell
             measure = { fitting(cell) }
         case .extensionMarkdownBlock:
-            let controller = UIHostingController(rootView: ExtensionNativeBlocksView(
+            // The drawer adopts the width it will show before measuring
+            // (`ExtensionSurfacePanel`).
+            let viewport = ExtensionNativeBlockScrollView(frame: CGRect(x: 0, y: 0, width: width, height: 1_000))
+            viewport.update(
                 content: .blocks([.markdown(base: ExtensionUIBlockBase(id: "md", accessibility: nil), markdown: markdown)]),
-                sizing: .capped(maxHeight: 2_000)
-            ))
-            hostingController = controller
-            root = controller.view
-            measure = { 0 }
+                context: ExtensionNativeBlockContext(themeID: .dark),
+                sizing: .capped(maxHeight: 2_000),
+                contentInsets: NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10),
+                spacing: 10,
+                accessibilityIdentifier: nil,
+                onDoubleTap: nil
+            )
+            viewport.adoptLayoutWidth(width)
+            root = viewport
+            measure = { viewport.viewportHeight(for: width) }
         }
 
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1_000))
         defer { window.isHidden = true }
-        let firstHeight: CGFloat
-        if let hostingController {
-            // SwiftUI measures the bridged view at the window's width, then
-            // places it, in one layout pass.
-            window.rootViewController = hostingController
-            window.makeKeyAndVisible()
-            window.layoutIfNeeded()
-            let bridged = try #require(
-                timelineFirstView(ofType: ExtensionNativeBlockScrollView.self, in: root) as UIView?
-                    ?? timelineFirstView(ofType: AssistantMarkdownContentView.self, in: root)
-            )
-            measure = { bridged.frame.height }
-            firstHeight = measure()
-        } else {
-            firstHeight = measure()
-            window.frame.size.height = max(firstHeight, 1)
-            root.translatesAutoresizingMaskIntoConstraints = true
-            root.frame = window.bounds
-            window.addSubview(root)
-            window.makeKeyAndVisible()
-            window.layoutIfNeeded()
-        }
+        let firstHeight = measure()
+        window.frame.size.height = max(firstHeight, 1)
+        root.translatesAutoresizingMaskIntoConstraints = true
+        root.frame = window.bounds
+        window.addSubview(root)
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
         let mermaidView = try #require(timelineFirstView(ofType: NativeMermaidBlockView.self, in: root))
         #expect(mermaidView.debugDiagramHeightConstraintIsActiveForTesting, "measured with the diagram's height")
-        // A UIKit host measures once, at the width it shows. SwiftUI probes a
-        // few widths first, and each probe before display may lay out again.
+        // A host measures once, at the width it shows.
         let layoutsBeforeDisplay = mermaidView.debugRenderCountForTesting
-        if hostingController == nil {
-            #expect(layoutsBeforeDisplay == 1, "laid out once, at the width it is shown at")
-        }
+        #expect(layoutsBeforeDisplay == 1, "laid out once, at the width it is shown at")
 
         rasterGate.open()
         func showsItsWidth() -> Bool {

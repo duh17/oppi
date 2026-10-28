@@ -2,6 +2,27 @@
 import SwiftUI
 import UIKit
 
+/// The full-screen audio player over the theme background, the way a reader
+/// page shows it.
+struct AudioLyricsPlayerPreviewHost: View {
+    let configuration: AudioLyricsPlayerViewController.Configuration
+
+    var body: some View {
+        Host(configuration: configuration)
+            .background { Color.themeBg.ignoresSafeArea() }
+    }
+
+    private struct Host: UIViewControllerRepresentable {
+        let configuration: AudioLyricsPlayerViewController.Configuration
+
+        func makeUIViewController(context: Context) -> AudioLyricsPlayerViewController {
+            AudioLyricsPlayerViewController(configuration: configuration)
+        }
+
+        func updateUIViewController(_ controller: AudioLyricsPlayerViewController, context: Context) {}
+    }
+}
+
 // MARK: - Script Reader Preview
 
 /// Speaker-tagged WebVTT in the full-screen player. Plays a generated silent clip,
@@ -57,7 +78,7 @@ struct AudioScriptReaderPreview: View {
     }
 
     var body: some View {
-        AudioLyricsPlayerView(
+        AudioLyricsPlayerPreviewHost(configuration: .init(
             title: "shaolin.m4a",
             lyrics: nil,
             itemID: Self.itemID,
@@ -67,7 +88,7 @@ struct AudioScriptReaderPreview: View {
             autoplayOnAppear: false,
             showsCloseButton: true,
             timedText: Self.timedText
-        )
+        ))
         .task {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("audio-script-reader-preview.wav")
             try? Self.silentWAV(seconds: 90).write(to: url)
@@ -80,7 +101,7 @@ struct AudioScriptReaderPreview: View {
     }
 
     /// 8 kHz mono 16-bit PCM silence.
-    private static func silentWAV(seconds: Int) -> Data {
+    static func silentWAV(seconds: Int) -> Data {
         let sampleRate: UInt32 = 8000
         let dataSize = UInt32(seconds) * sampleRate * 2
         var data = Data()

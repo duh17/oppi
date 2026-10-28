@@ -1,4 +1,3 @@
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -36,8 +35,8 @@ struct ChatReaderOpenLookupDestinationTests {
         #expect(addToChatSessionId(from: opened) == nil)
     }
 
-    @Test("environment-open rendered artifacts stamp the origin chat destination")
-    func environmentOpenRenderedArtifactsStampOriginChat() throws {
+    @Test("timeline-opened rendered artifacts stamp the origin chat destination")
+    func timelineOpenedRenderedArtifactsStampOriginChat() throws {
         ComposerCanvasActiveDestination.resetForTesting()
         defer { ComposerCanvasActiveDestination.resetForTesting() }
 
@@ -52,23 +51,15 @@ struct ChatReaderOpenLookupDestinationTests {
             .html(content: "<p>hello</p>", filePath: "note.html"),
         ]
         for content in contents {
-            var opened: ChatReaderPayload?
-            let openChatReader = ChatReaderOpenAction { payload in
-                opened = ChatViewController.stampedTimelineReaderPayload(
-                    payload,
-                    sessionId: "chat-origin",
-                    composerDestination: destination
-                )
-            }
-            openChatReader(.document(content: content))
-            let stamped = try #require(opened)
+            let stamped = ChatViewController.stampedTimelineReaderPayload(
+                .document(content: content),
+                sessionId: "chat-origin",
+                composerDestination: destination
+            )
             #expect(stamped.destination === destination)
 
-            let store = ChatReaderPayloadStore()
-            let target = store.store(stamped)
-            let controller = try #require(
-                ChatReaderDestinationView(target: target, store: store).debugMakeControllerForTesting()
-            )
+            let reader = makeReader(for: stamped)
+            let controller = try #require(reader.page as? FullScreenCodeViewController)
             #expect(controller.makeAnnotateHostForTesting().destinationSessionIdForTesting == "chat-origin")
         }
         #expect(acceptedCount == 0)
@@ -190,17 +181,14 @@ struct ChatReaderOpenLookupDestinationTests {
             }
         )
 
-        let store = ChatReaderPayloadStore()
-        let target = store.store(
-            ChatViewController.stampedTimelineReaderPayload(
+        let reader = makeReader(
+            for: ChatViewController.stampedTimelineReaderPayload(
                 .document(content: .html(content: "<p>hello</p>", filePath: "note.html")),
                 sessionId: "chat-a",
                 composerDestination: origin
             )
         )
-        let controller = try #require(
-            ChatReaderDestinationView(target: target, store: store).debugMakeControllerForTesting()
-        )
+        let controller = try #require(reader.page as? FullScreenCodeViewController)
         let host = controller.makeAnnotateHostForTesting()
         #expect(host.destinationSessionIdForTesting == "chat-a")
 
@@ -226,15 +214,12 @@ struct ChatReaderOpenLookupDestinationTests {
             ComposerCanvasDestination(sessionId: "chat-later") { _, _ in true }
         )
 
-        let store = ChatReaderPayloadStore()
-        let target = store.store(
-            ChatReaderPayload.document(
+        let reader = makeReader(
+            for: ChatReaderPayload.document(
                 content: .html(content: "<p>hello</p>", filePath: "note.html")
             )
         )
-        let controller = try #require(
-            ChatReaderDestinationView(target: target, store: store).debugMakeControllerForTesting()
-        )
+        let controller = try #require(reader.page as? FullScreenCodeViewController)
         let host = controller.makeAnnotateHostForTesting()
         let png = try makePNG()
         let outcome = host.completeAddToChatForTesting(
@@ -343,10 +328,7 @@ struct ChatReaderOpenLookupDestinationTests {
         )
         #expect(stamped.destination === destination)
 
-        let embeddedNavigation = EmbeddedImageViewerView(
-            image: image,
-            addToChatDestination: stamped.destination
-        ).debugMakeControllerForTesting()
+        let embeddedNavigation = makeReader(for: stamped).page
         let embeddedViewer = try #require(
             (embeddedNavigation as? UINavigationController)?
                 .viewControllers.first as? FullScreenImageViewController
@@ -402,6 +384,19 @@ struct ChatReaderOpenLookupDestinationTests {
         #expect(outcome == .missingDestination)
         #expect(host.didDismissForTesting == false)
         #expect(host.lastFailureMessageForTesting == PaperMarkupCanvasSession.AddToChatFailure.missingDestinationMessage)
+    }
+
+    /// The pushed reader for `payload`, loaded so it has mounted its page.
+    private func makeReader(for payload: ChatReaderPayload) -> ChatReaderViewController {
+        forgetSharedScopedLockFlags()
+        let store = ChatReaderPayloadStore()
+        let reader = ChatReaderViewController(
+            target: store.store(payload),
+            store: store,
+            navigation: AppNavigation()
+        )
+        reader.loadViewIfNeeded()
+        return reader
     }
 
     private func openFromChatAnchoredView(

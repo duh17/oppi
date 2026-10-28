@@ -5,7 +5,7 @@ enum ToolTimelineRowPresentationHelpers {
 #if DEBUG
     static var enclosingLayoutInvalidationHookForTesting: (() -> Void)?
     static var forcedEnclosingLayoutInvalidationHookForTesting: ((UICollectionView) -> Void)?
-    static var swiftUIMarkdownRootInvalidationHookForTesting: ((AssistantMarkdownContentView) -> Void)?
+    static var markdownRootInvalidationHookForTesting: ((AssistantMarkdownContentView) -> Void)?
     static var debugNestedLayoutInvalidationCountForTesting = 0
     static func debugResetNestedLayoutInvalidationCountForTesting() {
         debugNestedLayoutInvalidationCountForTesting = 0
@@ -305,7 +305,7 @@ enum ToolTimelineRowPresentationHelpers {
             return
         }
 
-        invalidateSwiftUIHostedMarkdownIfNeeded(target.markdownRoot)
+        invalidateMarkdownRootIfNeeded(target.markdownRoot)
     }
 
     /// Force a self-sizing pass for controls that synchronously change their
@@ -349,13 +349,14 @@ enum ToolTimelineRowPresentationHelpers {
             return
         }
 
-        invalidateSwiftUIHostedMarkdownIfNeeded(target.markdownRoot)
+        invalidateMarkdownRootIfNeeded(target.markdownRoot)
     }
 
     /// Walk toward the window, remembering the outermost markdown root.
-    /// Collection-view hosts keep the existing self-sizing path; SwiftUI
-    /// representables have no `UICollectionView`, so the walk would otherwise
-    /// no-op after async mermaid/LaTeX/image growth and freeze `sizeThatFits`.
+    /// Collection-view hosts keep the existing self-sizing path; markdown
+    /// hosted outside a collection view (an extension surface's viewport) has
+    /// no `UICollectionView`, so the walk would otherwise no-op after async
+    /// mermaid/LaTeX/image growth and freeze the host's measured height.
     private static func enclosingLayoutTarget(
         startingAt sourceView: UIView
     ) -> (collectionView: UICollectionView?, markdownRoot: AssistantMarkdownContentView?) {
@@ -373,12 +374,12 @@ enum ToolTimelineRowPresentationHelpers {
         return (nil, markdownRoot)
     }
 
-    private static func invalidateSwiftUIHostedMarkdownIfNeeded(
+    private static func invalidateMarkdownRootIfNeeded(
         _ markdownRoot: AssistantMarkdownContentView?
     ) {
         guard let markdownRoot else { return }
 #if DEBUG
-        swiftUIMarkdownRootInvalidationHookForTesting?(markdownRoot)
+        markdownRootInvalidationHookForTesting?(markdownRoot)
 #endif
         markdownRoot.invalidateIntrinsicContentSize()
         markdownRoot.setNeedsLayout()

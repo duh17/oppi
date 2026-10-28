@@ -1214,17 +1214,32 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(acceptedCount == 1)
     }
 
+    /// The document page the pushed chat reader mounts for `content`.
+    private func documentReader(
+        _ content: FullScreenCodeContent,
+        destination: ComposerCanvasDestination? = nil
+    ) throws -> FullScreenCodeViewController {
+        forgetSharedScopedLockFlags()
+        let store = ChatReaderPayloadStore()
+        let reader = ChatReaderViewController(
+            target: store.store(.document(content: content, destination: destination)),
+            store: store,
+            navigation: AppNavigation()
+        )
+        reader.loadViewIfNeeded()
+        return try #require(reader.page as? FullScreenCodeViewController)
+    }
+
     @Test func embeddedFileViewerHTMLAnnotateUsesExplicitDestination() throws {
         var acceptedCount = 0
         let destination = ComposerCanvasDestination(sessionId: "session-origin") { _, _ in
             acceptedCount += 1
             return true
         }
-        let viewer = EmbeddedFileViewerView(
-            content: .html(content: "<p>hello</p>", filePath: "note.html"),
-            addToChatDestination: destination
+        let controller = try documentReader(
+            .html(content: "<p>hello</p>", filePath: "note.html"),
+            destination: destination
         )
-        let controller = viewer.debugMakeControllerForTesting()
         let host = controller.makeAnnotateHostForTesting()
         let (image, pngData) = try makePNG()
         let outcome = host.completeAddToChatForTesting(
@@ -1246,10 +1261,7 @@ struct FileBrowserReviewCommentSelectionTests {
         ComposerCanvasActiveDestination.push(
             ComposerCanvasDestination(sessionId: "other-chat") { _, _ in true }
         )
-        let viewer = EmbeddedFileViewerView(
-            content: .html(content: "<p>hello</p>", filePath: "note.html")
-        )
-        let controller = viewer.debugMakeControllerForTesting()
+        let controller = try documentReader(.html(content: "<p>hello</p>", filePath: "note.html"))
         let host = controller.makeAnnotateHostForTesting()
         let (image, pngData) = try makePNG()
         let outcome = host.completeAddToChatForTesting(

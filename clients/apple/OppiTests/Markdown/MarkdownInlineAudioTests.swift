@@ -515,23 +515,21 @@ struct MarkdownInlineAudioTests {
         playbackTimedText.selectedIndex = 1
         player.setNowPlayingTimedText(playbackTimedText, for: "audio-1")
         var didLoadViewSidecar = false
-        let host = UIHostingController(
-            rootView: AudioLyricsPlayerView(
-                title: "clip.m4a",
-                lyrics: nil,
-                itemID: "audio-1",
-                audioPlayer: player,
-                play: { _ in },
-                openFile: nil,
-                autoplayOnAppear: false,
-                sidecarLoader: {
-                    didLoadViewSidecar = true
-                    var defaultTimedText = playbackTimedText
-                    defaultTimedText.selectedIndex = 0
-                    return defaultTimedText
-                }
-            )
-        )
+        let host = AudioLyricsPlayerViewController(configuration: .init(
+            title: "clip.m4a",
+            lyrics: nil,
+            itemID: "audio-1",
+            audioPlayer: player,
+            play: { _ in },
+            openFile: nil,
+            autoplayOnAppear: false,
+            sidecarLoader: {
+                didLoadViewSidecar = true
+                var defaultTimedText = playbackTimedText
+                defaultTimedText.selectedIndex = 0
+                return defaultTimedText
+            }
+        ))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()

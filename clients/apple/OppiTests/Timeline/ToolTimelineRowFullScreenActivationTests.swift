@@ -214,8 +214,10 @@ struct ToolTimelineRowFullScreenActivationTests {
         )
         #expect(store.payload(for: target.id) != nil)
 
-        let destination = ChatReaderDestinationView(target: target, store: store)
-        let controller = try #require(destination.debugMakeControllerForTesting())
+        forgetSharedScopedLockFlags()
+        let reader = ChatReaderViewController(target: target, store: store, navigation: AppNavigation())
+        reader.loadViewIfNeeded()
+        let controller = try #require(reader.page as? FullScreenCodeViewController)
         controller.loadViewIfNeeded()
         let navigation = try #require(controller.children.first as? UINavigationController)
         #expect(
@@ -229,10 +231,10 @@ struct ToolTimelineRowFullScreenActivationTests {
         let image = try #require(Self.makeTestPNG())
         let store = ChatReaderPayloadStore()
         let target = store.store(.image(image))
-        let viewer = EmbeddedImageViewerView(image: image)
-        let controller = viewer.debugMakeControllerForTesting()
-        controller.loadViewIfNeeded()
-        let navigation = try #require(controller as? UINavigationController)
+        forgetSharedScopedLockFlags()
+        let reader = ChatReaderViewController(target: target, store: store, navigation: AppNavigation())
+        reader.loadViewIfNeeded()
+        let navigation = try #require(reader.page as? UINavigationController)
         let imageController = try #require(navigation.topViewController as? FullScreenImageViewController)
         imageController.loadViewIfNeeded()
         #expect(
@@ -636,7 +638,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
         defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
 
-        // At 39db5c7b9 ChatReaderPageView re-queried store.payload(for:) on every
+        // At 39db5c7b9 the reader re-queried store.payload(for:) on every
         // render, so a covering disappear that dropped the store entry left empty chrome.
         let host = try makeProductionChatReaderStack()
         defer { host.window.isHidden = true }
@@ -722,6 +724,29 @@ struct ToolTimelineRowFullScreenActivationTests {
                 && !host.navigation.containsChatReader(first)
         }
         #expect(firstReleased, "true pop of the last reader must release its store entry")
+    }
+
+    @Test("Back from the reader releases its payload once app navigation follows the pop")
+    func backFromReaderReleasesItsPayload() async throws {
+        forgetSharedScopedLockFlags()
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .diff) }
+
+        let host = try makeProductionChatReaderStack()
+        defer { host.window.isHidden = true }
+
+        let target = try activateProductionDiffReader(on: host)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { Self.shellShows(screens: 2, in: host) })
+        let stack = try #require(Self.shellStack(in: host.controller))
+        let reader = try #require(stack.topViewController as? ChatReaderViewController)
+        #expect(host.store.payload(for: target.id) != nil)
+
+        Router.finish(reader)
+
+        let released = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.store.payload(for: target.id) == nil && !host.navigation.containsChatReader(target)
+        }
+        #expect(released, "Back left the reader's payload in the store")
     }
 
     @Test("ANSI text keeps display styling in full screen while copy stays plain")
@@ -863,7 +888,7 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     private struct HostedChatReader {
         let window: UIWindow
-        let controller: UIHostingController<AnyView>
+        let controller: UINavigationController
         let store: ChatReaderPayloadStore
         let target: ChatReaderNavTarget
     }
@@ -902,11 +927,10 @@ struct ToolTimelineRowFullScreenActivationTests {
         let target = store.store(payload)
         navigation.openChatReader(target)
 
-        let controller = UIHostingController(
-            rootView: AnyView(
-                ChatReaderDestinationView(target: target, store: store)
-                    .environment(navigation)
-            )
+        let controller = UINavigationController(rootViewController: UIViewController())
+        controller.pushViewController(
+            ChatReaderViewController(target: target, store: store, navigation: navigation),
+            animated: false
         )
         let harness = makeHostHarness()
         harness.window.rootViewController = controller
@@ -923,11 +947,12 @@ struct ToolTimelineRowFullScreenActivationTests {
 
     /// The shell's stack shows `screens` (inbox included) with no transition in flight.
     private static func shellShows(screens: Int, in host: ProductionChatReaderHost) -> Bool {
-        func stack(in controller: UIViewController) -> ShellNavigationController? {
-            (controller as? ShellNavigationController) ?? controller.children.lazy.compactMap(stack(in:)).first
-        }
-        guard let stack = stack(in: host.controller) else { return false }
+        guard let stack = shellStack(in: host.controller) else { return false }
         return stack.transitionCoordinator == nil && stack.viewControllers.count == screens
+    }
+
+    private static func shellStack(in controller: UIViewController) -> ShellNavigationController? {
+        (controller as? ShellNavigationController) ?? controller.children.lazy.compactMap(shellStack(in:)).first
     }
 
     private func makeProductionChatReaderStack() throws -> ProductionChatReaderHost {

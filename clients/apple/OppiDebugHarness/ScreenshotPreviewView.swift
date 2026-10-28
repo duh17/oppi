@@ -251,6 +251,8 @@ struct ScreenshotPreviewView: View {
             AudioFilePlayerScreenshotPreview()
         case "audio-script-reader":
             AudioScriptReaderPreview()
+        case "chat-reader-document", "chat-reader-extension", "chat-reader-locked", "server-lock-cover", "now-playing-player":
+            ChatReaderScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         case "live-activity-working":
             LiveActivityPreviewScreen(title: "Live Activity: Running", state: .init(running: 3, needsYou: 0))
         case "live-activity-needs-you":
@@ -305,6 +307,63 @@ struct ScreenshotPreviewView: View {
                 .ignoresSafeArea()
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
+        }
+    }
+}
+
+/// The chat reader's screens over fixture services, each as the shell mounts
+/// it: the route screen (`ChatReaderViewController`) with a document or an
+/// extension surface, the lock covers a reader and the shell show, and the
+/// full-screen Now Playing page.
+///
+/// - `chat-reader-document`: a Markdown document page.
+/// - `chat-reader-extension`: an extension drawer's surface, full screen.
+/// - `chat-reader-locked`: the cover a reader shows while its origin is
+///   locked. The cover is mounted directly; locking for real would write the
+///   simulator's persistent lock flags.
+/// - `server-lock-cover`: the shell's server lock cover with Switch Server.
+/// - `now-playing-player`: the Now Playing page over a paused silent clip.
+struct ChatReaderScreenshotPreview: View {
+    let screen: String
+    @State private var root = ChatReaderScreenshotFixture.makeRoot()
+    @State private var audioPlayer = AudioPlayerService()
+    private static let nowPlayingItemID = "now-playing-preview"
+
+    var body: some View {
+        RouterPreviewControllerStack(root: root) {
+            makeScreen()
+        }
+        .ignoresSafeArea()
+        .publishesAppRootToWindow(root)
+        .task {
+            guard screen == "now-playing-player" else { return }
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("now-playing-preview.wav")
+            try? AudioScriptReaderPreview.silentWAV(seconds: 90).write(to: url)
+            audioPlayer.toggleFilePlayback(fileURL: url, itemID: Self.nowPlayingItemID)
+            audioPlayer.seek(to: 31)
+            audioPlayer.pause()
+        }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private func makeScreen() -> UIViewController {
+        switch screen {
+        case "chat-reader-extension":
+            return ChatReaderScreenshotFixture.reader(root: root, payload: ChatReaderScreenshotFixture.extensionPayload)
+        case "chat-reader-locked":
+            return ScopedLockCoverViewController(
+                target: ChatReaderScreenshotFixture.origin,
+                title: String(localized: "Reader")
+            )
+        case "server-lock-cover":
+            return ShellRouteScreens.serverLockCover(
+                serverId: ChatReaderScreenshotFixture.servers[0].id,
+                root: root
+            )
+        case "now-playing-player":
+            return InAppNowPlayingPlayerViewController(audioPlayer: audioPlayer, onLeave: {})
+        default:
+            return ChatReaderScreenshotFixture.reader(root: root, payload: ChatReaderScreenshotFixture.documentPayload)
         }
     }
 }
@@ -783,7 +842,7 @@ private struct AudioFilePlayerScreenshotPreview: View {
     @State private var audioPlayer = AudioPlayerService()
 
     var body: some View {
-        AudioLyricsPlayerView(
+        AudioLyricsPlayerPreviewHost(configuration: .init(
             title: "xiaoge-story.wav",
             lyrics: nil,
             itemID: "audio-file-preview",
@@ -794,7 +853,7 @@ private struct AudioFilePlayerScreenshotPreview: View {
             autoplayOnAppear: false,
             showsCloseButton: false,
             usesNavigationBackButton: true
-        )
+        ))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("screenshot.ready")
     }

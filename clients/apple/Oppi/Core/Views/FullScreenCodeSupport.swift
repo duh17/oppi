@@ -1,4 +1,3 @@
-import SwiftUI
 import TipKit
 import UIKit
 
@@ -436,10 +435,8 @@ enum NavigationSwipeGesturePolicy {
 /// with down-chevron chrome must not install this horizontal recognizer.
 ///
 /// Distance/velocity thresholds are shared with ``NavigationSwipeGesturePolicy``.
-/// Scroll-edge gating lives on the UIKit installer path; pure SwiftUI
-/// ``horizontalBackSwipeGesture`` hosts latch suppression during `onChanged`
-/// while a scrub claim is active and consume the latch on end, so child/parent
-/// `onEnded` ordering can never pop a viewer mid-scrub.
+/// Scroll-edge gating lives on the UIKit installer path
+/// (``HorizontalBackSwipeGestureInstaller``).
 enum HorizontalBackSwipeGesturePolicy {
     static let minimumHorizontalDistance = NavigationSwipeGesturePolicy.minimumDistance
     static let leadingEdgeWidth: CGFloat = 20
@@ -455,197 +452,12 @@ enum HorizontalBackSwipeGesturePolicy {
         }
     }
 
-    /// Claims held by nested scrub gestures while their drag is active. A set
-    /// (not a counter) makes release idempotent: an owner can release on cancel,
-    /// disappear, and end without underflowing or poisoning later swipes.
-    @MainActor
-    private static var activeClaims: Set<BackSwipeExclusiveClaim> = []
-
     static func isBackSwipe(translation: CGSize) -> Bool {
         NavigationSwipeGesturePolicy.isSwipe(translation: translation, direction: .right)
     }
 
     static func shouldBegin(velocity: CGPoint) -> Bool {
         NavigationSwipeGesturePolicy.shouldBegin(velocity: velocity, direction: .right)
-    }
-
-    /// Acquires an exclusive claim. The owner must release it when its drag ends
-    /// or cancels; see ``BackSwipeExclusiveClaim``.
-    @MainActor
-    static func acquireExclusiveClaim() -> BackSwipeExclusiveClaim {
-        let claim = BackSwipeExclusiveClaim()
-        activeClaims.insert(claim)
-        return claim
-    }
-
-    /// Idempotent release; safe to call from cancel, disappear, and end paths.
-    @MainActor
-    static func releaseExclusiveClaim(_ claim: BackSwipeExclusiveClaim) {
-        activeClaims.remove(claim)
-    }
-
-    /// True while any scrub claim is active. Back-swipe hosts latch on this
-    /// during `onChanged`.
-    @MainActor
-    static var hasActiveExclusiveClaim: Bool {
-        !activeClaims.isEmpty
-    }
-
-    /// Keeps a parent drag suppressed once any nested scrub claimed it. The
-    /// gesture stores this in `@GestureState`, which resets on both end and
-    /// cancellation instead of leaking into the next swipe.
-    @MainActor
-    static func latchingExclusiveClaim(_ alreadyLatched: Bool) -> Bool {
-        alreadyLatched || hasActiveExclusiveClaim
-    }
-
-    /// SwiftUI ``horizontalBackSwipeGesture`` `onEnded` consults the latch the
-    /// host captured during `onChanged`. Once a scrub claim was observed, the
-    /// simultaneous parent drag must not pop, regardless of release order.
-    @MainActor
-    static func handleSwiftUIBackSwipeEnded(
-        translation: CGSize,
-        startLocation: CGPoint,
-        containerWidth: CGFloat,
-        layoutDirection: LayoutDirection = .leftToRight,
-        didLatchSuppression: Bool,
-        onBack: () -> Void
-    ) {
-        guard !didLatchSuppression else { return }
-        guard isSwiftUILeadingEdgeStart(
-            startLocation: startLocation,
-            containerWidth: containerWidth,
-            layoutDirection: layoutDirection
-        ) else { return }
-        guard isBackSwipe(translation: translation) else { return }
-        onBack()
-    }
-
-    static func isSwiftUILeadingEdgeStart(
-        startLocation: CGPoint,
-        containerWidth: CGFloat,
-        layoutDirection: LayoutDirection = .leftToRight
-    ) -> Bool {
-        switch layoutDirection {
-        case .rightToLeft:
-            return startLocation.x >= containerWidth - leadingEdgeWidth
-        default:
-            return startLocation.x <= leadingEdgeWidth
-        }
-    }
-}
-
-/// Opaque, identity-keyed token held by a scrub gesture for the lifetime of its
-/// drag. Release is idempotent, so cancellation and teardown paths can each
-/// release without coordination.
-final class BackSwipeExclusiveClaim: Hashable {
-    fileprivate init() {}
-
-    static func == (lhs: BackSwipeExclusiveClaim, rhs: BackSwipeExclusiveClaim) -> Bool {
-        lhs === rhs
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(ObjectIdentifier(self))
-    }
-}
-
-private struct HorizontalBackSwipeGestureModifier: ViewModifier {
-    let isEnabled: Bool
-    let onBack: () -> Void
-
-    /// GestureState detects both normal completion and cancellation. The sticky
-    /// suppression value lives in State because GestureState resets before
-    /// `onEnded` is guaranteed to read it.
-    @GestureState private var isTrackingBackSwipe = false
-    @State private var didLatchSuppression = false
-    @State private var containerWidth: CGFloat = 0
-    @Environment(\.layoutDirection) private var layoutDirection
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if isEnabled {
-            content
-                .contentShape(Rectangle())
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: HorizontalBackSwipeWidthKey.self,
-                            value: proxy.size.width
-                        )
-                    }
-                }
-                .onPreferenceChange(HorizontalBackSwipeWidthKey.self) { containerWidth = $0 }
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: HorizontalBackSwipeGesturePolicy.minimumHorizontalDistance)
-                        .updating($isTrackingBackSwipe) { _, tracking, _ in
-                            tracking = true
-                        }
-                        .onChanged { _ in
-                            didLatchSuppression = HorizontalBackSwipeGesturePolicy
-                                .latchingExclusiveClaim(didLatchSuppression)
-                        }
-                        .onEnded { value in
-                            let latched = didLatchSuppression
-                            didLatchSuppression = false
-                            HorizontalBackSwipeGesturePolicy.handleSwiftUIBackSwipeEnded(
-                                translation: value.translation,
-                                startLocation: value.startLocation,
-                                containerWidth: containerWidth,
-                                layoutDirection: layoutDirection,
-                                didLatchSuppression: latched,
-                                onBack: onBack
-                            )
-                        }
-                )
-                .onChange(of: isTrackingBackSwipe) { _, tracking in
-                    guard !tracking else { return }
-                    // A successful `onEnded` consumes State synchronously. A
-                    // cancelled gesture has no callback, so clear one turn later;
-                    // the guard avoids clearing a new drag that started meanwhile.
-                    DispatchQueue.main.async {
-                        guard !isTrackingBackSwipe else { return }
-                        didLatchSuppression = false
-                    }
-                }
-        } else {
-            content
-        }
-    }
-}
-
-extension View {
-    /// SwiftUI adapter for surfaces built from SwiftUI views.
-    /// UIKit scroll views should use ``HorizontalBackSwipeGestureInstaller`` so
-    /// the recognizer lives on the view that actually receives pan events.
-    func horizontalBackSwipeGesture(
-        isEnabled: Bool = true,
-        _ onBack: @escaping () -> Void
-    ) -> some View {
-        modifier(HorizontalBackSwipeGestureModifier(isEnabled: isEnabled, onBack: onBack))
-    }
-}
-
-private struct HorizontalBackSwipeWidthKey: PreferenceKey {
-    nonisolated(unsafe) static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-private struct HorizontalBackSwipeActionKey: EnvironmentKey {
-    static let defaultValue: (@MainActor @Sendable () -> Void)? = nil
-}
-
-extension EnvironmentValues {
-    /// Back action inherited by UIKit-backed SwiftUI renderers.
-    ///
-    /// Use this when a SwiftUI surface contains `UIViewRepresentable` scroll
-    /// views: the parent keeps SwiftUI fallback handling, while the UIKit child
-    /// installs the same recognizer on the actual scroll receiver.
-    var horizontalBackSwipeAction: (@MainActor @Sendable () -> Void)? {
-        get { self[HorizontalBackSwipeActionKey.self] }
-        set { self[HorizontalBackSwipeActionKey.self] = newValue }
     }
 }
 

@@ -533,7 +533,7 @@ struct SessionContentAccessTests {
         )
         let action = body.linkRequest(for: link)
 
-        // The pushed reader routes with the payload's identity (`ChatReaderDestinationView`).
+        // The pushed reader routes with the payload's identity (`ChatReaderViewController`).
         let target = ChatReaderLinkedFileRouting.target(
             for: action,
             serverID: access.identity.serverID,

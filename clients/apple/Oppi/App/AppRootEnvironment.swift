@@ -265,7 +265,6 @@ private struct AppRootEnvironmentModifier: ViewModifier {
             .environment(root.coordinator)
             .withServerScopedEnvironment(root.coordinator.activeConnection)
             .environment(root.navigation)
-            .environment(\.chatReaderPayloadStore, root.chatReaderPayloadStore)
             .environment(root.coordinator.serverStore)
             .environment(root.themeStore)
             .environment(root.quickCommentTemplateStore)

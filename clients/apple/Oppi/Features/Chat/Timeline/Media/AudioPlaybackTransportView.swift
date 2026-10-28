@@ -589,9 +589,11 @@ final class AudioPlaybackTransportView: UIView {
 
 /// Spinner with a small cancel glyph, shown in the play slot while audio loads.
 final class AudioLoadingCancelView: UIView {
+    nonisolated static let cancelSymbolName = "xmark"
+
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let glyph = UIImageView(image: AudioPlayerChromeStyle.symbol(
-        AudioLoadingCancelControl.cancelSymbolName,
+        AudioLoadingCancelView.cancelSymbolName,
         pointSize: 8,
         weight: .bold
     ))
@@ -649,7 +651,6 @@ final class AudioPlaybackSeekBar: UIControl {
             if !isSeekable, isTracking {
                 cancelTracking(with: nil)
             }
-            if !isSeekable { releaseClaim() }
         }
     }
 
@@ -668,8 +669,6 @@ final class AudioPlaybackSeekBar: UIControl {
     private let track = UIView()
     private let fill = UIView()
     private let thumb = UIView()
-    /// Keeps a SwiftUI parent back-swipe from popping the host mid-scrub.
-    private var scrubClaim: BackSwipeExclusiveClaim?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -705,16 +704,8 @@ final class AudioPlaybackSeekBar: UIControl {
         thumb.frame = CGRect(x: width * clamped - 6, y: midY - 6, width: 12, height: 12)
     }
 
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        if window == nil { releaseClaim() }
-    }
-
     override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
         guard isSeekable else { return false }
-        if scrubClaim == nil {
-            scrubClaim = HorizontalBackSwipeGesturePolicy.acquireExclusiveClaim()
-        }
         onScrub?(fraction(for: touch))
         return true
     }
@@ -725,7 +716,6 @@ final class AudioPlaybackSeekBar: UIControl {
     }
 
     override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
-        releaseClaim()
         if let touch {
             onCommit?(fraction(for: touch))
         } else {
@@ -734,7 +724,6 @@ final class AudioPlaybackSeekBar: UIControl {
     }
 
     override func cancelTracking(with event: UIEvent?) {
-        releaseClaim()
         onCancel?()
     }
 
@@ -751,13 +740,6 @@ final class AudioPlaybackSeekBar: UIControl {
     private func fraction(for touch: UITouch) -> Double {
         guard bounds.width > 0 else { return 0 }
         return min(1, max(0, Double(touch.location(in: self).x / bounds.width)))
-    }
-
-    private func releaseClaim() {
-        if let claim = scrubClaim {
-            HorizontalBackSwipeGesturePolicy.releaseExclusiveClaim(claim)
-            scrubClaim = nil
-        }
     }
 
     private static func percentValue(_ fraction: Double) -> String {
