@@ -51,6 +51,16 @@ enum InAppNowPlayingChrome {
 
     static let directSpeakPlaybackPrefix = "audio-stream-"
 
+    /// The full-screen player over a UIKit session list.
+    @MainActor
+    static func presentPlayer(_ audioPlayer: AudioPlayerService, from presenter: UIViewController) {
+        Router.present(
+            InAppNowPlayingPlayerViewController(audioPlayer: audioPlayer),
+            presentation: .fullScreen,
+            from: presenter
+        )
+    }
+
     static func playbackItemID(playingItemID: String?, loadingItemID: String?) -> String? {
         if let playingItemID, !playingItemID.isEmpty { return playingItemID }
         if let loadingItemID, !loadingItemID.isEmpty { return loadingItemID }

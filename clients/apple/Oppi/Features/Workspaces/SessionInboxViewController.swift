@@ -873,7 +873,7 @@ final class SessionInboxViewController: UIViewController {
         guard let player = coordinator.activeServerId.flatMap({ coordinator.connection(for: $0) })?.audioPlayer else {
             return
         }
-        SessionListHostedChrome.presentNowPlayingPlayer(player, from: self)
+        InAppNowPlayingChrome.presentPlayer(player, from: self)
     }
 
     private func openFiles() {

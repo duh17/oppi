@@ -1,4 +1,4 @@
-import SwiftUI
+import UIKit
 
 /// Session-list bottom chrome shared by All Sessions and workspace lists.
 /// Search lives in the navigation-bar drawer and reveals by pulling the list.
@@ -22,7 +22,7 @@ enum SessionInboxComposeChrome {
     /// width (iPad, the iPhone Duo inner display), and while now-playing shares
     /// the bottom bar.
     static func expandsMessageCapsule(
-        horizontalSizeClass: UserInterfaceSizeClass?,
+        horizontalSizeClass: UIUserInterfaceSizeClass?,
         hasActivePlayback: Bool
     ) -> Bool {
         guard !hasActivePlayback else { return false }
@@ -63,93 +63,124 @@ enum SessionInboxSearchScope {
     }
 }
 
-/// Collapsed session-list compose launcher. Not a live text field — tap
-/// presents Quick Session, which owns the real composer.
-struct SessionInboxCompactComposeBar: View {
-    let showsDictation: Bool
-    var hasActivePlayback: Bool = false
-    var columnWidth: CGFloat = 0
-    /// Width kept free beside the capsule: the folder capsule by default.
-    var trailingReserve: CGFloat = SessionInboxComposeChrome.messageCapsuleFolderReserve
-    var placeholder: String = SessionInboxComposeChrome.compactBarPlaceholder
-    let onStart: () -> Void
-    let onDictate: () -> Void
-
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-
-    var body: some View {
-        let expands = SessionInboxComposeChrome.expandsMessageCapsule(
-            horizontalSizeClass: horizontalSizeClass,
-            hasActivePlayback: hasActivePlayback
-        )
-        let minWidth = SessionInboxComposeChrome.messageCapsuleMinWidth(
-            screenWidth: columnWidth,
-            expands: expands,
-            reserve: trailingReserve
-        )
-
-        Button(action: onStart) {
-            if let minWidth {
-                // Keep every width finite. Spacer / max-infinity inside a
-                // toolbar item reports an unbounded ideal size and the bar
-                // drops the capsule.
-                HStack(spacing: 0) {
-                    if showsDictation {
-                        dictationMic
-                    }
-                    placeholderLabel
-                        .frame(
-                            width: minWidth - (showsDictation ? SessionInboxComposeChrome.compactBarMicWidth : 0),
-                            alignment: .leading
-                        )
-                }
-                .frame(width: minWidth, alignment: .leading)
-            } else {
-                HStack(spacing: 8) {
-                    if showsDictation {
-                        dictationMic
-                    }
-                    placeholderLabel
-                }
-            }
-        }
-        .accessibilityLabel("Start Quick Session")
-        .accessibilityIdentifier("workspace.quickSession.start")
-        .accessibilityAction(named: "Dictate Quick Session", onDictate)
-    }
-
-    private var placeholderLabel: some View {
-        Text(placeholder)
-            .font(.subheadline)
-            .foregroundStyle(.themeFgDim)
-            .lineLimit(1)
-            .padding(.leading, showsDictation ? 0 : 16)
-            .padding(.trailing, 16)
-    }
-
-    private var dictationMic: some View {
-        Image(systemName: "mic")
-            .font(.body)
-            .foregroundStyle(.themeFg)
-            .frame(
-                width: SessionInboxComposeChrome.compactBarMicWidth,
-                height: SessionInboxComposeChrome.compactBarHitHeight
-            )
-            .contentShape(Rectangle())
-            .highPriorityGesture(TapGesture().onEnded(onDictate))
-            .accessibilityHidden(true)
-            .accessibilityIdentifier("workspace.quickSession.dictate")
-    }
-}
-
-/// The full-screen now-playing player over a UIKit session list.
+/// Collapsed session-list compose launcher, the bottom bar's leading item. Not a
+/// live text field: a tap presents Quick Session, which owns the real composer,
+/// and the mic starts dictation there. One accessibility element, labeled "Start
+/// Quick Session", with the mic as a custom action while the mic shows.
+///
+/// At compact width the capsule has a fixed width (`SessionInboxComposeChrome.messageCapsuleMinWidth`)
+/// so it covers the row title under it; at regular width, or while now-playing
+/// shares the bar, it is as wide as its content. A bar item reports that size as
+/// the view's intrinsic size, so a change re-measures it.
 @MainActor
-enum SessionListHostedChrome {
-    static func presentNowPlayingPlayer(_ audioPlayer: AudioPlayerService, from presenter: UIViewController) {
-        Router.present(
-            InAppNowPlayingPlayerViewController(audioPlayer: audioPlayer),
-            presentation: .fullScreen,
-            from: presenter
+final class SessionInboxMessageCapsule: UIControl {
+    /// What the bar pass decides the capsule draws.
+    struct Content: Equatable {
+        var showsDictation: Bool
+        var hasActivePlayback = false
+        /// The list column's width, which sizes the capsule at compact width.
+        var columnWidth: CGFloat = 0
+        /// Width kept free beside the capsule: the folder capsule by default.
+        var trailingReserve = SessionInboxComposeChrome.messageCapsuleFolderReserve
+        var placeholder = SessionInboxComposeChrome.compactBarPlaceholder
+    }
+
+    private static let edgePadding: CGFloat = 16
+
+    private let micButton = UIButton(type: .custom)
+    private let placeholderLabel = UILabel()
+    private var content: Content
+    private let onDictate: () -> Void
+
+    /// `onStart` runs for a tap on the capsule, `onDictate` for a tap on the mic.
+    init(content: Content, onStart: @escaping () -> Void, onDictate: @escaping () -> Void) {
+        self.content = content
+        self.onDictate = onDictate
+        super.init(frame: .zero)
+        addAction(UIAction { _ in onStart() }, for: .touchUpInside)
+
+        placeholderLabel.font = .scaled(.subheadline)
+        placeholderLabel.adjustsFontForContentSizeCategory = true
+        placeholderLabel.numberOfLines = 1
+        placeholderLabel.lineBreakMode = .byTruncatingTail
+        placeholderLabel.isUserInteractionEnabled = false
+        addSubview(placeholderLabel)
+
+        micButton.setImage(UIImage.scaledSymbol("mic", style: .body), for: .normal)
+        micButton.addAction(UIAction { [weak self] _ in self?.onDictate() }, for: .touchUpInside)
+        // The capsule is the one accessibility element; the mic is its custom action.
+        micButton.isAccessibilityElement = false
+        micButton.accessibilityIdentifier = "workspace.quickSession.dictate"
+        addSubview(micButton)
+
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityLabel = String(localized: "Start Quick Session")
+        accessibilityIdentifier = "workspace.quickSession.start"
+        registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitPreferredContentSizeCategory.self]) {
+            (capsule: SessionInboxMessageCapsule, _: UITraitCollection) in
+            capsule.invalidateIntrinsicContentSize()
+        }
+        apply(content, palette: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    /// Draws `content`; a theme palette recolors the mic and placeholder. The capsule
+    /// re-measures only when what it draws changes.
+    func apply(_ content: Content, palette: ThemePalette?) {
+        let changed = content != self.content
+        self.content = content
+        placeholderLabel.text = content.placeholder
+        micButton.isHidden = !content.showsDictation
+        accessibilityCustomActions = content.showsDictation ? [
+            UIAccessibilityCustomAction(name: String(localized: "Dictate Quick Session")) { [weak self] _ in
+                self?.onDictate()
+                return true
+            },
+        ] : nil
+        if let palette {
+            placeholderLabel.textColor = UIColor(palette.fgDim)
+            micButton.tintColor = UIColor(palette.fg)
+        }
+        if changed {
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+
+    /// The fixed width at compact width; nil when the capsule is as wide as its content.
+    var fixedWidth: CGFloat? {
+        SessionInboxComposeChrome.messageCapsuleMinWidth(
+            screenWidth: content.columnWidth,
+            expands: SessionInboxComposeChrome.expandsMessageCapsule(
+                horizontalSizeClass: traitCollection.horizontalSizeClass,
+                hasActivePlayback: content.hasActivePlayback
+            ),
+            reserve: content.trailingReserve
         )
+    }
+
+    private var leadingInset: CGFloat {
+        content.showsDictation ? SessionInboxComposeChrome.compactBarMicWidth : Self.edgePadding
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let height = SessionInboxComposeChrome.compactBarHitHeight
+        if let fixedWidth { return CGSize(width: fixedWidth, height: height) }
+        let label = placeholderLabel.sizeThatFits(CGSize(width: .greatestFiniteMagnitude, height: height))
+        return CGSize(width: leadingInset + ceil(label.width) + Self.edgePadding, height: height)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let isRTL = effectiveUserInterfaceLayoutDirection == .rightToLeft
+        func frame(x: CGFloat, width: CGFloat) -> CGRect {
+            CGRect(x: isRTL ? bounds.width - x - width : x, y: 0, width: width, height: bounds.height)
+        }
+        micButton.frame = frame(x: 0, width: SessionInboxComposeChrome.compactBarMicWidth)
+        let labelWidth = max(0, bounds.width - leadingInset - Self.edgePadding)
+        placeholderLabel.frame = frame(x: leadingInset, width: labelWidth)
     }
 }

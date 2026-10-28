@@ -979,15 +979,14 @@ enum SessionListBarItems {
 }
 
 /// A session list's Message and Now Playing controls. On the horizontal
-/// bottom bar they are the hosted Message capsule and the Now Playing pill,
-/// kept across passes so they update in place instead of rebuilding the bar
+/// bottom bar they are the Message capsule and the Now Playing pill, kept
+/// across passes so they update in place instead of rebuilding the bar
 /// item; on the vertical rail, labeled symbols. Each opens Quick Session,
 /// dictation, or the player through the list's closures.
 @MainActor
 final class SessionListBottomBar {
-    /// The Message capsule's host, once the horizontal bar has asked for it.
-    private(set) var composeHost: HostedContentController?
-    private var composeParams: ComposeParams?
+    /// The Message capsule, once the horizontal bar has asked for it.
+    private(set) var messageCapsule: SessionInboxMessageCapsule?
     private var pill: InAppNowPlayingPillView?
     private let root: AppRootEnvironment
     private let onStart: () -> Void
@@ -1007,7 +1006,7 @@ final class SessionListBottomBar {
     }
 
     /// Brings the horizontal bar's capsule up to date, and the pill when
-    /// Now Playing shows. The capsule rebuilds only when its inputs change.
+    /// Now Playing shows. Call from `updateProperties()`: the theme read here is tracked.
     func update(
         showsDictation: Bool,
         hasActivePlayback: Bool,
@@ -1015,28 +1014,18 @@ final class SessionListBottomBar {
         player: AudioPlayerService?,
         columnWidth: CGFloat
     ) {
-        let params = ComposeParams(
+        let content = SessionInboxMessageCapsule.Content(
             showsDictation: showsDictation,
             hasActivePlayback: hasActivePlayback,
             columnWidth: columnWidth
         )
-        if composeParams != params || composeHost == nil {
-            composeParams = params
-            let content = SessionInboxCompactComposeBar(
-                showsDictation: showsDictation,
-                hasActivePlayback: hasActivePlayback,
-                columnWidth: columnWidth,
-                onStart: onStart,
-                onDictate: onDictate
-            )
-            if let composeHost {
-                composeHost.setContent(content)
-            } else {
-                let host = HostFactory.content(content, root: root)
-                host.sizingOptions = .intrinsicContentSize
-                host.view.backgroundColor = .clear
-                composeHost = host
-            }
+        let palette = root.themeStore.activeThemeID.palette
+        if let messageCapsule {
+            messageCapsule.apply(content, palette: palette)
+        } else {
+            let capsule = SessionInboxMessageCapsule(content: content, onStart: onStart, onDictate: onDictate)
+            capsule.apply(content, palette: palette)
+            messageCapsule = capsule
         }
         guard toolbar.showsNowPlayingPill, let player else { return }
         if let pill {
@@ -1055,8 +1044,8 @@ final class SessionListBottomBar {
     /// or centered, then `files` trailing.
     func items(showsNowPlaying: Bool, parksNowPlayingNextToCompose: Bool, files: UIBarButtonItem) -> [UIBarButtonItem] {
         var items: [UIBarButtonItem] = []
-        if let composeHost {
-            items.append(UIBarButtonItem(customView: composeHost.view))
+        if let messageCapsule {
+            items.append(UIBarButtonItem(customView: messageCapsule))
         }
         if showsNowPlaying, let pill {
             items.append(parksNowPlayingNextToCompose ? .fixedSpace() : .flexibleSpace())
@@ -1069,8 +1058,7 @@ final class SessionListBottomBar {
 
     /// Drops the controls with the list's content; the next update makes them again.
     func reset() {
-        composeHost = nil
-        composeParams = nil
+        messageCapsule = nil
         pill = nil
     }
 
@@ -1115,12 +1103,6 @@ final class SessionListBottomBar {
         item.accessibilityLabel = String(localized: "Now Playing")
         item.accessibilityIdentifier = "sessionList.nowPlaying.rail"
         return SessionListBarItems.railItem(item, priority: .overflowFirst)
-    }
-
-    private struct ComposeParams: Equatable {
-        let showsDictation: Bool
-        let hasActivePlayback: Bool
-        let columnWidth: CGFloat
     }
 }
 

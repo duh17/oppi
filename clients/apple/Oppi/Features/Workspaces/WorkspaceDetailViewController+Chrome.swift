@@ -54,8 +54,8 @@ extension WorkspaceDetailViewController {
                 columnWidth: columnWidth
             )
             // Disabled while a session is being created.
-            bottomBar.composeHost?.view.isUserInteractionEnabled = !state.isCreating
-            bottomBar.composeHost?.view.alpha = state.isCreating ? 0.55 : 1
+            bottomBar.messageCapsule?.isUserInteractionEnabled = !state.isCreating
+            bottomBar.messageCapsule?.alpha = state.isCreating ? 0.55 : 1
         }
 
         let bars = BarState(

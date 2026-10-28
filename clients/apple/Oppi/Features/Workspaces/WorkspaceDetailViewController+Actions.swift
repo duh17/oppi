@@ -244,7 +244,7 @@ extension WorkspaceDetailViewController {
 
     func openNowPlaying() {
         guard let player = connection?.audioPlayer else { return }
-        SessionListHostedChrome.presentNowPlayingPlayer(player, from: self)
+        InAppNowPlayingChrome.presentPlayer(player, from: self)
     }
 
     func openWorkspaceFiles() {
