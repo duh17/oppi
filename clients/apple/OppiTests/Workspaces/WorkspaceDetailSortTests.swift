@@ -191,44 +191,6 @@ struct WorkspaceDetailSortTests {
     }
 }
 
-@Suite("Workspace Delete Confirmation")
-struct WorkspaceDeleteConfirmationTests {
-    @Test func confirmationCopyRemovesRecordKeepsFilesAndWarnsSessions() {
-        let message = WorkspaceDeleteConfirmationPolicy.deleteMessage(
-            for: makeTestWorkspace(id: "ws-notes", name: "Notes")
-        )
-
-        #expect(
-            message
-                == "This removes the Oppi workspace record for \"Notes\". Files on disk stay. Sessions in this workspace may become unreachable."
-        )
-    }
-
-    @Test func deleteSwipeActionOnlyOpensConfirmation() {
-        #expect(WorkspaceDeleteConfirmationPolicy.swipeButtonRole == nil)
-    }
-
-    @Test func deleteConfirmationClearsPendingBeforeDeleteCallback() {
-        let workspace = makeTestWorkspace(id: "ws-delete", name: "Delete Me")
-        var pendingWorkspace: Workspace? = workspace
-        var didDelete = false
-        var pendingWasClearedBeforeDelete = false
-
-        WorkspaceDeleteConfirmationPolicy.confirm(
-            workspace: workspace,
-            clearPending: { pendingWorkspace = nil },
-            performDelete: { deleted in
-                didDelete = deleted.id == workspace.id
-                pendingWasClearedBeforeDelete = pendingWorkspace == nil
-            }
-        )
-
-        #expect(didDelete)
-        #expect(pendingWorkspace == nil)
-        #expect(pendingWasClearedBeforeDelete)
-    }
-}
-
 @Suite("Workspace icon picker catalog")
 struct WorkspaceIconPickerCatalogTests {
     @Test func emptySearchReturnsEveryCuratedSymbol() {

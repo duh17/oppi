@@ -15,7 +15,7 @@ import SwiftUI
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `agent-icon-picker`, `agent-edit`, `agent-edit-tools`, `-skills`, `-extensions`, `-workspaces` (the pages it pushes), `pi-tools`, `schedule-edit`, `schedule-edit-cron`, `schedule-edit-existing`,
-/// `schedule-time-zone`, `workspace-create`, `workspace-create-configure`, `server-settings`
+/// `schedule-time-zone`, `workspaces` (the server's workspace list), `workspaces-empty`, `workspace-create`, `workspace-create-configure`, `server-settings`
 /// (Server Settings for the fixture server, loaded), `server-settings-loading` (its
 /// summary and loading rows, before the first answer).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
@@ -213,6 +213,9 @@ struct SettingsSweepScreenshotPreview: View {
             if let empty = try? JSONEncoder().encode(SSHTerminalCatalog(profiles: [])) {
                 ScreenshotVolatileDefaults.apply([SSHTerminalProfileStore.catalogKey: empty])
             }
+        case "workspaces", "workspaces-empty":
+            connection.workspaceStore.setActiveServer(server.id)
+            connection.workspaceStore.workspacesByServer[server.id] = page == "workspaces" ? Self.workspaceList : []
         case "agents":
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
@@ -248,6 +251,11 @@ struct SettingsSweepScreenshotPreview: View {
     @ViewBuilder
     private var content: some View {
         switch page {
+        case "workspaces", "workspaces-empty":
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceListViewController(server: server, root: root)
+            }
+            .ignoresSafeArea()
         case "workspace-create":
             RouterPreviewControllerStack(root: root) {
                 WorkspaceCreateViewController(root: root, server: server)
@@ -591,6 +599,29 @@ struct SettingsSweepScreenshotPreview: View {
     private static let workspace = Workspace(
         id: "preview-ws", name: "oppi-dev", createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
     )
+
+    /// A host workspace with a description, a sandbox with no folder, and one
+    /// whose folder path is long enough to wrap.
+    private static let workspaceList: [Workspace] = {
+        var sandbox = Workspace(
+            id: "preview-sandbox", name: "oppi-sandbox", icon: .symbol("shippingbox"),
+            createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        sandbox.runtime = .sandbox
+        return [
+            Workspace(
+                id: "preview-ws", name: "oppi-dev", description: "iOS app development workspace",
+                icon: .symbol("hammer"), hostMount: "~/workspace/oppi",
+                createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
+            ),
+            sandbox,
+            Workspace(
+                id: "preview-notes", name: "Notes", icon: .emoji("\u{1F4DD}"),
+                hostMount: "~/notes/with/a/rather/long/path/that/wraps/at/large/text/sizes",
+                createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
+            ),
+        ]
+    }()
 
     private static let pendingApproval = PendingPairingApproval(
         id: "pa-preview", deviceName: "Chen's iPad", method: "invite", source: nil,

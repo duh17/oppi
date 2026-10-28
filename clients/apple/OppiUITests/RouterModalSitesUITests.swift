@@ -297,6 +297,29 @@ final class RouterModalSitesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// The Extensions page lists Oppi's and Pi's extensions with a switch each; a
+    /// write with no server shows its error inline and puts the switch back.
+    func testWorkspaceExtensionsPageTogglesAndShowsItsError() {
+        launch(screen: "workspace-settings", environment: ["SCREENSHOT_WORKSPACE_PAGE": "extensions"])
+        let list = app.collectionViews["workspace.edit.extensions.list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 10), "The Extensions page did not open")
+        XCTAssertTrue(app.navigationBars["Extensions"].exists, "The Extensions page must carry its title")
+        let enabled = list.switches["workspace.edit.extension.workflow"]
+        let disabled = list.switches["workspace.edit.extension.simplify"]
+        XCTAssertTrue(enabled.waitForExistence(timeout: 5), "An extension must show its switch")
+        XCTAssertEqual(enabled.value as? String, "1")
+        XCTAssertEqual(disabled.value as? String, "0")
+        attachScreenshot("workspace-extensions-page")
+
+        enabled.tap()
+        XCTAssertTrue(
+            list.staticTexts["Server is offline"].waitForExistence(timeout: 5),
+            "A write with no server must show its error"
+        )
+        XCTAssertEqual(enabled.value as? String, "1", "A refused write must put the switch back")
+        assertRunning()
+    }
+
     /// Workspace Settings carries the compact Oppi bar for this workspace:
     /// no pills at rest, the pills with the keyboard, Send once there is text.
     func testWorkspaceSettingsShowsTheOppiBar() {

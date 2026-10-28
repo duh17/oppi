@@ -398,6 +398,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                 AnyHashable(current.icon),
                 AnyHashable(current.runtime),
                 AnyHashable(folderSummary),
+                AnyHashable(serverSummary),
                 AnyHashable(lockWord),
             ])
         case .instructions: return AnyHashable(model.instructionsSummary)
@@ -429,17 +430,24 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         return model.isSandbox ? String(localized: "Sandbox") : String(localized: "No folder")
     }
 
+    /// The row names the server the workspace is on, so a second server's
+    /// workspace is not mistaken for the first's.
+    private var serverSummary: String? {
+        root.coordinator.serverStore.server(for: serverId).map { String(localized: "On \($0.name)") }
+    }
+
     private var lockWord: String { locks.badge(lockTarget).accessibilityWord }
 
     // MARK: - Data source
 
     private func installDataSource() {
-        let summary = UICollectionView.CellRegistration<WorkspaceSettingsSummaryCell, Item> { [weak self] cell, _, _ in
+        let summary = UICollectionView.CellRegistration<WorkspaceRowCell, Item> { [weak self] cell, _, _ in
             guard let self else { return }
             let palette = ThemeRuntimeState.currentPalette()
             cell.configure(
                 workspace: current,
                 folder: folderSummary,
+                server: serverSummary,
                 lock: locks.badge(lockTarget),
                 colors: ComposerThemeColors(palette: palette),
                 assetCache: connection?.iconAssetCache,
@@ -650,10 +658,9 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         }
     }
 
-    /// Pushes the page for `item`. Each page is a SwiftUI leaf that starts from
-    /// the app root, so this screen's server, API client, and navigation go on
-    /// it explicitly. The SwiftUI pages are named inside closures, so this
-    /// UIKit file adds no SwiftUI import.
+    /// Pushes the page for `item`. Every page is UIKit except Dictionary, a
+    /// SwiftUI leaf that starts from the app root, so this screen's server, API
+    /// client, and navigation go on it explicitly.
     private func push(_ item: Item) {
         guard let connection else { return }
         let navigator = ScreenNavigator.forUIKitScreen(self, root: root)
@@ -663,30 +670,18 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         let navigation = root.navigation
         switch item {
         case .summary:
-            navigator.push {
-                WorkspaceDetailsPage(model: model)
-                    .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-            }
+            Router.push(WorkspaceDetailsViewController(settings: model, connection: connection, root: root), from: self)
         case .instructions:
-            navigator.push {
-                WorkspaceInstructionsPage(model: model)
-                    .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-            }
+            Router.push(WorkspaceInstructionsViewController(model: model, root: root), from: self)
         case .skills:
             Router.push(WorkspaceSkillsViewController(model: model, connection: connection, root: root), from: self)
         case .extensions:
-            navigator.push {
-                WorkspaceExtensionsPage(model: model)
-                    .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-            }
+            Router.push(WorkspaceExtensionsViewController(model: model, root: root), from: self)
         case .mcpServers:
             // A host workspace manages its own `.pi/mcp.json`; a sandbox picks
             // from the global servers.
             if model.isSandbox {
-                navigator.push {
-                    WorkspaceSandboxMcpPage(model: model)
-                        .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-                }
+                Router.push(WorkspaceSandboxMcpViewController(model: model, root: root), from: self)
             } else {
                 Router.push(McpServersViewController(scopeId: workspaceId, root: root), from: self)
             }
@@ -699,10 +694,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                 from: self
             )
         case .networkAccess:
-            navigator.push {
-                WorkspaceNetworkAccessPage(model: model)
-                    .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
-            }
+            Router.push(WorkspaceNetworkAccessViewController(model: model, root: root), from: self)
         case .projectTrust, .gitStatus, .lock, .error, .delete:
             break
         }
@@ -781,123 +773,5 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
         collectionView.deselectItem(at: indexPath, animated: true)
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
         perform(item)
-    }
-}
-
-/// The workspace's summary row: its icon, name and lock badge, and folder.
-/// The whole row is one button, so a tap, a VoiceOver activation, and
-/// `app.buttons[id]` all open Details.
-final class WorkspaceSettingsSummaryCell: UICollectionViewListCell {
-    private let button = SettingsRowButton(type: .system)
-    private let icon = IconChoiceUIView(size: 24, frameSize: 36)
-    private let nameLabel = UILabel()
-    private let lockLabel = UILabel()
-    private let folderLabel = UILabel()
-    private var tapAction: UIAction?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        for view in [icon, nameLabel, lockLabel, folderLabel, button] as [UIView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            contentView.addSubview(view)
-        }
-        // The system highlight is the cell's own: it fills the whole row and
-        // keeps the card's corners, which a content-view fill cannot.
-        button.onHighlight = { [weak self] in self?.isHighlighted = $0 }
-        accessories = [.disclosureIndicator()]
-        nameLabel.font = .preferredFont(forTextStyle: .body)
-        nameLabel.adjustsFontForContentSizeCategory = true
-        nameLabel.numberOfLines = 0
-        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        lockLabel.setContentHuggingPriority(.required, for: .horizontal)
-        lockLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        folderLabel.font = .preferredFont(forTextStyle: .footnote)
-        folderLabel.adjustsFontForContentSizeCategory = true
-        // A folder path has no spaces to wrap at, so it wraps by character: at a
-        // large text size it takes more lines instead of being cut off.
-        folderLabel.numberOfLines = 0
-        folderLabel.lineBreakMode = .byCharWrapping
-        button.accessibilityTraits = .button
-        // The labels paint the row; the button above them is its one accessible
-        // element, so the row reads as a single control.
-        accessibilityElements = [button]
-        NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
-            icon.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
-            lockLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 5),
-            lockLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            lockLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.layoutMarginsGuide.trailingAnchor),
-            folderLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            folderLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
-            folderLabel.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            folderLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
-            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            button.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            button.topAnchor.constraint(equalTo: contentView.topAnchor),
-            button.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            // The separator starts where the name does, past the icon.
-            separatorLayoutGuide.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func configure(
-        workspace: Workspace,
-        folder: String,
-        lock: ScopedLockState,
-        colors: ComposerThemeColors,
-        assetCache: IconAssetCache?,
-        identifier: String,
-        action: @escaping () -> Void
-    ) {
-        icon.apply(
-            .choice(workspace.icon, purpose: .workspace, sandbox: workspace.runtime == .sandbox),
-            colors: colors,
-            assetCache: assetCache
-        )
-        nameLabel.text = workspace.name
-        nameLabel.textColor = colors.fg
-        folderLabel.text = folder
-        folderLabel.textColor = colors.comment
-        SessionRowText.setLockBadge(lock, on: lockLabel, color: colors.comment)
-        let lockWord = lock.accessibilityWord
-        button.accessibilityIdentifier = identifier
-        button.accessibilityLabel = workspace.name
-        button.accessibilityValue = lockWord.isEmpty ? folder : "\(folder), \(lockWord)"
-        if let tapAction { button.removeAction(tapAction, for: .touchUpInside) }
-        let tap = UIAction { _ in action() }
-        tapAction = tap
-        button.addAction(tap, for: .touchUpInside)
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        if let tapAction {
-            button.removeAction(tapAction, for: .touchUpInside)
-            self.tapAction = nil
-        }
-        button.accessibilityIdentifier = nil
-        button.accessibilityLabel = nil
-        button.accessibilityValue = nil
-        nameLabel.text = nil
-        folderLabel.text = nil
-        lockLabel.attributedText = nil
-        isHighlighted = false
-    }
-}
-
-private extension ScopedLockState {
-    /// The state as the row's accessibility value; empty without a lock.
-    var accessibilityWord: String {
-        switch self {
-        case .none: ""
-        case .locked: String(localized: "Locked")
-        case .unlocked: String(localized: "Unlocked")
-        }
     }
 }

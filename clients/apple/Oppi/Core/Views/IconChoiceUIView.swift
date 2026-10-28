@@ -3,7 +3,7 @@ import UIKit
 /// A saved workspace or Agent icon (`IconChoiceView` in UIKit): an SF Symbol in
 /// the theme blue, an emoji, or a Genmoji the server stores, which loads
 /// through the server's icon cache and shows the default symbol until it
-/// arrives. A sandbox workspace adds the lock mark (`WorkspaceRuntimeIcon`).
+/// arrives. A sandbox workspace adds the lock mark.
 /// Also the Pi mark, and plain symbols for the other pills. Quick Session's
 /// pills and pickers, the chat title, the empty chat, and the workspace
 /// sidebar's rows draw their icons with it.

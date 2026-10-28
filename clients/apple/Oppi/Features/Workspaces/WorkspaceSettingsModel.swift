@@ -249,6 +249,11 @@ final class WorkspaceSettingsModel {
         return folder.isEmpty ? nil : folder
     }
 
+    /// The name of the server this workspace is on, once the model is bound to it.
+    func serverName(in serverStore: ServerStore) -> String? {
+        scope.flatMap { serverStore.server(for: $0.serverId)?.name }
+    }
+
     var instructionsSummary: String {
         guard let prompt = workspace.systemPrompt, !prompt.isEmpty else { return "None" }
         let lines = prompt.split(separator: "\n", omittingEmptySubsequences: false).count
@@ -283,10 +288,15 @@ final class WorkspaceSettingsModel {
     /// Pi ignores a distrusted folder's project settings, so a toggle there would do nothing.
     var canTogglePiResources: Bool { projectTrust != .distrusted }
 
-    var piResourceFooter: String {
-        canTogglePiResources
-            ? "Toggles write Pi user/project settings for this folder. Use reload in an active session to apply changes immediately."
-            : "Pi ignores this folder\u{2019}s project settings while it isn\u{2019}t trusted, so toggles are off."
+    /// The footer under a Skills or Extensions list. A switch edits Pi's own
+    /// settings for this folder on the workspace's server, so the terminal sees
+    /// the change too; `serverName` is that server's name.
+    func piResourceFooter(serverName: String?) -> String {
+        guard canTogglePiResources else {
+            return "Pi ignores this folder\u{2019}s project settings until it\u{2019}s trusted, so these switches can\u{2019}t be changed."
+        }
+        let server = serverName ?? "your server"
+        return "Changes Pi\u{2019}s settings for this folder on \(server); the terminal sees them too. Reload a running session to apply them now."
     }
 
     /// The value the Show Changes in Chat toggle shows: the pending write, else the saved one.

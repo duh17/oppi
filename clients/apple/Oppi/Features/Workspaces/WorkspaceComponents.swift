@@ -19,40 +19,6 @@ struct WorkspaceIcon: View {
     }
 }
 
-struct WorkspaceRuntimeIcon: View {
-    let workspace: Workspace
-    let size: CGFloat
-    let frameSize: CGFloat
-    var assetCache: IconAssetCache? = nil
-
-    var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            WorkspaceIcon(icon: workspace.icon, size: size, assetCache: assetCache)
-                .frame(width: frameSize, height: frameSize)
-
-            if workspace.runtime == .sandbox {
-                WorkspaceSandboxMark(size: max(11, frameSize * 0.34))
-                    .offset(x: frameSize * 0.05, y: frameSize * 0.05)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(workspace.runtime == .sandbox ? "Sandbox workspace" : "Workspace")
-    }
-}
-
-struct WorkspaceSandboxMark: View {
-    let size: CGFloat
-
-    var body: some View {
-        Image(systemName: "lock.fill")
-            .font(.system(size: size * 0.52, weight: .bold))
-            .foregroundStyle(.themeBg)
-            .frame(width: size, height: size)
-            .background(Circle().fill(.themeOrange))
-            .overlay(Circle().stroke(.themeBg, lineWidth: 1))
-            .accessibilityLabel("Sandbox")
-    }
-}
 
 // MARK: - RuntimeBadge
 
@@ -308,7 +274,7 @@ struct WorkspaceSidebarRowConfiguration: UIContentConfiguration {
 final class WorkspaceSidebarRowContentView: UIView, UIContentView {
     private let selection = UIView()
     /// A 26 pt workspace mark drawn at 78 % of its 26 pt box (`IconChoiceView`),
-    /// centered in 32 pt with the sandbox lock (`WorkspaceRuntimeIcon`).
+    /// centered in 32 pt with the sandbox lock.
     private let icon = IconChoiceUIView(size: 26 * 0.78, frameSize: 32)
     private let nameLabel = UILabel()
     private let lockLabel = UILabel()

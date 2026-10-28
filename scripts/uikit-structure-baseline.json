@@ -237,28 +237,7 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateViewController.swift": {
       ".settingsToggle(": 2
     },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailsPage.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceExtensionsPage.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceFolderValidationView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceHomeView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceInstructionsPage.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceListView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceNetworkAccessPage.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceSandboxMcpPage.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsModel.swift": {

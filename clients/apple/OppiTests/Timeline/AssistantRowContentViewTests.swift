@@ -151,7 +151,7 @@ struct AssistantTimelineRowContentViewTests {
                 purpose: .agent,
                 size: 24
             )
-            WorkspaceRuntimeIcon(workspace: workspace, size: 24, frameSize: 32)
+            WorkspaceIcon(icon: workspace.icon, size: 24)
             SessionIdentityIconView(
                 sessionId: "session-1",
                 agentId: "agent-1",

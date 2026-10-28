@@ -138,34 +138,43 @@ struct WorkspaceSettingsScreenshotPreview: View {
     @ViewBuilder
     private var content: some View {
         switch ProcessInfo.processInfo.environment["SCREENSHOT_WORKSPACE_PAGE"] {
-        case "details": leaf { WorkspaceDetailsPage(model: model) }
-        case "instructions": leaf { WorkspaceInstructionsPage(model: model) }
+        case "details":
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceDetailsViewController(settings: model, connection: connection, root: root)
+            }
+        case "instructions":
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceInstructionsViewController(model: model, root: root)
+            }
         case "skills":
             RouterPreviewControllerStack(root: root) {
                 WorkspaceSkillsViewController(model: model, connection: connection, root: root)
             }
         case "skill-detail":
             SkillDetailPreviewHost(root: root, connection: connection, serverId: Self.serverId)
-        case "extensions": leaf { WorkspaceExtensionsPage(model: model) }
+        case "extensions":
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceExtensionsViewController(model: model, root: root)
+            }
         case "mcp":
             if workspace.runtime == .sandbox {
-                leaf { WorkspaceSandboxMcpPage(model: model) }
+                RouterPreviewControllerStack(root: root) {
+                    WorkspaceSandboxMcpViewController(model: model, root: root)
+                }
             } else {
                 RouterPreviewControllerStack(root: root) {
                     McpServersViewController(scopeId: workspace.id, root: root)
                 }
             }
-        case "network": leaf { WorkspaceNetworkAccessPage(model: model) }
+        case "network":
+            RouterPreviewControllerStack(root: root) {
+                WorkspaceNetworkAccessViewController(model: model, root: root)
+            }
         default:
             RouterPreviewControllerStack(root: root) {
                 WorkspaceSettingsViewController(workspace: workspace, model: model, connection: connection, root: root)
             }
         }
-    }
-
-    /// A pushed SwiftUI page as the root of a router stack.
-    private func leaf<Page: View>(@ViewBuilder _ page: @escaping () -> Page) -> some View {
-        RouterPreviewStack(root: root) { page().withServerScopedEnvironment(connection) }
     }
 }
 

@@ -144,8 +144,7 @@ extension ComposerBarHosting {
     func barHeightDidChange() {}
 }
 
-/// Emoji / asset / symbol workspace mark plus the sandbox lock. UIKit counterpart
-/// of `WorkspaceRuntimeIcon`.
+/// Emoji / asset / symbol workspace mark plus the sandbox lock.
 enum WorkspaceRuntimeIconRenderer {
     static func render(
         workspace: Workspace,

@@ -283,7 +283,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             guard model.sandboxMode else { return nil }
             return model.step == .pickProject
                 ? "Isolated micro-VM. Pick a project to mount."
-                : "Runs in an isolated micro-VM. Secrets and network are controlled by the host."
+                : "Runs in an isolated micro-VM. Secrets and network are controlled by the server."
         case .scan:
             guard model.isGuidedFirstWorkspace else {
                 return model.directoriesError == nil && !model.isLoadingDirectories
@@ -780,8 +780,9 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
 }
 
 /// What the folder field's check says, in the folder section: checking,
-/// missing (with the confirm-before-create flow), invalid, or valid. Draws the
-/// same states as `WorkspaceFolderValidationView`.
+/// missing (with the confirm-before-create flow), invalid, or valid. New
+/// Workspace and Workspace Details both draw it, so they validate and create
+/// folders the same way.
 final class WorkspaceFolderCheckCell: UICollectionViewListCell {
     private let statusImage = UIImageView()
     private let statusLabel = UILabel()

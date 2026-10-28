@@ -79,7 +79,8 @@ final class WorkspaceSkillsViewController: SettingsListViewController<
             items.append(contentsOf: model.skills.map { .skill($0.name) })
         }
         if model.skillsError != nil { items.append(.error) }
-        return [SettingsSectionModel(.skills, footer: model.piResourceFooter, items: items)]
+        let serverName = model.serverName(in: root.coordinator.serverStore)
+        return [SettingsSectionModel(.skills, footer: model.piResourceFooter(serverName: serverName), items: items)]
     }
 
     override func inputs(of item: Item) -> AnyHashable {
