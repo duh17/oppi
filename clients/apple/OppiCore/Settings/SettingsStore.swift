@@ -68,6 +68,9 @@ final class SettingsStore {
     @ObservationIgnored private var bindings: [SettingEndpoint: [String: Binding]] = [:]
     @ObservationIgnored private var loading: Set<SettingEndpoint> = []
     @ObservationIgnored private var lastSave: [SettingEndpoint: Task<Void, Never>] = [:]
+    /// The latest writer queued behind a save of each setting (by id): the next
+    /// writer waits for it, so queued writers go out in the order they asked.
+    @ObservationIgnored private var queueTails: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var retries: [String: () -> Task<Void, Never>] = [:]
 
     init(
@@ -151,26 +154,59 @@ final class SettingsStore {
 
     /// Validates `value`, shows it as `saving`, writes it, and settles to
     /// `value` or `failed`. The returned task finishes with the settled state of
-    /// this call (for a change that cannot start, the state it found).
+    /// this call (for a change that cannot start, the state it found). A call made
+    /// while the setting is already saving queues (see `queueWrite`).
     @discardableResult
     func set<Value>(_ declaration: SettingDeclaration<Value>, _ value: Value) -> Task<SettingValue<Value>, Never> {
         let current = read(declaration)
         // Nothing known to roll back to: still loading, or unavailable.
         guard current.canBeginSaving else {
-            // This setting is already saving. A writer asking for the value being saved
-            // waits for that save and shares what it settled to; one asking for another
-            // value queues behind it (writes to a route run in order) and returns its own
-            // result. Neither gets the in-flight state back.
-            if case .saving(let shown, _) = current, case .server(let endpoint, _) = declaration.storage, let inFlight = lastSave[endpoint] {
-                let sameValue = shown == value
-                return Task { @MainActor [weak self] in
-                    await inFlight.value
-                    guard let self else { return current }
-                    return sameValue ? read(declaration) : await set(declaration, value).value
-                }
+            if case .saving = current, case .server(let endpoint, _) = declaration.storage {
+                return queueWrite(declaration, value, endpoint: endpoint, found: current)
             }
             return Task { current }
         }
+        return write(declaration, value, current: current)
+    }
+
+    /// A writer that finds the setting already saving. It waits for the writer queued
+    /// before it (or, with none, the save in flight), so writers go out in the order
+    /// they asked and the last one wins; then it returns its own result. One asking for
+    /// the value the setting settled to has nothing to write and shares that result.
+    /// It never returns the in-flight state.
+    ///
+    /// It does not wait on a save forever: when it wakes and the setting is still
+    /// saving, it waits for the newer save, and gives up (returning what it found)
+    /// once no newer save exists, so a save that never settled cannot loop it.
+    private func queueWrite<Value>(
+        _ declaration: SettingDeclaration<Value>,
+        _ value: Value,
+        endpoint: SettingEndpoint,
+        found: SettingValue<Value>
+    ) -> Task<SettingValue<Value>, Never> {
+        guard let predecessor = queueTails[declaration.id] ?? lastSave[endpoint] else { return Task { found } }
+        let queued = Task<SettingValue<Value>, Never> { @MainActor [weak self] in
+            var waited = predecessor
+            while true {
+                await waited.value
+                guard let self else { return found }
+                let now = read(declaration)
+                if case .value(let stored, _) = now, stored == value { return now }
+                if now.canBeginSaving { return await write(declaration, value, current: now).value }
+                guard let newer = lastSave[endpoint], newer != waited else { return now }
+                waited = newer
+            }
+        }
+        queueTails[declaration.id] = Task { _ = await queued.value }
+        return queued
+    }
+
+    /// Starts the write of a setting that can begin saving.
+    private func write<Value>(
+        _ declaration: SettingDeclaration<Value>,
+        _ value: Value,
+        current: SettingValue<Value>
+    ) -> Task<SettingValue<Value>, Never> {
         retries[declaration.id] = nil
         if let reason = declaration.validate(value) {
             let refused = SettingValue<Value>.failed(last: current.current, reason: reason)
@@ -241,7 +277,11 @@ final class SettingsStore {
                 afterWrite(declaration.id)
                 return settled
             } catch is CancellationError {
-                return states[declaration.id] as? SettingValue<Value> ?? held
+                // The save never settled: back to the value it started from, so the
+                // setting is not left saving (and no writer waits on it).
+                let reverted = (states[declaration.id] as? SettingValue<Value> ?? held).revertedToPrevious()
+                states[declaration.id] = reverted
+                return reverted
             } catch SettingsError.revisionConflict {
                 // Someone else changed the document: show what is stored now, and say so.
                 if let saving = states[declaration.id] as? SettingValue<Value> {

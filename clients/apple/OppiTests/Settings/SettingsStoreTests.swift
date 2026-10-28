@@ -218,6 +218,67 @@ struct SettingsStoreTests {
         #expect(store.read(enabled) == .value(false, revision: 6))
     }
 
+    @Test("Last tap wins: true in flight, then false, then true go out in that order and the setting ends true")
+    func lastTapWins() async {
+        let transport = FakeSettingsTransport(revision: 4)
+        let store = await loaded(transport)
+        let gate = SettingsGate()
+        transport.holdSaves(gate)
+
+        let first = store.set(enabled, true)
+        await until { !transport.saves.isEmpty }
+        let second = store.set(enabled, false)
+        // Asked for true while false is queued: it waits for false, it does not share true's save.
+        let third = store.set(enabled, true)
+        #expect(store.read(enabled) == .saving(shown: true, previous: false))
+        await gate.open()
+
+        #expect(await first.value == .value(true, revision: 5))
+        #expect(await second.value == .value(false, revision: 6))
+        #expect(await third.value == .value(true, revision: 7))
+        #expect(transport.saves == [
+            .init(endpoint: .serverMetrics, fields: ["enabled": true], baseRevision: 4),
+            .init(endpoint: .serverMetrics, fields: ["enabled": false], baseRevision: 5),
+            .init(endpoint: .serverMetrics, fields: ["enabled": true], baseRevision: 6),
+        ])
+        #expect(store.read(enabled) == .value(true, revision: 7))
+    }
+
+    @Test("A save that is cancelled rolls back, and is not left saving")
+    func cancelledSaveRollsBack() async {
+        let transport = FakeSettingsTransport(revision: 4)
+        let store = await loaded(transport)
+
+        transport.failNextSave(with: CancellationError())
+        let reverted = await store.set(enabled, true).value
+
+        #expect(reverted == .value(false, revision: nil))
+        #expect(store.read(enabled) == reverted)
+        #expect(!store.canRetry(id: enabled.id))
+        // Nothing is wedged: the next write goes out.
+        #expect(await store.set(enabled, true).value == .value(true, revision: 5))
+    }
+
+    @Test("A writer queued behind a save that is cancelled still writes, and nothing waits forever")
+    func queuedWriterSurvivesACancelledSave() async {
+        let transport = FakeSettingsTransport(revision: 4)
+        let store = await loaded(transport)
+        let gate = SettingsGate()
+        transport.holdSaves(gate)
+        transport.failNextSave(with: CancellationError())
+
+        let first = store.set(enabled, true)
+        await until { !transport.saves.isEmpty }
+        let second = store.set(enabled, true)
+        await gate.open()
+
+        #expect(await first.value == .value(false, revision: nil))
+        // The first save never settled, so the queued one is the one that writes.
+        #expect(await second.value == .value(true, revision: 5))
+        #expect(transport.saves.count == 2)
+        #expect(store.read(enabled) == .value(true, revision: 5))
+    }
+
     @Test("A failed write rolls back to the previous value with the reason, and Retry writes it again")
     func serverFailureRollsBackAndRetries() async {
         let transport = FakeSettingsTransport(revision: 4)

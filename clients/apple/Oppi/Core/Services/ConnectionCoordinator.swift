@@ -98,6 +98,11 @@ final class ConnectionCoordinator {
     /// has (a removed one, a screen still holding it) gets a store that is not kept:
     /// it finds no connection, so its settings are unavailable, and it cannot
     /// outlive the removal in the cache.
+    ///
+    /// Ask for the store per operation, at the point of use, and never keep one
+    /// across operations: a store held past its server's removal is an orphan that
+    /// the cache no longer knows, and an id with no paired server gets a new,
+    /// uncached store on every call.
     func settings(for serverId: String) -> SettingsStore {
         if let store = serverSettings[serverId] { return store }
         let store = makeServerSettings(serverId)
