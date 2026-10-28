@@ -1900,7 +1900,7 @@ struct NonTextWikiLinkIconTests {
         guard side > 0 else { return false }
         let configuration = UIImage.SymbolConfiguration(pointSize: side * 0.72, weight: .medium)
         guard let reference = UIImage(systemName: icon.symbolName, withConfiguration: configuration)?
-            .withTintColor(UIColor(icon.color), renderingMode: .alwaysOriginal) else {
+            .withTintColor(icon.color, renderingMode: .alwaysOriginal) else {
             return false
         }
         return image.size == reference.size && image.pngData() == reference.pngData()

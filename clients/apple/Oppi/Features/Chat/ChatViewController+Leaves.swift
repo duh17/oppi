@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 // The chat's Git and Files panels, the screens they present, and the pages
@@ -15,7 +14,7 @@ extension AppScenePhase {
 }
 
 extension ChatViewController {
-    static func shouldPauseTimelinePresentation(for phase: ScenePhase) -> Bool {
+    static func shouldPauseTimelinePresentation(for phase: AppPhase) -> Bool {
         phase == .inactive || phase == .background
     }
 

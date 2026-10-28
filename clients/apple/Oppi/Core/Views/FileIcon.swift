@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// SF Symbol and color for a file path, based on extension or well-known filename.
@@ -9,7 +8,7 @@ import UIKit
 enum FileIconTint: Equatable, Sendable {
     case comment, blue, cyan, orange, yellow, red, purple, green
 
-    var snapshotColor: Color {
+    var snapshotColor: UIColor {
         switch self {
         case .comment: .themeComment
         case .blue: .themeBlue
@@ -29,7 +28,7 @@ struct FileIcon: Equatable, Sendable {
     /// Asset catalog image name. When set, preferred over `symbolName`.
     let assetName: String?
 
-    var color: Color { tint.snapshotColor }
+    var color: UIColor { tint.snapshotColor }
 
     init(symbolName: String, tint: FileIconTint, assetName: String? = nil) {
         self.symbolName = symbolName
@@ -47,7 +46,7 @@ struct FileIcon: Equatable, Sendable {
 
     /// Template-tinted so composer lists and file rows can paint it directly.
     func uiImage(pointSize: CGFloat, weight: UIImage.SymbolWeight = .medium) -> UIImage {
-        let color = UIColor(tint.snapshotColor)
+        let color = tint.snapshotColor
         if let assetName, let asset = UIImage(named: assetName) {
             return asset.withTintColor(color, renderingMode: .alwaysTemplate)
         }

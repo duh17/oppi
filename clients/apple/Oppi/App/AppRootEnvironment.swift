@@ -107,15 +107,31 @@ extension AppRootEnvironment: Equatable {
     }
 }
 
-/// The app scene's phase for SwiftUI screens UIKit hosts. SwiftUI's own
-/// `scenePhase` stays `.background` in a UIKit scene's hosting controllers,
-/// which would pause everything that waits for `.active` (the chat
-/// timeline, the SSH terminal); `appRootEnvironment(_:)` applies this one.
+/// The app scene's lifecycle phase. UIKit code reads it from `AppScenePhase`;
+/// SwiftUI's own `ScenePhase` is not used for app logic.
+enum AppPhase: Sendable {
+    case active, inactive, background
+}
+
+extension ScenePhase {
+    init(_ phase: AppPhase) {
+        switch phase {
+        case .active: self = .active
+        case .inactive: self = .inactive
+        case .background: self = .background
+        }
+    }
+}
+
+/// The app scene's phase. SwiftUI's own `scenePhase` stays `.background` in a
+/// UIKit scene's hosting controllers, which would pause everything that waits
+/// for `.active` (the chat timeline, the SSH terminal); `appRootEnvironment(_:)`
+/// hands this one to the SwiftUI screens UIKit hosts.
 @MainActor @Observable
 final class AppScenePhase {
     static let shared = AppScenePhase()
 
-    private(set) var phase: ScenePhase
+    private(set) var phase: AppPhase
     var isBackground: Bool { phase == .background }
     /// How many times the app has entered the background. A measurement that
     /// started in an earlier epoch spans suspension and is not a duration.
@@ -128,7 +144,7 @@ final class AppScenePhase {
         case .background: .background
         default: .inactive
         }
-        let transitions: [(Notification.Name, ScenePhase)] = [
+        let transitions: [(Notification.Name, AppPhase)] = [
             (UIScene.willEnterForegroundNotification, .inactive),
             (UIScene.didActivateNotification, .active),
             (UIScene.willDeactivateNotification, .inactive),
@@ -256,7 +272,7 @@ private struct AppRootEnvironmentModifier: ViewModifier {
             .environment(\.composerDraftStore, root.composerDraftStore)
             .environment(\.theme, root.themeStore.appTheme)
             .environment(\.themeID, root.themeStore.activeThemeID)
-            .environment(\.scenePhase, AppScenePhase.shared.phase)
+            .environment(\.scenePhase, ScenePhase(AppScenePhase.shared.phase))
             .environment(\.appRootEnvironment, root)
             // Every SwiftUI `Link` and `openURL` — Settings and onboarding
             // included — follows the app's browser preference through the

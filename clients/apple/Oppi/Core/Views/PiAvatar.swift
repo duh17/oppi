@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Shared Pi-agent identity. Ordinary sessions and the pinned Pi agent always

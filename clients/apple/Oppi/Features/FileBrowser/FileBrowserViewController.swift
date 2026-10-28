@@ -1438,7 +1438,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private func setListIcon(_ icon: FileIcon, on content: inout UIListContentConfiguration) {
         content.image = icon.uiImage(pointSize: 12)
-        content.imageProperties.tintColor = UIColor(icon.color)
+        content.imageProperties.tintColor = icon.color
         content.imageProperties.maximumSize = CGSize(width: 20, height: 20)
         content.imageProperties.reservedLayoutSize = CGSize(width: 24, height: 24)
     }

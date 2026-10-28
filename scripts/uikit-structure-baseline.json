@@ -10,9 +10,6 @@
     "clients/apple/Oppi/App/HostFactory.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/OppiApp.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/WorkspaceShellRoutes.swift": {
       "import SwiftUI": 1
     },
@@ -55,19 +52,10 @@
     "clients/apple/Oppi/Core/Views/AgentIconView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/AuthenticatedMediaPlayback.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/EmbeddedFileViewerView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/FileIcon.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/FullScreenCodeSupport.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/PiAvatar.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/ProviderIcon.swift": {
@@ -93,9 +81,6 @@
     },
     "clients/apple/Oppi/Features/Chat/ChatViewController+Actions.swift": {
       "AppPreferences.*.set": 1
-    },
-    "clients/apple/Oppi/Features/Chat/ChatViewController+Leaves.swift": {
-      "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift": {
       "import SwiftUI": 1
@@ -125,12 +110,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerViewController.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpAddServerViewController.swift": {

@@ -679,7 +679,7 @@ enum SessionFileIconTile {
     static func image(for icon: FileIcon, themeID: ThemeID) -> UIImage {
         let key = "\(icon.symbolName)|\(icon.assetName ?? "")|\(icon.tint)|\(themeID)"
         if let cached = cache[key] { return cached }
-        let tint = UIColor(icon.tint.snapshotColor)
+        let tint = icon.tint.snapshotColor
         let glyph = icon.uiImage(pointSize: 13, weight: .semibold)
         let size = CGSize(width: 28, height: 28)
         let image = UIGraphicsImageRenderer(size: size).image { _ in

@@ -2538,7 +2538,7 @@ enum FlatSegment: Sendable {
             weight: .medium
         )
         guard let image = UIImage(systemName: icon.symbolName, withConfiguration: configuration)?
-            .withTintColor(UIColor(icon.color), renderingMode: .alwaysOriginal) else {
+            .withTintColor(icon.color, renderingMode: .alwaysOriginal) else {
             return nil
         }
         let attachment = NSTextAttachment()

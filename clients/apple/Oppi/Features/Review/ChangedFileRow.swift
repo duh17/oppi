@@ -72,7 +72,7 @@ enum ChangedFileRow {
     ) -> (stack: UIStackView, labelParts: [String]) {
         let icon = FileIcon.forPath(path)
         let iconView = UIImageView(image: icon.uiImage(pointSize: 10, weight: .semibold))
-        iconView.tintColor = UIColor(icon.tint.snapshotColor)
+        iconView.tintColor = icon.tint.snapshotColor
         iconView.contentMode = icon.isAssetImage ? .scaleAspectFit : .center
         NSLayoutConstraint.activate([
             iconView.widthAnchor.constraint(equalToConstant: 16),

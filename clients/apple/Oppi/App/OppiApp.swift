@@ -1,6 +1,5 @@
 import AppIntents
 import os.log
-import SwiftUI
 import UIKit
 
 private let appLog = Logger(subsystem: AppIdentifiers.subsystem, category: "App")
@@ -56,7 +55,7 @@ final class E2ELifecycleDiagnostics {
 struct ForegroundReconnectGate {
     private(set) var hasEnteredBackground = false
 
-    mutating func shouldReconnect(for phase: ScenePhase) -> Bool {
+    mutating func shouldReconnect(for phase: AppPhase) -> Bool {
         switch phase {
         case .background:
             hasEnteredBackground = true
@@ -68,9 +67,6 @@ struct ForegroundReconnectGate {
             return shouldReconnect
 
         case .inactive:
-            return false
-
-        @unknown default:
             return false
         }
     }
@@ -180,7 +176,7 @@ final class OppiApp {
     @ObservationIgnored private let mainThreadLagWatchdog = MainThreadLagWatchdog()
     @ObservationIgnored private var foregroundReconnectGate = ForegroundReconnectGate()
     @ObservationIgnored private let backgroundKeepAlive = BackgroundKeepAlive()
-    @ObservationIgnored private var scenePhase: ScenePhase = .inactive
+    @ObservationIgnored private var scenePhase: AppPhase = .inactive
     @ObservationIgnored private var appEventObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var hasConnectedScene = false
     @ObservationIgnored private var pairedServerLoad: Task<Void, Never>?
@@ -280,7 +276,7 @@ final class OppiApp {
         changeScenePhase(to: .background)
     }
 
-    private func changeScenePhase(to phase: ScenePhase) {
+    private func changeScenePhase(to phase: AppPhase) {
         guard phase != scenePhase else { return }
         scenePhase = phase
         handleScenePhase(phase)
@@ -502,7 +498,7 @@ final class OppiApp {
 
     @MainActor
     private func recordDiagnosticContext(
-        phase: ScenePhase? = nil,
+        phase: AppPhase? = nil,
         lifecycleEvent: String? = nil,
         lifecycleStep: String? = nil
     ) {
@@ -555,17 +551,16 @@ final class OppiApp {
         navigation.diagnosticScreenLabel()
     }
 
-    private func diagnosticScenePhase(_ phase: ScenePhase) -> String {
+    private func diagnosticScenePhase(_ phase: AppPhase) -> String {
         switch phase {
         case .active: "active"
         case .inactive: "inactive"
         case .background: "background"
-        @unknown default: "unknown"
         }
     }
 
     @MainActor
-    private func diagnosticLifecycleMetadata(phase: ScenePhase, step: String) -> [String: String] {
+    private func diagnosticLifecycleMetadata(phase: AppPhase, step: String) -> [String: String] {
         var metadata: [String: String] = [
             "phase": diagnosticScenePhase(phase),
             "step": step,
@@ -584,7 +579,7 @@ final class OppiApp {
     }
 
     @MainActor
-    private func recordLifecycleStep(_ phase: ScenePhase, _ step: String, flush: Bool = false) {
+    private func recordLifecycleStep(_ phase: AppPhase, _ step: String, flush: Bool = false) {
         let phaseLabel = diagnosticScenePhase(phase)
 #if DEBUG
         E2ELifecycleDiagnostics.shared.record(phase: phaseLabel, step: step)
@@ -599,7 +594,7 @@ final class OppiApp {
     }
 
     @MainActor
-    private func handleScenePhase(_ phase: ScenePhase) {
+    private func handleScenePhase(_ phase: AppPhase) {
         let phaseLabel = diagnosticScenePhase(phase)
         let handlerStartedAt = ProcessInfo.processInfo.systemUptime
         let foregroundInterval = phase == .active
@@ -706,9 +701,6 @@ final class OppiApp {
             composerDraftStore.saveLifecycleFallback(activeComposerDraftRecord())
             Task { await composerDraftStore.flush() }
             lifecycleSignposter.endInterval("scene.inactive.draft_fallback", inactiveDraftFallbackInterval)
-
-        @unknown default:
-            break
         }
 
         recordLifecycleStep(phase, "end", flush: phase == .background)

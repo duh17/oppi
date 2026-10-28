@@ -97,7 +97,7 @@ final class ReviewFileSummaryBarView: UIView {
         applied = (values, themeID)
         let palette = themeID.palette
         let icon = FileIcon.forPath(values.path)
-        let tint = UIColor(icon.tint.snapshotColor)
+        let tint = icon.tint.snapshotColor
         iconTile.backgroundColor = tint.withAlphaComponent(0.12)
         iconView.image = icon.uiImage(pointSize: UIFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold)
         iconView.tintColor = tint

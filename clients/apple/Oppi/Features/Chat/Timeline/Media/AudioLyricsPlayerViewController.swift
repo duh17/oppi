@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Full-screen audio player: header, lyrics or script transcript, and transport.
@@ -268,8 +267,8 @@ final class AudioLyricsPlayerViewController: UIViewController {
 
     /// Authored WebVTT colors win; other speakers take theme accents so they follow the theme.
     private func color(for member: AudioReaderCast.Member) -> UIColor {
-        if let hex = member.colorHex, let authored = Color(hex: hex) {
-            return UIColor(authored)
+        if let hex = member.colorHex, let authored = UIColor(hex: hex) {
+            return authored
         }
         return style.speakerAccents[member.paletteIndex % style.speakerAccents.count]
     }
@@ -718,5 +717,20 @@ final class AudioFileShareButton: UIButton {
         isEnabled = !loading
         configuration?.image = loading ? nil : UIImage(systemName: "square.and.arrow.up")
         if loading { spinner.startAnimating() } else { spinner.stopAnimating() }
+    }
+}
+
+private extension UIColor {
+    /// An authored `#RRGGBB` (or `RRGGBB`) color; nil for anything else.
+    convenience init?(hex: String) {
+        var digits = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if digits.hasPrefix("#") { digits.removeFirst() }
+        guard digits.count == 6, let rgb = UInt32(digits, radix: 16) else { return nil }
+        self.init(
+            red: CGFloat((rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((rgb >> 8) & 0xFF) / 255,
+            blue: CGFloat(rgb & 0xFF) / 255,
+            alpha: 1
+        )
     }
 }
