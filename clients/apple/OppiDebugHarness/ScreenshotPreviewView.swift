@@ -198,6 +198,15 @@ struct ScreenshotPreviewView: View {
             GeoJSONMountRainierPreview()
         case "usdz-rendering":
             USDZRenderingPreview()
+        case "app-lock-cover":
+            AppLockCoverPreviewHost(state: .locked)
+                .ignoresSafeArea()
+        case "app-lock-cover-failed":
+            AppLockCoverPreviewHost(state: .failed)
+                .ignoresSafeArea()
+        case "app-lock-cover-obscured":
+            AppLockCoverPreviewHost(state: .obscured)
+                .ignoresSafeArea()
         case "mermaid-consistency-inline":
             MermaidConsistencyPreview(expanded: false)
         case "mermaid-consistency-expanded":
@@ -1157,6 +1166,17 @@ private struct RouterModalSitesPreview: View {
                 .ignoresSafeArea()
         }
     }
+}
+
+/// The App Lock cover controller, which the app puts in its own window.
+private struct AppLockCoverPreviewHost: UIViewControllerRepresentable {
+    let state: AppLockCoverScreenshotFixture.State
+
+    func makeUIViewController(context: Context) -> AppLockCoverViewController {
+        AppLockCoverScreenshotFixture.makeController(state: state)
+    }
+
+    func updateUIViewController(_ controller: AppLockCoverViewController, context: Context) {}
 }
 
 /// Quick Session's controller over the window, the way the app root mounts it.

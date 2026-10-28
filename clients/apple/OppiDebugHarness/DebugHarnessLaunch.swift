@@ -22,7 +22,7 @@ enum DebugHarnessLaunch {
         // router and HostFactory need the app root above them there too,
         // and the window needs the theme applied the way the app root does.
         return HarnessRootViewController(
-            content: HostFactory.content(harness.modifier(AppLockAccessibilityHidden()), root: root),
+            content: HostFactory.content(harness, root: root),
             themeStore: root.themeStore
         )
     }
@@ -84,6 +84,7 @@ enum DebugHarnessLaunch {
 final class HarnessRootViewController: UIViewController {
     private let themeStore: ThemeStore
     private let content: UIViewController
+    private let appLock = AppLockService.shared
 
     init(content: UIViewController, themeStore: ThemeStore) {
         self.content = content
@@ -114,6 +115,9 @@ final class HarnessRootViewController: UIViewController {
     override func updateProperties() {
         super.updateProperties()
         themeStore.applyToWindow(of: self)
+        // VoiceOver skips the harness content while the App Lock cover
+        // window is up above it.
+        content.view.accessibilityElementsHidden = appLock.isLocked
     }
 }
 #endif

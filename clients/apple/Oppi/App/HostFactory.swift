@@ -45,12 +45,6 @@ enum HostFactory {
         return HostedContentController(content: content, root: root)
     }
 
-    /// The App Lock cover only. Its window paints before the app root exists,
-    /// so it has no app services; it reads theme runtime state alone.
-    static func appLockCover<Content: View>(_ content: Content) -> HostedContentController {
-        HostedContentController(content: content, root: nil)
-    }
-
     /// The app root above a UIKit controller: the `appRootEnvironment` trait
     /// (published on the app's window, set on hosted screens) on the
     /// controller or its view (a view embedded without its controller joining
@@ -297,12 +291,11 @@ private struct ScreenContentView: View {
     }
 }
 
-/// SwiftUI content embedded in UIKit. Created only by `HostFactory.content`
-/// and, without a root, `HostFactory.appLockCover`.
+/// SwiftUI content embedded in UIKit. Created only by `HostFactory.content`.
 final class HostedContentController: UIHostingController<AnyView> {
-    private let root: AppRootEnvironment?
+    private let root: AppRootEnvironment
 
-    fileprivate init<Content: View>(content: Content, root: AppRootEnvironment?) {
+    fileprivate init<Content: View>(content: Content, root: AppRootEnvironment) {
         self.root = root
         super.init(rootView: Self.rootView(content, root: root))
     }
@@ -317,9 +310,8 @@ final class HostedContentController: UIHostingController<AnyView> {
         rootView = Self.rootView(content, root: root)
     }
 
-    private static func rootView<Content: View>(_ content: Content, root: AppRootEnvironment?) -> AnyView {
-        guard let root else { return AnyView(content) }
-        return AnyView(content.appRootEnvironment(root))
+    private static func rootView<Content: View>(_ content: Content, root: AppRootEnvironment) -> AnyView {
+        AnyView(content.appRootEnvironment(root))
     }
 }
 

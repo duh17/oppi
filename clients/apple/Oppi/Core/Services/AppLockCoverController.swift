@@ -87,7 +87,7 @@ final class AppLockCoverController {
         guard covers[key] == nil else { return }
         let window = UIWindow(windowScene: scene)
         window.windowLevel = .alert + 1
-        window.rootViewController = HostFactory.appLockCover(AppLockCoverView(service: service))
+        window.rootViewController = AppLockCoverViewController(service: service)
         window.accessibilityViewIsModal = true
         window.rootViewController?.view.accessibilityViewIsModal = true
         window.isHidden = true

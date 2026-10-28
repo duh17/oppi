@@ -64,9 +64,6 @@
     "clients/apple/Oppi/Core/Views/AgentIconView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/AppLockCoverView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/AuthenticatedMediaPlayback.swift": {
       "import SwiftUI": 1
     },
