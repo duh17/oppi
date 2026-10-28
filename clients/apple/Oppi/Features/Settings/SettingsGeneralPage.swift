@@ -18,7 +18,8 @@ final class SettingsGeneralViewController: SettingsListViewController<SettingsGe
         super.init(
             title: String(localized: "General"),
             listIdentifier: "settings.general.list",
-            scope: .device,
+            // All three are device settings; the page's scope is what their storage says.
+            scope: SettingsCatalog.hapticFeedback.storage.scope(serverName: nil, workspaceName: nil),
             settings: root.settings,
             footers: true
         )

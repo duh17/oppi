@@ -45,6 +45,7 @@ final class FakeSettingsTransport: SettingsServerTransport, @unchecked Sendable 
     private var loadAnswers: [SettingsServerDocument] = []
     private var saveGate: SettingsGate?
     private var loadGate: SettingsGate?
+    private var beforeSave: [() -> Void] = []
     private let revisioned: Bool
 
     init(fields: [String: JSONValue] = ["enabled": false, "label": "first"], revision: Int? = 4) {
@@ -62,6 +63,9 @@ final class FakeSettingsTransport: SettingsServerTransport, @unchecked Sendable 
     func answerNextLoad(with document: SettingsServerDocument) { lock.withLock { loadAnswers.append(document) } }
     func holdSaves(_ gate: SettingsGate) { lock.withLock { saveGate = gate } }
     func holdLoads(_ gate: SettingsGate) { lock.withLock { loadGate = gate } }
+    /// Runs `action` as the next save arrives, before the server checks its revision:
+    /// a change that lands between a caller's last read and its write.
+    func beforeNextSave(_ action: @escaping () -> Void) { lock.withLock { beforeSave.append(action) } }
     /// Another device changed the document.
     func changeElsewhere(_ fields: [String: JSONValue]) {
         lock.withLock {
@@ -85,10 +89,11 @@ final class FakeSettingsTransport: SettingsServerTransport, @unchecked Sendable 
         fields: [String: JSONValue],
         baseRevision: Int?
     ) async throws -> SettingsServerDocument {
-        let (gate, error) = lock.withLock {
+        let (gate, error, hook) = lock.withLock {
             _saves.append(Save(endpoint: endpoint, fields: fields, baseRevision: baseRevision))
-            return (saveGate, saveErrors.isEmpty ? nil : saveErrors.removeFirst())
+            return (saveGate, saveErrors.isEmpty ? nil : saveErrors.removeFirst(), beforeSave.isEmpty ? nil : beforeSave.removeFirst())
         }
+        hook?()
         await gate?.wait()
         if let error { throw error }
         return try lock.withLock {

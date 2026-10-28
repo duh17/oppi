@@ -58,7 +58,9 @@ struct AppRootEnvironment {
         self.composerDraftStore = composerDraftStore
         self.chatReaderPayloadStore = chatReaderPayloadStore
         self.sessionRows = sessionRows
-        self.settings = settings ?? .live(coordinator: coordinator)
+        // A store passed in (a test's) becomes the coordinator's too: one store per app.
+        if let settings { coordinator.settings = settings }
+        self.settings = coordinator.settings
         self.liveVoiceCalls = liveVoiceCalls
         self.opener = opener
     }

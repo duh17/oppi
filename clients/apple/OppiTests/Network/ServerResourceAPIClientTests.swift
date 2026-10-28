@@ -70,8 +70,8 @@ struct ServerResourceAPIClientTests {
         }
 
         #expect(try await client.serverMetricsEnabled() == false)
-        #expect(try await client.setServerMetricsEnabled(true) == true)
-        #expect(try await client.setServerMetricsEnabled(true, baseRevision: 1) == true)
+        #expect(try await client.saveServerMetricsSettings(enabled: true).enabled == true)
+        #expect(try await client.saveServerMetricsSettings(enabled: true, baseRevision: 1).revision == 2)
         #expect(bodies.count == 2)
         #expect(bodies[0]["baseRevision"] == nil)
         #expect(bodies[1]["baseRevision"] as? Int == 1)

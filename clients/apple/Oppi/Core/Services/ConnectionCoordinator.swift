@@ -81,6 +81,10 @@ final class ConnectionCoordinator {
     /// The app's Live Voice call (set by `OppiApp`). Its socket is not one of a connection's
     /// streams, so removing a server ends the call here first.
     @ObservationIgnored weak var liveVoiceCalls: LiveVoiceCallCenter?
+    /// The app's one settings store. `AppRootEnvironment` publishes it to UIKit
+    /// screens, and a model that holds only the coordinator (Server Settings)
+    /// reaches the same one, so every write of a setting goes through one document.
+    @ObservationIgnored lazy var settings: SettingsStore = .live(coordinator: self)
 
     /// The focused server's connection.
     /// Falls back to a disconnected sentinel if no server is active.

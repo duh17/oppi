@@ -17,7 +17,6 @@ struct SettingsStoreTests {
         SettingsStore(
             device: DeviceAdapter(defaults: defaults),
             server: ServerAdapter { transports[$0] },
-            serverName: { $0 == "s1" ? "mac-studio" : nil },
             afterWrite: afterWrite
         )
     }
@@ -97,18 +96,58 @@ struct SettingsStoreTests {
         #expect(transport.loads == 1)
     }
 
-    @Test("settled waits for the load a first read started")
-    func settledWaitsForTheLoad() async {
-        let transport = FakeSettingsTransport(fields: ["enabled": true], revision: 4)
-        let gate = SettingsGate()
-        transport.holdLoads(gate)
+    @Test("reload fetches the document again, so a write after it is not based on a stale one")
+    func reloadRefreshesTheDocumentBeforeAWrite() async {
+        let transport = FakeSettingsTransport(revision: 4)
         let store = makeStore(["s1": transport])
         store.attach(serverId: "s1")
+        _ = store.read(enabled)
+        await until { store.read(enabled).current != nil }
 
-        async let state = store.settled(enabled)
-        await until { transport.loads == 1 }
+        // The document moved on without this store: another writer, or a path that bypassed it.
+        transport.changeElsewhere(["enabled": true])
+        #expect(store.read(enabled) == .value(false, revision: 4))
+
+        let fresh = await store.reload(enabled)
+        #expect(fresh == .value(true, revision: 5))
+        #expect(transport.loads == 2)
+
+        await store.set(enabled, false).value
+        #expect(transport.saves == [.init(endpoint: .serverMetrics, fields: ["enabled": false], baseRevision: 5)])
+        #expect(store.read(enabled) == .value(false, revision: 6))
+    }
+
+    @Test("reload of a setting that was never read loads it")
+    func reloadLoadsAnUnreadSetting() async {
+        let transport = FakeSettingsTransport(fields: ["enabled": true], revision: 4)
+        let store = makeStore(["s1": transport])
+        store.attach(serverId: "s1")
+        #expect(await store.reload(enabled) == .value(true, revision: 4))
+        #expect(transport.loads == 1)
+    }
+
+    @Test("reload waits for a save in flight, and keeps a failed fetch's last value")
+    func reloadWaitsForSavesAndSurvivesFailure() async {
+        let transport = FakeSettingsTransport(revision: 4)
+        let store = makeStore(["s1": transport])
+        store.attach(serverId: "s1")
+        _ = store.read(enabled)
+        await until { store.read(enabled).current != nil }
+
+        let gate = SettingsGate()
+        transport.holdSaves(gate)
+        let write = store.set(enabled, true)
+        await until { !transport.saves.isEmpty }
+        async let reloaded = store.reload(enabled)
+        // The fetch has not run while the save is held.
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(transport.loads == 1)
         await gate.open()
-        #expect(await state == .value(true, revision: 4))
+        await write.value
+        #expect(await reloaded == .value(true, revision: 5))
+
+        transport.failNextLoad(with: SettingsTestError())
+        #expect(await store.reload(enabled) == .failed(last: true, reason: "The server said no."))
     }
 
     @Test("A write shows the new value as saving, then the stored one with its revision")
@@ -349,14 +388,6 @@ struct SettingsStoreTests {
         store.attach(serverId: "s1")
         #expect(store.read(label) == .value("first", revision: 4))
         #expect(transport.loads == 1)
-    }
-
-    @Test("A scope names the attached server")
-    func scopeNamesTheServer() {
-        let store = makeStore([:])
-        #expect(store.scope(of: haptics) == .device)
-        store.attach(serverId: "s1")
-        #expect(store.scope(of: enabled) == .server("mac-studio"))
     }
 }
 

@@ -32,11 +32,6 @@ extension APIClient {
         )
         return try JSONDecoder().decode(ServerMetricsSettings.self, from: data)
     }
-
-    @discardableResult
-    func setServerMetricsEnabled(_ enabled: Bool, baseRevision: Int? = nil) async throws -> Bool {
-        try await saveServerMetricsSettings(enabled: enabled, baseRevision: baseRevision).enabled
-    }
 }
 
 private struct ServerMetricsWriteRequest: Encodable {

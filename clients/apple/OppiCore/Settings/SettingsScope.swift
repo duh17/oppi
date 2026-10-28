@@ -2,7 +2,7 @@ import Foundation
 
 /// Where a setting is kept, which a page says only when it differs from what
 /// the page as a whole says. Derived from a declaration's `SettingStorage` and
-/// the current server or workspace name (`SettingsStore.scope(of:)`); a page
+/// the current server or workspace name (`SettingStorage.scope`); a page
 /// never builds one by hand.
 enum SettingsScope: Hashable, Sendable {
     /// This device only.
@@ -25,10 +25,8 @@ enum SettingsScope: Hashable, Sendable {
     }
 
     /// The footer a section shows: the scope sentence when the section's scope
-    /// differs from the page's, then the section's own footer. A page that
-    /// mixes scopes has no page scope (`nil`), so every section with a scope
-    /// says it.
-    static func footer(_ footer: String?, scope: SettingsScope?, pageScope: SettingsScope?) -> String? {
+    /// differs from the page's, then the section's own footer.
+    static func footer(_ footer: String?, scope: SettingsScope?, pageScope: SettingsScope) -> String? {
         guard let scope, scope != pageScope else { return footer }
         guard let footer, !footer.isEmpty else { return scope.sentence }
         return scope.sentence + " " + footer

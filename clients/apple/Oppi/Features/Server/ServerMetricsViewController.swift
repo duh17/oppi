@@ -411,7 +411,8 @@ final class ServerMetricsViewController: UIViewController {
             // failed save, and reloads on a revision conflict.
             let setting = SettingsCatalog.serverMetricsEnabled
             settings.attach(serverId: serverId)
-            _ = await settings.settled(setting)
+            // The document held since an earlier read (here or from Server Settings) may be stale.
+            _ = await settings.reload(setting)
             await settings.set(setting, enabled).value
             let result = settings.read(setting)
             // The server's answer is the truth, even when it is not what was asked for:

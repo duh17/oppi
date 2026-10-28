@@ -30,13 +30,6 @@ struct SettingsKitTests {
         )
     }
 
-    @Test("A page that mixes scopes has none of its own, so every section with a scope says it")
-    func mixedPageSaysEverySectionsScope() {
-        #expect(SettingsScope.footer("Footer.", scope: .device, pageScope: nil) == "Saved on this device. Footer.")
-        #expect(SettingsScope.footer(nil, scope: .server("mac-studio"), pageScope: nil) == "Applies to every device on mac-studio.")
-        #expect(SettingsScope.footer("Footer.", scope: nil, pageScope: nil) == "Footer.")
-    }
-
     @Test("A page's footer shows the scope sentence of a section that differs")
     func pageFooterCarriesTheScopeSentence() async throws {
         let page = ScopedPage()

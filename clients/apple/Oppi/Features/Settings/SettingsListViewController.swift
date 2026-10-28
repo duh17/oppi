@@ -67,9 +67,8 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     }()
     private(set) var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     /// Where the page's settings are kept. A section says its scope only when
-    /// it differs from this. `nil` for a page that mixes scopes: every section
-    /// with a scope says it.
-    let pageScope: SettingsScope?
+    /// it differs from this.
+    let pageScope: SettingsScope
     /// The store behind the page's declared settings (`SettingsCatalog`).
     let settings: SettingsStore?
     private let showsHeaders: Bool
@@ -80,8 +79,8 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
 
     /// - Parameters:
     ///   - listIdentifier: the list's accessibility identifier, `settings.<page>.list`.
-    ///   - scope: where the page's settings are kept. Every page says it; a
-    ///     page that mixes scopes says `nil`, and each section names its own.
+    ///   - scope: where the page's settings are kept. Every page says it; a page
+    ///     of declared settings takes it from their `SettingStorage`.
     ///   - settings: the store a page with declared settings reads and writes.
     ///   - headers: whether sections can show a header.
     ///   - footers: whether sections can show a footer. A page with a section
@@ -90,7 +89,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     init(
         title: String,
         listIdentifier: String,
-        scope: SettingsScope?,
+        scope: SettingsScope,
         settings: SettingsStore? = nil,
         headers: Bool = false,
         footers: Bool = false,

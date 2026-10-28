@@ -3,9 +3,9 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// Turning Server Metrics on from its page goes through `SettingsStore`: a fake
-/// server route answers the save, and the page and the connection's cached flag
-/// follow what the store settles to.
+/// Server Metrics is saved only through `SettingsStore`, from the Metrics page and
+/// from Server Settings alike: a fake server route answers the save, and the page,
+/// the model, and the connection's cached flag follow what the store settles to.
 @Suite("Server Metrics enable", .serialized)
 @MainActor
 struct ServerMetricsEnableTests {
@@ -18,6 +18,16 @@ struct ServerMetricsEnableTests {
         var window: UIWindow
     }
 
+    private func makePage(_ root: AppRootEnvironment) throws -> (ServerMetricsViewController, UIWindow) {
+        let page = ServerMetricsViewController(root: root)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = UINavigationController(rootViewController: page)
+        window.makeKeyAndVisible()
+        return (page, window)
+    }
+
     private func makeHarness(revision: Int? = 4) throws -> Harness {
         let transport = FakeSettingsTransport(fields: ["enabled": false], revision: revision)
         let store = SettingsStore(
@@ -28,12 +38,7 @@ struct ServerMetricsEnableTests {
         let root = try makeTestAppRoot(readyServerId: serverId, apiClient: client, settings: store)
         // Known off: the page shows its Turn On state without asking for history.
         root.coordinator.setServerMetricsEnabledCache(false, for: serverId)
-        let page = ServerMetricsViewController(root: root)
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        window.rootViewController = UINavigationController(rootViewController: page)
-        window.makeKeyAndVisible()
+        let (page, window) = try makePage(root)
         return Harness(page: page, transport: transport, root: root, window: window)
     }
 
@@ -56,11 +61,15 @@ struct ServerMetricsEnableTests {
     }
 
     private func turnOn(_ h: Harness) async throws {
+        try await turnOn(on: h.page)
+    }
+
+    private func turnOn(on page: ServerMetricsViewController) async throws {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            h.page.view.layoutIfNeeded()
-            return Self.button(withIdentifier: "server.metrics.turnOn", in: h.page.view) != nil
+            page.view.layoutIfNeeded()
+            return Self.button(withIdentifier: "server.metrics.turnOn", in: page.view) != nil
         })
-        try #require(Self.button(withIdentifier: "server.metrics.turnOn", in: h.page.view)).sendActions(for: .primaryActionTriggered)
+        try #require(Self.button(withIdentifier: "server.metrics.turnOn", in: page.view)).sendActions(for: .primaryActionTriggered)
     }
 
     @Test("Turning on saves through the store against the loaded revision and updates the cached flag")
@@ -91,15 +100,12 @@ struct ServerMetricsEnableTests {
         #expect(h.root.settings.read(SettingsCatalog.serverMetricsEnabled).current == false)
     }
 
-    @Test("A revision conflict reloads the server's value, which the page then shows")
+    @Test("A change that lands between the page's read and its save is a conflict: reloaded, and the page says so")
     func turnOnConflictReloads() async throws {
         let h = try makeHarness()
         defer { hide(h) }
-        // The store already holds the document the page's save will be based on.
-        h.root.settings.attach(serverId: serverId)
-        _ = await h.root.settings.settled(SettingsCatalog.serverMetricsEnabled)
-        // Another device saved (and left it off) after this page loaded.
-        h.transport.changeElsewhere([:])
+        // Another device saves (and leaves it off) after the page fetched the document.
+        h.transport.beforeNextSave { h.transport.changeElsewhere([:]) }
 
         try await turnOn(h)
 
@@ -109,6 +115,67 @@ struct ServerMetricsEnableTests {
         })
         #expect(h.transport.saves.map(\.baseRevision) == [4])
         #expect(h.transport.loads == 2)
+        #expect(h.root.coordinator.connection(for: serverId)?.serverMetricsEnabled == false)
+    }
+
+    @Test("A change made elsewhere before the tap is fetched first, so the save is not a false conflict")
+    func turnOnAfterAChangeElsewhere() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        _ = await h.root.settings.reload(SettingsCatalog.serverMetricsEnabled)
+        h.transport.changeElsewhere([:])
+
+        try await turnOn(h)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.root.coordinator.connection(for: serverId)?.serverMetricsEnabled == true })
+        #expect(h.transport.saves.map(\.baseRevision) == [5])
+        #expect(!Self.labels(in: h.page.view).contains("Changed on another device; showing the latest."))
+    }
+
+    @Test("Turn On from Metrics, off from Server Settings, Turn On from Metrics again: no conflict")
+    func metricsThenServerSettingsThenMetrics() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        let coordinator = h.root.coordinator
+
+        try await turnOn(h)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { coordinator.connection(for: serverId)?.serverMetricsEnabled == true })
+
+        // The Server Settings toggle, on the model the SwiftUI view owns.
+        let model = ServerSettingsModel()
+        model.attach(coordinator: coordinator, serverId: serverId)
+        await model.load()
+        #expect(model.serverMetricsEnabled == true)
+        await model.setServerMetrics(false)
+        #expect(model.serverMetricsEnabled == false)
+        #expect(model.serverMetricsError == nil)
+        #expect(coordinator.connection(for: serverId)?.serverMetricsEnabled == false)
+
+        // Back on the Metrics page, which finds sampling off and turns it on.
+        let (again, window) = try makePage(h.root)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await turnOn(on: again)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { coordinator.connection(for: serverId)?.serverMetricsEnabled == true })
+
+        #expect(h.transport.saves.map(\.fields) == [["enabled": true], ["enabled": false], ["enabled": true]])
+        #expect(h.transport.saves.map(\.baseRevision) == [4, 5, 6])
+        #expect(!Self.labels(in: again.view).contains("Changed on another device; showing the latest."))
+    }
+
+    @Test("Server Settings' toggle saves through the store too: a failure rolls back and says why")
+    func serverSettingsFailureRollsBack() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        let model = ServerSettingsModel()
+        model.attach(coordinator: h.root.coordinator, serverId: serverId)
+        await model.load()
+        #expect(model.serverMetricsEnabled == false)
+
+        h.transport.failNextSave(with: SettingsTestError())
+        await model.setServerMetrics(true)
+
+        #expect(model.serverMetricsEnabled == false)
+        #expect(model.serverMetricsError == "The server said no.")
         #expect(h.root.coordinator.connection(for: serverId)?.serverMetricsEnabled == false)
     }
 }

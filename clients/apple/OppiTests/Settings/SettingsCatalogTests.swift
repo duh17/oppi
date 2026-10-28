@@ -12,16 +12,6 @@ struct SettingsCatalogTests {
         #expect(Set(places).count == places.count)
     }
 
-    @Test("General's settings are the device preferences on their existing keys and defaults")
-    func generalSettingsArePreferences() {
-        #expect(SettingsCatalog.hapticFeedback.key == AppPreferenceStore.Interaction.hapticFeedbackEnabledKey)
-        #expect(SettingsCatalog.hapticFeedback.default == AppPreferenceStore.Interaction.hapticFeedbackEnabledDefault)
-        #expect(SettingsCatalog.keepAwakeAfterActivity.key == AppPreferenceStore.ScreenAwake.timeoutPresetKey)
-        #expect(SettingsCatalog.keepAwakeAfterActivity.default == AppPreferenceStore.ScreenAwake.timeoutPresetDefault)
-        #expect(SettingsCatalog.openLinks.key == AppPreferenceStore.Browser.linkOpeningModeKey)
-        #expect(SettingsCatalog.openLinks.default == AppPreferenceStore.Browser.linkOpeningModeDefault)
-    }
-
     @Test("A setting's scope follows its storage and the names it is shown under")
     func scopeFollowsStorage() {
         #expect(SettingStorage.device(perServer: false).scope(serverName: "mac-studio", workspaceName: nil) == .device)

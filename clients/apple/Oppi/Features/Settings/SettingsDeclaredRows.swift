@@ -7,7 +7,7 @@ struct SettingChoice<Value: Equatable & Sendable> {
 }
 
 /// Rows drawn from a `SettingDeclaration`: the title, the identifier, the
-/// scope, the value, and what the row does while saving or after a failure all
+/// value, and what the row does while saving or after a failure all
 /// come from the declaration and the store, so every setting behaves the same.
 ///
 /// - Reads `settings` (`SettingsStore`), so call `settingRows` and
@@ -28,12 +28,6 @@ extension SettingsListViewController {
     ) -> [Item] {
         guard let settings, settings.read(declaration).failureReason != nil else { return [item] }
         return [item, failure(declaration.id)]
-    }
-
-    /// The scope sentence's scope for a section holding `declaration`: from its
-    /// storage and the attached server's name.
-    func settingScope<Value>(_ declaration: SettingDeclaration<Value>) -> SettingsScope? {
-        settings?.scope(of: declaration)
     }
 
     /// What a declared setting's row is drawn from, for `inputs(of:)`.

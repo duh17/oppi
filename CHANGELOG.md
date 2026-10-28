@@ -101,6 +101,7 @@ Example:
 
 ### Fixed
 
+- **Client:** **Server Metrics → Turn On**, and the Server Metrics switch in **Server Settings**, now notice a change made on another device: they read the server's current setting before saving, and if it changed in between they show "Changed on another device; showing the latest." instead of overwriting it.
 - **Server:** A stopped durable session now releases its memory even while another session keeps working, such as a lead waiting on its subagents. Before, each stopped session's MCP connections and state stayed in memory until that work ended or the server restarted, so memory climbed for as long as you delegated.
 - **Client:** Server Metrics no longer runs off the edge of the screen at the largest text sizes, and the "Server metrics are off" message is no longer cut off.
 - **Server:** A cron schedule now runs once, not twice, when daylight saving time ends and a local hour repeats; see [Agents and schedules](docs/usage.md#agents-and-schedules).

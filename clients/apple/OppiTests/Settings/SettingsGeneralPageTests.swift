@@ -119,7 +119,49 @@ struct SettingsGeneralPageTests {
 
         #expect(h.defaults.string(forKey: AppPreferenceStore.Browser.linkOpeningModeKey) == "external")
         #expect(await waitForMainActorCondition { footers(h.page).last == AppPreferenceStore.Browser.LinkOpeningMode.external.detail })
-        // Only Keep Awake has a side effect.
+        // The test's hook sees every stored write; which ones do anything is the live
+        // hook's filter (`SettingsLiveHookTests`).
         #expect(h.written.ids == [SettingsCatalog.openLinks.id])
+    }
+}
+
+/// The app's own after-write hook (`SettingsStore.liveAfterWrite`), on a screen-awake
+/// controller of the test's own: Keep Awake After Activity refreshes the idle timer
+/// and no other setting does.
+@Suite("Settings live hook")
+@MainActor
+struct SettingsLiveHookTests {
+    private func makeController(_ updates: UpdateLog) -> ScreenAwakeController {
+        ScreenAwakeController(
+            timeoutProvider: { .seconds(2) },
+            idleTimerSetter: { updates.values.append($0) },
+            sleepFunction: { _ in }
+        )
+    }
+
+    final class UpdateLog {
+        var values: [Bool] = []
+    }
+
+    @Test("Keep Awake After Activity refreshes the idle timer")
+    func keepAwakeRefreshes() {
+        let updates = UpdateLog()
+        let hook = SettingsStore.liveAfterWrite(screenAwake: makeController(updates))
+
+        hook(SettingsCatalog.keepAwakeAfterActivity.id)
+
+        #expect(updates.values == [true])
+    }
+
+    @Test("Open Links, Haptic Feedback, and Server Metrics do not")
+    func otherSettingsDoNot() {
+        let updates = UpdateLog()
+        let hook = SettingsStore.liveAfterWrite(screenAwake: makeController(updates))
+
+        for setting in [SettingsCatalog.openLinks.id, SettingsCatalog.hapticFeedback.id, SettingsCatalog.serverMetricsEnabled.id] {
+            hook(setting)
+        }
+
+        #expect(updates.values.isEmpty)
     }
 }

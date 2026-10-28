@@ -315,36 +315,44 @@ final class ServerSettingsModel {
     // MARK: - Server Metrics
 
     private func loadServerMetricsSetting(_ client: Client) async {
-        do {
-            let enabled = try await client.api.serverMetricsEnabled()
-            guard shouldApply(client.serverId) else { return }
+        // The store holds the document every save of this setting is based on, so
+        // this read goes through it (fetching again) instead of beside it.
+        guard let settings = coordinator?.settings else { return }
+        let setting = SettingsCatalog.serverMetricsEnabled
+        settings.attach(serverId: client.serverId)
+        let state = await settings.reload(setting)
+        guard shouldApply(client.serverId) else { return }
+        if let enabled = state.current {
             serverMetricsEnabled = enabled
             serverMetricsError = nil
             coordinator?.setServerMetricsEnabledCache(enabled, for: client.serverId)
-        } catch {
-            guard shouldApply(client.serverId, error: error) else { return }
+        } else {
             serverMetricsEnabled = nil
-            serverMetricsError = error.localizedDescription
+            serverMetricsError = state.failureReason ?? state.unavailableReason
         }
     }
 
+    /// Saves `serverMetrics.enabled` through `SettingsStore`, the one path that
+    /// writes it (this model and the Metrics page share the store, so neither
+    /// can base a save on a document the other has already moved on from). It
+    /// fetches the current document first, then saves: a failed save rolls back
+    /// with the reason, and a conflict reloads the latest value.
     func setServerMetrics(_ enabled: Bool) async {
-        guard serverMetricsEnabled != nil,
-              let client = await prepareClient(),
-              shouldApply(client.serverId) else { return }
+        guard serverMetricsEnabled != nil, let serverId, let settings = coordinator?.settings else { return }
         isSavingServerMetrics = true
-        defer { if shouldApply(client.serverId) { isSavingServerMetrics = false } }
-        do {
-            let saved = try await client.api.setServerMetricsEnabled(enabled)
-            // The server changed even if this screen moved on; the pill follows it.
-            coordinator?.setServerMetricsEnabledCache(saved, for: client.serverId)
-            guard shouldApply(client.serverId) else { return }
-            serverMetricsEnabled = saved
-            serverMetricsError = nil
-        } catch {
-            guard shouldApply(client.serverId, error: error) else { return }
-            serverMetricsError = error.localizedDescription
+        defer { if shouldApply(serverId) { isSavingServerMetrics = false } }
+        let setting = SettingsCatalog.serverMetricsEnabled
+        settings.attach(serverId: serverId)
+        _ = await settings.reload(setting)
+        await settings.set(setting, enabled).value
+        let result = settings.read(setting)
+        // The server changed even if this screen moved on; the pill follows it.
+        if let stored = result.current {
+            coordinator?.setServerMetricsEnabledCache(stored, for: serverId)
         }
+        guard shouldApply(serverId) else { return }
+        if let stored = result.current { serverMetricsEnabled = stored }
+        serverMetricsError = result.current == enabled ? nil : (result.failureReason ?? result.unavailableReason)
     }
 
     // MARK: - Update

@@ -252,7 +252,7 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ServerSettingsModel.swift": {
-      "APIClient settings write": 2
+      "APIClient settings write": 1
     },
     "clients/apple/Oppi/Features/Servers/ServerSettingsRootView.swift": {
       "import SwiftUI": 1

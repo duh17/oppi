@@ -19,6 +19,8 @@ import Observation
 ///   already held (an answer that arrived out of order) is ignored.
 /// - Writes to one route run one at a time, so two settings on the same
 ///   document never conflict with each other.
+/// - `reload(_:)` re-fetches a route's document for a caller about to write who
+///   must not trust a document that may have gone stale.
 /// - `attach(serverId:)` switches the server context. Everything loaded for the
 ///   previous one is dropped, and a result still in flight for it is ignored
 ///   when it lands, as `ServerSettingsModel` does.
@@ -51,9 +53,7 @@ final class SettingsStore {
 
     @ObservationIgnored private let device: DeviceAdapter
     @ObservationIgnored private let server: ServerAdapter
-    @ObservationIgnored private let serverName: @MainActor (String) -> String?
     @ObservationIgnored private let afterWrite: @MainActor (String) -> Void
-    @ObservationIgnored private var loadTasks: [SettingEndpoint: Task<Void, Never>] = [:]
     @ObservationIgnored private var serverId: String?
     /// Changes whenever the context does, including back to the same server, so
     /// a result requested before a switch never lands after it.
@@ -67,12 +67,10 @@ final class SettingsStore {
     init(
         device: DeviceAdapter = DeviceAdapter(),
         server: ServerAdapter,
-        serverName: @escaping @MainActor (String) -> String? = { _ in nil },
         afterWrite: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.device = device
         self.server = server
-        self.serverName = serverName
         self.afterWrite = afterWrite
     }
 
@@ -88,14 +86,7 @@ final class SettingsStore {
         documents = [:]
         loading = []
         lastSave = [:]
-        loadTasks = [:]
         retries = [:]
-    }
-
-    /// The scope a page says for `declaration`, from its storage and the
-    /// attached server's name.
-    func scope<Value>(of declaration: SettingDeclaration<Value>) -> SettingsScope {
-        declaration.storage.scope(serverName: serverId.flatMap(serverName), workspaceName: nil)
     }
 
     // MARK: - Read
@@ -126,13 +117,15 @@ final class SettingsStore {
         }
     }
 
-    /// The setting's state once it is no longer loading: waits for the load a
-    /// first read started. For a caller that must know the stored value before it
-    /// changes it (a button, not a row that draws `loading`).
-    func settled<Value>(_ declaration: SettingDeclaration<Value>) async -> SettingValue<Value> {
-        let state = read(declaration)
-        guard state == .loading, case .server(let endpoint, _) = declaration.storage else { return state }
-        await loadTasks[endpoint]?.value
+    /// The setting's state after fetching its route's document again, once any
+    /// save in flight has settled. For a caller that must base a write on the
+    /// current stored value (a button, not a row that draws `loading`): a document
+    /// held since an earlier read may be stale for a reason this store never saw.
+    func reload<Value>(_ declaration: SettingDeclaration<Value>) async -> SettingValue<Value> {
+        guard case .server(let endpoint, _) = declaration.storage, let serverId else { return read(declaration) }
+        bind(declaration, to: endpoint)
+        await lastSave[endpoint]?.value
+        _ = await fetch(endpoint, serverId: serverId, requestedContext: context)
         return read(declaration)
     }
 
@@ -227,7 +220,7 @@ final class SettingsStore {
                 if let held = states[declaration.id] as? SettingValue<Value> {
                     states[declaration.id] = held.revertedToPrevious()
                 }
-                let reloaded = await reload(endpoint, serverId: requested, requestedContext: requestedContext)
+                let reloaded = await fetch(endpoint, serverId: requested, requestedContext: requestedContext)
                 if reloaded, requestedContext == context, let document = documents[endpoint] {
                     states[declaration.id] = SettingValue<Value>.failed(
                         last: ServerAdapter.value(of: declaration, in: document),
@@ -249,14 +242,14 @@ final class SettingsStore {
         guard let serverId, !loading.contains(endpoint) else { return }
         loading.insert(endpoint)
         let requestedContext = context
-        loadTasks[endpoint] = Task { @MainActor [weak self] in
-            _ = await self?.reload(endpoint, serverId: serverId, requestedContext: requestedContext)
+        Task { @MainActor [weak self] in
+            _ = await self?.fetch(endpoint, serverId: serverId, requestedContext: requestedContext)
         }
     }
 
     /// Fetches the route's document and applies it to every setting bound to it.
     /// `true` when a document arrived in the current context.
-    private func reload(_ endpoint: SettingEndpoint, serverId requested: String, requestedContext: Int) async -> Bool {
+    private func fetch(_ endpoint: SettingEndpoint, serverId requested: String, requestedContext: Int) async -> Bool {
         do {
             let document = try await server.load(endpoint, serverId: requested)
             guard requestedContext == context else { return false }
