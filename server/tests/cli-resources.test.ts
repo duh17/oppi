@@ -82,7 +82,7 @@ async function startLocalApi(workspaces: FixtureWorkspace[]): Promise<Storage> {
 
   const storage = new Storage(dataDir);
   storage.rotateToken();
-  storage.updateConfig({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } });
+  storage.mutateConfig(() => ({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } }));
   return storage;
 }
 

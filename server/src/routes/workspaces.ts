@@ -13,7 +13,7 @@ import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../lo
 import { safeErrorMessage } from "../log-utils.js";
 import { resolveInitialChatModel } from "../session-model-selection.js";
 import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
-import { hostMountValidationError } from "../host.js";
+import { SettingValidationError, validateSetting } from "../settings/registry.js";
 import {
   assertWorkspaceSupportsWorktrees,
   claimInFlightWorkspaceCreate,
@@ -61,16 +61,19 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
   const removedDefaultModelError =
     "Workspace defaultModel is no longer supported; Pi settings own the default model. Configure defaultProvider and defaultModel in ~/.pi/agent/settings.json.";
 
-  function systemPromptModeValidationError(mode: unknown): string | undefined {
-    if (mode === undefined) {
+  /** What the store cannot judge: the prompt mode, and that the folder exists. */
+  function workspaceFieldError(body: {
+    systemPromptMode?: unknown;
+    hostMount?: unknown;
+  }): string | undefined {
+    try {
+      validateSetting("workspace.systemPromptMode", body.systemPromptMode);
+      validateSetting("workspace.hostMount", body.hostMount);
       return undefined;
+    } catch (error) {
+      if (error instanceof SettingValidationError) return error.message;
+      throw error;
     }
-
-    if (mode !== "append") {
-      return "systemPromptMode must be append";
-    }
-
-    return undefined;
   }
 
   async function handleListLocalSessions(res: ServerResponse): Promise<void> {
@@ -184,15 +187,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const systemPromptModeError = systemPromptModeValidationError(body.systemPromptMode);
-    if (systemPromptModeError) {
-      helpers.error(res, 400, systemPromptModeError);
-      return;
-    }
-
-    const hostMountError = hostMountValidationError(body.hostMount);
-    if (hostMountError) {
-      helpers.error(res, 400, hostMountError);
+    const fieldError = workspaceFieldError(body);
+    if (fieldError) {
+      helpers.error(res, 400, fieldError);
       return;
     }
 
@@ -228,15 +225,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const body = await parseWorkspaceMutationBody<UpdateWorkspaceRequest>(req, res);
     if (!body) return;
 
-    const systemPromptModeError = systemPromptModeValidationError(body.systemPromptMode);
-    if (systemPromptModeError) {
-      helpers.error(res, 400, systemPromptModeError);
-      return;
-    }
-
-    const hostMountError = hostMountValidationError(body.hostMount);
-    if (hostMountError) {
-      helpers.error(res, 400, hostMountError);
+    const fieldError = workspaceFieldError(body);
+    if (fieldError) {
+      helpers.error(res, 400, fieldError);
       return;
     }
 

@@ -226,12 +226,12 @@ beforeEach(async () => {
   );
 
   storage = new Storage(dataDir);
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
     experimental: { serverDurable: true },
-  });
+  }));
   storage.ensurePaired();
   token = enrollTestDevice(storage);
   workspace = storage.createWorkspace({ name: "Conversation stream", hostMount: dataDir });

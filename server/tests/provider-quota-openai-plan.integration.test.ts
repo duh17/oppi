@@ -122,7 +122,7 @@ beforeAll(async () => {
 
   dataDir = mkdtempSync(join(tmpdir(), "oppi-quota-plan-"));
   storage = new Storage(dataDir);
-  storage.updateConfig({ port: 0, host: "127.0.0.1", tls: { mode: "self-signed" } });
+  storage.mutateConfig(() => ({ port: 0, host: "127.0.0.1", tls: { mode: "self-signed" } }));
   storage.ensurePaired();
   const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
     publicKey: devicePublicKey(),

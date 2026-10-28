@@ -19,7 +19,6 @@ export interface CliConnectionConfig extends LocalApiConnection {
 }
 
 export interface CliConfigStorage extends CliConnectionConfig {
-  updateConfig(updates: Partial<ServerConfig>): void;
   /** Locked read/merge/write against the latest disk snapshot. */
   mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig;
   ensurePaired(): string;
@@ -112,10 +111,6 @@ export class FileCliConfigStorage implements CliConfigCommandStorage {
 
   getConfigPath(): string {
     return this.configStore.getConfigPath();
-  }
-
-  updateConfig(updates: Partial<ServerConfig>): void {
-    this.configStore.updateConfig(updates);
   }
 
   mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig {

@@ -12,6 +12,8 @@ import type { AppEventEmitter } from "../app-event-stream.js";
 import type { SessionRuntimes } from "../runtime-router.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ServerResourceService } from "../server-resource-service.js";
+import type { ConfigSettingResult, RevisionedServerMetrics } from "../settings/config-settings.js";
+import type { ServerMetricsPatch } from "../settings/registry.js";
 import type { ServerUpdateService } from "../server-update.js";
 import type { McpService } from "../mcp-service.js";
 import type { ServerTelemetry } from "../telemetry/server-telemetry.js";
@@ -26,8 +28,12 @@ export interface ServerMetricsControl {
   telemetryDir: string;
   intervalMs: number;
   isEnabled(): boolean;
-  /** Persists `serverMetrics.enabled` and starts or stops the sampler. */
-  setEnabled(enabled: boolean): void;
+  settings(): RevisionedServerMetrics;
+  /** Saves `serverMetrics.enabled` (see `applySetting`) and starts or stops the sampler. */
+  apply(
+    patch: ServerMetricsPatch,
+    baseRevision: number | undefined,
+  ): ConfigSettingResult<"serverMetrics">;
   latestSample(): ServerResourceRecord | null;
 }
 
@@ -44,6 +50,8 @@ export interface RouteContext {
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   refreshModelCatalog: (options?: { force?: boolean }) => Promise<void>;
   getModelCatalog: () => ModelInfo[];
+  /** Whether the model runtime resolves `provider` and `modelId`, as the title generator does. */
+  hasModel: (provider: string, modelId: string) => boolean;
   /** Prompt-cache lifetimes (seconds per retention tier) for a stored `provider/id` model reference. */
   getModelPromptCache?: (
     model: string | undefined,

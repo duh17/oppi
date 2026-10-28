@@ -19,11 +19,11 @@ describe("Unix-socket local API", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-poc-"));
     const storage = new Storage(dataDir);
     storage.ensurePaired();
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "0.0.0.0",
       port: 0,
       tls: { mode: "tailscale" },
-    });
+    }));
 
     const originalPath = process.env.PATH;
     process.env.PATH = dataDir;
@@ -53,11 +53,11 @@ describe("Unix-socket local API", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-slow-remote-"));
     const storage = new Storage(dataDir);
     storage.ensurePaired();
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: "tailscale" },
-    });
+    }));
     writeFileSync(join(dataDir, "tailscale"), "#!/bin/sh\n/bin/sleep 3\nexit 1\n", {
       mode: 0o755,
     });
@@ -96,7 +96,7 @@ describe("Unix-socket local API", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-tls-error-"));
     const storage = new Storage(dataDir);
     storage.ensurePaired();
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: {
@@ -104,7 +104,7 @@ describe("Unix-socket local API", () => {
         certPath: join(dataDir, "missing.crt"),
         keyPath: join(dataDir, "missing.key"),
       },
-    });
+    }));
     const server = new Server(storage);
     try {
       await expect(server.start()).rejects.toThrow("TLS cert not found");
@@ -157,7 +157,7 @@ describe("Unix-socket local API", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-local-socket-second-server-"));
     const storage = new Storage(dataDir);
     storage.ensurePaired();
-    storage.updateConfig({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } });
+    storage.mutateConfig(() => ({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } }));
     const live = storage.createSession("Live on the owning server");
     live.workspaceId = "ws-1";
     live.status = "busy";

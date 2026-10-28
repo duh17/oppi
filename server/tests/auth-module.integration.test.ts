@@ -31,12 +31,12 @@ async function startWithModule(module: { path?: string; source?: string }): Prom
   if (module.source !== undefined) writeFileSync(modulePath, module.source);
   const storage = new Storage(dataDir);
   storage.ensurePaired();
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     host: "127.0.0.1",
     port: 0,
     tls: { mode: "disabled" },
     auth: { module: modulePath },
-  });
+  }));
   server = new Server(storage);
   await server.start();
   return storage;

@@ -94,6 +94,7 @@ import { createLogger } from "./logger.js";
 import { registerE2EFauxProvider } from "./e2e-faux-provider.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import { splitCanonicalModelId } from "./model-resolution.js";
+import { applySetting, readConfigSetting } from "./settings/config-settings.js";
 import {
   BonjourAdvertiser,
   buildBonjourServiceName,
@@ -959,6 +960,7 @@ export class Server {
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       refreshModelCatalog: (options) => this.refreshModelCatalog(options),
       getModelCatalog: () => this.models.getAll(),
+      hasModel: (provider, modelId) => this.modelRuntime.getModel(provider, modelId) !== undefined,
       getModelPromptCache: (model) => {
         const ref = model ? splitCanonicalModelId(model) : undefined;
         return ref ? this.modelRegistry.find(ref.provider, ref.modelId)?.promptCache : undefined;
@@ -1007,15 +1009,18 @@ export class Server {
         telemetryDir: join(this.storage.getDataDir(), "diagnostics", "telemetry"),
         intervalMs: intervalFromEnv(),
         isEnabled: () => this.serverMetricsEnabled,
-        setEnabled: (enabled) => {
-          this.storage.updateConfig({ serverMetrics: { enabled } });
-          this.serverMetricsEnabled = enabled;
-          if (enabled) {
+        settings: () => readConfigSetting(this.storage.getConfig(), "serverMetrics"),
+        apply: (patch, baseRevision) => {
+          const result = applySetting(this.storage, "serverMetrics", patch, baseRevision);
+          if (!result.ok) return result;
+          this.serverMetricsEnabled = result.current.enabled;
+          if (result.current.enabled) {
             this.resourceSampler.start();
           } else {
             this.resourceSampler.stop();
             this.telemetryWriter.prune("server");
           }
+          return result;
         },
         latestSample: () => this.resourceSampler.latestSample,
       },

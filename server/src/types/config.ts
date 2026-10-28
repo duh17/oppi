@@ -116,6 +116,8 @@ export interface ServerConfig {
    */
   serverMetrics?: {
     enabled: boolean;
+    /** Counts saves made through `PUT /server/metrics/settings`; absent reads as 0. */
+    revision?: number;
   };
 
   /** Opt-in runtime experiments. Each needs a server restart unless its comment says otherwise. */
@@ -189,6 +191,8 @@ export interface ServerConfig {
   autoTitle?: {
     enabled: boolean;
     model?: string; // "provider/model-id" (e.g. "anthropic/claude-haiku-3")
+    /** Counts saves made through `PUT /server/auto-title`; absent reads as 0. */
+    revision?: number;
   };
 
   /**

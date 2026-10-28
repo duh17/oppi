@@ -678,13 +678,12 @@ export function saveVoicePreferences(
   };
 
   if (storage) {
-    const current = storage.getConfig();
-    storage.updateConfig({
+    storage.mutateConfig((current) => ({
       extensions: {
         ...(current.extensions ?? {}),
         voice: next.defaultVoiceId ? { defaultVoiceId: next.defaultVoiceId } : undefined,
       },
-    });
+    }));
   }
 
   return next;

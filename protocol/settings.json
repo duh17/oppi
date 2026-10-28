@@ -1,0 +1,182 @@
+{
+  "_meta": {
+    "description": "Every setting the server owns: server-wide, per-workspace, and per-device rows the server stores. Hand-maintained copy of the registry in server/src/settings/registry.ts; server/tests/settings-registry.test.ts requires both to list the same keys with the same scope, storage, default and revisioned. Change a row together with its registry entry and with the clients that read it.",
+    "scope": "server = one value for the whole server; workspace = one value per workspace; device = one value per paired device, stored on the server.",
+    "storage": "config = config.json; settings-file = <dataDir>/settings/*.json; workspace = the workspace record; pi = Pi's settings.json (the terminal sees it too); push-registration = the device's stored push registration.",
+    "default": "null means no value to default to: derived when the workspace is created, owned by Pi, or required on write.",
+    "revisioned": "true means the stored value carries a revision the API returns. autoTitle, serverMetrics and mobileOutputGuide save with an optional baseRevision (mobileOutputGuide requires it); a stale one answers 409 { error, code: \"revision_conflict\", current } and leaves the setting unchanged. The dictionaries keep their own contract: PUT carries `revision`, a stale one answers 409 { error }."
+  },
+  "settings": [
+    {
+      "key": "autoTitle",
+      "scope": "server",
+      "storage": "config",
+      "type": "{ enabled: boolean, model?: string }",
+      "default": { "enabled": false },
+      "validation": "PUT /server/auto-title takes a partial object; enabled must be a boolean; model must be provider/id and resolve in the server's model runtime, or null to clear it.",
+      "revisioned": true
+    },
+    {
+      "key": "serverMetrics",
+      "scope": "server",
+      "storage": "config",
+      "type": "{ enabled: boolean }",
+      "default": { "enabled": false },
+      "validation": "PUT /server/metrics/settings takes enabled as a boolean.",
+      "revisioned": true
+    },
+    {
+      "key": "mobileOutputGuide",
+      "scope": "server",
+      "storage": "settings-file",
+      "type": "{ enabled: boolean }",
+      "default": { "enabled": false },
+      "validation": "PUT /server/mobile-output-guide takes exactly enabled (boolean) and baseRevision.",
+      "revisioned": true
+    },
+    {
+      "key": "dictionaryGlobal",
+      "scope": "server",
+      "storage": "settings-file",
+      "type": "string[]",
+      "default": [],
+      "validation": "At most 100 phrases; each trimmed, non-empty, without control characters, at most 256 UTF-8 bytes; no repeats.",
+      "revisioned": true
+    },
+    {
+      "key": "dictionaryWorkspace",
+      "scope": "workspace",
+      "storage": "settings-file",
+      "type": "string[]",
+      "default": [],
+      "validation": "The same phrase rules as dictionaryGlobal, kept per workspace.",
+      "revisioned": true
+    },
+    {
+      "key": "piDefaultTools",
+      "scope": "server",
+      "storage": "pi",
+      "type": "string[] | null",
+      "default": null,
+      "validation": "null, or an array of strings; Pi's built-in tool names and optional tools it registers off are checked when saved.",
+      "revisioned": false
+    },
+    {
+      "key": "piDefaultModel",
+      "scope": "server",
+      "storage": "pi",
+      "type": "string",
+      "default": null,
+      "validation": "A non-empty provider/id that is in the server's model catalog.",
+      "revisioned": false
+    },
+    {
+      "key": "pushEvents",
+      "scope": "device",
+      "storage": "push-registration",
+      "type": "string[]",
+      "default": null,
+      "validation": "Required on PUT /me/push-registration: an array of strings; names the server does not send are dropped.",
+      "revisioned": false
+    },
+    {
+      "key": "pushLiveActivity",
+      "scope": "device",
+      "storage": "push-registration",
+      "type": "boolean",
+      "default": false,
+      "validation": "A boolean on PUT /me/push-registration; omitted means false.",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.name",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "string",
+      "default": null,
+      "validation": "A non-empty string; required to create.",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.description",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "string | null",
+      "default": null,
+      "validation": "A string; null clears it on update.",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.icon",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "IconChoice",
+      "default": { "kind": "default" },
+      "validation": "A tagged icon object: default, emoji, symbol, or genmoji (whose asset must exist).",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.systemPrompt",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "string | null",
+      "default": null,
+      "validation": "A string; null clears it on update.",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.systemPromptMode",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "\"append\"",
+      "default": "append",
+      "validation": "append is the only mode.",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.hostMount",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "string | null",
+      "default": null,
+      "validation": "A string naming an existing, accessible directory on the server; empty or null lets Oppi create the default folder. Never the home directory itself.",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.tools",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "string[] | null",
+      "default": null,
+      "validation": "An array of non-empty, trimmed strings (a sandbox tool allowlist); null clears it on update.",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.gitStatusEnabled",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "boolean",
+      "default": true,
+      "validation": "A boolean.",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.runtime",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "\"host\" | \"sandbox\"",
+      "default": "host",
+      "validation": "Exactly host or sandbox.",
+      "revisioned": false
+    },
+    {
+      "key": "workspace.sandboxConfig",
+      "scope": "workspace",
+      "storage": "workspace",
+      "type": "{ allowedHosts?: string[], env?: Record<string, string>, mcpServers?: string[] } | null",
+      "default": null,
+      "validation": "An object with only allowedHosts (strings), env (string values) and mcpServers (names of letters, digits, _ and -); null clears it on update.",
+      "revisioned": false
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 import { arch, platform } from "node:os";
 
+import { parseBaseRevision, revisionConflictBody } from "../settings/config-settings.js";
+import { SettingValidationError, validateSetting } from "../settings/registry.js";
 import {
   parseServerMetricsRange,
   readServerMetricsHistory,
@@ -9,7 +11,8 @@ import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 /**
  * Server Metrics page: `GET /server/metrics?range=1h|24h|7d|30d` and the
- * `serverMetrics.enabled` switch at `/server/metrics/settings`.
+ * `serverMetrics.enabled` switch at `/server/metrics/settings`, which saves like every
+ * revisioned setting: an optional `baseRevision`, a 409 `revision_conflict` when it is stale.
  */
 export function createServerMetricsRoutes(
   ctx: RouteContext,
@@ -51,17 +54,23 @@ export function createServerMetricsRoutes(
         return true;
       }
       if (method === "GET") {
-        helpers.json(res, { enabled: control.isEnabled() });
+        helpers.json(res, control.settings());
         return true;
       }
       if (method === "PUT") {
-        const body = await helpers.parseBody<{ enabled?: unknown }>(req, { maxBytes: 1024 });
-        if (typeof body.enabled !== "boolean") {
-          helpers.error(res, 400, "enabled must be a boolean");
-          return true;
+        const body = await helpers.parseBody<Record<string, unknown>>(req, { maxBytes: 1024 });
+        try {
+          const patch = validateSetting("serverMetrics", body);
+          const result = control.apply(patch, parseBaseRevision(body.baseRevision));
+          if (!result.ok) {
+            helpers.json(res, revisionConflictBody("serverMetrics", result.current), 409);
+          } else {
+            helpers.json(res, result.current);
+          }
+        } catch (cause: unknown) {
+          if (!(cause instanceof SettingValidationError)) throw cause;
+          helpers.error(res, 400, cause.message);
         }
-        control.setEnabled(body.enabled);
-        helpers.json(res, { enabled: control.isEnabled() });
         return true;
       }
     }

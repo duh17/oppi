@@ -134,11 +134,11 @@ describe("owner-socket WebSocket upgrades", () => {
     dataDir = mkdtempSync(join(tmpdir(), "oppi-local-ws-"));
     const storage = new Storage(dataDir);
     const token = storage.ensurePaired();
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: "tailscale" },
-    });
+    }));
     const originalPath = process.env.PATH;
     process.env.PATH = dataDir;
     server = new Server(storage);
@@ -159,11 +159,11 @@ describe("owner-socket WebSocket upgrades", () => {
     dataDir = mkdtempSync(join(tmpdir(), "oppi-network-ws-"));
     const storage = new Storage(dataDir);
     const token = storage.ensurePaired();
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: "self-signed" },
-    });
+    }));
     server = new Server(storage);
     await server.start();
     return { token, baseUrl: `https://127.0.0.1:${server.port}` };

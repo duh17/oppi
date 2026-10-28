@@ -70,11 +70,11 @@ describe("malformed Host and request-target isolation", { timeout: 30_000 }, () 
     process.on("uncaughtException", onUncaughtException);
     dataDir = mkdtempSync(join(tmpdir(), "oppi-malformed-host-"));
     const storage = new Storage(dataDir);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       port: 0,
       host: "127.0.0.1",
       tls: { mode: "disabled" },
-    });
+    }));
     storage.ensurePaired();
     server = new Server(storage);
     await server.start();

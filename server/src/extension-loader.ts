@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { isManagedExtensionName } from "../extensions/built-ins.js";
+import { PiSettingsOperationError } from "./settings/pi-resource-errors.js";
 
 const DEFAULT_AGENT_DIR = join(homedir(), ".pi", "agent");
 const HOST_EXTENSIONS_DIR = join(DEFAULT_AGENT_DIR, "extensions");
@@ -278,7 +279,7 @@ function throwIfSettingsErrors(settingsManager: SettingsManager, operation: stri
     .slice(0, 5)
     .map((entry) => `${entry.scope}: ${entry.error.message}`)
     .join("; ");
-  throw new Error(`Pi settings ${operation} failed: ${detail}`);
+  throw new PiSettingsOperationError(operation, detail);
 }
 
 export function resolveWorkspaceExtensions(

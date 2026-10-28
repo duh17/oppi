@@ -157,7 +157,7 @@ async function fixture(responses: FauxResponseStep[]) {
   );
   const opening = vi.spyOn(SessionHost.prototype, "open");
   const storage = new Storage(dir);
-  storage.updateConfig({ experimental: { serverDurable: true } });
+  storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
   const workspace = storage.createWorkspace({ name: "Packages", hostMount: dir });
   const session = storage.createSession("Package user", "faux/faux-1");
   session.serverDurable = { storeId: session.id };

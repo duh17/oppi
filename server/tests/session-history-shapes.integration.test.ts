@@ -87,12 +87,12 @@ describe.each(clients)("session history shapes for a client with $name", ({ head
     process.env.PI_CODING_AGENT_DIR = join(dataDir, "agent");
     storage = new Storage(dataDir);
     token = storage.ensurePaired();
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: "tailscale" },
       experimental: { serverDurable: true },
-    });
+    }));
     fixture = seed(storage, dataDir);
     const originalPath = process.env.PATH;
     process.env.PATH = dataDir;

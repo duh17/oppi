@@ -45,14 +45,14 @@ describe("config command agent safety", () => {
   it("redacts token on get/show while preserving non-secret values", async () => {
     const dataDir = makeDataDir();
     const storage = createCliConfigStorage(dataDir);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       ...storage.getConfig(),
       token: "owner-secret-token",
       runtimeEnv: {
         OPENAI_API_KEY: "sk-test",
         TTS_BASE_URL: "http://127.0.0.1:7937",
       },
-    });
+    }));
 
     const getToken = await runCli(["config", "get", "token"], {
       dataDir,
@@ -90,10 +90,10 @@ describe("config command agent safety", () => {
   it("captures human output on successful config actions", async () => {
     const dataDir = makeDataDir();
     const storage = createCliConfigStorage(dataDir);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       ...storage.getConfig(),
       runtimeEnv: { TTS_BASE_URL: "http://127.0.0.1:7937" },
-    });
+    }));
 
     const get = await runCli(["config", "get", "runtimeEnv.TTS_BASE_URL"], {
       dataDir,

@@ -47,7 +47,7 @@ describe("oppi config", () => {
       runtime: "runtime-config-display-secret",
     };
     const storage = new Storage(dataDir);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       token: secrets.owner,
       pairingToken: secrets.pairing,
       pushRegistrations: [
@@ -61,7 +61,7 @@ describe("oppi config", () => {
         },
       ],
       runtimeEnv: { OPENAI_API_KEY: secrets.runtime },
-    });
+    }));
     return secrets;
   }
 
@@ -261,10 +261,10 @@ describe("oppi init", () => {
         registeredAt: 1,
         events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
       });
-      new Storage(initDir).updateConfig({
+      new Storage(initDir).mutateConfig(() => ({
         push: { mode: "relay", relays: [`http://127.0.0.1:${port}`] },
         pushRegistrations: [registration("phone"), registration("ipad")],
-      });
+      }));
 
       const { stdout, exitCode } = await runAsync([
         "init",

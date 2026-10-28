@@ -230,10 +230,6 @@ export class Storage {
     return this.configStore.readVoiceConfig();
   }
 
-  updateConfig(updates: Partial<ServerConfig>): void {
-    this.configStore.updateConfig(updates);
-  }
-
   mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig {
     return this.configStore.mutate(mutator);
   }

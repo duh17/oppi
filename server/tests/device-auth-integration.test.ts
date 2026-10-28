@@ -101,11 +101,11 @@ function websocketUpgradeStatus(token: string): Promise<number> {
 beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-device-auth-plaintext-"));
   storage = new Storage(dataDir);
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "disabled" },
-  });
+  }));
   ownerToken = storage.ensurePaired();
   const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
     publicKey: devicePublicKey(),

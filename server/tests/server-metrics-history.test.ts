@@ -169,8 +169,10 @@ describe("GET/PUT /server/metrics", () => {
       telemetryDir: dir,
       intervalMs: 30_000,
       isEnabled: () => enabled,
-      setEnabled: (value) => {
-        enabled = value;
+      settings: () => ({ enabled, revision: 0 }),
+      apply: (patch) => {
+        enabled = patch.enabled;
+        return { ok: true, current: { enabled, revision: 0 } };
       },
       latestSample: () => latest,
     });
@@ -188,8 +190,12 @@ describe("GET/PUT /server/metrics", () => {
 
     expect((await call("PUT", "/server/metrics/settings", { enabled: false })).json).toEqual({
       enabled: false,
+      revision: 0,
     });
-    expect((await call("GET", "/server/metrics/settings")).json).toEqual({ enabled: false });
+    expect((await call("GET", "/server/metrics/settings")).json).toEqual({
+      enabled: false,
+      revision: 0,
+    });
     const off = await call("GET", "/server/metrics?range=1h");
     expect(off.json).toMatchObject({ enabled: false, latest: null, history: null });
   });

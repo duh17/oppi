@@ -59,6 +59,14 @@ function normalizeDevicePublicKey(value: unknown): DevicePublicKey | undefined {
 
 const PAIRING_METHODS = new Set<string>(["invite", "tailscale", "custom"]);
 
+/** A saved setting's revision: absent reads as 0 (undefined); anything else must be a count. */
+function readSettingRevision(value: unknown, path: string, errors: string[]): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
+  errors.push(`${path}.revision: expected a non-negative safe integer`);
+  return undefined;
+}
+
 function optionalNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -509,7 +517,7 @@ function normalizeConfig(
 
     if (strictUnknown) {
       for (const key of Object.keys(serverMetrics)) {
-        if (key !== "enabled") {
+        if (key !== "enabled" && key !== "revision") {
           errors.push(`config.serverMetrics.${key}: unknown key`);
         }
       }
@@ -518,6 +526,12 @@ function normalizeConfig(
     if ("enabled" in serverMetrics) {
       if (typeof serverMetrics.enabled === "boolean") {
         config.serverMetrics = { enabled: serverMetrics.enabled };
+        const revision = readSettingRevision(
+          serverMetrics.revision,
+          "config.serverMetrics",
+          errors,
+        );
+        if (revision !== undefined) config.serverMetrics.revision = revision;
       } else {
         errors.push("config.serverMetrics.enabled: expected boolean");
         changed = true;
@@ -828,6 +842,8 @@ function normalizeConfig(
     if (typeof at.model === "string" && at.model.trim().length > 0) {
       autoTitle.model = at.model.trim();
     }
+    const revision = readSettingRevision(at.revision, "config.autoTitle", errors);
+    if (revision !== undefined) autoTitle.revision = revision;
     config.autoTitle = autoTitle;
   }
 

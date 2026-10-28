@@ -78,7 +78,7 @@ describe("Storage pairing", () => {
   it("owner rotation invalidates paired, pairing, and push credentials", () => {
     const storage = new Storage(dir);
     storage.ensurePaired();
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       pairingToken: "pt_rotation-fixture-secret",
       pairingTokenExpiresAt: Date.now() + 60_000,
       pushRegistrations: [
@@ -91,7 +91,7 @@ describe("Storage pairing", () => {
           events: ["blocked", "error", "notify", "pairing_approval", "device_enrolled"],
         },
       ],
-    });
+    }));
 
     storage.rotateToken();
 

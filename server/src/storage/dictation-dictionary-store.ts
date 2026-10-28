@@ -57,6 +57,17 @@ function validPhrase(value: unknown): string {
   return text;
 }
 
+/** The saved phrases a replace may store: at most the cap, each valid, none repeated. */
+export function validateDictionaryPhrases(phrases: unknown): string[] {
+  if (!Array.isArray(phrases) || phrases.length > maxSaved) {
+    throw new DictionaryError(400, "Dictionary allows at most 100 saved phrases per scope");
+  }
+  const entries = phrases.map(validPhrase);
+  if (new Set(entries).size !== entries.length)
+    throw new DictionaryError(400, "Duplicate dictionary phrase");
+  return entries;
+}
+
 function validList(value: unknown): value is List {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const list = value as Partial<List>;
@@ -154,12 +165,7 @@ export class DictationDictionaryStore {
   }
 
   replace(workspaceId: string | null, revision: unknown, phrases: unknown): List {
-    if (!Array.isArray(phrases) || phrases.length > maxSaved) {
-      throw new DictionaryError(400, "Dictionary allows at most 100 saved phrases per scope");
-    }
-    const entries = phrases.map(validPhrase);
-    if (new Set(entries).size !== entries.length)
-      throw new DictionaryError(400, "Duplicate dictionary phrase");
+    const entries = validateDictionaryPhrases(phrases);
     return this.change(workspaceId, (list) => {
       if (revision !== list.revision)
         throw new DictionaryError(409, "Dictionary changed; reload before saving");

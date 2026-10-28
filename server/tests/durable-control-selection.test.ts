@@ -46,7 +46,7 @@ async function startDurable(runtime: "host" | "sandbox") {
     }),
   );
   const storage = new Storage(dir);
-  storage.updateConfig({ experimental: { serverDurable: true } });
+  storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
   const workspace = storage.createWorkspace({ name: "Selection", hostMount: dir });
   if (runtime === "sandbox") {
     workspace.runtime = "sandbox";

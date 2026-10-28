@@ -281,7 +281,7 @@ export async function runUntilOutput(
 export function seedConfiguredHost(dir: string): void {
   const storage = new Storage(dir);
   storage.rotateToken();
-  storage.updateConfig({ tls: { mode: "disabled" } });
+  storage.mutateConfig(() => ({ tls: { mode: "disabled" } }));
 }
 
 export async function getFreePort(): Promise<number> {

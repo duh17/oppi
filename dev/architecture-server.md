@@ -181,10 +181,19 @@ When changing protocol messages:
 2. Update Apple models: `ClientMessage.swift`, `ServerMessage.swift`, `AppEventMessage.swift`, and stream wrappers.
 3. Update protocol snapshots in `protocol/*.json` when the wire shape changes. Ordinary protocol tests compare deterministic canonical bytes with the committed fixtures without writing tracked files. Deliberate fixture changes use `cd server && npm run protocol:fixtures:update`.
 4. Run server protocol tests, followed by Apple Codable tests.
+5. A setting's wire contract also lives in `protocol/settings.json`: keep its row and the registry entry (see [Settings registry](#settings-registry)) in step.
 
 The experimental durable conversation stream (`ConversationStreamServerMessage`, `ConversationStreamAttach`, `ConversationStreamDetach`, `ConversationStreamOlder`) is outside the server's `ServerMessage`/`ClientMessage` unions. Its fixtures are `protocol/conversation-stream.json` and the golden `protocol/conversation-stream-golden.json`; its Apple models are `OppiCore/Models/ConversationStream.swift`, applied by `ConversationReplica`. The Apple client carries the frames as `ServerMessage.conversationStream` and the requests as `ClientMessage.conversationAttach`/`.conversationDetach`/`.conversationOlder`, so they share the focused socket's decoding and send path. See [Durable conversation stream](architecture-server/durable-conversation-stream.md).
 
 Tool presentation facts and full-output lifetime are documented in [Tool inspection](architecture-server/tool-inspection.md).
+
+### Settings registry
+
+`server/src/settings/registry.ts` declares every setting the server owns: key, scope (`server`, `workspace`, `device`), storage (`config`, `settings-file`, `workspace`, `pi`, `push-registration`), default, `revisioned`, and `validate(value)`, which throws `SettingValidationError` (a 400) for a value it refuses. Routes and stores validate through the definition rather than keeping their own copy of a check. `protocol/settings.json` is the hand-maintained copy the clients read; `server/tests/settings-registry.test.ts` requires the two to list the same keys with the same scope, storage, default, and `revisioned`. A new setting adds its entry and its fixture row together, and an entry exists only for a setting that exists.
+
+Auto-title, Server Metrics, and the Mobile Output Guide share one save contract. GET and PUT responses carry `revision`; a PUT may carry `baseRevision`, and a stale one answers `409 { error, code: "revision_conflict", current }` and changes nothing. Auto-title and Server Metrics keep the revision beside the value in `config.json` (`applySetting` in `server/src/settings/config-settings.ts` checks and bumps it under the config lock); omitting `baseRevision` is last-writer-wins. The Mobile Output Guide requires it. The Dictionary keeps its own `revision` contract. `oppi config set` writes `config.json` without bumping a revision.
+
+Pi owns the Skills and Extensions settings, so the server-global and workspace-scoped routes map failures through one function, `httpStatusForPiResourceError` in `server/src/settings/pi-resource-errors.ts`, by error class rather than message text.
 
 ## Server boundary rules current code
 
@@ -196,6 +205,7 @@ These rules are enforced by `server/scripts/check-architecture-boundaries.ts` an
 - Concrete route modules must not import each other. Compose route dispatch in `server/src/routes/index.ts`, and keep shared route helpers limited to the approved route helper modules.
 - `server/src/types.ts` may only re-export modules under `server/src/types/`.
 - `session-*` modules must not import the `sessions.ts` facade.
+- `.updateConfig(` calls (`ConfigStore.updateConfig` writes any `Partial<ServerConfig>`) are allowed only in `server/src/storage/**` and `server/src/settings/**`. Declared settings save through the registry and `applySetting`; other locked config writes use `Storage.mutateConfig`.
 - `server/src/storage/**` modules are infrastructure leaves. They must not import routes, stream code, or session runtime modules.
 - `@earendil-works/pi-ai/compat` imports are forbidden. Configured model/auth requests use `ModelRuntime`; static built-in pricing reads use `@earendil-works/pi-ai/providers/all`.
 - Direct `mirror-session-resume.ts` imports live only in `server/src/session-lifecycle-service.ts`; routes and streams call lifecycle service methods for mirror open/resume behavior.

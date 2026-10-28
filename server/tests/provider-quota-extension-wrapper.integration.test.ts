@@ -112,12 +112,12 @@ async function startScenario(extensions: Record<string, string>): Promise<Scenar
 
   const dataDir = mkdtempSync(join(tmpdir(), "oppi-quota-wrapper-data-"));
   const storage = new Storage(dataDir);
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
     providerQuotas: { openaiUseCodexPlan: true },
-  });
+  }));
   storage.ensurePaired();
   const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
     publicKey: devicePublicKey(),

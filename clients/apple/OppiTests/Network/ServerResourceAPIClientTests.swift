@@ -24,6 +24,59 @@ struct ServerResourceAPIClientTests {
         #expect(skills.first?.packageName == "@scope/review-tools")
     }
 
+    @Test func autoTitleDecodesOptionalRevisionAndSendsBaseRevisionOnlyWhenGiven() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+        var bodies: [[String: Any]] = []
+
+        TestURLProtocol.handler = { request in
+            #expect(request.url?.path == "/server/auto-title")
+            if request.httpMethod == "PUT" {
+                let object = try JSONSerialization.jsonObject(with: requestBodyData(request))
+                bodies.append(try #require(object as? [String: Any]))
+                return mockResponse(json: #"{"enabled":true,"model":"anthropic/haiku","revision":4}"#)
+            }
+            return mockResponse(json: #"{"enabled":false}"#)
+        }
+
+        let older = try await client.getAutoTitleConfig()
+        #expect(older.revision == nil)
+
+        let config = APIClient.AutoTitleConfig(enabled: true, model: "anthropic/haiku")
+        let lastWriterWins = try await client.setAutoTitleConfig(config)
+        let guarded = try await client.setAutoTitleConfig(config, baseRevision: 3)
+
+        #expect(lastWriterWins.revision == 4)
+        #expect(guarded.revision == 4)
+        #expect(bodies.count == 2)
+        #expect(bodies[0]["baseRevision"] == nil)
+        #expect(bodies[1]["baseRevision"] as? Int == 3)
+        #expect(bodies[1]["revision"] == nil)
+    }
+
+    @Test func serverMetricsSettingsTolerateRevisionAndSendBaseRevisionOnlyWhenGiven() async throws {
+        let client = makeClient()
+        defer { TestURLProtocol.handler = nil }
+        var bodies: [[String: Any]] = []
+
+        TestURLProtocol.handler = { request in
+            #expect(request.url?.path == "/server/metrics/settings")
+            if request.httpMethod == "PUT" {
+                let object = try JSONSerialization.jsonObject(with: requestBodyData(request))
+                bodies.append(try #require(object as? [String: Any]))
+                return mockResponse(json: #"{"enabled":true,"revision":2}"#)
+            }
+            return mockResponse(json: #"{"enabled":false}"#)
+        }
+
+        #expect(try await client.serverMetricsEnabled() == false)
+        #expect(try await client.setServerMetricsEnabled(true) == true)
+        #expect(try await client.setServerMetricsEnabled(true, baseRevision: 1) == true)
+        #expect(bodies.count == 2)
+        #expect(bodies[0]["baseRevision"] == nil)
+        #expect(bodies[1]["baseRevision"] as? Int == 1)
+    }
+
     @Test func skillDetailSafelyEncodesOpaqueID() async throws {
         let client = makeClient()
         defer { TestURLProtocol.handler = nil }

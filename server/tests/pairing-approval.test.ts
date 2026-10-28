@@ -523,7 +523,7 @@ describe("new-device alerts", () => {
   }
 
   it("pushes the approval request and the enrollment to every other registered device and logs it", async () => {
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
     const phone = enrollExisting();
     const mac = enrollExisting();
     const revoked = enrollExisting();
@@ -597,7 +597,7 @@ describe("new-device alerts", () => {
   });
 
   function pushingPairing(extra: Partial<ConstructorParameters<typeof DevicePairing>[0]> = {}) {
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
     const phone = enrollExisting();
     registerPush(phone.deviceId, "recipient", "osp1.r.p.phone");
     const capture = relayCapture();

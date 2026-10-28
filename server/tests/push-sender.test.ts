@@ -91,7 +91,7 @@ describe("PushSender", () => {
   };
 
   it("sends nothing while push is off, even to a registered device", async () => {
-    storage.updateConfig({ push: { mode: "off" } });
+    storage.mutateConfig(() => ({ push: { mode: "off" } }));
     const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
     const push = sender(fetchImpl);
 
@@ -103,7 +103,7 @@ describe("PushSender", () => {
   });
 
   it("relays a sealed envelope only the device key opens, without rewriting config per push", async () => {
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
     const configBefore = readFileSync(join(dataDir, "config.json"), "utf8");
     const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
     const push = sender(fetchImpl);
@@ -141,7 +141,7 @@ describe("PushSender", () => {
   });
 
   it("seals and relays nothing for an event the phone did not list", async () => {
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
     const [registered] = storage.getPushRegistrations();
     if (!registered) throw new Error("missing registration");
     storage.setPushRegistration({ ...registered, events: ["blocked", "pairing_approval"] });
@@ -161,7 +161,7 @@ describe("PushSender", () => {
   });
 
   it("sends nothing to a registration that was replaced after the caller listed it", async () => {
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
     const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
     const push = sender(fetchImpl);
     const [listed] = push.registrations();
@@ -174,7 +174,7 @@ describe("PushSender", () => {
   });
 
   it("fails over to the standby on a network error or 5xx", async () => {
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } }));
     const down = relayFetch({ [STANDBY]: ok });
     const [registration] = sender(down.fetchImpl).registrations();
     if (!registration) throw new Error("missing registration");
@@ -194,7 +194,7 @@ describe("PushSender", () => {
   });
 
   it("prunes on a primary 410 but not on a standby 410", async () => {
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } }));
     const gone = () => new Response(JSON.stringify({ error: "gone" }), { status: 410 });
 
     const standbyGone = relayFetch({ [STANDBY]: gone });
@@ -216,7 +216,7 @@ describe("PushSender", () => {
   });
 
   it("does not fail over a deterministic refusal such as a quota", async () => {
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } }));
     const quota = relayFetch({
       [PRIMARY]: () => new Response(JSON.stringify({ error: "quota_exceeded" }), { status: 429 }),
       [STANDBY]: ok,
@@ -237,13 +237,13 @@ describe("PushSender", () => {
     expect(sender(fetchImpl).relays()).toEqual([OPPI_PUSH_RELAY]);
 
     // A push block without a mode, read back from config.json, is relay mode.
-    storage.updateConfig({ push: { relays: [PRIMARY] } } as never);
+    storage.mutateConfig(() => ({ push: { relays: [PRIMARY] } } as never));
     const reloaded = new Storage(dataDir);
     expect(
       new PushSender(reloaded, { signingKey: signing.privateKey, fetch: fetchImpl }).relays(),
     ).toEqual([PRIMARY]);
 
-    storage.updateConfig({ push: { mode: "off" } });
+    storage.mutateConfig(() => ({ push: { mode: "off" } }));
     const off = sender(fetchImpl);
     expect(off.relays()).toBeUndefined();
     expect(off.registrations()).toEqual([]);
@@ -251,16 +251,16 @@ describe("PushSender", () => {
 
   it("keeps the push config it started with, whatever config.json says later", async () => {
     const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
-    storage.updateConfig({ push: { mode: "off" } });
+    storage.mutateConfig(() => ({ push: { mode: "off" } }));
     const off = sender(fetchImpl);
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
     expect(off.relays()).toBeUndefined();
     expect(off.registrations()).toEqual([]);
 
     const on = sender(fetchImpl);
     const [registration] = on.registrations();
     if (!registration) throw new Error("missing registration");
-    storage.updateConfig({ push: { mode: "off" } });
+    storage.mutateConfig(() => ({ push: { mode: "off" } }));
     expect(on.relays()).toEqual([PRIMARY]);
     expect(await on.send(registration, notification)).toEqual({ status: "delivered" });
     expect(calls).toHaveLength(1);
@@ -270,7 +270,7 @@ describe("PushSender", () => {
     const gone = () => new Response(JSON.stringify({ error: "gone" }), { status: 410 });
 
     it("remembers a token pruned by the primary, not one a standby refused", async () => {
-      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } });
+      storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } }));
       const standbyGone = relayFetch({ [STANDBY]: gone });
       const push = sender(standbyGone.fetchImpl);
       const [registration] = push.registrations();
@@ -288,7 +288,7 @@ describe("PushSender", () => {
     });
 
     it("keeps a bounded memory, forgetting the oldest token first", async () => {
-      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+      storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
       const { fetchImpl } = relayFetch({ [PRIMARY]: gone });
       // A new UTC day per send, so the device budget never refuses before the relay answers.
       let clock = Date.parse("2026-01-01T12:00:00Z");
@@ -329,7 +329,7 @@ describe("PushSender", () => {
     });
 
     function timed(fetchImpl: typeof fetch): PushSender {
-      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } });
+      storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY, STANDBY] } }));
       storage.setPushRegistration({
         deviceId,
         keyId: vectors.recipient.keyId,
@@ -445,7 +445,7 @@ describe("PushSender", () => {
     let clock: number;
 
     function budgeted(fetchImpl: typeof fetch): PushSender {
-      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+      storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
       return new PushSender(storage, {
         signingKey: signing.privateKey,
         fetch: fetchImpl,
@@ -538,7 +538,7 @@ describe("PushSender", () => {
     const update = { event: "update" as const, running: 2, needsYou: 1 };
 
     function liveActivitySender(fetchImpl: typeof fetch, liveActivity = true): PushSender {
-      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+      storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
       storage.setPushRegistration({
         deviceId,
         keyId: vectors.recipient.keyId,

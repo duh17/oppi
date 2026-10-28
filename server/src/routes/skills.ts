@@ -26,6 +26,12 @@ import {
 import { listConfiguredHostExtensionResources } from "../extension-loader.js";
 import { projectTrustState } from "../project-trust.js";
 import { workspaceMountRoot } from "../session-work-root.js";
+import {
+  httpStatusForPiResourceError,
+  PiResourceNotFoundError,
+  PiSettingsOperationError,
+  WorkspaceResourceScopeError,
+} from "../settings/pi-resource-errors.js";
 import type { ProjectTrustState } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
@@ -42,39 +48,6 @@ interface SkillRouteInfo {
 
 type PiResourceType = "skills" | "extensions";
 type PiResourceScope = "user" | "project";
-
-class WorkspaceResourceScopeError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "WorkspaceResourceScopeError";
-  }
-}
-
-class PiSettingsOperationError extends Error {
-  constructor(operation: string, detail: string) {
-    super(`Pi settings ${operation} failed: ${detail}`);
-    this.name = "PiSettingsOperationError";
-  }
-}
-
-class PiResourceNotFoundError extends Error {
-  constructor(message = "Pi resource not found for cwd") {
-    super(message);
-    this.name = "PiResourceNotFoundError";
-  }
-}
-
-function httpStatusForPiResourceError(err: unknown): number {
-  if (err instanceof WorkspaceResourceScopeError) return err.status;
-  if (err instanceof PiSettingsOperationError) return 500;
-  if (err instanceof PiResourceNotFoundError) return 404;
-  // extension-loader and other Pi helpers throw plain Errors with this prefix.
-  if (err instanceof Error && err.message.startsWith("Pi settings ")) return 500;
-  return 400;
-}
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error ? err.message : fallback;
@@ -692,7 +665,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     } catch (err: unknown) {
       helpers.error(
         res,
-        httpStatusForPiResourceError(err),
+        httpStatusForPiResourceError(err, 400),
         errorMessage(err, "Failed to resolve Pi skills for cwd"),
       );
     }
@@ -722,7 +695,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     } catch (err: unknown) {
       helpers.error(
         res,
-        httpStatusForPiResourceError(err),
+        httpStatusForPiResourceError(err, 400),
         errorMessage(err, "Failed to resolve Pi extensions for cwd"),
       );
     }
@@ -751,7 +724,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     } catch (err: unknown) {
       helpers.error(
         res,
-        httpStatusForPiResourceError(err),
+        httpStatusForPiResourceError(err, 400),
         errorMessage(err, "Failed to load skill detail"),
       );
     }
@@ -786,7 +759,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     } catch (err: unknown) {
       helpers.error(
         res,
-        httpStatusForPiResourceError(err),
+        httpStatusForPiResourceError(err, 400),
         errorMessage(err, "Failed to load skill file"),
       );
     }
@@ -902,7 +875,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     } catch (err: unknown) {
       helpers.error(
         res,
-        httpStatusForPiResourceError(err),
+        httpStatusForPiResourceError(err, 400),
         errorMessage(err, "Failed to update Pi resource settings"),
       );
     }

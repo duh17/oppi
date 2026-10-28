@@ -3,6 +3,7 @@ import {
   DictionaryError,
 } from "../storage/dictation-dictionary-store.js";
 import { isDictationStreamEnabled, resolveAsrProvider } from "../dictation-types.js";
+import { SettingValidationError, validateSetting } from "../settings/registry.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 /** Authenticated on both owner Unix socket and paired HTTPS; never log phrase bodies. */
@@ -51,7 +52,11 @@ export function createDictationDictionaryRoutes(
         ) {
           throw new DictionaryError(400, "Expected revision and phrases");
         }
-        list = store.replace(workspaceId, body.revision, body.phrases);
+        const phrases = validateSetting(
+          workspaceId === null ? "dictionaryGlobal" : "dictionaryWorkspace",
+          body.phrases,
+        );
+        list = store.replace(workspaceId, body.revision, phrases);
       } else if (method === "DELETE") {
         const body = await helpers.parseBody<unknown>(req, { maxBytes: 2048 });
         if (
@@ -86,7 +91,9 @@ export function createDictationDictionaryRoutes(
       helpers.error(
         res,
         error instanceof DictionaryError ? error.status : 400,
-        error instanceof DictionaryError ? error.message : "Invalid dictionary request",
+        error instanceof DictionaryError || error instanceof SettingValidationError
+          ? error.message
+          : "Invalid dictionary request",
       );
     }
     return true;

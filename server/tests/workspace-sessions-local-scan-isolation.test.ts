@@ -35,11 +35,11 @@ describe("workspace sessions local scan isolation", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-ws-sessions-isolation-data-"));
     const mountDir = mkdtempSync(join(tmpdir(), "oppi-ws-sessions-isolation-mount-"));
     const storage = new Storage(dataDir);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       port: 0,
       host: "127.0.0.1",
       tls: { mode: "self-signed" },
-    });
+    }));
     storage.ensurePaired();
     const token = enrollTestDevice(storage);
     const server = new Server(storage);

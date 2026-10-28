@@ -51,7 +51,7 @@ describe.skipIf(logSkip(!hasOpenSSL, "server-stop-upload-gc", "openssl is not av
     it("waits for the upload GC pass in flight, so nothing writes into the data dir after it returns", async () => {
       dataDir = mkdtempSync(join(tmpdir(), "oppi-stop-upload-gc-"));
       const storage = new Storage(dataDir);
-      storage.updateConfig({ port: 0, host: "127.0.0.1", tls: { mode: "self-signed" } });
+      storage.mutateConfig(() => ({ port: 0, host: "127.0.0.1", tls: { mode: "self-signed" } }));
       storage.ensurePaired();
       const server = new Server(storage);
       await server.start();

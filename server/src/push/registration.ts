@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { verifyDeviceSignature } from "../storage/device-auth.js";
 import type { DevicePublicKey, PushEvent, PushRegistrationRequest } from "../types.js";
 import { PUSH_PUBLIC_KEY_BYTES, pushKeyId } from "./envelope.js";
-import { parsePushEvents } from "./events.js";
+import { SettingValidationError, validateSetting } from "../settings/registry.js";
 
 /** How far `issuedAt` may be from the server clock. */
 export const PUSH_REGISTRATION_MAX_SKEW_MS = 10 * 60 * 1000;
@@ -59,13 +59,15 @@ export function checkPushRegistration(input: {
   now: number;
 }): PushRegistrationCheck {
   const { body } = input;
-  const { keyId, publicKey, sendToken, relay, issuedAt, signature, liveActivity } = body;
-  if (liveActivity !== undefined && typeof liveActivity !== "boolean") {
-    return { ok: false, status: 400, error: "liveActivity must be a boolean" };
-  }
-  const events = parsePushEvents(body.events);
-  if (!events) {
-    return { ok: false, status: 400, error: "events must be an array of strings" };
+  const { keyId, publicKey, sendToken, relay, issuedAt, signature } = body;
+  let liveActivity: boolean;
+  let events: PushEvent[];
+  try {
+    liveActivity = validateSetting("pushLiveActivity", body.liveActivity);
+    events = validateSetting("pushEvents", body.events);
+  } catch (error) {
+    if (!(error instanceof SettingValidationError)) throw error;
+    return { ok: false, status: 400, error: error.message };
   }
   if (
     typeof keyId !== "string" ||
@@ -123,7 +125,7 @@ export function checkPushRegistration(input: {
     keyId,
     publicKey: publicKeyBytes.toString("base64url"),
     sendToken,
-    liveActivity: liveActivity === true,
+    liveActivity,
     events,
   };
 }

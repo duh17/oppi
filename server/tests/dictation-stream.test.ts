@@ -77,12 +77,12 @@ describe("Server HTTP dictation boot enablement", () => {
   it("enables dictation from asr.sttEndpoint", () => {
     const dataDir = tempDir("oppi-stt-http-boot-");
     const storage = new Storage(dataDir);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: "disabled" },
       asr: { sttEndpoint: "http://127.0.0.1:7936" },
-    });
+    }));
 
     const server = new Server(storage) as unknown as ServerDictationInternals;
     try {
@@ -97,12 +97,12 @@ describe("Server HTTP dictation boot enablement", () => {
   it("enables dictation from asr.provider xai without sttEndpoint", () => {
     const dataDir = tempDir("oppi-stt-xai-boot-");
     const storage = new Storage(dataDir);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: "disabled" },
       asr: { provider: "xai" },
-    });
+    }));
 
     const server = new Server(storage) as unknown as ServerDictationInternals;
     try {

@@ -16,6 +16,14 @@ import { readyVoiceFeatures } from "../voice-backend-health.js";
 import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
 import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { checkPushRegistration } from "../push/registration.js";
+import { splitCanonicalModelId } from "../model-resolution.js";
+import {
+  applySetting,
+  parseBaseRevision,
+  readConfigSetting,
+  revisionConflictBody,
+} from "../settings/config-settings.js";
+import { SettingValidationError, validateSetting } from "../settings/registry.js";
 import type { PushRegistrationRequest, WorkspaceFileEditingCapability } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
@@ -593,6 +601,37 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, { serverPublicKey: push.serverPublicKey, keyId: check.keyId });
   }
 
+  /** The model must resolve in the model runtime, the lookup the title generator makes. */
+  async function requireTitleModel(model: string): Promise<void> {
+    await ctx.refreshModelCatalog();
+    const ref = splitCanonicalModelId(model);
+    if (!ref || !ctx.hasModel(ref.provider, ref.modelId)) {
+      throw new SettingValidationError(`model ${model} is not available on this server`);
+    }
+  }
+
+  async function handlePutAutoTitle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await helpers.parseBody<Record<string, unknown>>(req);
+    try {
+      const patch = validateSetting("autoTitle", body);
+      if (typeof patch.model === "string") await requireTitleModel(patch.model);
+      const result = applySetting(
+        ctx.storage,
+        "autoTitle",
+        patch,
+        parseBaseRevision(body.baseRevision),
+      );
+      if (!result.ok) {
+        helpers.json(res, revisionConflictBody("autoTitle", result.current), 409);
+        return;
+      }
+      helpers.json(res, result.current);
+    } catch (cause: unknown) {
+      if (!(cause instanceof SettingValidationError)) throw cause;
+      helpers.error(res, 400, cause.message);
+    }
+  }
+
   function handleDeletePushRegistration(
     res: ServerResponse,
     principal: RequestPrincipal | undefined,
@@ -873,24 +912,11 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return true;
     }
     if (path === "/server/auto-title" && method === "GET") {
-      const config = ctx.storage.getConfig();
-      helpers.json(res, config.autoTitle ?? { enabled: false });
+      helpers.json(res, readConfigSetting(ctx.storage.getConfig(), "autoTitle"));
       return true;
     }
     if (path === "/server/auto-title" && method === "PUT") {
-      const body = await helpers.parseBody<{ enabled?: boolean; model?: string | null }>(req);
-      const current = ctx.storage.getConfig().autoTitle ?? { enabled: false };
-      const updated = {
-        enabled: typeof body.enabled === "boolean" ? body.enabled : current.enabled,
-        model:
-          typeof body.model === "string" && body.model.trim().length > 0
-            ? body.model.trim()
-            : body.model === null
-              ? undefined
-              : current.model,
-      };
-      ctx.storage.updateConfig({ autoTitle: updated });
-      helpers.json(res, updated);
+      await handlePutAutoTitle(req, res);
       return true;
     }
     return false;

@@ -72,7 +72,7 @@ async function fixture(responses: FauxResponseStep[] = []) {
     }),
   );
   const storage = new Storage(dir);
-  storage.updateConfig({ experimental: { serverDurable: true } });
+  storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
   const workspace = storage.createWorkspace({ name: "Stores", hostMount: dir });
   const manager = new SessionManager(storage);
   managers.push(manager);

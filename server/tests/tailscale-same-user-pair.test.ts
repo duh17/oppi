@@ -205,13 +205,13 @@ describe("POST /pair/tailscale", () => {
     if (tlsMode === "tailscale") {
       writeTailscaleLeaf(dataDir, process.env.OPPI_TEST_SELF_DNS ?? "mac.tail1234.ts.net");
     }
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: tlsMode },
       ...(extras.publicUrl ? { publicUrl: extras.publicUrl } : {}),
       ...(extras.trustedPeers ? { proxy: { trustedPeers: extras.trustedPeers } } : {}),
-    });
+    }));
     server = new Server(storage);
     await server.start();
     return storage;
@@ -294,12 +294,12 @@ describe("POST /pair/tailscale", () => {
         writeTailscaleLeaf(dataDir, "mac.tail1234.ts.net");
         const storage = new Storage(dataDir);
         storage.ensurePaired();
-        storage.updateConfig({
+        storage.mutateConfig(() => ({
           host: "127.0.0.1",
           port: 0,
           tls: { mode: "tailscale" },
           auth: { tailscalePairing: false },
-        });
+        }));
         server = new Server(storage);
         await server.start();
         const res = await httpsJSON(`https://127.0.0.1:${server.port}/pair/tailscale`, {
@@ -423,7 +423,7 @@ describe("POST /pair/tailscale", () => {
 
       it("consumes the pairing limiter on unsupported-TLS 503s", async () => {
         const storage = await startServer("self-signed");
-        storage.updateConfig({ tls: { mode: "disabled" } });
+        storage.mutateConfig(() => ({ tls: { mode: "disabled" } }));
         const url = `https://127.0.0.1:${server!.port}/pair/tailscale`;
         for (let i = 0; i < 5; i += 1) {
           const failed = await httpsJSON(url, { method: "POST", body: {} });

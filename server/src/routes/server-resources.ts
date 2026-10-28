@@ -1,11 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import {
-  ServerResourceNotFoundError,
-  ServerResourceServiceError,
-  ServerResourceValidationError,
-} from "../server-resource-service.js";
 import { createLogger } from "../logger.js";
+import { revisionConflictBody } from "../settings/config-settings.js";
+import { httpStatusForPiResourceError } from "../settings/pi-resource-errors.js";
+import { SettingValidationError, validateSetting } from "../settings/registry.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
@@ -109,10 +107,13 @@ function isBaseRevision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-function isDefaultToolsValue(value: unknown): value is string[] | null {
-  return (
-    value === null || (Array.isArray(value) && value.every((entry) => typeof entry === "string"))
-  );
+function validGuideReplacement(value: unknown): { enabled: boolean } | undefined {
+  try {
+    return validateSetting("mobileOutputGuide", value);
+  } catch (cause: unknown) {
+    if (cause instanceof SettingValidationError) return undefined;
+    throw cause;
+  }
 }
 
 function errorForPiConfig(
@@ -121,7 +122,7 @@ function errorForPiConfig(
   operation: Extract<ResourceOperation, "catalog" | "mutation">,
   cause: unknown,
 ): void {
-  if (cause instanceof ServerResourceValidationError) {
+  if (httpStatusForPiResourceError(cause, 500) === 400 && cause instanceof Error) {
     logRouteRejected(operation, "pi_config", "validation");
     helpers.error(res, 400, cause.message);
     return;
@@ -139,12 +140,13 @@ function errorForResource(
   cause: unknown,
 ): void {
   const resourceKind = resource.toLowerCase() as Extract<ResourceKind, "skill" | "extension">;
-  if (cause instanceof ServerResourceNotFoundError) {
+  const status = httpStatusForPiResourceError(cause, 500);
+  if (status === 404) {
     logRouteRejected(operation, resourceKind, "not_found");
     helpers.error(res, 404, `${resource} not found`);
     return;
   }
-  if (cause instanceof ServerResourceValidationError) {
+  if (status === 400 && cause instanceof Error) {
     logRouteRejected(operation, resourceKind, "validation");
     helpers.error(res, 400, cause.message);
     return;
@@ -152,10 +154,6 @@ function errorForResource(
 
   logRouteFailure(operation, resourceKind, cause);
   const action = operation === "mutation" ? "update" : "load";
-  if (cause instanceof ServerResourceServiceError) {
-    helpers.error(res, 500, `Unable to ${action} server ${resource.toLowerCase()}s`);
-    return;
-  }
   helpers.error(res, 500, `Unable to ${action} server ${resource.toLowerCase()}s`);
 }
 
@@ -188,7 +186,7 @@ function logRouteRejected(
 }
 
 function classifyError(cause: unknown): ErrorDiagnostic {
-  if (cause instanceof ServerResourceNotFoundError) return ERROR_DIAGNOSTICS.not_found;
+  if (httpStatusForPiResourceError(cause, 500) === 404) return ERROR_DIAGNOSTICS.not_found;
 
   const messages = causalMessages(cause);
   if (
@@ -404,13 +402,14 @@ export function createServerResourceRoutes(
       error(res, helpers, "Request body must be valid JSON within 16 KiB");
       return;
     }
-    if (!body || !isDefaultToolsValue(body.defaultTools)) {
+    if (!body) {
       logRouteRejected("mutation", "pi_config", "validation");
       error(res, helpers, "Request body must be exactly { defaultTools: string[] | null }");
       return;
     }
     try {
-      helpers.json(res, await ctx.serverResources.setPiDefaultTools(body.defaultTools));
+      const defaultTools = validateSetting("piDefaultTools", body.defaultTools);
+      helpers.json(res, await ctx.serverResources.setPiDefaultTools(defaultTools));
     } catch (cause: unknown) {
       errorForPiConfig(res, helpers, "mutation", cause);
     }
@@ -432,13 +431,14 @@ export function createServerResourceRoutes(
       error(res, helpers, "Request body must be valid JSON within 16 KiB");
       return;
     }
-    if (!body || typeof body.model !== "string") {
+    if (!body) {
       error(res, helpers, "Request body must be exactly { model: string }");
       return;
     }
     try {
+      const model = validateSetting("piDefaultModel", body.model);
       await ctx.refreshModelCatalog();
-      const candidate = ctx.getModelCatalog().find((item) => item.id === body.model);
+      const candidate = ctx.getModelCatalog().find((item) => item.id === model);
       if (!candidate) {
         error(res, helpers, "Model is not available in this server's catalog");
         return;
@@ -473,7 +473,8 @@ export function createServerResourceRoutes(
       error(res, helpers, "Request body must be valid JSON within 16 KiB");
       return;
     }
-    if (!body || typeof body.enabled !== "boolean" || !isBaseRevision(body.baseRevision)) {
+    const replacement = body && validGuideReplacement({ enabled: body.enabled });
+    if (!body || !replacement || !isBaseRevision(body.baseRevision)) {
       logRouteRejected("guide_persistence", "mobile_output_guide", "validation");
       error(
         res,
@@ -484,20 +485,10 @@ export function createServerResourceRoutes(
     }
 
     try {
-      const result = ctx.storage.replaceMobileOutputGuideSettings(body.baseRevision, {
-        enabled: body.enabled,
-      });
+      const result = ctx.storage.replaceMobileOutputGuideSettings(body.baseRevision, replacement);
       if (!result.ok) {
         logRouteRejected("guide_persistence", "mobile_output_guide", "conflict");
-        helpers.json(
-          res,
-          {
-            error: "Mobile Output Guide setting changed",
-            code: "revision_conflict",
-            current: result.current,
-          },
-          409,
-        );
+        helpers.json(res, revisionConflictBody("mobileOutputGuide", result.current), 409);
         return;
       }
       helpers.json(res, result.current);

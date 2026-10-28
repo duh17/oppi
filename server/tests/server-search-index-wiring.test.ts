@@ -49,11 +49,11 @@ describe("Server search index wiring", () => {
   it("warms persisted session content after real server startup", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-search-index-startup-"));
     const storage = new Storage(dataDir);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: "self-signed" },
-    });
+    }));
     storage.ensurePaired();
     const token = enrollTestDevice(storage);
     const session = storage.createSession("startup wiring title");
@@ -99,11 +99,11 @@ describe("Server search index wiring", () => {
   it("wires SessionManager.searchIndex after SearchIndex initialization", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-search-index-wiring-"));
     const storage = new Storage(dataDir);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       host: "127.0.0.1",
       port: 0,
       tls: { mode: "disabled" },
-    });
+    }));
 
     const server = new Server(storage) as unknown as {
       searchIndex: { close: () => void } | null;

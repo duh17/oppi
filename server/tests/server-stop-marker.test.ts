@@ -20,7 +20,7 @@ describe("Server stop and Live Activity cards", () => {
     dataDir = mkdtempSync(join(tmpdir(), "oppi-stop-marker-"));
     storage = new Storage(dataDir);
     storage.ensurePaired();
-    storage.updateConfig({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } });
+    storage.mutateConfig(() => ({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } }));
     endLiveCards = vi.spyOn(LiveActivityNotifier.prototype, "endLiveCards").mockResolvedValue();
   });
 

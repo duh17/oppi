@@ -794,7 +794,7 @@ describe("PUT /me/push-registration after the relay retired a send token", () =>
     dataDir = mkdtempSync(join(tmpdir(), "oppi-identity-push-gone-"));
     const storage = new Storage(dataDir);
     storage.ensurePaired();
-    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [PRIMARY] } }));
     const deviceKeys = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const jwk = deviceKeys.publicKey.export({ format: "jwk" }) as { x: string; y: string };
     const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {

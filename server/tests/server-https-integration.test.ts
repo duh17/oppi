@@ -108,11 +108,11 @@ describe.skipIf(logSkip(!hasOpenSSL, "HTTPS/WSS integration", "openssl executabl
     it("serves /health over HTTPS and bound session stream over WSS", async () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-https-integration-"));
       const storage = new Storage(dataDir);
-      storage.updateConfig({
+      storage.mutateConfig(() => ({
         host: "127.0.0.1",
         port: 0,
         tls: { mode: "self-signed" },
-      });
+      }));
 
       storage.ensurePaired();
       const token = enrollTestDevice(storage);

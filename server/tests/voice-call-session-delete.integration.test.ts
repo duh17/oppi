@@ -109,7 +109,7 @@ const sttServers: Array<{ close: () => Promise<void> }> = [];
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-voice-delete-"));
   storage = new Storage(dataDir);
-  storage.updateConfig({ port: 0, host: "127.0.0.1", tls: { mode: "self-signed" } });
+  storage.mutateConfig(() => ({ port: 0, host: "127.0.0.1", tls: { mode: "self-signed" } }));
   storage.ensurePaired();
   server = new Server(storage);
   await server.start();
@@ -201,9 +201,10 @@ function storedCalls(): Array<{ callId: string; controlSessionId: string; lifecy
 
 describe("deleting a session that has a Live Voice call", { timeout: 60_000 }, () => {
   it("ends the call, releases its media, and removes only that session's records", async () => {
-    storage.updateConfig({
-      asr: { sttEndpoint: await silentStreamingStt(), liveVoiceBackend: "yuwp" },
-    });
+    const sttEndpoint = await silentStreamingStt();
+    storage.mutateConfig(() => ({
+      asr: { sttEndpoint, liveVoiceBackend: "yuwp" },
+    }));
     const device = enroll(storage);
     const workspace = storage.createWorkspace({ name: "Voice", hostMount: dataDir });
     const sessionIds: string[] = [];

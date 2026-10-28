@@ -130,13 +130,13 @@ beforeAll(async () => {
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   dataDir = mkdtempSync(join(tmpdir(), "oppi-server-integration-"));
   storage = new Storage(dataDir);
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
     pushRegistrations: [pushOnlyRecord],
     push: { mode: "relay", relays: [pushRelay] },
-  });
+  }));
   storage.ensurePaired();
   const deviceJwk = deviceKeys.publicKey.export({ format: "jwk" }) as { x: string; y: string };
   const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
@@ -249,12 +249,12 @@ describe("auth", () => {
     // token-separation tests keeps its pre-rotation device credentials.
     const rotationDataDir = mkdtempSync(join(tmpdir(), "oppi-rotation-integration-"));
     const rotationStorage = new Storage(rotationDataDir);
-    rotationStorage.updateConfig({
+    rotationStorage.mutateConfig(() => ({
       port: 0,
       host: "127.0.0.1",
       tls: { mode: "disabled" },
       pushRegistrations: [pushOnlyRecord],
-    });
+    }));
     rotationStorage.ensurePaired();
     const rotationServer = new Server(rotationStorage);
     await rotationServer.start();
@@ -1674,11 +1674,11 @@ async function withIsolatedPairingServer(
 ): Promise<void> {
   const pairingDataDir = mkdtempSync(join(tmpdir(), "oppi-pairing-integration-"));
   const pairingStorage = new Storage(pairingDataDir);
-  pairingStorage.updateConfig({
+  pairingStorage.mutateConfig(() => ({
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
-  });
+  }));
   pairingStorage.ensurePaired();
 
   const pairingServer = new Server(pairingStorage);
@@ -1747,7 +1747,7 @@ describe("pairing token flow", () => {
     await withIsolatedPairingServer(
       async ({ storage: pairingStorage, baseUrl: pairingBaseUrl }) => {
         const pt = pairingStorage.issuePairingToken(1_000);
-        pairingStorage.updateConfig({ pairingTokenExpiresAt: Date.now() - 1 });
+        pairingStorage.mutateConfig(() => ({ pairingTokenExpiresAt: Date.now() - 1 }));
 
         const res = await fetch(`${pairingBaseUrl}/pair`, {
           method: "POST",

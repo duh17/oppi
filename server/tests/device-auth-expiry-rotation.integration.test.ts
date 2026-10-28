@@ -35,12 +35,12 @@ function enroll(storage: Storage): { id: string; token: string } {
 }
 
 function shortenAccessTokens(storage: Storage, expiresAt: number): void {
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     authAccessTokens: (storage.getConfig().authAccessTokens ?? []).map((token) => ({
       ...token,
       expiresAt,
     })),
-  });
+  }));
 }
 
 class WsProbe {
@@ -121,11 +121,11 @@ const sttServers: Array<{ close: () => Promise<void> }> = [];
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-auth-expiry-"));
   storage = new Storage(dataDir);
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
-  });
+  }));
   ownerToken = storage.ensurePaired();
   server = new Server(storage);
   await server.start();
@@ -283,9 +283,10 @@ describe("access-token expiry and dt_ retirement", { timeout: 30_000 }, () => {
 
   it("keeps a socket carrying a Live Voice call open past at_ expiry until the call ends", async () => {
     // A reconnect restarts the call's voice backend, so the call outlives the token, and only that call.
-    storage.updateConfig({
-      asr: { sttEndpoint: await silentStreamingStt(), liveVoiceBackend: "yuwp" },
-    });
+    const sttEndpoint = await silentStreamingStt();
+    storage.mutateConfig(() => ({
+      asr: { sttEndpoint, liveVoiceBackend: "yuwp" },
+    }));
     const device = enroll(storage);
     const workspace = storage.createWorkspace({ name: "Voice", hostMount: dataDir });
     const created = await networkPost(`/workspaces/${workspace.id}/sessions`, device.token, {});
@@ -334,13 +335,13 @@ describe("access-token expiry and dt_ retirement", { timeout: 30_000 }, () => {
   it("does not close an unrelated device socket when another token expires", async () => {
     const deviceA = enroll(storage);
     const deviceB = enroll(storage);
-    storage.updateConfig({
+    storage.mutateConfig(() => ({
       authAccessTokens: (storage.getConfig().authAccessTokens ?? []).map((token) =>
         token.deviceId === deviceA.id
           ? { ...token, expiresAt: Date.now() - CLOCK_SKEW_MS + 250 }
           : token,
       ),
-    });
+    }));
 
     const wsA = await connectStream(deviceA.token);
     const wsB = await connectStream(deviceB.token);

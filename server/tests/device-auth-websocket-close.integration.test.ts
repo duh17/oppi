@@ -96,11 +96,11 @@ let probes: WsProbe[] = [];
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-auth-ws-close-"));
   storage = new Storage(dataDir);
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
-  });
+  }));
   ownerToken = storage.ensurePaired();
   server = new Server(storage);
   await server.start();

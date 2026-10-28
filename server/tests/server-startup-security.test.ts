@@ -73,7 +73,7 @@ describe("server.start hard bind guard", () => {
 
     try {
       const storage = new Storage(dataDir);
-      storage.updateConfig({ host: "0.0.0.0", token: undefined });
+      storage.mutateConfig(() => ({ host: "0.0.0.0", token: undefined }));
 
       const server = new Server(storage);
       await expect(server.start()).rejects.toThrow(
@@ -89,11 +89,11 @@ describe("server.start hard bind guard", () => {
 
     try {
       const storage = new Storage(dataDir);
-      storage.updateConfig({
+      storage.mutateConfig(() => ({
         host: "0.0.0.0",
         token: "sk_test_token",
         tls: { mode: "disabled" },
-      });
+      }));
 
       const server = new Server(storage);
       await expect(server.start()).rejects.toThrow("Cannot bind to 0.0.0.0 with TLS disabled");

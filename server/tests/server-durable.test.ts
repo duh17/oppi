@@ -130,7 +130,7 @@ async function fixture(
     }),
   );
   const storage = new Storage(dir);
-  storage.updateConfig({ experimental: { serverDurable: true } });
+  storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
   const workspace = storage.createWorkspace({ name: "Durable proof", hostMount: dir });
   const session = createDurableSession(storage, "Durable proof");
   session.workspaceId = workspace.id;
@@ -4533,13 +4533,13 @@ describe("server durable managed runtime", () => {
 
   it("keeps existing sessions on the SDK path without opening durable storage", async () => {
     const f = await fixture([]);
-    f.storage.updateConfig({ experimental: { serverDurable: false } });
+    f.storage.mutateConfig(() => ({ experimental: { serverDurable: false } }));
     const existing = f.storage.createSession("Existing");
     expect(existing.serverDurable).toBeUndefined();
     await f.manager.close();
     managers.splice(managers.indexOf(f.manager), 1);
     expect(existsSync(join(f.dir, "durable"))).toBe(false);
-    f.storage.updateConfig({ experimental: { serverDurable: true } });
+    f.storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
     expect(f.storage.getSession(existing.id)?.serverDurable).toBeUndefined();
   });
 
@@ -4561,7 +4561,7 @@ describe("server durable managed runtime", () => {
       await f.manager.close();
       managers.splice(managers.indexOf(f.manager), 1);
       const storage = new Storage(f.dir);
-      storage.updateConfig({ experimental: { serverDurable: false } });
+      storage.mutateConfig(() => ({ experimental: { serverDurable: false } }));
       const conversationId = storage.getSession(f.session.id)!.serverDurable!.conversationId;
       expect(conversationId).toBeDefined();
       const manager = new SessionManager(storage);

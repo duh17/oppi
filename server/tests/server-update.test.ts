@@ -367,7 +367,7 @@ describe("ServerUpdateService", () => {
     mkdirSync(process.env.npm_config_prefix, { recursive: true });
     const storage = new Storage(join(dir, "data"));
     storage.ensurePaired();
-    storage.updateConfig({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } });
+    storage.mutateConfig(() => ({ host: "127.0.0.1", port: 0, tls: { mode: "disabled" } }));
     let server: Server | undefined;
     let updatePackageDir: string | undefined;
     let updateStarted = false;

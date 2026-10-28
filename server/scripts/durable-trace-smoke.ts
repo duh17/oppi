@@ -45,12 +45,12 @@ const { Storage } = await import("../dist/src/storage.js");
 const { Server } = await import("../dist/src/server.js");
 const { localApiSocketPath } = await import("../dist/src/local-api-socket.js");
 const storage = new Storage(join(dir, "data"));
-storage.updateConfig({
+storage.mutateConfig(() => ({
   host: "127.0.0.1",
   port: 0,
   tls: { mode: "disabled" },
   experimental: { serverDurable: true },
-});
+}));
 // Direct construction does not run CLI pairing bootstrap.
 storage.ensurePaired();
 const server = new Server(storage);

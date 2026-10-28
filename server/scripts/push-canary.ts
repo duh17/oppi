@@ -390,7 +390,7 @@ async function runCanary(
     ) as {
       recipient: { privateKey: string; publicKey: string; keyId: string };
     };
-    storage.updateConfig({ push: { mode: "relay", relays: [proxy.url] } });
+    storage.mutateConfig(() => ({ push: { mode: "relay", relays: [proxy.url] } }));
     const register = async () => {
       const phone = await registerPhone(proxy.url);
       storage.setPushRegistration({

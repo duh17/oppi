@@ -987,7 +987,7 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
 
   // Apply user choices + generate owner token so `oppi serve` can bind to 0.0.0.0.
   // The token makes the host paired, so init owns the first-run TLS choice.
-  storage.updateConfig({ port, maxSessionsGlobal });
+  storage.mutateConfig(() => ({ port, maxSessionsGlobal }));
   console.log("");
   const tlsMode = !storage.hasOwnerToken()
     ? chooseFirstRunTlsMode(storage, undefined, console.log)

@@ -140,11 +140,11 @@ afterAll(() => {
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-app-event-stream-"));
   storage = new Storage(dataDir);
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
-  });
+  }));
   storage.ensurePaired();
   token = enrollTestDevice(storage);
   server = new Server(storage);

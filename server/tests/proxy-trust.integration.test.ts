@@ -69,13 +69,13 @@ function networkRequest(
 beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "oppi-proxy-trust-"));
   storage = new Storage(dataDir);
-  storage.updateConfig({
+  storage.mutateConfig(() => ({
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "disabled" },
     publicUrl: "https://oppi.example.com",
     proxy: { trustedPeers: ["127.0.0.1/32", "::1/128"] },
-  });
+  }));
   ownerToken = storage.ensurePaired();
   server = new Server(storage);
   await server.start();

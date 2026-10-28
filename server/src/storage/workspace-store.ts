@@ -28,6 +28,11 @@ import type {
   WorkspaceSandboxConfig,
   WorkspaceSystemPromptMode,
 } from "../types.js";
+import {
+  MCP_SERVER_NAME,
+  parseSandboxConfig,
+  validateWorkspaceWrite,
+} from "../settings/registry.js";
 import { defaultHostWorkspaceFolder, defaultSandboxHostMount } from "../workspace-folder.js";
 import type { ConfigStore } from "./config-store.js";
 
@@ -79,107 +84,6 @@ function normalizeHostMount(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-/** The top-level fields a Workspace write may carry. */
-const WORKSPACE_WRITE_FIELDS = new Set([
-  "name",
-  "description",
-  "icon",
-  "systemPrompt",
-  "systemPromptMode",
-  "hostMount",
-  "tools",
-  "gitStatusEnabled",
-  "runtime",
-  "sandboxConfig",
-]);
-const SANDBOX_CONFIG_FIELDS = ["allowedHosts", "env", "mcpServers"];
-const MCP_SERVER_NAME = /^[A-Za-z0-9_-]+$/;
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
-
-/**
- * A Workspace write is stored as it is sent or refused with the reason: a runtime that is not
- * exactly "host" or "sandbox", a field the Workspace does not have, or a malformed `sandboxConfig`
- * never turns into a different Workspace than the one the owner approved.
- */
-function assertWorkspaceWrite(input: object, kind: "create" | "update"): void {
-  for (const key of Object.keys(input)) {
-    if (!WORKSPACE_WRITE_FIELDS.has(key))
-      throw new Error(`Unknown Workspace field ${JSON.stringify(key)}`);
-  }
-  const { name, description, systemPrompt, gitStatusEnabled, tools, runtime, sandboxConfig } =
-    input as Record<string, unknown>;
-  if (name !== undefined && (typeof name !== "string" || name === "")) {
-    throw new Error("name must be a non-empty string");
-  }
-  // `null` clears a field on update; a create has nothing to clear.
-  const clearable = (value: unknown): boolean => kind === "update" && value === null;
-  for (const [field, value] of [
-    ["description", description],
-    ["systemPrompt", systemPrompt],
-  ] as const) {
-    if (value !== undefined && typeof value !== "string" && !clearable(value)) {
-      throw new Error(`${field} must be a string${kind === "update" ? " or null" : ""}`);
-    }
-  }
-  if (gitStatusEnabled !== undefined && typeof gitStatusEnabled !== "boolean") {
-    throw new Error("gitStatusEnabled must be true or false");
-  }
-  if (
-    tools !== undefined &&
-    !clearable(tools) &&
-    (!Array.isArray(tools) ||
-      tools.some((tool) => typeof tool !== "string" || tool === "" || tool !== tool.trim()))
-  ) {
-    throw new Error(
-      `tools must be an array of non-empty, trimmed strings${kind === "update" ? " or null" : ""}`,
-    );
-  }
-  if (runtime !== undefined && runtime !== "host" && runtime !== "sandbox") {
-    throw new Error('runtime must be "host" or "sandbox"');
-  }
-  if (sandboxConfig !== undefined && !clearable(sandboxConfig)) parseSandboxConfig(sandboxConfig);
-}
-
-/** A sandbox config exactly as sent; anything it cannot keep as sent is an error. An empty one is none. */
-function parseSandboxConfig(raw: unknown): WorkspaceSandboxConfig | undefined {
-  if (!isPlainObject(raw)) throw new Error("sandboxConfig must be an object");
-  for (const key of Object.keys(raw)) {
-    if (!SANDBOX_CONFIG_FIELDS.includes(key)) {
-      throw new Error(
-        `Unknown sandboxConfig field ${JSON.stringify(key)}; it takes ${SANDBOX_CONFIG_FIELDS.join(", ")}`,
-      );
-    }
-  }
-  const result: WorkspaceSandboxConfig = {};
-  const { allowedHosts, env, mcpServers } = raw;
-  if (allowedHosts !== undefined) {
-    if (!Array.isArray(allowedHosts) || allowedHosts.some((host) => typeof host !== "string")) {
-      throw new Error("sandboxConfig.allowedHosts must be an array of strings");
-    }
-    result.allowedHosts = [...allowedHosts];
-  }
-  if (env !== undefined) {
-    if (!isPlainObject(env) || Object.values(env).some((value) => typeof value !== "string")) {
-      throw new Error("sandboxConfig.env must be an object of string values");
-    }
-    result.env = { ...(env as Record<string, string>) };
-  }
-  if (mcpServers !== undefined) {
-    if (
-      !Array.isArray(mcpServers) ||
-      mcpServers.some((name) => typeof name !== "string" || !MCP_SERVER_NAME.test(name))
-    ) {
-      throw new Error(
-        "sandboxConfig.mcpServers must be an array of server names made of letters, digits, _ and -",
-      );
-    }
-    result.mcpServers = [...mcpServers];
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 /** A stored record's sandbox config, read leniently: older Oppi stored whatever it was sent. */
@@ -238,7 +142,7 @@ export class WorkspaceStore {
   }
 
   createWorkspace(req: CreateWorkspaceRequest): Workspace {
-    assertWorkspaceWrite(req, "create");
+    validateWorkspaceWrite(req, "create");
     const id = generateId(8);
     const now = Date.now();
     const runtime = req.runtime ?? "host";
@@ -257,7 +161,9 @@ export class WorkspaceStore {
       gitStatusEnabled: req.gitStatusEnabled,
       runtime,
       sandboxConfig:
-        req.sandboxConfig === undefined ? undefined : parseSandboxConfig(req.sandboxConfig),
+        req.sandboxConfig === undefined
+          ? undefined
+          : (parseSandboxConfig(req.sandboxConfig, "create") ?? undefined),
       createdAt: now,
       updatedAt: now,
     };
@@ -514,7 +420,7 @@ export class WorkspaceStore {
   }
 
   updateWorkspace(workspaceId: string, updates: UpdateWorkspaceRequest): Workspace | undefined {
-    assertWorkspaceWrite(updates, "update");
+    validateWorkspaceWrite(updates, "update");
     const workspace = this.getWorkspace(workspaceId);
     if (!workspace) {
       return undefined;
@@ -541,8 +447,7 @@ export class WorkspaceStore {
       undo = folder.undo;
     }
     if (updates.sandboxConfig !== undefined)
-      workspace.sandboxConfig =
-        updates.sandboxConfig === null ? undefined : parseSandboxConfig(updates.sandboxConfig);
+      workspace.sandboxConfig = parseSandboxConfig(updates.sandboxConfig, "update") ?? undefined;
 
     workspace.updatedAt = Date.now();
 

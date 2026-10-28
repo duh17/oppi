@@ -89,7 +89,7 @@ async function fixture(
     }),
   );
   const storage = new Storage(dir);
-  storage.updateConfig({ experimental: { serverDurable: true } });
+  storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
   const workspace = storage.createWorkspace({
     name: "Durable MCP",
     hostMount: dir,

@@ -55,7 +55,7 @@ describe("durable model runtime", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-durable-models-manager-"));
     const runtime = await isolatedModels();
     const storage = new Storage(dir);
-    storage.updateConfig({ experimental: { serverDurable: true } });
+    storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
     const bind = vi.spyOn(DurableHarness.prototype, "bindModelRuntime");
     const manager = new SessionManager(storage);
     await manager.expectDurableModelRuntime();

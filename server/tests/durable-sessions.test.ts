@@ -177,7 +177,7 @@ async function fixture(
     gitIn(repo, ["commit", "-m", "initial"]);
   }
   const storage = new Storage(dir);
-  storage.updateConfig({ experimental: { serverDurable: options?.serverDurable ?? true } });
+  storage.mutateConfig(() => ({ experimental: { serverDurable: options?.serverDurable ?? true } }));
   const workspace = storage.createWorkspace({
     name: "Durable threads",
     hostMount: options?.git ? repo : dir,
