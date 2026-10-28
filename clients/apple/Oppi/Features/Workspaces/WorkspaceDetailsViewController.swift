@@ -151,8 +151,12 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
         }
     }
 
-    private lazy var fieldRow = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
-        self?.configureField(cell, item: item)
+    private lazy var nameRow = UICollectionView.CellRegistration<WorkspaceFieldCell, Item> { [weak self] cell, _, _ in
+        self?.configureName(cell)
+    }
+
+    private lazy var editorRow = UICollectionView.CellRegistration<WorkspaceTextEditorCell, Item> { [weak self] cell, _, item in
+        self?.configureEditor(cell, item: item)
     }
 
     private lazy var iconRow = UICollectionView.CellRegistration<WorkspaceIconRowCell, Item> { [weak self] cell, _, _ in
@@ -178,13 +182,15 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
     }
 
     override func prepareRegistrations() {
-        _ = (fieldRow, iconRow, checkRow, errorRow)
+        _ = (nameRow, editorRow, iconRow, checkRow, errorRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
-        case .name, .description, .folder:
-            collectionView.dequeueConfiguredReusableCell(using: fieldRow, for: indexPath, item: item)
+        case .name:
+            collectionView.dequeueConfiguredReusableCell(using: nameRow, for: indexPath, item: item)
+        case .description, .folder:
+            collectionView.dequeueConfiguredReusableCell(using: editorRow, for: indexPath, item: item)
         case .icon:
             collectionView.dequeueConfiguredReusableCell(using: iconRow, for: indexPath, item: item)
         case .folderCheck:
@@ -194,54 +200,53 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
         }
     }
 
-    private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {
-        let title = SettingsStyle.current.title
-        switch item {
-        case .name:
+    private func configureName(_ cell: WorkspaceFieldCell) {
+        cell.configure(
+            title: String(localized: "Name"),
+            accessibilityLabel: String(localized: "Name"),
+            text: model.draft.name,
+            placeholder: String(localized: "Required"),
+            identifier: "workspace.edit.name",
+            autocapitalization: .sentences,
+            returnKey: .next,
+            onReturn: { [weak self] in self?.focus(.description) }
+        ) { [weak self] in self?.model.setName($0) }
+    }
+
+    /// Description and folder wrap instead of clipping: a long description or a
+    /// deep path stays readable at any text size.
+    private func configureEditor(_ cell: WorkspaceTextEditorCell, item: Item) {
+        if item == .description {
             cell.configure(
-                text: model.draft.name,
-                placeholder: String(localized: "Required"),
-                identifier: "workspace.edit.name",
-                label: String(localized: "Name"),
-                autocapitalization: .sentences,
-                textColor: title,
-                labelColor: title,
-                returnKey: .next,
-                onReturn: { [weak self] in self?.focus(.description) }
-            ) { [weak self] in self?.model.setName($0) }
-        case .description:
-            cell.configure(
+                style: WorkspaceTextEditorCell.Style(
+                    title: String(localized: "Description"),
+                    placeholder: String(localized: "Optional"),
+                    monospaced: false,
+                    singleParagraph: true,
+                    returnKey: .next,
+                    autocapitalization: .sentences,
+                    autocorrection: .default
+                ),
                 text: model.draft.description,
-                placeholder: String(localized: "Optional"),
                 identifier: "workspace.edit.description",
                 label: String(localized: "Description"),
-                autocapitalization: .sentences,
-                autocorrection: .default,
-                textColor: title,
-                labelColor: title,
-                returnKey: .next,
                 onReturn: { [weak self] in self?.focus(.folder) }
             ) { [weak self] in self?.model.setDescription($0) }
-        default:
+        } else {
+            // The section header names it: the field carries no label of its own.
             cell.configure(
+                style: WorkspaceTextEditorCell.Style(placeholder: Self.folderPlaceholder, singleParagraph: true),
                 text: model.draft.hostMount,
-                placeholder: Self.folderPlaceholder,
                 identifier: "workspace.edit.hostMount",
-                monospaced: true,
-                textColor: title,
-                labelColor: title,
-                returnKey: .done,
-                onReturn: { [weak self] in self?.view.endEditing(true) }
+                label: String(localized: "Folder")
             ) { [weak self] in self?.model.setHostMount($0) }
-            cell.textField.accessibilityLabel = String(localized: "Folder")
         }
     }
 
     /// Return moves on to the next field.
     private func focus(_ item: Item) {
-        guard let path = dataSource?.indexPath(for: item),
-              let cell = collectionView.cellForItem(at: path) as? SSHTerminalTextFieldCell else { return }
-        cell.textField.becomeFirstResponder()
+        guard let path = dataSource?.indexPath(for: item) else { return }
+        (collectionView.cellForItem(at: path) as? WorkspaceTextEditorCell)?.textView.becomeFirstResponder()
     }
 
     private func configureFolderCheck(_ cell: WorkspaceFolderCheckCell) {

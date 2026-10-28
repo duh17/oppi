@@ -135,6 +135,7 @@ final class WorkspaceNetworkAccessViewController: SettingsListViewController<
     private lazy var editorRow = UICollectionView.CellRegistration<WorkspaceTextEditorCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
         cell.configure(
+            style: WorkspaceTextEditorCell.Style(minimumHeight: 120),
             text: draft.text,
             identifier: "workspace.edit.allowedHosts",
             label: String(localized: "Allowed Hosts")

@@ -616,7 +616,7 @@ struct SettingsSweepScreenshotPreview: View {
             ),
             sandbox,
             Workspace(
-                id: "preview-notes", name: "Notes", icon: .emoji("\u{1F4DD}"),
+                id: "preview-notes", name: "Notes", icon: .symbol("note.text"),
                 hostMount: "~/notes/with/a/rather/long/path/that/wraps/at/large/text/sizes",
                 createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
             ),

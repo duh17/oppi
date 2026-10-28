@@ -4,10 +4,10 @@ import UIKit
 /// extension and where it lives, an MCP server and what it runs. A spinner sits
 /// beside the switch while the row's write runs.
 ///
-/// A kit list row (title and secondary text in a content configuration, the
-/// controls as trailing accessories), so the row re-measures at any text size
-/// and the switch keeps its own size. The cell owns its one switch, as the
-/// Skills row does: these switches write Pi's settings (or a sandbox's MCP
+/// The name and detail are labels in the row's content view and the controls
+/// are trailing accessories, so the list gives the text the width the controls
+/// leave and the row grows with the text size. The cell owns its one switch, as
+/// the Skills row does: these switches write Pi's settings (or a sandbox's MCP
 /// picks) through `WorkspaceSettingsModel`, which `SettingsCatalog` cannot
 /// declare yet (`.piOwned` storage has no adapter). The switch is the row's
 /// accessibility element: it carries `identifier`, and its label reads the name
@@ -27,12 +27,33 @@ final class WorkspaceToggleRowCell: UICollectionViewListCell {
         var identifier: String
     }
 
+    private let titleLabel = UILabel()
+    private let detailLabel = UILabel()
     private let toggle = UISwitch()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private var onChange: ((Bool) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        titleLabel.font = .preferredFont(forTextStyle: .body)
+        for label in [titleLabel, detailLabel] {
+            label.adjustsFontForContentSizeCategory = true
+            label.numberOfLines = 0
+            label.isAccessibilityElement = false
+        }
+        let text = UIStackView(arrangedSubviews: [titleLabel, detailLabel])
+        text.axis = .vertical
+        text.spacing = 2
+        text.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(text)
+        let margins = contentView.layoutMarginsGuide
+        NSLayoutConstraint.activate([
+            text.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+            text.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+            text.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
+            text.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+        ])
         spinner.hidesWhenStopped = true
         spinner.isAccessibilityElement = false
         toggle.addAction(UIAction { [weak self] _ in
@@ -46,15 +67,11 @@ final class WorkspaceToggleRowCell: UICollectionViewListCell {
 
     func configure(row: Row, onChange: @escaping (Bool) -> Void) {
         let style = SettingsStyle.current
-        var content = SettingsStyle.content(.subtitle)
-        content.text = row.title
-        content.textProperties.color = row.dimsTitle ? style.value : style.title
-        content.textProperties.numberOfLines = 0
-        content.secondaryText = row.detail
-        content.secondaryTextProperties.color = row.warnsDetail ? style.warning : style.value
-        content.secondaryTextProperties.font = row.monospacedDetail ? .scaledMonospaced(.caption2) : .scaled(.caption1)
-        content.secondaryTextProperties.numberOfLines = 0
-        contentConfiguration = content
+        titleLabel.text = row.title
+        titleLabel.textColor = row.dimsTitle ? style.value : style.title
+        detailLabel.text = row.detail
+        detailLabel.textColor = row.warnsDetail ? style.warning : style.value
+        detailLabel.font = row.monospacedDetail ? .scaledMonospaced(.caption2) : .scaled(.caption1)
 
         self.onChange = onChange
         toggle.isOn = row.isOn
