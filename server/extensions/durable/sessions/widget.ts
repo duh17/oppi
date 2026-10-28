@@ -36,7 +36,8 @@ import {
 // the same helpers, published through the `oppi.extension-ui` notification slots. Rows link to
 // `oppi://session/<id>`, which the app already opens.
 //
-// Refresh follows the documents; there is no ticking timer. Each shown child's `pi.live` (busy,
+// Refresh follows the documents; the only timers are the activity interval, the starting retry,
+// and the invocation end below. Each shown child's `pi.live` (busy,
 // and its current activity) and `oppi.extension-ui` (an open dialog: needs attention) are
 // watched in process; a write happens only when a row changes. Model and context usage come from
 // the child's newest assistant entry, read when the child is first shown and when a run ends, so
@@ -52,6 +53,13 @@ import {
 // while its VM is attached. A commit cannot see which tasks the scheduler blocked, so a blocked
 // waker (parked by the restart limit, or with no definition) keeps its row Working, where
 // `pendingWakers` drops it; the work it stands for did not finish either.
+//
+// The watch never ends on its own, but its invocation does, every `WATCH_INVOCATION_MS`: pi-durable
+// keeps the registry snapshot an invocation was reserved with until the invocation ends, and that
+// snapshot holds every extension installed then, including those of sessions stopped since. The
+// last pass commits a sleep that is already due, so the scheduler reserves the task again with the
+// current registry. The new phase watches from scratch, as at first sight:
+// it reads each child's newest answer again, so a busy child's row can take that answer's usage.
 
 /** Rows the pill shows: the newest children, in spawn order. */
 const MAX_ROWS = 8;
@@ -65,6 +73,8 @@ export const ACTIVITY_INTERVAL_MS = 2_000;
 const ACTIVITY_MAX = 120;
 /** The activity of an idle child whose pending wakers will wake it. */
 export const WAITING_ACTIVITY = "Waiting on background work";
+/** How long one watch invocation runs before its next pass ends it, releasing its registry snapshot. */
+export const WATCH_INVOCATION_MS = 5 * 60_000;
 
 const PROVENANCE = {
   extensionScopeId: "repo:subagents",
@@ -245,8 +255,10 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
   abort: (_task, runtime, context) =>
     runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
   phases: {
-    async watch(_task, runtime, context) {
+    async watch(task, runtime, context) {
       const parent = runtime.conversationId;
+      const invocationEnds = Date.now() + WATCH_INVOCATION_MS;
+      let ending = false;
       const list = await runtime.watchDoc(Subagents, parent, context);
       if (!list) throw new Error("The subagent pill needs oppi.subagents");
       const watched = new Map<ConversationId, Watched>();
@@ -343,6 +355,8 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
 
       try {
         while (!runtime.signal.aborted) {
+          // An invocation ends with a pass, so the next one starts from the rows this one wrote.
+          ending = Date.now() >= invocationEnds;
           dirty = false;
           // This pass writes every row's current activity.
           clearTimeout(activityTimer);
@@ -440,8 +454,17 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
               if (current === undefined && rows.length === 0) continue;
               if (JSON.stringify(current) !== JSON.stringify(next)) ui.notifications[slot] = next;
             }
-            return undefined;
+            // A sleep that is already due, not a running checkpoint: only a new invocation takes
+            // a new snapshot (one that goes on to the next phase keeps the one it was reserved with).
+            return ending
+              ? {
+                  status: "sleeping" as const,
+                  until: runtime.now(),
+                  checkpoint: task.state.checkpoint,
+                }
+              : undefined;
           }, context);
+          if (ending) return;
           // After the commit that read them live: one that ended since resolves at once.
           for (const { entry } of rowsOf) for (const id of entry.wakers) watchWaker(entry, id);
 
@@ -464,9 +487,13 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
             runtime.signal.addEventListener("abort", abort, { once: true });
             if (runtime.signal.aborted) abort();
             else if (dirty) finish();
-            // Bounded by the starter: it submits the first input, or ends.
-            else if (rowsOf.some(({ entry }) => entry.starting))
-              timer = setTimeout(finish, STARTING_RETRY_MS);
+            else {
+              // Bounded by the starter: it submits the first input, or ends.
+              const retry = rowsOf.some(({ entry }) => entry.starting)
+                ? STARTING_RETRY_MS
+                : Number.POSITIVE_INFINITY;
+              timer = setTimeout(finish, Math.max(0, Math.min(retry, invocationEnds - Date.now())));
+            }
           });
         }
       } finally {

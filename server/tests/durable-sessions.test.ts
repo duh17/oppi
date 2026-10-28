@@ -31,7 +31,12 @@ import {
   ensureSubagentWidget,
 } from "../extensions/durable/sessions/contract.js";
 import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
-import { ACTIVITY_INTERVAL_MS, WAITING_ACTIVITY } from "../extensions/durable/sessions/widget.js";
+import {
+  ACTIVITY_INTERVAL_MS,
+  WAITING_ACTIVITY,
+  WATCH_INVOCATION_MS,
+} from "../extensions/durable/sessions/widget.js";
+import { collected } from "./helpers/collected.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
 import { createWorkspaceWorktree, listWorkspaceWorktrees } from "../src/worktrees.js";
@@ -666,6 +671,73 @@ describe("durable-native threads", () => {
       async () => (await row())?.state === "running",
       "the new watcher follows the child",
     );
+    againGate.open();
+    await until(async () => (await row())?.state === "success", "done again");
+  });
+
+  it("lets its tickers release an uninstalled extension once their invocations ran their length, and keeps following the child", async () => {
+    const childGate = gate();
+    const againGate = gate();
+    const f = await fixture(
+      model(async ({ last, text, signal }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate")) return spawnCall({ task: "CHILD_TASK phase", name: "Long" });
+        await (text.includes("CHILD_TASK phase") ? childGate : againGate).wait(signal);
+        return fauxAssistantMessage("PHASE_ANSWER");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    // Installed before the pill watcher and the child's working-words ticker are reserved, so the
+    // snapshots they run with hold it, as they hold the MCP extension of every session alive then.
+    const host = await f.owner();
+    const probe = ((): WeakRef<object> => {
+      const extension = { name: "test.retained-extension" };
+      host.runtime.installExtension(extension);
+      return new WeakRef(extension);
+    })();
+    await f.manager.sendPrompt(f.parent.id, "Delegate in the background");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const row = async () =>
+      (
+        (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+          "widget:subagents"
+        ]?.nativeSurface as { blocks: Array<{ rows: Array<Record<string, unknown>> }> } | undefined
+      )?.blocks[0]?.rows[0];
+    const watcher = async () => {
+      const id = (await harness.snapshot(Subagents, parentConversation, context))?.widget;
+      return (await harness.inspect(context)).tasks.find(({ record }) => record.id === id)?.record;
+    };
+    await until(async () => (await row())?.state === "running", "a working row");
+    const first = await watcher();
+    host.runtime.uninstallExtension({ name: "test.retained-extension" });
+
+    // The invocations have run their length: their next passes (the child's answer, the parent's
+    // report turn) end them.
+    const now = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => now() + WATCH_INVOCATION_MS);
+    childGate.open();
+
+    await until(async () => (await row())?.state === "success", "the answer's row");
+    await until(
+      async () =>
+        (await userTexts(harness, parentConversation)).some((t) => t.includes("[session")),
+      "the report",
+    );
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    expect(await collected(probe)).toBe(true);
+
+    // The same watcher goes on in its next invocation: one task, not a replacement.
+    await until(
+      async () => (await watcher())?.state.status === "running",
+      "the watcher running again",
+    );
+    expect((await watcher())?.id).toBe(first?.id);
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    await f.manager.startSession(child.id, f.workspace);
+    await f.manager.sendPrompt(child.id, "Once more");
+    await until(async () => (await row())?.state === "running", "the next run's row");
     againGate.open();
     await until(async () => (await row())?.state === "success", "done again");
   });

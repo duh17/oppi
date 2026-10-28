@@ -154,8 +154,84 @@ function durableTool(definition: ToolDefinition, exposure: McpExposure): ToolReg
   };
 }
 
+type ToolSearchArgs = { query: string; limit?: number };
+
+/** What a published extension may use of its session while the session is open. */
+interface LiveMcp {
+  connectionOf(server: string): McpServerConnection | undefined;
+  resourceConnections(): McpServerConnection[];
+  renderServersSection(): string | undefined;
+  searchTools(
+    args: ToolSearchArgs,
+    api: Parameters<ToolRegistration["execute"]>[1],
+    context: Context,
+  ): ReturnType<ToolRegistration["execute"]>;
+}
+
+/**
+ * The only way the published extensions reach their session: their tools and section read it at
+ * each call, and `DurableMcp.close()` empties it. Registry snapshots outlive an uninstall (a
+ * running task invocation keeps the snapshot it was reserved with), so an extension that held the session
+ * or a connection kept the whole stopped session alive; one that holds this cell keeps only its
+ * tool definitions, and a call on it after close fails like a shut-down server.
+ *
+ * The closures an extension holds are made by the functions below, never in a `DurableMcp`
+ * method: V8 gives all closures of one function call a shared context, so a closure made next to
+ * one that uses `this` holds `this` as well.
+ */
+interface LiveCell {
+  mcp?: LiveMcp;
+}
+
+function liveToolClient(
+  live: LiveCell,
+  server: string,
+): { getClient: () => Promise<McpServerConnection>; readableResources: () => boolean } {
+  return {
+    getClient: async () => {
+      const connection = live.mcp?.connectionOf(server);
+      if (!connection) throw new Error(`MCP server "${server}" is shut down`);
+      return connection;
+    },
+    readableResources: () =>
+      live.mcp?.resourceConnections().some((connection) => connection.name === server) ?? false,
+  };
+}
+
+function liveResourceServers(live: LiveCell): () => McpServerConnection[] {
+  return () => live.mcp?.resourceConnections() ?? [];
+}
+
+function liveServersSection(live: LiveCell): ReturnType<typeof section> {
+  return section("mcp_servers", () => live.mcp?.renderServersSection());
+}
+
+function liveToolSearch(live: LiveCell, internals: PiMcpInternals): ToolRegistration {
+  const parameters = Type.Object({
+    query: Type.String({ description: "Search query for deferred tools." }),
+    limit: Type.Optional(
+      Type.Number({
+        description: `Maximum number of tools to return. Defaults to ${internals.DEFAULT_TOOL_SEARCH_LIMIT}.`,
+      }),
+    ),
+  });
+  return {
+    name: DURABLE_TOOL_SEARCH_NAME,
+    description: internals.TOOL_SEARCH_DESCRIPTION,
+    parameters,
+    // Loading the same tools again is harmless.
+    replay: "safe",
+    execute: (args, api, context: Context) => {
+      const mcp = live.mcp;
+      if (!mcp) throw new Error("MCP tool search is shut down with its session");
+      return mcp.searchTools(args as ToolSearchArgs, api, context);
+    },
+  };
+}
+
 export class DurableMcp {
   readonly extensionName: string;
+  private readonly live: LiveCell = {};
   private readonly servers: Server[];
   private readonly configErrors: string[];
   /** Tool names the conversation offers once it attaches: codemode and tool search as needed. */
@@ -217,6 +293,12 @@ export class DurableMcp {
     autoEnableCodemode: boolean,
   ) {
     this.extensionName = `${DURABLE_MCP_EXTENSION_PREFIX}${options.sessionId}`;
+    this.live.mcp = {
+      connectionOf: (server) => this.connectionOf(server),
+      resourceConnections: () => this.resourceConnections(),
+      renderServersSection: () => this.renderServersSection(),
+      searchTools: (args, api, context) => this.searchTools(args, api, context),
+    };
     this.servers = entries.map((entry) => ({ entry }));
     this.configErrors = configErrors;
     this.credentials = new internals.McpOAuthCredentialStore();
@@ -236,7 +318,7 @@ export class DurableMcp {
     this.toolSearch =
       (exposures.has("deferred") || exposures.has("codemode")) &&
       this.permitted(DURABLE_TOOL_SEARCH_NAME, "direct")
-        ? this.createToolSearch()
+        ? liveToolSearch(this.live, internals)
         : undefined;
     // Pi's `ensureDiscoveryActive`: the tool the servers' exposure asks for is on, as is one the
     // Pi Tools setting (or an allow list) enables.
@@ -381,6 +463,7 @@ export class DurableMcp {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.live.mcp = undefined;
     this.options.namespaces(undefined);
     this.options.uninstall(this.extension);
     await Promise.allSettled(this.servers.map((server) => server.connection?.close()));
@@ -488,8 +571,7 @@ export class DurableMcp {
         exposure,
         namespace,
         timeoutMs: connection.timeoutMs,
-        getClient: async () => connection,
-        readableResources: () => this.resourceConnections().includes(connection),
+        ...liveToolClient(this.live, server),
       });
       current.set(name, {
         tool: durableTool(definition, exposure),
@@ -501,6 +583,10 @@ export class DurableMcp {
     this.syncResourceTools();
     this.publish();
     this.offerTools(this.enabledToolNames());
+  }
+
+  private connectionOf(server: string): McpServerConnection | undefined {
+    return this.servers.find((candidate) => candidate.entry.name === server)?.connection;
   }
 
   /** Connected servers with resources whose exposure is not `hidden`, which the resource tools reach. */
@@ -528,7 +614,7 @@ export class DurableMcp {
     }
     if (this.resourceTools[0]?.exposure === exposure) return;
     this.resourceTools = this.internals
-      .createMcpResourceToolDefinitions({ exposure, servers: () => this.resourceConnections() })
+      .createMcpResourceToolDefinitions({ exposure, servers: liveResourceServers(this.live) })
       .map((definition) => ({
         tool: durableTool(definition, exposure),
         exposure,
@@ -557,18 +643,23 @@ export class DurableMcp {
   }
 
   private buildExtension(): Extension {
-    const listings = this.servers.map((server) => ({
-      entry: server.entry,
-      ...(server.connection ? { connection: server.connection } : {}),
-    }));
     return {
       name: this.extensionName,
       tools: [
         ...this.registered().map((item) => item.tool),
         ...(this.toolSearch ? [this.toolSearch] : []),
       ],
-      sections: [section("mcp_servers", () => this.internals.renderServersSection(listings))],
+      sections: [liveServersSection(this.live)],
     };
+  }
+
+  private renderServersSection(): string | undefined {
+    return this.internals.renderServersSection(
+      this.servers.map((server) => ({
+        entry: server.entry,
+        ...(server.connection ? { connection: server.connection } : {}),
+      })),
+    );
   }
 
   private publish(): void {
@@ -606,64 +697,50 @@ export class DurableMcp {
     });
   }
 
-  private createToolSearch(): ToolRegistration {
-    const parameters = Type.Object({
-      query: Type.String({ description: "Search query for deferred tools." }),
-      limit: Type.Optional(
-        Type.Number({
-          description: `Maximum number of tools to return. Defaults to ${this.internals.DEFAULT_TOOL_SEARCH_LIMIT}.`,
-        }),
+  private async searchTools(
+    { query, limit }: ToolSearchArgs,
+    api: Parameters<ToolRegistration["execute"]>[1],
+    context: Context,
+  ): ReturnType<ToolRegistration["execute"]> {
+    if (query.trim() === "") throw new Error("query must not be empty");
+    const max = limit ?? this.internals.DEFAULT_TOOL_SEARCH_LIMIT;
+    if (!Number.isInteger(max) || max <= 0) throw new Error("limit must be a positive integer");
+    await this.reconnectSignedIn();
+    await this.waitFor(
+      this.servers.filter((server) =>
+        [...configuredExposures(server.entry)].some(
+          (exposure) => exposure === "deferred" || exposure === "codemode",
+        ),
       ),
+      Number.POSITIVE_INFINITY,
+      context.abortSignal,
+    );
+    const offered = new Set((await api.agent(context)).tools.map((tool) => tool.name));
+    const candidates = this.registered().filter(
+      (item) =>
+        item.exposure !== "direct" &&
+        !offered.has(item.tool.name) &&
+        this.permitted(item.tool.name, item.exposure),
+    );
+    const matches = new this.internals.Bm25Ranker().rank(
+      query,
+      candidates.map((item) => item.document),
+      max,
+    );
+    const loaded = matches.flatMap((match) => {
+      const item = candidates.find((candidate) => candidate.tool.name === match.name);
+      return item ? [item.tool] : [];
     });
+    const text =
+      loaded.length === 0
+        ? "No matching tools found."
+        : `Loaded ${loaded.length} tool${loaded.length === 1 ? "" : "s"}. They are available from your next call:\n${loaded
+            .map((tool) => `- ${tool.name}: ${firstLine(tool.description.trim())}`)
+            .join("\n")}`;
     return {
-      name: DURABLE_TOOL_SEARCH_NAME,
-      description: this.internals.TOOL_SEARCH_DESCRIPTION,
-      parameters,
-      // Loading the same tools again is harmless.
-      replay: "safe",
-      execute: async (args, api, context: Context) => {
-        const { query, limit } = args as { query: string; limit?: number };
-        if (query.trim() === "") throw new Error("query must not be empty");
-        const max = limit ?? this.internals.DEFAULT_TOOL_SEARCH_LIMIT;
-        if (!Number.isInteger(max) || max <= 0) throw new Error("limit must be a positive integer");
-        await this.reconnectSignedIn();
-        await this.waitFor(
-          this.servers.filter((server) =>
-            [...configuredExposures(server.entry)].some(
-              (exposure) => exposure === "deferred" || exposure === "codemode",
-            ),
-          ),
-          Number.POSITIVE_INFINITY,
-          context.abortSignal,
-        );
-        const offered = new Set((await api.agent(context)).tools.map((tool) => tool.name));
-        const candidates = this.registered().filter(
-          (item) =>
-            item.exposure !== "direct" &&
-            !offered.has(item.tool.name) &&
-            this.permitted(item.tool.name, item.exposure),
-        );
-        const matches = new this.internals.Bm25Ranker().rank(
-          query,
-          candidates.map((item) => item.document),
-          max,
-        );
-        const loaded = matches.flatMap((match) => {
-          const item = candidates.find((candidate) => candidate.tool.name === match.name);
-          return item ? [item.tool] : [];
-        });
-        const text =
-          loaded.length === 0
-            ? "No matching tools found."
-            : `Loaded ${loaded.length} tool${loaded.length === 1 ? "" : "s"}. They are available from your next call:\n${loaded
-                .map((tool) => `- ${tool.name}: ${firstLine(tool.description.trim())}`)
-                .join("\n")}`;
-        return {
-          output: [{ type: "text", text }],
-          details: { loaded: loaded.map((tool) => tool.name) },
-          ...(loaded.length ? { control: { addTools: loaded.map((tool) => tool.name) } } : {}),
-        };
-      },
+      output: [{ type: "text", text }],
+      details: { loaded: loaded.map((tool) => tool.name) },
+      ...(loaded.length ? { control: { addTools: loaded.map((tool) => tool.name) } } : {}),
     };
   }
 }

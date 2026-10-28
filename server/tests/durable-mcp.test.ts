@@ -14,7 +14,10 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { GondolinExecResult, GondolinProcess, GondolinVm } from "../src/gondolin-ops.js";
-import { SessionHost } from "../src/durable-harness.js";
+import { DurableBackend } from "../src/durable-backend.js";
+import { DurableHarness, SessionHost } from "../src/durable-harness.js";
+import { DurableMcp } from "../src/durable-mcp.js";
+import { collected } from "./helpers/collected.js";
 import { PROJECT_TRUST_OPTIONS } from "../src/project-trust.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
@@ -230,6 +233,43 @@ describe("server durable MCP (host)", () => {
         return true;
       }
     }, "echo server to exit after Stop");
+  });
+
+  it("frees a stopped session while an older registry snapshot still holds its MCP extension", async () => {
+    writeMcpJson(agentDir, {
+      echo: echoServer(join(agentDir, "echo.marker"), { exposure: "direct" }),
+      search: echoServer(join(agentDir, "search.marker")),
+    });
+    const f = await fixture([
+      fauxAssistantMessage([fauxToolCall("mcp__echo__echo", { text: "hi" })], {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("RETAIN_DONE"),
+    ]);
+    // A running task invocation keeps the registry snapshot it was reserved with, and with it every
+    // extension installed then, past their uninstall. Hold what this session installs the same way.
+    const install = vi.spyOn(DurableHarness.prototype, "installExtension");
+    const opened = vi.spyOn(DurableMcp, "open");
+    const created = vi.spyOn(DurableBackend, "create");
+    await f.manager.startSession(f.session.id, f.workspace);
+    await prompt(f.manager, f.session.id, "Echo hi");
+    const pinned = install.mock.calls
+      .map(([extension]) => extension)
+      .filter((extension) => extension.name === `oppi.mcp/${f.session.id}`);
+    // Tools and the server section, from after the servers connected.
+    expect(pinned.at(-1)?.tools?.map((tool) => tool.name)).toContain("mcp__echo__echo");
+    const mcp = new WeakRef((await opened.mock.results[0]!.value)!);
+    const backend = new WeakRef(await created.mock.results[0]!.value);
+    for (const spy of [install, opened, created]) {
+      spy.mockClear();
+      spy.mockRestore();
+    }
+
+    await f.manager.stopSession(f.session.id);
+
+    expect(await collected(mcp)).toBe(true);
+    expect(await collected(backend)).toBe(true);
+    expect(pinned.length).toBeGreaterThan(0);
   });
 
   it("turns codemode on for a codemode server, whose tools scripts call and tool_search loads, and keeps loaded ones after a restart", async () => {

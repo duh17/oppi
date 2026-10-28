@@ -86,6 +86,14 @@ export const PHRASES: Record<Activity, string[]> = {
 };
 
 const TICK_MS = 1_000;
+/**
+ * How long one watch invocation runs. pi-durable keeps the registry snapshot an invocation was
+ * reserved with until it ends, and with it every extension installed then, also after it is
+ * uninstalled: a watcher of an idle conversation would hold them for as long as it stays open.
+ * The last pass commits a sleep that is already due, so the task is reserved again on the
+ * current registry.
+ */
+const INVOCATION_MS = 5 * 60_000;
 
 function hashText(text: string): number {
   let hash = 2166136261;
@@ -238,6 +246,7 @@ const Words = defineTask<null, { phase: "watch" }, null>({
         context,
       );
       if (!live) throw new Error("Working words requires pi.live");
+      const invocationEnds = Date.now() + INVOCATION_MS;
       let view = deriveView(live.value);
       let wake: (() => void) | undefined;
       live.start(async (value) => {
@@ -252,6 +261,7 @@ const Words = defineTask<null, { phase: "watch" }, null>({
           // A live-doc edge can arrive while the UI commit is in flight and no
           // waiter is installed. Compare against the view actually published.
           const published = view;
+          const ending = Date.now() >= invocationEnds;
           await runtime.commit(async (tx) => {
             const owner = await tx.doc(WordsOwner, runtime.conversationId);
             let message: string | undefined;
@@ -284,8 +294,16 @@ const Words = defineTask<null, { phase: "watch" }, null>({
               method: "setWorkingMessage",
               ...(message ? { message } : {}),
             });
-            return { status: "running", checkpoint: task.state.checkpoint };
+            // A sleep, not a running checkpoint: only a new invocation takes a new snapshot.
+            return ending
+              ? {
+                  status: "sleeping",
+                  until: runtime.now(),
+                  checkpoint: task.state.checkpoint,
+                }
+              : { status: "running", checkpoint: task.state.checkpoint };
           }, context);
+          if (ending) return;
           await new Promise<void>((resolve, reject) => {
             let timer: ReturnType<typeof setTimeout> | undefined;
             const cleanup = (): void => {
@@ -305,8 +323,13 @@ const Words = defineTask<null, { phase: "watch" }, null>({
             runtime.signal.addEventListener("abort", abort, { once: true });
             if (runtime.signal.aborted) abort();
             else if (published !== view) finish();
-            else if (view.run !== undefined)
-              timer = setTimeout(finish, TICK_MS);
+            else
+              timer = setTimeout(
+                finish,
+                view.run !== undefined
+                  ? TICK_MS
+                  : Math.max(0, invocationEnds - Date.now()),
+              );
           });
         }
       } finally {

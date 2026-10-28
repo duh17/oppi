@@ -99,6 +99,7 @@ Example:
 
 ### Fixed
 
+- **Server:** A stopped durable session now releases its memory even while another session keeps working, such as a lead waiting on its subagents. Before, each stopped session's MCP connections and state stayed in memory until that work ended or the server restarted, so memory climbed for as long as you delegated.
 - **Client:** Server Metrics no longer runs off the edge of the screen at the largest text sizes, and the "Server metrics are off" message is no longer cut off.
 - **Server:** A cron schedule now runs once, not twice, when daylight saving time ends and a local hour repeats; see [Agents and schedules](docs/usage.md#agents-and-schedules).
 - **Server:** When a durable session store's lock is disturbed while open, for example by a file written into its `.lock` folder, Oppi closes only that store and ends its sessions with an error, and refuses to reopen it until the server restarts. Remove any stray file from the `.lock` folder before that restart, or the store still cannot open. Before, the whole server exited with `Uncaught exception: Unable to update lock within the stale threshold`.
