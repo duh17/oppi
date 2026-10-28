@@ -1,38 +1,6 @@
 import Foundation
 import Observation
 
-/// Opens Model Providers for the same visible host Server Settings shows.
-///
-/// Active host wins (`ServerSelection.resolveVisible`); frozen id is fallback.
-@MainActor
-enum ServerDetailModelProvidersNavigation {
-    static func visibleServer(
-        activeServerId: String?,
-        frozenServer: PairedServer,
-        servers: [PairedServer]
-    ) -> PairedServer {
-        ServerSelection.resolveVisible(
-            activeId: activeServerId,
-            frozenId: frozenServer.id,
-            from: servers
-        ) ?? servers.first { $0.id == frozenServer.id } ?? frozenServer
-    }
-
-    static func open(
-        navigation: AppNavigation,
-        activeServerId: String?,
-        frozenServer: PairedServer,
-        servers: [PairedServer]
-    ) {
-        let visible = visibleServer(
-            activeServerId: activeServerId,
-            frozenServer: frozenServer,
-            servers: servers
-        )
-        navigation.openModelProviders(ModelProvidersNavTarget(serverId: visible.id))
-    }
-}
-
 /// Provider sign-in calls for one flow. `APIClient` conforms; tests use a fake.
 protocol ProviderAuthFlowClient: Sendable {
     func getProviderAuthFlow(flowId: String) async throws -> ProviderAuthFlowSnapshot

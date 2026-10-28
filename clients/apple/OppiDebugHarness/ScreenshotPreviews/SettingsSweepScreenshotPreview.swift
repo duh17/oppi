@@ -15,7 +15,9 @@ import SwiftUI
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `agent-icon-picker`, `agent-edit`, `agent-edit-tools`, `-skills`, `-extensions`, `-workspaces` (the pages it pushes), `pi-tools`, `schedule-edit`, `schedule-edit-cron`, `schedule-edit-existing`,
-/// `schedule-time-zone`, `workspace-create`, `workspace-create-configure`.
+/// `schedule-time-zone`, `workspace-create`, `workspace-create-configure`, `server-settings`
+/// (Server Settings for the fixture server, loaded), `server-settings-loading` (its
+/// summary and loading rows, before the first answer).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -173,7 +175,7 @@ struct SettingsSweepScreenshotPreview: View {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if page.hasPrefix("mcp") {
+        if page.hasPrefix("mcp") || page.hasPrefix("server-settings") {
             // The MCP screens wait for `apiClientReady`, so their connection is
             // a ready one whose requests the fixture answers, as the Router and
             // Metrics previews build theirs.
@@ -258,6 +260,17 @@ struct SettingsSweepScreenshotPreview: View {
                     server: server,
                     prefillName: "oppi",
                     prefillPath: "~/workspace/oppi"
+                )
+            }
+            .ignoresSafeArea()
+        case "server-settings", "server-settings-loading":
+            RouterPreviewControllerStack(root: root) { [root, server, coordinator, page] in
+                ServerSettingsViewController(
+                    server: server,
+                    root: root,
+                    model: page == "server-settings"
+                        ? .screenshotFixture(coordinator: coordinator, serverId: server.id, currentDeviceId: "dev-iphone", updateAvailable: true)
+                        : .screenshotLoading(coordinator: coordinator, serverId: server.id)
                 )
             }
             .ignoresSafeArea()
@@ -693,6 +706,7 @@ struct SettingsSweepScreenshotPreview: View {
                 ModelInfo(id: "claude-haiku-5", name: "Claude Haiku 5", provider: "anthropic", contextWindow: 200_000),
                 ModelInfo(id: "gpt-5-mini", name: "GPT-5 mini", provider: "openai", contextWindow: 400_000),
             ])),
+            "/server/metrics/settings": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/dictation/dictionary/global": Data(#"{"revision":3,"phrases":["Oppi","Tailscale","Herdr","Kypu","SwiftUI","Nerd Font Symbols Mono Extended Family Name That Is Long Enough To Wrap Past The Row"],"provider":"xai"}"#.utf8),
             "/dictation/dictionary/workspaces/preview-ws": Data(#"{"revision":1,"phrases":["oppi-dev","WorkspaceStore"],"provider":null}"#.utf8),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),

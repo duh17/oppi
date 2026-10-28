@@ -97,19 +97,20 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
         XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 10), "Offline Server Settings did not open")
         let list = app.collectionViews["server.details.list"]
         XCTAssertTrue(list.waitForExistence(timeout: 10))
-        let remove = app.buttons["Remove Server"]
+        let remove = app.buttons["server.remove"]
         if !remove.isHittable { list.swipeUp() }
         tap(remove, named: "Remove Server")
         XCTAssertTrue(app.staticTexts["Remove Offline E2E?"].waitForExistence(timeout: 5), "Removal confirmation missing")
-        // Compact iPhone confirmation popovers dismiss on an outside tap and
-        // need not expose the SwiftUI cancellation role as a visible button.
+        // The action sheet dismisses on an outside tap (iPad: a popover) as it does on Cancel.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.95)).tap()
         XCTAssertFalse(app.staticTexts["Remove Offline E2E?"].exists, "Cancellation did not dismiss confirmation")
         XCTAssertTrue(app.navigationBars["Server Settings"].exists, "Cancellation unexpectedly left settings")
         XCTAssertTrue(remove.exists, "Cancellation removed the pairing")
         tap(remove, named: "Remove Server again")
         XCTAssertTrue(app.staticTexts["Remove Offline E2E?"].waitForExistence(timeout: 5))
-        tap(app.buttons.matching(identifier: "Remove Server").element(boundBy: 1), named: "confirm local removal")
+        // The row is also labelled "Remove Server"; the sheet's action is the button of that name that is not the row.
+        let confirm = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Remove Server", "server.remove")).firstMatch
+        tap(confirm, named: "confirm local removal")
         XCTAssertTrue(first.waitForExistence(timeout: 15), "Removal did not return to the remaining connected server")
         tap(first, named: "remaining server picker")
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Offline E2E")).firstMatch.exists, "Removed pairing remained selectable")

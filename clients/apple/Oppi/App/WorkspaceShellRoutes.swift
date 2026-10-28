@@ -14,7 +14,8 @@ import SwiftUI
 // Schedules, Agents, MCP Servers (`McpServersViewController`), App Settings
 // (`SettingsRootViewController`), Workspace Settings
 // (`WorkspaceSettingsViewController`), Model Providers
-// (`ModelProvidersViewController`), and Server Metrics
+// (`ModelProvidersViewController`), Server Settings
+// (`ServerSettingsRouteViewController`), and Server Metrics
 // (`ServerMetricsViewController`) are UIKit screens.
 
 /// Hosted screens for the shell's UIKit controllers.
@@ -103,6 +104,13 @@ enum ShellRouteScreens {
             // reloads in place and keeps a live provider sign-in.
             return ModelProvidersViewController(target: target, root: root)
         }
+        if case .serverDetails(let target) = route {
+            return ServerSettingsRouteViewController(
+                target: target,
+                root: root,
+                showsSidebarToggle: placement == .splitDetailRoot
+            )
+        }
         if case .workspaceConfiguration(let target) = route {
             let screen = WorkspaceSettingsViewController(
                 serverId: target.serverId,
@@ -159,6 +167,10 @@ enum ShellRouteScreens {
         }
         if let chatRoute = screen as? ChatRouteViewController {
             chatRoute.placement = placement
+            return
+        }
+        if let serverSettings = screen as? ServerSettingsRouteViewController {
+            serverSettings.showsSidebarToggle = placement == .splitDetailRoot
             return
         }
         if let files = screen as? FileBrowserViewController {
@@ -262,14 +274,15 @@ struct ShellRouteView: View {
     private var content: some View {
         switch route {
         case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile, .serverSkillFile,
-             .workspaceConfiguration, .modelProviders, .serverResourceDetail, .serverSkillBrowser:
+             .workspaceConfiguration, .modelProviders, .serverResourceDetail, .serverSkillBrowser,
+             .serverDetails:
             // UIKit screens (SessionInboxViewController,
             // WorkspaceSidebarViewController, WorkspaceDetailViewController,
             // ChatRouteViewController, FileBrowserViewController,
             // WorkspaceLinkedFileViewController, ServerSkillFileViewController,
             // WorkspaceSettingsViewController, ModelProvidersViewController,
             // ServerSkillDetailViewController, ServerExtensionDetailViewController,
-            // ServerSkillBrowserViewController).
+            // ServerSkillBrowserViewController, ServerSettingsRouteViewController).
             mountedByUIKitScreen
         case .chatReader(let target):
             if let chatReaderPayloadStore {
@@ -277,8 +290,6 @@ struct ShellRouteView: View {
             }
         case .utility(let target):
             WorkspaceUtilityDestinationView(target: target)
-        case .serverDetails(let target):
-            ServerDetailsScopedDestinationView(target: target)
         case .sessionThread(let target):
             SessionThreadDetailView(target: target)
         }

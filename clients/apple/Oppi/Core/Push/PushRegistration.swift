@@ -111,9 +111,7 @@ final class PushRegistration {
     /// server has this device's push key and send token. Registering asks iOS for notification
     /// permission when it has not been asked.
     ///
-    /// The discovery card's Turn On runs this. Server Settings' switch runs the same three
-    /// steps in `ServerNotificationsSection.turnPushOn`; switch it to this when Server Settings
-    /// moves to UIKit.
+    /// The discovery card's Turn On and Server Settings' push switch run this, through `PushEnableFlow`.
     func enable(api: APIClient, serverId: String, deviceId: String, relay: URL) async -> Failure? {
         Self.setEnabled(true, serverId: serverId)
         let failure = await register(api: api, serverId: serverId, deviceId: deviceId, relay: relay)

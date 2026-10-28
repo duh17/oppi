@@ -25,20 +25,21 @@ enum ServerDetailMobileOutputGuideState: Equatable {
 /// Everything Server Settings loads from one server, owned in one place so the
 /// root and its pushed pages read the same values instead of refetching.
 ///
-/// The root view owns the model and calls `attach` when the visible host
-/// changes; pages receive the model and call its actions. `serverId` is the
-/// visible host: every async result is applied only while the server it was
-/// requested for is still `serverId` (`ServerSelection.shouldApplyHostResult`),
-/// so a late response never paints another host.
+/// A model belongs to one server for its whole life: the page that owns it is
+/// pinned to that server, and a different server gets a different page with its
+/// own model (`ServerSettingsRouteViewController`). So a response that lands
+/// after the person switched servers settles into the model that asked for it,
+/// and no other. `serverId` is that server; every async result is still applied
+/// only through `ServerSelection.shouldApplyHostResult`, which drops a cancelled
+/// request instead of reporting it as a failure.
 ///
 /// Update polling is owned by the model and holds it weakly, so it ends when
-/// the root view (and with it the model) goes away or the host changes. A
-/// returning user gets a fresh model; `load()` resumes polling when the server
-/// still reports an install or restart in progress, and the Update button is
-/// hidden while it does.
+/// the page (and with it the model) goes away. A returning user gets a fresh
+/// model; `load()` resumes polling when the server still reports an install or
+/// restart in progress, and the Update button is hidden while it does.
 @MainActor @Observable
 final class ServerSettingsModel {
-    private(set) var serverId: String?
+    let serverId: String
 
     private(set) var info: ServerInfo?
     private(set) var isLoading = true
@@ -50,12 +51,9 @@ final class ServerSettingsModel {
     private(set) var mobileOutputGuide: MobileOutputGuideConfiguration?
     private(set) var isLoadingMobileOutputGuide = false
     private(set) var isSavingMobileOutputGuide = false
+    /// The value being saved, shown disabled until the save settles (nil when none is in flight).
+    private(set) var pendingMobileOutputGuide: Bool?
     private(set) var mobileOutputGuideError: String?
-
-    /// `serverMetrics.enabled`; nil until loaded or when the load failed (`serverMetricsError`).
-    private(set) var serverMetricsEnabled: Bool?
-    private(set) var isSavingServerMetrics = false
-    private(set) var serverMetricsError: String?
 
     private(set) var pairedDevices: [AuthDevice]?
     private(set) var isLoadingPairedDevices = false
@@ -65,7 +63,7 @@ final class ServerSettingsModel {
     private(set) var updateInFlight = false
     private(set) var updateDidNotReturn = false
 
-    @ObservationIgnored private var coordinator: ConnectionCoordinator?
+    @ObservationIgnored private let coordinator: ConnectionCoordinator
     @ObservationIgnored private var updatePollTask: Task<Void, Never>?
     #if DEBUG
     @ObservationIgnored fileprivate var isFixture = false
@@ -77,33 +75,9 @@ final class ServerSettingsModel {
         let serverId: String
     }
 
-    /// Binds the model to a server. Switching servers drops everything loaded
-    /// for the previous one; re-attaching the same server keeps it so a page
-    /// pop does not flash a loading state.
-    func attach(coordinator: ConnectionCoordinator, serverId: String) {
+    init(coordinator: ConnectionCoordinator, serverId: String) {
         self.coordinator = coordinator
-        guard self.serverId != serverId else { return }
-        updatePollTask?.cancel()
-        updatePollTask = nil
         self.serverId = serverId
-        info = nil
-        error = nil
-        isLoading = true
-        providerSetupState = .unknown
-        connectedProviderCount = 0
-        mobileOutputGuide = nil
-        mobileOutputGuideError = nil
-        isLoadingMobileOutputGuide = false
-        isSavingMobileOutputGuide = false
-        serverMetricsEnabled = nil
-        isSavingServerMetrics = false
-        serverMetricsError = nil
-        pairedDevices = nil
-        pairedDevicesError = nil
-        isLoadingPairedDevices = false
-        isRevokingDevice = false
-        updateInFlight = false
-        updateDidNotReturn = false
     }
 
     // MARK: - Derived values
@@ -138,10 +112,12 @@ final class ServerSettingsModel {
         )
     }
 
+    /// Loading while the page's first load is still out, until the guide's own answer
+    /// (or its failure) arrives: the row never flashes "Unavailable" before its request starts.
     var mobileOutputGuideState: ServerDetailMobileOutputGuideState {
         ServerDetailMobileOutputGuideState.resolve(
             configuration: mobileOutputGuide,
-            isLoading: isLoadingMobileOutputGuide,
+            isLoading: isLoadingMobileOutputGuide || (isLoading && mobileOutputGuideError == nil),
             error: mobileOutputGuideError
         )
     }
@@ -152,9 +128,7 @@ final class ServerSettingsModel {
         #if DEBUG
         if isFixture { return }
         #endif
-        let requestedId = serverId
         guard let client = await prepareClient() else {
-            guard let requestedId, shouldApply(requestedId) else { return }
             error = "Unable to prepare server transport"
             pairedDevicesError = "Unable to prepare server transport"
             isLoading = false
@@ -210,9 +184,7 @@ final class ServerSettingsModel {
 
     /// Retry for the Paired Devices page.
     func reloadPairedDevices() async {
-        let requestedId = serverId
         guard let client = await prepareClient() else {
-            guard let requestedId, shouldApply(requestedId) else { return }
             pairedDevicesError = "Unable to prepare server transport"
             return
         }
@@ -239,9 +211,7 @@ final class ServerSettingsModel {
         guard row.canRevoke else { return }
         // Resolve the client once: a host switch while this runs must not
         // send the DELETE to a different server.
-        let requestedId = serverId
         guard let client = await prepareClient() else {
-            guard let requestedId, shouldApply(requestedId) else { return }
             pairedDevicesError = "Unable to prepare server transport"
             return
         }
@@ -265,9 +235,7 @@ final class ServerSettingsModel {
 
     /// Retry for the Mobile Output Guide row.
     func reloadMobileOutputGuide() async {
-        let requestedId = serverId
         guard let client = await prepareClient() else {
-            guard let requestedId, shouldApply(requestedId) else { return }
             mobileOutputGuideError = "Unable to prepare server transport"
             return
         }
@@ -289,12 +257,24 @@ final class ServerSettingsModel {
         }
     }
 
+    /// Saves the guide against the revision this page loaded. The switch shows the
+    /// new value, disabled, until the save settles (`pendingMobileOutputGuide`); a
+    /// failure puts the old value back with the reason, and a revision conflict
+    /// reloads the latest.
     func setMobileOutputGuide(_ enabled: Bool) async {
         guard let current = mobileOutputGuide,
+              !isSavingMobileOutputGuide,
               let client = await prepareClient(),
               shouldApply(client.serverId) else { return }
         isSavingMobileOutputGuide = true
-        defer { if shouldApply(client.serverId) { isSavingMobileOutputGuide = false } }
+        pendingMobileOutputGuide = enabled
+        mobileOutputGuideError = nil
+        defer {
+            if shouldApply(client.serverId) {
+                isSavingMobileOutputGuide = false
+                pendingMobileOutputGuide = nil
+            }
+        }
         do {
             let saved = try await client.api.setMobileOutputGuideConfiguration(
                 enabled: enabled,
@@ -314,41 +294,20 @@ final class ServerSettingsModel {
 
     // MARK: - Server Metrics
 
+    /// Fetches this server's metrics setting into its `SettingsStore`, the one
+    /// path that reads and writes it (the page's switch and the Metrics page
+    /// both go through it), and tells the connection's pill cache what the
+    /// server answered.
     private func loadServerMetricsSetting(_ client: Client) async {
-        // This server's store holds the document every save of the setting is based
-        // on, so this read goes through it (fetching again) instead of beside it.
-        guard let settings = coordinator?.settings(for: client.serverId) else { return }
-        let state = await settings.reload(SettingsCatalog.serverMetricsEnabled)
-        // A cancelled fetch leaves nothing to show, and is not a failure to report
-        // (`shouldApply(_:error:)` used to filter it out).
-        if case .loading = state { return }
-        guard !Task.isCancelled, shouldApply(client.serverId) else { return }
-        serverMetricsEnabled = state.current
-        serverMetricsError = state.failureReason ?? state.unavailableReason
-        if let enabled = state.current {
-            coordinator?.setServerMetricsEnabledCache(enabled, for: client.serverId)
+        let state = await coordinator.settings(for: client.serverId).reload(SettingsCatalog.serverMetricsEnabled)
+        // Only what the server stored: a cancelled fetch (`loading`) says nothing, and a save in
+        // flight shows the value it is trying to store, which the server has not accepted.
+        switch state {
+        case .value, .failed: break
+        case .loading, .saving, .unavailable: return
         }
-    }
-
-    /// Saves `serverMetrics.enabled` through this server's `SettingsStore`, the one
-    /// path that writes it (the Metrics page uses the same store, so neither can
-    /// base a save on a document the other has already moved on from). It fetches
-    /// the current document first, then saves: a failed save rolls back with the
-    /// reason, and a conflict reloads the latest value.
-    func setServerMetrics(_ enabled: Bool) async {
-        guard serverMetricsEnabled != nil, let serverId, let settings = coordinator?.settings(for: serverId) else { return }
-        isSavingServerMetrics = true
-        defer { if shouldApply(serverId) { isSavingServerMetrics = false } }
-        let setting = SettingsCatalog.serverMetricsEnabled
-        _ = await settings.reload(setting)
-        let result = await settings.set(setting, enabled).value
-        // The server changed even if this screen moved on; the pill follows it.
-        if let stored = result.current {
-            coordinator?.setServerMetricsEnabledCache(stored, for: serverId)
-        }
-        guard !Task.isCancelled, shouldApply(serverId) else { return }
-        if let stored = result.current { serverMetricsEnabled = stored }
-        serverMetricsError = result.current == enabled ? nil : (result.failureReason ?? result.unavailableReason)
+        guard !Task.isCancelled, shouldApply(client.serverId), let enabled = state.current else { return }
+        coordinator.setServerMetricsEnabledCache(enabled, for: client.serverId)
     }
 
     // MARK: - Update
@@ -356,9 +315,7 @@ final class ServerSettingsModel {
     func startServerUpdate() async {
         guard let version = info?.update?.latestVersion, !version.isEmpty,
               !updateInFlight else { return }
-        let requestedId = serverId
         guard let client = await prepareClient() else {
-            guard let requestedId, shouldApply(requestedId) else { return }
             error = "Unable to prepare server transport"
             return
         }
@@ -465,12 +422,11 @@ final class ServerSettingsModel {
     }
 
     private func noteServerVersionAfterUpdate(_ version: String, serverId: String) {
-        coordinator?.connection(for: serverId)?.noteServerVersionAfterUpdate(version)
+        coordinator.connection(for: serverId)?.noteServerVersionAfterUpdate(version)
     }
 
     /// Reads the id before awaiting so the client and its id always agree.
     private func prepareClient() async -> Client? {
-        guard let coordinator, let serverId else { return nil }
         guard let api = await coordinator.apiClientReady(for: serverId) else { return nil }
         return Client(api: api, serverId: serverId)
     }
@@ -478,16 +434,24 @@ final class ServerSettingsModel {
 
 #if DEBUG
 extension ServerSettingsModel {
-    /// Fixture for the screenshot harness: `load()` leaves it untouched and
-    /// `attach` keeps it for the same server id, so pages render without a server.
+    /// Fixture for the screenshot harness: a server whose first load never answers,
+    /// so the page shows its summary and loading rows.
+    static func screenshotLoading(coordinator: ConnectionCoordinator, serverId: String) -> ServerSettingsModel {
+        let model = ServerSettingsModel(coordinator: coordinator, serverId: serverId)
+        model.isFixture = true
+        return model
+    }
+
+    /// Fixture for the screenshot harness: `load()` leaves it untouched, so pages
+    /// render without a server.
     static func screenshotFixture(
+        coordinator: ConnectionCoordinator,
         serverId: String,
         currentDeviceId: String,
         updateAvailable: Bool
     ) -> ServerSettingsModel {
-        let model = ServerSettingsModel()
+        let model = ServerSettingsModel(coordinator: coordinator, serverId: serverId)
         model.isFixture = true
-        model.serverId = serverId
         model.info = ServerInfo(
             name: "mac-studio",
             version: "1.4.2",
@@ -519,7 +483,6 @@ extension ServerSettingsModel {
         model.providerSetupState = .configured
         model.connectedProviderCount = 2
         model.mobileOutputGuide = MobileOutputGuideConfiguration(enabled: true, revision: 3)
-        model.serverMetricsEnabled = true
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
         model.pairedDevices = [
             AuthDevice(

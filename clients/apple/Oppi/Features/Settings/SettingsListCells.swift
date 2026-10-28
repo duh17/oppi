@@ -79,6 +79,7 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         title: String,
         systemImage: String?,
         value: String?,
+        valueNeedsAttention: Bool = false,
         identifier: String,
         action: @escaping () -> Void
     ) {
@@ -91,7 +92,8 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         titleLabel.text = title
         titleLabel.textColor = style.title
         valueLabel.text = value
-        valueLabel.textColor = style.value
+        // A value that asks for something ("Needs setup") is drawn in the warning color.
+        valueLabel.textColor = valueNeedsAttention ? style.warning : style.value
         valueLabel.isHidden = value == nil
         accessories = [.disclosureIndicator()]
         button.accessibilityIdentifier = identifier

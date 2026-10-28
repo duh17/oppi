@@ -47,8 +47,9 @@ extension SettingsListViewController {
 
     // MARK: - Toggle
 
-    /// Makes `cell` the switch row of a declared on/off setting.
-    func settingToggleRow(_ cell: UICollectionViewListCell, _ declaration: SettingDeclaration<Bool>) {
+    /// Makes `cell` the switch row of a declared on/off setting. `identifier` is the
+    /// switch's when a screen's existing id is not the declaration's.
+    func settingToggleRow(_ cell: UICollectionViewListCell, _ declaration: SettingDeclaration<Bool>, identifier: String? = nil) {
         let state = settings?.read(declaration) ?? .unavailable(reason: Self.noStore)
         var content = content(state.unavailableReason == nil ? .plain : .subtitle)
         content.text = declaration.copy.title
@@ -56,7 +57,7 @@ extension SettingsListViewController {
         cell.contentConfiguration = content
         cell.accessories = [.settingsToggle(
             state.current ?? declaration.default,
-            identifier: declaration.id,
+            identifier: identifier ?? declaration.id,
             label: declaration.copy.title,
             isEnabled: state.canBeginSaving,
             reusing: cell

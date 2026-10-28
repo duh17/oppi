@@ -458,7 +458,10 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
     private func openServerSettings(for peer: TailnetPeer) {
         guard let server = coordinator.serverStore.servers.first(where: { peer.hasHost($0.host) }),
               let root = HostFactory.root(near: self) else { return }
-        ScreenNavigator.forUIKitScreen(self, root: root).push { ServerSettingsRootView(server: server) }
+        Router.push(
+            ServerSettingsRouteViewController(target: ServerDetailsNavTarget(serverId: server.id), root: root),
+            from: self
+        )
     }
 
     private func startPairing(with peer: TailnetPeer) {

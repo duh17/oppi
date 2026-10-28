@@ -108,40 +108,6 @@ struct ProviderConfigurationPresentation: Equatable {
     }
 }
 
-struct ServerDetailsScopedDestinationView: View {
-    @Environment(ServerStore.self) private var serverStore
-    @Environment(ConnectionCoordinator.self) private var coordinator
-
-    let target: ServerDetailsNavTarget
-
-    private var server: PairedServer? {
-        ServerSelection.resolveVisible(
-            activeId: coordinator.activeServerId,
-            frozenId: target.serverId,
-            from: serverStore.servers
-        )
-    }
-
-    var body: some View {
-        if let server {
-            ServerSettingsRootView(server: server)
-                .id(server.id)
-        } else {
-            unavailableServerView
-        }
-    }
-
-    private var unavailableServerView: some View {
-        ContentUnavailableView(
-            "Server Unavailable",
-            systemImage: "server.rack",
-            description: Text("This paired server is no longer available.")
-        )
-        .navigationTitle(HostSwitcherDestination.serverSettings.title)
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
 /// "This server is older than this app" with Open Server Settings, as an All
 /// Sessions cell inset from the row edges. The list gives the cell a clear
 /// background and no separator.

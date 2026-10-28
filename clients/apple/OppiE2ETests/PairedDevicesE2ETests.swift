@@ -51,7 +51,7 @@ final class PairedDevicesE2ETests: E2ETestCase {
         let throwawayRow = rosterRow("server.pairedDevices.row.\(throwawayId)")
         XCTAssertTrue(throwawayRow.exists, "Other device row missing from roster")
         XCTAssertTrue(throwawayRow.label.hasPrefix(throwawayDeviceName), "Other device name missing: \(throwawayRow.label)")
-        XCTAssertTrue(throwawayRow.label.contains("Last used"), "Other device row has no last-used caption: \(throwawayRow.label)")
+        XCTAssertTrue(throwawayRow.label.contains("Enrolled"), "Other device row has no enrolled caption: \(throwawayRow.label)")
         let thisRow = rosterRow("server.pairedDevices.thisDevice")
         XCTAssertTrue(thisRow.exists, "This-device row missing")
         XCTAssertTrue(thisRow.label.hasPrefix(appName), "Paired name '\(appName)' missing from roster: \(thisRow.label)")

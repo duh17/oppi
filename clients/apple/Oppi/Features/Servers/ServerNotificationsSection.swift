@@ -1,6 +1,7 @@
 import ActivityKit
 import DeviceCheck
-import SwiftUI
+import Foundation
+import Observation
 
 /// Server Settings → Notifications: this server's push alerts and Live Activity on this device.
 ///
@@ -12,19 +13,11 @@ import SwiftUI
 /// Anything that makes data leave the device asks first (docs/privacy.md, "The push relay"
 /// and "Live Activities"): turning push on, and turning Live Activities on while push is on.
 /// Turning Live Activities on with push off sends nothing, so it asks nothing.
-struct ServerNotificationsSection: View {
-    let serverId: String
-    let connection: ServerConnection?
-
-    @Environment(\.appRootEnvironment) private var appRoot
-    @State private var pushEnabled = false
-    @State private var liveActivityEnabled = false
-    @State private var consent: Consent?
-    @State private var status: Status = .idle
-    /// Why turning push on last failed; cleared on the next try.
-    @State private var pushFailure: PushRegistration.Failure?
-    @State private var liveActivityStatus: Status = .idle
-
+///
+/// The words live here, as statics, so every surface that turns push on says the same
+/// thing (`PushEnableFlow`, Server Settings). The rows are a section of
+/// `ServerSettingsViewController`; the per-server state is `ServerNotificationsController`.
+enum ServerNotificationsSection {
     /// What the user is being asked to agree to before it takes effect. The relay is captured
     /// when the alert is shown: the connection can drop or name another relay while it is up,
     /// and the message must not change or go blank, nor push go to a relay it did not name.
@@ -43,26 +36,11 @@ struct ServerNotificationsSection: View {
         }
     }
 
-    enum Status: Equatable {
-        case idle
-        case working
-        case failed
-    }
-
-    private var relayHost: String? {
-        connection?.pushRelay?.host()
-    }
 
     /// The relay registers App Store and TestFlight builds only when App Attest vouches for
     /// them; development builds and Simulator may register without it.
-    private static var relayRefusesThisDevice: Bool {
+    static var relayRefusesThisDevice: Bool {
         APNsEnvironment.current == .production && !DCAppAttestService.shared.isSupported
-    }
-
-    /// The relay this phone registered with names it while the server is offline or
-    /// reconnecting.
-    private var relayHostForConsent: String? {
-        relayHost ?? PushRegistration.savedRelay(serverId: serverId)?.host()
     }
 
     /// The relay host is unknown when neither the connection nor a registration names it.
@@ -75,99 +53,6 @@ struct ServerNotificationsSection: View {
     /// (the server sends them once it reconnects), so only `pushEnabled` decides.
     static func consentForLiveActivityOn(pushEnabled: Bool, relayHost: String?) -> Consent? {
         pushEnabled ? .liveActivity(relayHost: hostForConsent(relayHost)) : nil
-    }
-
-    var body: some View {
-        Section {
-            if relayHost != nil {
-                Toggle(isOn: Binding(
-                    get: { pushEnabled },
-                    set: { newValue in
-                        if newValue {
-                            // The toggle shows only while the relay is known.
-                            guard let relay = connection?.pushRelay else { return }
-                            consent = .push(relay: relay, withCounts: liveActivityEnabled)
-                        } else {
-                            turnPushOff()
-                        }
-                    }
-                )) {
-                    SettingsRowLabel(String(localized: "Push Notifications"), systemImage: "bell.badge")
-                }
-                .disabled(status == .working || Self.relayRefusesThisDevice)
-                .accessibilityIdentifier("server.push.enabled")
-                if status == .working {
-                    ProgressView()
-                        .accessibilityIdentifier("server.push.working")
-                }
-                if let pushFailure {
-                    Text(Self.message(for: pushFailure))
-                        .foregroundStyle(.themeOrange)
-                        .accessibilityIdentifier("server.push.error")
-                }
-            }
-            Toggle(isOn: Binding(
-                get: { liveActivityEnabled },
-                set: { newValue in
-                    if newValue,
-                       let needed = Self.consentForLiveActivityOn(pushEnabled: pushEnabled, relayHost: relayHostForConsent) {
-                        consent = needed
-                    } else {
-                        setLiveActivity(newValue)
-                    }
-                }
-            )) {
-                SettingsRowLabel(String(localized: "Live Activities"), systemImage: "platter.filled.bottom.iphone")
-            }
-            .disabled(liveActivityStatus == .working)
-            .accessibilityIdentifier("server.liveActivity.enabled")
-            if liveActivityStatus == .working {
-                ProgressView()
-                    .accessibilityIdentifier("server.liveActivity.working")
-            }
-            if liveActivityStatus == .failed, liveActivityEnabled {
-                Text("Couldn't let this server update the Live Activity while Oppi is closed. Oppi tries again when it reconnects.")
-                    .foregroundStyle(.themeOrange)
-                    .accessibilityIdentifier("server.liveActivity.error")
-            }
-            if liveActivityEnabled, !ActivityAuthorizationInfo().areActivitiesEnabled {
-                Text("Live Activities are off for Oppi in the Settings app.")
-                    .foregroundStyle(.themeOrange)
-                    .accessibilityIdentifier("server.liveActivity.systemOff")
-            }
-        } header: {
-            Text("Notifications")
-        } footer: {
-            Text(Self.footer(
-                relayHost: relayHost,
-                relayRefusesThisDevice: Self.relayRefusesThisDevice,
-                pushEnabled: pushEnabled
-            ))
-        }
-        .onAppear {
-            pushEnabled = PushRegistration.isEnabled(serverId: serverId)
-            liveActivityEnabled = LiveActivitySettings.isEnabled(serverId: serverId)
-        }
-        .alert(
-            consent?.title ?? "",
-            isPresented: Binding(get: { consent != nil }, set: { if !$0 { consent = nil } }),
-            presenting: consent
-        ) { pending in
-            Button("Turn On") {
-                switch pending {
-                case .push(let relay, _): turnPushOn(relay: relay)
-                case .liveActivity: setLiveActivity(true)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-            // An alert cannot hold a link. This button closes it without turning anything on;
-            // the user reads the policy, then turns the setting on again.
-            Button("Privacy Policy") {
-                appRoot?.opener.open(.webLink(AppSupportLinks.privacyPolicyURL))
-            }
-        } message: { pending in
-            Text(Self.message(for: pending))
-        }
     }
 
     /// Agrees with docs/privacy.md, "The push relay", "Apple" and "Live Activities". Describes
@@ -213,9 +98,90 @@ struct ServerNotificationsSection: View {
         )
         return parts.joined(separator: " ")
     }
+}
 
-    private func setLiveActivity(_ enabled: Bool) {
-        LiveActivitySettings.setEnabled(enabled, serverId: serverId)
+/// One server's push and Live Activity state on this device, for the Notifications section of
+/// its Server Settings page. The opt-ins live in `UserDefaults` per server
+/// (`PushRegistration`, `LiveActivitySettings`); this holds what the section shows while a
+/// turn-on or a registration runs, and why one failed.
+///
+/// A switch that was flipped but not turned on (the person cancelled the disclosure) is put
+/// back by `redraw()`: the rows draw from this state, and a redraw with unchanged state would
+/// otherwise leave the switch where the finger left it.
+@MainActor @Observable
+final class ServerNotificationsController {
+    enum Status: Equatable {
+        case idle
+        case working
+        case failed
+    }
+
+    let serverId: String
+    private(set) var pushEnabled: Bool
+    private(set) var liveActivityEnabled: Bool
+    private(set) var pushStatus: Status = .idle
+    /// Why turning push on last failed, in the words Server Settings shows; cleared on the next try.
+    private(set) var pushFailure: String?
+    private(set) var liveActivityStatus: Status = .idle
+    /// Counts the times a switch has to be drawn again from this state.
+    private(set) var redraws = 0
+
+    @ObservationIgnored private let defaults: UserDefaults
+
+    init(serverId: String, defaults: UserDefaults = .standard) {
+        self.serverId = serverId
+        self.defaults = defaults
+        pushEnabled = PushRegistration.isEnabled(serverId: serverId, defaults: defaults)
+        liveActivityEnabled = LiveActivitySettings.isEnabled(serverId: serverId, defaults: defaults)
+    }
+
+    /// Reads the opt-ins again: another surface (the discovery card) may have turned push on.
+    func reload() {
+        guard pushStatus != .working else { return }
+        pushEnabled = PushRegistration.isEnabled(serverId: serverId, defaults: defaults)
+        liveActivityEnabled = LiveActivitySettings.isEnabled(serverId: serverId, defaults: defaults)
+    }
+
+    /// Draws the rows again from the current state.
+    func redraw() {
+        redraws += 1
+    }
+
+    /// The steps of `PushEnableFlow` for this server's push switch. The opt-in is on from the
+    /// moment registration starts, and nothing of a failed turn-on stays (`PushRegistration.enable`).
+    func apply(_ outcome: PushEnableFlow.Outcome) {
+        switch outcome {
+        case .cancelled:
+            redraw()
+        case .working:
+            pushFailure = nil
+            pushEnabled = true
+            pushStatus = .working
+        case .enabled:
+            pushEnabled = true
+            pushStatus = .idle
+        case .failed(let message):
+            pushEnabled = false
+            pushFailure = message
+            pushStatus = .idle
+        }
+    }
+
+    func turnPushOff(connection: ServerConnection?) {
+        pushEnabled = false
+        pushFailure = nil
+        pushStatus = .working
+        let serverId = serverId
+        let api = connection?.apiClient
+        let relay = connection?.pushRelay
+        Task { [weak self] in
+            await PushRegistration.shared.disable(serverId: serverId, api: api, relay: relay)
+            self?.pushStatus = .idle
+        }
+    }
+
+    func setLiveActivity(_ enabled: Bool, connection: ServerConnection?) {
+        LiveActivitySettings.setEnabled(enabled, serverId: serverId, defaults: defaults)
         liveActivityEnabled = enabled
         LiveActivityManager.shared.settingsChanged(serverId: serverId)
         connection?.syncLiveActivityState()
@@ -225,59 +191,15 @@ struct ServerNotificationsSection: View {
         guard pushEnabled, let connection, let relay = connection.pushRelay, let api = connection.apiClient,
               let deviceId = connection.credentials?.deviceCredential?.deviceId else { return }
         liveActivityStatus = .working
-        Task {
+        let serverId = serverId
+        Task { [weak self] in
             let failure = await PushRegistration.shared.register(
                 api: api,
                 serverId: serverId,
                 deviceId: deviceId,
                 relay: relay
             )
-            liveActivityStatus = failure == nil ? .idle : .failed
-        }
-    }
-
-    /// `relay` is the one the consent named. A connection that names another relay by now
-    /// fails before any relay hears from this phone.
-    private func turnPushOn(relay: URL) {
-        pushFailure = nil
-        guard let connection, connection.pushRelay == relay, let api = connection.apiClient,
-              let deviceId = connection.credentials?.deviceCredential?.deviceId else {
-            pushFailure = .refused
-            return
-        }
-        PushRegistration.setEnabled(true, serverId: serverId)
-        pushEnabled = true
-        status = .working
-        Task {
-            let failure = await PushRegistration.shared.register(
-                api: api,
-                serverId: serverId,
-                deviceId: deviceId,
-                relay: relay
-            )
-            if let failure {
-                // Nothing of a failed turn-on stays: the send token, and a relay registration
-                // no other server uses (`disable` turns the opt-in off too).
-                await PushRegistration.shared.disable(serverId: serverId, api: api, relay: relay)
-                pushEnabled = false
-                pushFailure = failure
-            }
-            status = .idle
-        }
-    }
-
-    private func turnPushOff() {
-        pushEnabled = false
-        pushFailure = nil
-        status = .working
-        let connection = connection
-        Task {
-            await PushRegistration.shared.disable(
-                serverId: serverId,
-                api: connection?.apiClient,
-                relay: connection?.pushRelay
-            )
-            status = .idle
+            self?.liveActivityStatus = failure == nil ? .idle : .failed
         }
     }
 }

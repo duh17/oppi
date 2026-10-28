@@ -18,7 +18,7 @@ struct ServerAboutPage: View {
             Section {
                 LabeledContent(
                     "Connection",
-                    value: ServerSettingsRootView.connectionStatusTitle(for: server, coordinator: coordinator)
+                    value: ServerSettingsViewController.connectionStatusTitle(for: server, coordinator: coordinator)
                 )
                 if let info = model.info {
                     LabeledContent("Uptime", value: info.uptimeLabel)
