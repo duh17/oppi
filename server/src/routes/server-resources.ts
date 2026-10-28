@@ -364,6 +364,18 @@ export function createServerResourceRoutes(
           error: refreshError instanceof Error ? refreshError.message : String(refreshError),
         });
       }
+      // Durable sessions load a Pi package's durable entry when their store opens and on reload,
+      // so the toggle reaches them only through a reload (`oppi extensions reload`).
+      if (ctx.sessions.durableSessionsAvailable()) {
+        try {
+          await ctx.sessions.reloadDurableExtensions();
+        } catch (reloadError: unknown) {
+          log.warn("server_resources.durable_extensions_reload_failed", {
+            extensionId: id,
+            error: reloadError instanceof Error ? reloadError.message : String(reloadError),
+          });
+        }
+      }
       helpers.json(res, summary);
     } catch (cause: unknown) {
       errorForResource(res, helpers, "Extension", "mutation", cause);

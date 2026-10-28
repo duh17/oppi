@@ -40,7 +40,7 @@ function jsonRequest(body: unknown, contentType = "application/json"): IncomingM
   return request;
 }
 
-function makeRoutes() {
+function makeRoutes(sessions: ReturnType<typeof makeRouteSessions> = makeRouteSessions()) {
   const serverResources = {
     listSkills: vi.fn(async () => ({ skills: [skill] })),
     getSkillDetail: vi.fn(async () => ({
@@ -79,7 +79,7 @@ function makeRoutes() {
   };
   return {
     routes: new RouteHandler({
-      sessions: makeRouteSessions(),
+      sessions,
       serverResources,
       storage,
       refreshModelCatalog,
@@ -108,6 +108,45 @@ async function dispatch(
 describe("server resource routes", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("reloads durable extensions after an extension toggle, so a durable session follows it", async () => {
+    const sessions = makeRouteSessions();
+    sessions.durableSessionsAvailable = () => true;
+    const reload = vi.fn(async () => ({}));
+    sessions.reloadDurableExtensions = reload;
+    const { routes } = makeRoutes(sessions);
+    const toggle = () =>
+      dispatch(
+        routes,
+        "PUT",
+        `/server/resources/extensions/${extension.id}/enabled`,
+        jsonRequest({ enabled: true }),
+      );
+
+    expect((await toggle()).statusCode).toBe(200);
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    // A reload that fails is logged; the toggle itself was saved.
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    reload.mockRejectedValueOnce(new Error("store busy"));
+    expect((await toggle()).statusCode).toBe(200);
+  });
+
+  it("leaves durable extensions alone when the server offers no durable sessions", async () => {
+    const sessions = makeRouteSessions();
+    const reload = vi.fn(async () => ({}));
+    sessions.reloadDurableExtensions = reload;
+    const { routes } = makeRoutes(sessions);
+
+    await dispatch(
+      routes,
+      "PUT",
+      `/server/resources/extensions/${extension.id}/enabled`,
+      jsonRequest({ enabled: true }),
+    );
+
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("emits bounded causal logs while preserving resource error responses", async () => {

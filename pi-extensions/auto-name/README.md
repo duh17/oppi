@@ -8,23 +8,23 @@ A Pi extension that names an unnamed session from its first message. A small mod
 
 ## Turn it on
 
-Link the package where Pi discovers extensions, and Pi loads it for every session:
+In Oppi, the first `oppi serve` lists the package as an off extension: turn **Auto-Name** on in **Server Settings → Extensions** (every session, durable ones included) or in a workspace's **Extensions** list (that workspace's classic sessions). A server that had the old built-in Auto-Name on keeps it on ([upgrade](../../docs/extensions.md#auto-name)).
+
+In terminal Pi, or from a checkout, link the package where Pi discovers extensions, and Pi loads it for every session; `pi config` turns it off:
 
 ```bash
 ln -sfn "$PWD/pi-extensions/auto-name" ~/.pi/agent/extensions/auto-name
 ```
-
-Oppi's npm package carries the same package under `extensions/pi/auto-name/`, and `oppi serve` links it for you when you upgrade from the old built-in Auto-Name with it turned on ([migration](../../docs/extensions.md#auto-name)). Turn it off, globally or for one workspace, with the extension's toggle in Oppi's **Server Settings → Extensions** or a workspace's **Extensions** list, or with `pi config`. Durable sessions follow the global setting.
 
 ## Choose the model
 
 `~/.pi/agent/auto-name.json`:
 
 ```json
-{ "model": "anthropic/claude-haiku-4-5" }
+{ "model": "anthropic/claude-haiku-5-5" }
 ```
 
-`model` is `provider/model-id`, read at each title so an edit applies to the next session. Without the file, the extension uses the cheapest small model (an id containing `haiku`, `flash`, `mini`, `nano`, `lite`, or `small`; non-reasoning first) of the session's own provider, and the session's own model when that provider has none. A configured model that is not available logs once and names nothing; the extension does not fall back to a model you did not name.
+`model` is `provider/model-id`, read at each title so an edit applies to the next session. Without the file, the extension uses the cheapest small model of the session's provider (an id with `haiku`, `flash`, `mini`, `nano`, `lite`, or `small` as a whole part, non-reasoning first; on OpenRouter only the session model's own vendor, never a `:batch` variant), and the session's own model when that provider has none. OpenAI Codex models cannot answer a plain completion: a Codex session names nothing by default and logs once that you should set this file. A configured model that is not available logs once and names nothing; the extension does not fall back to a model you did not name.
 
 ## The title contract
 

@@ -141,6 +141,11 @@ export class Storage {
     });
   }
 
+  /** Runs `run` once per data directory, recorded in the migration ledger of session-state.db. */
+  runMigrationOnce(key: string, run: () => Promise<void>): Promise<boolean> {
+    return this.sessionStore.runMigrationOnce(key, run);
+  }
+
   /**
    * Legacy workspace migration: older sessions could exist without workspaceId.
    * Workspace-scoped iOS/server flows require workspace-backed sessions for

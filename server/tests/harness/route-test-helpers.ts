@@ -4,8 +4,16 @@ import { MobileRendererRegistry } from "../../src/mobile-renderer.js";
 import { VoiceBackendHealth } from "../../src/voice-backend-health.js";
 
 /** Mounted route fixtures need the same required registry contract as SessionManager. */
-export function makeRouteSessions(): { mobileRenderer: MobileRendererRegistry } {
-  return { mobileRenderer: new MobileRendererRegistry() };
+export function makeRouteSessions(): {
+  mobileRenderer: MobileRendererRegistry;
+  durableSessionsAvailable: () => boolean;
+  reloadDurableExtensions: () => Promise<unknown>;
+} {
+  return {
+    mobileRenderer: new MobileRendererRegistry(),
+    durableSessionsAvailable: () => false,
+    reloadDurableExtensions: async () => ({}),
+  };
 }
 
 /** A real voice backend owner with no `asr` or `tts`: every feature `not_configured`, no probes. */

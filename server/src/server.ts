@@ -944,7 +944,6 @@ export class Server {
       resolveWorkspaceForSession: (session) => this.resolveWorkspaceForSession(session),
       refreshModelCatalog: (options) => this.refreshModelCatalog(options),
       getModelCatalog: () => this.models.getAll(),
-      hasModel: (provider, modelId) => this.modelRuntime.getModel(provider, modelId) !== undefined,
       getModelPromptCache: (model) => {
         const ref = model ? splitCanonicalModelId(model) : undefined;
         return ref ? this.modelRegistry.find(ref.provider, ref.modelId)?.promptCache : undefined;

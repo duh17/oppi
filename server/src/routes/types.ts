@@ -50,8 +50,6 @@ export interface RouteContext {
   resolveWorkspaceForSession: (session: Session) => Workspace | undefined;
   refreshModelCatalog: (options?: { force?: boolean }) => Promise<void>;
   getModelCatalog: () => ModelInfo[];
-  /** Whether the model runtime resolves `provider` and `modelId`, as the title generator does. */
-  hasModel: (provider: string, modelId: string) => boolean;
   /** Prompt-cache lifetimes (seconds per retention tier) for a stored `provider/id` model reference. */
   getModelPromptCache?: (
     model: string | undefined,

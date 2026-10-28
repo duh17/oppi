@@ -13,6 +13,9 @@ import {
 } from "./session-columns-record-migration.js";
 import type { WorkspaceSessionSummarySnapshot } from "./session-dao.js";
 import {
+  ensureMigrationsTable,
+  hasCompletedMigration,
+  recordMigration,
   runSessionInteractionsDrop,
   runSessionStateDeadSchemaCleanup,
 } from "./session-state-cleanup-migration.js";
@@ -396,6 +399,19 @@ export class SessionSqliteStore {
       )
       .all() as Array<{ session_id: string; was_busy: number }>;
     return rows.map((row) => ({ sessionId: row.session_id, wasBusy: row.was_busy === 1 }));
+  }
+
+  /**
+   * Runs `run` once per data directory: the first call under `key` runs it and records the key
+   * in the migration ledger, later calls do not. A `run` that throws is not recorded, so the
+   * next start tries again.
+   */
+  async runMigrationOnce(key: string, run: () => Promise<void>): Promise<boolean> {
+    ensureMigrationsTable(this.db);
+    if (hasCompletedMigration(this.db, key)) return false;
+    await run();
+    recordMigration(this.db, key);
+    return true;
   }
 
   clearRestartResume(sessionId: string): void {
