@@ -34,6 +34,7 @@ final class FakeSettingsTransport: SettingsServerTransport, @unchecked Sendable 
     private var _saves: [Save] = []
     private var saveErrors: [Error] = []
     private var loadErrors: [Error] = []
+    private var loadAnswers: [SettingsServerDocument] = []
     private var saveGate: SettingsGate?
     private var loadGate: SettingsGate?
     private let revisioned: Bool
@@ -49,6 +50,8 @@ final class FakeSettingsTransport: SettingsServerTransport, @unchecked Sendable 
     /// The next save throws `error`.
     func failNextSave(with error: Error) { lock.withLock { saveErrors.append(error) } }
     func failNextLoad(with error: Error) { lock.withLock { loadErrors.append(error) } }
+    /// The next load answers `document` instead of the route's own, as an answer that arrives late would.
+    func answerNextLoad(with document: SettingsServerDocument) { lock.withLock { loadAnswers.append(document) } }
     func holdSaves(_ gate: SettingsGate) { lock.withLock { saveGate = gate } }
     func holdLoads(_ gate: SettingsGate) { lock.withLock { loadGate = gate } }
     /// Another device changed the document.
@@ -62,7 +65,7 @@ final class FakeSettingsTransport: SettingsServerTransport, @unchecked Sendable 
     func loadSettings(_ endpoint: SettingEndpoint) async throws -> SettingsServerDocument {
         let (gate, error, snapshot) = lock.withLock {
             _loads += 1
-            return (loadGate, loadErrors.isEmpty ? nil : loadErrors.removeFirst(), document)
+            return (loadGate, loadErrors.isEmpty ? nil : loadErrors.removeFirst(), loadAnswers.isEmpty ? document : loadAnswers.removeFirst())
         }
         await gate?.wait()
         if let error { throw error }

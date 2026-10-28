@@ -67,7 +67,8 @@ final class SettingsChatTopBarViewController: SettingsListViewController<Setting
         cell.accessories = [
             .settingsToggle(
                 layout.isShown(action),
-                identifier: "settings.chat.topBar.\(action.rawValue)"
+                identifier: "settings.chat.topBar.\(action.rawValue)",
+                reusing: cell
             ) { [weak self] isOn in
                 guard let self else { return }
                 AppPreferences.ChatTopBar.setLayout(layout.setting(action, shown: isOn), in: defaults)

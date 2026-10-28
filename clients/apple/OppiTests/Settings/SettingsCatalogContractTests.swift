@@ -12,7 +12,6 @@ struct SettingsCatalogContractTests {
     private struct Row: Decodable {
         let key: String
         let scope: String
-        let storage: String
         let type: String
         let revisioned: Bool?
     }
@@ -25,14 +24,13 @@ struct SettingsCatalogContractTests {
         try JSONDecoder().decode(Registry.self, from: ProtocolFixtures.data("settings.json")).settings
     }
 
-    /// The row a declaration's storage points at, and the scope and storage that row must have.
-    private static func expectation(of storage: SettingStorage) -> (key: String, scope: String, storage: String)? {
+    /// The row a declaration's storage points at, and the scope that row must have.
+    private static func expectation(of storage: SettingStorage) -> (key: String, scope: String)? {
         switch storage {
         case .device: nil
-        case .server(let endpoint, _): (endpoint.registryKey, "server", "config")
-        case .piOwned(let endpoint, _): (endpoint.registryKey, "server", "pi")
-        case .workspace(let field): ("workspace.\(field)", "workspace", "workspace")
-        case .deviceOnServer(_, let field): (field, "device", "push-registration")
+        case .server(let endpoint, _), .piOwned(let endpoint, _): (endpoint.registryKey, "server")
+        case .workspace(let field): ("workspace.\(field)", "workspace")
+        case .deviceOnServer(_, let field): (field, "device")
         }
     }
 
@@ -69,7 +67,7 @@ struct SettingsCatalogContractTests {
     func everyEndpointHasARow() throws {
         let keys = Set(try Self.rows().map(\.key))
         for endpoint in SettingEndpoint.allCases {
-            #expect(keys.contains(endpoint.registryKey), "\(endpoint.path) has no row \(endpoint.registryKey)")
+            #expect(keys.contains(endpoint.registryKey), "\(endpoint.rawValue) has no row \(endpoint.registryKey)")
         }
     }
 }

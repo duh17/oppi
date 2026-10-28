@@ -18,7 +18,7 @@ struct SettingsServerTransportTests {
         )
     }
 
-    @Test("A 409 revision_conflict reloads the setting instead of failing it")
+    @Test("A 409 revision_conflict reloads the setting and says it changed elsewhere, with nothing to retry")
     func conflictReloadsTheStoredValue() async {
         let server = ScriptedAutoTitleServer(enabled: false, model: "anthropic/claude-haiku-5", revision: 4)
         let store = makeStore(server)
@@ -31,8 +31,8 @@ struct SettingsServerTransportTests {
         server.changeElsewhere(model: "openai/gpt-5")
         await store.set(model, "google/gemini-2.5-pro").value
 
-        #expect(store.read(model) == .value("openai/gpt-5", revision: 5))
-        #expect(store.failureReason(id: model.id) == nil)
+        #expect(store.read(model) == .failed(last: "openai/gpt-5", reason: "Changed on another device; showing the latest."))
+        #expect(!store.canRetry(id: model.id))
         #expect(server.log == [
             "GET", "PUT base=4 model=google/gemini-2.5-pro", "GET",
         ])

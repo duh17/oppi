@@ -128,7 +128,8 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditViewController.swift": {
-      "AppPreferences.*.set": 1
+      "AppPreferences.*.set": 1,
+      ".settingsToggle(": 1
     },
     "clients/apple/Oppi/Features/Agents/PiToolsEditor.swift": {
       "APIClient settings write": 1
@@ -180,6 +181,9 @@
     },
     "clients/apple/Oppi/Features/Mcp/McpAddServerViewController.swift": {
       "SettingsListStyle.pin(": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpServerDetailViewController.swift": {
+      ".settingsToggle(": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpServersViewController.swift": {
       "SettingsListStyle.pin(": 1
@@ -284,7 +288,8 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsChatTopBarViewController.swift": {
-      "AppPreferences.*.set": 2
+      "AppPreferences.*.set": 2,
+      ".settingsToggle(": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsChatViewController.swift": {
       "AppPreferences.*.set": 3
@@ -326,6 +331,9 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceComponents.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateViewController.swift": {
+      ".settingsToggle(": 2
+    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailsPage.swift": {
       "import SwiftUI": 1
     },
@@ -351,11 +359,12 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsModel.swift": {
-      "APIClient settings write": 1
+      "APIClient settings write": 2
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsViewController.swift": {
       "SettingsListStyle.pin(": 1,
-      "SettingsListStyle.applyTheme(": 1
+      "SettingsListStyle.applyTheme(": 1,
+      ".settingsToggle(": 2
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSidebarViewController.swift": {
       "UserDefaults.standard.set(": 1

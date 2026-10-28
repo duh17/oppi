@@ -38,11 +38,6 @@ enum SettingValue<Value: Equatable & Sendable>: Equatable, Sendable {
         }
     }
 
-    var isLoading: Bool {
-        if case .loading = self { return true }
-        return false
-    }
-
     var isSaving: Bool {
         if case .saving = self { return true }
         return false
@@ -70,12 +65,6 @@ enum SettingValue<Value: Equatable & Sendable>: Equatable, Sendable {
     }
 
     // MARK: - Transitions
-
-    /// A value arrived from the store: loaded, reloaded after a conflict, or
-    /// the stored copy a write returned.
-    func loaded(_ value: Value, revision: Int?) -> Self {
-        .value(value, revision: revision)
-    }
 
     /// A change was requested. `nil` when there is nothing known to roll back
     /// to (still loading, already saving, unavailable, or a load that failed).
@@ -109,10 +98,5 @@ enum SettingValue<Value: Equatable & Sendable>: Equatable, Sendable {
         case .failed(let last, _): .failed(last: last, reason: reason)
         case .loading, .unavailable: .failed(last: nil, reason: reason)
         }
-    }
-
-    /// A load failed. A value that was already known stays as `last`.
-    func loadFailed(reason: String) -> Self {
-        .failed(last: current, reason: reason)
     }
 }

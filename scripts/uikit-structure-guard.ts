@@ -36,12 +36,18 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    `clients/apple/Oppi/Features/**`, the direct writes of a setting that
  *    bypass `SettingsStore`: `AppPreferences.*.set…(`, `UserDefaults.standard.set(`,
  *    `FontPreferences.set…(`, the `APIClient` calls that write a setting
- *    (`settingsApiWrites` below), and `toggleRow(`, the plain switch row that
- *    a declared setting replaces with `settingToggleRow`. A setting is declared
- *    in `SettingsCatalog` and written by the store, so each page that moves
- *    onto it lowers its count and the total only goes down. Limits: the guard
- *    sees the call by name; a write through a stored closure, a wrapper type of
- *    a page's own, or `UserDefaults` held in a variable is not seen.
+ *    (`settingsApiWrites` below), and the plain switch rows that a declared
+ *    setting replaces with `settingToggleRow`: `toggleRow(` and a direct
+ *    `.settingsToggle(` accessory. A setting is declared in `SettingsCatalog`
+ *    and written by the store, so each page that moves onto it lowers its count
+ *    and the total only goes down. Limits: the guard sees the call by name. A
+ *    write through a wrapper (a helper or model method that calls the
+ *    preference or the API; `ServerSettingsModel` and `WorkspaceSettingsModel`
+ *    are the known ones), a stored closure, `UserDefaults` held in a variable,
+ *    or a call to an `APIClient` write not in the list is not seen; the wrapper
+ *    is counted only where it calls the preference or the API itself, so moving
+ *    a call into a new wrapper lowers a page's count without moving the setting
+ *    onto the store. Review a new wrapper as a write.
  *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
@@ -137,6 +143,7 @@ const settingsApiWrites = [
   "setPiDefaultTools",
   "setPiDefaultModel",
   "saveDictationDictionary",
+  "updateWorkspace",
 ];
 const featuresOnly = /^clients\/apple\/Oppi\/Features\//;
 
@@ -204,6 +211,14 @@ const constructs: Construct[] = [
     // The base's own definition is `func toggleRow(`; a declared setting calls `settingToggleRow(`.
     pattern: /(?<![\w.])(?<!func\s)toggleRow\s*\(/g,
     disallowed: false,
+    pathMustMatch: featuresOnly,
+  },
+  {
+    name: ".settingsToggle(",
+    // A switch accessory built by hand. The base's `toggleRow` and the declared rows call it for the kit.
+    pattern: /\.settingsToggle\s*\(/g,
+    disallowed: false,
+    exemptFiles: [settingsBase, "clients/apple/Oppi/Features/Settings/SettingsDeclaredRows.swift"],
     pathMustMatch: featuresOnly,
   },
 ];
@@ -338,7 +353,7 @@ SettingsListStyle.layoutConfiguration); see ${settingsGuide}. A screen that
 will never be a settings page goes in settingsThemingExceptions with a reason.
 
 AppPreferences.*.set, UserDefaults.standard.set(, FontPreferences.set, an APIClient
-call that writes a setting, and toggleRow( in Features are settings written outside
+call that writes a setting, and toggleRow( or .settingsToggle( in Features are settings written outside
 SettingsStore. Declare the setting in SettingsCatalog and read and write it through
 SettingsStore (settingToggleRow, settingChoiceRow on the settings base); see
 ${settingsGuide}. The count only goes down: \`bun scripts/uikit-structure-guard.ts --update\`

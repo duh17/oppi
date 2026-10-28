@@ -16,7 +16,7 @@ enum SettingsError: Error, Equatable, Sendable {
     var reason: String {
         switch self {
         case .unavailable(let reason), .invalidStoredValue(let reason), .rejected(let reason): reason
-        case .revisionConflict: String(localized: "This setting changed on another device.")
+        case .revisionConflict: String(localized: "Changed on another device; showing the latest.")
         }
     }
 }

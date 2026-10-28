@@ -1,13 +1,11 @@
 import Foundation
 
-/// A server route that holds settings. One case per route in
-/// `protocol/settings.json`; a declaration names the route and the field of its
-/// JSON document it owns.
+/// A server route that holds settings: the raw value is its path. One case per
+/// route in `protocol/settings.json`; a declaration names the route and the
+/// field of its JSON document it owns.
 enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
     /// `GET`/`PUT /server/auto-title`: `{ enabled, model, revision? }`.
     case autoTitle = "/server/auto-title"
-
-    var path: String { rawValue }
 
     /// The route's row in `protocol/settings.json`, where the server lists the
     /// setting's scope and whether its saves carry a revision.
@@ -122,7 +120,7 @@ struct SettingDeclaration<Value: Codable & Equatable & Sendable>: Sendable {
 
     /// The type-erased identity, for the catalog's list and the contract test.
     var descriptor: SettingDescriptor {
-        SettingDescriptor(id: id, key: key, storage: storage, valueType: String(describing: Value.self))
+        SettingDescriptor(id: id, key: key, storage: storage)
     }
 }
 
@@ -131,7 +129,6 @@ struct SettingDescriptor: Hashable, Sendable {
     let id: String
     let key: String
     let storage: SettingStorage
-    let valueType: String
 }
 
 /// The one place Oppi's settings are declared. A setting that is not here has

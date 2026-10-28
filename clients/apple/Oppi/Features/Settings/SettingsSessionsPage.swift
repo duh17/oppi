@@ -155,7 +155,8 @@ final class SettingsSessionsViewController: SettingsListViewController<SettingsS
                 cell,
                 SettingsCatalog.autoNameServerModel,
                 groups: modelChoices,
-                placeholder: String(localized: "Choose a Model")
+                placeholder: String(localized: "Choose a Model"),
+                choicesLoading: modelsAreLoading ? String(localized: "Loading Models…") : nil
             )
         default:
             break
@@ -226,9 +227,17 @@ final class SettingsSessionsViewController: SettingsListViewController<SettingsS
         return groups
     }
 
+    /// Whether the server's model list has not arrived yet.
+    private var modelsAreLoading: Bool {
+        switch models {
+        case .idle, .loading: root.coordinator.activeServerId != nil
+        case .loaded, .failed: false
+        }
+    }
+
     /// Redraws the Model row when the menu's choices change.
     private var modelChoiceSignature: [String] {
-        modelChoices.flatMap { group in group.choices.map(\.value) }
+        modelChoices.flatMap { group in group.choices.map(\.value) } + (modelsAreLoading ? ["loading"] : [])
     }
 
     override func isSelectable(_ item: Item) -> Bool { item == .sessionRows }

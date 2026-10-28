@@ -50,18 +50,8 @@ struct SettingValueTests {
         #expect(State.value("a", revision: 3).revertedToPrevious() == .value("a", revision: 3))
     }
 
-    @Test("A load replaces any state; a failed load keeps a known value as last")
-    func loadedAndLoadFailed() {
-        for state: State in [.loading, .value("a", revision: 1), .saving(shown: "b", previous: "a"), .failed(last: nil, reason: "x"), .unavailable(reason: "x")] {
-            #expect(state.loaded("z", revision: 7) == .value("z", revision: 7))
-        }
-        #expect(State.loading.loadFailed(reason: "x") == .failed(last: nil, reason: "x"))
-        #expect(State.value("a", revision: 1).loadFailed(reason: "x") == .failed(last: "a", reason: "x"))
-    }
-
     @Test("Each state answers the questions a row asks")
     func queries() {
-        #expect(State.loading.isLoading)
         #expect(State.saving(shown: "b", previous: "a").isSaving)
         #expect(!State.value("a", revision: nil).isSaving)
         #expect(State.failed(last: "a", reason: "why").failureReason == "why")

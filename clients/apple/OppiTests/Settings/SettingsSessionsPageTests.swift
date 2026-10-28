@@ -183,6 +183,24 @@ struct SettingsSessionsPageTests {
         #expect(h.transport.saves.first?.fields == ["model": "openai/gpt-5-mini"])
     }
 
+    @Test("The Model row is disabled and says it is loading until the server's models arrive")
+    func modelRowWaitsForTheModelList() async throws {
+        SessionsPageURLProtocol.holdModels()
+        defer { SessionsPageURLProtocol.releaseModels() }
+        let h = try makeHarness(fields: ["enabled": true, "model": ""])
+        defer { hide(h) }
+
+        #expect(await ready(h.page, .serverModel))
+        #expect(await waitForMainActorCondition { button(.serverModel, in: h.page)?.accessibilityValue == "Loading Models…" })
+        #expect(try #require(button(.serverModel, in: h.page)).isEnabled == false)
+
+        SessionsPageURLProtocol.releaseModels()
+        #expect(await waitForMainActorCondition { button(.serverModel, in: h.page)?.isEnabled == true })
+        let model = try #require(button(.serverModel, in: h.page))
+        #expect(model.accessibilityValue == "Choose a Model")
+        #expect(menuActions(of: model).map(\.title).contains("Claude Haiku 5"))
+    }
+
     // MARK: - Largest text size
 
     @Test("At the largest accessibility text size every row grows and none of its text is cut off")
@@ -245,7 +263,33 @@ private final class SessionsPageURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == host }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var holding = false
+    nonisolated(unsafe) private static var pending: [SessionsPageURLProtocol] = []
+
+    /// Holds every `/models` answer until `releaseModels()`.
+    static func holdModels() { lock.withLock { holding = true } }
+
+    static func releaseModels() {
+        let waiting = lock.withLock {
+            holding = false
+            defer { pending = [] }
+            return pending
+        }
+        for request in waiting { request.answer() }
+    }
+
     override func startLoading() {
+        let isModels = request.url?.path.hasSuffix("/models") == true
+        let held = Self.lock.withLock { () -> Bool in
+            guard isModels, Self.holding else { return false }
+            Self.pending.append(self)
+            return true
+        }
+        if !held { answer() }
+    }
+
+    fileprivate func answer() {
         let models = #"{"models":[{"id":"claude-haiku-5","name":"Claude Haiku 5","provider":"anthropic","contextWindow":200000},{"id":"gpt-5-mini","name":"GPT-5 mini","provider":"openai","contextWindow":400000},{"id":"gpt-5.3-codex","name":"Codex","provider":"openai-codex","contextWindow":400000}]}"#
         let isModels = request.url?.path.hasSuffix("/models") == true
         let response = HTTPURLResponse(url: request.url ?? URL(fileURLWithPath: "/"), statusCode: isModels ? 200 : 404, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])

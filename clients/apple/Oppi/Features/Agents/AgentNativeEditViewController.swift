@@ -720,7 +720,7 @@ final class AgentNativeEditViewController: UIViewController, UICollectionViewDel
         switch item {
         case .customPrompt:
             content.text = "Custom system prompt"
-            cell.accessories = [.settingsToggle(draft.usesCustomInstructions, identifier: "agent.nativeEdit.customPrompt") { [weak self] in
+            cell.accessories = [.settingsToggle(draft.usesCustomInstructions, identifier: "agent.nativeEdit.customPrompt", reusing: cell) { [weak self] in
                 self?.draft.usesCustomInstructions = $0
             }]
         case .model:

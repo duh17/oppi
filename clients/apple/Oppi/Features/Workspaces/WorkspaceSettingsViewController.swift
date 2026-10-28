@@ -516,7 +516,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                 model.gitStatusEnabled,
                 identifier: "workspace.edit.gitStatus",
                 label: content.text,
-                isEnabled: !(model.isSavingGitStatus || model.isDeleting)
+                isEnabled: !(model.isSavingGitStatus || model.isDeleting),
+                reusing: cell
             ) { [weak self] isOn in
                 guard let self else { return }
                 let model = model
@@ -532,7 +533,8 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
                 locks.isFlagged(scope),
                 identifier: "workspace.edit.lock",
                 label: content.text,
-                isEnabled: !locks.isAuthenticating
+                isEnabled: !locks.isAuthenticating,
+                reusing: cell
             ) { [weak self] isOn in
                 guard let self else { return }
                 // Turning the lock on never asks and keeps this screen open

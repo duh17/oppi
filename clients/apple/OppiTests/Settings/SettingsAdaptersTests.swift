@@ -39,17 +39,18 @@ struct SettingsAdaptersTests {
         #expect(try DeviceAdapter(defaults: defaults).read(SettingsCatalog.autoNameProvider) == .server)
     }
 
-    @Test("The adapter and the preference read and write the same value")
-    func deviceSharesTheKeyWithAppPreferences() throws {
+    @Test("The adapter and the preference share one key and one stored form, in a suite of their own")
+    func deviceSharesTheKeyAndFormWithThePreference() throws {
+        let defaults = makeSettingsDefaults()
+        let adapter = DeviceAdapter(defaults: defaults)
         let key = AppPreferenceStore.Session.autoTitleProviderKey
-        let original = UserDefaults.standard.object(forKey: key)
-        defer { UserDefaults.standard.set(original, forKey: key) }
 
-        let adapter = DeviceAdapter()
+        // What the adapter stores, the preference decodes.
         try adapter.write(SettingsCatalog.autoNameProvider, .onDevice)
-        #expect(AppPreferences.Session.autoTitleProvider == .onDevice)
+        #expect(defaults.string(forKey: key).flatMap(AppPreferenceStore.Session.AutoTitleProvider.init(rawValue:)) == .onDevice)
 
-        AppPreferences.Session.setAutoTitleProvider(.off)
+        // What the preference stores (`setAutoTitleProvider` stores the raw value), the adapter reads.
+        defaults.set(AppPreferenceStore.Session.AutoTitleProvider.off.rawValue, forKey: key)
         #expect(try adapter.read(SettingsCatalog.autoNameProvider) == .off)
     }
 

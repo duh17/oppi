@@ -13,8 +13,10 @@ import Observation
 ///   the reason, and `retry` runs the same write again.
 /// - A server route that revisions its document gets its last known revision as
 ///   the write's base. A `revision_conflict` reloads the document instead of
-///   failing; a response with no `revision` is an unrevisioned route and has
-///   no conflict path.
+///   failing, and the row says once that it changed on another device (a
+///   failure line with no Retry); a response with no `revision` is an
+///   unrevisioned route and has no conflict path. A document older than the one
+///   already held (an answer that arrived out of order) is ignored.
 /// - Writes to one route run one at a time, so two settings on the same
 ///   document never conflict with each other.
 /// - `attach(serverId:)` switches the server context. Everything loaded for the
@@ -23,7 +25,8 @@ import Observation
 ///
 /// Read state through `read(_:)` in a view's `updateProperties()`: an
 /// `@Observable` store re-runs the page when a setting's state changes. A
-/// server setting that has not been loaded starts loading on its first read.
+/// server setting starts loading on its first read, unless another setting on
+/// its route has already loaded the document: then it reads from that one.
 ///
 /// Only the device and server adapters exist so far; a declaration with any
 /// other storage reads as unavailable until its adapter is added here.
@@ -103,6 +106,10 @@ final class SettingsStore {
             guard serverId != nil else { return .unavailable(reason: String(localized: "No server is selected.")) }
             bind(declaration, to: endpoint)
             if let held = states[declaration.id] as? SettingValue<Value> { return held }
+            // The route's document is already here (another setting loaded it).
+            if let document = documents[endpoint] {
+                return .value(ServerAdapter.value(of: declaration, in: document), revision: document.revision)
+            }
             loadIfNeeded(endpoint)
             return .loading
         case .workspace, .deviceOnServer, .piOwned:
@@ -200,11 +207,17 @@ final class SettingsStore {
                 return
             } catch SettingsError.revisionConflict {
                 guard requestedContext == context else { return }
-                // Someone else changed the document: show what is stored now.
+                // Someone else changed the document: show what is stored now, and say so.
                 if let held = states[declaration.id] as? SettingValue<Value> {
                     states[declaration.id] = held.revertedToPrevious()
                 }
-                await reload(endpoint, serverId: requested, requestedContext: requestedContext)
+                let reloaded = await reload(endpoint, serverId: requested, requestedContext: requestedContext)
+                if reloaded, requestedContext == context, let document = documents[endpoint] {
+                    states[declaration.id] = SettingValue<Value>.failed(
+                        last: ServerAdapter.value(of: declaration, in: document),
+                        reason: SettingsError.revisionConflict.reason
+                    )
+                }
             } catch {
                 guard requestedContext == context else { return }
                 let held = states[declaration.id] as? SettingValue<Value> ?? .loading
@@ -221,27 +234,32 @@ final class SettingsStore {
         loading.insert(endpoint)
         let requestedContext = context
         Task { @MainActor [weak self] in
-            await self?.reload(endpoint, serverId: serverId, requestedContext: requestedContext)
+            _ = await self?.reload(endpoint, serverId: serverId, requestedContext: requestedContext)
         }
     }
 
     /// Fetches the route's document and applies it to every setting bound to it.
-    private func reload(_ endpoint: SettingEndpoint, serverId requested: String, requestedContext: Int) async {
+    /// `true` when a document arrived in the current context.
+    private func reload(_ endpoint: SettingEndpoint, serverId requested: String, requestedContext: Int) async -> Bool {
         do {
             let document = try await server.load(endpoint, serverId: requested)
-            guard requestedContext == context else { return }
+            guard requestedContext == context else { return false }
             loading.remove(endpoint)
             accept(document, for: endpoint)
+            return true
         } catch is CancellationError {
-            return
+            return false
         } catch {
-            guard requestedContext == context else { return }
+            guard requestedContext == context else { return false }
             loading.remove(endpoint)
             for binding in (bindings[endpoint] ?? [:]).values { binding.failLoad(error) }
+            return false
         }
     }
 
     private func accept(_ document: SettingsServerDocument, for endpoint: SettingEndpoint) {
+        // An answer that arrived out of order must not replace a newer document.
+        if let incoming = document.revision, let held = documents[endpoint]?.revision, incoming < held { return }
         documents[endpoint] = document
         for (id, binding) in bindings[endpoint] ?? [:] {
             retries[id] = nil

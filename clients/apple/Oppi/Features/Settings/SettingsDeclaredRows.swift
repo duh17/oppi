@@ -82,12 +82,16 @@ extension SettingsListViewController {
 
     /// Configures `cell` as the menu row of a declared setting. `groups` are
     /// the values it can take; the row shows the title of the current one, or
-    /// `placeholder` when none matches.
+    /// `placeholder` when none matches. While the choices themselves are still
+    /// arriving, `choicesLoading` is the text the row shows (when no current
+    /// choice has a title) and the row stays disabled, so the menu is never
+    /// opened empty.
     func settingChoiceRow<Value>(
         _ cell: SettingsMenuRowCell,
         _ declaration: SettingDeclaration<Value>,
         groups: [SettingChoiceGroup<Value>],
-        placeholder: String? = nil
+        placeholder: String? = nil,
+        choicesLoading: String? = nil
     ) {
         let state = settings?.read(declaration) ?? .unavailable(reason: Self.noStore)
         let current = state.current
@@ -103,12 +107,12 @@ extension SettingsListViewController {
         let shown: String? = switch state {
         case .unavailable: Self.unavailableTitle
         case .loading: String(localized: "Loading…")
-        case .value, .saving, .failed: selected ?? placeholder
+        case .value, .saving, .failed: selected ?? choicesLoading ?? placeholder
         }
         cell.configure(
             title: declaration.copy.title,
             identifier: declaration.id,
-            isEnabled: state.canBeginSaving,
+            isEnabled: state.canBeginSaving && choicesLoading == nil,
             value: shown,
             menu: menu
         )

@@ -278,7 +278,7 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
         case .enabled:
             cell.contentConfiguration = Self.rowText("Enabled")
             cell.accessories = [.settingsToggle(
-                entry.enabled, identifier: "mcp.enabled", label: "Enabled", isEnabled: !locked
+                entry.enabled, identifier: "mcp.enabled", label: "Enabled", isEnabled: !locked, reusing: cell
             ) { [weak self] value in
                 self?.perform {
                     try await client.patchMcpServer(

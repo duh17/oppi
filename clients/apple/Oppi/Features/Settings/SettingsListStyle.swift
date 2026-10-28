@@ -176,30 +176,31 @@ extension UICellAccessory {
     /// be changed. `label` names the switch for VoiceOver and `app.switches[label]`
     /// where the row's text is not its name.
     ///
-    /// `cell`: the row the switch sits in. A row redrawn from a changed value
-    /// (a save that rolled back) keeps the one switch it had and sets it, so a
-    /// replaced switch can never linger beside the new one showing the old
-    /// position. Without it, every call makes a new switch.
+    /// `cell`: the row the switch sits in. The cell keeps one switch for its whole
+    /// life and every call sets it (value, enabled, identifier, label, action),
+    /// so a row redrawn from a changed value (a save that rolled back) or reused
+    /// for another row never has a replaced switch lingering beside the new one
+    /// at the old position.
     static func settingsToggle(
         _ isOn: Bool,
         identifier: String? = nil,
         label: String? = nil,
         isEnabled: Bool = true,
-        reusing cell: UICollectionViewListCell? = nil,
+        reusing cell: UICollectionViewListCell,
         onChange: @escaping (Bool) -> Void
     ) -> UICellAccessory {
-        let held = cell.map(SettingsSwitchHolder.holder(of:))
-        let toggle = held?.toggle ?? UISwitch()
+        let held = SettingsSwitchHolder.holder(of: cell)
+        let toggle = held.toggle
         toggle.isOn = isOn
         toggle.isEnabled = isEnabled
         toggle.accessibilityIdentifier = identifier
         toggle.accessibilityLabel = label
-        if let previous = held?.action { toggle.removeAction(previous, for: .valueChanged) }
+        if let previous = held.action { toggle.removeAction(previous, for: .valueChanged) }
         let action = UIAction { action in
             guard let toggle = action.sender as? UISwitch else { return }
             onChange(toggle.isOn)
         }
-        held?.action = action
+        held.action = action
         toggle.addAction(action, for: .valueChanged)
         return .customView(configuration: .init(customView: toggle, placement: .trailing()))
     }

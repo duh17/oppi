@@ -16,22 +16,8 @@ struct SettingsCatalogTests {
     func autoNameProviderIsThePreference() {
         let provider = SettingsCatalog.autoNameProvider
         #expect(provider.key == AppPreferenceStore.Session.autoTitleProviderKey)
+        #expect(provider.default == AppPreferenceStore.Session.autoTitleProviderDefault)
         #expect(provider.storage == .device(perServer: false))
-
-        let original = UserDefaults.standard.object(forKey: provider.key)
-        defer { UserDefaults.standard.set(original, forKey: provider.key) }
-        UserDefaults.standard.removeObject(forKey: provider.key)
-        #expect(AppPreferences.Session.autoTitleProvider == provider.default)
-    }
-
-    @Test("The server's Auto-Name settings live on the auto-title route, which revisions its document")
-    func autoNameServerSettingsAreOnTheRoute() {
-        for descriptor in [SettingsCatalog.autoNameServerEnabled.descriptor, SettingsCatalog.autoNameServerModel.descriptor] {
-            #expect(descriptor.storage == .server(.autoTitle, revisioned: true))
-        }
-        #expect(SettingEndpoint.autoTitle.path == "/server/auto-title")
-        #expect(SettingsCatalog.autoNameServerEnabled.key == "enabled")
-        #expect(SettingsCatalog.autoNameServerModel.key == "model")
     }
 
     @Test("A model must be chosen")

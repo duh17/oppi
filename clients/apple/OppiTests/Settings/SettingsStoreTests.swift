@@ -70,7 +70,7 @@ struct SettingsStoreTests {
 
         #expect(store.read(enabled) == .loading)
         #expect(store.read(model) == .loading)
-        await until { !store.read(enabled).isLoading }
+        await until { store.read(enabled).current != nil }
 
         #expect(store.read(enabled) == .value(true, revision: 4))
         #expect(store.read(model) == .value("openai/gpt-5-mini", revision: 4))
@@ -119,7 +119,7 @@ struct SettingsStoreTests {
         #expect(!store.canRetry(id: enabled.id))
     }
 
-    @Test("A revision conflict reloads the server's value instead of failing")
+    @Test("A revision conflict reloads the server's value, says it changed elsewhere, and leaves the row editable")
     func conflictReloads() async {
         let transport = FakeSettingsTransport(revision: 4)
         let store = makeStore(["s1": transport])
@@ -131,9 +131,49 @@ struct SettingsStoreTests {
         transport.changeElsewhere(["model": "openai/gpt-5"])
         await store.set(model, "google/gemini-2.5-pro").value
 
-        #expect(store.read(model) == .value("openai/gpt-5", revision: 5))
+        #expect(store.read(model) == .failed(last: "openai/gpt-5", reason: "Changed on another device; showing the latest."))
+        // A message, not a failure to retry: nothing to run again, and the row can be changed.
+        #expect(!store.canRetry(id: model.id))
         #expect(transport.saves.count == 1)
         #expect(transport.loads == 2)
+
+        await store.set(model, "google/gemini-2.5-pro").value
+        #expect(store.read(model) == .value("google/gemini-2.5-pro", revision: 6))
+        #expect(transport.saves.map(\.baseRevision) == [4, 5])
+    }
+
+    @Test("A document older than the one held is ignored")
+    func olderDocumentIsIgnored() async {
+        let transport = FakeSettingsTransport(revision: 4)
+        let store = makeStore(["s1": transport])
+        store.attach(serverId: "s1")
+        _ = store.read(model)
+        await until { store.read(model).current != nil }
+
+        // The conflict's reload is answered with a document from before the one held.
+        transport.changeElsewhere(["model": "openai/gpt-5"])
+        transport.answerNextLoad(with: SettingsServerDocument(fields: ["enabled": false, "model": "a/ancient"], revision: 2))
+        await store.set(model, "google/gemini-2.5-pro").value
+
+        // The ancient document did not become the base of the next write or the value shown.
+        #expect(store.read(model).current == "anthropic/claude-haiku-5")
+        await store.set(model, "openai/gpt-5-mini").value
+        #expect(transport.saves.map(\.baseRevision) == [4, 4])
+    }
+
+    @Test("A setting first read after its route loaded reads that document instead of asking again")
+    func laterSettingReadsTheLoadedDocument() async {
+        let transport = FakeSettingsTransport(fields: ["enabled": true, "model": "openai/gpt-5-mini"], revision: 4)
+        let store = makeStore(["s1": transport])
+        store.attach(serverId: "s1")
+        _ = store.read(enabled)
+        await until { store.read(enabled).current != nil }
+
+        // Not .loading, and no second request.
+        #expect(store.read(model) == .value("openai/gpt-5-mini", revision: 4))
+        await store.set(model, "openai/gpt-5").value
+        #expect(transport.loads == 1)
+        #expect(transport.saves == [.init(endpoint: .autoTitle, fields: ["model": "openai/gpt-5"], baseRevision: 4)])
     }
 
     @Test("A route with no revision is written without one and has no conflict path")

@@ -402,7 +402,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         case .sandbox:
             content.text = "Sandbox"
             content.textProperties.color = UIColor(palette.fg)
-            cell.accessories = [.settingsToggle(model.sandboxMode, identifier: "workspace.create.sandbox", label: "Sandbox") { [weak self] in
+            cell.accessories = [.settingsToggle(model.sandboxMode, identifier: "workspace.create.sandbox", label: "Sandbox", reusing: cell) { [weak self] in
                 self?.model.sandboxMode = $0
             }]
         case .scanning:
@@ -459,7 +459,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         case .gitStatus:
             content.text = "Show Changes in Chat"
             content.textProperties.color = UIColor(palette.fg)
-            cell.accessories = [.settingsToggle(model.gitStatusEnabled, identifier: "workspace.create.gitStatus", label: "Show Changes in Chat") { [weak self] in
+            cell.accessories = [.settingsToggle(model.gitStatusEnabled, identifier: "workspace.create.gitStatus", label: "Show Changes in Chat", reusing: cell) { [weak self] in
                 self?.model.gitStatusEnabled = $0
             }]
         case .error:
