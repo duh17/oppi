@@ -26,7 +26,7 @@ protocol TrailingColumnKeyboardScreen: UIViewController {
 /// an iPadOS inspector: an invisible child of the screen that asked for it,
 /// which calls `show` with the panel (nil hides it) and, at compact width,
 /// presents the same panel as a router sheet instead. A new panel id replaces
-/// the panel. The panel is one screen (hosted or UIKit) at the root of the column's
+/// the panel. The panel is one UIKit screen at the root of the column's
 /// own navigation controller, shown in a `TrailingColumnOverlayView` on top
 /// of the navigation controller that holds the screen (the screen's top
 /// ancestor outside one), whose child the column's controller becomes:
@@ -44,8 +44,6 @@ final class TrailingColumnController: UIViewController {
 
     private var panelID: AnyHashable?
     private var root: AppRootEnvironment?
-    /// Set when the panel is a hosted SwiftUI screen.
-    private var hostedScreen: HostedScreenController?
     private var container: RouterNavigationController?
     private var overlay: TrailingColumnOverlayView?
     /// The controller whose safe area makes room for the column, and the
@@ -94,10 +92,6 @@ final class TrailingColumnController: UIViewController {
         self.root = root
         requested = panel
         if panel.id == panelID, container != nil, !isRemoving {
-            // The presenter re-rendered: refresh the content it builds.
-            if case .hosted(let makeContent) = panel.screen {
-                hostedScreen?.setContent(makeContent)
-            }
             overlay?.widths = (panel.minWidth, panel.idealWidth)
             return
         }
@@ -112,15 +106,11 @@ final class TrailingColumnController: UIViewController {
 
     private func installRequestedPanel() {
         guard let panel = requested, let root, container == nil else { return }
-        let screen: UIViewController
-        switch panel.screen {
-        case .hosted(let makeContent):
-            let hosted = HostFactory.screen(root: root, content: makeContent)
-            hostedScreen = hosted
-            screen = hosted
-        case .controller(let makeController, _):
-            screen = makeController()
+        // A column holds UIKit screens; no panel is built from SwiftUI.
+        guard case .controller(let makeController, _) = panel.screen else {
+            preconditionFailure("A trailing column panel must be a UIKit screen")
         }
+        let screen = makeController()
         let container = RouterNavigationController(rootViewController: screen)
         let themeStore = root.themeStore
         container.interfaceStyle = { themeStore.userInterfaceStyle }
@@ -281,7 +271,6 @@ final class TrailingColumnController: UIViewController {
         Router.endSearch(in: container) { [self] in
             self.detach()
             self.container = nil
-            self.hostedScreen = nil
             self.overlay = nil
             self.panelID = nil
             self.isRemoving = false

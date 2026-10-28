@@ -3,7 +3,7 @@ import Foundation
 /// Serialize a `[MarkdownBlock]` AST back to markdown text.
 ///
 /// Used by `OrgToMarkdownConverter` to produce markdown text that can be fed
-/// into the existing `MarkdownContentViewWrapper` rendering pipeline. The output
+/// into the existing `AssistantMarkdownContentView` rendering pipeline. The output
 /// doesn't need to be perfectly formatted — it just needs to parse back to the
 /// same AST through CommonMark.
 enum MarkdownBlockSerializer {

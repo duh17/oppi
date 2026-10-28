@@ -1,6 +1,5 @@
 import Testing
 import Foundation
-import SwiftUI
 @testable import Oppi
 
 // MARK: - Date+Relative
@@ -129,29 +128,5 @@ struct StringPathTests {
     @Test func workspaceRelativePathRejectsOutsideWorkspace() {
         let path = "/tmp/screenshot.png"
         #expect(path.workspaceRelativePath(hostMount: "~/workspace/oppi") == nil)
-    }
-}
-
-// MARK: - SessionStatus+Color
-
-@Suite("SessionStatus+Color")
-struct SessionStatusColorTests {
-
-    @Test func allStatusesHaveColors() {
-        // Verify all cases produce a color without crashing
-        let statuses: [SessionStatus] = [.starting, .ready, .busy, .stopping, .stopped, .error]
-        for status in statuses {
-            let color = status.color
-            // Just verify it's a valid Color (not crashing is the test)
-            #expect(color == color)
-        }
-    }
-
-    @Test func semanticStatusColors() {
-        #expect(SessionStatus.starting.color == SessionStatus.busy.color)
-        #expect(SessionStatus.busy.color == SessionStatus.stopping.color)
-        #expect(SessionStatus.ready.color != SessionStatus.busy.color)
-        #expect(SessionStatus.stopped.color != SessionStatus.ready.color)
-        #expect(SessionStatus.error.color != SessionStatus.ready.color)
     }
 }

@@ -310,7 +310,7 @@ struct MermaidRenderingPreview: View {
                     Text(diagram.heading)
                         .font(.headline)
                         .foregroundStyle(.themeFg)
-                    MarkdownContentViewWrapper(content: diagram.markdown, renderingMode: .export)
+                    PreviewMarkdownView(content: diagram.markdown, renderingMode: .export)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("mermaid.preview.diagram.\(diagram.id)")
                 }
@@ -337,7 +337,7 @@ struct MermaidConsistencyPreview: View {
     }
 
     var body: some View {
-        FullScreenCodeView(content: expanded
+        PreviewFullScreenCodeViewer(content: expanded
             ? .mermaid(content: Self.source, filePath: nil)
             : .markdown(content: Self.markdown, filePath: nil))
             .preferredColorScheme(themeID == .light ? .light : .dark)
@@ -427,7 +427,7 @@ struct MermaidFullscreenPreview: View {
     }
 
     var body: some View {
-        FullScreenCodeView(content: .mermaid(content: Self.source, filePath: "asr.mmd"))
+        PreviewFullScreenCodeViewer(content: .mermaid(content: Self.source, filePath: "asr.mmd"))
             .preferredColorScheme(themeID == .light ? .light : .dark)
             .accessibilityIdentifier("screenshot.ready")
     }
@@ -554,7 +554,7 @@ struct MermaidResponsiveRoutingPreview: View {
                     Text(diagram.heading)
                         .font(.headline)
                         .foregroundStyle(.themeFg)
-                    MarkdownContentViewWrapper(content: diagram.markdown, renderingMode: .export)
+                    PreviewMarkdownView(content: diagram.markdown, renderingMode: .export)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

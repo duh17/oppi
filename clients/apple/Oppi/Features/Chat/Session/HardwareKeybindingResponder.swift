@@ -5,7 +5,7 @@ import UIKit
 ///
 /// Lives on the collection view, not on a view controller that also hosts the
 /// composer, so vim letters cannot steal typing. Cmd-Return send stays on
-/// `PastableTextView`.
+/// `PastableUITextView`.
 final class HardwareKeybindingResponder: UIView {
     var mode: KeybindingMode = KeybindingPreferenceStore().mode
     var focus: KeybindingFocus = .timeline

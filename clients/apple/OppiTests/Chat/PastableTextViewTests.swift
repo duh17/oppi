@@ -1,4 +1,3 @@
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -333,64 +332,35 @@ struct InlineComposerFastPathTests {
 struct InlineComposerDictationFollowTests {
     @Test func streamedTerminalTranscriptKeepsLastLineVisibleAfterEightLineClamp() async throws {
         let font = UIFont.systemFont(ofSize: 17)
-        let draft = InlineComposerFollowDraft()
-        let width: CGFloat = 320
-        let maxLines = ComposerInputMetrics.inlineMaxLines
-        let clampedHeight = inlineComposerHeight(
-            rawContentHeight: .greatestFiniteMagnitude,
-            lineHeight: font.lineHeight,
-            verticalInsets: 12,
-            maxLines: maxLines
-        )
-
-        let host = UIHostingController(
-            rootView: InlineComposerFollowHost(
-                draft: draft,
-                font: font,
-                width: width,
-                height: clampedHeight,
-                maxLines: maxLines
-            )
-        )
-        let scene = try #require(
-            UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
-        )
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: width, height: clampedHeight + 24)
-        window.rootViewController = host
-        window.makeKeyAndVisible()
+        let (textView, window) = try makeClampedInlineComposerTextView(font: font)
         defer {
             window.isHidden = true
             window.rootViewController = nil
         }
-        host.view.layoutIfNeeded()
+        let clampedHeight = textView.bounds.height
 
         let lines = (1...16).map { index in
             "Line \(index) of streamed dictation keeps newest words visible in the compact composer."
         }
+        var transcript = ""
         for index in lines.indices {
-            draft.text = lines[0...index].joined(separator: "\n")
-            host.view.setNeedsLayout()
-            host.view.layoutIfNeeded()
+            transcript = lines[0...index].joined(separator: "\n")
+            applyInlineDictationTranscript(transcript, to: textView, font: font, scrollCaretToVisible: true)
+            textView.superview?.layoutIfNeeded()
             await yieldMainQueueTurn()
         }
 
-        let textView = try #require(findPastableTextView(in: host.view))
         #expect(textView.bounds.height <= clampedHeight + 0.5)
         #expect(textView.clipsToBounds)
         #expect(textView.isScrollEnabled)
-        #expect(textView.textStorage.length == (draft.text as NSString).length)
+        #expect(textView.textStorage.length == (transcript as NSString).length)
         #expect(textView.selectedRange == NSRange(location: textView.textStorage.length, length: 0))
 
         let followed = await waitForMainActorCondition {
-            guard let textView = findPastableTextView(in: host.view) else { return false }
             textView.layoutIfNeeded()
             return terminalLineIsVisible(in: textView)
         }
-        #expect(
-            followed,
-            "\(inlineFollowDebugDescription(textView))"
-        )
+        #expect(followed, "\(inlineFollowDebugDescription(textView))")
     }
 
     @Test func streamedUpdateDoesNotFollowTailWhenCaretIsOffEnd() async throws {
@@ -424,50 +394,6 @@ struct InlineComposerDictationFollowTests {
         #expect(textView.selectedRange == NSRange(location: 0, length: 0))
         #expect(abs(textView.contentOffset.y - offsetBefore) < 1)
         #expect(!terminalLineIsVisible(in: textView))
-    }
-}
-
-@MainActor @Observable
-private final class InlineComposerFollowDraft {
-    var text = ""
-    var keyboardLanguage: String? = nil
-}
-
-private struct InlineComposerFollowHost: View {
-    @Bindable var draft: InlineComposerFollowDraft
-    let font: UIFont
-    let width: CGFloat
-    let height: CGFloat
-    let maxLines: Int
-
-    var body: some View {
-        PastableTextView(
-            text: $draft.text,
-            placeholder: "",
-            font: font,
-            textColor: .label,
-            tintColor: .systemBlue,
-            volatileSuffixLength: min(18, draft.text.count),
-            correctionRanges: [],
-            maxLines: maxLines,
-            autocorrectionEnabled: true,
-            onPasteImages: { _ in },
-            onCommandEnter: nil,
-            onAlternateEnter: nil,
-            onOverflowChange: nil,
-            onLineCountChange: nil,
-            onFocusChange: nil,
-            onDictationStateChange: nil,
-            focusRequestID: 0,
-            blurRequestID: 0,
-            dictationRequestID: 0,
-            suppressKeyboard: true,
-            allowKeyboardRestoreOnTap: false,
-            onKeyboardRestoreRequest: nil,
-            accessibilityIdentifier: "test.inline.dictation.composer",
-            keyboardLanguage: $draft.keyboardLanguage
-        )
-        .frame(width: width, height: height)
     }
 }
 
@@ -524,19 +450,6 @@ private func applyInlineDictationTranscript(
         volatileBackgroundColor: .systemBlue.withAlphaComponent(0.2),
         scrollCaretToVisible: scrollCaretToVisible
     )
-}
-
-@MainActor
-private func findPastableTextView(in view: UIView) -> PastableUITextView? {
-    if let textView = view as? PastableUITextView {
-        return textView
-    }
-    for subview in view.subviews {
-        if let found = findPastableTextView(in: subview) {
-            return found
-        }
-    }
-    return nil
 }
 
 @MainActor

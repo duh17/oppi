@@ -19,25 +19,16 @@
     "clients/apple/Oppi/Core/Extensions/Color+Theme.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Extensions/SessionStatus+Color.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Extensions/View+iPadReadableContent.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Formatting/ProviderColor.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Models/SlashCommand+SwiftUI.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Networking/APIClientEnvironment.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Services/ComposerDraftEnvironment.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Services/FileSharePresenter.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Services/IconAssetCache.swift": {
@@ -76,24 +67,6 @@
     "clients/apple/Oppi/Core/Views/FullScreenCodeSupport.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/FullScreenCodeView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/FullScreenReviewCommentStashOverlay.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/MarkdownContentViewWrapper.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/PaperMarkupCanvasHostController.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/PastableTextView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/PhotoLibraryPicker.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/PiAvatar.swift": {
       "import SwiftUI": 1
     },
@@ -104,12 +77,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/SettingsKit.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/StatusPill.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/WorkingSpinnerView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditDraft.swift": {

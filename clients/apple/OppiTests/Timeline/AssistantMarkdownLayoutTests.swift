@@ -662,7 +662,6 @@ struct AssistantMarkdownLayoutTests {
         case toolInspectionSupplement
         case notebookOutput
         case extensionMarkdownBlock
-        case swiftUIMarkdown
     }
 
     /// Every other surface that shows Markdown builds its diagram before it
@@ -745,11 +744,6 @@ struct AssistantMarkdownLayoutTests {
                 content: .blocks([.markdown(base: ExtensionUIBlockBase(id: "md", accessibility: nil), markdown: markdown)]),
                 sizing: .capped(maxHeight: 2_000)
             ))
-            hostingController = controller
-            root = controller.view
-            measure = { 0 }
-        case .swiftUIMarkdown:
-            let controller = UIHostingController(rootView: MarkdownContentViewWrapper(content: markdown))
             hostingController = controller
             root = controller.view
             measure = { 0 }

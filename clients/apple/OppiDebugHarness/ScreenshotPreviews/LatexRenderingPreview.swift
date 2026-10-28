@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 import SwiftUI
+import UIKit
 
 // MARK: - LaTeX Rendering Preview
 
@@ -62,7 +63,7 @@ struct LatexRenderingPreview: View {
                     .font(.caption)
                     .foregroundStyle(.themeComment)
 
-                MarkdownContentViewWrapper(content: Self.markdown)
+                PreviewMarkdownView(content: Self.markdown)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("latex.preview.content")
             }
@@ -71,6 +72,53 @@ struct LatexRenderingPreview: View {
         .background(Color.themeBg.ignoresSafeArea())
         .preferredColorScheme(themeID == .light ? .light : .dark)
         .accessibilityIdentifier("screenshot.ready")
+    }
+}
+
+/// The production markdown renderer (`AssistantMarkdownContentView`) in a
+/// SwiftUI preview, sized the way the timeline sizes it: at the width the
+/// preview offers.
+struct PreviewMarkdownView: UIViewRepresentable {
+    let content: String
+    var renderingMode: ContentRenderingMode = .live
+
+    func makeUIView(context: Context) -> AssistantMarkdownContentView {
+        let view = AssistantMarkdownContentView()
+        view.backgroundColor = .clear
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+
+    func updateUIView(_ uiView: AssistantMarkdownContentView, context: Context) {
+        uiView.apply(configuration: .make(
+            content: content,
+            isStreaming: false,
+            themeID: ThemeRuntimeState.currentThemeID(),
+            textSelectionEnabled: true,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil,
+            resourceAccess: .empty,
+            renderingMode: renderingMode
+        ))
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView: AssistantMarkdownContentView,
+        context: Context
+    ) -> CGSize? {
+        let fallbackWidth = uiView.superview?.bounds.width ?? uiView.bounds.width
+        let width = proposal.width ?? fallbackWidth
+        guard width > 0 else { return nil }
+        uiView.hostLayoutWidth = width
+
+        let fitting = uiView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        return CGSize(width: width, height: max(1, fitting.height))
     }
 }
 #endif

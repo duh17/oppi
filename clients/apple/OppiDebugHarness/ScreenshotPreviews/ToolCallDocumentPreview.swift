@@ -102,10 +102,12 @@ struct ToolCallDocumentPreview: View {
                 reader = Reader(content: content)
             }
         }
-        .fullScreenViewer(
-            isPresented: Binding(get: { reader != nil }, set: { if !$0 { reader = nil } }),
-            content: reader?.content ?? .plainText(content: "", filePath: nil)
-        )
+        .overlay {
+            if let reader {
+                PreviewFullScreenCodeViewer(content: reader.content)
+                    .ignoresSafeArea()
+            }
+        }
         .environment(\.themeID, themeID).preferredColorScheme(themeID.preferredColorScheme)
     }
 

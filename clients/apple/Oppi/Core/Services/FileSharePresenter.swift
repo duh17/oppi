@@ -1,11 +1,9 @@
-import SwiftUI
 import UIKit
 
 // MARK: - Export Loading Token
 
 /// Abstract token that the presenter uses to show/hide a loading spinner
-/// during export rendering. Concrete implementations handle UIKit bar buttons
-/// and SwiftUI state.
+/// during export rendering. The concrete implementation handles UIKit bar buttons.
 @MainActor
 protocol ExportLoadingToken: AnyObject {
     func start()
@@ -62,12 +60,11 @@ final class BarButtonLoadingToken: ExportLoadingToken {
 
 // MARK: - FileSharePresenter
 
-/// Single entry point for all share/export interactions across SwiftUI and UIKit.
+/// Single entry point for all share/export interactions.
 ///
 /// Owns the full share flow: format selection → render → activity controller.
 /// UIKit callers use ``makeShareBarButtonItem(for:tintColor:)`` to get a
-/// fully-wired button. SwiftUI callers use ``FileShareButton``.
-/// Both delegate to the same render + present logic here.
+/// fully-wired button; the render + present logic lives here.
 @MainActor
 enum FileSharePresenter {
 
@@ -231,111 +228,5 @@ enum FileSharePresenter {
             topVC = presented
         }
         return topVC
-    }
-}
-
-// MARK: - FileShareButton
-
-/// Reusable share button for SwiftUI surfaces.
-///
-/// Single-format content: tap exports directly (no picker needed).
-/// Multi-format content: tap opens format picker menu.
-/// Shows a spinner while export renders. Delegates to ``FileSharePresenter``.
-struct FileShareButton: View {
-    let content: FileShareService.ShareableContent
-    let style: ButtonStyle
-
-    enum ButtonStyle {
-        /// Floating capsule with material background (for overlays).
-        case capsule
-        /// System-sized icon button for navigation toolbars and headers.
-        case icon
-    }
-
-    @State private var isExporting = false
-
-    init(content: FileShareService.ShareableContent, style: ButtonStyle = .capsule) {
-        self.content = content
-        self.style = style
-    }
-
-    var body: some View {
-        let formats = FileShareService.availableFormats(for: content)
-
-        if formats.count <= 1 {
-            Button {
-                Task { await exportDefault() }
-            } label: {
-                shareLabel
-            }
-            .disabled(isExporting)
-        } else {
-            Menu {
-                ForEach(formats, id: \.self) { format in
-                    Button {
-                        Task { await export(format: format) }
-                    } label: {
-                        let info = FileShareService.formatDisplayInfo(format, for: content)
-                        Label(info.label, systemImage: info.icon)
-                    }
-                }
-            } label: {
-                shareLabel
-            }
-            .disabled(isExporting)
-        }
-    }
-
-    @ViewBuilder
-    private var shareLabel: some View {
-        if isExporting {
-            // Spinner replaces icon during export
-            switch style {
-            case .capsule:
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.mini)
-                    Text("Exporting")
-                        .font(.caption2.bold())
-                }
-                .foregroundStyle(.themeFg)
-                .tint(.themeCyan)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .themedSurface(.floatingControl, in: Capsule())
-            case .icon:
-                ProgressView()
-                    .controlSize(.regular)
-                    .tint(.themeCyan)
-            }
-        } else {
-            switch style {
-            case .capsule:
-                Label("Share", systemImage: "square.and.arrow.up")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.themeFg)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .themedSurface(.floatingControl, in: Capsule())
-            case .icon:
-                Label("Share", systemImage: "square.and.arrow.up")
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(.themeFgDim)
-            }
-        }
-    }
-
-    private func exportDefault() async {
-        guard !isExporting else { return }
-        isExporting = true
-        defer { isExporting = false }
-        await FileSharePresenter.shareDefault(content)
-    }
-
-    private func export(format: FileShareService.ExportFormat) async {
-        guard !isExporting else { return }
-        isExporting = true
-        defer { isExporting = false }
-        await FileSharePresenter.share(content, format: format)
     }
 }

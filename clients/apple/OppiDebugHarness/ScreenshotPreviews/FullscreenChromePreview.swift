@@ -13,7 +13,7 @@ struct FullscreenMermaidChromePreview: View {
     }
 
     var body: some View {
-        FullScreenCodeView(
+        PreviewFullScreenCodeViewer(
             content: .mermaid(
                 content: """
                 flowchart TD
@@ -42,7 +42,7 @@ struct FullscreenHTMLChromePreview: View {
     }
 
     var body: some View {
-        FullScreenCodeView(
+        PreviewFullScreenCodeViewer(
             content: .html(
                 content: "<h1>Note</h1><p>Annotate this page.</p>",
                 filePath: "note.html"
@@ -101,6 +101,30 @@ struct FullscreenImageChromePreview: UIViewControllerRepresentable {
             UIColor.white.setFill()
             UIBezierPath(ovalIn: CGRect(x: 250, y: 150, width: 300, height: 300)).fill()
         }
+    }
+}
+
+/// The production full-screen viewer (`FullScreenCodeViewController`) as a
+/// SwiftUI preview root. Content is immutable; only the theme follows updates.
+struct PreviewFullScreenCodeViewer: UIViewControllerRepresentable {
+    let content: FullScreenCodeContent
+    var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
+    var reviewCommentSessionId: String?
+    var reviewCommentSourceLabel: String?
+
+    @Environment(\.themeID) private var themeID
+
+    func makeUIViewController(context: Context) -> FullScreenCodeViewController {
+        FullScreenCodeViewController(
+            content: content,
+            reviewCommentSelectionRouter: reviewCommentSelectionRouter,
+            reviewCommentSessionId: reviewCommentSessionId,
+            reviewCommentSourceLabel: reviewCommentSourceLabel
+        )
+    }
+
+    func updateUIViewController(_ uiViewController: FullScreenCodeViewController, context: Context) {
+        uiViewController.applyThemeIfNeeded(themeID)
     }
 }
 #endif

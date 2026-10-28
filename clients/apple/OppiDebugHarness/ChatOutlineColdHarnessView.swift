@@ -414,8 +414,7 @@ private final class ChatOutlineColdHarnessProbeState {
 /// `chatRoutes.createdSessions` counts the new sessions the stub received.
 /// Leading controls open the timeline's commit and file viewers through the
 /// production presenter (a test tap on a timeline pill did not reach the pill
-/// control), and the composers' photo library and canvas covers without the
-/// attach menu, which keeps the app from idling for UI tests.
+/// control).
 struct ChatRoutesHarnessView: View {
     @State private var connection = ChatRoutesFixture.connection
     @State private var navigation = AppNavigation()
@@ -444,7 +443,6 @@ struct ChatRoutesHarnessView: View {
                         connection: connection
                     )
                 }
-                ChatRoutesCoverControls()
             }
             .padding(.top, 240)
         }
@@ -538,31 +536,6 @@ private struct HarnessControl: UIViewRepresentable {
 
     func updateUIView(_ button: UIButton, context: Context) {
         context.coordinator.action = action
-    }
-}
-
-/// The composers' photo library and canvas covers, as the inline and expanded
-/// composers attach them.
-private struct ChatRoutesCoverControls: View {
-    @State private var showsPhotoLibrary = false
-    @State private var showsCanvas = false
-    @State private var text = ""
-    @State private var attachments: [PendingAttachment] = []
-    @State private var importError: String?
-    @State private var importEpoch: UInt64 = 0
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            harnessControl("chatRoutes.photoLibrary") { showsPhotoLibrary = true }
-            harnessControl("chatRoutes.canvas") { showsCanvas = true }
-        }
-        .composerPhotoLibraryCover(
-            isPresented: $showsPhotoLibrary,
-            pendingAttachments: $attachments,
-            importError: $importError,
-            localImportEpoch: $importEpoch
-        )
-        .composerCanvasCover(isPresented: $showsCanvas, text: $text, pendingAttachments: $attachments)
     }
 }
 

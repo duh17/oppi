@@ -228,12 +228,6 @@ enum FullScreenReviewCommentStashControl {
     }
 }
 
-extension View {
-    func fullScreenFloatingControlGlass<S: Shape>(in shape: S) -> some View {
-        themedSurface(.floatingControl, in: shape)
-    }
-}
-
 /// Direction for navigation-style swipe gestures.
 ///
 /// Keep the gesture direction aligned with the visible navigation glyph:

@@ -1,6 +1,5 @@
 import PaperKit
 import PencilKit
-import SwiftUI
 import UIKit
 
 /// Full-screen PaperKit markup host shared by the composer and viewers.
@@ -816,40 +815,6 @@ final class PaperMarkupCanvasHostController: UIViewController {
         guard let data = image.pngData() else { return nil }
         return (data, image)
     }
-}
-
-struct PaperMarkupCanvasHostView: View {
-    let background: PaperMarkupCanvasSession.Background
-    let onAddToChat: (PendingAttachment, String) -> Bool
-    let onCancel: () -> Void
-
-    var body: some View {
-        PaperMarkupCanvasHostRepresentable(
-            background: background,
-            onAddToChat: onAddToChat,
-            onCancel: onCancel
-        )
-        .ignoresSafeArea()
-    }
-}
-
-private struct PaperMarkupCanvasHostRepresentable: UIViewControllerRepresentable {
-    let background: PaperMarkupCanvasSession.Background
-    let onAddToChat: (PendingAttachment, String) -> Bool
-    let onCancel: () -> Void
-
-    func makeUIViewController(context: Context) -> UINavigationController {
-        let host = PaperMarkupCanvasHostController(
-            background: background,
-            onAddToChat: onAddToChat,
-            onCancel: onCancel
-        )
-        let navigation = UINavigationController(rootViewController: host)
-        navigation.modalPresentationStyle = .fullScreen
-        return navigation
-    }
-
-    func updateUIViewController(_ uiViewController: UINavigationController, context: Context) {}
 }
 
 extension PaperMarkupCanvasHostController {

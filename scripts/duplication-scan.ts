@@ -363,44 +363,26 @@ function runAppleGuardrails(): GuardrailResult {
     );
   }
 
-  hits = filterAllowed(
-    rgFiles("(?:\\.sheet.*FullScreenCodeView|FullScreenCodeView.*\\.sheet)", ["Oppi/"], {
-      cwd: appleRoot,
-      type: "swift",
-    }),
-    /(^|\/)FullScreenCodeView\.swift$/,
-  );
-  if (hits.length > 0) {
-    err(
-      `Raw .sheet + FullScreenCodeView in: ${hits.join(", ")}`,
-      "Use .fullScreenViewer(isPresented:content:piRouter:) modifier",
-      hits,
-    );
-  }
-
   // Readers come from the helpers. The UIKit screens that embed one as a
   // child are named here: the file viewer, the reviewable control Markdown
   // screen, the editor's conflict review, and a skill's file.
   hits = filterAllowed(
     rgFiles("FullScreenCodeViewController\\(", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
-    /(^|\/)(FullScreenCodeView|FullScreenCodeViewController|EmbeddedFileViewerView|ToolTimelineRowHelpers|FileViewerViewController|WorkspaceFileEditChrome|ReviewableControlMarkdownViewController|SkillFileViewController)\.swift$/,
+    /(^|\/)(FullScreenCodeViewController|EmbeddedFileViewerView|ToolTimelineRowHelpers|FileViewerViewController|WorkspaceFileEditChrome|ReviewableControlMarkdownViewController|SkillFileViewController)\.swift$/,
   );
   if (hits.length > 0) {
     err(
       `Direct FullScreenCodeViewController creation in: ${hits.join(", ")}`,
-      "Use .fullScreenViewer() (SwiftUI) or ToolTimelineRowPresentationHelpers.presentFullScreenContent() (UIKit)",
+      "Use ToolTimelineRowPresentationHelpers.presentFullScreenContent()",
       hits,
     );
   }
 
-  hits = filterAllowed(
-    rgFiles("presentationDetents\\(\\[\\.large\\]\\)", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
-    /(^|\/)FullScreenCodeView\.swift$/,
-  );
+  hits = rgFiles("presentationDetents\\(\\[\\.large\\]\\)", ["Oppi/"], { cwd: appleRoot, type: "swift" });
   if (hits.length > 0) {
     err(
       `Manual .presentationDetents([.large]) in: ${hits.join(", ")}`,
-      "Use .fullScreenViewer() modifier — it handles sheet configuration",
+      "Use ToolTimelineRowPresentationHelpers.presentFullScreenContent(), which handles sheet configuration",
       hits,
     );
   }

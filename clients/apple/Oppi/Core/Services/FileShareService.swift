@@ -303,9 +303,9 @@ enum FileShareService {
 
     /// Display info for an export format in the context of specific content.
     ///
-    /// Returns a user-facing label and SF Symbol name. Used by both
-    /// ``FileShareButton`` (SwiftUI) and ``FullScreenCodeViewController`` (UIKit)
-    /// so format picker labels stay consistent across surfaces.
+    /// Returns a user-facing label and SF Symbol name. Used by
+    /// ``FullScreenCodeViewController`` and ``FileSharePresenter`` so format
+    /// picker labels stay consistent across surfaces.
     static func formatDisplayInfo(
         _ format: ExportFormat,
         for content: ShareableContent?

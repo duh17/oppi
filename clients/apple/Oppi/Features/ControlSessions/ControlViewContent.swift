@@ -179,8 +179,7 @@ enum ControlRowViews {
     }
 }
 
-/// A small capsule label: a schedule's status, an Agent's version (SwiftUI
-/// `StatusPill` at its mini size).
+/// A small capsule label: a schedule's status, an Agent's version.
 final class ControlStatusPill: UIView {
     enum Emphasis { case quiet, tinted }
 

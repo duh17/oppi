@@ -1,7 +1,7 @@
 import XCTest
 
 /// Opens every modal the router presents for the app root, workspaces, quick
-/// session, the document and stash viewers, and the SSH terminal, on the real
+/// session, Now Playing, and the SSH terminal, on the real
 /// presenters with fixture services (`SCREENSHOT_SCREEN=router-modal-sites`
 /// and the existing settings, workspace, and terminal previews). Each modal
 /// closes through its own control and, for sheets, by swipe-down; a modal
@@ -84,54 +84,6 @@ final class RouterModalSitesUITests: XCTestCase {
             XCTAssertTrue(waitFor(self.label("routerModalSites.whatsNewState") == "What's New cleared"))
             assertRunning()
         }
-    }
-
-    // MARK: Viewers
-
-    func testDocumentViewerClosesAndClearsItsBinding() {
-        launchSite("document")
-        app.buttons["routerModalSites.openDocument"].tap()
-        let dismiss = app.buttons["fullscreen-code.dismiss"]
-        XCTAssertTrue(dismiss.waitForExistence(timeout: 5), "Document viewer did not open")
-        attachScreenshot("document-viewer")
-        assertRunning()
-        dismiss.tap()
-        XCTAssertTrue(waitForDisappearance(of: dismiss), "Dismiss must close the viewer")
-        XCTAssertEqual(label("routerModalSites.documentCloses"), "Viewer closed 1")
-
-        // Compact width shows a page sheet; regular width covers the window.
-        app.buttons["routerModalSites.openDocument"].tap()
-        XCTAssertTrue(dismiss.waitForExistence(timeout: 5), "Document viewer did not reopen")
-        if isRegularWidth {
-            dismiss.tap()
-        } else {
-            dragToBottom(dismiss)
-        }
-        XCTAssertTrue(waitForDisappearance(of: dismiss), "The viewer must close again")
-        XCTAssertEqual(label("routerModalSites.documentCloses"), "Viewer closed 2")
-        assertRunning()
-    }
-
-    func testStashSheetRemovesACommentThenCloses() {
-        launchSite("stash")
-        XCTAssertEqual(label("routerModalSites.staged"), "Staged 2")
-        app.buttons["fullscreen-code.review-comments.stash"].tap()
-        let removeByLabel = app.buttons["Remove review comment"].firstMatch
-        XCTAssertTrue(removeByLabel.waitForExistence(timeout: 5), "Stash sheet did not open")
-        attachScreenshot("stash-sheet")
-        removeByLabel.tap()
-        XCTAssertTrue(waitFor(self.label("routerModalSites.staged") == "Staged 1"), "The removal must reach the stash")
-
-        cancelButton.tap()
-        XCTAssertTrue(waitForDisappearance(of: removeByLabel), "Close must close the stash sheet")
-        assertRunning()
-
-        app.buttons["fullscreen-code.review-comments.stash"].tap()
-        XCTAssertTrue(removeByLabel.waitForExistence(timeout: 5), "Stash sheet did not reopen")
-        dragToBottom(removeByLabel)
-        XCTAssertTrue(waitForDisappearance(of: removeByLabel), "Swipe-down must close the stash sheet")
-        XCTAssertEqual(label("routerModalSites.staged"), "Staged 1")
-        assertRunning()
     }
 
     func testNowPlayingPlayerOpensFromTheInboxAndGoesBack() {
@@ -542,10 +494,6 @@ final class RouterModalSitesUITests: XCTestCase {
         }
         app.launch()
         XCTAssertEqual(app.wait(for: .runningForeground, timeout: 10), true)
-    }
-
-    private var isRegularWidth: Bool {
-        app.windows.firstMatch.frame.width >= 700
     }
 
     private func label(_ identifier: String) -> String {

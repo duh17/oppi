@@ -38,7 +38,7 @@ enum HardwareKeybindingAdapter {
         return KeybindingCatalog.action(for: chord, mode: request.mode, focus: request.focus)
     }
 
-    /// Composer `.send` is not consumed — `PastableTextView` Cmd-Return owns it.
+    /// Composer `.send` is not consumed — `PastableUITextView` Cmd-Return owns it.
     static func consumes(_ action: KeybindingAction?) -> Bool {
         switch action {
         case .nextToolRow, .previousToolRow, .collapse, .expand, .toggleExpanded,
@@ -77,7 +77,7 @@ enum HardwareKeybindingAdapter {
     /// Chords this responder may install as `UIKeyCommand`s.
     ///
     /// Empty without a hardware keyboard, and empty when the composer is
-    /// focused so Cmd-Return stays on `PastableTextView`. Bindings themselves
+    /// focused so Cmd-Return stays on `PastableUITextView`. Bindings themselves
     /// come from `KeybindingCatalog.boundChords`.
     static func registeredChords(for request: Request) -> [KeybindingChord] {
         guard shouldBind(request) else { return [] }

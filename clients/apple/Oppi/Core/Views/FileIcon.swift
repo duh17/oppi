@@ -9,19 +9,6 @@ import UIKit
 enum FileIconTint: Equatable, Sendable {
     case comment, blue, cyan, orange, yellow, red, purple, green
 
-    var style: ThemeShapeStyle {
-        switch self {
-        case .comment: .themeComment
-        case .blue: .themeBlue
-        case .cyan: .themeCyan
-        case .orange: .themeOrange
-        case .yellow: .themeYellow
-        case .red: .themeRed
-        case .purple: .themePurple
-        case .green: .themeGreen
-        }
-    }
-
     var snapshotColor: Color {
         switch self {
         case .comment: .themeComment
@@ -50,16 +37,6 @@ struct FileIcon: Equatable, Sendable {
         self.assetName = assetName
     }
 
-    /// Returns a SwiftUI Image using the asset catalog icon when available,
-    /// falling back to the SF Symbol.
-    var image: Image {
-        if let assetName, UIImage(named: assetName) != nil {
-            return Image(assetName)
-                .resizable()
-        }
-        return Image(systemName: symbolName)
-    }
-
     /// Whether this icon uses a custom asset (not an SF Symbol).
     var isAssetImage: Bool {
         if let assetName, UIImage(named: assetName) != nil {
@@ -68,36 +45,7 @@ struct FileIcon: Equatable, Sendable {
         return false
     }
 
-    /// Returns a properly-sized icon view with correct aspect ratio.
-    ///
-    /// Asset images get `.scaledToFit()` so they don't stretch to fill the frame.
-    /// SF Symbols get font-based sizing. The `size` sets both width and height of the frame.
-    ///
-    /// For icons inside a larger background (e.g. 28pt rounded rect), use a smaller `size`
-    /// for the icon and add an outer `.frame()` + `.background()`:
-    /// ```
-    /// icon.iconView(size: 18)
-    ///     .frame(width: 28, height: 28)
-    ///     .background(...)
-    /// ```
-    @ViewBuilder
-    func iconView(size: CGFloat, font: Font? = nil) -> some View {
-        if isAssetImage {
-            image  // .resizable() already applied
-                .renderingMode(.template)
-                .scaledToFit()
-                .foregroundStyle(tint.style)
-                .frame(width: size, height: size)
-        } else {
-            Image(systemName: symbolName)
-                .font(font ?? .system(size: max(9, size * 0.6), weight: .medium))
-                .foregroundStyle(tint.style)
-                .frame(width: size, height: size)
-        }
-    }
-
-    /// UIKit counterpart to `iconView`. Template-tinted so composer lists can
-    /// paint without a SwiftUI host.
+    /// Template-tinted so composer lists and file rows can paint it directly.
     func uiImage(pointSize: CGFloat, weight: UIImage.SymbolWeight = .medium) -> UIImage {
         let color = UIColor(tint.snapshotColor)
         if let assetName, let asset = UIImage(named: assetName) {

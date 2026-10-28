@@ -1167,10 +1167,6 @@ private struct RouterModalSitesPreview: View {
         switch site {
         case "root":
             RouterModalSitesRootPage(root: root)
-        case "document":
-            RouterModalSitesDocumentPage()
-        case "stash":
-            RouterModalSitesStashPage()
         case "inbox-now-playing":
             RouterPreviewControllerStack(root: root) { SessionInboxViewController(root: root) }
                 .ignoresSafeArea()
@@ -1454,64 +1450,6 @@ private struct RouterModalSitesRootPage: View {
 @MainActor @Observable
 private final class RouterModalSitesResponse {
     var summary = "none"
-}
-
-/// The document viewer modifier on a plain button; the page counts closes, so
-/// a dismissal that left the binding set shows.
-private struct RouterModalSitesDocumentPage: View {
-    @State private var isPresented = false
-    @State private var closes = 0
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Button("Open Document") { isPresented = true }
-                .accessibilityIdentifier("routerModalSites.openDocument")
-            Text("Viewer closed \(closes)")
-                .accessibilityIdentifier("routerModalSites.documentCloses")
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.themeBg)
-        .fullScreenViewer(
-            isPresented: $isPresented,
-            content: .code(content: "let answer = 42\nprint(answer)\n", language: "swift", filePath: "Fixture.swift", startLine: 1)
-        )
-        .onChange(of: isPresented) { wasPresented, presented in
-            if wasPresented, !presented { closes += 1 }
-        }
-    }
-}
-
-/// The staged-comment control and sheet over two staged comments.
-private struct RouterModalSitesStashPage: View {
-    @State private var comments: ChatReviewCommentsController
-    @State private var router: ReviewCommentSelectionRouter
-
-    init() {
-        let suite = "router-modal-sites-stash"
-        let defaults = UserDefaults(suiteName: suite) ?? .standard
-        defaults.removePersistentDomain(forName: suite)
-        let comments = ChatReviewCommentsController(store: ReviewCommentStore(defaults: defaults, keyPrefix: suite))
-        comments.load(localScopeId: "workspace", sessionId: "session")
-        let source = ReviewCommentSourceContext(sessionId: "session", surface: .fullScreenSource, filePath: "Fixture.swift")
-        for body in ["Rename this.", "Explain this."] {
-            _ = comments.save(
-                body: body,
-                request: ReviewCommentSelectionRequest(selectedText: "let answer = 42", source: source),
-                localScopeId: "workspace",
-                sessionId: "session"
-            )
-        }
-        _comments = State(initialValue: comments)
-        _router = State(initialValue: ReviewCommentSelectionRouter(dispatch: { _ in }, stash: comments))
-    }
-
-    var body: some View {
-        Text("Staged \(comments.stagedCount)")
-            .accessibilityIdentifier("routerModalSites.staged")
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.themeBg)
-            .fullScreenReviewCommentStashOverlay(scope: .activeSession(router))
-    }
 }
 
 /// A fixture server whose stub answers models, worktrees, and Agents.

@@ -800,25 +800,6 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
-    /// The composers' covers, opened from harness controls: with the attach
-    /// menu open the app never reports idle to the test runner.
-    func testPhotoLibraryAndCanvasCovers() {
-        launch()
-        for (control, name) in [("chatRoutes.photoLibrary", "photo-library"), ("chatRoutes.canvas", "canvas")] {
-            app.buttons[control].tap()
-            let close = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"])).firstMatch
-            XCTAssertTrue(close.waitForExistence(timeout: 10), "\(name) cover did not open")
-            XCTAssertFalse(app.buttons["chat.toolbar.context"].isHittable, "The \(name) cover must cover the chat")
-            attachScreenshot("cover-\(name)")
-            close.tap()
-            XCTAssertTrue(
-                waitFor(self.app.buttons["chat.toolbar.context"].isHittable),
-                "Closing the \(name) cover must return to the chat"
-            )
-            assertRunning()
-        }
-    }
-
     /// A pending composer image opens the annotate canvas. Its bar must carry
     /// undo/redo beside the checkmark — Add to Chat returns the annotated image,
     /// Cancel keeps the attachment — and the composer must be usable again

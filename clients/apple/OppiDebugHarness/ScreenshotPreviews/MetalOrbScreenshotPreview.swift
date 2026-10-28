@@ -83,7 +83,7 @@ struct MetalOrbScreenshotPreview: View {
 
     private func workingTile(_ style: SpinnerStyle) -> some View {
         VStack(spacing: 8) {
-            WorkingSpinnerView(tintColor: .themeFg, style: style, side: 20)
+            PreviewSpinner(tintColor: .themeFg, style: style, side: 20)
                 .frame(width: 20, height: 20)
             Text(style.displayName)
                 .font(.caption)
@@ -120,6 +120,55 @@ struct MetalOrbScreenshotPreview: View {
         }
         .frame(width: max(72, diameter + 12))
         .accessibilityIdentifier("preview.dictation.\(style.rawValue).\(Int(diameter))")
+    }
+}
+
+/// One spinner style at a fixed size, so the tiles show every style side by
+/// side. The app's `WorkingSpinnerUIView` follows the Settings choice instead.
+private struct PreviewSpinner: View {
+    let tintColor: Color
+    let style: SpinnerStyle
+    let side: CGFloat
+
+    var body: some View {
+        switch style {
+        case .working, .searching, .solving:
+            if let orbStyle = style.orbStyle {
+                OrbView(style: orbStyle, sizeClass: .working(side: Double(side)), tint: tintColor)
+            }
+        case .brailleDots:
+            BrailleSpinner(tintColor: tintColor)
+        case .gameOfLife:
+            GameOfLifeSpinner(tintColor: tintColor)
+        }
+    }
+
+    private struct GameOfLifeSpinner: UIViewRepresentable {
+        let tintColor: Color
+
+        func makeUIView(context: Context) -> GameOfLifeUIView {
+            let view = GameOfLifeUIView(gridSize: 6)
+            view.tintUIColor = UIColor(tintColor)
+            return view
+        }
+
+        func updateUIView(_ uiView: GameOfLifeUIView, context: Context) {
+            uiView.tintUIColor = UIColor(tintColor)
+        }
+    }
+
+    private struct BrailleSpinner: UIViewRepresentable {
+        let tintColor: Color
+
+        func makeUIView(context: Context) -> BrailleSpinnerUIView {
+            let view = BrailleSpinnerUIView()
+            view.tintUIColor = UIColor(tintColor)
+            return view
+        }
+
+        func updateUIView(_ uiView: BrailleSpinnerUIView, context: Context) {
+            uiView.tintUIColor = UIColor(tintColor)
+        }
     }
 }
 #endif

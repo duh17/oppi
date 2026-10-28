@@ -4,12 +4,11 @@ import UIKit
 /// Full-screen content viewer for tool output (UIKit).
 ///
 /// Supports code (with syntax highlighting), diff, and markdown modes.
-/// Presented via ``FullScreenCodeView`` (UIViewControllerRepresentable wrapper)
-/// from SwiftUI callers, and directly from UIKit timeline cells.
+/// Presented directly from UIKit timeline cells.
 ///
-/// Supports two presentation modes:
+/// Supports these presentation modes:
 /// - `.sheet`: standalone presentation with its own dismiss button (chevron.down).
-///   Used by timeline full-screen and SwiftUI `.sheet`/`.fullScreenCover`.
+///   Used by timeline full-screen.
 /// - `.embedded(onDismiss:)`: embedded in a pushed screen. Shows a
 ///   back button (chevron.backward) that calls the provided closure.
 /// - `.contentOnly`: embedded as pane content without internal navigation chrome.
