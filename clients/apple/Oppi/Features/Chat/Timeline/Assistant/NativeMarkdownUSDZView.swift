@@ -1,6 +1,3 @@
-import Combine
-import RealityKit
-import SwiftUI
 import UIKit
 
 enum MarkdownInlineUSDZLayout {
@@ -16,7 +13,7 @@ enum MarkdownInlineUSDZLayout {
 /// Native inline USDZ host for Oppi wiki-file embeds.
 ///
 /// Chat scroll wins until Interact. Done restores scroll. Expand presents a
-/// separate RealityKit scene from the same downloaded file.
+/// separate `FullScreenUSDZViewController` for the same downloaded file.
 @MainActor
 final class NativeMarkdownUSDZView: UIView {
     private let statusLabel = UILabel()
@@ -27,9 +24,7 @@ final class NativeMarkdownUSDZView: UIView {
     private let expandButton = UIButton(type: .system)
     private let chromeStack = UIStackView()
     private var heightConstraint: NSLayoutConstraint?
-    private let interactChrome = USDZInteractChrome()
-    private var sceneHost: HostedContentController?
-    private var sceneWaitingForWindow: USDZLocalFileStore.Handle?
+    private let sceneView = USDZSceneView()
     private var resolutionTask: Task<Void, Never>?
     private var currentEmbed: MarkdownUSDZEmbed?
     private var currentIdentity: String?
@@ -130,7 +125,7 @@ final class NativeMarkdownUSDZView: UIView {
                     return
                 }
                 self.currentHandle = handle
-                self.installScene(handle: handle, interactive: false)
+                self.installScene(handle: handle)
             } catch {
                 guard let self, !Task.isCancelled, self.currentIdentity == identity else { return }
                 self.showFallback(
@@ -152,6 +147,17 @@ final class NativeMarkdownUSDZView: UIView {
         layer.cornerRadius = 8
         clipsToBounds = true
         accessibilityIdentifier = "markdown-usdz"
+
+        sceneView.translatesAutoresizingMaskIntoConstraints = false
+        sceneView.isHidden = true
+        sceneView.onLoadFailed = { [weak self] in
+            self?.showFallback(
+                title: String(localized: "Unable to load 3D scene"),
+                detail: self?.currentEmbed?.displayLabel ?? "",
+                actionable: true
+            )
+        }
+        addSubview(sceneView)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.adjustsFontForContentSizeCategory = true
@@ -206,6 +212,10 @@ final class NativeMarkdownUSDZView: UIView {
         heightConstraint?.isActive = true
 
         NSLayoutConstraint.activate([
+            sceneView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sceneView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            sceneView.topAnchor.constraint(equalTo: topAnchor),
+            sceneView.bottomAnchor.constraint(equalTo: bottomAnchor),
             statusStack.centerXAnchor.constraint(equalTo: centerXAnchor),
             statusStack.centerYAnchor.constraint(equalTo: centerYAnchor),
             statusStack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
@@ -256,73 +266,26 @@ final class NativeMarkdownUSDZView: UIView {
         accessibilityLabel = title
     }
 
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        guard window != nil, let handle = sceneWaitingForWindow else { return }
-        sceneWaitingForWindow = nil
-        installScene(handle: handle, interactive: false)
-    }
-
-    private func installScene(handle: USDZLocalFileStore.Handle, interactive: Bool) {
-        // The canvas is hosted with the app root above this view, which only a
-        // view in a window can find. A scene that loads off-window waits.
-        guard window != nil else {
-            sceneWaitingForWindow = handle
-            return
-        }
+    private func installScene(handle: USDZLocalFileStore.Handle) {
         statusLabel.isHidden = true
         retryButton.isHidden = true
         openButton.isHidden = true
         chromeStack.isHidden = false
-        doneButton.isHidden = !interactive
-        interactButton.isHidden = interactive
+        doneButton.isHidden = true
+        interactButton.isHidden = false
         expandButton.isHidden = false
 
-        interactChrome.cameraControlsEnabled = interactive
-        let canvas = USDZRealityCanvas(
-            fileURL: handle.url,
-            interactChrome: interactChrome,
-            onLoadFailed: { [weak self] in
-                self?.showFallback(
-                    title: String(localized: "Unable to load 3D scene"),
-                    detail: self?.currentEmbed?.displayLabel ?? "",
-                    actionable: true
-                )
-            }
-        )
-        let host = HostFactory.content(canvas, root: HostFactory.root(near: self))
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-        host.view.backgroundColor = .clear
-        host.view.isUserInteractionEnabled = interactive
-        if let sceneHost {
-            sceneHost.willMove(toParent: nil)
-            sceneHost.view.removeFromSuperview()
-            sceneHost.removeFromParent()
-        }
-        if let parent = nearestViewController() {
-            parent.addChild(host)
-            addSubview(host.view)
-            sendSubviewToBack(host.view)
-            host.didMove(toParent: parent)
-        } else {
-            addSubview(host.view)
-            sendSubviewToBack(host.view)
-        }
-        NSLayoutConstraint.activate([
-            host.view.leadingAnchor.constraint(equalTo: leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: trailingAnchor),
-            host.view.topAnchor.constraint(equalTo: topAnchor),
-            host.view.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        sceneHost = host
+        sceneView.isInteractive = false
+        sceneView.accessibilityLabel = currentEmbed?.displayLabel
+        sceneView.isHidden = false
+        sceneView.show(fileURL: handle.url)
         accessibilityLabel = currentEmbed?.displayLabel
     }
 
     private func setInteracting(_ interacting: Bool) {
         guard renderingMode != .export, currentHandle != nil else { return }
         isInteracting = interacting
-        interactChrome.cameraControlsEnabled = interacting
-        sceneHost?.view.isUserInteractionEnabled = interacting
+        sceneView.isInteractive = interacting
         doneButton.isHidden = !interacting
         interactButton.isHidden = interacting
         if interacting {
@@ -330,17 +293,6 @@ final class NativeMarkdownUSDZView: UIView {
         } else {
             restoreScrollIfNeeded()
         }
-    }
-
-    private func nearestViewController() -> UIViewController? {
-        var current: UIResponder? = self
-        while let responder = current {
-            if let controller = responder as? UIViewController {
-                return controller
-            }
-            current = responder.next
-        }
-        return nil
     }
 
     private func retry() {
@@ -371,12 +323,9 @@ final class NativeMarkdownUSDZView: UIView {
     }
 
     private func removeScene() {
-        sceneWaitingForWindow = nil
-        sceneHost?.willMove(toParent: nil)
-        sceneHost?.view.removeFromSuperview()
-        sceneHost?.removeFromParent()
-        sceneHost = nil
-        interactChrome.cameraControlsEnabled = false
+        sceneView.clear()
+        sceneView.isHidden = true
+        sceneView.isInteractive = false
     }
 
     private func releaseHandle() {
@@ -415,12 +364,12 @@ enum FullScreenUSDZPresenter {
         fileProvider: MarkdownUSDZFileProvider?
     ) {
         guard let presenter = nearestViewController(from: view) else { return }
-        let root = FullScreenUSDZView(
+        let screen = FullScreenUSDZViewController(
             embed: embed,
             initialHandle: handle,
             fileProvider: fileProvider
         )
-        Router.present(presentation: .fullScreen, from: presenter) { root }
+        Router.present(screen, presentation: .fullScreen.inNavigation(), from: presenter)
     }
 
     @MainActor
@@ -436,315 +385,153 @@ enum FullScreenUSDZPresenter {
     }
 }
 
-struct FullScreenUSDZView: View {
-    let embed: MarkdownUSDZEmbed
-    let initialHandle: USDZLocalFileStore.Handle?
-    let fileProvider: MarkdownUSDZFileProvider?
-    @Environment(\.screenNavigator) private var navigator
-    @Environment(\.openURL) private var openURL
-    @State private var handle: USDZLocalFileStore.Handle?
-    @State private var didFail = false
-    @State private var isLoading = false
+/// The expanded USDZ scene: the downloaded file (or one fetched through the
+/// provider) with inspect gestures on, under a navigation bar with Done.
+/// Presented through the router; it holds its own retain on the file for as
+/// long as it is on screen.
+@MainActor
+final class FullScreenUSDZViewController: UIViewController {
+    private let embed: MarkdownUSDZEmbed
+    private let initialHandle: USDZLocalFileStore.Handle?
+    private let fileProvider: MarkdownUSDZFileProvider?
+    private let sceneView = USDZSceneView()
+    private let statusView = UIContentUnavailableView(configuration: .empty())
+    private var handle: USDZLocalFileStore.Handle?
+    private var loadTask: Task<Void, Never>?
 
-    var body: some View {
-        ZStack {
-            Color(ThemeRuntimeState.currentPalette().bg).ignoresSafeArea()
-            if let handle {
-                USDZRealityCanvas(fileURL: handle.url, cameraControlsEnabled: true)
-                    .ignoresSafeArea()
-            } else if didFail {
-                ContentUnavailableView {
-                    Label("Unable to load 3D scene", systemImage: "cube")
-                } description: {
-                    Text(embed.displayLabel)
-                } actions: {
-                    Button("Retry") { Task { await load() } }
-                    Button("Open file") {
-                        // The root's openURL action delivers the reference to
-                        // the app opener.
-                        if let url = ResourceReferenceURL.make(embed.reference) {
-                            openURL(url)
-                        }
-                    }
-                }
-            } else {
-                ProgressView("Loading 3D scene")
+    init(
+        embed: MarkdownUSDZEmbed,
+        initialHandle: USDZLocalFileStore.Handle?,
+        fileProvider: MarkdownUSDZFileProvider?
+    ) {
+        self.embed = embed
+        self.initialHandle = initialHandle
+        self.fileProvider = fileProvider
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.accessibilityIdentifier = "markdown-usdz-fullscreen"
+        navigationItem.title = embed.displayLabel
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            systemItem: .done,
+            primaryAction: UIAction { [weak self] _ in
+                guard let self else { return }
+                Router.finish(self)
             }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack {
-                Text(embed.displayLabel)
-                    .font(.headline)
-                    .lineLimit(1)
-                Spacer()
-                Button("Done") { navigator.finish() }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(.bar)
-        }
-        .accessibilityIdentifier("markdown-usdz-fullscreen")
-        .task {
-            await load()
-        }
-        .onDisappear {
-            releaseLoadedHandle()
+        )
+
+        sceneView.isInteractive = true
+        sceneView.accessibilityLabel = embed.displayLabel
+        sceneView.onLoadFailed = { [weak self] in self?.showFailure() }
+        sceneView.isHidden = true
+
+        for subview in [sceneView, statusView] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(subview)
+            NSLayoutConstraint.activate([
+                subview.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                subview.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                subview.topAnchor.constraint(equalTo: view.topAnchor),
+                subview.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
         }
     }
 
-    private func releaseLoadedHandle() {
+    override func updateProperties() {
+        super.updateProperties()
+        view.backgroundColor = .themeBg
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        startLoading()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        loadTask?.cancel()
+        loadTask = nil
+        sceneView.clear()
         guard let handle else { return }
         self.handle = nil
         Task { await USDZLocalFileStore.shared.release(handle) }
     }
 
+    private func startLoading() {
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in await self?.load() }
+    }
+
     private func load() async {
-        didFail = false
         if handle != nil { return }
+        showLoading()
         if let initialHandle {
             await USDZLocalFileStore.shared.retain(initialHandle)
-            if Task.isCancelled {
+            guard !Task.isCancelled else {
                 await USDZLocalFileStore.shared.release(initialHandle)
                 return
             }
-            handle = initialHandle
+            show(initialHandle)
             return
         }
         guard let fileProvider else {
-            didFail = true
+            showFailure()
             return
         }
-        isLoading = true
-        defer { isLoading = false }
         do {
-            handle = try await fileProvider(embed)
+            let loaded = try await fileProvider(embed)
+            guard !Task.isCancelled else {
+                await USDZLocalFileStore.shared.release(loaded)
+                return
+            }
+            show(loaded)
         } catch {
-            didFail = true
+            guard !Task.isCancelled else { return }
+            showFailure()
         }
     }
-}
 
-/// File-browser and full-screen USDZ canvas. Camera controls are on immediately.
-struct FileBrowserUSDZPreview: View {
-    let fileURL: URL
-    var accessibilityName: String = "3D scene"
-
-    var body: some View {
-        USDZRealityCanvas(fileURL: fileURL, cameraControlsEnabled: true)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityIdentifier("file-browser-usdz")
-            .accessibilityLabel(accessibilityName)
-    }
-}
-
-/// Apple `CameraControls` is one mode at a time (orbit *or* pan *or* dolly).
-/// Inspect uses 1-finger orbit, pinch zoom, and 2-finger pan on the model.
-@MainActor
-final class USDZInspectState: ObservableObject {
-    @Published var yaw: Float = 0
-    @Published var pitch: Float = 0
-    @Published var zoom: Float = 1
-    @Published var pan: SIMD2<Float> = .zero
-
-    func apply(to gimbal: Entity?) {
-        guard let gimbal else { return }
-        let pitchQ = simd_quatf(angle: pitch, axis: SIMD3<Float>(1, 0, 0))
-        let yawQ = simd_quatf(angle: yaw, axis: SIMD3<Float>(0, 1, 0))
-        gimbal.orientation = pitchQ * yawQ
-        gimbal.scale = SIMD3<Float>(repeating: zoom)
-        gimbal.position = SIMD3<Float>(pan.x, pan.y, 0)
+    private func show(_ handle: USDZLocalFileStore.Handle) {
+        self.handle = handle
+        statusView.isHidden = true
+        sceneView.isHidden = false
+        sceneView.show(fileURL: handle.url)
     }
 
-    func clamp() {
-        let nextPitch = min(1.2, max(-1.2, pitch))
-        let nextZoom = min(3, max(0.35, zoom))
-        let nextPan = SIMD2(min(1.6, max(-1.6, pan.x)), min(1.6, max(-1.6, pan.y)))
-        if nextPitch != pitch { pitch = nextPitch }
-        if nextZoom != zoom { zoom = nextZoom }
-        if nextPan != pan { pan = nextPan }
-    }
-}
-
-@MainActor
-final class USDZInteractChrome: ObservableObject {
-    @Published var cameraControlsEnabled: Bool
-
-    init(cameraControlsEnabled: Bool = false) {
-        self.cameraControlsEnabled = cameraControlsEnabled
-    }
-}
-
-struct USDZRealityCanvas: View {
-    let fileURL: URL
-    var onLoadFailed: (() -> Void)? = nil
-    @ObservedObject private var interactChrome: USDZInteractChrome
-    @StateObject private var inspect = USDZInspectState()
-    @State private var didFail = false
-
-    init(
-        fileURL: URL,
-        cameraControlsEnabled: Bool,
-        onLoadFailed: (() -> Void)? = nil
-    ) {
-        self.fileURL = fileURL
-        self.onLoadFailed = onLoadFailed
-        self._interactChrome = ObservedObject(
-            wrappedValue: USDZInteractChrome(cameraControlsEnabled: cameraControlsEnabled)
-        )
+    private func showLoading() {
+        sceneView.isHidden = true
+        statusView.isHidden = false
+        var configuration = UIContentUnavailableConfiguration.loading()
+        configuration.text = String(localized: "Loading 3D scene")
+        statusView.configuration = configuration
     }
 
-    init(
-        fileURL: URL,
-        interactChrome: USDZInteractChrome,
-        onLoadFailed: (() -> Void)? = nil
-    ) {
-        self.fileURL = fileURL
-        self.onLoadFailed = onLoadFailed
-        self._interactChrome = ObservedObject(wrappedValue: interactChrome)
-    }
-
-    var body: some View {
-        ZStack {
-            if didFail {
-                ContentUnavailableView(
-                    "Unable to load 3D scene",
-                    systemImage: "cube",
-                    description: Text(fileURL.lastPathComponent)
-                )
-            } else {
-                RealityView { content in
-                    do {
-                        let model = try await Entity(contentsOf: fileURL, withName: nil)
-                        content.add(Self.inspectionRoot(for: model))
-                    } catch {
-                        didFail = true
-                        onLoadFailed?()
-                    }
-                } update: { content in
-                    inspect.apply(
-                        to: content.entities.first?.findEntity(named: Self.gimbalName)
-                    )
-                } placeholder: {
-                    ProgressView()
-                }
-                .realityViewCameraControls(.none)
-                .realityViewLayoutBehavior(.centered)
-                .overlay {
-                    if interactChrome.cameraControlsEnabled {
-                        USDZInspectGestureView(state: inspect)
-                            .accessibilityHidden(true)
-                    }
-                }
-            }
+    private func showFailure() {
+        sceneView.clear()
+        sceneView.isHidden = true
+        statusView.isHidden = false
+        var configuration = UIContentUnavailableConfiguration.empty()
+        configuration.image = UIImage(systemName: "cube")
+        configuration.text = String(localized: "Unable to load 3D scene")
+        configuration.secondaryText = embed.displayLabel
+        var retry = UIButton.Configuration.borderedProminent()
+        retry.title = String(localized: "Retry")
+        configuration.button = retry
+        configuration.buttonProperties.primaryAction = UIAction { [weak self] _ in
+            self?.startLoading()
         }
-        .accessibilityAddTraits(.allowsDirectInteraction)
-        .accessibilityHint(String(localized: "Drag to orbit, pinch to zoom, two fingers to pan"))
-    }
-
-    private static let gimbalName = "usdz-gimbal"
-
-    /// Do not call `visualBounds` in `make` — it can hang USDZ loads on iOS.
-    /// `.centered` measures bounds after `make` returns.
-    @discardableResult
-    private static func inspectionRoot(for model: Entity) -> Entity {
-        let gimbal = Entity()
-        gimbal.name = gimbalName
-        gimbal.addChild(model)
-        let root = Entity()
-        root.name = "usdz-root"
-        root.addChild(gimbal)
-        return root
-    }
-}
-
-/// 1-finger orbit, pinch zoom, 2-finger pan. Does not use exclusive CameraControls.
-private struct USDZInspectGestureView: UIViewRepresentable {
-    @ObservedObject var state: USDZInspectState
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(state: state)
-    }
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        view.isAccessibilityElement = false
-        view.accessibilityIdentifier = "markdown-usdz-gestures"
-
-        let orbit = UIPanGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleOrbit(_:))
-        )
-        orbit.minimumNumberOfTouches = 1
-        orbit.maximumNumberOfTouches = 1
-        orbit.name = "usdz-orbit"
-
-        let pan = UIPanGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handlePan(_:))
-        )
-        pan.minimumNumberOfTouches = 2
-        pan.maximumNumberOfTouches = 2
-        pan.name = "usdz-pan"
-
-        let pinch = UIPinchGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handlePinch(_:))
-        )
-        pinch.name = "usdz-zoom"
-
-        view.addGestureRecognizer(orbit)
-        view.addGestureRecognizer(pan)
-        view.addGestureRecognizer(pinch)
-        pinch.delegate = context.coordinator
-        pan.delegate = context.coordinator
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.state = state
-    }
-
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var state: USDZInspectState
-        private var pinchStart: Float = 1
-
-        init(state: USDZInspectState) {
-            self.state = state
+        var open = UIButton.Configuration.bordered()
+        open.title = String(localized: "Open file")
+        configuration.secondaryButton = open
+        configuration.secondaryButtonProperties.primaryAction = UIAction { [weak self] _ in
+            guard let self else { return }
+            HostFactory.root(near: self)?.opener.open(.resourceReference(embed.reference))
         }
-
-        @objc func handleOrbit(_ gesture: UIPanGestureRecognizer) {
-            let translation = gesture.translation(in: gesture.view)
-            gesture.setTranslation(.zero, in: gesture.view)
-            state.yaw += Float(translation.x) * 0.01
-            state.pitch -= Float(translation.y) * 0.01
-            state.clamp()
-        }
-
-        @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
-            let translation = gesture.translation(in: gesture.view)
-            gesture.setTranslation(.zero, in: gesture.view)
-            state.pan += SIMD2(
-                Float(translation.x) * 0.004,
-                Float(-translation.y) * 0.004
-            )
-            state.clamp()
-        }
-
-        @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
-            if gesture.state == .began {
-                pinchStart = state.zoom
-            }
-            state.zoom = pinchStart * Float(gesture.scale)
-            state.clamp()
-        }
-
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
-        ) -> Bool {
-            gestureRecognizer.name == "usdz-zoom" && other.name == "usdz-pan"
-                || gestureRecognizer.name == "usdz-pan" && other.name == "usdz-zoom"
-        }
+        statusView.configuration = configuration
     }
 }

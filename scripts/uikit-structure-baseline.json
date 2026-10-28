@@ -161,7 +161,7 @@
     "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
       "AppPreferences.*.set": 1
     },
-    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
+    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/USDZRealityCanvas.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerView.swift": {

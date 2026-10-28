@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Markdown inline USDZ contract")
@@ -163,6 +164,55 @@ struct MarkdownInlineUSDZTests {
         )
         view.prepareForRemoval()
         #expect(view.debugIsInteractingForTesting == false)
+    }
+
+    @Test("expanded scene shows Retry and Open file after a failed load, and Retry asks the provider again")
+    @MainActor
+    func expandedSceneRetryReloads() async throws {
+        let embed = try makeEmbed("![[models/scene.usdz]]")
+        let calls = FetchCounter()
+        let controller = FullScreenUSDZViewController(
+            embed: embed,
+            initialHandle: nil,
+            fileProvider: { _ in
+                calls.count += 1
+                throw CocoaError(.fileNoSuchFile)
+            }
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.isHidden = false
+        defer { hideTestWindow(window) }
+
+        func failureStatus() -> UIContentUnavailableConfiguration? {
+            controller.view.subviews.lazy
+                .compactMap { ($0 as? UIContentUnavailableView)?.configuration as? UIContentUnavailableConfiguration }
+                .first { $0.text == "Unable to load 3D scene" }
+        }
+        func waitForFailure(afterCalls expected: Int) async throws -> UIContentUnavailableConfiguration {
+            for _ in 0..<200 {
+                if calls.count == expected, let status = failureStatus() { return status }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            throw TestFailure("no failure status after \(expected) provider calls")
+        }
+
+        let failed = try await waitForFailure(afterCalls: 1)
+        #expect(failed.button.title == "Retry")
+        #expect(failed.secondaryButton.title == "Open file")
+
+        let retry = try #require(failed.buttonProperties.primaryAction)
+        retry.performWithSender(nil, target: nil)
+        _ = try await waitForFailure(afterCalls: 2)
+    }
+
+    private struct TestFailure: Error, CustomStringConvertible {
+        let description: String
+        init(_ description: String) { self.description = description }
+    }
+
+    private final class FetchCounter: @unchecked Sendable {
+        var count = 0
     }
 
     @Test("reserved geometry is 1:1")

@@ -179,7 +179,7 @@ STYLE
 
 ### Markdown inline USDZ
 
-`![[scene.usdz]]` and `![label](scene.usdz)` reserve a 1:1 slot. Chat scroll wins until you tap **Interact**; **Done** restores scroll. Drag orbits, pinch zooms, and two-finger pan moves the model; there is no auto-spin, and Reduce Motion adds no decorative motion. Expand opens a separate RealityKit scene from the same downloaded file, which is interactive at once and can reset the camera to a framed default. Loading, error, retry, and open-file fallback stay in the slot. Downloads use the 50 MB cap and load asynchronously. A plain `[[scene.usdz]]` link opens the document viewer.
+`![[scene.usdz]]` and `![label](scene.usdz)` reserve a 1:1 slot. Chat scroll wins until you tap **Interact**; **Done** restores scroll. Drag orbits, pinch zooms, and two-finger pan moves the model; there is no auto-spin, and Reduce Motion adds no decorative motion. Expand opens a separate RealityKit scene from the same downloaded file, which is interactive at once. Loading, error, retry, and open-file fallback stay in the slot. Downloads use the 50 MB cap and load asynchronously. A plain `[[scene.usdz]]` link opens the document viewer.
 
 ## Rules for authors
 

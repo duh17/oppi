@@ -940,13 +940,39 @@ final class FileViewerViewController: UIViewController {
     private func mountUSDZ(_ handle: USDZLocalFileStore.Handle) -> UIView {
         let page = UIView()
         addPage(page)
-        guard let root = HostFactory.root(near: self) else { return page }
-        let scene = HostFactory.content(
-            FileBrowserUSDZPreview(fileURL: handle.url, accessibilityName: currentFileName),
-            root: root
-        )
-        scene.view.backgroundColor = .clear
-        embed(scene, in: page, guide: page.safeAreaLayoutGuide)
+        let scene = USDZSceneView()
+        scene.isInteractive = true
+        scene.accessibilityIdentifier = "file-browser-usdz"
+        scene.accessibilityLabel = currentFileName
+        scene.translatesAutoresizingMaskIntoConstraints = false
+        page.addSubview(scene)
+        let safe = page.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            scene.topAnchor.constraint(equalTo: safe.topAnchor),
+            scene.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
+            scene.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
+            scene.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+        ])
+        let fileName = currentFileName
+        scene.onLoadFailed = { [weak page, weak scene] in
+            guard let page else { return }
+            scene?.clear()
+            scene?.isHidden = true
+            var configuration = UIContentUnavailableConfiguration.empty()
+            configuration.image = UIImage(systemName: "cube")
+            configuration.text = String(localized: "Unable to load 3D scene")
+            configuration.secondaryText = fileName
+            let unavailable = UIContentUnavailableView(configuration: configuration)
+            unavailable.translatesAutoresizingMaskIntoConstraints = false
+            page.addSubview(unavailable)
+            NSLayoutConstraint.activate([
+                unavailable.topAnchor.constraint(equalTo: page.safeAreaLayoutGuide.topAnchor),
+                unavailable.bottomAnchor.constraint(equalTo: page.safeAreaLayoutGuide.bottomAnchor),
+                unavailable.leadingAnchor.constraint(equalTo: page.safeAreaLayoutGuide.leadingAnchor),
+                unavailable.trailingAnchor.constraint(equalTo: page.safeAreaLayoutGuide.trailingAnchor),
+            ])
+        }
+        scene.show(fileURL: handle.url)
         return page
     }
 

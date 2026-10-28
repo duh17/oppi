@@ -142,7 +142,7 @@ UIKit owns every iOS view and all app structure (decided 2026-10-15). The target
 ### Remaining SwiftUI
 
 - **Untouched for now:** Settings and admin screens (servers, agents, schedules, workspace settings except its Skills page), the thread detail, the full-screen reader's content router, debug and screenshot previews, and the session lists' Message capsule (`SessionInboxCompactComposeBar`, shared with the thread detail).
-- **Framework-required:** the USDZ preview, because RealityKit's `RealityView` is SwiftUI-only, and the Apple-required surfaces in rule 6.
+- **Framework-required:** the USDZ canvas (`USDZRealityCanvas`, the only SwiftUI in the USDZ preview), because RealityKit's `RealityView` is SwiftUI-only, and the Apple-required surfaces in rule 6. Its inputs are values (file URL, `USDZInspectPose`, a load-failure callback). `USDZSceneView` hosts it through `HostFactory.content` and owns the inspect gestures and accessibility; the inline card's chrome (`NativeMarkdownUSDZView`), the expanded scene (`FullScreenUSDZViewController`), and the file viewer's page are UIKit around it.
 
 ### HostFactory: the transitional seam
 

@@ -198,6 +198,12 @@ struct ScreenshotPreviewView: View {
             GeoJSONMountRainierPreview()
         case "usdz-rendering":
             USDZRenderingPreview()
+        case "usdz-fullscreen":
+            USDZFullScreenPreviewHost(failing: false)
+                .ignoresSafeArea()
+        case "usdz-fullscreen-failed":
+            USDZFullScreenPreviewHost(failing: true)
+                .ignoresSafeArea()
         case "app-lock-cover":
             AppLockCoverPreviewHost(state: .locked)
                 .ignoresSafeArea()
