@@ -39,7 +39,8 @@ final class TrailingColumnController: UIViewController {
         let id: AnyHashable
         let minWidth: CGFloat
         let idealWidth: CGFloat
-        let screen: RouterScreen
+        /// Builds the panel's UIKit screen when the column installs it.
+        let makeScreen: () -> UIViewController
     }
 
     private var panelID: AnyHashable?
@@ -106,11 +107,7 @@ final class TrailingColumnController: UIViewController {
 
     private func installRequestedPanel() {
         guard let panel = requested, let root, container == nil else { return }
-        // A column holds UIKit screens; no panel is built from SwiftUI.
-        guard case .controller(let makeController, _) = panel.screen else {
-            preconditionFailure("A trailing column panel must be a UIKit screen")
-        }
-        let screen = makeController()
+        let screen = panel.makeScreen()
         let container = RouterNavigationController(rootViewController: screen)
         let themeStore = root.themeStore
         container.interfaceStyle = { themeStore.userInterfaceStyle }

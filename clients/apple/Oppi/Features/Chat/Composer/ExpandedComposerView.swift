@@ -199,11 +199,9 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
             ComposerShared.discardFailedTake(
                 manager: manager,
                 owner: .expandedComposer,
-                getText: { [weak self] in self?.live.text ?? "" },
                 setText: { [weak self] value in self?.setComposerText(value) },
                 getTextBeforeRecording: { [weak self] in self?.live.textBeforeRecording },
                 setTextBeforeRecording: { [weak self] value in self?.setPrefix(value) },
-                getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
                 setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value }
             )
             if let prefix = live.textBeforeRecording,
@@ -261,9 +259,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
         textView.onKeyboardRestoreRequest = { [weak self] in
             guard let self else { return }
             ComposerShared.handleKeyboardRestore(
-                getSuppressKeyboard: { self.suppressKeyboard },
                 setSuppressKeyboard: { self.suppressKeyboard = $0 },
-                getTextBeforeRecording: { self.live.textBeforeRecording },
                 setTextBeforeRecording: { self.setPrefix($0) },
                 voiceInputManager: self.configuration.voiceInputManager,
                 expectedOwner: .expandedComposer
@@ -620,11 +616,9 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
             await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
                 manager: voiceInputManager,
                 owner: .expandedComposer,
-                getText: { [weak self] in self?.live.text ?? "" },
                 setText: { [weak self] value in self?.setComposerText(value) },
                 getTextBeforeRecording: { [weak self] in self?.live.textBeforeRecording },
                 setTextBeforeRecording: { [weak self] value in self?.setPrefix(value) },
-                getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
                 setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value }
             )
             self.isHandlingVoiceLifecycle = false
@@ -687,7 +681,6 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
             case .stop:
                 await ComposerShared.stopVoiceInput(
                     manager: manager,
-                    getText: { [weak self] in self?.live.text ?? "" },
                     setText: { [weak self] value in self?.setComposerText(value) },
                     getTextBeforeRecording: { [weak self] in self?.live.textBeforeRecording },
                     setTextBeforeRecording: { [weak self] value in self?.setPrefix(value) }
@@ -695,9 +688,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
             case .cancelPreparing:
                 await ComposerShared.cancelVoiceInput(
                     manager: manager,
-                    getTextBeforeRecording: { [weak self] in self?.live.textBeforeRecording },
                     setTextBeforeRecording: { [weak self] value in self?.setPrefix(value) },
-                    getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
                     setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value }
                 )
             case .start:
@@ -706,11 +697,8 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
                     keyboardLanguage: keyboardLanguage,
                     owner: .expandedComposer,
                     baseText: live.text,
-                    getText: { [weak self] in self?.live.text ?? "" },
                     setText: { [weak self] value in self?.setComposerText(value) },
-                    getTextBeforeRecording: { [weak self] in self?.live.textBeforeRecording },
                     setTextBeforeRecording: { [weak self] value in self?.setPrefix(value) },
-                    getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
                     setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value },
                     getFocusRequestID: { [weak self] in self?.focusRequestID ?? 0 },
                     setFocusRequestID: { [weak self] value in
@@ -777,8 +765,6 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
                 let accepted = ComposerShared.applyCanvasToComposer(
                     attachment: attachment,
                     recognizedText: recognizedText,
-                    getText: { self.live.text },
-                    setText: { self.setComposerText($0) },
                     getAttachments: { self.live.pendingAttachments },
                     setAttachments: { self.setAttachments($0) },
                     replacingAttachmentID: replacing

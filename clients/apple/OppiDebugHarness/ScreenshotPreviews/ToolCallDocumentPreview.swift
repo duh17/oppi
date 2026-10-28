@@ -104,7 +104,7 @@ struct ToolCallDocumentPreview: View {
         }
         .overlay {
             if let reader {
-                PreviewFullScreenCodeViewer(content: reader.content)
+                PreviewFullScreenCodeViewer(content: reader.content, onDismiss: { self.reader = nil })
                     .ignoresSafeArea()
             }
         }

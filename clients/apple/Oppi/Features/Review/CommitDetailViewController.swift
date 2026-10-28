@@ -248,7 +248,7 @@ final class CommitDetailViewController: UIViewController {
                     id: AnyHashable(file.id),
                     minWidth: 320,
                     idealWidth: 440,
-                    screen: diffScreen(file)
+                    makeScreen: diffController(file)
                 )
             } : nil,
             root: root
@@ -260,14 +260,14 @@ final class CommitDetailViewController: UIViewController {
             clear: { [weak self] in self?.selectedFile = nil },
             screen: {
                 guard let file else { preconditionFailure("The diff sheet presents only with a selected file") }
-                return diffScreen(file)
+                return .controller(diffController(file))
             }
         )
     }
 
     /// The diff of `file` in this commit, with this viewer's server and
     /// review scope.
-    private func diffScreen(_ file: GitCommitFileInfo) -> RouterScreen {
+    private func diffController(_ file: GitCommitFileInfo) -> () -> UIViewController {
         let configuration = CommitFileDiffViewController.Configuration(
             workspaceId: configuration.workspaceId,
             sha: self.configuration.commit.sha,
@@ -275,11 +275,11 @@ final class CommitDetailViewController: UIViewController {
             reviewCommentSelectionScope: self.configuration.reviewCommentSelectionScope
         )
         let apiClient = apiClient
-        return .controller({ [weak self] in
+        return { [weak self] in
             let diff = CommitFileDiffViewController(configuration: configuration, apiClient: apiClient)
             diff.onClose = { self?.selectedFile = nil }
             return diff
-        })
+        }
     }
 
     // MARK: Actions

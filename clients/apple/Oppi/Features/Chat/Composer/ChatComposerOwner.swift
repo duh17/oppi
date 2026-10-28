@@ -437,11 +437,8 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
             keyboardLanguage: keyboardLanguage,
             owner: owner,
             baseText: baseText,
-            getText: textAccess.get,
             setText: textAccess.set,
-            getTextBeforeRecording: prefixAccess.get,
             setTextBeforeRecording: prefixAccess.set,
-            getSuppressKeyboard: suppressAccess.get,
             setSuppressKeyboard: suppressAccess.set,
             getFocusRequestID: { [weak self] in self?.focusRequestID ?? 0 },
             setFocusRequestID: { [weak self] value in
@@ -460,7 +457,6 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         guard let manager = current?.voiceInputManager else { return }
         await ComposerShared.stopVoiceInput(
             manager: manager,
-            getText: textAccess.get,
             setText: textAccess.set,
             getTextBeforeRecording: prefixAccess.get,
             setTextBeforeRecording: prefixAccess.set
@@ -472,9 +468,7 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         guard let manager = current?.voiceInputManager else { return }
         await ComposerShared.cancelVoiceInput(
             manager: manager,
-            getTextBeforeRecording: prefixAccess.get,
             setTextBeforeRecording: prefixAccess.set,
-            getSuppressKeyboard: suppressAccess.get,
             setSuppressKeyboard: suppressAccess.set
         )
         bar.apply()
@@ -485,11 +479,9 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
             manager: manager,
             owner: .inlineComposer,
-            getText: textAccess.get,
             setText: textAccess.set,
             getTextBeforeRecording: prefixAccess.get,
             setTextBeforeRecording: prefixAccess.set,
-            getSuppressKeyboard: suppressAccess.get,
             setSuppressKeyboard: suppressAccess.set,
             restoreKeyboard: false
         )
@@ -569,8 +561,6 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         ComposerShared.applyCanvasToComposer(
             attachment: attachment,
             recognizedText: recognizedText,
-            getText: textAccess.get,
-            setText: textAccess.set,
             getAttachments: attachmentsAccess.get,
             setAttachments: attachmentsAccess.set,
             replacingAttachmentID: replacingAttachmentID
@@ -614,20 +604,16 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         ComposerShared.discardFailedTake(
             manager: current?.voiceInputManager,
             owner: .inlineComposer,
-            getText: textAccess.get,
             setText: textAccess.set,
             getTextBeforeRecording: prefixAccess.get,
             setTextBeforeRecording: prefixAccess.set,
-            getSuppressKeyboard: suppressAccess.get,
             setSuppressKeyboard: suppressAccess.set
         )
     }
 
     func restoreKeyboardFromSuppression() {
         ComposerShared.handleKeyboardRestore(
-            getSuppressKeyboard: suppressAccess.get,
             setSuppressKeyboard: suppressAccess.set,
-            getTextBeforeRecording: prefixAccess.get,
             setTextBeforeRecording: prefixAccess.set,
             voiceInputManager: current?.voiceInputManager,
             expectedOwner: .inlineComposer

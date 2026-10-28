@@ -9,13 +9,13 @@ import Testing
 /// `UITextInputMode.currentInputModeDidChangeNotification`, and with
 /// a custom empty inputView, UIKit's `textInputMode?.primaryLanguage`
 /// may report nil or the device's default keyboard language instead of
-/// the user's previously active one. The PastableTextView coordinator
-/// would blindly write this stale value to both `@State keyboardLanguage`
-/// and `AppPreferences.Keyboard`, causing subsequent voice sessions to
-/// select the wrong speech model.
+/// the user's previously active one. Writing that stale value to the
+/// composer's keyboard language and `AppPreferences.Keyboard` would make
+/// subsequent voice sessions select the wrong speech model.
 ///
-/// **Fix:** Skip `keyboardLanguage` / `AppPreferences.Keyboard` updates
-/// when `PastableUITextView.isKeyboardSuppressed` is true.
+/// **Fix:** The composers skip `keyboardLanguage` / `AppPreferences.Keyboard`
+/// updates when `PastableUITextView.isKeyboardSuppressed` is true
+/// (`ComposerBarController.updateKeyboardLanguage`, `ExpandedComposerView`).
 @Suite("Voice Locale Stability")
 @MainActor
 struct VoiceLocaleStabilityTests {

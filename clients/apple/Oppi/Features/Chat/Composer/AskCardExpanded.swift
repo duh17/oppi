@@ -905,11 +905,8 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
                 keyboardLanguage: keyboardLanguage,
                 owner: .askCard,
                 baseText: base,
-                getText: { [weak self] in self?.customTexts[question.id] ?? "" },
                 setText: { [weak self] value in self?.customTexts[question.id] = value },
-                getTextBeforeRecording: { [weak self] in self?.dictationPrefixText },
                 setTextBeforeRecording: { [weak self] value in self?.dictationPrefixText = value ?? "" },
-                getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
                 setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value },
                 getFocusRequestID: { [weak self] in self?.focusRequestID ?? 0 },
                 setFocusRequestID: { [weak self] value in
@@ -950,11 +947,9 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
             await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
                 manager: manager,
                 owner: .askCard,
-                getText: { [weak self] in self?.customTexts[questionId] ?? "" },
                 setText: { [weak self] value in self?.customTexts[questionId] = value },
                 getTextBeforeRecording: { [weak self] in self?.dictationPrefixText },
                 setTextBeforeRecording: { [weak self] value in self?.dictationPrefixText = value ?? "" },
-                getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
                 setSuppressKeyboard: { [weak self] value in self?.suppressKeyboard = value }
             )
         } else if manager.isPreparing {

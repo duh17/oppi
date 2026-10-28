@@ -24,7 +24,11 @@ extension ChatViewController {
     /// file review, closes the panel so it reaches the composer; a session
     /// started from it closes the panel and pushes onto this chat's stack.
     func gitPanelScreen() -> RouterScreen {
-        .controller({ [weak self] in
+        .controller(gitPanelController())
+    }
+
+    func gitPanelController() -> () -> UIViewController {
+        { [weak self] in
             guard let self else { preconditionFailure("The Git panel presents only while its chat is alive") }
             let closePanel: () -> Void = { [weak self] in self?.model.showGit = false }
             return GitPanelViewController(
@@ -51,7 +55,7 @@ extension ChatViewController {
                 navigation: self.appNavigation,
                 onClose: closePanel
             )
-        })
+        }
     }
 
     /// The Git panel's status and session, read in its `updateProperties()`,
@@ -143,7 +147,11 @@ extension ChatViewController {
     /// reads this chat's session, server stores, and tab live; once the chat
     /// is gone it shows what it last read.
     func filePanelScreen() -> RouterScreen {
-        .controller({ [weak self] in
+        .controller(filePanelController())
+    }
+
+    func filePanelController() -> () -> UIViewController {
+        { [weak self] in
             guard let self, let root = self.root else {
                 preconditionFailure("The Files panel presents only while its chat is alive")
             }
@@ -158,7 +166,7 @@ extension ChatViewController {
                 },
                 onClose: { [weak self] in self?.closeChatFilePanel() }
             )
-        })
+        }
     }
 
     /// The Files panel's values: the session's files and checkout, this

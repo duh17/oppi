@@ -46,8 +46,6 @@ struct PaperMarkupCanvasSessionTests {
         let coverAccepted = ComposerShared.applyCanvasToComposer(
             attachment: attachment,
             recognizedText: "8 8 日 8",
-            getText: { coverText },
-            setText: { coverText = $0 },
             getAttachments: { coverAttachments },
             setAttachments: { coverAttachments = $0 },
             replacingAttachmentID: nil

@@ -177,7 +177,7 @@ extension ChatViewController {
                     id: AnyHashable(panel),
                     minWidth: 320,
                     idealWidth: 400,
-                    screen: sidePanelScreen(panel)
+                    makeScreen: sidePanelController(panel)
                 )
             },
             root: panel == nil ? nil : root
@@ -185,32 +185,40 @@ extension ChatViewController {
     }
 
     /// Outline, Git, Context, and Files are UIKit screens.
-    private func sidePanelScreen(_ panel: ChatSidePanel) -> RouterScreen {
+    private func sidePanelController(_ panel: ChatSidePanel) -> () -> UIViewController {
         switch panel {
-        case .files: filePanelScreen()
-        case .outline: outlineScreen()
-        case .git: gitPanelScreen()
-        case .context: contextScreen()
+        case .files: filePanelController()
+        case .outline: outlineController()
+        case .git: gitPanelController()
+        case .context: contextController()
         }
     }
 
-    /// A panel screen built on demand; it presents only while its chat is up.
-    private func panelScreen(
+    /// A panel controller built on demand; it presents only while its chat is up.
+    private func panelController(
         _ missingMessage: String,
         _ make: @escaping (ChatViewController) -> UIViewController
-    ) -> RouterScreen {
-        .controller({ [weak self] in
+    ) -> () -> UIViewController {
+        { [weak self] in
             guard let self else { preconditionFailure(missingMessage) }
             return make(self)
-        })
+        }
+    }
+
+    private func outlineController() -> () -> UIViewController {
+        panelController("The outline presents only while its chat is alive") { $0.makeOutlineController() }
+    }
+
+    private func contextController() -> () -> UIViewController {
+        panelController("The context panel presents only while its chat is alive") { $0.makeContextController() }
     }
 
     private func outlineScreen() -> RouterScreen {
-        panelScreen("The outline presents only while its chat is alive") { $0.makeOutlineController() }
+        .controller(outlineController())
     }
 
     private func contextScreen() -> RouterScreen {
-        panelScreen("The context panel presents only while its chat is alive") { $0.makeContextController() }
+        .controller(contextController())
     }
 
     func closeChatFilePanel() {

@@ -158,7 +158,7 @@ class PastableUITextView: UITextView {
     private var renderedVolatileBackgroundColorCache: UIColor?
     private var renderedCorrectionUnderlineColorCache: UIColor?
     private var programmaticTextDepth = 0
-    var isApplyingProgrammaticText: Bool { programmaticTextDepth > 0 }
+    private var isApplyingProgrammaticText: Bool { programmaticTextDepth > 0 }
     private var programmaticClearEcho: String?
     private var programmaticClearEchoDeadline: Date?
 
@@ -404,7 +404,7 @@ class PastableUITextView: UITextView {
         return true
     }
 
-    func rejectProgrammaticClearEcho(_ incoming: String) -> Bool {
+    private func rejectProgrammaticClearEcho(_ incoming: String) -> Bool {
         guard let echo = programmaticClearEcho,
               let deadline = programmaticClearEchoDeadline,
               Date() < deadline,

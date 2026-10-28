@@ -449,7 +449,7 @@ extension EnvironmentValues {
 
 // MARK: - Declarative presentation
 
-/// The root screen of a router modal or trailing column: SwiftUI content
+/// The root screen of a router modal: SwiftUI content
 /// hosted through `HostFactory.screen`, or a UIKit view controller that owns
 /// its `navigationItem` (title, bar items, search) itself. A UIKit root needs
 /// a navigation presentation (`.inNavigation()`) unless it is a

@@ -2059,6 +2059,7 @@
 		E1677AEB78E3CA8303AB5CCC /* FreshnessStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A8D3D2D8061C577E399968E /* FreshnessStateTests.swift */; };
 		E17CB949F4B8F528B830EDD2 /* SSHTerminalConnectSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B69A0FD4B8E42D904683F95 /* SSHTerminalConnectSession.swift */; };
 		E181E83736CAF8B1AAED7554 /* cmark-gfm in Frameworks */ = {isa = PBXBuildFile; productRef = 73D0CD745CBFC835A738B5C3 /* cmark-gfm */; };
+		E18B771252547566AD290C96 /* UIColor+Hex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25EA3C41A75A40001FE6ADEF /* UIColor+Hex.swift */; };
 		E18FECA280CCC0C88A73E70F /* SettingsEditorPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B257FEC8F35142CBCC918B3A /* SettingsEditorPage.swift */; };
 		E1AA1AAB955D27E07C7D4ECC /* AppOpenerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4DA145F582638024288CC72 /* AppOpenerTests.swift */; };
 		E1BEA7672661A4DA959F5970 /* SSHTerminalKittyGraphicsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A8C36DC256C05957F39C0C5 /* SSHTerminalKittyGraphicsTests.swift */; };
@@ -2752,6 +2753,7 @@
 		25D6AB78559D52C0802FB062 /* SessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStoreTests.swift; sourceTree = "<group>"; };
 		25E0843A5FB36A83E7AA0940 /* FuzzyMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuzzyMatch.swift; sourceTree = "<group>"; };
 		25E1EAB7B3DB387C15E7E1E8 /* FullScreenCodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullScreenCodeView.swift; sourceTree = "<group>"; };
+		25EA3C41A75A40001FE6ADEF /* UIColor+Hex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UIColor+Hex.swift"; sourceTree = "<group>"; };
 		2615C850025132D46C82EF62 /* ToolTimelineRowStatusAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTimelineRowStatusAppearance.swift; sourceTree = "<group>"; };
 		2651D06EDEC4E1A51DD8BABC /* ChatViewOutlineColdStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewOutlineColdStateTests.swift; sourceTree = "<group>"; };
 		2664804AEBE9B60684649418 /* MacSessionTimelineAutoFollowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionTimelineAutoFollowTests.swift; sourceTree = "<group>"; };
@@ -4953,6 +4955,7 @@
 				83CD322A52A58400A6393B2E /* Int+TokenFormatting.swift */,
 				545698598C85EA57EFA8FCAC /* NotificationNames.swift */,
 				A5A08CDC411F41CBF7121CC4 /* String+Path.swift */,
+				25EA3C41A75A40001FE6ADEF /* UIColor+Hex.swift */,
 				B8C05B4064B261AE4D4E8BC3 /* UIFont+Scaled.swift */,
 				A13F360F8079F7DC27038DDD /* UIView+VisibleWindow.swift */,
 				87C081F15A3F4C889F4B2A9F /* View+iPadReadableContent.swift */,
@@ -10474,6 +10477,7 @@
 				8C800A2188ACD3899B22C580 /* TreeSitterHighlighter.swift in Sources */,
 				68769C35E5E9CC7AFDA47DB4 /* TurnSendTracking.swift in Sources */,
 				30B1D90B4BA4BB2B47CFE262 /* TypewriterAnimator.swift in Sources */,
+				E18B771252547566AD290C96 /* UIColor+Hex.swift in Sources */,
 				1CC4C71E1C446C18E8669824 /* UIFont+Scaled.swift in Sources */,
 				D8EA99109B290CBB3D3043AB /* UIHangHarnessView.swift in Sources */,
 				12A46F734B6D2FFE88FADDC2 /* UIView+VisibleWindow.swift in Sources */,

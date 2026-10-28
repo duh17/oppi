@@ -816,7 +816,6 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private func stopVoiceInput(_ manager: VoiceInputManager) async {
         await ComposerShared.stopVoiceInput(
             manager: manager,
-            getText: { [weak self] in self?.inputTextView.text ?? "" },
             setText: { [weak self] in self?.setBodyText($0) },
             getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
             setTextBeforeRecording: { [weak self] in self?.setRecordingPrefix($0) }
@@ -826,9 +825,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private func cancelVoiceInput(_ manager: VoiceInputManager) async {
         await ComposerShared.cancelVoiceInput(
             manager: manager,
-            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
             setTextBeforeRecording: { [weak self] in self?.setRecordingPrefix($0) },
-            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
             setSuppressKeyboard: { [weak self] in self?.setKeyboardSuppression($0) }
         )
     }
@@ -851,9 +848,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                     keyboardLanguage: inputTextView.textInputMode?.primaryLanguage,
                     owner: .reviewCommentInline,
                     baseText: inputTextView.text ?? "",
-                    getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
                     setTextBeforeRecording: { [weak self] in self?.setRecordingPrefix($0) },
-                    getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
                     setSuppressKeyboard: { [weak self] in self?.setKeyboardSuppression($0) },
                     // The review card has no focus counter; the keyboard
                     // suppression above focuses the field.
@@ -881,11 +876,9 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                 await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
                     manager: manager,
                     owner: .reviewCommentInline,
-                    getText: { [weak self] in self?.inputTextView.text ?? "" },
                     setText: { [weak self] in self?.setBodyText($0) },
                     getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
                     setTextBeforeRecording: { [weak self] in self?.setRecordingPrefix($0) },
-                    getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
                     setSuppressKeyboard: { [weak self] in self?.setKeyboardSuppression($0) },
                     restoreKeyboard: false
                 )

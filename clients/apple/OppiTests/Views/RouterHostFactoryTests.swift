@@ -668,7 +668,7 @@ private final class ColumnScreen: UIViewController, TrailingColumnKeyboardScreen
     func showPanel(root: AppRootEnvironment) {
         let panelField = panelField
         column.show(
-            TrailingColumnController.Panel(id: "panel", minWidth: 100, idealWidth: 150, screen: .controller {
+            TrailingColumnController.Panel(id: "panel", minWidth: 100, idealWidth: 150, makeScreen: {
                 let panel = UIViewController()
                 panel.view.addSubview(panelField)
                 return panel

@@ -270,11 +270,8 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
             keyboardLanguage: keyboardLanguage,
             owner: owner,
             baseText: baseText,
-            getText: { [weak self] in self?.text ?? "" },
             setText: { [weak self] in self?.text = $0 },
-            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
             setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
-            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
             setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 },
             getFocusRequestID: { [weak self] in self?.focusRequestID ?? 0 },
             setFocusRequestID: { [weak self] in self?.focusRequestID = $0 },
@@ -289,7 +286,6 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         guard let manager = voiceInputManager else { return }
         await ComposerShared.stopVoiceInput(
             manager: manager,
-            getText: { [weak self] in self?.text ?? "" },
             setText: { [weak self] in self?.text = $0 },
             getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
             setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 }
@@ -301,9 +297,7 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         guard let manager = voiceInputManager else { return }
         await ComposerShared.cancelVoiceInput(
             manager: manager,
-            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
             setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
-            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
             setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 }
         )
         controller?.apply()
@@ -314,11 +308,9 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
             manager: manager,
             owner: .inlineComposer,
-            getText: { [weak self] in self?.text ?? "" },
             setText: { [weak self] in self?.text = $0 },
             getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
             setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
-            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
             setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 },
             restoreKeyboard: false
         )
@@ -409,8 +401,6 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         let ok = ComposerShared.applyCanvasToComposer(
             attachment: attachment,
             recognizedText: recognizedText,
-            getText: { [weak self] in self?.text ?? "" },
-            setText: { [weak self] in self?.text = $0 },
             getAttachments: { [weak self] in self?.pendingAttachments ?? [] },
             setAttachments: { [weak self] in self?.setPendingAttachments($0) },
             replacingAttachmentID: replacingAttachmentID
@@ -453,11 +443,9 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         ComposerShared.discardFailedTake(
             manager: voiceInputManager,
             owner: .inlineComposer,
-            getText: { [weak self] in self?.text ?? "" },
             setText: { [weak self] in self?.text = $0 },
             getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
             setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
-            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
             setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 }
         )
         controller?.apply()
@@ -465,9 +453,7 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
 
     func restoreKeyboardFromSuppression() {
         ComposerShared.handleKeyboardRestore(
-            getSuppressKeyboard: { [weak self] in self?.suppressKeyboard ?? false },
             setSuppressKeyboard: { [weak self] in self?.suppressKeyboard = $0 },
-            getTextBeforeRecording: { [weak self] in self?.textBeforeRecording },
             setTextBeforeRecording: { [weak self] in self?.textBeforeRecording = $0 },
             voiceInputManager: voiceInputManager,
             expectedOwner: .inlineComposer

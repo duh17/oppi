@@ -112,11 +112,9 @@ enum ComposerShared {
     static func discardFailedTake(
         manager: VoiceInputManager?,
         owner: VoiceInputOwner,
-        getText: @escaping () -> String,
         setText: @escaping (String) -> Void,
         getTextBeforeRecording: @escaping () -> String?,
         setTextBeforeRecording: @escaping (String?) -> Void,
-        getSuppressKeyboard: @escaping () -> Bool,
         setSuppressKeyboard: @escaping (Bool) -> Void
     ) {
         guard captureFailure(manager, owner: owner) != nil else { return }
@@ -184,8 +182,6 @@ enum ComposerShared {
     static func applyCanvasToComposer(
         attachment: PendingAttachment,
         recognizedText _: String,
-        getText _: @escaping () -> String,
-        setText _: @escaping (String) -> Void,
         getAttachments: @escaping () -> [PendingAttachment],
         setAttachments: @escaping ([PendingAttachment]) -> Void,
         replacingAttachmentID: String?
@@ -579,11 +575,8 @@ enum ComposerShared {
         keyboardLanguage: String?,
         owner: VoiceInputOwner,
         baseText: String,
-        getText: (() -> String)? = nil,
         setText: ((String) -> Void)? = nil,
-        getTextBeforeRecording: @escaping () -> String?,
         setTextBeforeRecording: @escaping (String?) -> Void,
-        getSuppressKeyboard: @escaping () -> Bool,
         setSuppressKeyboard: @escaping (Bool) -> Void,
         getFocusRequestID: @escaping () -> Int,
         setFocusRequestID: @escaping (Int) -> Void,
@@ -635,7 +628,6 @@ enum ComposerShared {
 
     static func stopVoiceInput(
         manager: VoiceInputManager,
-        getText: @escaping () -> String,
         setText: @escaping (String) -> Void,
         getTextBeforeRecording: @escaping () -> String?,
         setTextBeforeRecording: @escaping (String?) -> Void
@@ -650,9 +642,7 @@ enum ComposerShared {
 
     static func cancelVoiceInput(
         manager: VoiceInputManager,
-        getTextBeforeRecording: @escaping () -> String?,
         setTextBeforeRecording: @escaping (String?) -> Void,
-        getSuppressKeyboard: @escaping () -> Bool,
         setSuppressKeyboard: @escaping (Bool) -> Void
     ) async {
         await manager.cancelRecording()
@@ -746,12 +736,10 @@ enum ComposerShared {
     static func finishOwnedVoiceInputBeforeSubmit(
         manager: VoiceInputManager?,
         owner: VoiceInputOwner,
-        getText: @escaping () -> String,
         setText: @escaping (String) -> Void,
         getTextBeforeRecording: @escaping () -> String?,
         setTextBeforeRecording: @escaping (String?) -> Void,
-        getSuppressKeyboard: @escaping () -> Bool,
-        setSuppressKeyboard: ((Bool) -> Void)?,
+        setSuppressKeyboard: @escaping (Bool) -> Void,
         restoreKeyboard: Bool = true
     ) async -> Bool {
         guard let manager,
@@ -761,7 +749,6 @@ enum ComposerShared {
         if manager.isRecording {
             await stopVoiceInput(
                 manager: manager,
-                getText: getText,
                 setText: setText,
                 getTextBeforeRecording: getTextBeforeRecording,
                 setTextBeforeRecording: setTextBeforeRecording
@@ -771,7 +758,7 @@ enum ComposerShared {
             setTextBeforeRecording(nil)
         }
         if restoreKeyboard {
-            setSuppressKeyboard?(false)
+            setSuppressKeyboard(false)
         }
         return true
     }
@@ -816,7 +803,7 @@ enum ComposerShared {
         manager: VoiceInputManager?,
         owner: VoiceInputOwner,
         setTextBeforeRecording: @escaping (String?) -> Void,
-        setSuppressKeyboard: ((Bool) -> Void)?
+        setSuppressKeyboard: @escaping (Bool) -> Void
     ) async -> Bool {
         guard let manager,
               ownsVoiceInput(manager, owner: owner),
@@ -824,7 +811,7 @@ enum ComposerShared {
 
         await manager.cancelRecording()
         setTextBeforeRecording(nil)
-        setSuppressKeyboard?(false)
+        setSuppressKeyboard(false)
         return true
     }
 
@@ -837,9 +824,7 @@ enum ComposerShared {
     }
 
     static func handleKeyboardRestore(
-        getSuppressKeyboard: @escaping () -> Bool,
         setSuppressKeyboard: @escaping (Bool) -> Void,
-        getTextBeforeRecording: @escaping () -> String?,
         setTextBeforeRecording: @escaping (String?) -> Void,
         voiceInputManager: VoiceInputManager?,
         expectedOwner: VoiceInputOwner?

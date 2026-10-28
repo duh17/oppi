@@ -652,7 +652,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
                 id: AnyHashable(FileListPanel().id),
                 minWidth: 240,
                 idealWidth: 300,
-                screen: .controller({ [weak self] in
+                makeScreen: { [weak self] in
                     let list = ReviewFileListViewController(
                         files: files,
                         currentPath: self?.currentFile.path,
@@ -661,7 +661,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
                     )
                     self?.fileList = list
                     return list
-                })
+                }
             ),
             root: root
         )

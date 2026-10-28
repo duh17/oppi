@@ -106,8 +106,11 @@ struct FullscreenImageChromePreview: UIViewControllerRepresentable {
 
 /// The production full-screen viewer (`FullScreenCodeViewController`) as a
 /// SwiftUI preview root. Content is immutable; only the theme follows updates.
+/// With `onDismiss` the viewer shows its back button, which calls it; without
+/// it the viewer is the whole preview and has nothing to close.
 struct PreviewFullScreenCodeViewer: UIViewControllerRepresentable {
     let content: FullScreenCodeContent
+    var onDismiss: (@MainActor @Sendable () -> Void)?
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     var reviewCommentSessionId: String?
     var reviewCommentSourceLabel: String?
@@ -117,6 +120,7 @@ struct PreviewFullScreenCodeViewer: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
+            presentationMode: onDismiss.map { .embedded(onDismiss: $0) } ?? .sheet,
             reviewCommentSelectionRouter: reviewCommentSelectionRouter,
             reviewCommentSessionId: reviewCommentSessionId,
             reviewCommentSourceLabel: reviewCommentSourceLabel
