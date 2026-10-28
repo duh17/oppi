@@ -97,6 +97,7 @@ enum UIValidateDump {
             let element = app.descendants(matching: .any)[identifier]
             return element.exists ? element.frame : nil
         }
+        let barFrames = app.navigationBars.allElementsBoundByIndex.map(\.frame)
         do {
             try app.performAccessibilityAudit(for: .all) { issue in
                 box.issues.append(
@@ -105,7 +106,7 @@ enum UIValidateDump {
                         compact: issue.compactDescription,
                         detailed: issue.detailedDescription,
                         element: describeElement(issue.element),
-                        waivedReason: waivedReason(for: issue, previewFrames: previewFrames)
+                        waivedReason: waivedReason(for: issue, previewFrames: previewFrames, barFrames: barFrames)
                     )
                 )
                 return true
@@ -222,14 +223,25 @@ enum UIValidateDump {
     /// The Session Rows editor's preview draws `SessionRowView` over sample data, a row the
     /// editor does not own. The audit reports `dynamicType` (its fixed-size labels), `textClipped`
     /// (the row and the "PREVIEW · SAMPLE DATA" label at accessibility sizes) and `hitRegion`
-    /// (its non-interactive subviews) there at every size, and `sufficientElementDescription` for
-    /// its cost label. They predate the Auto-Name removal: the editor and `SessionRowView` are
-    /// unchanged by it.
-    private static func waivedReason(for issue: XCUIAccessibilityAuditIssue, previewFrames: [CGRect]) -> String? {
+    /// (its non-interactive subviews) there at every size, `sufficientElementDescription` for
+    /// its cost label, and `contrast` for its dimmed detail labels on the iPad's dark theme. They
+    /// predate the Auto-Name removal: the editor and `SessionRowView` are unchanged by it.
+    private static func waivedReason(
+        for issue: XCUIAccessibilityAuditIssue,
+        previewFrames: [CGRect],
+        barFrames: [CGRect]
+    ) -> String? {
         if issue.auditType == .textClipped, issue.element?.elementType == .searchField {
             return "textClipped on the system search field, which draws its text in full"
         }
-        if [.dynamicType, .textClipped, .hitRegion, .sufficientElementDescription].contains(issue.auditType),
+        // The iPad's dark theme draws every navigation bar title under this finding, Settings →
+        // General (no Session Rows involved) included.
+        if issue.auditType == .contrast, issue.element?.elementType == .staticText,
+           let frame = issue.element?.frame,
+           barFrames.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(frame) }) {
+            return "contrast on a navigation bar title, which every UIKit settings page shows on the iPad's dark theme"
+        }
+        if [.dynamicType, .textClipped, .hitRegion, .sufficientElementDescription, .contrast].contains(issue.auditType),
            let frame = issue.element?.frame,
            previewFrames.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(frame) }) {
             return "\(auditTypeName(issue.auditType)) on the Session Rows preview's sample SessionRowView, which predates this change"
