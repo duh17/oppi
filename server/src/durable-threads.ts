@@ -5,7 +5,6 @@ import {
   configure,
   type Agent,
   type ConversationId,
-  type Harness,
   type ModelRef,
 } from "@earendil-works/pi-durable";
 import { existsSync } from "node:fs";
@@ -654,39 +653,6 @@ export class DurableThreads {
     this.deps.storage.saveSession(session);
     return session;
   }
-
-  /**
-   * The Sessions of the thread containing `sessionId`: the topmost owner and every
-   * conversation it owns, transitively, read from the Harness ownership edges.
-   */
-  async threadSessions(
-    sessionId: string,
-  ): Promise<{ rootSessionId: string; sessionIds: Set<string> } | undefined> {
-    const session = this.deps.storage.getSession(sessionId);
-    const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
-    if (!session || conversationId === undefined) return undefined;
-    return this.deps.runtime.withSession(session, async (harness, host) => {
-      const { chain, members } = await readThread(harness, conversationId);
-      const byConversation = new Map<ConversationId, string>();
-      for (const { conversationId, sessionId } of this.deps.storage.listDurableStoreConversations(
-        host.storeId,
-      )) {
-        const id = conversationId as ConversationId;
-        if (!byConversation.has(id)) byConversation.set(id, sessionId);
-      }
-      // The harness root may have lost its Session (deleted). The thread then roots at the
-      // nearest remaining ancestor: the topmost conversation above `sessionId` that has one.
-      const rootConversation = chain.filter((id) => byConversation.has(id)).at(-1);
-      const rootSessionId = rootConversation && byConversation.get(rootConversation);
-      if (rootSessionId === undefined) return undefined;
-      const sessionIds = new Set<string>();
-      for (const member of members) {
-        const id = byConversation.get(member);
-        if (id !== undefined) sessionIds.add(id);
-      }
-      return { rootSessionId, sessionIds };
-    });
-  }
 }
 
 /** The conversation whose task owns `id` in `host`'s store; undefined for an ownerless one. */
@@ -694,42 +660,4 @@ async function ownerOf(host: SessionHost, id: ConversationId): Promise<Conversat
   const { harness } = await host.open();
   const record = await harness.commit((tx) => tx.conversation(id), BACKGROUND_CONTEXT);
   return record?.owner?.conversationId;
-}
-
-/**
- * Walk owner edges up to the root, then down through `ownerConversationId`, in one read.
- * `chain` is the path from `id` up to the root, nearest first.
- */
-function readThread(
-  harness: Harness,
-  id: ConversationId,
-): Promise<{ chain: ConversationId[]; members: ConversationId[] }> {
-  return harness.commit(async (tx) => {
-    const chain: ConversationId[] = [id];
-    const seen = new Set<ConversationId>(chain);
-    let root = id;
-    for (;;) {
-      const parent = (await tx.conversation(root))?.owner?.conversationId;
-      if (parent === undefined || seen.has(parent)) break;
-      seen.add(parent);
-      chain.push(parent);
-      root = parent;
-    }
-    const members: ConversationId[] = [root];
-    const known = new Set<ConversationId>(members);
-    // Array iteration also visits children pushed during the walk.
-    for (const member of members) {
-      let cursor;
-      do {
-        const page = await tx.scanConversations({ ownerConversationId: member }, 100, cursor);
-        for (const child of page.items)
-          if (!known.has(child.id)) {
-            known.add(child.id);
-            members.push(child.id);
-          }
-        cursor = page.next;
-      } while (cursor);
-    }
-    return { chain, members };
-  }, BACKGROUND_CONTEXT);
 }

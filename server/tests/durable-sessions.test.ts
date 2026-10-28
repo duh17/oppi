@@ -343,18 +343,8 @@ function requestIds(
   }
 }
 
-/** The thread containing `sessionId`, read from the Harness ownership edges. */
-async function getThread(
-  f: Fixture,
-  sessionId: string,
-): Promise<{ rootSessionId: string; sessionIds: string[] }> {
-  const thread = await (await f.threads()).threadSessions(sessionId);
-  expect(thread).toBeDefined();
-  return { rootSessionId: thread!.rootSessionId, sessionIds: [...thread!.sessionIds].sort() };
-}
-
 describe("durable-native threads", () => {
-  it("runs a foreground child as a bound Session: parent busy until it is idle, thread from ownership", async () => {
+  it("runs a foreground child as a bound Session: parent busy until it is idle", async () => {
     const childGate = gate();
     let childStarted!: () => void;
     const started = new Promise<void>((resolve) => (childStarted = resolve));
@@ -390,16 +380,6 @@ describe("durable-native threads", () => {
     // Busy until the child is idle.
     expect((await harness.snapshot(LiveDoc, parentConversation, context))?.run).toBeDefined();
     expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeDefined();
-
-    // The thread comes from ownership: it survives losing the launch edge copy.
-    const stored = f.storage.getSession(child.id)!;
-    f.storage.saveSession({ ...stored, launch: { ...stored.launch!, parentSessionId: undefined } });
-    for (const from of [f.parent.id, child.id]) {
-      const thread = await getThread(f, from);
-      expect(thread.rootSessionId).toBe(f.parent.id);
-      expect(thread.sessionIds).toEqual([f.parent.id, child.id].sort());
-    }
-    f.storage.saveSession(stored);
 
     childGate.open();
     await parentEnd;
@@ -1347,9 +1327,16 @@ describe("durable-native threads", () => {
       text: "LEAF_ANSWER",
       details: { name: "Leaf", sessionId: leaf!.id },
     });
-    expect((await getThread(f, leaf!.id)).sessionIds).toEqual(
-      [f.parent.id, plain.id, lead!.id, mid!.id, leaf!.id].sort(),
-    );
+    // Clients build the thread from these launch edges: every row's chain ends at the parent.
+    const byId = new Map(f.storage.listSessions().map((session) => [session.id, session]));
+    const chain = (id: string): string[] => {
+      const up: string[] = [];
+      for (let at = byId.get(id); at; at = byId.get(at.launch?.parentSessionId ?? ""))
+        up.push(at.id);
+      return up;
+    };
+    expect(chain(leaf!.id)).toEqual([leaf!.id, mid!.id, lead!.id, f.parent.id]);
+    expect(chain(plain.id)).toEqual([plain.id, f.parent.id]);
   });
 
   it("refuses a grant from a sandbox parent, before any child exists", async () => {
@@ -2914,11 +2901,11 @@ describe("durable-native threads", () => {
     await f.manager.stopSession(f.parent.id);
     f.storage.deleteSession(f.parent.id);
 
-    for (const from of children) {
-      const thread = await getThread(f, from.id);
-      expect(thread.rootSessionId).toBe(from.id);
-      expect(thread.sessionIds).toEqual(children.map((child) => child.id).sort());
+    // The children keep their launch edge to the deleted parent: a client roots each at itself.
+    for (const child of children) {
+      expect(f.storage.getSession(child.id)?.launch?.parentSessionId).toBe(f.parent.id);
     }
+    expect(f.storage.getSession(f.parent.id)).toBeUndefined();
   });
 
   it("deletes a session tree's store with its last Session and leaves other stores alone", async () => {
