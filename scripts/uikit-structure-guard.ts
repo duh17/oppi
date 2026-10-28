@@ -134,7 +134,6 @@ const settingsThemingExempt = [settingsBase, settingsStyle, ...settingsThemingEx
  * through its server adapter (`APIClient+SettingsTransport.swift`).
  */
 const settingsApiWrites = [
-  "setAutoTitleConfig",
   "setMobileOutputGuideConfiguration",
   "setServerMetricsEnabled",
   "setServerSkillEnabled",
