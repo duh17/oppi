@@ -99,6 +99,8 @@ final class ScopedLockCoverViewController: UIViewController {
 
     private let action: Action
     private let accessory: UIView?
+    /// Reads the name each pass, so a rename shows while the cover is up.
+    private let titleSource: (@MainActor () -> String)?
     private let symbol = UIImageView()
     private let titleLabel = UILabel()
     private let lockedLabel = UILabel()
@@ -107,13 +109,24 @@ final class ScopedLockCoverViewController: UIViewController {
     init(target: ScopedLockTarget, title: String, accessory: UIView? = nil) {
         action = .unlock(target)
         self.accessory = accessory
+        titleSource = nil
         coverTitle = title
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    /// A cover whose name is read from observable state in `updateProperties()`.
+    init(target: ScopedLockTarget, titleSource: @escaping @MainActor () -> String, accessory: UIView? = nil) {
+        action = .unlock(target)
+        self.accessory = accessory
+        self.titleSource = titleSource
+        coverTitle = titleSource()
         super.init(nibName: nil, bundle: nil)
     }
 
     init(title: String, closeTitle: String, onClose: @escaping @MainActor () -> Void) {
         action = .close(title: closeTitle, handler: onClose)
         accessory = nil
+        titleSource = nil
         coverTitle = title
         super.init(nibName: nil, bundle: nil)
     }
@@ -172,7 +185,7 @@ final class ScopedLockCoverViewController: UIViewController {
         let palette = (HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
         view.backgroundColor = UIColor(palette.bg)
         symbol.tintColor = UIColor(palette.comment)
-        titleLabel.text = coverTitle
+        titleLabel.text = titleSource?() ?? coverTitle
         titleLabel.textColor = UIColor(palette.fg)
         lockedLabel.textColor = UIColor(palette.comment)
 
@@ -193,7 +206,11 @@ final class ScopedLockCoverViewController: UIViewController {
         configuration.buttonSize = .large
         configuration.baseBackgroundColor = UIColor(palette.blue)
         unlockButton.configuration = configuration
-        unlockButton.isEnabled = !ScopedLockService.shared.isAuthenticating
+        // Only Unlock waits for a prompt that is up; Close always leaves.
+        switch action {
+        case .unlock: unlockButton.isEnabled = !ScopedLockService.shared.isAuthenticating
+        case .close: unlockButton.isEnabled = true
+        }
     }
 }
 

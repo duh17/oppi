@@ -31,7 +31,6 @@ struct ExtensionNativeReaderContent {
     let identifierSuffix: String
     let title: String
     let subtitle: String?
-    let statusText: String?
     var linkContext: ExtensionSurfaceLinkContext = .empty
     var onOpenURL: ((URL) -> Bool)? = nil
     /// Current snapshot for the same surface id; the reader follows widget updates through it.

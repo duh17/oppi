@@ -770,7 +770,7 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
 
     private func openFullScreen() {
         switch entry {
-        case .native(let nativeSurface, let statusText):
+        case .native(let nativeSurface, _):
             let id = nativeSurface.surface.id
             var liveSurface: (@MainActor () -> ExtensionUINativeSurface?)?
             if let lookup = actions.liveSurface {
@@ -781,7 +781,6 @@ private final class ExtensionSurfaceDrawerView: ExtensionDrawerPanelView {
                 identifierSuffix: entry.identifierSuffix,
                 title: entry.title,
                 subtitle: entry.subtitle,
-                statusText: statusText,
                 linkContext: actions.linkContext,
                 onOpenURL: actions.onOpenURL,
                 liveSurface: liveSurface

@@ -487,8 +487,7 @@ struct ChatReaderOpenLookupDestinationTests {
                     ),
                     identifierSuffix: "suffix",
                     title: "Title",
-                    subtitle: nil,
-                    statusText: nil
+                    subtitle: nil
                 )
             ),
         ]

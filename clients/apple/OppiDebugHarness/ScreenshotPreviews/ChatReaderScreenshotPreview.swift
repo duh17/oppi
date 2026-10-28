@@ -86,8 +86,7 @@ enum ChatReaderScreenshotFixture {
             surface: surface,
             identifierSuffix: "jobs",
             title: "Jobs",
-            subtitle: "3 running",
-            statusText: nil
+            subtitle: "3 running"
         ))
     }
 }

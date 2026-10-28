@@ -57,8 +57,7 @@ struct ChatReaderViewControllerTests {
             ),
             identifierSuffix: "jobs",
             title: "Jobs",
-            subtitle: "2 running",
-            statusText: nil
+            subtitle: "2 running"
         ))
     }
 
@@ -198,5 +197,42 @@ struct ChatReaderViewControllerTests {
             host.navigation.viewControllers.count == 1
         }
         #expect(left, "Close did not leave the reader")
+    }
+
+    @Test("the shell's server lock cover follows the server's name")
+    func serverLockCoverTitleFollowsTheServersName() async throws {
+        func server(named name: String) throws -> PairedServer {
+            try #require(PairedServer(from: ServerCredentials(
+                host: "cover.local",
+                port: 7749,
+                token: "sk_test",
+                name: name,
+                scheme: .https,
+                serverFingerprint: "sha256:cover-title",
+                tlsCertFingerprint: "sha256:cover-title-leaf"
+            )))
+        }
+        func label(_ text: String, in root: UIView) -> UILabel? {
+            if let label = root as? UILabel, label.text == text { return label }
+            return root.subviews.lazy.compactMap { label(text, in: $0) }.first
+        }
+        let serverStore = ServerStore()
+        let first = try server(named: "alpha")
+        serverStore.replaceServersForPreview([first])
+        let root = makeTestAppRoot(coordinator: ConnectionCoordinator(serverStore: serverStore))
+        let cover = ShellRouteScreens.serverLockCover(serverId: first.id, root: root)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = cover
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        cover.view.layoutIfNeeded()
+        cover.updatePropertiesIfNeeded()
+        #expect(label("alpha", in: cover.view) != nil)
+
+        serverStore.replaceServersForPreview([try server(named: "beta")])
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            cover.updatePropertiesIfNeeded()
+            return label("beta", in: cover.view) != nil
+        }, "the cover kept the old server name")
     }
 }

@@ -237,9 +237,10 @@ enum ShellRouteScreens {
     }
 
     static func serverLockCover(serverId: String, root: AppRootEnvironment) -> UIViewController {
-        ScopedLockCoverViewController(
+        let serverStore = root.coordinator.serverStore
+        return ScopedLockCoverViewController(
             target: .server(serverId),
-            title: root.coordinator.serverStore.server(for: serverId)?.name ?? String(localized: "Server"),
+            titleSource: { serverStore.server(for: serverId)?.name ?? String(localized: "Server") },
             accessory: LockedServerSwitchButton(root: root)
         )
     }
