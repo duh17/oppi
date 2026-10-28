@@ -37,8 +37,8 @@ struct TailnetServerSettingsTests {
         #expect(root.navigation.workspaceStackRouteElements.last == .serverDetails(ServerDetailsNavTarget(serverId: peerServer.id)))
     }
 
-    @Test("In a sheet the Paired row is only a status: it switches nothing and opens nothing")
-    func pairedRowInASheetHasNoAction() throws {
+    @Test("From App Settings the Paired row opens Server Settings; in a sheet it is only a status")
+    func pairedRowOpensOnlyOutsideASheet() async throws {
         let paired = try makeServer("mac-b.tail1234.ts.net", order: 0)
         let serverStore = ServerStore()
         serverStore.replaceServersForPreview([paired])
@@ -48,11 +48,52 @@ struct TailnetServerSettingsTests {
             id: "peer-b", hostName: "mac-b", dnsName: "mac-b.tail1234.ts.net", os: "macOS",
             tailscaleIPs: ["100.64.0.2"], isOnline: true
         )
+        TailnetNodeController.shared.applyPreviewSnapshot(TailnetStatusSnapshot(
+            backendState: .running, authURL: nil, selfDNSName: "oppi-ios.tail1234.ts.net", tailnetName: nil, peers: [peer]
+        ))
+        defer {
+            TailnetNodeController.shared.applyPreviewSnapshot(TailnetStatusSnapshot(
+                backendState: .noState, authURL: nil, selfDNSName: nil, tailnetName: nil, peers: []
+            ))
+        }
 
-        let inSheet = TailnetSettingsViewController(coordinator: coordinator, onClose: {})
-        let inStack = TailnetSettingsViewController(coordinator: coordinator)
+        let fromSettings = try show(TailnetSettingsViewController(coordinator: coordinator))
+        defer { fromSettings.window.isHidden = true; fromSettings.window.rootViewController = nil }
+        let inSheet = try show(TailnetSettingsViewController(coordinator: coordinator, onClose: {}))
+        defer { inSheet.window.isHidden = true; inSheet.window.rootViewController = nil }
 
-        #expect(inSheet.peerRow(peer).rowAction == nil)
-        #expect(inStack.peerRow(peer).rowAction?.0 == "tailnet.paired.peer-b")
+        // Both lists draw the peer's row; only the one outside a sheet makes it open something.
+        for shown in [fromSettings, inSheet] {
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+                shown.page.view.layoutIfNeeded()
+                return Self.hasText("mac-b", in: shown.page.view)
+            })
+        }
+        #expect(Self.pairedRowButton("tailnet.paired.peer-b", in: fromSettings.page.view) != nil)
+        #expect(Self.pairedRowButton("tailnet.paired.peer-b", in: inSheet.page.view) == nil)
+    }
+
+    private func show(_ page: TailnetSettingsViewController) throws -> (page: TailnetSettingsViewController, window: UIWindow) {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
+        window.rootViewController = UINavigationController(rootViewController: page)
+        window.makeKeyAndVisible()
+        page.view.layoutIfNeeded()
+        return (page, window)
+    }
+
+    /// The row's tap overlay, which only a row that opens something shows.
+    private static func pairedRowButton(_ identifier: String, in view: UIView) -> UIButton? {
+        if let button = view as? UIButton, button.accessibilityIdentifier == identifier, !button.isHidden { return button }
+        for subview in view.subviews {
+            if let found = pairedRowButton(identifier, in: subview) { return found }
+        }
+        return nil
+    }
+
+    private static func hasText(_ text: String, in view: UIView) -> Bool {
+        if (view as? UILabel)?.text == text { return true }
+        return view.subviews.contains { hasText(text, in: $0) }
     }
 }

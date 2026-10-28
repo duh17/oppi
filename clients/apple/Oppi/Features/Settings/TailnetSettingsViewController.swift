@@ -387,7 +387,7 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
         return peerRow(peer)
     }
 
-    func peerRow(_ peer: TailnetPeer) -> SetupRow {
+    private func peerRow(_ peer: TailnetPeer) -> SetupRow {
         let fg = UIColor(palette.fg)
         let comment = UIColor(palette.comment)
         let address = SetupRow.Line(text: peer.dnsName.isEmpty ? peer.tailscaleIPs.first ?? "" : peer.dnsName, color: comment)
