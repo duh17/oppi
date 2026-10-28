@@ -7,7 +7,9 @@ import UIKit
 /// The page is pinned to the server it was made for (Server Settings pushes it and
 /// tracks it, so a server switch closes it). A tap asks the server store to save
 /// the icon, and the grid's mark and the preview read the store's own answer, so a
-/// save the store refuses leaves the old icon marked.
+/// store that has not loaded the pairing list (it refuses every change) leaves the old
+/// icon marked. A Keychain write that fails after the store accepted the change is only
+/// logged by `ServerStore.setBadgeIcon`; the icon then shows until the app restarts.
 @MainActor
 final class ServerBadgeViewController: SettingsListViewController<ServerBadgeViewController.Section, ServerBadgeViewController.Item> {
     enum Section: Hashable, Sendable { case preview, icons }

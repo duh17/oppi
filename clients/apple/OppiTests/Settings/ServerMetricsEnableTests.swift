@@ -159,6 +159,23 @@ struct ServerMetricsEnableTests {
         #expect(h.root.coordinator.connection(for: serverId)?.serverMetricsEnabled == false)
     }
 
+    @Test("Coming back to Server Settings shows a change another device made meanwhile")
+    func returningReloadsTheServerSettings() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        let (settings, window) = try makeServerSettings(h.root, serverId: serverId)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let store = h.root.coordinator.settings(for: serverId)
+        let metrics = SettingsCatalog.serverMetricsEnabled
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { store.read(metrics).current == false })
+
+        h.transport.changeElsewhere(["enabled": true])
+        // The return from a page this one pushed.
+        settings.viewWillAppear(true)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { store.read(metrics).current == true })
+    }
+
     @Test("A conflict that brings another device's value updates the pill's cached flag too")
     func conflictUpdatesTheCachedFlag() async throws {
         let h = try makeHarness()

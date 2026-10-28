@@ -41,6 +41,7 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
         weak var screen: UIViewController?
     }
     private var loadTask: Task<Void, Never>?
+    private var hasAppeared = false
     /// Counts the redraws a switch needs when its state did not change (a cancelled
     /// save, a refused unlock), so the switch returns to what the state says.
     private var toggleRevision = 0
@@ -106,6 +107,15 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
     override func viewWillAppear(_ animated: Bool) {
         // Another surface (the discovery card) may have turned push on.
         notifications.reload()
+        // Another device may have changed a server setting while this page sat under one it
+        // pushed. The first appearance already reads them.
+        if hasAppeared, let settings {
+            Task {
+                _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
+                _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
+            }
+        }
+        hasAppeared = true
         super.viewWillAppear(animated)
     }
 
