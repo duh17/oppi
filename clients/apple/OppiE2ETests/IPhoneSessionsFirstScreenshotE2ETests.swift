@@ -537,7 +537,13 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         let tools = try XCTUnwrap(defaults["tools"] as? [String])
         XCTAssertEqual(tools, ["bash", "edit", "grep", "read", "write"])
 
-        tap(app.buttons["agents.detail.launch"], named: "Agent Start Session row", timeout: 10)
+        // The saved definition and its chosen tools make the detail taller than the
+        // screen, so Start Session sits below the fold until the list scrolls.
+        let startSession = app.buttons["agents.detail.launch"]
+        for _ in 0..<3 where !startSession.exists {
+            app.swipeUp()
+        }
+        tap(startSession, named: "Agent Start Session row", timeout: 10)
         let selectedAgent = app.buttons["quickSession.agentPicker"]
         XCTAssertTrue(selectedAgent.waitForExistence(timeout: 10), "Quick Session did not open")
         XCTAssertTrue(
@@ -940,7 +946,17 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         let currentValue = element.value as? String ?? ""
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.80)).tap()
         if !currentValue.isEmpty {
-            element.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentValue.count))
+            // Select all, then delete: a tap can land mid-text, and a Quick Session
+            // composer restores a saved draft that the simulator keeps between
+            // runs, so deleting backward from the caret would leave text behind.
+            // The key goes to the field only once it has keyboard focus.
+            let focused = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "hasKeyboardFocus == true"),
+                object: element
+            )
+            XCTAssertEqual(XCTWaiter().wait(for: [focused], timeout: 5), .completed, "The field did not take keyboard focus")
+            element.typeKey("a", modifierFlags: .command)
+            element.typeText(XCUIKeyboardKey.delete.rawValue)
         }
         element.typeText(text)
         XCTAssertEqual(element.value as? String, text)
