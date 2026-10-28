@@ -91,15 +91,18 @@ enum UIValidateDump {
     static func collectAuditIssues(from app: XCUIApplication) -> [AuditIssue] {
         final class IssueBox: @unchecked Sendable {
             var issues: [AuditIssue] = []
+            /// `<preview>|<type>` of each element-less issue already waived: only the first of
+            /// a kind is, so a second one is a finding.
+            var elementlessWaived: Set<String> = []
         }
         let box = IssueBox()
         let previewFrames = ["sessionRows.preview", "sessionRows.preview.label"].compactMap { identifier -> CGRect? in
             let element = app.descendants(matching: .any)[identifier]
             return element.exists ? element.frame : nil
         }
-        let sampledPreviews = SampledPreview.all.compactMap { preview -> (frame: CGRect, reason: String)? in
+        let sampledPreviews = SampledPreview.all.compactMap { preview -> (identifier: String, frame: CGRect, reason: String)? in
             let element = app.descendants(matching: .any)[preview.identifier]
-            return element.exists ? (element.frame, preview.reason) : nil
+            return element.exists ? (preview.identifier, element.frame, preview.reason) : nil
         }
         do {
             try app.performAccessibilityAudit(for: .all) { issue in
@@ -109,7 +112,10 @@ enum UIValidateDump {
                         compact: issue.compactDescription,
                         detailed: issue.detailedDescription,
                         element: describeElement(issue.element),
-                        waivedReason: waivedReason(for: issue, previewFrames: previewFrames, sampledPreviews: sampledPreviews)
+                        waivedReason: waivedReason(
+                            for: issue, previewFrames: previewFrames, sampledPreviews: sampledPreviews,
+                            elementlessWaived: &box.elementlessWaived
+                        )
                     )
                 )
                 return true
@@ -234,21 +240,28 @@ enum UIValidateDump {
     /// (`SampledPreview`): Voice's mic control and Text's code sample. The audit
     /// finds their text by looking at the screen, so it often reports `dynamicType`
     /// or `elementDetection` without an element. Those two types are waived on a page
-    /// only while its preview is on screen, and an issue that names an element is
-    /// waived only when the element sits inside the preview's frame. The reason is
-    /// in the waiver text; the rest of the page is audited as everywhere else.
+    /// only while its preview is on screen. An issue that names an element is waived
+    /// only when the element sits inside the preview's frame; an element-less one is
+    /// waived once per type per preview per dump, and a second is a finding. The reason
+    /// is in the waiver text; the rest of the page is audited as everywhere else.
     private static func waivedReason(
         for issue: XCUIAccessibilityAuditIssue,
         previewFrames: [CGRect],
-        sampledPreviews: [(frame: CGRect, reason: String)]
+        sampledPreviews: [(identifier: String, frame: CGRect, reason: String)],
+        elementlessWaived: inout Set<String>
     ) -> String? {
         if issue.auditType == .textClipped, issue.element?.elementType == .searchField {
             return "textClipped on the system search field, which draws its text in full"
         }
         if issue.auditType == .dynamicType || issue.auditType == .elementDetection {
             for preview in sampledPreviews {
-                let inside = issue.element.map { preview.frame.insetBy(dx: -1, dy: -1).contains($0.frame) } ?? true
-                if inside { return "\(auditTypeName(issue.auditType)) on a preview: \(preview.reason)" }
+                if let element = issue.element {
+                    if preview.frame.insetBy(dx: -1, dy: -1).contains(element.frame) {
+                        return "\(auditTypeName(issue.auditType)) on a preview: \(preview.reason)"
+                    }
+                } else if elementlessWaived.insert("\(preview.identifier)|\(auditTypeName(issue.auditType))").inserted {
+                    return "\(auditTypeName(issue.auditType)) on a preview: \(preview.reason)"
+                }
             }
         }
         if [.dynamicType, .textClipped, .hitRegion, .sufficientElementDescription, .contrast].contains(issue.auditType),
@@ -274,8 +287,7 @@ enum UIValidateDump {
             ),
             SampledPreview(
                 identifier: "settings.text.preview",
-                reason: "the code sample deliberately follows Code Text Size, not Dynamic Type, as code does in chat; "
-                    + "the preview is one accessibility element that reads both samples"
+                reason: "the code sample deliberately follows Code Text Size, not Dynamic Type, as code does in chat"
             ),
         ]
     }

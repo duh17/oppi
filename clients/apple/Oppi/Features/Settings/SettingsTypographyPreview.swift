@@ -41,13 +41,12 @@ final class SettingsTypographyPreviewView: UIView {
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        // One element: the cards are samples, not controls.
-        isAccessibilityElement = true
+        // A group of its own labels, so VoiceOver and the audit read the samples
+        // as the text they are.
+        isAccessibilityElement = false
+        accessibilityContainerType = .semanticGroup
         accessibilityIdentifier = "settings.text.preview"
         accessibilityLabel = String(localized: "Text preview")
-        accessibilityValue = [codeCaption.text, codeSample.text, messageCaption.text, messageSample.text]
-            .compactMap { $0 }
-            .joined(separator: ". ")
         refresh()
     }
 
