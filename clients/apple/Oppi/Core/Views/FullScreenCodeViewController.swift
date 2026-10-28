@@ -1,5 +1,4 @@
 import Observation
-import SwiftUI
 import UIKit
 
 /// Full-screen content viewer for tool output (UIKit).
@@ -1977,7 +1976,6 @@ final class FullScreenCodeViewController: UIViewController {
         }
 
         let options = FullScreenViewingOptionsController(
-            root: HostFactory.root(near: self),
             family: family,
             preferences: preferences,
             onTextScaleChanged: { [weak self] scale in
@@ -2318,13 +2316,17 @@ private final class FullScreenContentHostController: UIViewController {
 /// Text size, wrapping, and spacing for full-screen readers. Shared by
 /// `FullScreenCodeViewController` and the review diff reader (`DiffReaderView`).
 ///
-/// A UIKit controller that owns the popover or sheet and embeds the SwiftUI
-/// panel through `HostFactory.content`, so the panel gets the app root like
-/// every other hosted view. `root` comes from `HostFactory.root(near:)` at the
-/// presenting view; the panel is hosted when the view loads.
+/// A UIKit controller that owns the popover or sheet: a glass panel with a
+/// text-size slider, a wrap switch and a spacing control where the content
+/// family supports them, and Reset View. It reads the theme from
+/// `ThemeRuntimeState`, so it needs no app root.
 final class FullScreenViewingOptionsController: UIViewController {
-    private let root: AppRootEnvironment?
-    private var host: HostedContentController?
+    private static let panelWidth: CGFloat = 340
+    private static let outerMargin: CGFloat = 16
+    private static let innerPadding: CGFloat = 20
+    /// The slider moves in 5% steps.
+    static let textScaleStep: CGFloat = 0.05
+
     private var family: FullScreenReaderContentFamily
     private var preferences: FullScreenReaderPreferences
     private let onTextScaleChanged: (CGFloat) -> Void
@@ -2334,15 +2336,46 @@ final class FullScreenViewingOptionsController: UIViewController {
 
     var onDismiss: ((FullScreenViewingOptionsController) -> Void)?
 
+    private let scrollView = UIScrollView()
+    private let glassView = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+    private let contentStack = UIStackView()
+
+    private let headerIcon = UIImageView()
+    private let headerGlass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+    private let headerTitle = UILabel()
+    private let headerSubtitle = UILabel()
+    private let header = UIStackView()
+
+    private let textSizeIcon = UIImageView()
+    private let textSizeTitle = UILabel()
+    private let textSizeValue = UILabel()
+    private let textSizeSlider = TextScaleSlider()
+    private let textSizeGroup = UIStackView()
+    /// The title row and the percent: side by side, stacked at accessibility sizes.
+    private let textSizeTop = UIStackView()
+
+    private let wrapDivider = UIView()
+    private let wrapIcon = UIImageView()
+    private let wrapTitle = UILabel()
+    private let wrapSwitch = UISwitch()
+    private let wrapRow = UIStackView()
+
+    private let spacingDivider = UIView()
+    private let spacingIcon = UIImageView()
+    private let spacingTitle = UILabel()
+    private let spacingControl = UISegmentedControl(
+        items: FullScreenReaderSpacing.allCases.map(\.displayName)
+    )
+    private let spacingGroup = UIStackView()
+
+    private let resetButton = UIButton(configuration: .bordered())
+
+    /// The sheet detent: the panel at its natural height, at the sheet's width.
     var preferredSheetHeight: CGFloat {
-        var height: CGFloat = 238
-        if family.supportsWrapping { height += 60 }
-        if family.supportsSpacing { height += 82 }
-        return height
+        fittingHeight(forWidth: view.bounds.width > 0 ? view.bounds.width : Self.panelWidth)
     }
 
     init(
-        root: AppRootEnvironment?,
         family: FullScreenReaderContentFamily,
         preferences: FullScreenReaderPreferences,
         onTextScaleChanged: @escaping (CGFloat) -> Void,
@@ -2350,7 +2383,6 @@ final class FullScreenViewingOptionsController: UIViewController {
         onSpacingChanged: @escaping (FullScreenReaderSpacing) -> Void,
         onReset: @escaping () -> Void
     ) {
-        self.root = root
         self.family = family
         self.preferences = preferences
         self.onTextScaleChanged = onTextScaleChanged
@@ -2358,42 +2390,284 @@ final class FullScreenViewingOptionsController: UIViewController {
         self.onSpacingChanged = onSpacingChanged
         self.onReset = onReset
         super.init(nibName: nil, bundle: nil)
-        preferredContentSize = CGSize(width: 340, height: preferredSheetHeight)
     }
 
     @available(*, unavailable)
     required init?(coder aDecoder: NSCoder) { nil }
 
+    // MARK: - Layout
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
         view.isOpaque = false
+        view.accessibilityIdentifier = "fullscreen.viewingOptions"
 
-        let host = HostFactory.content(makePanel(), root: root)
-        host.sizingOptions = [.preferredContentSize]
-        host.view.backgroundColor = .clear
-        host.view.isOpaque = false
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-        addChild(host)
-        view.addSubview(host.view)
+        glassView.cornerConfiguration = .corners(radius: 28)
+        glassView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(glassView)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.alwaysBounceVertical = false
+        scrollView.contentInsetAdjustmentBehavior = .never
+        glassView.contentView.addSubview(scrollView)
+
+        configureControls()
+        buildContent()
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentStack)
+
+        let margin = Self.outerMargin
+        let padding = Self.innerPadding
         NSLayoutConstraint.activate([
-            host.view.topAnchor.constraint(equalTo: view.topAnchor),
-            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            glassView.topAnchor.constraint(equalTo: view.topAnchor, constant: margin),
+            glassView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: margin),
+            glassView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -margin),
+            glassView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -margin),
+            scrollView.topAnchor.constraint(equalTo: glassView.contentView.topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: glassView.contentView.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: glassView.contentView.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: glassView.contentView.bottomAnchor),
+            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: padding),
+            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -padding),
+            contentStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: padding),
+            contentStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -padding),
+            scrollView.contentLayoutGuide.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor, constant: -padding),
+            scrollView.contentLayoutGuide.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor, constant: padding),
         ])
-        host.didMove(toParent: self)
-        self.host = host
+        preferredContentSize = CGSize(width: Self.panelWidth, height: fittingHeight(forWidth: Self.panelWidth))
     }
 
-    /// The panel's own size drives the popover, as it did when this controller
-    /// was the hosting controller.
-    override func preferredContentSizeDidChange(forChildContentContainer container: any UIContentContainer) {
-        super.preferredContentSizeDidChange(forChildContentContainer: container)
-        let size = container.preferredContentSize
-        if size.width > 0, size.height > 0 {
-            preferredContentSize = size
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // A popover takes its size from here; a larger text size grows it.
+        let height = fittingHeight(forWidth: Self.panelWidth)
+        if preferredContentSize.height != height || preferredContentSize.width != Self.panelWidth {
+            preferredContentSize = CGSize(width: Self.panelWidth, height: height)
         }
+        scrollView.isScrollEnabled = scrollView.contentSize.height > scrollView.bounds.height + 0.5
+    }
+
+    /// The panel's height at `width`: the stack at its natural height inside
+    /// the glass padding, the outer margin, and the bottom safe area (a
+    /// sheet's home indicator).
+    private func fittingHeight(forWidth width: CGFloat) -> CGFloat {
+        loadViewIfNeeded()
+        let stackWidth = width - 2 * (Self.outerMargin + Self.innerPadding)
+        let stackHeight = contentStack.systemLayoutSizeFitting(
+            CGSize(width: stackWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        return ceil(stackHeight + 2 * (Self.innerPadding + Self.outerMargin) + view.safeAreaInsets.bottom)
+    }
+
+    private func configureControls() {
+        for label in [headerTitle, headerSubtitle, textSizeTitle, textSizeValue, wrapTitle, spacingTitle] {
+            label.adjustsFontForContentSizeCategory = true
+            label.numberOfLines = 0
+        }
+        textSizeValue.numberOfLines = 1
+        textSizeValue.setContentCompressionResistancePriority(.required, for: .horizontal)
+        textSizeValue.setContentHuggingPriority(.required, for: .horizontal)
+        textSizeValue.isAccessibilityElement = false
+        for icon in [headerIcon, textSizeIcon, wrapIcon, spacingIcon] {
+            icon.isAccessibilityElement = false
+            icon.setContentHuggingPriority(.required, for: .horizontal)
+            icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+
+        headerTitle.text = String(localized: "Viewing Options")
+        headerSubtitle.text = String(localized: "Reader controls")
+        headerIcon.contentMode = .center
+        headerGlass.cornerConfiguration = .capsule()
+        headerGlass.contentView.addSubview(headerIcon)
+        headerIcon.translatesAutoresizingMaskIntoConstraints = false
+        headerGlass.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            headerGlass.widthAnchor.constraint(equalToConstant: 34),
+            headerGlass.heightAnchor.constraint(equalToConstant: 34),
+            headerIcon.centerXAnchor.constraint(equalTo: headerGlass.contentView.centerXAnchor),
+            headerIcon.centerYAnchor.constraint(equalTo: headerGlass.contentView.centerYAnchor),
+        ])
+        // One element: the title and its subtitle read together.
+        header.isAccessibilityElement = true
+        header.accessibilityLabel = "\(String(localized: "Viewing Options")), \(String(localized: "Reader controls"))"
+        header.accessibilityTraits = .header
+        header.accessibilityIdentifier = "fullscreen.viewingOptions.header"
+
+        textSizeTitle.text = String(localized: "Text Size")
+        textSizeSlider.minimumValue = Float(FullScreenReaderPreferences.minimumTextScale)
+        textSizeSlider.maximumValue = Float(FullScreenReaderPreferences.maximumTextScale)
+        textSizeSlider.step = Float(Self.textScaleStep)
+        textSizeSlider.minimumValueImage = UIImage(systemName: "textformat.size.smaller")
+        textSizeSlider.maximumValueImage = UIImage(systemName: "textformat.size.larger")
+        textSizeSlider.accessibilityLabel = String(localized: "Text Size")
+        textSizeSlider.accessibilityIdentifier = "fullscreen.viewingOptions.textSize"
+        textSizeSlider.addAction(UIAction { [weak self] action in
+            guard let self, let slider = action.sender as? UISlider else { return }
+            let scale = Self.snappedTextScale(CGFloat(slider.value))
+            slider.value = Float(scale)
+            // A drag crosses many raw values inside one 5% step; the owner
+            // saves and re-applies only when the step changes.
+            guard scale != preferences.textScale else { return }
+            preferences.textScale = scale
+            setNeedsUpdateProperties()
+            onTextScaleChanged(scale)
+        }, for: .valueChanged)
+
+        wrapTitle.text = String(localized: "Wrap Text")
+        wrapSwitch.accessibilityLabel = String(localized: "Wrap Text")
+        wrapSwitch.accessibilityIdentifier = "fullscreen.viewingOptions.wrap"
+        wrapSwitch.setContentHuggingPriority(.required, for: .horizontal)
+        wrapSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
+        wrapSwitch.addAction(UIAction { [weak self] action in
+            guard let self, let toggle = action.sender as? UISwitch else { return }
+            onWrappingChanged(toggle.isOn)
+        }, for: .valueChanged)
+
+        spacingTitle.text = String(localized: "Spacing")
+        spacingControl.accessibilityLabel = String(localized: "Spacing")
+        spacingControl.accessibilityIdentifier = "fullscreen.viewingOptions.spacing"
+        spacingControl.addAction(UIAction { [weak self] action in
+            guard let self, let control = action.sender as? UISegmentedControl,
+                  FullScreenReaderSpacing.allCases.indices.contains(control.selectedSegmentIndex) else { return }
+            onSpacingChanged(FullScreenReaderSpacing.allCases[control.selectedSegmentIndex])
+        }, for: .valueChanged)
+
+        var reset = UIButton.Configuration.bordered()
+        reset.cornerStyle = .capsule
+        reset.title = String(localized: "Reset View")
+        reset.image = UIImage(systemName: "arrow.counterclockwise")
+        reset.imagePadding = 6
+        resetButton.configuration = reset
+        resetButton.accessibilityIdentifier = "fullscreen.viewingOptions.reset"
+        resetButton.addAction(UIAction { [weak self] _ in self?.onReset() }, for: .primaryActionTriggered)
+    }
+
+    private func buildContent() {
+        contentStack.axis = .vertical
+        contentStack.spacing = 18
+
+        let headerText = UIStackView(arrangedSubviews: [headerTitle, headerSubtitle])
+        headerText.axis = .vertical
+        headerText.spacing = 2
+        header.addArrangedSubview(headerGlass)
+        header.addArrangedSubview(headerText)
+        header.axis = .horizontal
+        header.spacing = 12
+        header.alignment = .center
+
+        let textSizeTitleRow = UIStackView(arrangedSubviews: [textSizeIcon, textSizeTitle])
+        textSizeTitleRow.axis = .horizontal
+        textSizeTitleRow.spacing = 6
+        textSizeTitleRow.alignment = .center
+        textSizeTitleRow.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textSizeTop.addArrangedSubview(textSizeTitleRow)
+        textSizeTop.addArrangedSubview(textSizeValue)
+        textSizeTop.spacing = 12
+        textSizeGroup.addArrangedSubview(textSizeTop)
+        textSizeGroup.addArrangedSubview(textSizeSlider)
+        textSizeGroup.axis = .vertical
+        textSizeGroup.spacing = 10
+
+        wrapRow.addArrangedSubview(wrapIcon)
+        wrapRow.addArrangedSubview(wrapTitle)
+        wrapRow.addArrangedSubview(wrapSwitch)
+        wrapRow.axis = .horizontal
+        wrapRow.spacing = 6
+        wrapRow.alignment = .center
+        wrapRow.setCustomSpacing(12, after: wrapTitle)
+
+        let spacingTop = UIStackView(arrangedSubviews: [spacingIcon, spacingTitle])
+        spacingTop.axis = .horizontal
+        spacingTop.spacing = 6
+        spacingTop.alignment = .center
+        spacingGroup.addArrangedSubview(spacingTop)
+        spacingGroup.addArrangedSubview(spacingControl)
+        spacingGroup.axis = .vertical
+        spacingGroup.spacing = 10
+
+        for divider in [wrapDivider, spacingDivider] {
+            divider.translatesAutoresizingMaskIntoConstraints = false
+            divider.heightAnchor.constraint(equalToConstant: 1 / max(1, traitCollection.displayScale)).isActive = true
+            divider.isAccessibilityElement = false
+        }
+
+        for arranged in [header, textSizeGroup, wrapDivider, wrapRow, spacingDivider, spacingGroup, resetButton] {
+            contentStack.addArrangedSubview(arranged)
+        }
+    }
+
+    // MARK: - State
+
+    override func updateProperties() {
+        super.updateProperties()
+        // Beside the title, the percent squeezes it to a letter per line at
+        // accessibility sizes; under it, both read in full.
+        let stacked = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+        textSizeTop.axis = stacked ? .vertical : .horizontal
+        textSizeTop.alignment = stacked ? .leading : .center
+        let fg = UIColor.themeFg
+        let dim = UIColor.themeFgDim
+        let cyan = UIColor.themeCyan
+
+        view.tintColor = cyan
+        headerIcon.image = .scaledSymbol(FullScreenViewingOptionsSymbols.readerModeIconName, style: .title3, weight: .semibold, color: fg)
+        headerTitle.font = .scaled(.headline)
+        headerTitle.textColor = fg
+        headerSubtitle.font = .scaled(.caption1)
+        headerSubtitle.textColor = dim
+
+        textSizeIcon.image = .scaledSymbol("textformat.size", style: .subheadline, weight: .semibold, color: fg)
+        textSizeTitle.font = .scaled(.subheadline, .semibold)
+        textSizeTitle.textColor = fg
+        textSizeValue.font = .scaled(.subheadline, .medium, monospacedDigits: true)
+        textSizeValue.textColor = dim
+        let percent = Int(round(preferences.textScale * 100))
+        textSizeValue.text = "\(percent)%"
+        textSizeSlider.accessibilityValue = String(localized: "\(percent) percent")
+        if !textSizeSlider.isTracking, CGFloat(textSizeSlider.value) != preferences.textScale {
+            textSizeSlider.value = Float(preferences.textScale)
+        }
+
+        wrapIcon.image = .scaledSymbol(CodeWrapControl.symbolName, style: .subheadline, color: fg)
+        wrapTitle.font = .scaled(.subheadline)
+        wrapTitle.textColor = fg
+        wrapSwitch.onTintColor = cyan
+        if wrapSwitch.isOn != preferences.wrapsText {
+            wrapSwitch.setOn(preferences.wrapsText, animated: false)
+        }
+
+        spacingIcon.image = .scaledSymbol("line.3.horizontal.decrease", style: .subheadline, weight: .semibold, color: fg)
+        spacingTitle.font = .scaled(.subheadline, .semibold)
+        spacingTitle.textColor = fg
+        if let index = FullScreenReaderSpacing.allCases.firstIndex(of: preferences.spacing),
+           spacingControl.selectedSegmentIndex != index {
+            spacingControl.selectedSegmentIndex = index
+        }
+
+        for divider in [wrapDivider, spacingDivider] {
+            divider.backgroundColor = UIColor.separator.withAlphaComponent(0.35)
+        }
+        wrapDivider.isHidden = !family.supportsWrapping
+        wrapRow.isHidden = !family.supportsWrapping
+        spacingDivider.isHidden = !family.supportsSpacing
+        spacingGroup.isHidden = !family.supportsSpacing
+
+        var reset = resetButton.configuration ?? .bordered()
+        reset.baseForegroundColor = cyan
+        reset.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = UIFont.scaled(.subheadline)
+            return outgoing
+        }
+        resetButton.configuration = reset
+    }
+
+    /// `value` on the slider's 5% grid, inside the reader's text-scale range.
+    static func snappedTextScale(_ value: CGFloat) -> CGFloat {
+        FullScreenReaderPreferences.clampedTextScale((value / textScaleStep).rounded() * textScaleStep)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -2407,19 +2681,10 @@ final class FullScreenViewingOptionsController: UIViewController {
         guard self.family != family || self.preferences != preferences else { return }
         self.family = family
         self.preferences = preferences
-        preferredContentSize = CGSize(width: 340, height: preferredSheetHeight)
-        host?.setContent(makePanel())
-    }
-
-    private func makePanel() -> FullScreenViewingOptionsPanel {
-        FullScreenViewingOptionsPanel(
-            family: family,
-            preferences: preferences,
-            onTextScaleChanged: onTextScaleChanged,
-            onWrappingChanged: onWrappingChanged,
-            onSpacingChanged: onSpacingChanged,
-            onReset: onReset
-        )
+        setNeedsUpdateProperties()
+        if isViewLoaded {
+            view.setNeedsLayout()
+        }
     }
 
     /// A popover from a rail bar item, or from the floating button in regular
@@ -2444,8 +2709,8 @@ final class FullScreenViewingOptionsController: UIViewController {
         if let sheet = sheetPresentationController {
             let detentIdentifier = UISheetPresentationController.Detent.Identifier("viewing-options")
             sheet.detents = [
-                .custom(identifier: detentIdentifier) { [weak self] _ in
-                    self?.preferredSheetHeight ?? 280
+                .custom(identifier: detentIdentifier) { [weak self] context in
+                    min(self?.preferredSheetHeight ?? 280, context.maximumDetentValue)
                 }
             ]
             sheet.selectedDetentIdentifier = detentIdentifier
@@ -2472,6 +2737,7 @@ final class FullScreenViewingOptionsController: UIViewController {
         FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
 
         let button = UIButton(configuration: config)
+        button.accessibilityIdentifier = "fullscreen.viewingOptions.button"
         button.accessibilityLabel = String(localized: "Viewing Options")
         button.accessibilityHint = String(localized: "Adjust text size, wrapping, and spacing")
         return button
@@ -2491,140 +2757,17 @@ final class FullScreenViewingOptionsController: UIViewController {
     }
 }
 
-struct FullScreenViewingOptionsPanel: View {
-    let family: FullScreenReaderContentFamily
-    let preferences: FullScreenReaderPreferences
-    let onTextScaleChanged: (CGFloat) -> Void
-    let onWrappingChanged: (Bool) -> Void
-    let onSpacingChanged: (FullScreenReaderSpacing) -> Void
-    let onReset: () -> Void
+/// A slider whose VoiceOver increment and decrement use its own step
+/// (UIKit's default is 10% of the range).
+private final class TextScaleSlider: UISlider {
+    var step: Float = 0.05
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            header
-            textSizeControl
+    override func accessibilityIncrement() { nudge(step) }
+    override func accessibilityDecrement() { nudge(-step) }
 
-            if family.supportsWrapping {
-                Divider().opacity(0.35)
-                wrapControl
-            }
-
-            if family.supportsSpacing {
-                Divider().opacity(0.35)
-                spacingControl
-            }
-
-            resetButton
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .padding(16)
-        .tint(.themeCyan)
-        .presentationBackground(.clear)
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: FullScreenViewingOptionsSymbols.readerModeIconName)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .frame(width: 34, height: 34)
-                .glassEffect(.regular, in: Circle())
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Viewing Options")
-                    .font(.headline)
-                    .foregroundStyle(.themeFg)
-                Text("Reader controls")
-                    .font(.caption)
-                    .foregroundStyle(.themeFgDim)
-            }
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var textSizeControl: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Label("Text Size", systemImage: "textformat.size")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                Spacer()
-                Text("\(Int(round(preferences.textScale * 100)))%")
-                    .font(.subheadline.monospacedDigit().weight(.medium))
-                    .foregroundStyle(.themeFgDim)
-                    .accessibilityHidden(true)
-            }
-
-            Slider(
-                value: textScaleBinding,
-                in: Double(FullScreenReaderPreferences.minimumTextScale)...Double(FullScreenReaderPreferences.maximumTextScale),
-                step: 0.05
-            ) {
-                Text("Text Size")
-            } minimumValueLabel: {
-                Image(systemName: "textformat.size.smaller")
-            } maximumValueLabel: {
-                Image(systemName: "textformat.size.larger")
-            }
-            .accessibilityValue("\(Int(round(preferences.textScale * 100))) percent")
-        }
-    }
-
-    private var wrapControl: some View {
-        Toggle(isOn: wrapBinding) {
-            Label("Wrap Text", systemImage: CodeWrapControl.symbolName)
-                .font(.subheadline)
-                .foregroundStyle(.themeFg)
-        }
-        .toggleStyle(.switch)
-    }
-
-    private var spacingControl: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Spacing", systemImage: "line.3.horizontal.decrease")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.themeFg)
-
-            Picker("Spacing", selection: spacingBinding) {
-                ForEach(FullScreenReaderSpacing.allCases, id: \.self) { spacing in
-                    Text(spacing.displayName).tag(spacing)
-                }
-            }
-            .pickerStyle(.segmented)
-        }
-    }
-
-    private var resetButton: some View {
-        Button(action: onReset) {
-            Label("Reset View", systemImage: "arrow.counterclockwise")
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-        .buttonBorderShape(.capsule)
-        .controlSize(.regular)
-    }
-
-    private var textScaleBinding: Binding<Double> {
-        Binding(
-            get: { Double(preferences.textScale) },
-            set: { onTextScaleChanged(CGFloat($0)) }
-        )
-    }
-
-    private var wrapBinding: Binding<Bool> {
-        Binding(
-            get: { preferences.wrapsText },
-            set: { onWrappingChanged($0) }
-        )
-    }
-
-    private var spacingBinding: Binding<FullScreenReaderSpacing> {
-        Binding(
-            get: { preferences.spacing },
-            set: { onSpacingChanged($0) }
-        )
+    private func nudge(_ delta: Float) {
+        value = min(maximumValue, max(minimumValue, value + delta))
+        sendActions(for: .valueChanged)
     }
 }
 
@@ -2709,12 +2852,11 @@ extension FullScreenCodeViewController {
         return view.convert(button.frame, from: superview)
     }
 
-    func makeViewingOptionsControllerForTesting(root: AppRootEnvironment) -> UIViewController? {
+    func makeViewingOptionsControllerForTesting() -> UIViewController? {
         let presentation = makePresentation()
         guard let family = presentation.readerFamily,
               let preferences = presentation.readerPreferences else { return nil }
         let controller = FullScreenViewingOptionsController(
-            root: root,
             family: family,
             preferences: preferences,
             onTextScaleChanged: { [weak self] scale in

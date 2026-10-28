@@ -160,7 +160,7 @@ final class FullScreenReaderPreferencesStore {
     static let shared = FullScreenReaderPreferencesStore()
 
     private let defaults: UserDefaults
-    private let keyPrefix = "oppi.fullScreenReaderPreferences"
+    private static let keyPrefix = "oppi.fullScreenReaderPreferences"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -194,8 +194,13 @@ final class FullScreenReaderPreferencesStore {
         defaults.removeObject(forKey: key(for: family))
     }
 
-    private func key(for family: FullScreenReaderContentFamily) -> String {
+    /// The defaults key a family's preferences are stored under.
+    static func key(for family: FullScreenReaderContentFamily) -> String {
         "\(keyPrefix).\(family.rawValue)"
+    }
+
+    private func key(for family: FullScreenReaderContentFamily) -> String {
+        Self.key(for: family)
     }
 
     private func normalized(

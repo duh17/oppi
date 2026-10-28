@@ -204,6 +204,18 @@ struct ScreenshotPreviewView: View {
         case "usdz-fullscreen-failed":
             USDZFullScreenPreviewHost(failing: true)
                 .ignoresSafeArea()
+        case "fullscreen-code":
+            FullScreenReaderPreviewHost(kind: .code)
+                .ignoresSafeArea()
+        case "fullscreen-markdown":
+            FullScreenReaderPreviewHost(kind: .markdown)
+                .ignoresSafeArea()
+        case "viewing-options":
+            ViewingOptionsPreviewHost(family: .code)
+                .ignoresSafeArea()
+        case "viewing-options-markdown":
+            ViewingOptionsPreviewHost(family: .markdown)
+                .ignoresSafeArea()
         case "app-lock-cover":
             AppLockCoverPreviewHost(state: .locked)
                 .ignoresSafeArea()
@@ -1172,6 +1184,28 @@ private struct RouterModalSitesPreview: View {
                 .ignoresSafeArea()
         }
     }
+}
+
+/// The full-screen reader, as the app presents it.
+private struct FullScreenReaderPreviewHost: UIViewControllerRepresentable {
+    let kind: FullScreenReaderScreenshotFixture.Kind
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        FullScreenReaderScreenshotFixture.makeController(kind: kind)
+    }
+
+    func updateUIViewController(_ controller: UIViewController, context: Context) {}
+}
+
+/// The viewing-options panel on a themed page.
+private struct ViewingOptionsPreviewHost: UIViewControllerRepresentable {
+    let family: FullScreenReaderContentFamily
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        ViewingOptionsScreenshotFixture.makeController(family: family)
+    }
+
+    func updateUIViewController(_ controller: UIViewController, context: Context) {}
 }
 
 /// The App Lock cover controller, which the app puts in its own window.

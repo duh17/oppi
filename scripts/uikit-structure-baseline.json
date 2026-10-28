@@ -79,9 +79,6 @@
     "clients/apple/Oppi/Core/Views/FullScreenCodeView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/FullScreenReviewCommentStashOverlay.swift": {
       "import SwiftUI": 1
     },

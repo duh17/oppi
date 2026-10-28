@@ -193,7 +193,6 @@ final class DiffReaderView: UIView {
         }
         guard let presenter = nearestViewController() else { return }
         let options = FullScreenViewingOptionsController(
-            root: HostFactory.root(near: presenter),
             family: Self.family,
             preferences: readerPreferences,
             onTextScaleChanged: { [weak self] scale in

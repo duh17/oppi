@@ -151,10 +151,13 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         let content: FullScreenCodeContent
         let context: ReviewCommentSelectionContext
         if Self.diffWrappingModeEnabled {
-            FullScreenReaderPreferencesStore.shared.setPreferences(
-                FullScreenReaderPreferences(textScale: 0.95, wrapsText: true),
-                for: .diff
-            )
+            // The launch's volatile argument domain, never the simulator's
+            // defaults: a persisted wrap setting outlives this launch and
+            // changes every later diff reader on the simulator, unit tests
+            // hosted in the app included.
+            if let data = try? JSONEncoder().encode(FullScreenReaderPreferences(textScale: 0.95, wrapsText: true)) {
+                ScreenshotVolatileDefaults.apply([FullScreenReaderPreferencesStore.key(for: .diff): data])
+            }
             let filePath = "server/tests/architecture-layer-rules.test.ts"
             content = .diff(
                 ToolDiffDocument(

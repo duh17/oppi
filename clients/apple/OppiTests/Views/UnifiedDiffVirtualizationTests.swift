@@ -29,6 +29,9 @@ struct UnifiedDiffVirtualizationTests {
         ]
         let totalSourceUTF16 = hunks[0].lines.reduce(into: 0) { $0 += $1.text.utf16.count }
         let reader = DiffReaderView()
+        // Clipped lines publish horizontal scroll width only when wrapping is
+        // off; do not inherit the simulator's saved reader preferences.
+        reader.applyReaderPreferencesForTesting(FullScreenReaderPreferences(textScale: 1, wrapsText: false))
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         reader.frame = host.bounds
         host.addSubview(reader)
