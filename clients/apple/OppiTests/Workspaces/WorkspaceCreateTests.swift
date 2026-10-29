@@ -68,6 +68,13 @@ struct WorkspaceFolderCheckTests {
 @Suite("Workspace create", .serialized)
 @MainActor
 struct WorkspaceCreateTests {
+    /// How long a wait for the screen or model may take before the test fails. The waits
+    /// return as soon as their condition holds, so this only bounds a failure. The shard these
+    /// tests run in shares the main thread with a hundred other suites: the suggestion and Return
+    /// tests took 5.1 s and 6.1 s in recorded loaded runs (0.4 s and 0.25 s when quiet), against the
+    /// 5 s and 2 s deadlines that used to guard them.
+    private static let patience: Duration = .seconds(30)
+
     // MARK: Rules
 
     @Test("Create needs a name, and a folder the server confirmed as a directory")
@@ -161,12 +168,12 @@ struct WorkspaceCreateTests {
         model.name = "Tmp"
         model.setHostMount("/tmp")
         #expect(!model.canCreate)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { model.canCreate })
+        #expect(await waitForMainActorCondition(timeout: Self.patience) { model.canCreate })
         #expect(model.folderCheck == .valid)
 
         model.setHostMount("/nope")
         #expect(!model.canCreate)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { model.folderCheck == .missing })
+        #expect(await waitForMainActorCondition(timeout: Self.patience) { model.folderCheck == .missing })
         #expect(!model.canCreate)
     }
 
@@ -184,14 +191,14 @@ struct WorkspaceCreateTests {
         defer { hide(window) }
         let screen = WorkspaceCreateViewController(root: fixture.root, server: fixture.second)
         Router.present(screen, presentation: .sheet.inNavigation(), from: presenter, theme: fixture.root.themeStore)
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { isSettled(presenter.presentedViewController) })
+        #expect(await waitForMainActorCondition(timeout: Self.patience) { isSettled(presenter.presentedViewController) })
 
         let row = try #require(await findButton("workspace.create.createWithOppi", in: screen.view))
         #expect(row.accessibilityLabel == "Create with Oppi")
         row.sendActions(for: .touchUpInside)
 
         let createSheet = try #require(presenter.presentedViewController)
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+        #expect(await waitForMainActorCondition(timeout: Self.patience) {
             isSettled(createSheet.presentedViewController)
         })
         let guided = try #require(
@@ -203,14 +210,14 @@ struct WorkspaceCreateTests {
         // The composer's own setup and send, as the Send button runs them.
         let model = try #require(guided.children.compactMap { $0 as? GuidedControlComposerController }.first).model
         model.appear()
-        #expect(await waitForMainActorCondition(timeout: .seconds(20)) { model.isInitialized })
+        #expect(await waitForMainActorCondition(timeout: Self.patience) { model.isInitialized })
         #expect(model.selectedWorkspace == nil)
         #expect(model.acceptsInput)
         model.request = "A workspace for my notes"
         model.send()
 
         let target = WorkspaceSessionNavTarget(serverId: fixture.second.id, sessionId: "control-1", routeScope: .control)
-        #expect(await waitForMainActorCondition(timeout: .seconds(10)) {
+        #expect(await waitForMainActorCondition(timeout: Self.patience) {
             presenter.presentedViewController == nil
                 && fixture.root.navigation.workspaceStackRouteElements.contains(.session(target))
         })
@@ -255,11 +262,11 @@ struct WorkspaceCreateTests {
         field.sendActions(for: .editingChanged)
         #expect(screen.model.hostMount == "~/wo")
 
-        let suggestion = try #require(await findButton("workspace.create.suggestion.~/workspace", in: screen.view, timeout: .seconds(5)))
+        let suggestion = try #require(await findButton("workspace.create.suggestion.~/workspace", in: screen.view, timeout: Self.patience))
         suggestion.sendActions(for: .touchUpInside)
 
         #expect(screen.model.hostMount == "~/workspace")
-        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { field.text == "~/workspace" })
+        #expect(await waitForMainActorCondition(timeout: Self.patience) { field.text == "~/workspace" })
         #expect(field.text == screen.model.hostMount)
     }
 
@@ -282,7 +289,7 @@ struct WorkspaceCreateTests {
 
         #expect(folder.returnKeyType == .done)
         folder.sendActions(for: .editingDidEndOnExit)
-        #expect(await waitForMainActorCondition(timeout: .seconds(2)) { !folder.isFirstResponder })
+        #expect(await waitForMainActorCondition(timeout: Self.patience) { !folder.isFirstResponder })
     }
 
     // MARK: Helpers
@@ -290,7 +297,7 @@ struct WorkspaceCreateTests {
     private func findTextField(
         _ identifier: String,
         in view: UIView,
-        timeout: Duration = .seconds(3)
+        timeout: Duration = Self.patience
     ) async -> UITextField? {
         var found: UITextField?
         _ = await waitForMainActorCondition(timeout: timeout) {
@@ -304,7 +311,7 @@ struct WorkspaceCreateTests {
     private func findButton(
         _ identifier: String,
         in view: UIView,
-        timeout: Duration = .seconds(3)
+        timeout: Duration = Self.patience
     ) async -> UIButton? {
         var found: UIButton?
         _ = await waitForMainActorCondition(timeout: timeout) {
@@ -337,7 +344,7 @@ struct WorkspaceCreateTests {
 
     private func hide(_ window: UIWindow) {
         window.rootViewController?.dismiss(animated: false)
-        window.isHidden = true
+        hideTestWindow(window)
         window.rootViewController = nil
     }
 
