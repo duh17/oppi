@@ -315,25 +315,38 @@ struct ScreenshotPreviewView: View {
 /// settings go in the volatile argument domain, never the simulator's defaults.
 /// `SCREENSHOT_EDITOR_KEYS` types its characters after focus, through the same
 /// `insertText` path as the keyboard (in `-vim`, e.g. `Vj` shows Visual Line).
+/// `SCREENSHOT_EDITOR_SOURCE` is the path of a file to open instead of the
+/// sample (its extension picks the grammar), `SCREENSHOT_EDITOR_WRAP=on|off`
+/// sets Wrap Lines for every file kind, and `SCREENSHOT_EDITOR_SCROLL=0.5`
+/// jumps that fraction down the document once it is on screen.
 /// Dump with `UIValidateTests` (dev/testing/apple.md) and `SCREENSHOT_SCREEN=workspace-file-editor[-markdown|-vim]`.
 private struct WorkspaceFileEditorScreenshotPreview: UIViewControllerRepresentable {
     let screen: String
 
     func makeUIViewController(context: Context) -> UINavigationController {
         let markdown = screen.hasSuffix("-markdown")
-        ScreenshotVolatileDefaults.apply([
+        let environment = ProcessInfo.processInfo.environment
+        var editorDefaults: [String: Any] = [
             "\(AppIdentifiers.subsystem).editor.keybindings": screen.hasSuffix("-vim") ? "vim" : "standard",
-        ])
+        ]
+        if let wrap = environment["SCREENSHOT_EDITOR_WRAP"] {
+            for key in ["wrapLines", "wrapText", "wrapCode"] {
+                editorDefaults["\(AppIdentifiers.subsystem).editor.\(key)"] = wrap == "on"
+            }
+        }
+        ScreenshotVolatileDefaults.apply(editorDefaults)
         let themeID: ThemeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" ? .light : .dark
         ThemeRuntimeState.setThemeID(themeID)
-        let text = markdown ? Self.markdownSample : Self.swiftSample
+        let source = environment["SCREENSHOT_EDITOR_SOURCE"]
+        let text = source.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+            ?? (markdown ? Self.markdownSample : Self.swiftSample)
         let store = WorkspaceFileDraftStore(
             directory: FileManager.default.temporaryDirectory.appendingPathComponent("editor-preview-\(UUID().uuidString)")
         )
         guard let session = WorkspaceFileEditSession(
             identity: WorkspaceFileEditIdentity(
                 serverId: "preview", workspaceId: "preview", worktreeId: nil,
-                path: markdown ? "docs/notes.md" : "Sources/App/Greeter.swift"
+                path: source ?? (markdown ? "docs/notes.md" : "Sources/App/Greeter.swift")
             ),
             disk: WorkspaceFileDiskSnapshot(bytes: Data(text.utf8), etag: "\"sha256-\(String(repeating: "0", count: 64))\""),
             maxBytes: 1_048_576,
@@ -376,9 +389,15 @@ private struct WorkspaceFileEditorScreenshotPreview: UIViewControllerRepresentab
             super.viewDidAppear(animated)
             let textView = editor.textView
             textView.becomeFirstResponder()
-            textView.selectedRange = NSRange(location: (textView.text as NSString).range(of: "return").location, length: 0)
+            let anchor = (textView.text as NSString).range(of: "return").location
+            textView.selectedRange = NSRange(location: anchor == NSNotFound ? 0 : anchor, length: 0)
             for character in ProcessInfo.processInfo.environment["SCREENSHOT_EDITOR_KEYS"] ?? "" {
                 textView.insertText(String(character))
+            }
+            if let scroll = ProcessInfo.processInfo.environment["SCREENSHOT_EDITOR_SCROLL"].flatMap(Double.init) {
+                textView.layoutIfNeeded()
+                let maxY = max(0, textView.contentSize.height - textView.bounds.height)
+                textView.setContentOffset(CGPoint(x: textView.contentOffset.x, y: maxY * scroll), animated: false)
             }
         }
     }
