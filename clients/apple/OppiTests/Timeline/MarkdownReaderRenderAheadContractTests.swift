@@ -518,6 +518,50 @@ struct MarkdownReaderRenderAheadContractTests {
     }
 
     @MainActor
+    @Test("a non-scrolling inline reader lays out one viewport of a long text segment, a scrolling reader all of it")
+    func inlineReaderTrimsLongTextToViewport() throws {
+        let content = (1...80).map { index in
+            "## Section \(index)\n\n- first point \(index)\n- second point \(index)\n\nParagraph \(index) explains the section at some length so that it wraps."
+        }.joined(separator: "\n\n")
+
+        func reservedTextHeight(
+            allowsVerticalScrolling: Bool,
+            handOff intent: FullScreenMarkdownViewportIntent? = nil
+        ) throws -> CGFloat {
+            let body = NativeFullScreenMarkdownBody(
+                content: content,
+                palette: ThemeID.dark.palette,
+                reviewCommentSelectionRouter: nil,
+                reviewCommentSourceContext: nil,
+                allowsVerticalBounce: false,
+                allowsVerticalScrolling: allowsVerticalScrolling,
+                visibleHeightCeiling: 400
+            )
+            if let intent { body.restoreViewportAfterMutableTransition(intent) }
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 400))
+            window.addSubview(body)
+            body.frame = window.bounds
+            window.makeKeyAndVisible()
+            defer { window.isHidden = true }
+            body.layoutIfNeeded()
+            #expect(body.debugRenderedSegmentCountForTesting == 1)
+            return try #require(body.debugReservedHeightForTesting(0))
+        }
+
+        let inline = try reservedTextHeight(allowsVerticalScrolling: false)
+        let scrolling = try reservedTextHeight(allowsVerticalScrolling: true)
+        #expect(inline >= 400, "the trimmed text must still fill the viewport")
+        #expect(inline < scrolling / 4)
+
+        // A stream that finished at the tail hands the reader a tail position,
+        // which only the whole text can show.
+        let handedOffTail = try reservedTextHeight(allowsVerticalScrolling: false, handOff: .tail)
+        #expect(abs(handedOffTail - scrolling) < 1)
+        let handedOffTop = try reservedTextHeight(allowsVerticalScrolling: false, handOff: .top)
+        #expect(abs(handedOffTop - inline) < 1)
+    }
+
+    @MainActor
     @Test("production runway prepares every kind at canonical widths in both scroll directions")
     func productionPathAllKindsWidthMatrix() async throws {
         NativeMarkdownImageView.debugResetPreparedArtifactsForTesting()

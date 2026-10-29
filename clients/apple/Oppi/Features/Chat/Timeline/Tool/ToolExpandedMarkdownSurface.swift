@@ -242,7 +242,10 @@ final class ToolExpandedMarkdownSurface {
             readerPreferences: FullScreenReaderContentFamily.markdown.defaultPreferences,
             perfSurface: .toolExpanded,
             allowsVerticalBounce: false,
-            allowsVerticalScrolling: false
+            allowsVerticalScrolling: false,
+            // The row's Markdown viewport is never taller than this, and it does
+            // not scroll: the reader lays out no more text than fits.
+            visibleHeightCeiling: ToolTimelineRowContentView.maxOutputViewportHeight
         )
         self.themeID = themeID
         body.accessibilityIdentifier = Self.accessibilityIdentifier(itemID: input.itemID)

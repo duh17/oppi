@@ -473,17 +473,20 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             // A 13-inch viewport builds all nine ToolSet rows, so this flow really renders
             // them expanded; before the reconfigure fix these rows never expanded on iPad
             // (main read 0 breaches, layoutMax 10 ms). Three costs are inherent to that
-            // and are bounded here by what was measured in 15 runs at host load 5-33 (apply
-            // 243-290 ms, layout 433-534 ms, cell 51-102 ms) with about 2x margin, instead of
-            // by the breach count: those runs breached 1 to 3 times, so any count limit that
+            // and are bounded here by what was measured with about 2x margin, instead of
+            // by the breach count: the runs breached 1 to 3 times, so any count limit that
             // passes them is either flaky or no bound at all:
-            //   - the ToolSet apply, 9 cell configures in one pass;
-            //   - the Read markdown row's expanded layout (335 ms alone after a tap on main);
-            //   - one slow cell configure.
+            //   - the ToolSet apply, 9 cell configures in one pass (apply 247-326 ms in 12
+            //     runs at host load 5-27), bounded at 600 ms;
+            //   - the Read markdown row's expanded layout, about 110 ms alone now that the
+            //     inline reader lays out one viewport of text instead of the whole 8 KB
+            //     document (it was 335 ms); layout 228-269 ms in 6 runs at host load 5-27,
+            //     bounded at 550 ms;
+            //   - one slow cell configure (cell 58-101 ms in 6 runs), bounded at 200 ms.
             // Any larger stall, or a different one, still fails.
             XCTAssertLessThanOrEqual(applyMax, 600, "ToolSet apply stalled: \(summary)")
-            XCTAssertLessThanOrEqual(layoutMax, 1000, "Expanded-row layout stalled: \(summary)")
-            XCTAssertLessThanOrEqual(cellMax, 250, "Cell configure stalled: \(summary)")
+            XCTAssertLessThanOrEqual(layoutMax, 550, "Expanded-row layout stalled: \(summary)")
+            XCTAssertLessThanOrEqual(cellMax, 200, "Cell configure stalled: \(summary)")
         } else {
             XCTAssertLessThanOrEqual(breaches, 1, summary)
         }

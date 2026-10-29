@@ -3278,6 +3278,19 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorResolution: SourceLineAnchorResolution?
     private let maximumViewportHeight: CGFloat?
+    /// A reader that cannot scroll (the inline tool viewport) shows only the top
+    /// of its document, and the full document opens in the full-screen reader.
+    /// Its owner names the tallest the viewport can ever be, and the reader
+    /// lays out each text segment only that far down. The owner sizes the
+    /// viewport after the first layout, so the ceiling is used instead of the
+    /// height the reader happens to have then. A hand-off that restores the
+    /// tail or a mid-document position needs the whole text, so that intent
+    /// turns the trim off.
+    private let visibleHeightCeiling: CGFloat?
+    private var trimsTextToViewport: Bool
+    /// The document's text segments as built, while `renderedSegments` holds
+    /// them trimmed. Nil when nothing is trimmed.
+    private var untrimmedSegments: [FlatSegment]?
     private var intrinsicViewportContentHeight: CGFloat = 44
     private var readerPreferences: FullScreenReaderPreferences
 
@@ -3342,6 +3355,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         maximumViewportHeight: CGFloat? = nil,
         allowsVerticalBounce: Bool = true,
         allowsVerticalScrolling: Bool = true,
+        visibleHeightCeiling: CGFloat? = nil,
         deferredInitialRenderByteThreshold: Int = NativeFullScreenMarkdownBody.defaultDeferredInitialRenderByteThreshold
     ) {
         self.sourceFormat = sourceFormat
@@ -3358,6 +3372,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         self.lineAnchorResolution = lineAnchor?.resolution(fileContent: initialText)
         self.readerPreferences = readerPreferences
         self.maximumViewportHeight = maximumViewportHeight
+        self.visibleHeightCeiling = allowsVerticalScrolling ? nil : visibleHeightCeiling
+        self.trimsTextToViewport = !allowsVerticalScrolling && visibleHeightCeiling != nil
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
         let initialSnapshot = sourceFormat == .markdown
             ? ThinkingTraceStream.Snapshot(text: content, isDone: true)
@@ -3613,6 +3629,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     /// host. The immutable reader owns the actual offset write so it can clamp
     /// against its final render-ahead geometry without animation.
     func restoreViewportAfterMutableTransition(_ intent: FullScreenMarkdownViewportIntent) {
+        if trimsTextToViewport, intent != .top {
+            trimsTextToViewport = false
+            if untrimmedSegments != nil {
+                needsDocumentLayoutPreparation = true
+            }
+        }
         pendingMutableTransitionViewportIntent = intent
         markdownViewportRestoreSettled = false
         setNeedsLayout()
@@ -3754,6 +3776,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             mergeAdjacentTextSegments: lineAnchor == nil
         )
         renderedSegments = build.segments
+        untrimmedSegments = nil
         renderedSegmentLineRanges = build.sourceLineRanges
         renderedSegmentIDs = build.identities
         #if DEBUG
@@ -3795,6 +3818,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     ) {
         installDeferredRenderPlaceholder(palette: themeID.palette)
         renderedSegments = []
+        untrimmedSegments = nil
         renderedSegmentLineRanges = []
         renderedSegmentIDs = []
         resetParkedSegmentViews()
@@ -3850,6 +3874,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             #endif
             self.collectionView.backgroundView = nil
             self.renderedSegments = segments
+            self.untrimmedSegments = nil
             self.renderedSegmentLineRanges = build.build.sourceLineRanges
             self.renderedSegmentIDs = FlatSegment.readerSegmentIDs(
                 segments: segments,
@@ -4244,6 +4269,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         #if DEBUG
         let heightEstimateStart = MarkdownStreamingPerf.timestampNs()
         #endif
+        applyViewportTextTrim(width: width, canonicalWidth: canonicalWidth)
         let estimates = renderedSegments.map {
             Self.estimatedHeight(for: $0, containerWidth: width)
         }
@@ -4264,7 +4290,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             fromItem: 0,
             throughY: collectionView.bounds.height * 1.5,
             maxItems: Self.maxInitialSynchronousPreparationItems,
-            timeBudgetNs: Self.maxInitialSynchronousPreparationNs
+            timeBudgetNs: Self.maxInitialSynchronousPreparationNs,
+            visibleThroughY: collectionView.bounds.height
         )
         #if DEBUG
         debugInitialSynchronousPreparationItemCount = initialPreparedCount
@@ -4307,6 +4334,113 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
             targetY: collectionView.bounds.height * 3,
             generation: heightFlushGeneration
         )
+    }
+
+    /// Points `renderedSegments` at the trimmed (or, once the trim is off, the
+    /// full) text of the document. The segment list, line ranges, and IDs keep
+    /// their shape: only the text inside a text segment gets shorter.
+    private func applyViewportTextTrim(width: CGFloat, canonicalWidth: CGFloat) {
+        guard trimsTextToViewport else {
+            if let untrimmedSegments {
+                renderedSegments = untrimmedSegments
+                self.untrimmedSegments = nil
+            }
+            return
+        }
+        guard let viewportHeight = visibleHeightCeiling, let config = currentConfig else { return }
+        let source = untrimmedSegments ?? renderedSegments
+        var trimmed = source
+        var didTrim = false
+        for (item, segment) in source.enumerated() {
+            guard case .text(let text) = segment,
+                  let shorter = Self.viewportTrimmedText(
+                      text,
+                      viewportHeight: viewportHeight,
+                      estimatedHeight: Self.estimatedHeight(for: segment, containerWidth: width),
+                      measure: { [self] candidate in
+                          measuredHeight(
+                              of: .text(candidate),
+                              item: item,
+                              config: config,
+                              canonicalWidth: canonicalWidth
+                          )
+                      }
+                  ) else { continue }
+            trimmed[item] = .text(shorter)
+            didTrim = true
+        }
+        if didTrim {
+            untrimmedSegments = source
+            renderedSegments = trimmed
+        }
+    }
+
+    /// The leading paragraphs of `text` whose laid-out height reaches
+    /// `viewportHeight`, or nil when the text is short enough to keep whole.
+    /// The first cut is proportional to the character-count estimate; the
+    /// candidate is then measured, and the prefix grows until it fills the
+    /// viewport. Text layout is top-down, so the visible part of a prefix is
+    /// the same as the visible part of the whole.
+    static func viewportTrimmedText(
+        _ text: AttributedString,
+        viewportHeight: CGFloat,
+        estimatedHeight: CGFloat,
+        measure: (AttributedString) -> CGFloat
+    ) -> AttributedString? {
+        let firstCutHeight = viewportHeight * 1.5
+        guard estimatedHeight > firstCutHeight else { return nil }
+        let characters = text.characters
+        let total = characters.count
+        var take = max(1, Int(Double(total) * Double(firstCutHeight / estimatedHeight)))
+        while take < total {
+            var cut = characters.index(characters.startIndex, offsetBy: take)
+            // End on a paragraph boundary so the cut never splits a line the
+            // viewport could show.
+            while cut < characters.endIndex, characters[cut] != "\n" {
+                cut = characters.index(after: cut)
+            }
+            if cut < characters.endIndex {
+                cut = characters.index(after: cut)
+            }
+            guard cut < characters.endIndex else { return nil }
+            let candidate = AttributedString(text[text.startIndex..<cut])
+            if measure(candidate) >= viewportHeight {
+                return candidate
+            }
+            take *= 2
+        }
+        return nil
+    }
+
+    private func measuredHeight(
+        of segment: FlatSegment,
+        item: Int,
+        config: AssistantMarkdownContentView.Configuration,
+        canonicalWidth: CGFloat
+    ) -> CGFloat {
+        let cell = FullScreenMarkdownSegmentCell(
+            frame: CGRect(x: 0, y: 0, width: canonicalWidth, height: 1)
+        )
+        cell.contentView.bounds.size.width = canonicalWidth
+        cell.bindReaderChrome(
+            lineAnchorModeEnabled: lineAnchor != nil,
+            textViewDelegate: self,
+            doubleTapActivation: viewportDoubleTapActivation
+        )
+        cell.apply(
+            segment: segment,
+            config: config,
+            sourceLineRange: renderedSegmentLineRanges.indices.contains(item)
+                ? renderedSegmentLineRanges[item]
+                : nil,
+            lineAnchorModeEnabled: lineAnchor != nil,
+            palette: themeID.palette,
+            textViewDelegate: self,
+            doubleTapActivation: viewportDoubleTapActivation,
+            canonicalWidth: canonicalWidth,
+            preparesImagesForDisplay: false
+        )
+        return cell.measuredFittingHeight(width: canonicalWidth)
     }
 
     private func updateIntrinsicViewportContentHeight() {
@@ -4417,7 +4551,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         fromItem startItem: Int,
         throughY targetY: CGFloat,
         maxItems: Int = .max,
-        timeBudgetNs: UInt64 = .max
+        timeBudgetNs: UInt64 = .max,
+        visibleThroughY: CGFloat = 0
     ) -> Int {
         guard let config = currentConfig,
               let canonicalWidth = preparedCanonicalWidth,
@@ -4435,7 +4570,12 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         while item < renderedSegments.count,
               y <= targetY,
               preparedCount < maxItems,
-              MarkdownStreamingPerf.timestampNs() - started < timeBudgetNs {
+              // The time budget bounds the runway below the first paint. An item
+              // that starts inside the visible viewport is settled whatever the
+              // clock says: leaving it to `willDisplay` repeats the same fit
+              // inside the collection's layout pass and then replaces the layout.
+              y <= visibleThroughY
+                || MarkdownStreamingPerf.timestampNs() - started < timeBudgetNs {
             if heightLedger.finalHeight(
                 for: renderedSegmentIDs[item],
                 canonicalWidth: canonicalWidth
