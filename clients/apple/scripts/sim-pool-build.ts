@@ -195,6 +195,20 @@ export function compilationCache(
   return { root, args, settings, packages };
 }
 
+/**
+ * `compilationCache`'s xcodebuild arguments and build settings for a build that does not go through
+ * `sim-pool run` (the pre-push Release compile: it needs the iPhone SDK, which sim-pool's slotless
+ * builds do not use). The shared SwiftPM clone is used only once a `sim-pool run` build resolved it
+ * (`-disableAutomaticPackageResolution` would fail on an empty directory); until then the build
+ * resolves packages itself. Empty when the cache is turned off.
+ */
+export function sharedCacheArguments(env: NodeJS.ProcessEnv, appleDir: string, derivedData: string): string[] {
+  const cache = compilationCache(env, appleDir, derivedData, []);
+  if (!cache) return [];
+  const packagesReady = cache.packages !== undefined && existsSync(packagesResolvedMarker(cache.packages));
+  return [...(packagesReady ? cache.args : []), ...cache.settings];
+}
+
 function realpathOrSelf(path: string): string {
   try {
     return realpathSync.native(path);

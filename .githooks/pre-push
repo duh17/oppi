@@ -443,9 +443,9 @@ cache_path() {
   case "$lane" in
     server) lane_mode="$SERVER_MODE" ;;
     apple|ios-unit) lane_mode="$APPLE_MODE" ;;
-    # The Release compile runs under the pinned Xcode, not the default `xcodebuild` that TOOLCHAIN_KEY names.
-    ios-release) lane_mode="$APPLE_MODE $(DEVELOPER_DIR="$(pinned_developer_dir)" xcodebuild -version 2>/dev/null | tr '\n' ' ')" ;;
-    mac) lane_mode="$MAC_CHANGED" ;;
+    # These compile under the pinned Xcode, not the default `xcodebuild` that TOOLCHAIN_KEY names.
+    ios-release) lane_mode="$APPLE_MODE $(pinned_xcode_version)" ;;
+    mac) lane_mode="$MAC_CHANGED $(pinned_xcode_version)" ;;
     harness) lane_mode="$HARNESS_CHANGED" ;;
   esac
   key="$(printf '%s\n' "$GATE_VERSION" "$HEAD_SHA" "$RANGE_KEY_INPUT" "$PUSH_PATHS_KEY" "$lane" "$lane_mode" "$TOOLCHAIN_KEY" | shasum -a 256 | cut -d' ' -f1)"
@@ -557,9 +557,19 @@ pinned_developer_dir() {
 # `#if DEBUG`, so a Release-only break (a DEBUG-only member used from shared code) would
 # pass every lane and fail the first archive. DerivedData is private to this lane and
 # incremental, so a push that changed little recompiles little.
+pinned_xcode_version() {
+  DEVELOPER_DIR="$(pinned_developer_dir)" xcodebuild -version 2>/dev/null | tr '\n' ' '
+}
+
 run_ios_release_gate() {
-  local developer_dir log_dir build_log status=0
+  local developer_dir log_dir build_log status=0 cache_arg
+  local -a cache_args=()
   developer_dir="$(pinned_developer_dir)"
+  # sim-pool's shared SwiftPM clone and compilation cache, keyed by this Xcode: a fresh worktree
+  # compiles from the cache instead of from source, and clones no packages over the network.
+  while IFS= read -r -d '' cache_arg; do cache_args+=("$cache_arg"); done < <(
+    DEVELOPER_DIR="$developer_dir" bun "$REPO_ROOT/clients/apple/scripts/xcode-cache-args.ts" "$REPO_ROOT/clients/apple/.build/pre-push-release"
+  )
   log_dir="$(git rev-parse --absolute-git-dir)/oppi/pre-push-logs"
   mkdir -p "$log_dir"
   build_log="$log_dir/ios-release-$(date +%Y%m%d-%H%M%S).log"
@@ -570,7 +580,7 @@ run_ios_release_gate() {
     -project Oppi.xcodeproj -scheme Oppi -configuration Release \
     -sdk iphoneos -destination 'generic/platform=iOS' \
     -derivedDataPath .build/pre-push-release \
-    CODE_SIGNING_ALLOWED=NO build) >"$build_log" 2>&1
+    CODE_SIGNING_ALLOWED=NO ${cache_args[@]+"${cache_args[@]}"} build) >"$build_log" 2>&1
   status=$?
   set -e
   if [[ "$status" -ne 0 ]]; then
@@ -583,7 +593,7 @@ run_ios_release_gate() {
 
 run_mac_gate() {
   (cd "$REPO_ROOT/server" && bun scripts/check-architecture-boundaries.ts --scope mac)
-  (cd "$REPO_ROOT/clients/apple" && "$HEAVY" xcode-build -- xcodebuild \
+  (cd "$REPO_ROOT/clients/apple" && DEVELOPER_DIR="$(pinned_developer_dir)" "$HEAVY" xcode-build -- xcodebuild \
     -project Oppi.xcodeproj -scheme OppiMac build-for-testing \
     -destination 'platform=macOS' \
     -derivedDataPath .build/pre-push-mac \
@@ -624,11 +634,13 @@ fi
 apple_then_mac() {
   run_cached apple run_apple_gate
   local mac_pid="" unit_pid release_pid unit_status=0 release_status=0 mac_status=0
+  # Unit tests start first: their build takes an xcode-build slot (2 machine-wide), and the Mac
+  # and Release compiles can hold both for minutes; the shards cannot start until their build has one.
+  run_cached ios-unit run_ios_unit_gate & unit_pid="$!"
   if [[ "$MAC_CHANGED" -eq 1 ]]; then
     run_cached mac run_mac_gate & mac_pid="$!"
   fi
   run_cached ios-release run_ios_release_gate & release_pid="$!"
-  run_cached ios-unit run_ios_unit_gate & unit_pid="$!"
   set +e
   wait "$unit_pid"
   unit_status=$?

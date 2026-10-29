@@ -1,9 +1,19 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildIsCurrent, buildKey, completionArgvForXctestrun, forgetBuild, planRun, recordBuild } from "./sim-pool-build";
+import {
+  buildIsCurrent,
+  buildKey,
+  completionArgvForXctestrun,
+  forgetBuild,
+  markPackagesResolved,
+  planRun,
+  recordBuild,
+  sharedCacheArguments,
+} from "./sim-pool-build";
 
 describe("planRun", () => {
   test("a test run builds once without test-execution flags and hands them to the test phase", () => {
@@ -241,5 +251,38 @@ describe("build stamp", () => {
     const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "build-stamp-nogit-")));
     dirs.push(dir);
     expect(buildKey({ root: dir, appleDir: dir, command: "xcodebuild", argv: [], env: {} })).toBeUndefined();
+  });
+});
+
+describe("sharedCacheArguments", () => {
+  const fixture = () => {
+    const root = mkdtempSync(join(tmpdir(), "shared-cache-"));
+    const appleDir = join(root, "apple");
+    const swiftpm = join(appleDir, "Oppi.xcodeproj", "project.xcworkspace", "xcshareddata", "swiftpm");
+    mkdirSync(swiftpm, { recursive: true });
+    writeFileSync(join(swiftpm, "Package.resolved"), '{"pins":[]}');
+    const env = { OPPI_XCODE_CACHE_DIR: join(root, "cache"), DEVELOPER_DIR: "/x/Xcode-9.app/Contents/Developer" };
+    return { root, appleDir, env, derived: join(root, "dd") };
+  };
+  const clone = (args: string[]) => args[args.indexOf("-clonedSourcePackagesDirPath") + 1];
+
+  test("builds share the compilation cache, and the package clone only once sim-pool resolved it", () => {
+    const { appleDir, env, derived } = fixture();
+    const before = sharedCacheArguments(env, appleDir, derived);
+    expect(before).toContain("COMPILATION_CACHE_ENABLE_CACHING=YES");
+    expect(before).not.toContain("-clonedSourcePackagesDirPath");
+
+    // sim-pool resolves one clone per Package.resolved hash; once it has, the build reuses it.
+    const hashDir = join(env.OPPI_XCODE_CACHE_DIR, "spm", createHash("sha256").update('{"pins":[]}').digest("hex").slice(0, 16));
+    mkdirSync(hashDir, { recursive: true });
+    markPackagesResolved(hashDir);
+    const after = sharedCacheArguments(env, appleDir, derived);
+    expect(clone(after)).toBe(hashDir);
+    expect(after).toContain("-disableAutomaticPackageResolution");
+  });
+
+  test("a build opted out of the cache gets no arguments", () => {
+    const { appleDir, env, derived } = fixture();
+    expect(sharedCacheArguments({ ...env, OPPI_SIM_POOL_COMPILATION_CACHE: "0" }, appleDir, derived)).toEqual([]);
   });
 });

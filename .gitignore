@@ -76,6 +76,7 @@ clients/apple/scripts/*
 !clients/apple/scripts/xcode-toolchain.ts
 !clients/apple/scripts/xcode-toolchain.test.ts
 !clients/apple/scripts/xcode-toolchain.txt
+!clients/apple/scripts/xcode-cache-args.ts
 !clients/apple/scripts/tsconfig.json
 !clients/apple/scripts/sim-slim.sh
 !clients/apple/scripts/sim-slim.test.ts
