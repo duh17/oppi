@@ -574,6 +574,41 @@ export function cloneProducts(derivedData: string, runDir: string): string {
   return dest;
 }
 
+/** Test targets that drive the app from outside its process: nothing of the unit-test host is needed. */
+const UI_TEST_TARGETS = new Set(["OppiUITests", "OppiE2ETests"]);
+
+/** True when the run names tests (`-only-testing`) and every one lives in a UI or E2E target. */
+export function selectsOnlyUiTests(testFlags: string[]): boolean {
+  const targets: string[] = [];
+  for (let i = 0; i < testFlags.length; i += 1) {
+    const arg = testFlags[i];
+    const value = arg.startsWith("-only-testing:") ? arg.slice("-only-testing:".length) : arg === "-only-testing" ? testFlags[i + 1] : undefined;
+    if (value !== undefined) targets.push(value.split("/")[0]);
+  }
+  return targets.length > 0 && targets.every((target) => UI_TEST_TARGETS.has(target));
+}
+
+/**
+ * Hosted unit-test bundles (`OppiTests.xctest`, `OppiPerfTests.xctest`) and their dSYMs sit inside
+ * `Oppi.app/PlugIns`, because Xcode embeds a hosted test bundle in its host app. A UI or E2E run
+ * installs that same app as its target, so the simulator copies and registers about 600 MB it never
+ * loads. Remove them from the run's own clone (the checkout build keeps them for unit runs).
+ * Returns the removed entries, relative to `products`.
+ */
+export function stripUnitTestBundles(products: string): string[] {
+  const removed: string[] = [];
+  for (const config of readdirSync(products)) {
+    const plugIns = join(products, config, "Oppi.app", "PlugIns");
+    if (!existsSync(plugIns)) continue;
+    for (const name of readdirSync(plugIns)) {
+      if (!name.endsWith(".xctest") && !name.endsWith(".xctest.dSYM")) continue;
+      rmSync(join(plugIns, name), { recursive: true, force: true });
+      removed.push(join(config, "Oppi.app", "PlugIns", name));
+    }
+  }
+  return removed;
+}
+
 /** The one xctestrun the build wrote for `scheme` (no test plans in this project). */
 export function findXctestrun(products: string, scheme: string): string {
   const matches = readdirSync(products).filter((name) => name.startsWith(`${scheme}_`) && name.endsWith(".xctestrun"));

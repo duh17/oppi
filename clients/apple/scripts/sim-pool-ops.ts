@@ -17,6 +17,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   checkoutDerivedData,
   cloneProducts,
+  selectsOnlyUiTests,
+  stripUnitTestBundles,
   acquireHeavySlot,
   buildIsCurrent,
   buildKey,
@@ -1687,7 +1689,7 @@ async function runBuildPhase(input: {
   argv: string[];
   extraSettings: string[];
   logFile: string;
-  cloneFor?: { runDir: string; scheme: string };
+  cloneFor?: { runDir: string; scheme: string; stripUnitTests?: boolean };
 }): Promise<BuildPhase> {
   const { session, config } = input;
   const derivedData = checkoutDerivedData(config.buildBase);
@@ -1789,6 +1791,10 @@ async function runBuildPhase(input: {
     if (phase.code === 0 && !phase.uncertain && input.cloneFor) {
       try {
         const products = cloneProducts(derivedData, input.cloneFor.runDir);
+        if (input.cloneFor.stripUnitTests) {
+          const removed = stripUnitTestBundles(products);
+          if (removed.length) log(`[sim-pool] UI/E2E run: removed ${removed.length} unit-test bundle entries from the cloned app`);
+        }
         phase.xctestrun = findXctestrun(products, input.cloneFor.scheme);
         log(`[sim-pool] Test products: ${products}`);
         log(`[sim-pool] xctestrun: ${phase.xctestrun}`);
@@ -2022,7 +2028,7 @@ export async function commandRun(
       const scheme = extractFlagValue("-scheme", plan.buildArgv);
       const cloneFor =
         plan.kind === "split" && runDir
-          ? { runDir, scheme: plan.scheme }
+          ? { runDir, scheme: plan.scheme, stripUnitTests: selectsOnlyUiTests(plan.testFlags) }
           : plan.kind === "build" && productsDir && scheme && plan.buildArgv.includes("build-for-testing")
             ? { runDir: productsDir, scheme }
             : undefined;

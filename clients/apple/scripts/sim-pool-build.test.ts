@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,7 +12,9 @@ import {
   markPackagesResolved,
   planRun,
   recordBuild,
+  selectsOnlyUiTests,
   sharedCacheArguments,
+  stripUnitTestBundles,
 } from "./sim-pool-build";
 import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
 
@@ -59,6 +61,41 @@ describe("planRun", () => {
     expect(completionArgvForXctestrun(shard)).toEqual(["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests", "-skip-testing:OppiTests/A"]);
     // Repetition changes what a finished summary means; leave such runs unparsed.
     expect(completionArgvForXctestrun([...shard, "-test-iterations", "3"])).toBeUndefined();
+  });
+});
+
+describe("unit-test bundles in a UI or E2E run's app", () => {
+  test("only a run that names tests, all in UI or E2E targets, drops the unit-test bundles", () => {
+    expect(selectsOnlyUiTests(["-only-testing:OppiUITests/ChatRoutesUITests/testA"])).toBe(true);
+    expect(selectsOnlyUiTests(["-only-testing", "OppiE2ETests", "-only-testing:OppiUITests"])).toBe(true);
+    // One unit test keeps them: the unit tests run hosted in this very app.
+    expect(selectsOnlyUiTests(["-only-testing:OppiUITests/A", "-only-testing:OppiTests/B"])).toBe(false);
+    // Skips and a whole-scheme run name no target, so any bundle may be needed.
+    expect(selectsOnlyUiTests(["-skip-testing:OppiTests"])).toBe(false);
+    expect(selectsOnlyUiTests([])).toBe(false);
+  });
+
+  test("the clone's app loses its hosted test bundles and their dSYMs, nothing else", () => {
+    const products = mkdtempSync(join(tmpdir(), "strip-unit-"));
+    try {
+      const config = join(products, "Debug-iphonesimulator");
+      const plugIns = join(config, "Oppi.app", "PlugIns");
+      for (const name of ["OppiTests.xctest", "OppiTests.xctest.dSYM", "OppiPerfTests.xctest", "OppiShareExtension.appex"]) {
+        mkdirSync(join(plugIns, name), { recursive: true });
+      }
+      // The UI test runner's own bundle is what the harness loads; it stays.
+      mkdirSync(join(config, "OppiUITests-Runner.app", "PlugIns", "OppiUITests.xctest"), { recursive: true });
+
+      expect(stripUnitTestBundles(products).sort()).toEqual([
+        join("Debug-iphonesimulator", "Oppi.app", "PlugIns", "OppiPerfTests.xctest"),
+        join("Debug-iphonesimulator", "Oppi.app", "PlugIns", "OppiTests.xctest"),
+        join("Debug-iphonesimulator", "Oppi.app", "PlugIns", "OppiTests.xctest.dSYM"),
+      ]);
+      expect(readdirSync(plugIns)).toEqual(["OppiShareExtension.appex"]);
+      expect(existsSync(join(config, "OppiUITests-Runner.app", "PlugIns", "OppiUITests.xctest"))).toBe(true);
+    } finally {
+      rmSync(products, { recursive: true, force: true });
+    }
   });
 });
 
