@@ -501,6 +501,87 @@ struct CodeEditorWrapAndGutterTests {
         try expectItems(hang: 2, "fence deleted")
     }
 
+    /// An unrelated edit, then a fence opened above lines TextKit built long
+    /// before: they are inside it now and wrap as code, with no color pass.
+    @Test func openingAFenceAfterAnUnrelatedEditRestylesLinesBuiltFurtherDown() throws {
+        let item = "- Bullet long enough to wrap onto a second row on a phone screen, surely."
+        let text = ["``", item, "text```", item].joined(separator: "\n")
+        let (controller, window) = try makeEditor(path: "notes.md", text: text, highlightsSyntax: false)
+        defer { hideTestWindow(window) }
+        let textView = controller.textView
+        func lineStart(_ line: Int) -> Int { lineStarts(of: textView.text)[line] }
+        func replace(at offset: Int, with string: String) throws {
+            let position = try #require(textView.position(from: textView.beginningOfDocument, offset: offset))
+            textView.replace(try #require(textView.textRange(from: position, to: position)), withText: string)
+        }
+        for line in [1, 3] { try expectWrappedRowStarts(textView, lineStart: lineStart(line), textAfter: 2, "bullet \(line) before") }
+        try replace(at: lineStart(1) + item.utf16.count, with: "x")
+        window.layoutIfNeeded()
+        try replace(at: 2, with: "`")
+        window.layoutIfNeeded()
+        for line in [1, 3] { try expectWrappedRowStarts(textView, lineStart: lineStart(line), textAfter: 0, "bullet \(line) inside the new fence") }
+    }
+
+    // MARK: - Width changes
+
+    private func attributeEdits(in textView: UITextView, during work: () async throws -> Void) async throws -> Int {
+        let edits = EditCounter()
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSTextStorage.didProcessEditingNotification, object: textView.textStorage, queue: nil
+        ) { _ in edits.count += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        try await work()
+        return edits.count
+    }
+
+    /// Rotating changes the wrapped width and with it the cap on hangs. When no
+    /// paragraph TextKit built hangs as deep as the smaller cap, nothing needs
+    /// styling again, so nothing is invalidated (and no layout is redone).
+    @Test func rotatingRestylesNothingWhenNoBuiltParagraphHangsPastTheCap() async throws {
+        let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau"
+        let text = ["func run() {", "    \(words)", "        \(words)", "}"].joined(separator: "\n")
+        let (controller, window) = try makeEditor(path: "run.swift", text: text, highlightsSyntax: false)
+        defer { hideTestWindow(window) }
+        try await Task.sleep(for: .milliseconds(300))
+        let edits = try await attributeEdits(in: controller.textView) {
+            window.frame = CGRect(x: 0, y: 0, width: 844, height: 390)
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(400))
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        #expect(edits == 0, "rotation edited the text storage \(edits) times with no deep indent in the buffer")
+    }
+
+    @Test func rotatingGivesADeepIndentItsRoomBackAndTakesItAwayAgain() async throws {
+        let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau"
+        let text = [String(repeating: " ", count: 30) + words, "end"].joined(separator: "\n")
+        let (controller, window) = try makeEditor(path: "run.swift", text: text)
+        defer { hideTestWindow(window) }
+        let textView = controller.textView
+        let columnWidth = ("M" as NSString).size(withAttributes: [.font: try #require(textView.font)]).width
+        func hang() throws -> CGFloat {
+            try caret(textView, at: secondRowStart(textView, paragraphStart: 0)).minX - caret(textView, at: 0).minX
+        }
+        func settle(until condition: () throws -> Bool) async throws -> Bool {
+            for _ in 0..<40 {
+                window.layoutIfNeeded()
+                if try condition() { return true }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            return false
+        }
+        window.frame = CGRect(x: 0, y: 0, width: 844, height: 390)
+        let roomy = try await settle { abs(try hang() - 30 * columnWidth) < 0.5 }
+        let landscapeHang = try hang() / columnWidth
+        #expect(roomy, "in landscape the 30-column indent fits and hangs 30 columns, not \(landscapeHang)")
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let wrapWidth = textView.textContainer.size.width - 2 * textView.textContainer.lineFragmentPadding
+        let capped = try await settle { try hang() <= wrapWidth / 2 + 0.5 }
+        #expect(capped, "back in portrait the hang is capped at half the wrapped width")
+    }
+
     /// With Syntax Highlighting on, an indent typed into a flush line wraps
     /// under it as soon as the text lays out; the color pass is not involved.
     @Test func anIndentTypedWithHighlightingOnWrapsAtOnce() throws {

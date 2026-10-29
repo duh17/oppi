@@ -25,10 +25,19 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
     private var styles: [Int: NSParagraphStyle] = [:]
     private var fences = CodeEditorFenceIndex()
     private var capColumns = Int.max
+    /// The cap the paragraphs TextKit has built were styled under.
+    private var styledCap = Int.max
     private var hasWrapWidth = false
     private var capTask: Task<Void, Never>?
+    /// Everything TextKit has built through this delegate (kept in step with
+    /// edits), and the deepest hang any of it wanted before the cap.
+    private var builtRange: NSRange?
+    private var deepestHang = 0
 
     /// Width of the wrapped text area in points; nil when lines do not wrap.
+    /// A new width changes the cap on hangs; paragraphs TextKit built that
+    /// hang past the smaller of the old and new cap are built again, and
+    /// nothing else is touched.
     var wrapWidth: CGFloat? {
         didSet {
             let cap = Self.cap(for: wrapWidth, columnWidth: columnWidth)
@@ -38,16 +47,26 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
             guard hasWrapWidth else {
                 // The first width arrives before the first layout.
                 hasWrapWidth = true
-                invalidateAll()
+                restyleForCap()
                 return
             }
-            // A resize drag reports a width per frame: restyle once it settles.
+            // A resize drag reports a width per frame: restyle once it settles,
+            // and not while marked (IME) text is open.
             capTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(150))
+                while !Task.isCancelled, self?.textView?.markedTextRange != nil {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
                 guard !Task.isCancelled else { return }
-                self?.invalidateAll()
+                self?.restyleForCap()
             }
         }
+    }
+
+    private func restyleForCap() {
+        defer { styledCap = capColumns }
+        guard let builtRange, deepestHang > min(styledCap, capColumns) else { return }
+        invalidate(builtRange)
     }
 
     init(textView: CodeEditorTextView, isMarkdown: Bool, columnWidth: CGFloat, tabWidth: Int) {
@@ -75,7 +94,10 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
         self.columnWidth = columnWidth
         self.tabWidth = tabWidth
         capColumns = Self.cap(for: wrapWidth, columnWidth: columnWidth)
+        styledCap = capColumns
         styles = [:]
+        builtRange = nil
+        deepestHang = 0
     }
 
     private static func cap(for width: CGFloat?, columnWidth: CGFloat) -> Int {
@@ -97,6 +119,8 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
             let item = Self.wrapColumns(in: text, lineStart: range.location, contentsEnd: end, tabWidth: tabWidth, markdown: true)
             if item != columns, !fences.contains(range.location, in: text) { columns = item }
         }
+        builtRange = builtRange.map { NSUnionRange($0, range) } ?? range
+        deepestHang = max(deepestHang, columns)
         columns = min(capColumns, columns)
         // No hang: the buffer-wide default style is already right.
         guard columns > 0 else { return nil }
@@ -122,29 +146,49 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
         return style
     }
 
-    // MARK: - Fences
+    // MARK: - Edits
 
-    /// An edit can open or close a fence, which changes how the lines after it
-    /// in a fenced block or out of one are styled. Paragraphs that asked about
-    /// fences are built again; paragraphs nothing asked about are not styled
-    /// differently.
+    /// Keeps `builtRange` in step with an edit, and for Markdown lets the fence
+    /// index see it: an edit can open or close a fence, which changes how the
+    /// lines after it are styled. Paragraphs that asked about fences are built
+    /// again; paragraphs nothing asked about are not styled differently.
     @objc private func storageDidProcessEditing(_ note: Notification) {
-        guard isMarkdown, let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
-        guard storage.editedRange.location != NSNotFound else {
-            fences = CodeEditorFenceIndex()
+        guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
+        let edited = storage.editedRange
+        guard edited.location != NSNotFound else {
+            builtRange = nil
+            if isMarkdown {
+                // The edit's range is unknown: forget what was read and rebuild what was asked about.
+                let asked = fences.askedThrough
+                fences.reset()
+                invalidate(NSRange(location: 0, length: min(storage.length, asked + 1)))
+            }
             return
         }
-        if let stale = fences.apply(editAt: storage.editedRange, changeInLength: storage.changeInLength, in: storage.mutableString) {
+        shiftBuiltRange(for: edited, changeInLength: storage.changeInLength, textLength: storage.length)
+        guard isMarkdown else { return }
+        if let stale = fences.apply(editAt: edited, changeInLength: storage.changeInLength, in: storage.mutableString) {
             invalidate(stale)
         }
     }
 
-    private func invalidateAll() {
-        guard let storage = textView?.textStorage else { return }
-        invalidate(NSRange(location: 0, length: storage.length))
+    private func shiftBuiltRange(for edited: NSRange, changeInLength delta: Int, textLength: Int) {
+        guard let built = builtRange else { return }
+        let oldEditEnd = NSMaxRange(edited) - delta
+        let start = built.location >= oldEditEnd ? built.location + delta : min(built.location, edited.location)
+        let end = NSMaxRange(built) >= oldEditEnd ? NSMaxRange(built) + delta : max(edited.location, NSMaxRange(edited))
+        let clipped = min(end, textLength)
+        builtRange = clipped > start ? NSRange(location: start, length: clipped - start) : nil
     }
 
     /// Makes TextKit build the paragraphs in `range` again.
+    ///
+    /// Called from `didProcessEditing`, while the edit that triggered it is
+    /// still being processed: TextKit folds this attribute range into that edit
+    /// and invalidates the paragraphs in one pass. The tests that prove it:
+    /// `openingAndClosingAFenceRestylesTheLinesBelowAtOnce` and
+    /// `openingAFenceAfterAnUnrelatedEditRestylesLinesBuiltFurtherDown` (a real
+    /// window, no color pass to rescue a stale paragraph).
     private func invalidate(_ range: NSRange) {
         guard range.length > 0, let storage = textView?.textStorage else { return }
         storage.beginEditing()
