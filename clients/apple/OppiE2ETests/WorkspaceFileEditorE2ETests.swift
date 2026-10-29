@@ -106,8 +106,8 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
 
         // Typing continues; autosave stays stopped.
         editorTextView.typeText("MORE")
-        Thread.sleep(forTimeInterval: 2.5)
-        XCTAssertEqual(try diskString(), external, "autosave ran after 412")
+        XCTAssertTrue((editorTextView.value as? String)?.contains("MORE") == true, "typing after the conflict did not reach the editor")
+        XCTAssertTrue(diskStaysUnchanged(external), "autosave ran after 412: \((try? diskString())?.debugDescription ?? "unreadable")")
 
         // The review sheet closes by Keep Editing and by swipe-down, and opens again.
         let keepEditing = app.buttons["workspace-file-review.close"]
@@ -137,8 +137,8 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
         editorTextView.tap()
         editorTextView.typeText("GONE")
         XCTAssertTrue(waitForStatus("Deleted", timeout: 15), "404 did not surface as deleted")
-        Thread.sleep(forTimeInterval: 2.5)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: filePath), "the editor recreated a deleted file")
+        XCTAssertTrue((editorTextView.value as? String)?.contains("GONE") == true, "typing after the delete did not reach the editor")
+        XCTAssertTrue(fileStaysDeleted(), "the editor recreated a deleted file")
 
         tap(app.buttons["workspace-file-editor.use-disk"], named: "Use Disk Version")
         let confirmAlert = app.alerts["Use Disk Version?"]
@@ -239,6 +239,29 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         return (try? diskString()).map(condition) ?? false
+    }
+
+    /// The idle autosave fires `WorkspaceFileEditSession.idleDelay` (1 s) after the
+    /// last edit, so a stopped autosave is shown by watching the disk for longer
+    /// than that plus a save round trip. The watch ends at the first violation
+    /// instead of sleeping blind and checking once.
+    private static let autosaveQuietWindow: TimeInterval = 2.5
+
+    private func diskStaysUnchanged(_ expected: String) -> Bool {
+        watchDisk(for: Self.autosaveQuietWindow) { (try? diskString()) == expected }
+    }
+
+    private func fileStaysDeleted() -> Bool {
+        watchDisk(for: Self.autosaveQuietWindow) { !FileManager.default.fileExists(atPath: filePath) }
+    }
+
+    private func watchDisk(for window: TimeInterval, holds invariant: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(window)
+        while Date() < deadline {
+            if !invariant() { return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return invariant()
     }
 
     private func waitForStatus(_ label: String, timeout: TimeInterval) -> Bool {

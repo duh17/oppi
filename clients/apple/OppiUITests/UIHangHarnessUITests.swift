@@ -524,6 +524,25 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         add(attachment)
     }
 
+    /// Re-reads the timeline offset until two consecutive readings agree, so the
+    /// snap-back assertions compare against the resting offset instead of one
+    /// sampled a fixed time after the drag. Returns the last reading if the
+    /// offset keeps moving for the whole window.
+    private func waitForTimelineOffsetToRest(
+        diagTick: XCUIElement,
+        lastReading: Int,
+        timeout: TimeInterval = 6
+    ) -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        var previous = lastReading
+        while true {
+            tapHarnessControl(diagTick)
+            let reading = pollDiagnostic("diag.offsetY", timeout: 4)
+            if reading == previous || Date() >= deadline { return reading }
+            previous = reading
+        }
+    }
+
     func testExpandedExtensionMarkdownGestureOwnsVerticalScroll() throws {
         launchHarness(noStream: true, includeVisualFixtures: true)
 
@@ -580,9 +599,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             context: "downward drag after passing expanded extension markdown"
         )
 
-        Thread.sleep(forTimeInterval: 0.35)
-        diagTick.tap()
-        let settledOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+        let settledOffset = waitForTimelineOffsetToRest(diagTick: diagTick, lastReading: offsetAfterReturnDown)
         XCTAssertLessThanOrEqual(
             abs(settledOffset - offsetAfterReturnDown),
             24,
@@ -646,9 +663,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             context: "downward drag after passing expanded extension text"
         )
 
-        Thread.sleep(forTimeInterval: 0.35)
-        diagTick.tap()
-        let settledOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+        let settledOffset = waitForTimelineOffsetToRest(diagTick: diagTick, lastReading: offsetAfterReturnDown)
         XCTAssertLessThanOrEqual(
             abs(settledOffset - offsetAfterReturnDown),
             24,
@@ -745,10 +760,7 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             context: "downward drag after passing expanded \(markdownLabel)"
         )
 
-        Thread.sleep(forTimeInterval: 0.35)
-        tapHarnessControl(diagTick)
-
-        let settledOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+        let settledOffset = waitForTimelineOffsetToRest(diagTick: diagTick, lastReading: offsetAfterReturnDown)
         XCTAssertLessThanOrEqual(
             abs(settledOffset - offsetAfterReturnDown),
             16,
