@@ -74,16 +74,31 @@ enum AppFont {
     /// preference notification, which fires before the rebuild.
     static let didRebuildNotification = Notification.Name("AppFontDidRebuild")
 
-    // MARK: - System (UIKit, non-monospaced) — these don't change
+    // MARK: - System (UIKit, non-monospaced) — Dynamic Type from the sizes named here
+    //
+    // Each is the named size at the standard text size and grows with Dynamic
+    // Type from there. Put it on a label with `adjustsFontForContentSizeCategory`
+    // so it follows a live change; attributed text keeps the size it was built at.
 
     /// 11pt — metadata labels, line counts
-    static let systemSmall = UIFont.systemFont(ofSize: 11)
+    static var systemSmall: UIFont { scaledSystem(11, .regular, relativeTo: .caption2) }
 
     /// 13pt semibold — toast feedback ("Copied")
-    static let systemFeedback = UIFont.systemFont(ofSize: 13, weight: .semibold)
+    static var systemFeedback: UIFont { scaledSystem(13, .semibold, relativeTo: .footnote) }
 
     /// 14pt medium — toast feedback ("Saved")
-    static let systemFeedbackMedium = UIFont.systemFont(ofSize: 14, weight: .medium)
+    static var systemFeedbackMedium: UIFont { scaledSystem(14, .medium, relativeTo: .footnote) }
+
+    /// The system font at `size` (its size at the standard text size), scaled along
+    /// `style`'s curve. Safe off the main actor.
+    static func scaledSystem(
+        _ size: CGFloat,
+        _ weight: UIFont.Weight,
+        relativeTo style: UIFont.TextStyle,
+        compatibleWith traits: UITraitCollection? = nil
+    ) -> UIFont {
+        UIFontMetrics(forTextStyle: style).scaledFont(for: .systemFont(ofSize: size, weight: weight), compatibleWith: traits)
+    }
 
     // MARK: - Rebuild
 

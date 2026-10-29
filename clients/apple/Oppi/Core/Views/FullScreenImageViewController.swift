@@ -281,6 +281,7 @@ final class FullScreenImageViewController: UIViewController {
         let label = UILabel()
         label.text = "Saved"
         label.font = AppFont.systemFeedbackMedium
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = UIColor(palette.fg)
         label.textAlignment = .center
         label.backgroundColor = UIColor(
@@ -302,8 +303,10 @@ final class FullScreenImageViewController: UIViewController {
                     + FullScreenFloatingControlChrome.controlSize
                     + 8)
             ),
-            label.widthAnchor.constraint(equalToConstant: 80),
-            label.heightAnchor.constraint(equalToConstant: 32),
+            // 80 x 32 at the standard text size; the label grows with its text.
+            label.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
+            label.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+            label.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -32),
         ])
 
         UIView.animate(withDuration: 0.3, delay: 1.5, options: []) {

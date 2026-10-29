@@ -1496,15 +1496,18 @@ final class NativeFullScreenDiffBody: UIView {
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = AppFont.systemFeedbackMedium
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.numberOfLines = 0
         titleLabel.textColor = UIColor(palette.fg)
         titleLabel.text = fileName ?? String(localized: "Changes")
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.font = AppFont.systemSmall
+        subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = UIColor(palette.fgDim)
         subtitleLabel.text = relativePath ?? String(localized: "Review changes")
-        subtitleLabel.numberOfLines = 1
+        subtitleLabel.numberOfLines = 0
 
         let textStack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
         textStack.translatesAutoresizingMaskIntoConstraints = false
@@ -3536,6 +3539,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         label.text = String(localized: "Preparing preview…")
         label.textColor = UIColor(palette.fgDim)
         label.font = AppFont.systemFeedback
+        label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .center
         label.numberOfLines = 0
         collectionView.backgroundView = label

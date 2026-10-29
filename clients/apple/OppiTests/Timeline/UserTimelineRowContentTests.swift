@@ -1159,6 +1159,46 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("The You caption grows with the text size")
+    func youCaptionFollowsTheTextSize() async throws {
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: "Hello",
+                images: [],
+                canFork: false,
+                onFork: nil,
+                differentiateWithoutColor: true
+            )
+        )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 600)
+        let host = UIViewController()
+        host.view.addSubview(view)
+        view.frame = host.view.bounds
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { host.traitOverrides.remove(UITraitPreferredContentSizeCategory.self); hideTestWindow(window); window.rootViewController = nil }
+
+        // A label takes a new text size on the pass after the trait changes.
+        func settle(_ category: UIContentSizeCategory, until done: () -> Bool) async {
+            host.traitOverrides.preferredContentSizeCategory = category
+            for _ in 0..<150 {
+                view.layoutIfNeeded()
+                if done() { return }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        let caption = try #require(userMessageYouCaption(in: view))
+        await settle(.large) { caption.font.pointSize == 11 }
+        let standard = caption.font.pointSize
+        #expect(standard == 11)
+
+        await settle(.accessibilityExtraExtraExtraLarge) { caption.font.pointSize > standard * 2 }
+        #expect(caption.font.pointSize > standard * 2, "the caption stayed \(caption.font.pointSize) pt at AX5")
+    }
+
+    @MainActor
     @Test("Review Repo and Commit pills use userMessageText for icon and prefix")
     func userCardPathPillsUseUserMessageTextForGlyphAndPrefix() throws {
         let palette = ThemeRuntimeState.currentPalette()

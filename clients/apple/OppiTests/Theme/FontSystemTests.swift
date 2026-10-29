@@ -497,12 +497,20 @@ struct AppFontRebuildTests {
         #expect(AppFont.messageHeading(level: 9) == AppFont.messageHeading(level: 6))
     }
 
-    // MARK: - System fonts are static
+    // MARK: - System fonts follow Dynamic Type
 
-    @Test func systemFontConstantsAreFixedSize() {
-        #expect(AppFont.systemSmall.pointSize == 11)
-        #expect(AppFont.systemFeedback.pointSize == 13)
-        #expect(AppFont.systemFeedbackMedium.pointSize == 14)
+    @Test func systemFontRolesKeepTheirSizeAtTheStandardSizeAndGrowWithDynamicType() {
+        let standard = UITraitCollection(preferredContentSizeCategory: .large)
+        let accessibility = UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge)
+        let roles: [(size: CGFloat, weight: UIFont.Weight, style: UIFont.TextStyle)] = [
+            (11, .regular, .caption2), (13, .semibold, .footnote), (14, .medium, .footnote),
+        ]
+        for role in roles {
+            let atStandard = AppFont.scaledSystem(role.size, role.weight, relativeTo: role.style, compatibleWith: standard)
+            let atAccessibility = AppFont.scaledSystem(role.size, role.weight, relativeTo: role.style, compatibleWith: accessibility)
+            #expect(atStandard.pointSize == role.size)
+            #expect(atAccessibility.pointSize > role.size * 2, "\(role.size)pt did not grow at AX5: \(atAccessibility.pointSize)")
+        }
     }
 }
 

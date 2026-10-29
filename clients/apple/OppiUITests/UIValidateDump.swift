@@ -245,8 +245,9 @@ enum UIValidateDump {
     /// `UIFontMetrics(forTextStyle:)` like every other label; the audit reports `dynamicType` on it
     /// anyway. Only a static text inside a row of that list whose label is the row's detail is waived.
     ///
-    /// Two settings previews draw real app text that is fixed-size on purpose
-    /// (`SampledPreview`): Voice's mic control and Text's code sample. The audit
+    /// Two settings previews draw real app text the audit misreads (`SampledPreview`): Voice's
+    /// mic mark, which scales with a cap inside its disc, and Text's code sample, which is
+    /// fixed-size on purpose. The audit
     /// finds their text by looking at the screen, so it often reports `dynamicType`
     /// or `elementDetection` without an element. Those two types are waived on a page
     /// only while its preview is on screen. An issue that names an element is waived
@@ -299,8 +300,10 @@ enum UIValidateDump {
         static let all = [
             SampledPreview(
                 identifier: "settings.voice.micPreview",
-                reason: "the mic's \"EN\" is a fixed-size glyph inside the 44 pt mic control, decorative, drawn by "
-                    + "the chrome the composer shares (MicButtonChromeView); the row's label names the preview"
+                reason: "the mic's \"EN\" grows with Dynamic Type up to half the 44 pt disc "
+                    + "(MicButtonChromeView.languageMarkFont: a scaled system font with a cap, exact at the standard "
+                    + "size). The audit flags it at the standard size only and finds nothing at AX5; the row's label "
+                    + "names the preview"
             ),
             SampledPreview(
                 identifier: "settings.text.preview.code",

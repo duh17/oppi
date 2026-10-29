@@ -162,6 +162,11 @@ final class MicButtonChromeView: UIControl {
         addSubview(imageView)
 
         textLabel.textAlignment = .center
+        // The font is sized by `languageMarkFont` (see it), refreshed on a text size change.
+        textLabel.adjustsFontForContentSizeCategory = true
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
+            self.textLabel.font = Self.languageMarkFont(diameter: self.diameter, compatibleWith: self.traitCollection)
+        }
         textLabel.adjustsFontSizeToFitWidth = true
         textLabel.minimumScaleFactor = 0.5
         textLabel.isUserInteractionEnabled = false
@@ -347,7 +352,7 @@ final class MicButtonChromeView: UIControl {
                 imageView.isHidden = true
                 textLabel.isHidden = false
                 textLabel.text = languageLabel ?? "??"
-                textLabel.font = UIFont.systemFont(ofSize: diameter * 0.4, weight: .bold)
+                textLabel.font = Self.languageMarkFont(diameter: diameter, compatibleWith: traitCollection)
                 textLabel.textColor = indicator
             }
         } else {
@@ -361,6 +366,16 @@ final class MicButtonChromeView: UIControl {
                 : indicator
             textLabel.isHidden = true
         }
+    }
+
+    /// The language/engine mark ("EN") grows with Dynamic Type, but stays inside
+    /// the disc: it is `diameter * 0.4` at the standard size and never passes
+    /// half the diameter, where the two letters still fit the label's width.
+    static func languageMarkFont(diameter: CGFloat, compatibleWith traits: UITraitCollection? = nil) -> UIFont {
+        // The text size's scale, taken from 100 pt so it is not rounded to the
+        // pixel grid: the standard size stays exactly `diameter * 0.4`.
+        let scale = UIFontMetrics(forTextStyle: .body).scaledValue(for: 100, compatibleWith: traits) / 100
+        return .systemFont(ofSize: min(diameter * 0.4 * scale, diameter * 0.5), weight: .bold)
     }
 
     /// The parts that move with the voice: the orb's spectrum or the ring's width.

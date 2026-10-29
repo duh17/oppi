@@ -7,6 +7,49 @@ import UIKit
 @Suite("Composer bar")
 @MainActor
 struct ComposerBarTests {
+    @Test("The mic's language mark grows with the text size and stays inside the disc")
+    func micLanguageMarkFollowsTheTextSize() async throws {
+        let chrome = MicButtonChromeView()
+        chrome.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+        chrome.apply(
+            isRecording: true,
+            isProcessing: false,
+            voiceSpectrum: .zero,
+            languageLabel: "EN",
+            accentColor: .systemBlue,
+            engineBadge: .onDevice,
+            diameter: 44,
+            animated: false
+        )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 200, height: 200)
+        let host = UIViewController()
+        host.view.addSubview(chrome)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { host.traitOverrides.remove(UITraitPreferredContentSizeCategory.self); hideTestWindow(window); window.rootViewController = nil }
+        let mark = try #require(Mirror(reflecting: chrome).children.first { $0.label == "textLabel" }?.value as? UILabel)
+        #expect(mark.text == "EN")
+
+        // A trait change reaches the view on the pass after it is set.
+        func settle(_ category: UIContentSizeCategory, until done: () -> Bool) async {
+            host.traitOverrides.preferredContentSizeCategory = category
+            for _ in 0..<150 {
+                chrome.layoutIfNeeded()
+                if done() { return }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        await settle(.large) { abs(mark.font.pointSize - 44 * 0.4) < 0.01 }
+        let standard = mark.font.pointSize
+        #expect(abs(standard - 44 * 0.4) < 0.01, "the mark changed at the standard size: \(standard)")
+
+        await settle(.accessibilityExtraExtraExtraLarge) { mark.font.pointSize > standard }
+        #expect(mark.font.pointSize > standard, "the mark stayed \(mark.font.pointSize) pt at AX5")
+        #expect(mark.font.pointSize <= 44 * 0.5 + 0.01, "the mark outgrew the disc: \(mark.font.pointSize)")
+    }
+
     @Test("Live Voice entry ends a recording or preparing dictation take first")
     func liveVoiceEntryEndsDictation() async {
         for state: VoiceInputManager.State in [.recording, .preparingModel] {

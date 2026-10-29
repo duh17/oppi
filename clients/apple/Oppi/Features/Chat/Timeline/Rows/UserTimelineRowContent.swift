@@ -329,7 +329,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         youCaption.translatesAutoresizingMaskIntoConstraints = false
         youCaption.text = String(localized: "You")
         youCaption.font = AppFont.systemSmall
-        youCaption.adjustsFontForContentSizeCategory = false
+        youCaption.adjustsFontForContentSizeCategory = true
         youCaption.isAccessibilityElement = false
         youCaption.accessibilityIdentifier = "chat.user.you-caption"
 
