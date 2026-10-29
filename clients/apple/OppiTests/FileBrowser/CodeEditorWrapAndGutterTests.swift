@@ -582,6 +582,36 @@ struct CodeEditorWrapAndGutterTests {
         #expect(capped, "back in portrait the hang is capped at half the wrapped width")
     }
 
+    /// A paragraph built while the width is somewhere between two settled
+    /// widths is capped by that width. When the width returns before the
+    /// restyle fires, the settled caps are equal, but that paragraph still has
+    /// to be built again to get its room back.
+    @Test func aParagraphBuiltDuringAResizeWaitIsRestyledWhenTheWidthReturns() async throws {
+        let line = String(repeating: " ", count: 30) + "deeply indented text that hangs"
+        let textView = CodeEditorTextView()
+        textView.text = [line, line].joined(separator: "\n")
+        let styler = CodeEditorParagraphStyler(textView: textView, isMarkdown: false, columnWidth: 8, tabWidth: 4)
+        let content = try #require(textView.textLayoutManager?.textContentManager as? NSTextContentStorage)
+        let paragraph = NSRange(location: 0, length: line.utf16.count + 1)
+        func hang() throws -> CGFloat {
+            let built = try #require(styler.textContentStorage(content, textParagraphWith: paragraph))
+            return (built.attributedString.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.headIndent ?? 0
+        }
+
+        styler.wrapWidth = 800          // cap 50: the indent fits, hangs 30 columns
+        #expect(try hang() == 30 * 8)
+        styler.wrapWidth = 80           // narrow, inside the resize wait: cap 5
+        #expect(try hang() == 5 * 8, "built during the wait, under the narrow cap")
+        let edits = EditCounter()
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSTextStorage.didProcessEditingNotification, object: textView.textStorage, queue: nil
+        ) { _ in edits.count += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        styler.wrapWidth = 800          // wide again before the wait ends
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(edits.count == 1, "the paragraph built under the narrow cap was invalidated (\(edits.count) edits)")
+    }
+
     /// With Syntax Highlighting on, an indent typed into a flush line wraps
     /// under it as soon as the text lays out; the color pass is not involved.
     @Test func anIndentTypedWithHighlightingOnWrapsAtOnce() throws {

@@ -25,8 +25,10 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
     private var styles: [Int: NSParagraphStyle] = [:]
     private var fences = CodeEditorFenceIndex()
     private var capColumns = Int.max
-    /// The cap the paragraphs TextKit has built were styled under.
-    private var styledCap = Int.max
+    /// The lowest cap in effect when any paragraph was built since the last
+    /// restyle: a paragraph built during a resize wait is capped by whatever
+    /// the width was at that moment, not by the last settled one.
+    private var lowestBuiltCap = Int.max
     private var hasWrapWidth = false
     private var capTask: Task<Void, Never>?
     /// Everything TextKit has built through this delegate (kept in step with
@@ -64,8 +66,8 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
     }
 
     private func restyleForCap() {
-        defer { styledCap = capColumns }
-        guard let builtRange, deepestHang > min(styledCap, capColumns) else { return }
+        defer { lowestBuiltCap = capColumns }
+        guard let builtRange, deepestHang > min(lowestBuiltCap, capColumns) else { return }
         invalidate(builtRange)
     }
 
@@ -94,7 +96,7 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
         self.columnWidth = columnWidth
         self.tabWidth = tabWidth
         capColumns = Self.cap(for: wrapWidth, columnWidth: columnWidth)
-        styledCap = capColumns
+        lowestBuiltCap = Int.max
         styles = [:]
         builtRange = nil
         deepestHang = 0
@@ -121,6 +123,7 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
         }
         builtRange = builtRange.map { NSUnionRange($0, range) } ?? range
         deepestHang = max(deepestHang, columns)
+        lowestBuiltCap = min(lowestBuiltCap, capColumns)
         columns = min(capColumns, columns)
         // No hang: the buffer-wide default style is already right.
         guard columns > 0 else { return nil }
@@ -156,7 +159,8 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
         guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
         let edited = storage.editedRange
         guard edited.location != NSNotFound else {
-            builtRange = nil
+            // Unknown range: anything built may be gone or moved.
+            builtRange = NSRange(location: 0, length: storage.length)
             if isMarkdown {
                 // The edit's range is unknown: forget what was read and rebuild what was asked about.
                 let asked = fences.askedThrough
@@ -167,8 +171,10 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
         }
         shiftBuiltRange(for: edited, changeInLength: storage.changeInLength, textLength: storage.length)
         guard isMarkdown else { return }
-        if let stale = fences.apply(editAt: edited, changeInLength: storage.changeInLength, in: storage.mutableString) {
-            invalidate(stale)
+        if let stale = fences.apply(editAt: edited, changeInLength: storage.changeInLength, in: storage.mutableString),
+           let built = builtRange {
+            // Only paragraphs TextKit built through this delegate have a style to be stale.
+            invalidate(NSIntersectionRange(stale, built))
         }
     }
 
@@ -185,10 +191,12 @@ final class CodeEditorParagraphStyler: NSObject, @preconcurrency NSTextContentSt
     ///
     /// Called from `didProcessEditing`, while the edit that triggered it is
     /// still being processed: TextKit folds this attribute range into that edit
-    /// and invalidates the paragraphs in one pass. The tests that prove it:
-    /// `openingAndClosingAFenceRestylesTheLinesBelowAtOnce` and
-    /// `openingAFenceAfterAnUnrelatedEditRestylesLinesBuiltFurtherDown` (a real
-    /// window, no color pass to rescue a stale paragraph).
+    /// and invalidates the paragraphs in one pass. TextKit does not build
+    /// paragraphs after an edit again on its own (without this call the
+    /// paragraphs below stay as they were), and two real-window tests turn red
+    /// when it is removed: `openingAndClosingAFenceRestylesTheLinesBelowAtOnce`
+    /// and `openingAFenceAfterAnUnrelatedEditRestylesLinesBuiltFurtherDown`
+    /// (no color pass runs there to rescue a stale paragraph).
     private func invalidate(_ range: NSRange) {
         guard range.length > 0, let storage = textView?.textStorage else { return }
         storage.beginEditing()
