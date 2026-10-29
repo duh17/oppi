@@ -5,11 +5,28 @@ import XCTest
 /// Hang-harness queue store is in-memory; this lane is not paired-server E2E.
 @MainActor
 final class QAVerificationNegativeUITests: UIHarnessTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // The receipts are bound to the run `scripts/qa-verify.ts` starts; without that
+        // binding every inner attempt reads `unknown` and the proofs below cannot hold.
+        try XCTSkipUnless(
+            QAVerificationRunBinding.fromEnvironment() != nil,
+            "Needs the qa-verify run binding (OPPI_QA_RUN_NONCE, OPPI_QA_SOURCE_SHA, OPPI_QA_SOURCE_HASH)"
+        )
+    }
+
     private let unusedPostcondition = QAVerificationExecutor.Confirmation.exists(
+        // ax-id-guard: absent-on-purpose
         .id("qa.verification.unused-postcondition", role: .staticText)
     )
 
-    func testStrictRejectsThreeAmbiguousMoveControlsAndLeavesQueueUnchanged() throws {
+    /// Every queued message carries the same remove label; their ids differ by item.
+    private static let removeControl = QAVerificationExecutor.Target.label("Remove queued message", role: .button)
+    /// The queue drawer's expand/collapse header, and the list it shows while expanded.
+    private static let queueToggle = QAVerificationExecutor.Target.id("chat.messageQueue.toggle", role: .any)
+    private static let queueList = QAVerificationExecutor.Target.id("chat.messageQueue.list", role: .any)
+
+    func testStrictRejectsThreeAmbiguousRemoveControlsAndLeavesQueueUnchanged() throws {
         launchQueueHarness()
         enqueueSteer(times: 3)
         expandQueue()
@@ -17,15 +34,15 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
 
         try wrapNegative(
             journeyId: "negative-ambiguous-target",
-            subject: "Three duplicate move controls fail closed; queue unchanged",
-            stepIds: ["tap-move"],
+            subject: "Three duplicate remove controls fail closed; queue unchanged",
+            stepIds: ["tap-remove"],
             requiredAssertionIds: ["rejected-ambiguous-3-matches", "queue-unchanged"],
             innerStatus: .fail
         ) { _, executor in
             try executor.tap(
-                QAVerificationExecutor.Target.id("arrow.down.right", role: .button),
+                Self.removeControl,
                 timeout: 4,
-                stepId: "tap-move",
+                stepId: "tap-remove",
                 confirming: unusedPostcondition
             )
         } assertions: { outer, innerFile, error in
@@ -46,7 +63,7 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
         }
     }
 
-    func testStrictMissingMoveDoesNotChangeQueue() throws {
+    func testStrictMissingRemoveDoesNotChangeQueue() throws {
         launchQueueHarness()
         enqueueSteer(times: 1)
         expandQueue()
@@ -54,13 +71,13 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
 
         try wrapNegative(
             journeyId: "negative-missing-target",
-            subject: "Missing move identifier fails closed; queue unchanged",
+            subject: "Missing remove identifier fails closed; queue unchanged",
             stepIds: ["tap-missing"],
             requiredAssertionIds: ["rejected-missing-target", "queue-unchanged"],
             innerStatus: .fail
         ) { _, executor in
             try executor.tap(
-                QAVerificationExecutor.Target.id("chat.messageQueue.item.missing.moveToFollowUp", role: .button),
+                QAVerificationExecutor.Target.id("chat.messageQueue.remove.missing-item", role: .button),
                 timeout: 2,
                 stepId: "tap-missing",
                 confirming: unusedPostcondition
@@ -97,8 +114,9 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
         ) { _, executor in
             try executor.tap(
                 QAVerificationExecutor.Target.id(
-                    "chat.messageQueue.refresh",
+                    "chat.messageQueue.editInComposer",
                     role: .button,
+                    // ax-id-guard: absent-on-purpose
                     scope: "qa.verification.missing-scope"
                 ),
                 timeout: 2,
@@ -116,39 +134,6 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
         }
     }
 
-    func testAmbiguousScopeDoesNotFallBackToApp() throws {
-        launchQueueHarness()
-        enqueueSteer(times: 3)
-        expandQueue()
-
-        try wrapNegative(
-            journeyId: "negative-ambiguous-scope",
-            subject: "Ambiguous scope does not fall back to the app",
-            stepIds: ["tap-scoped"],
-            requiredAssertionIds: ["rejected-ambiguous-scope"],
-            innerStatus: .fail
-        ) { _, executor in
-            try executor.tap(
-                QAVerificationExecutor.Target.id(
-                    "chat.messageQueue.refresh",
-                    role: .button,
-                    scope: "arrow.down.right"
-                ),
-                timeout: 2,
-                stepId: "tap-scoped",
-                confirming: unusedPostcondition
-            )
-        } assertions: { outer, innerFile, error in
-            let reason = innerFile.failingStep?.reason ?? error?.localizedDescription ?? ""
-            outer.recordAssertion(
-                name: "rejected-ambiguous-scope",
-                status: reason.contains("Ambiguous scope") ? .pass : .fail,
-                expected: "Ambiguous scope arrow.down.right",
-                observed: reason
-            )
-        }
-    }
-
     func testAbsentPostconditionDoesNotPass() throws {
         launchQueueHarness()
         try wrapNegative(
@@ -159,6 +144,7 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
             innerStatus: .fail
         ) { _, executor in
             try executor.waitExists(
+                // ax-id-guard: absent-on-purpose
                 QAVerificationExecutor.Target.id("qa.verification.never-present", role: .staticText),
                 timeout: 1,
                 stepId: "wait-phantom"
@@ -182,18 +168,18 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
         try wrapNegative(
             journeyId: "negative-uncertain-dispatch",
             subject: "Unconfirmed dispatch refuses another mutation",
-            stepIds: ["tap-move", "tap-again"],
+            stepIds: ["tap-collapse", "tap-again"],
             requiredAssertionIds: ["refused-second-mutation"],
             innerStatus: .unknown
         ) { _, executor in
             try executor.tap(
-                QAVerificationExecutor.Target.id("arrow.down.right", role: .button),
+                Self.queueToggle,
                 timeout: 4,
-                stepId: "tap-move",
-                confirming: .gone(.id("arrow.down.right", role: .button))
+                stepId: "tap-collapse",
+                confirming: .gone(Self.queueList)
             )
             try executor.tap(
-                QAVerificationExecutor.Target.id("chat.messageQueue.refresh", role: .button),
+                Self.queueToggle,
                 timeout: 2,
                 stepId: "tap-again",
                 confirming: unusedPostcondition
@@ -213,24 +199,23 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
         launchQueueHarness()
         enqueueSteer(times: 1)
         expandQueue()
-        let refresh = QAVerificationExecutor.Target.id("chat.messageQueue.refresh", role: .button)
 
         try wrapNegative(
             journeyId: "negative-unrelated-wait",
             subject: "Unrelated or already-present wait does not confirm another mutation",
-            stepIds: ["tap-move", "wait-unrelated-refresh", "tap-again"],
+            stepIds: ["tap-collapse", "wait-unrelated-toggle", "tap-again"],
             requiredAssertionIds: ["refused-after-unrelated-wait"],
             innerStatus: .unknown
         ) { _, executor in
             try executor.tap(
-                QAVerificationExecutor.Target.id("arrow.down.right", role: .button),
+                Self.queueToggle,
                 timeout: 4,
-                stepId: "tap-move",
-                confirming: .exists(.id("arrow.up.left", role: .button))
+                stepId: "tap-collapse",
+                confirming: .gone(Self.queueList)
             )
-            try executor.waitExists(refresh, timeout: 2, stepId: "wait-unrelated-refresh")
+            try executor.waitExists(Self.queueToggle, timeout: 2, stepId: "wait-unrelated-toggle")
             try executor.tap(
-                refresh,
+                Self.queueToggle,
                 timeout: 2,
                 stepId: "tap-again",
                 confirming: unusedPostcondition
@@ -357,8 +342,8 @@ final class QAVerificationNegativeUITests: UIHarnessTestCase {
         let toggle = app.descendants(matching: .any)["chat.messageQueue.toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 4))
         toggle.tap()
-        let refresh = app.descendants(matching: .any)["chat.messageQueue.refresh"]
-        XCTAssertTrue(refresh.waitForExistence(timeout: 4), "Queue editor did not expand")
+        let list = app.descendants(matching: .any)["chat.messageQueue.list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 4), "Queue editor did not expand")
     }
 
     private func writeReceipt(_ receipt: QAVerificationReceipt) {

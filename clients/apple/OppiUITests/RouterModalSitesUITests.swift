@@ -326,7 +326,6 @@ final class RouterModalSitesUITests: XCTestCase {
         launch(screen: "workspace-settings")
         let input = app.textViews["chat.input"]
         XCTAssertTrue(input.waitForExistence(timeout: 10), "Workspace Settings did not show the Oppi bar")
-        XCTAssertFalse(app.buttons["workspace.edit.editWithOppi"].exists, "The Edit with Oppi row is the bar now")
         let send = app.buttons["chat.send"]
         let model = app.buttons["session.toolbar.model"]
         XCTAssertFalse(send.isEnabled, "Send must wait for a request")

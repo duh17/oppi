@@ -59,7 +59,6 @@ final class UIValidateTests: XCTestCase {
             ready.waitForExistence(timeout: 8),
             "Screenshot preview \(resolvedScreen) did not become ready"
         )
-        _ = app.images.firstMatch.waitForExistence(timeout: 8)
 
         // OPPI_UI_VALIDATE_ROTATE_AFTER_READY=landscape|portrait turns the device once the screen is
         // up, so the dump records a screen that was laid out for the other orientation first (a

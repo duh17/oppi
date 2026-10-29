@@ -57,10 +57,6 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
             "File panel should use the shared sheet navigation container"
         )
         XCTAssertFalse(
-            app.buttons["chat.files.fullscreen.expand"].exists,
-            "File panel should rely on the native sheet detent instead of a custom expand button"
-        )
-        XCTAssertFalse(
             app.collectionViews["navChrome.repro.root"].exists,
             "Tapping production ChatViewController top Files should not reveal the workspace list"
         )

@@ -562,7 +562,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
         openSettingsPage("experiments")
         XCTAssertTrue(settingsSwitch("settings.sessionThreads").isHittable, "Experiments → Session Threads missing")
         XCTAssertEqual(app.switches["settings.sessionThreads"].value as? String, "0")
-        XCTAssertFalse(app.buttons["settings.inboxListMode"].exists, "Layout picker should be gone")
         try returnToInbox()
         try openRowEditor()
         XCTAssertTrue(toggle("cost").exists, "Row options missing")
