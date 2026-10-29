@@ -43,7 +43,7 @@ enum ComposerShared {
         let isBlockedByOtherOwner: Bool
         let voiceSpectrum: VoiceSpectrumFrame
         let languageLabel: String?
-        let engineBadge: MicButtonLabel.EngineBadge
+        let engineBadge: MicEngineBadge
         let accessibilityValue: String
 
         var isBusy: Bool { isPreparing || isProcessing }
@@ -68,7 +68,7 @@ enum ComposerShared {
 
     // MARK: - Voice UI Helpers
 
-    static func micEngineBadge(for manager: VoiceInputManager) -> MicButtonLabel.EngineBadge {
+    static func micEngineBadge(for manager: VoiceInputManager) -> MicEngineBadge {
         switch manager.routeIndicator {
         case .onDevice: return .onDevice
         case .remote: return .remote

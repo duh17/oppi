@@ -528,24 +528,25 @@ struct MicButtonOrbLayoutTests {
     }
 
     @Test func composingOrbHasNoLanguageOrCloudOverlay() {
-        let host = UIHostingController(
-            rootView: MicButtonLabel(
+        withRestoredDictationStyle {
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.composing)
+            let chrome = MicButtonChromeView()
+            chrome.frame = CGRect(x: 0, y: 0, width: 80, height: 80)
+            chrome.apply(
                 isRecording: true,
                 isProcessing: false,
                 voiceSpectrum: VoiceSpectrumFrame(level: 0.4),
                 languageLabel: "EN",
-                accentColor: .blue,
+                accentColor: .systemBlue,
                 engineBadge: .onDevice,
                 diameter: 44,
-                dictationStyle: .composing
+                animated: false
             )
-        )
-        host.view.frame = CGRect(x: 0, y: 0, width: 80, height: 80)
-        host.view.layoutIfNeeded()
-        let labels = allLabels(in: host.view).filter { !$0.isHidden }
-        #expect(!labels.contains { $0.text == "EN" })
-        #expect(firstSubview(of: host.view, type: UIImageView.self)?.isHidden != false
-            || firstSubview(of: host.view, type: UIImageView.self)?.image == nil)
+            chrome.layoutIfNeeded()
+            #expect(!allLabels(in: chrome).contains { !$0.isHidden && $0.text == "EN" })
+            #expect(firstSubview(of: chrome, type: UIImageView.self)?.isHidden != false
+                || firstSubview(of: chrome, type: UIImageView.self)?.image == nil)
+        }
     }
 
     @Test func recordingForwardsLiveAudioIntoTheOrbHost() {
@@ -580,36 +581,6 @@ struct MicButtonOrbLayoutTests {
             )
             #expect(orb?.voiceSpectrum.level == 0.18)
         }
-    }
-
-    @Test func swiftUIRecordingPresentationFeedsTheOrbHost() throws {
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first
-        else {
-            throw TestHostError.missingScene
-        }
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 80, height: 80)
-        let host = UIHostingController(
-            rootView: MicButtonLabel(
-                isRecording: true,
-                isProcessing: false,
-                voiceSpectrum: VoiceSpectrumFrame(level: 0.51, bands: SIMD8(0, 0, 0.2, 0, 0.7, 0, 0, 0)),
-                languageLabel: "EN",
-                accentColor: .blue,
-                engineBadge: .onDevice,
-                diameter: 44,
-                dictationStyle: .composing
-            )
-        )
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        host.view.layoutIfNeeded()
-        let orb = firstSubview(of: host.view, type: OrbMetalView.self)
-        #expect(orb?.voiceSpectrum == VoiceSpectrumFrame(level: 0.51, bands: SIMD8(0, 0, 0.2, 0, 0.7, 0, 0, 0)))
-        window.rootViewController = nil
-        window.isHidden = true
     }
 
     @Test func preparingDoesNotFeedVoiceIntoTheOrb() {
@@ -752,17 +723,6 @@ struct MicButtonOrbLayoutTests {
         }
     }
 
-    /// The idle button paints a 44 pt disc in `themeBgHighlight` (about 1,500 px at scale 1);
-    /// listening shows only the orb, so almost no pixel of that exact color may remain. If the
-    /// `if !showsOrb` fill in `MicButtonLabel` came back, the listening count would be ~1,400
-    /// and fail the second expectation; the first proves the counter can see the fill at all.
-    /// (The UIKit sibling asserts the same through `micFillIsClear`.)
-    @Test func swiftUIListeningOmitsTheFillDiscWhenShowingAnOrb() throws {
-        let idle = try micLabelFillPixelCount(isRecording: false)
-        let listening = try micLabelFillPixelCount(isRecording: true)
-        #expect(idle > 1_000, "the idle button should paint its fill disc: \(idle) fill-colored pixels")
-        #expect(listening < 100, "listening kept the fill disc: \(listening) fill-colored pixels vs \(idle) idle")
-    }
 }
 
 @Suite("Working indicator metal size")
@@ -980,76 +940,18 @@ private func orbTimeoutMessage(_ view: OrbMetalView, expected: String) -> String
 
 @MainActor
 private func micButtonFitSize(diameter: CGFloat) -> CGSize {
-    let label = MicButtonLabel(
+    let chrome = MicButtonChromeView()
+    chrome.apply(
         isRecording: true,
         isProcessing: false,
         voiceSpectrum: VoiceSpectrumFrame(level: 0.35),
         languageLabel: "EN",
-        accentColor: .blue,
+        accentColor: .systemBlue,
         engineBadge: .onDevice,
         diameter: diameter,
-        dictationStyle: .composing
+        animated: false
     )
-    let host = UIHostingController(rootView: label)
-    host.safeAreaRegions = []
-    return host.sizeThatFits(in: CGSize(width: 400, height: 400))
-}
-
-/// Pixels of a 44 pt composing-style `MicButtonLabel` (rendered at scale 1) that are opaque and
-/// the `themeBgHighlight` fill color, so orb dots and the glyph do not count.
-@MainActor
-private func micLabelFillPixelCount(isRecording: Bool) throws -> Int {
-    guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
-        throw TestHostError.missingScene
-    }
-    let window = UIWindow(windowScene: scene)
-    window.frame = CGRect(x: 0, y: 0, width: 80, height: 80)
-    let host = UIHostingController(
-        rootView: MicButtonLabel(
-            isRecording: isRecording,
-            isProcessing: false,
-            voiceSpectrum: VoiceSpectrumFrame(level: 0.4),
-            languageLabel: "EN",
-            accentColor: .blue,
-            engineBadge: .onDevice,
-            diameter: 44,
-            dictationStyle: .composing
-        )
-    )
-    // Without this the window's status-bar inset pushes the label out of the snapshot.
-    host.safeAreaRegions = []
-    host.view.backgroundColor = .clear
-    window.rootViewController = host
-    window.makeKeyAndVisible()
-    defer { window.rootViewController = nil; window.isHidden = true }
-    host.view.layoutIfNeeded()
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    format.opaque = false
-    let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: format).image { _ in
-        host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
-    }
-    guard let cgImage = image.cgImage else { throw TestHostError.timeout("no mic label snapshot") }
-    var bytes = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
-    let drew = bytes.withUnsafeMutableBytes { raw -> Bool in
-        guard let context = CGContext(
-            data: raw.baseAddress, width: cgImage.width, height: cgImage.height,
-            bitsPerComponent: 8, bytesPerRow: cgImage.width * 4, space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return false }
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
-        return true
-    }
-    guard drew else { throw TestHostError.timeout("no mic label bitmap context") }
-    var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
-    UIColor(Color.themeBgHighlight).resolvedColor(with: window.traitCollection)
-        .getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-    let expected = [red, green, blue].map { Int(($0 * 255).rounded()) }
-    return stride(from: 0, to: bytes.count, by: 4).reduce(0) { count, index in
-        guard bytes[index + 3] >= 250 else { return count }
-        let matches = (0..<3).allSatisfy { abs(Int(bytes[index + $0]) - expected[$0]) <= 6 }
-        return count + (matches ? 1 : 0)
-    }
+    return chrome.intrinsicContentSize
 }
 
 private func firstSubview<T: UIView>(of root: UIView, type: T.Type) -> T? {

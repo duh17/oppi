@@ -317,7 +317,6 @@
 		2167D82EA26BB30F75F0CE7F /* ShareQuickSessionTransportPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AE7E85D93C172A5172D44C /* ShareQuickSessionTransportPolicyTests.swift */; };
 		2171C2692EAB9962EB04FF43 /* ServerExtensionListPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BF5CE9F5FA051497A8877B8 /* ServerExtensionListPresentation.swift */; };
 		21A008ABC6BE93FC2E75B7AE /* QuickSessionModel+Loads.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D35BE446D20D429BEB0A2D /* QuickSessionModel+Loads.swift */; };
-		21C479FD12C1DB426D3DC3AE /* MicButtonLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ADDF47F1831F78C28CC6E4E /* MicButtonLabel.swift */; };
 		21DB23FABD27712D9EABC38A /* MacSessionTraceStoreSlashCommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5295B0ACAC1662107E0079B5 /* MacSessionTraceStoreSlashCommandTests.swift */; };
 		21FFB8C46102643BF2D8B5B0 /* SessionThreads.swift in Sources */ = {isa = PBXBuildFile; fileRef = 228381F790BA9A38C1E4FFB3 /* SessionThreads.swift */; };
 		226D1C568AADF264D9B66CD7 /* ClientMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2C3C70BD59E7E4AACF8F03C /* ClientMessage.swift */; };
@@ -1117,6 +1116,7 @@
 		7AEF594F0778F8D4D3BF39DD /* ScrollInvariantPropertyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 490D07E1EB1A8673A161ACC0 /* ScrollInvariantPropertyTests.swift */; };
 		7AF16537C4D7CC3183704FDB /* VoiceInputSystemAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4FC352387FBA40CACB7E522 /* VoiceInputSystemAccess.swift */; };
 		7B160589723C3628E0A8F730 /* TimelineReducerInvariantTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51844A88F73A4E0B0B9BD90D /* TimelineReducerInvariantTests.swift */; };
+		7B66D8D124850C96B011B12E /* MicEngineBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4E401690DB2EC5C60220844 /* MicEngineBadge.swift */; };
 		7B7131636B83A08A0B284643 /* SSHTerminalPasswordPromptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56C2107ABF7041EDF38F116C /* SSHTerminalPasswordPromptTests.swift */; };
 		7B89FD5C9C1DDB6AB023F630 /* ToolRowViewportCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BC8CDD43FFE1DFF5F100E86 /* ToolRowViewportCalculator.swift */; };
 		7B987B0883FA4AEA3FBF8FF0 /* AppIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62B65456465F2E93C3070661 /* AppIdentifiers.swift */; };
@@ -3172,7 +3172,6 @@
 		5A1E582445F6793942A2B4D7 /* UserTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserTimelineRowContent.swift; sourceTree = "<group>"; };
 		5A78F0118ED2C33D0B6FDA87 /* AppIconBadgeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconBadgeService.swift; sourceTree = "<group>"; };
 		5ADA0E901A20AE20AE19855D /* PendingImageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingImageTests.swift; sourceTree = "<group>"; };
-		5ADDF47F1831F78C28CC6E4E /* MicButtonLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicButtonLabel.swift; sourceTree = "<group>"; };
 		5AEC6B59602529A805CAA784 /* unix-ws-echo.mjs */ = {isa = PBXFileReference; path = "unix-ws-echo.mjs"; sourceTree = "<group>"; };
 		5B090D7A39994FCB0E2D4FC3 /* AppSupportLinksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSupportLinksTests.swift; sourceTree = "<group>"; };
 		5B0E3F624DE6F2A0176249F5 /* AskRequestStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskRequestStoreTests.swift; sourceTree = "<group>"; };
@@ -4240,6 +4239,7 @@
 		E4AF9FF9C50ABA3F2127174B /* NearbyPairingConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NearbyPairingConstants.swift; sourceTree = "<group>"; };
 		E4AFF3CB51FFC38FB3B90BB9 /* UserMessageTextProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserMessageTextProjection.swift; sourceTree = "<group>"; };
 		E4BB69555D112B667C5252E4 /* FuzzyMatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuzzyMatchTests.swift; sourceTree = "<group>"; };
+		E4E401690DB2EC5C60220844 /* MicEngineBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicEngineBadge.swift; sourceTree = "<group>"; };
 		E51CAFE6104CAF02AAA289C4 /* LoadMoreTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadMoreTimelineRowContent.swift; sourceTree = "<group>"; };
 		E51F36ADDF60631121F8C7E3 /* FileViewerPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileViewerPolicies.swift; sourceTree = "<group>"; };
 		E552CCBAAE9D0983625EA179 /* SSHConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnection.swift; sourceTree = "<group>"; };
@@ -7084,7 +7084,7 @@
 				508B2CA610F83F81F2908694 /* MessageQueueComposerRestore.swift */,
 				CC5457DE50129E7A15ADFB87 /* MessageQueueContainer.swift */,
 				DA2C58C6FABA4782985C5013 /* MicButtonChromeView.swift */,
-				5ADDF47F1831F78C28CC6E4E /* MicButtonLabel.swift */,
+				E4E401690DB2EC5C60220844 /* MicEngineBadge.swift */,
 				FBC2CD3074D3F04148C616EC /* PendingAttachmentUploader.swift */,
 				B8288347A9E172BD200A1B17 /* PendingImage.swift */,
 				A3FB1ADC4F9301F7E86D7CE5 /* PhotoLibraryMediaImporter.swift */,
@@ -10131,7 +10131,7 @@
 				DA0099528731ED46A01CA646 /* MetricKitModels.swift in Sources */,
 				39C50AE87CBD12BC76DB0812 /* MetricKitService.swift in Sources */,
 				6E64F04D9461A0960BC948E2 /* MicButtonChromeView.swift in Sources */,
-				21C479FD12C1DB426D3DC3AE /* MicButtonLabel.swift in Sources */,
+				7B66D8D124850C96B011B12E /* MicEngineBadge.swift in Sources */,
 				BC3D068EEF270C10A90D1402 /* ModelBreakdownSection.swift in Sources */,
 				FCA85FCD3DA9DBD021393D91 /* ModelColorHelpers.swift in Sources */,
 				FE9B0000334E7C845F221FB2 /* ModelPickerViewController.swift in Sources */,

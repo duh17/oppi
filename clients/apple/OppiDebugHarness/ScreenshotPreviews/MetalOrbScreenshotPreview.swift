@@ -100,16 +100,11 @@ struct MetalOrbScreenshotPreview: View {
         caption: String
     ) -> some View {
         VStack(spacing: 8) {
-            MicButtonLabel(
-                isRecording: true,
-                isProcessing: false,
+            PreviewDictationDisc(
                 voiceSpectrum: VoiceSpectrumFrame(
                     level: level,
                     bands: SIMD8(level * 2, level, 0, 0, level * 0.5, 0, 0, 0)
                 ),
-                languageLabel: "EN",
-                accentColor: .themeBlue,
-                engineBadge: .onDevice,
                 diameter: diameter,
                 dictationStyle: style
             )
@@ -120,6 +115,43 @@ struct MetalOrbScreenshotPreview: View {
         }
         .frame(width: max(72, diameter + 12))
         .accessibilityIdentifier("preview.dictation.\(style.rawValue).\(Int(diameter))")
+    }
+}
+
+/// A listening on-device dictation disc in one indicator style, so the tiles show
+/// every style side by side. The app's `MicButtonChromeView` follows the Settings
+/// choice instead.
+private struct PreviewDictationDisc: View {
+    let voiceSpectrum: VoiceSpectrumFrame
+    let diameter: CGFloat
+    let dictationStyle: DictationIndicatorStyle
+
+    var body: some View {
+        let level = CGFloat(min(max(voiceSpectrum.level, 0), 1))
+        ZStack {
+            if let orbStyle = dictationStyle.orbStyle {
+                OrbView(
+                    style: orbStyle,
+                    sizeClass: .dictation(side: Double(diameter)),
+                    tint: .themeBlue,
+                    voiceSpectrum: voiceSpectrum,
+                    isActive: true
+                )
+            } else {
+                Circle().fill(Color.themeBgHighlight)
+                Circle()
+                    .stroke(Color.themeBlue, lineWidth: 1.5 + level * 2.0)
+                    .animation(.easeOut(duration: 0.1), value: voiceSpectrum.level)
+                Text("EN")
+                    .font(.system(size: diameter * 0.4, weight: .bold))
+                    .foregroundStyle(Color.themeBlue)
+                    .minimumScaleFactor(0.5)
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: diameter, height: diameter)
+        .clipShape(Circle())
+        .contentShape(Circle())
     }
 }
 

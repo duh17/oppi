@@ -1,7 +1,5 @@
 import UIKit
 
-/// UIKit companion to `MicButtonLabel`.
-///
 /// Owns only the shared mic button chrome: idle or muted mic, recording
 /// language/cloud indicator with audio-reactive ring or orb, and processing
 /// spinner. Callers own the recording route and action wiring.
@@ -36,7 +34,7 @@ final class MicButtonChromeView: UIControl {
     private var accentColor = UIColor(ThemeRuntimeState.currentPalette().blue)
     /// The disc's colors; nil is the app theme's palette. Takes effect on the next `apply`.
     var colors: ComposerThemeColors?
-    private var engineBadge: MicButtonLabel.EngineBadge = .onDevice
+    private var engineBadge: MicEngineBadge = .onDevice
     private var dictationStyle: DictationIndicatorStyle = .current
     nonisolated(unsafe) private var dictationStyleObserver: NSObjectProtocol?
 
@@ -114,7 +112,7 @@ final class MicButtonChromeView: UIControl {
         voiceSpectrum: VoiceSpectrumFrame,
         languageLabel: String?,
         accentColor: UIColor,
-        engineBadge: MicButtonLabel.EngineBadge,
+        engineBadge: MicEngineBadge,
         diameter: CGFloat = 44,
         animated: Bool = true,
         isPreparing: Bool = false,
@@ -155,8 +153,7 @@ final class MicButtonChromeView: UIControl {
         orbView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(orbView)
 
-        // Glyphs are drawn at their symbol point size, as `MicButtonLabel` does,
-        // and never size the button.
+        // Glyphs are drawn at their symbol point size and never size the button.
         imageView.contentMode = .center
         imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
