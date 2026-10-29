@@ -3,7 +3,7 @@ import UIKit
 
 /// The app root's SwiftUI layer, under the UIKit content
 /// (`AppRootViewController`): app-wide modals (extension dialogs and notices,
-/// What's New, pairing approvals, workspace creation the shell starts) and
+/// What's New, workspace creation the shell starts) and
 /// app-wide event handlers.
 struct AppRootLayer: View {
     let root: AppRootEnvironment
@@ -24,7 +24,6 @@ struct AppRootLayer: View {
                     Color.clear.modifier(WorkspaceCreationIntakeModifier(root: root))
                 }
             }
-            .modifier(PairingApprovalPromptHost(root: root))
             .routerModal(
                 item: Binding<ExtensionUIRequest?>(
                     get: { ExtensionSheetLayout.sheetRequest(liveConnection.activeExtensionDialog) },

@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import OSLog
 
 private let pairingDenyLogger = Logger(subsystem: AppIdentifiers.subsystem, category: "PairingApprovals")
@@ -30,6 +31,48 @@ final class PairingApprovalController {
     private var preferred: (serverId: String, approvalId: String)?
     private var pendingDenies: [DenyKey] = []
     private var denyInFlight: Set<DenyKey> = []
+    @ObservationIgnored private weak var syncedCoordinator: ConnectionCoordinator?
+    @ObservationIgnored private var changeObserver: NSObjectProtocol?
+
+    // MARK: - Sync triggers
+
+    /// Keeps `presented` in step with the connections' pending approvals: now, on every
+    /// `.pairingApprovalsDidChange`, and whenever a connection's pending ids change. The
+    /// scene becoming active is the app's call (`sceneDidBecomeActive(coordinator:)`). Safe
+    /// to call again for the same coordinator.
+    func startSyncing(coordinator: ConnectionCoordinator) {
+        guard syncedCoordinator !== coordinator else { return }
+        syncedCoordinator = coordinator
+        if let changeObserver { NotificationCenter.default.removeObserver(changeObserver) }
+        changeObserver = NotificationCenter.default.addObserver(
+            forName: .pairingApprovalsDidChange, object: nil, queue: .main
+        ) { [weak self, weak coordinator] _ in
+            MainActor.assumeIsolated {
+                guard let self, let coordinator else { return }
+                self.sync(coordinator: coordinator)
+            }
+        }
+        observePendingIds(of: coordinator)
+        sync(coordinator: coordinator)
+    }
+
+    /// The app became active: ask every server again, send the denies that were waiting for
+    /// a connection, then sync.
+    func sceneDidBecomeActive(coordinator: ConnectionCoordinator) {
+        Task { await refreshAndSync(coordinator: coordinator) }
+    }
+
+    private func observePendingIds(of coordinator: ConnectionCoordinator) {
+        withObservationTracking {
+            for connection in coordinator.connections.values { _ = connection.pendingPairingApprovals.map(\.id) }
+        } onChange: { [weak self, weak coordinator] in
+            Task { @MainActor in
+                guard let self, let coordinator, self.syncedCoordinator === coordinator else { return }
+                self.sync(coordinator: coordinator)
+                self.observePendingIds(of: coordinator)
+            }
+        }
+    }
 
     func sync(coordinator: ConnectionCoordinator, now: Date = Date()) {
         let nowMs = Int64((now.timeIntervalSince1970 * 1_000).rounded())
@@ -169,16 +212,31 @@ final class PairingApprovalController {
         presented = nil
     }
 
+    /// Approves the request `presentedId` names (`Presented.id`): the one the sheet is
+    /// showing, on its own server. A tap that arrives after the sheet moved on to another
+    /// request (or none) does nothing, an expired request is never signed, and nothing
+    /// is approved without the device owner's authentication.
     func approve(
+        presentedId: String,
         coordinator: ConnectionCoordinator,
+        now: @escaping () -> Date = { Date() },
         authenticate: (String) async -> Bool = { reason in
             await DeviceOwnerAuthentication.authenticate(reason: reason) == .success
         }
     ) async {
-        guard var current = presented else { return }
+        guard var current = presented, current.id == presentedId else { return }
         let key = DenyKey(serverId: current.serverId, approvalId: current.approval.id)
         guard !blocksApprove(key) else {
             presented = nil
+            return
+        }
+        func isExpired() -> Bool {
+            current.approval.expiresAt <= Int64((now().timeIntervalSince1970 * 1_000).rounded())
+        }
+        guard !isExpired() else {
+            current.isBusy = false
+            current.errorMessage = String(localized: "This request expired. Ask the device to try again.")
+            presented = current
             return
         }
         current.isBusy = true
@@ -192,6 +250,12 @@ final class PairingApprovalController {
         }
         guard !blocksApprove(key) else {
             presented = nil
+            return
+        }
+        guard !isExpired() else {
+            current.isBusy = false
+            current.errorMessage = String(localized: "This request expired. Ask the device to try again.")
+            presented = current
             return
         }
         guard let connection = coordinator.connection(for: current.serverId) else {
@@ -211,8 +275,9 @@ final class PairingApprovalController {
         }
     }
 
-    func deny(coordinator: ConnectionCoordinator) async {
-        guard let current = presented else { return }
+    /// Denies the request `presentedId` names, like `approve(presentedId:...)`.
+    func deny(presentedId: String, coordinator: ConnectionCoordinator) async {
+        guard let current = presented, current.id == presentedId else { return }
         queueDeny(serverId: current.serverId, approvalId: current.approval.id)
         await performQueuedDenies(coordinator: coordinator)
         if hasQueuedDeny(serverId: current.serverId, approvalId: current.approval.id) {

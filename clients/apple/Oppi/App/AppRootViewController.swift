@@ -26,6 +26,10 @@ final class AppRootViewController: UIViewController {
     private weak var resourceChoiceAlert: UIAlertController?
     private var resourceChoiceShown: [String]?
     private lazy var quickSession = QuickSessionPresentation(root: root, host: self)
+    /// The pairing approval sheet, over whatever the window shows.
+    private lazy var pairingApprovals = PairingApprovalPresentation(
+        controller: .shared, root: root, anchor: self
+    )
 
     init(app: OppiApp) {
         self.app = app
@@ -52,6 +56,13 @@ final class AppRootViewController: UIViewController {
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (controller: Self, _: UITraitCollection) in
             controller.root.themeStore.followSystemAppearance(from: controller)
         }
+        PairingApprovalController.shared.startSyncing(coordinator: root.coordinator)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // A request that came in before the window was up presents now.
+        pairingApprovals.anchorDidAppear()
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -74,6 +85,8 @@ final class AppRootViewController: UIViewController {
         setNeedsStatusBarAppearanceUpdate()
         content?.view.isUserInteractionEnabled = !showsQuickSession
         content?.view.accessibilityElementsHidden = showsQuickSession
+
+        pairingApprovals.update()
 
         // A Quick Session parked during launch/onboarding can run now that the
         // root shows the shell.

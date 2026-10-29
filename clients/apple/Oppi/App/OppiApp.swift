@@ -269,6 +269,7 @@ final class OppiApp {
         changeScenePhase(to: .active)
         // A request whose server was unreachable retries here.
         opener.sceneDidBecomeActive()
+        PairingApprovalController.shared.sceneDidBecomeActive(coordinator: coordinator)
     }
     func sceneWillResignActive() { changeScenePhase(to: .inactive) }
     func sceneDidEnterBackground() {

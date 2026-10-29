@@ -329,8 +329,8 @@ struct SettingsSweepScreenshotPreview: View {
             OnboardingPreviewHost(root: root)
                 .ignoresSafeArea()
         case "pairing-approval":
-            Text("Pairing approval host")
-                .modifier(PairingApprovalPromptHost(root: root, controller: PairingApprovalController()))
+            RouterPreviewControllerStack(root: root) { [root] in PairingApprovalPreviewScreen(root: root) }
+                .ignoresSafeArea()
         // Shell routes the router hosts directly: search lives in its bar.
         case "skills", "skills-offline":
             RouterPreviewControllerStack(root: root) { ServerSkillsViewController(root: root) }
@@ -1149,6 +1149,40 @@ enum PreviewWidthChange {
                 UIView.animate(withDuration: 0.25) { self.view.layoutIfNeeded() }
             }
         }
+    }
+}
+
+/// `pairing-approval`: an empty screen over which the approval sheet presents, the way the
+/// app root presents it, for the fixture server's one pending approval.
+@MainActor
+final class PairingApprovalPreviewScreen: UIViewController {
+    private let root: AppRootEnvironment
+    private let controller = PairingApprovalController()
+    private lazy var presentation = PairingApprovalPresentation(controller: controller, root: root, anchor: self)
+
+    init(root: AppRootEnvironment) {
+        self.root = root
+        super.init(nibName: nil, bundle: nil)
+        title = "Pairing approval host"
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = root.themeStore.backgroundColor
+        controller.startSyncing(coordinator: root.coordinator)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        presentation.anchorDidAppear()
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        presentation.update()
     }
 }
 

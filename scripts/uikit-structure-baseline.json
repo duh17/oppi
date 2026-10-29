@@ -124,9 +124,6 @@
     "clients/apple/Oppi/Features/Server/UsageCharts.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Servers/PairingApprovalPrompt.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Servers/ServerSettingsViewController.swift": {
       "toggleRow(": 1
     },
