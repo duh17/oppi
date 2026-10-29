@@ -36,6 +36,9 @@ final class ErrorAlertPresenter {
 
     private weak var screen: UIViewController?
     private weak var shown: UIAlertController?
+    /// The alert this presenter is closing itself (the owner's error went away),
+    /// as opposed to one the person closed with OK.
+    private weak var closedByUs: UIAlertController?
     private var shownEntry: Entry?
     private var held: Entry?
     private weak var watcher: WindowWatcher?
@@ -98,6 +101,7 @@ final class ErrorAlertPresenter {
     /// is stacked above it, so an alert with something over it stays.
     private func closeShown() {
         guard let shown, shown.presentingViewController != nil, shown.presentedViewController == nil else { return }
+        closedByUs = shown
         shown.dismiss(animated: true)
     }
 
@@ -105,9 +109,11 @@ final class ErrorAlertPresenter {
 
     private func raise(_ entry: Entry) {
         retries = 0
-        // The alert for this very error is on its way out: re-presenting it would flash it back.
-        if let shown, shown.isBeingDismissed, entry.isStateDriven, shownEntry?.isStateDriven == true,
-           shown.message == entry.message {
+        // The person tapped OK on this very error and the alert is on its way out: re-presenting
+        // it before the owner clears it would flash it back. An alert we closed ourselves (the
+        // owner's error went away) does not count: the same error raised again shows.
+        if let shown, shown.isBeingDismissed, shown !== closedByUs, entry.isStateDriven,
+           shownEntry?.isStateDriven == true, shown.message == entry.message {
             return
         }
         if let shown, isActive(shown) {
@@ -160,8 +166,10 @@ final class ErrorAlertPresenter {
             top = presented
         }
         if let covering {
-            // Shown when it closes: its view leaves the window.
-            watch(covering.view, for: .detach)
+            // Shown when it closes: its view leaves the window. A view that is not in a window
+            // cannot report that, so the front-most presented one, then the screen, stands in.
+            let watched = [covering.view, top.view, screen.view].lazy.compactMap { $0 }.first { $0.window != nil }
+            watch(watched ?? screen.view, for: .detach)
             return
         }
         held = nil
@@ -188,7 +196,12 @@ final class ErrorAlertPresenter {
         if let coordinator, coordinator.animate(alongsideTransition: nil, completion: { [weak self] _ in self?.flush() }) {
             return
         }
-        guard retries < 30 else { return }
+        guard retries < 30 else {
+            // Out of retries: the next time the screen reaches a window flushes it (a state-driven
+            // screen also retries on every pass), so a held error is never stranded.
+            if let screen { watch(screen.view, for: .attach) }
+            return
+        }
         retries += 1
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(100))

@@ -95,6 +95,26 @@ struct ErrorAlertPresenterTests {
         #expect(next.message == "second", "and it is shown next")
     }
 
+    @Test func theSameErrorRaisedAgainAfterItsOwnerClearedItShowsAgain() async throws {
+        let screen = StateErrorScreen()
+        let (window, _) = try mount(screen)
+        defer { hideTestWindow(window) }
+        screen.error = "flaky"
+        screen.updatePropertiesIfNeeded()
+        let first = try #require(await settledAlert(in: window))
+
+        // The owner's error goes away and comes straight back while the alert closes.
+        screen.error = nil
+        screen.updatePropertiesIfNeeded()
+        screen.error = "flaky"
+        screen.updatePropertiesIfNeeded()
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            guard let alert = window.rootViewController?.presentedViewController as? UIAlertController else { return false }
+            return alert !== first && alert.message == "flaky" && !alert.isBeingPresented
+        }, "a re-raised error is not swallowed by the alert that was closing")
+    }
+
     @Test func clearingTheOwnersErrorClosesTheAlert() async throws {
         let screen = StateErrorScreen()
         let (window, _) = try mount(screen)
@@ -238,6 +258,19 @@ struct ErrorAlertPresenterTests {
     }
 
     // MARK: - Confirmation
+
+    @Test func aSheetPointsAtTheRowThatAskedWhenItIsInAWindow() async throws {
+        let screen = UIViewController()
+        let (window, _) = try mount(screen)
+        defer { hideTestWindow(window) }
+        let row = UIView(frame: CGRect(x: 20, y: 100, width: 200, height: 44))
+        screen.view.addSubview(row)
+
+        let sheet = Confirmation(title: "Delete?", actionTitle: "Delete").present(from: screen, anchor: row) {}
+
+        #expect(sheet.popoverPresentationController?.sourceView === row)
+        #expect(sheet.popoverPresentationController?.sourceRect == row.bounds)
+    }
 
     @Test func theActionRunsOnlyOnConfirmAndCancelReportsItself() async throws {
         let screen = UIViewController()
