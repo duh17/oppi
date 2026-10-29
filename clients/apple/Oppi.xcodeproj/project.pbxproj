@@ -865,6 +865,7 @@
 		5FA65B667D7666BEB36A8B07 /* MacBashCommandChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F96E8050A8F265A85BF4D3E2 /* MacBashCommandChromeTests.swift */; };
 		5FA737713C03075508F021B5 /* FileBrowserMotionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D27150D99B3C650DFFC08F4D /* FileBrowserMotionUITests.swift */; };
 		5FC166A933DDAB6E3409C704 /* MacToolTimelineChromeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A88485BEE07970790BAF044 /* MacToolTimelineChromeTests.swift */; };
+		5FC6001A997603E757175C72 /* SSHTerminalGlyphRasterCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06BA659E662145D1E8BB87E8 /* SSHTerminalGlyphRasterCache.swift */; };
 		5FF360E26969FA024CE7468C /* MacSessionPaneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A78B02D0BD7F4F507002C1B0 /* MacSessionPaneLayout.swift */; };
 		600B97B02AB697A1A60FC43B /* MobileOutputGuideSettingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B4DD6B9235D0666446237CD /* MobileOutputGuideSettingTests.swift */; };
 		601D7262035FC92D20646668 /* MacAuthenticatedAVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACE76BD002D360FBE84ADC5 /* MacAuthenticatedAVPlayerView.swift */; };
@@ -2533,6 +2534,7 @@
 		0568D4E6AE1774A817C312B8 /* TimelineReducerAskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerAskTests.swift; sourceTree = "<group>"; };
 		058518656CBE399C40F1CEE5 /* MacSyntaxHighlighterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSyntaxHighlighterTests.swift; sourceTree = "<group>"; };
 		059DC71532A5BD33D34A3460 /* WorkspaceSidebarViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSidebarViewController.swift; sourceTree = "<group>"; };
+		06BA659E662145D1E8BB87E8 /* SSHTerminalGlyphRasterCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalGlyphRasterCache.swift; sourceTree = "<group>"; };
 		06BED5B0F53D9FAAFC4342E3 /* TelemetryCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryCapture.swift; sourceTree = "<group>"; };
 		06F3AB0894033CD93CBE7043 /* FileTypeDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTypeDetectionTests.swift; sourceTree = "<group>"; };
 		070DA145C740439D6AF3A207 /* SyntaxHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxHighlighter.swift; sourceTree = "<group>"; };
@@ -7024,6 +7026,7 @@
 				A583A9541B9F603C8A3EEFD4 /* SSHTerminalFolderTerminal.swift */,
 				5BA4DC898631CE91243B52B2 /* SSHTerminalFolderViewController.swift */,
 				8687CA04088C4A84F1B289BD /* SSHTerminalGhosttyTheme.swift */,
+				06BA659E662145D1E8BB87E8 /* SSHTerminalGlyphRasterCache.swift */,
 				1BAEBFA4650D544EA7426022 /* SSHTerminalHostListView.swift */,
 				436E6B3957684C7E42DE77A2 /* SSHTerminalHostPresentation.swift */,
 				5F1318955097C657E0A1264D /* SSHTerminalKeymap.swift */,
@@ -10296,6 +10299,7 @@
 				40421D9C350FA7A9432C9C1A /* SSHTerminalFolderTerminal.swift in Sources */,
 				58CD3783454798C4BC29C5B0 /* SSHTerminalFolderViewController.swift in Sources */,
 				DB456F57E01924CA66003569 /* SSHTerminalGhosttyTheme.swift in Sources */,
+				5FC6001A997603E757175C72 /* SSHTerminalGlyphRasterCache.swift in Sources */,
 				65AB07E896B3A7D20A02F19F /* SSHTerminalHostListView.swift in Sources */,
 				4B99D80B20729EB480A24E44 /* SSHTerminalHostPresentation.swift in Sources */,
 				619C6BBDB8B13B424E85DC80 /* SSHTerminalKeyStripView.swift in Sources */,

@@ -108,6 +108,7 @@ Example:
 - **Client:** The files in a Skill's detail page, opened from Workspace Settings or the chat Context panel, are full-size touch rows.
 - **Server:** `GET` and `PUT /server/auto-title` and `/server/metrics/settings` return a `revision`, and the PUTs take an optional `baseRevision`: a stale one answers `409 revision_conflict` with the current value, as the Mobile Output Guide does, and leaving it out still saves last-writer-wins. `PUT /server/auto-title` now answers 400 for a `model` that is not `provider/id` or that the server's model runtime cannot resolve, and for an `enabled` that is not a boolean.
 - **Protocol:** `protocol/settings.json` lists every server, workspace, and device-on-server setting with its scope, storage, default, validation, and whether saves carry a revision. The server validates writes through one registry that a server test keeps in step with it. The Apple auto-title and Server Metrics models decode the new optional `revision`.
+- **Client:** SSH Terminal: the first screen of text and box drawing, and the first emoji, stall less: common glyphs and the emoji and symbol fonts are prepared in the background while the connection opens.
 
 ### Fixed
 

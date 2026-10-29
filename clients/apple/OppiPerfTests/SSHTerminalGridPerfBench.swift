@@ -26,6 +26,12 @@ struct SSHTerminalGridPerfBench {
         let initStart = DispatchTime.now().uptimeNanoseconds
         let coldRenderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: 2)
         let rendererInitNs = DispatchTime.now().uptimeNanoseconds &- initStart
+        // Renderer creation queues glyph prewarm off main. A terminal's first
+        // output arrives after the SSH handshake, so the cold frame below is
+        // measured once that work is done; its own cost is reported separately.
+        let rasterCache = SSHTerminalGlyphRasterCache.shared
+        rasterCache.waitForPrewarm()
+        let prewarm = try #require(rasterCache.lastPrewarm)
         let coldEngine = try SSHTerminalEngine(
             geometry: .init(columns: Self.columns, rows: Self.rows, cellWidth: 8, cellHeight: 17)
         ) { _ in }
@@ -34,7 +40,9 @@ struct SSHTerminalGridPerfBench {
             return
         }
         coldEngine.receive(Data(Self.styledScreen(seed: 0).utf8))
+        let rasterizedBeforeCold = rasterCache.rasterizedCount
         let cold = Self.once(engine: coldEngine, renderer: coldRenderer, texture: coldTexture, fullRebuild: true)
+        let coldRasterized = rasterCache.rasterizedCount - rasterizedBeforeCold
 
         let renderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: 2)
         let engine = try SSHTerminalEngine(
@@ -82,6 +90,9 @@ struct SSHTerminalGridPerfBench {
         print("METRIC ssh_terminal_styled_frame_us=\(String(format: "%.1f", Double(styled.frameNs.median) / 1_000))")
         print("METRIC ssh_terminal_styled_encode_us=\(String(format: "%.1f", Double(styled.encodeNs.median) / 1_000))")
         print("METRIC ssh_terminal_renderer_init_us=\(String(format: "%.1f", Double(rendererInitNs) / 1_000))")
+        print("METRIC ssh_terminal_glyph_prewarm_ms=\(String(format: "%.2f", Double(prewarm.nanos) / 1_000_000))")
+        print("METRIC ssh_terminal_glyph_prewarm_glyphs=\(prewarm.glyphs)")
+        print("METRIC ssh_terminal_styled_cold_rasterized_glyphs=\(coldRasterized)")
         print("METRIC ssh_terminal_styled_cold_encode_us=\(String(format: "%.1f", Double(cold.encodeNs) / 1_000))")
         print("METRIC ssh_terminal_dirty_one_row_encode_us=\(String(format: "%.1f", Double(dirtySamples.encodeNs.median) / 1_000))")
         print("METRIC ssh_terminal_color_emoji_encode_us=\(String(format: "%.1f", Double(emoji.encodeNs) / 1_000))")
@@ -92,6 +103,7 @@ struct SSHTerminalGridPerfBench {
         #expect(styled.encodeNs.median > 0)
         #expect(styled.completed, "worst-case styled screen presented in one frame")
         #expect(cold.completed, "cold-atlas styled screen presented in one frame")
+        #expect(coldRasterized == 0, "a prewarmed first screen draws no glyph on main")
         #expect(dirtySamples.encodeNs.median > 0)
         #expect(dirtySamples.reused >= Self.rows - 2, "dirty-one-row must reuse the rest of the grid")
         #expect(emoji.completed, "color-emoji cell presented in one frame")

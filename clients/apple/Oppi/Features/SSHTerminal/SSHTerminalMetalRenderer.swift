@@ -284,14 +284,12 @@ final class SSHTerminalGlyphAtlas {
         scale: CGFloat
     ) -> Upload? {
         let key = key(cell: cell, face: face)
-        let columns = max(1, cell.width)
-        let pixelWidth = max(1, Int(ceil(cellSize.width * CGFloat(columns) * scale)))
-        let pixelHeight = max(1, Int(ceil(cellSize.height * scale)))
-        guard let glyph = Self.rasterizeGlyph(
+        guard let glyph = SSHTerminalGlyphRasterCache.shared.glyph(
             text: cell.displayText, font: font,
-            width: pixelWidth, height: pixelHeight,
-            cellSize: cellSize, columns: columns, scale: scale
+            cellSize: cellSize, columns: cell.width, scale: scale
         ) else { return nil }
+        let pixelWidth = glyph.width
+        let pixelHeight = glyph.height
         let origin: (x: Int, y: Int)?
         if glyph.color {
             guard ensureColorAtlas() else { return nil }
@@ -306,22 +304,10 @@ final class SSHTerminalGlyphAtlas {
             Float(origin.x + pixelWidth) / s, Float(origin.y + pixelHeight) / s
         )
         map[key] = CachedGlyph(uv: uv, color: glyph.color)
-        let bytes = glyph.color ? glyph.bytes : Self.coverage(fromBGRA: glyph.bytes)
         return Upload(
-            bytes: bytes, width: pixelWidth, height: pixelHeight,
+            bytes: glyph.bytes, width: pixelWidth, height: pixelHeight,
             destX: origin.x, destY: origin.y, uv: uv, color: glyph.color
         )
-    }
-
-    private static func coverage(fromBGRA bytes: [UInt8]) -> [UInt8] {
-        let pixels = bytes.count / 4
-        var out = [UInt8](repeating: 0, count: pixels)
-        var i = 0
-        while i < pixels {
-            out[i] = bytes[i * 4 + 3]
-            i += 1
-        }
-        return out
     }
 
     /// White coverage at device scale, or native color for remaining emoji.
@@ -911,6 +897,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             ))
         }
         self.slots = built
+        // Last, so the background draws do not compete with this allocation.
+        SSHTerminalGlyphRasterCache.shared.prewarm(metrics: metrics, scale: self.scale)
     }
 
     var inFlightCount: Int {
@@ -943,6 +931,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         self.metrics = metrics
         self.scale = scale
         faces.removeAll()
+        SSHTerminalGlyphRasterCache.shared.prewarm(metrics: metrics, scale: scale)
         // Next encode re-packs and blits every glyph; prior command buffers
         // keep sampling the old UVs until they complete.
         atlas.resetPacking()
@@ -1613,11 +1602,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         let key: UInt8 = (bold ? 1 : 0) | (italic ? 2 : 0)
         let styled: UIFont = {
             if let cached = faces[key] { return cached }
-            let weighted = bold ? metrics.boldFont : metrics.font
-            let value = italic
-                ? weighted.fontDescriptor.withSymbolicTraits(.traitItalic)
-                    .map { NerdFontSymbols.withFallback(UIFont(descriptor: $0, size: weighted.pointSize)) } ?? weighted
-                : weighted
+            let value = Self.styledFont(metrics: metrics, bold: bold, italic: italic)
             faces[key] = value
             return value
         }()
@@ -1631,6 +1616,15 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             return (4, symbols)
         }
         return (key, styled)
+    }
+
+    /// The face for a bold/italic combination. Shared with glyph prewarm, which
+    /// must key its rasterizations by the same fonts the renderer draws with.
+    static func styledFont(metrics: SSHTerminalCellMetrics, bold: Bool, italic: Bool) -> UIFont {
+        let weighted = bold ? metrics.boldFont : metrics.font
+        guard italic else { return weighted }
+        return weighted.fontDescriptor.withSymbolicTraits(.traitItalic)
+            .map { NerdFontSymbols.withFallback(UIFont(descriptor: $0, size: weighted.pointSize)) } ?? weighted
     }
 
     private func bind(_ instances: [CellInstance]) -> Int? {
