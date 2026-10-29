@@ -388,6 +388,16 @@ func makeWindowedTimelineHarness(
     frame: CGRect = CGRect(x: 0, y: 0, width: 390, height: 844),
     useAnchoredCollectionView: Bool = true
 ) -> WindowedTimelineHarness {
+    // Tool rows grow a one-time tip banner while the app's persisted tip state says the tip was never shown
+    // (UserDefaults `oppi.featureEducationTips.shownTipIDs.v1`). On an app freshly installed on the
+    // simulator the first tool row in the process shows it, so a layout test that measures a row before and
+    // after its async render saw the row change height: AssistantMarkdownLayoutTests' Mermaid tests
+    // failed on every run after an uninstall and passed from the second run on. Windowed layout tests
+    // measure rows, not tips, so mark the tool tips shown; tests that want the banner force it
+    // (`forcesInlineFeatureTipsForTesting`), which ignores this state.
+    for descriptor in [FeatureEducationTips.openToolDetails, FeatureEducationTips.toolOutputShortcuts] {
+        FeatureEducationTipPresentationStore.standard.markShown(id: descriptor.id)
+    }
     let window = UIWindow(frame: frame)
     let layout = ChatTimelineController.makeTestLayout()
     let collectionView: UICollectionView

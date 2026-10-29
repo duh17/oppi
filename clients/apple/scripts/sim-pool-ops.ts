@@ -1127,7 +1127,12 @@ export const APP_BUNDLE_ID = "dev.chenda.Oppi";
 
 /**
  * Drops everything a previous run left in a leased slot: the app, its data container (defaults, drafts,
- * `lastSeenVersion`, app-group data) and the simulator keychain (paired servers and tokens). A
+ * `lastSeenVersion`, app-group data), its privacy decisions, and the simulator keychain (paired servers and
+ * tokens). Uninstalling forgets the microphone decision, so a fresh install would put the system
+ * "Oppi Would Like to Access the Microphone" alert over whatever the run shows first (UIValidate dumps
+ * and the UI fixtures that touch dictation). The UI tests that meet that alert answer "Don't Allow", so
+ * the reset records that same answer: microphone denied, no prompt. Notification and speech prompts
+ * cannot be preset through `simctl privacy`; the tests that reach them dismiss them. A
  * killed or older run's state must not reach this run (the app dials stored servers at launch, and a stale
  * `lastSeenVersion` puts a What's New sheet over the UI). `xcodebuild test-without-building` installs the
  * app again; the booted simulator, its installed runtime and the other apps stay. Uninstalling an app that is
@@ -1136,6 +1141,7 @@ export const APP_BUNDLE_ID = "dev.chenda.Oppi";
 export async function resetSlotAppState(session: CommandSession, udid: string): Promise<void> {
   await runSimctl(session, ["uninstall", udid, APP_BUNDLE_ID], "simctl uninstall");
   await runSimctl(session, ["keychain", udid, "reset"], "simctl keychain reset");
+  await runSimctl(session, ["privacy", udid, "revoke", "microphone", APP_BUNDLE_ID], "simctl privacy revoke microphone");
 }
 
 async function acquireRunSlot(

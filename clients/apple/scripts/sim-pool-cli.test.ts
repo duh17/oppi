@@ -52,7 +52,7 @@ case "$sub" in
     if [[ "\${1:-}" == "runtimes" ]]; then cat "$dir/runtimes.json"; exit 0; fi
     cat "$dir/devices.json"
     ;;
-  bootstatus|boot|shutdown|erase|delete|create|spawn|io|uninstall|keychain)
+  bootstatus|boot|shutdown|erase|delete|create|spawn|io|uninstall|keychain|privacy)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     # Model CoreSimulator: boot bakes the caller's SIMCTL_CHILD_* into the
     # device environment until shutdown; spawn env prints that environment.
@@ -963,6 +963,9 @@ exit 0
     // The leased slot starts every run without the previous run's app, data, or keychain.
     const calls = readFileSync(join(fake, "xcrun.calls"), "utf8");
     expect(calls).toMatch(/simctl uninstall \S+ dev\.chenda\.Oppi\n(.*\n)*simctl keychain \S+ reset\n/);
+    // The uninstall forgot the microphone decision; the reset answers it ("Don't Allow", as the UI tests do)
+    // so no system alert covers the first screen. Order matters: the privacy row is written after the uninstall.
+    expect(calls).toMatch(/simctl uninstall \S+ dev\.chenda\.Oppi\n(.*\n)*simctl privacy \S+ revoke microphone dev\.chenda\.Oppi\n/);
     const state = readSlotState(join(root, "locks"), 0);
     expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
   });
@@ -1178,7 +1181,7 @@ case "$sub" in
     fi
     exit 0
     ;;
-  erase|boot|delete|create|spawn|io|uninstall|keychain)
+  erase|boot|delete|create|spawn|io|uninstall|keychain|privacy)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     exit 0
     ;;
@@ -1635,7 +1638,7 @@ case "$sub" in
     if [[ "\${1:-}" == "runtimes" ]]; then cat "$dir/runtimes.json"; exit 0; fi
     cat "$dir/devices.json"
     ;;
-  bootstatus|boot|erase|delete|create|spawn|io|uninstall|keychain)
+  bootstatus|boot|erase|delete|create|spawn|io|uninstall|keychain|privacy)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     if [[ "$sub" == "create" ]]; then echo UDID-CREATED; fi
     if [[ "$sub" == "io" ]]; then echo "Recording started" >&2; fi
@@ -1735,7 +1738,7 @@ case "$sub" in
     if [[ "\${1:-}" == "runtimes" ]]; then cat "$dir/runtimes.json"; exit 0; fi
     cat "$dir/devices.json"
     ;;
-  bootstatus|boot|erase|delete|create|spawn|io|uninstall|keychain)
+  bootstatus|boot|erase|delete|create|spawn|io|uninstall|keychain|privacy)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     if [[ "$sub" == "create" ]]; then echo UDID-CREATED; fi
     if [[ "$sub" == "io" ]]; then echo "Recording started" >&2; fi
@@ -1822,7 +1825,7 @@ case "$sub" in
     if [[ "\${1:-}" == "runtimes" ]]; then cat "$dir/runtimes.json"; exit 0; fi
     cat "$dir/devices.json"
     ;;
-  bootstatus|boot|erase|delete|create|spawn|io|uninstall|keychain)
+  bootstatus|boot|erase|delete|create|spawn|io|uninstall|keychain|privacy)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     if [[ "$sub" == "create" ]]; then echo UDID-CREATED; fi
     if [[ "$sub" == "io" ]]; then echo "Recording started" >&2; fi

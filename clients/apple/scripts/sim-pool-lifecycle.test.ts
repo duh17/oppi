@@ -97,7 +97,7 @@ switch (sub) {
   }
   case "boot": setState(rest[0], "Booted"); break;
   case "shutdown": setState(rest[0], "Shutdown"); break;
-  case "bootstatus": case "spawn": case "uninstall": case "keychain": break;
+  case "bootstatus": case "spawn": case "uninstall": case "keychain": case "privacy": break;
   default: process.exit(127);
 }
 `,
