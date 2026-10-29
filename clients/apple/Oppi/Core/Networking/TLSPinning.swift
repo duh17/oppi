@@ -9,6 +9,21 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
     private let pinnedLeafFingerprint: String?
     let expectedServerName: String?
     private let followsRedirects: Bool
+    private let rejectionLock = NSLock()
+    private var rejections = 0
+
+    /// What a rejected certificate says when it surfaces as an error.
+    static let rejectionMessage = "The server's certificate doesn't match the paired one."
+
+    /// How many server-trust challenges this delegate has rejected. URLSession
+    /// reports each one as a cancelled request, so a caller that sees
+    /// `URLError.cancelled` reads this before and after to tell the two apart.
+    var rejectionCount: Int { rejectionLock.withLock { rejections } }
+
+    private func reject(_ completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        rejectionLock.withLock { rejections += 1 }
+        completionHandler(.cancelAuthenticationChallenge, nil)
+    }
 
     init(pinnedLeafFingerprint: String?, expectedServerName: String? = nil, followsRedirects: Bool = true) {
         self.pinnedLeafFingerprint = Self.normalizeFingerprint(pinnedLeafFingerprint)
@@ -57,7 +72,7 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         }
 
         guard let trust = challenge.protectionSpace.serverTrust else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
+            reject(completionHandler)
             return
         }
 
@@ -75,7 +90,7 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
             let policy = SecPolicyCreateSSL(true, expectedServerName as CFString)
             guard SecTrustSetPolicies(trust, policy) == errSecSuccess,
                   SecTrustEvaluateWithError(trust, nil) else {
-                completionHandler(.cancelAuthenticationChallenge, nil)
+                reject(completionHandler)
                 return
             }
             completionHandler(.useCredential, URLCredential(trust: trust))
@@ -84,7 +99,7 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
 
         guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
               let leafCertificate = chain.first else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
+            reject(completionHandler)
             return
         }
 
@@ -101,7 +116,7 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         case .publicCAFallback:
             completionHandler(.performDefaultHandling, nil)
         case .reject:
-            completionHandler(.cancelAuthenticationChallenge, nil)
+            reject(completionHandler)
         }
     }
 

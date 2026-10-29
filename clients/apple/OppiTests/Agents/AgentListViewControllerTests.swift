@@ -201,6 +201,73 @@ struct AgentListViewControllerTests {
 }
 
 @MainActor
+@Suite("A rejected server certificate is not a cancel")
+struct CertificateRejectionLoadTests {
+    @Test("APIClient names a pin rejection; a real cancel stays a cancel")
+    func apiClientNamesTheRejection() async throws {
+        AgentsURLProtocol.reset()
+        AgentsURLProtocol.mode = .certificateRejected
+        let client = AgentsURLProtocol.makeClient()
+        do {
+            _ = try await client.listAgents()
+            Issue.record("a rejected certificate must fail the request")
+        } catch let error as URLError {
+            #expect(error.code == .serverCertificateUntrusted)
+            #expect(error.localizedDescription == "The server's certificate doesn't match the paired one.")
+            #expect(!AgentManagementPresentation.isCancellation(error))
+        }
+
+        AgentsURLProtocol.mode = .cancelled
+        do {
+            _ = try await client.listAgents()
+            Issue.record("a cancelled request must fail")
+        } catch let error as URLError {
+            #expect(error.code == .cancelled)
+            #expect(AgentManagementPresentation.isCancellation(error))
+        }
+    }
+
+    @Test("Agents shows the certificate failure with Retry instead of nothing")
+    func agentsShowsTheRejection() async throws {
+        AgentsURLProtocol.reset()
+        AgentsURLProtocol.mode = .certificateRejected
+        let root = makeTestAppRoot()
+        root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
+        let screen = AgentListViewController(root: root)
+        let window = try AgentListViewControllerTests.show(screen)
+        defer { AgentListViewControllerTests.hide(window) }
+
+        var row: UIButton?
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            screen.view.layoutIfNeeded()
+            row = AgentListViewControllerTests.buttons("agents.state", in: screen.view).first { !$0.isHiddenInHierarchy }
+            return row != nil
+        })
+        #expect(row?.accessibilityLabel == "The server's certificate doesn't match the paired one.")
+        #expect(row?.accessibilityTraits.contains(.button) == true)
+    }
+
+    @Test("Pi shows the certificate failure with Retry instead of nothing")
+    func piShowsTheRejection() async throws {
+        AgentsURLProtocol.reset()
+        AgentsURLProtocol.mode = .certificateRejected
+        let root = makeTestAppRoot()
+        root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
+        let screen = PiAgentDetailViewController(root: root)
+        let window = try AgentListViewControllerTests.show(screen)
+        defer { AgentListViewControllerTests.hide(window) }
+
+        var row: UIButton?
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            screen.view.layoutIfNeeded()
+            row = AgentListViewControllerTests.buttons("agents.pi.state", in: screen.view).first { !$0.isHiddenInHierarchy }
+            return row != nil
+        })
+        #expect(row?.accessibilityLabel == "The server's certificate doesn't match the paired one.")
+    }
+}
+
+@MainActor
 @Suite("Pi page load states")
 struct PiAgentDetailLoadStateTests {
     private func hasAlert(_ screen: UIViewController, _ window: UIWindow) -> Bool {
@@ -293,7 +360,7 @@ private extension UIView {
 /// releases them, `.failing` is a 500, `.cancelled` fails like a URLSession
 /// task that was cancelled under the caller, `.available` one saved Agent.
 private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
-    enum Mode { case available, failing, cancelled, held }
+    enum Mode { case available, failing, cancelled, certificateRejected, held }
 
     static let host = "agents-list.test"
     private static let lock = NSLock()
@@ -370,6 +437,7 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
         Self.lock.withLock { Self.requests += 1 }
         switch Self.mode {
         case .cancelled: client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+        case .certificateRejected: challengeServerTrust()
         case .available: respond(status: 200, body: Self.agentsBody(id: "reviewer"))
         case .failing: respond(status: 500, body: Data(#"{"error":"agents are down"}"#.utf8))
         case .held: Self.lock.withLock { Self.held.append(self) }
@@ -377,6 +445,38 @@ private final class AgentsURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+
+    /// What URLSession does with a server whose certificate fails the pin: the
+    /// connection asks the delegate to trust it, the delegate cancels the
+    /// challenge, and the request ends as a cancelled one.
+    private func challengeServerTrust() {
+        let space = URLProtectionSpace(
+            host: Self.host,
+            port: 443,
+            protocol: NSURLProtectionSpaceHTTPS,
+            realm: nil,
+            authenticationMethod: NSURLAuthenticationMethodServerTrust
+        )
+        let challenge = URLAuthenticationChallenge(
+            protectionSpace: space,
+            proposedCredential: nil,
+            previousFailureCount: 0,
+            failureResponse: nil,
+            error: nil,
+            sender: CancellingChallengeSender(owner: self)
+        )
+        client?.urlProtocol(self, didReceive: challenge)
+    }
+
+    private final class CancellingChallengeSender: NSObject, URLAuthenticationChallengeSender, @unchecked Sendable {
+        private let owner: AgentsURLProtocol
+        init(owner: AgentsURLProtocol) { self.owner = owner }
+        func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) {}
+        func continueWithoutCredential(for challenge: URLAuthenticationChallenge) {}
+        func cancel(_ challenge: URLAuthenticationChallenge) {
+            owner.client?.urlProtocol(owner, didFailWithError: URLError(.cancelled))
+        }
+    }
 
     private func respond(status: Int, body: Data) {
         guard let url = request.url, let response = HTTPURLResponse(

@@ -2378,18 +2378,34 @@ actor APIClient: ClientLogUploading {
     // MARK: - Private
 
     private func performData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let rejections = trustDelegate.rejectionCount
         do {
             return try await session.data(for: request)
         } catch {
+            let error = namingCertificateRejection(error, since: rejections)
             reportAvailabilityFailure(for: error)
             throw error
         }
+    }
+
+    /// A rejected server certificate reaches the caller as a cancelled request
+    /// (the delegate cancels the challenge). Callers ignore cancels, so name it
+    /// with the certificate error the connection layer already treats as a
+    /// verdict: not retried, and not an availability failure.
+    private func namingCertificateRejection(_ error: Error, since rejections: Int) -> Error {
+        guard (error as? URLError)?.code == .cancelled, !Task.isCancelled,
+              trustDelegate.rejectionCount > rejections else { return error }
+        return URLError(
+            .serverCertificateUntrusted,
+            userInfo: [NSLocalizedDescriptionKey: PinnedServerTrustDelegate.rejectionMessage]
+        )
     }
 
     private func bootstrapData(
         for request: URLRequest,
         deadline: BootstrapDeadline
     ) async throws -> (Data, URLResponse) {
+        let rejections = trustDelegate.rejectionCount
         do {
             return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
                 group.addTask { [session] in
@@ -2407,6 +2423,7 @@ actor APIClient: ClientLogUploading {
                 return result
             }
         } catch {
+            let error = namingCertificateRejection(error, since: rejections)
             reportAvailabilityFailure(for: error)
             throw error
         }
@@ -2641,9 +2658,11 @@ actor APIClient: ClientLogUploading {
     }
 
     private func performBytes(for request: URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse) {
+        let rejections = trustDelegate.rejectionCount
         do {
             return try await session.bytes(for: request)
         } catch {
+            let error = namingCertificateRejection(error, since: rejections)
             reportAvailabilityFailure(for: error)
             throw error
         }
@@ -2753,9 +2772,11 @@ actor APIClient: ClientLogUploading {
     }
 
     private func performUpload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, URLResponse) {
+        let rejections = trustDelegate.rejectionCount
         do {
             return try await session.upload(for: request, fromFile: fileURL)
         } catch {
+            let error = namingCertificateRejection(error, since: rejections)
             reportAvailabilityFailure(for: error)
             throw error
         }
