@@ -45,11 +45,27 @@ enum ContextBarScoping {
         fileScope == .session && fileScopes(sessionId: sessionId, worktreeId: worktreeId).contains(.session)
     }
 
-    /// The Git status narrowed to `changedFiles` (the session's
-    /// `changeStats.changedFiles`); nil when the session touched nothing.
-    static func sessionScope(gitStatus: GitStatus?, changedFiles: [String]?) -> SessionScopedGitStatus? {
+    /// The Git status narrowed to the session's touched files: `changedFiles`
+    /// (the server's full list, or `changeStats.changedFiles`, which is
+    /// capped) and `stats.filesChanged`, the session's own count. The panel
+    /// and the bar button both read it, so they count alike. Nil when the
+    /// session touched nothing.
+    static func sessionScope(
+        gitStatus: GitStatus?,
+        changedFiles: [String]?,
+        stats: SessionChangeStats? = nil
+    ) -> SessionScopedGitStatus? {
         guard let gitStatus, let changedFiles, !changedFiles.isEmpty else { return nil }
-        return SessionScopedGitStatus.filter(gitStatus: gitStatus, sessionChangedFiles: changedFiles)
+        return SessionScopedGitStatus.filter(
+            gitStatus: gitStatus,
+            sessionChangedFiles: changedFiles,
+            reportedTouchedCount: stats?.filesChanged ?? 0
+        )
+    }
+
+    /// This session counts the files it touched, as its list shows them.
+    static func sessionScope(gitStatus: GitStatus?, stats: SessionChangeStats?) -> SessionScopedGitStatus? {
+        sessionScope(gitStatus: gitStatus, changedFiles: stats?.changedFiles, stats: stats)
     }
 
     static func displayFileCount(
@@ -57,6 +73,8 @@ enum ContextBarScoping {
         filtersToSession: Bool,
         sessionScope: SessionScopedGitStatus?
     ) -> Int {
+        // Changes, not touches: the touched files Git reports. The touched
+        // total is This session's header alone.
         if filtersToSession { return sessionScope?.sessionFileCount ?? 0 }
         return gitStatus?.uncommittedCount ?? 0
     }
@@ -79,6 +97,12 @@ enum ContextBarScoping {
         return gitStatus?.removedLines ?? 0
     }
 
+    /// The paths Select may pick, in list order: Git's files only. Quick
+    /// actions send them to the server, which refuses one Git does not report.
+    static func selectablePaths(_ files: [GitPanelFile]) -> [String] {
+        files.filter(\.isSelectable).map(\.path)
+    }
+
     /// The rows: in This session every touched file, Git's first; otherwise
     /// Git's changes.
     static func displayFiles(
@@ -88,6 +112,34 @@ enum ContextBarScoping {
     ) -> [GitPanelFile] {
         if filtersToSession { return sessionScope?.touchedFiles ?? [] }
         return (gitStatus?.files ?? []).map(GitPanelFile.init)
+    }
+}
+
+/// A session's full touched list from the server (`listSessionChanges`) at
+/// one count: `changeStats.changedFiles` is capped. A chat loads it and hands
+/// the same paths to its Git button and its Git panel, so they never count
+/// from different lists.
+struct SessionTouchedList: Equatable {
+    let workspaceId: String
+    let sessionId: String
+    /// The session's `changeStats.filesChanged` the list was asked for.
+    let filesChanged: Int
+    var paths: [String]?
+    var failedAt: Date?
+
+    /// The paths to count for `stats`: the loaded list while it is the one
+    /// for this count, else the session's capped list.
+    static func paths(
+        _ list: SessionTouchedList?,
+        workspaceId: String?,
+        sessionId: String,
+        stats: SessionChangeStats?
+    ) -> [String]? {
+        if let list, list.workspaceId == workspaceId, list.sessionId == sessionId,
+           list.filesChanged == (stats?.filesChanged ?? 0), let paths = list.paths {
+            return paths
+        }
+        return stats?.changedFiles
     }
 }
 
@@ -132,6 +184,10 @@ final class WorkspaceContextBarView: UIView {
         var sessionId: String?
         var worktreeId: String?
         var serverId: String?
+        /// The session's touched list as its host resolved it
+        /// (`SessionTouchedList.paths`): the one the host's Git button counts
+        /// too. Nil reads the session's `changeStats.changedFiles`.
+        var sessionTouchedFiles: [String]?
     }
 
     /// What stays fixed for the bar's life.
@@ -244,21 +300,6 @@ final class WorkspaceContextBarView: UIView {
     private var fileScope: ContextBarScoping.FileScope {
         chosenFileScope.flatMap { fileScopes.contains($0) ? $0 : nil }
             ?? ContextBarScoping.defaultFileScope(sessionId: context.sessionId, worktreeId: context.worktreeId)
-    }
-
-    /// The session's whole touched list from the server
-    /// (`listSessionChanges`); the session's `changeStats.changedFiles` is
-    /// capped. Loaded while This session shows, again when the session's
-    /// count moves.
-    private var touchedList: (key: TouchedListKey, paths: [String])? {
-        didSet { if touchedList?.paths != oldValue?.paths { setNeedsUpdateProperties() } }
-    }
-    private var touchedListTask: Task<Void, Never>?
-    private var loadedTouchedListKey: TouchedListKey?
-    private struct TouchedListKey: Equatable {
-        let workspaceId: String
-        let sessionId: String
-        let filesChanged: Int
     }
 
     // Derived on each render.
@@ -520,11 +561,11 @@ final class WorkspaceContextBarView: UIView {
         )
         if filtersToSession, let sessionId = context.sessionId {
             let session = connection.sessionStore.sessions.first { $0.id == sessionId }
-            loadTouchedListIfNeeded(sessionId: sessionId, stats: session?.changeStats)
-            let fullList = touchedList.flatMap { $0.key.sessionId == sessionId ? $0.paths : nil }
+            // The host's touched list, the one its Git button counts too.
             sessionScope = ContextBarScoping.sessionScope(
                 gitStatus: context.gitStatus,
-                changedFiles: fullList ?? session?.changeStats?.changedFiles
+                changedFiles: context.sessionTouchedFiles ?? session?.changeStats?.changedFiles,
+                stats: session?.changeStats
             )
         } else {
             sessionScope = nil
@@ -576,8 +617,15 @@ final class WorkspaceContextBarView: UIView {
         branchIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(.caption2, .caption1, .semibold))
         branchIcon.tintColor = cyan
 
-        changedLabel.isHidden = fileCount <= 0
-        changedLabel.text = "\(SessionFormatting.compactCount(fileCount)) changed"
+        if filtersToSession {
+            // The list's own count: every touched file, then the ones Git has.
+            let touched = sessionScope?.touchedCount ?? 0
+            changedLabel.isHidden = touched <= 0
+            changedLabel.text = String(localized: "\(SessionFormatting.compactCount(touched)) touched · \(SessionFormatting.compactCount(fileCount)) with changes")
+        } else {
+            changedLabel.isHidden = fileCount <= 0
+            changedLabel.text = "\(SessionFormatting.compactCount(fileCount)) changed"
+        }
         changedLabel.font = font(.caption1, .footnote, .semibold, mono: true)
         changedLabel.textColor = Self.dirtyColor(fileCount: fileCount, palette: palette)
 
@@ -1018,15 +1066,22 @@ final class WorkspaceContextBarView: UIView {
         return centered
     }
 
+    /// What Select can pick: Git's files. A quick action sends its paths to
+    /// the server, which refuses a path Git does not report.
+    private var selectablePaths: [String] {
+        ContextBarScoping.selectablePaths(displayFiles)
+    }
+
     private var allFilesSelected: Bool {
-        !displayFiles.isEmpty && displayFiles.allSatisfy { selectedPaths.contains($0.path) }
+        let selectable = selectablePaths
+        return !selectable.isEmpty && selectable.allSatisfy { selectedPaths.contains($0) }
     }
 
     private func selectionHeader(palette: ThemePalette) -> UIView {
         let toggleAll = UIButton(configuration: .plain())
         toggleAll.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            selectedPaths = allFilesSelected ? [] : Set(displayFiles.map(\.path))
+            selectedPaths = allFilesSelected ? [] : Set(selectablePaths)
         }, for: .primaryActionTriggered)
         let count = Self.label("", font: font(.caption2, .caption1, mono: true), color: UIColor(palette.fg))
         selectAllButton = toggleAll
@@ -1073,7 +1128,10 @@ final class WorkspaceContextBarView: UIView {
         for file in displayFiles {
             let row = fileRow(file, palette: palette)
             list.addArrangedSubview(row.view)
-            fileRows.append((file.path, row.view, row.mark))
+            // Only selectable rows take part in selection and drag-select.
+            if file.isSelectable {
+                fileRows.append((file.path, row.view, row.mark))
+            }
         }
 
         if !filtersToSession, let gitStatus = context.gitStatus, gitStatus.totalFiles > gitStatus.files.count {
@@ -1099,7 +1157,7 @@ final class WorkspaceContextBarView: UIView {
     ) -> (view: UIView, mark: UIImageView?) {
         let canTap = context.workspaceId != nil
         var mark: UIImageView?
-        if isSelecting {
+        if isSelecting, file.isSelectable {
             let check = UIImageView()
             check.preferredSymbolConfiguration = UIImage.SymbolConfiguration(font: font(fixed: 12, .regular, regular: .caption1, .regular))
             check.contentMode = .center
@@ -1135,12 +1193,16 @@ final class WorkspaceContextBarView: UIView {
         let row = PlainRowButton(wrapping: content.stack) { [weak self] in
             guard let self else { return }
             if isSelecting {
-                toggleSelection(file.path)
+                if file.isSelectable { toggleSelection(file.path) }
             } else if canTap {
                 open(file)
             }
         }
         row.accessibilityLabel = content.labelParts.joined(separator: ", ")
+        // While selecting, a row Select cannot pick reads as dimmed text.
+        let unselectable = isSelecting && !file.isSelectable
+        content.stack.alpha = unselectable ? 0.45 : 1
+        row.accessibilityTraits = unselectable ? [.staticText, .notEnabled] : .button
         return (row, mark)
     }
 
@@ -1435,21 +1497,6 @@ final class WorkspaceContextBarView: UIView {
         }
     }
 
-    /// The server's whole touched list for This session, once per count the
-    /// session reports; a failure keeps the session's capped list.
-    private func loadTouchedListIfNeeded(sessionId: String, stats: SessionChangeStats?) {
-        guard let workspaceId = context.workspaceId, let apiClient else { return }
-        let key = TouchedListKey(workspaceId: workspaceId, sessionId: sessionId, filesChanged: stats?.filesChanged ?? 0)
-        guard key != loadedTouchedListKey else { return }
-        loadedTouchedListKey = key
-        touchedListTask?.cancel()
-        touchedListTask = Task { [weak self] in
-            guard let response = try? await apiClient.listSessionChanges(workspaceId: workspaceId, sessionId: sessionId),
-                  !Task.isCancelled else { return }
-            self?.touchedList = (key, response.files.map(\.path))
-        }
-    }
-
     @objc private func handleDragSelect(_ gesture: UIPanGestureRecognizer) {
         switch gesture.state {
         case .began, .changed:
@@ -1629,7 +1676,7 @@ final class WorkspaceContextBarView: UIView {
     }
 
     private var selectedPathsInListOrder: [String] {
-        displayFiles.filter { selectedPaths.contains($0.path) }.map(\.path)
+        selectablePaths.filter(selectedPaths.contains)
     }
 
     private func useSelectionInCurrentSession(option: WorkspaceQuickActionOption) async {

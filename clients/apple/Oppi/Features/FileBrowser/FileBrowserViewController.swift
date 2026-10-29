@@ -69,7 +69,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     var onEmbeddedChromeChange: ((FileBrowserEmbeddedChrome) -> Void)?
 
     /// The device's sort and visibility choices, shared by every browser.
-    private let viewOptions: FileBrowserViewOptionsStore
+    private var viewOptions: FileBrowserViewOptionsStore { .shared }
 
     private let root: AppRootEnvironment
     private let serverId: String?
@@ -110,7 +110,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var isOnScreen = false
     private var hasAppeared = false
     private var searchedKey: SearchKey?
-    private var cachedChangeMarks: (files: [GitFileStatus], marks: FileBrowserChangeMarks)?
+    private var cachedChangeMarks: (files: [GitFileStatus], total: Int, marks: FileBrowserChangeMarks)?
     private let viewportRestore = FileBrowserViewportRestore()
 
     // Views.
@@ -146,21 +146,20 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var lastThemeID: ThemeID?
     private var appliedBars: BarState?
     private var sidebarToggle: UIBarButtonItem?
-    private lazy var viewOptionsItem = Self.makeViewOptionsItem(store: viewOptions)
+    private lazy var viewOptionsItem = Self.makeViewOptionsItem()
     private var lastChrome: FileBrowserEmbeddedChrome?
     /// The listing's order and the checkout's Git changes, read each pass.
     private var arrangement = FileBrowserViewOptions()
+    private var arrangedMemo: (listingID: UUID, options: FileBrowserViewOptions, entries: [FileEntry])?
     private var changeMarks = FileBrowserChangeMarks.none
 
     /// The `.fileBrowser` shell route.
     init(
         root: AppRootEnvironment,
         target: FileBrowserNavTarget,
-        showsSidebarToggle: Bool,
-        viewOptions: FileBrowserViewOptionsStore = .shared
+        showsSidebarToggle: Bool
     ) {
         self.root = root
-        self.viewOptions = viewOptions
         serverId = target.serverId
         scope = target.scope
         initialPath = target.path
@@ -187,11 +186,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         services: FileBrowserServices,
         navigator: ScreenNavigator,
         serverId: String?,
-        scope: FileBrowserScope,
-        viewOptions: FileBrowserViewOptionsStore = .shared
+        scope: FileBrowserScope
     ) {
         self.root = root
-        self.viewOptions = viewOptions
         self.serverId = serverId
         self.scope = scope
         initialPath = ""
@@ -276,6 +273,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         installConstraints()
 
         search.onTextChange = { [weak self] text in self?.setSearchText(text) }
+        search.scopeAccessibilityIdentifier = "fileBrowser.searchScope"
         search.onScopeChange = { [weak self] index in
             self?.setSearchScope(FileBrowserSearchScope(rawValue: index) ?? .everywhere)
         }
@@ -356,7 +354,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         // A query stays current with the file index under it, and with its
         // scope's folder.
         let index = services.fileIndexStore.paths
-        let searchKey = SearchKey(index: index, scope: state.searchScope, folder: currentDirectoryPath)
+        let searchKey = SearchKey(
+            index: index,
+            scope: state.searchScope,
+            folder: currentDirectoryPath,
+            showsHidden: arrangement.showsHidden
+        )
         if searchKey != searchedKey {
             searchedKey = searchKey
             if !trimmedQuery.isEmpty {
@@ -632,9 +635,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         guard case .workspace(let workspaceId, let worktreeId) = scope,
               let status = services.connection.gitStatusStore.status(workspaceId: workspaceId, worktreeId: worktreeId),
               status.isGitRepo else { return .none }
-        if let cached = cachedChangeMarks, cached.files == status.files { return cached.marks }
-        let marks = FileBrowserChangeMarks(status.files)
-        cachedChangeMarks = (status.files, marks)
+        if let cached = cachedChangeMarks, cached.files == status.files, cached.total == status.totalFiles {
+            return cached.marks
+        }
+        let marks = FileBrowserChangeMarks(status.files, totalCount: status.totalFiles)
+        cachedChangeMarks = (status.files, status.totalFiles, marks)
         return marks
     }
 
@@ -658,9 +663,20 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         return contentFilePath(relative)
     }
 
+    /// The listing's entries in display order, sorted once per listing and
+    /// view options; the rows and previous/next both read this.
+    private func arrangedEntries(_ listing: DirectoryListingResponse) -> [FileEntry] {
+        if let memo = arrangedMemo, memo.listingID == state.listingID, memo.options == arrangement {
+            return memo.entries
+        }
+        let entries = arrangement.arranged(listing.entries)
+        arrangedMemo = (state.listingID, arrangement, entries)
+        return entries
+    }
+
     /// Previous/next walk the folder's files in the order the list shows them.
     private func listingNavigationContext(_ listing: DirectoryListingResponse) -> FileBrowserNavigationContext {
-        FileBrowserNavigationContext(files: arrangement.arranged(listing.entries).compactMap { entry in
+        FileBrowserNavigationContext(files: arrangedEntries(listing).compactMap { entry in
             guard !entry.isDirectory else { return nil }
             return FileBrowserSelection(
                 path: filePath(for: entry, relativeTo: currentDirectoryPath),
@@ -782,11 +798,14 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         guard let paths = services?.fileIndexStore.paths else { return }
         let scope = effectiveSearchScope
         let folder = currentDirectoryPath
+        let options = arrangement
         Task { [weak self] in
             let results = await Task.detached {
-                FuzzyMatch.search(query: query, candidates: scope.candidates(paths, folder: folder), limit: 100)
+                let candidates = options.searchable(scope.candidates(paths, folder: folder))
+                return FuzzyMatch.search(query: query, candidates: candidates, limit: 100)
             }.value
-            guard let self, trimmedQuery == query, effectiveSearchScope == scope, currentDirectoryPath == folder else { return }
+            guard let self, trimmedQuery == query, effectiveSearchScope == scope, currentDirectoryPath == folder,
+                  arrangement.showsHidden == options.showsHidden else { return }
             state.fuzzyResults = results
         }
     }
@@ -1127,7 +1146,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 return collectionView.dequeueConfiguredReusableCell(using: fileCell, for: indexPath, item: item)
             case .result:
                 return collectionView.dequeueConfiguredReusableCell(using: resultCell, for: indexPath, item: item)
-            case .searchCount, .emptyDirectory, .truncated:
+            case .searchCount, .emptyDirectory, .truncated, .marksIncomplete:
                 return collectionView.dequeueConfiguredReusableCell(using: noteCell, for: indexPath, item: item)
             }
         }
@@ -1180,7 +1199,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
         func append(_ items: [Item], to section: Section) {
             guard !items.isEmpty else { return }
-            snapshot.appendSections([section])
+            if !snapshot.sectionIdentifiers.contains(section) {
+                snapshot.appendSections([section])
+            }
             snapshot.appendItems(items, toSection: section)
         }
 
@@ -1217,7 +1238,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 append(items, to: .body)
             }
         } else if let listing = state.listing {
-            let entries = arrangement.arranged(listing.entries)
+            let entries = arrangedEntries(listing)
             if entries.isEmpty, !column {
                 nextOverlay = .empty
             } else {
@@ -1275,6 +1296,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             nextOverlay = .error(error)
         } else {
             nextOverlay = .loading
+        }
+        // Git listed only some of its changes: an unmarked file may be
+        // changed too, so the list says so instead of looking clean.
+        if nextOverlay == nil, changeMarks.unlistedCount > 0 {
+            nextRows[.marksIncomplete] = .marksIncomplete(changeMarks.unlistedCount)
+            append([.marksIncomplete], to: .footer)
         }
 
         let headerChanged = nextHeader != compactSearchHeader
@@ -1382,6 +1409,14 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             // At least the SwiftUI view's 220 pt under the breadcrumb.
             var content = emptyDirectoryConfiguration()
             content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 50, leading: 16, bottom: 50, trailing: 16)
+            cell.contentConfiguration = content
+            applyPlainBackground(to: cell)
+        case .marksIncomplete(let unlisted):
+            var content = UIListContentConfiguration.cell()
+            content.text = String(localized: "Git reported \(unlisted) more changes than it listed; those files show no change mark.")
+            content.textProperties.font = UIFont.preferredFont(forTextStyle: .caption1)
+            content.textProperties.color = comment
+            content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
             cell.contentConfiguration = content
             applyPlainBackground(to: cell)
         case .truncated(let count):
@@ -1847,10 +1882,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     /// (the chosen key again flips its direction), Folders First, and Show
     /// Hidden Files. The menu is read when it opens, so it always shows the
     /// device's current choice, whichever browser made it.
-    static func makeViewOptionsItem(store: FileBrowserViewOptionsStore = .shared) -> UIBarButtonItem {
-        let menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak store] completion in
-            guard let store else { return completion([]) }
-            completion(viewOptionsMenuElements(store: store))
+    static func makeViewOptionsItem() -> UIBarButtonItem {
+        let menu = UIMenu(children: [UIDeferredMenuElement.uncached { completion in
+            completion(viewOptionsMenuElements(store: .shared))
         }])
         let item = UIBarButtonItem(
             title: String(localized: "View Options"),
@@ -1977,7 +2011,11 @@ private extension FileBrowserViewController {
     }
 
     struct ContentState {
-        var listing: DirectoryListingResponse?
+        var listing: DirectoryListingResponse? {
+            didSet { listingID = UUID() }
+        }
+        /// Changes with every listing, so its sorted entries are kept per listing.
+        private(set) var listingID = UUID()
         var error: String?
         var searchText = ""
         var searchScope = FileBrowserSearchScope.everywhere
@@ -2007,6 +2045,8 @@ private extension FileBrowserViewController {
         case result(String)
         case emptyDirectory
         case truncated
+        /// Git's status lists only some of its changes.
+        case marksIncomplete
     }
 
     struct DirectoryRow: Equatable {
@@ -2046,6 +2086,7 @@ private extension FileBrowserViewController {
         let index: [String]?
         let scope: FileBrowserSearchScope
         let folder: String
+        let showsHidden: Bool
     }
 
     enum Row: Equatable {
@@ -2056,6 +2097,7 @@ private extension FileBrowserViewController {
         case result(ResultRow)
         case emptyDirectory
         case truncated(Int)
+        case marksIncomplete(Int)
     }
 
     enum Tap {

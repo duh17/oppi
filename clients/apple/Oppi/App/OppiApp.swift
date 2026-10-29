@@ -186,6 +186,7 @@ final class OppiApp {
     init() {
         FeatureEducationTips.configure()
         LocalHTTPCache.disableDiskCacheAndPurgeLeftovers()
+        FileBrowserViewOptionsStore.removeRetiredPanelTabs()
         let coordinator = ConnectionCoordinator(
             serverStore: ServerStore(),
             seenStorage: SessionSeenLedgerStorage(defaults: .standard)

@@ -231,6 +231,7 @@ extension ChatViewController {
         updateTitleMaxWidth()
         updateTimelineChrome()
         composer.view.isHidden = isStopped
+        loadSessionTouchedListIfNeeded()
         barItems.update()
         updateTopBarTip()
         updateSidePanels()
@@ -496,6 +497,7 @@ extension ChatViewController {
         topBarTip.stop()
         sessionEntryTask?.cancel()
         sessionEntryTask = nil
+        cancelSessionTouchedListLoad()
         let shellSwapRemount = mountedPresentation != appNavigation.workspaceNavigationPresentation
         logMountTelemetry(
             "Chat disappeared",

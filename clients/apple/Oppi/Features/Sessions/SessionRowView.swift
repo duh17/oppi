@@ -248,7 +248,13 @@ final class SessionRowView: UIView {
                 "doc", "\(files)", style: .caption2, textStyle: .caption1, symbolWeight: .semibold,
                 textWeight: .regular, monospacedDigits: true, color: Self.changeColor(files, colors: colors)
             )
-            filesLabel.accessibilityLabel = SessionRowMetricsFormatting.filesTouchedAccessibilityLabel(files)
+            // A main-checkout session shares its checkout: its count is the
+            // tool calls' record, so it says so.
+            let worktreeId = session.worktreeId ?? ""
+            filesLabel.accessibilityLabel = SessionRowMetricsFormatting.filesTouchedAccessibilityLabel(
+                files,
+                approximate: worktreeId.isEmpty || worktreeId == WorkspaceWorktree.mainId
+            )
         }
         metricsCluster.setHiddenIfChanged(metricsCluster.arrangedSubviews.allSatisfy(\.isHidden))
 

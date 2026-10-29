@@ -115,8 +115,58 @@ struct ContextBarScopingTests {
 
         #expect(files.map(\.path) == ["src/b.swift", "/tmp/plan.md", "src/committed.swift"])
         #expect(files.map { $0.gitFile != nil } == [true, false, false])
+        // The bar counts changes (the one Git reports); the header's touched
+        // total counts the whole list.
         #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: true, sessionScope: scope) == 1)
+        #expect(scope?.touchedCount == 3)
         #expect(ContextBarScoping.displayAddedLines(gitStatus: gitStatus, filtersToSession: true, sessionScope: scope) == 2)
+    }
+
+    /// Select picks only Git's files: a quick action sends the paths to the
+    /// server, which refuses one Git does not report.
+    @Test func selectOffersOnlyFilesGitReports() {
+        let gitStatus = makeDirtyGitStatus(totalFiles: 2, files: [makeFile("src/a.swift", added: 1, removed: 0)])
+        let scope = ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: ["/tmp/plan.md", "src/a.swift"])
+        let files = ContextBarScoping.displayFiles(gitStatus: gitStatus, filtersToSession: true, sessionScope: scope)
+
+        #expect(files.map(\.path) == ["src/a.swift", "/tmp/plan.md"])
+        #expect(ContextBarScoping.selectablePaths(files) == ["src/a.swift"])
+    }
+
+    /// A capped touched list still totals the session's own count, so the
+    /// header reads the same before and after the full list arrives.
+    @Test func aCappedTouchedListCountsTheSessionsOwnTotal() {
+        let gitStatus = makeDirtyGitStatus(totalFiles: 1, files: [makeFile("a.swift", added: 1, removed: 0)])
+        let stats = SessionChangeStats(
+            mutatingToolCalls: 9,
+            filesChanged: 5,
+            changedFiles: ["a.swift", "b.swift"],
+            changedFilesOverflow: 3
+        )
+        let capped = ContextBarScoping.sessionScope(gitStatus: gitStatus, stats: stats)
+        let full = ContextBarScoping.sessionScope(
+            gitStatus: gitStatus,
+            changedFiles: ["a.swift", "b.swift", "c.swift", "d.swift", "e.swift"],
+            stats: stats
+        )
+        #expect(capped?.touchedCount == 5)
+        #expect(full?.touchedCount == 5)
+        #expect(ContextBarScoping.displayFileCount(gitStatus: gitStatus, filtersToSession: true, sessionScope: full) == 1)
+    }
+
+    /// The Git button and the panel read one list: the loaded full list only
+    /// while it is this session's at its current count, else the capped one.
+    @Test func theLoadedTouchedListCountsOnlyForItsSessionAndCount() {
+        let stats = SessionChangeStats(mutatingToolCalls: 3, filesChanged: 3, changedFiles: ["a.swift"], changedFilesOverflow: 2)
+        var list = SessionTouchedList(workspaceId: "w1", sessionId: "s1", filesChanged: 3)
+        #expect(SessionTouchedList.paths(list, workspaceId: "w1", sessionId: "s1", stats: stats) == ["a.swift"])
+        list.paths = ["a.swift", "b.swift", "c.swift"]
+        #expect(SessionTouchedList.paths(list, workspaceId: "w1", sessionId: "s1", stats: stats) == ["a.swift", "b.swift", "c.swift"])
+        #expect(SessionTouchedList.paths(list, workspaceId: "w2", sessionId: "s1", stats: stats) == ["a.swift"])
+        #expect(SessionTouchedList.paths(list, workspaceId: "w1", sessionId: "s2", stats: stats) == ["a.swift"])
+        var moved = stats
+        moved.filesChanged = 4
+        #expect(SessionTouchedList.paths(list, workspaceId: "w1", sessionId: "s1", stats: moved) == ["a.swift"])
     }
 
     /// A dirty checkout the session has not touched: "This session" lists
@@ -145,7 +195,8 @@ struct ContextBarScopingTests {
             files: [makeFile("src/a.swift", added: 4, removed: 1), makeFile("src/b.swift", added: 2, removed: 0)]
         )
         let scope = ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: ["/repo/src/a.swift"])
-        #expect(scope?.sessionFiles.map(\.path) == ["src/a.swift"])
+        #expect(scope?.touchedFiles.map(\.path) == ["src/a.swift"])
+        #expect(scope?.touchedFiles.first?.gitFile != nil)
         #expect(ContextBarScoping.sessionScope(gitStatus: nil, changedFiles: ["/repo/src/a.swift"]) == nil)
         #expect(ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: nil) == nil)
     }

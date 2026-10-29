@@ -45,6 +45,10 @@ final class ChatScreenModel {
 
     var showOutline = false
     var showGit = false
+    /// The session's full touched list, read by the Git button and the Git
+    /// panel alike (`loadSessionTouchedListIfNeeded`).
+    var sessionTouchedList: SessionTouchedList?
+    @ObservationIgnored var sessionTouchedListTask: Task<Void, Never>?
     var isFilePanelVisible = false
     var showContextInspector = false
     var showModelPicker = false

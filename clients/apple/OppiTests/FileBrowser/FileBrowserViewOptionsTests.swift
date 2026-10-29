@@ -63,6 +63,16 @@ struct FileBrowserViewOptionsTests {
         #expect(options.arranged(listing).map(\.name) == ["assets", "src", "File2.swift", "file10.txt", "README"])
     }
 
+    /// Hidden files off hides them from search too: a dot-file or anything
+    /// inside a dot-folder.
+    @Test func hidingHiddenFilesKeepsThemOutOfSearch() {
+        let paths = ["src/a.swift", ".env", ".github/workflows/ci.yml", "src/.cache/x", "docs/v1.2/notes.md"]
+        var options = FileBrowserViewOptions()
+        #expect(options.searchable(paths) == paths)
+        options.showsHidden = false
+        #expect(options.searchable(paths) == ["src/a.swift", "docs/v1.2/notes.md"])
+    }
+
     @MainActor
     @Test func theStoreKeepsTheChoiceOnTheDevice() throws {
         let suite = "FileBrowserViewOptionsTests.\(UUID().uuidString)"
@@ -121,6 +131,28 @@ struct FileBrowserViewOptionsTests {
         #expect(marks.folderHasChanges("fresh/"))
         #expect(!marks.folderHasChanges("docs/"))
         #expect(!marks.folderHasChanges("sr/"))
+        #expect(marks.unlistedCount == 0)
+    }
+
+    /// Git C-quotes a path with spaces, quotes, or non-ASCII bytes; the mark
+    /// lands on the file's real name, each side of a rename unquoted.
+    @Test func marksReadGitsQuotedPaths() {
+        let marks = FileBrowserChangeMarks([
+            GitFileStatus(status: " M", path: #""docs/caf\303\251 \"menu\".md""#, addedLines: 1, removedLines: 0),
+            GitFileStatus(status: "R ", path: #""old name.txt" -> "new\tname.txt""#, addedLines: nil, removedLines: nil),
+        ])
+        #expect(marks.mark(forFile: "docs/caf\u{e9} \"menu\".md")?.kind == .modified)
+        #expect(marks.mark(forFile: "new\tname.txt")?.kind == .renamed)
+        #expect(marks.folderHasChanges("docs/"))
+        #expect(FileBrowserChangeMarks.unquoted("plain/path.swift") == "plain/path.swift")
+    }
+
+    /// Git's status lists at most so many files: the marks say how many
+    /// changes they could not show, so an unmarked file is not taken as clean.
+    @Test func marksCountTheChangesGitDidNotList() {
+        let listed = [GitFileStatus(status: " M", path: "a.swift", addedLines: 1, removedLines: 0)]
+        #expect(FileBrowserChangeMarks(listed, totalCount: 812).unlistedCount == 811)
+        #expect(FileBrowserChangeMarks(listed, totalCount: 1).unlistedCount == 0)
     }
 }
 

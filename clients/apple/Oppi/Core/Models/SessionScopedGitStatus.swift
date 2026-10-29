@@ -1,9 +1,3 @@
-/// Filtered view of `GitStatus` scoped to files touched by a specific session.
-///
-/// The server tracks per-session changed files via `session.changeStats.changedFiles`
-/// (absolute paths from edit/write tool calls). This struct cross-references those
-/// against the workspace's git status (repo-relative paths) to produce a subset
-/// showing only what the current session modified.
 /// A file the Git panel lists: Git's change, or a file the session touched
 /// that Git does not report (committed and clean, outside the repository,
 /// or in a worktree that is gone). A Git file opens its diff; any other
@@ -23,16 +17,28 @@ struct GitPanelFile: Sendable, Equatable {
         path = sessionPath
         gitFile = nil
     }
+
+    /// Select may pick it: Git reports it, so a quick action the server
+    /// runs on it can read it. The server refuses any other path.
+    var isSelectable: Bool { gitFile != nil }
 }
 
+/// The Git status scoped to the files a session touched.
+///
+/// The server tracks per-session changed files via `session.changeStats.changedFiles`
+/// (absolute paths from edit/write tool calls). This struct cross-references those
+/// against the workspace's git status (repo-relative paths): the touched files
+/// Git reports carry its status and counts; the rest are listed without.
 struct SessionScopedGitStatus: Sendable, Equatable {
-
-    /// Files from `gitStatus.files` that were touched by the session.
-    let sessionFiles: [GitFileStatus]
 
     /// Every file the session touched: its Git files in Git's order, then
     /// the touched files Git does not report, in the session's order.
     let touchedFiles: [GitPanelFile]
+
+    /// How many files the session touched: the listed ones, or the
+    /// session's own count when its list is capped (`changeStats.filesChanged`),
+    /// so a capped and a full list count the same.
+    let touchedCount: Int
 
     /// Count of session-touched files present in the git status.
     let sessionFileCount: Int
@@ -53,12 +59,13 @@ struct SessionScopedGitStatus: Sendable, Equatable {
     /// - Returns: A scoped status containing only files the session touched.
     static func filter(
         gitStatus: GitStatus,
-        sessionChangedFiles: [String]
+        sessionChangedFiles: [String],
+        reportedTouchedCount: Int = 0
     ) -> Self {
         guard !sessionChangedFiles.isEmpty else {
             return Self(
-                sessionFiles: [],
                 touchedFiles: [],
+                touchedCount: reportedTouchedCount,
                 sessionFileCount: 0,
                 sessionAddedLines: 0,
                 sessionRemovedLines: 0
@@ -94,9 +101,10 @@ struct SessionScopedGitStatus: Sendable, Equatable {
         let addedLines = filtered.compactMap(\.addedLines).reduce(0, +)
         let removedLines = filtered.compactMap(\.removedLines).reduce(0, +)
 
+        let touched = filtered.map(GitPanelFile.init) + outsideGit.map(GitPanelFile.init(sessionPath:))
         return Self(
-            sessionFiles: filtered,
-            touchedFiles: filtered.map(GitPanelFile.init) + outsideGit.map(GitPanelFile.init(sessionPath:)),
+            touchedFiles: touched,
+            touchedCount: max(touched.count, reportedTouchedCount),
             sessionFileCount: filtered.count,
             sessionAddedLines: addedLines,
             sessionRemovedLines: removedLines

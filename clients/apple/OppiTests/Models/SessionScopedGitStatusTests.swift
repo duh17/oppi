@@ -53,8 +53,8 @@ struct SessionScopedGitStatusTests {
             sessionChangedFiles: ["/workspace/project/src/App.swift"]
         )
 
-        #expect(scoped.sessionFiles.count == 1)
-        #expect(scoped.sessionFiles[0].path == "src/App.swift")
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).count == 1)
+        #expect(scoped.touchedFiles.compactMap(\.gitFile)[0].path == "src/App.swift")
     }
 
     @Test func multipleSessionFilesFiltered() {
@@ -72,8 +72,8 @@ struct SessionScopedGitStatusTests {
             ]
         )
 
-        #expect(scoped.sessionFiles.count == 2)
-        #expect(scoped.sessionFiles.map(\.path) == ["src/App.swift", "README.md"])
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).count == 2)
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).map(\.path) == ["src/App.swift", "README.md"])
     }
 
     @Test func preservesOriginalFileOrder() {
@@ -89,7 +89,7 @@ struct SessionScopedGitStatusTests {
         )
 
         // Should follow git status order, not session changedFiles order
-        #expect(scoped.sessionFiles.map(\.path) == ["c.swift", "a.swift", "b.swift"])
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).map(\.path) == ["c.swift", "a.swift", "b.swift"])
     }
 
     // MARK: - Summary stats
@@ -137,7 +137,7 @@ struct SessionScopedGitStatusTests {
             sessionChangedFiles: ["/project/binary.png", "/project/src/App.swift"]
         )
 
-        #expect(scoped.sessionFiles.count == 2)
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).count == 2)
         #expect(scoped.sessionAddedLines == 5)
         #expect(scoped.sessionRemovedLines == 2)
     }
@@ -154,7 +154,7 @@ struct SessionScopedGitStatusTests {
             sessionChangedFiles: []
         )
 
-        #expect(scoped.sessionFiles.isEmpty)
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).isEmpty)
         #expect(scoped.sessionFileCount == 0)
         #expect(scoped.sessionAddedLines == 0)
         #expect(scoped.sessionRemovedLines == 0)
@@ -174,8 +174,8 @@ struct SessionScopedGitStatusTests {
         )
 
         // Only the file still in git status shows up
-        #expect(scoped.sessionFiles.count == 1)
-        #expect(scoped.sessionFiles[0].path == "src/App.swift")
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).count == 1)
+        #expect(scoped.touchedFiles.compactMap(\.gitFile)[0].path == "src/App.swift")
     }
 
     @Test func allFilesMatchedWhenSessionTouchedEverything() {
@@ -202,7 +202,7 @@ struct SessionScopedGitStatusTests {
             sessionChangedFiles: ["/project/src/App.swift"]
         )
 
-        #expect(scoped.sessionFiles.isEmpty)
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).isEmpty)
         #expect(scoped.sessionFileCount == 0)
     }
 
@@ -219,7 +219,7 @@ struct SessionScopedGitStatusTests {
             ]
         )
 
-        #expect(scoped.sessionFiles.count == 1)
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).count == 1)
         #expect(scoped.sessionAddedLines == 10)
     }
 
@@ -235,7 +235,7 @@ struct SessionScopedGitStatusTests {
             ]
         )
 
-        #expect(scoped.sessionFiles.count == 1)
+        #expect(scoped.touchedFiles.compactMap(\.gitFile).count == 1)
     }
 
     // MARK: - Helpers

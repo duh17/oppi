@@ -29,7 +29,7 @@ enum FileBrowserSortKey: String, CaseIterable, Codable, Sendable {
 
 /// How every file browser on this device lists a folder: the sort, whether
 /// folders come first, and whether dot-files show. Search results keep their
-/// relevance order; only listings sort.
+/// relevance order (only listings sort), and hide dot-files too.
 struct FileBrowserViewOptions: Codable, Equatable, Sendable {
     var sortKey: FileBrowserSortKey = .name
     var ascending = true
@@ -54,6 +54,15 @@ struct FileBrowserViewOptions: Codable, Equatable, Sendable {
         let sorted = visible.sorted(by: precedes)
         guard foldersFirst else { return sorted }
         return sorted.filter(\.isDirectory) + sorted.filter { !$0.isDirectory }
+    }
+
+    /// Index paths a search may return: with hidden files off, none inside a
+    /// dot-folder or named with a leading dot.
+    func searchable(_ paths: [String]) -> [String] {
+        guard !showsHidden else { return paths }
+        return paths.filter { path in
+            !path.split(separator: "/").contains { $0.hasPrefix(".") }
+        }
     }
 
     private func precedes(_ lhs: FileEntry, _ rhs: FileEntry) -> Bool {
@@ -124,6 +133,12 @@ final class FileBrowserViewOptionsStore {
         options = defaults.data(forKey: Self.key)
             .flatMap { try? JSONDecoder().decode(FileBrowserViewOptions.self, from: $0) }
             ?? FileBrowserViewOptions()
+    }
+
+    /// The chat Files panel's per-session Changed / All tab, gone with the
+    /// Changed tab. Launch removes what an older build stored there.
+    nonisolated static func removeRetiredPanelTabs(from defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: "\(AppIdentifiers.subsystem).chatFileBrowser.selectedTabsBySession")
     }
 
     func update(_ change: (inout FileBrowserViewOptions) -> Void) {

@@ -520,7 +520,7 @@ struct SessionStorePartitioningTests {
             sessionChangedFiles: changedFiles
         )
 
-        #expect(scope.sessionFiles.map(\.path) == ["server/src/session-events.ts", "README.md"])
+        #expect(scope.touchedFiles.compactMap(\.gitFile).map(\.path) == ["server/src/session-events.ts", "README.md"])
     }
 
     @Test func staleSummaryPreservesExistingChangeStats() {

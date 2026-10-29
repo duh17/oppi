@@ -1104,18 +1104,20 @@ private final class ChatRoutesURLProtocol: URLProtocol {
             body = Self.json([
                 "workspaceId": "chat-routes-ws",
                 "sessionId": "chat-routes-session",
-                "files": [["path": "Sources/App.swift"], ["path": "Notes/plan.md"]],
-                "changedFileCount": 2,
+                // The full list matches the session's `changeStats`, as the server's does.
+                "files": ([ChatRoutesFixture.changedPath, ChatRoutesFixture.touchedPath] + ChatRoutesFixture.manyChangePaths)
+                    .map { ["path": $0] },
+                "changedFileCount": 2 + ChatRoutesFixture.manyChangePaths.count,
                 "changedFilesOverflow": 0,
             ])
         case ("GET", "\(workspace)/contents"):
-            // App.swift sorts before Route.md by name and after it by date,
-            // so a re-sort visibly flips them.
+            // Alpha.txt sorts before Route.md by name and after it by date,
+            // so a re-sort visibly flips them. Sources/ holds Git's change.
             body = Self.json([
                 "path": "",
                 "entries": [
                     ["name": "Sources", "path": "Sources/", "type": "directory", "size": 0, "modifiedAt": 1_800_000_000_000],
-                    ["name": "App.swift", "path": "Sources/App.swift", "type": "file", "size": 20, "modifiedAt": 1_800_000_000_000],
+                    ["name": "Alpha.txt", "path": "Alpha.txt", "type": "file", "size": 10, "modifiedAt": 1_700_000_000_000],
                     ["name": "Route.md", "path": "Route.md", "type": "file", "size": 40, "modifiedAt": 1_900_000_000_000],
                 ],
                 "truncated": false,
@@ -1140,7 +1142,10 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         case ("GET", "\(workspace)/paths"):
             // "route" matches Route.md at the root and RouteView.swift in
             // Sources/: a search there differs by scope.
-            body = Self.json(["paths": ["Sources/App.swift", "Sources/RouteView.swift", "Route.md"], "truncated": false])
+            body = Self.json([
+                "paths": ["Alpha.txt", "Route.md", "Sources/App.swift", "Sources/RouteView.swift"],
+                "truncated": false,
+            ])
         case ("GET", "/files/current"):
             contentType = "text/plain"
             body = Data("let route = \"chat\"\n".utf8)

@@ -106,8 +106,15 @@ struct SessionWorktreeIndicatorPresentation: Equatable, Sendable {
 }
 
 enum SessionRowMetricsFormatting {
-    static func filesTouchedAccessibilityLabel(_ filesChanged: Int) -> String {
-        filesChanged == 1 ? String(localized: "1 file touched") : String(localized: "\(filesChanged) files touched")
+    /// `approximate`: a session in a shared checkout, whose count is its
+    /// edit and write calls' record, not Git's.
+    static func filesTouchedAccessibilityLabel(_ filesChanged: Int, approximate: Bool = false) -> String {
+        if approximate {
+            return filesChanged == 1
+                ? String(localized: "Approximately 1 file touched")
+                : String(localized: "Approximately \(filesChanged) files touched")
+        }
+        return filesChanged == 1 ? String(localized: "1 file touched") : String(localized: "\(filesChanged) files touched")
     }
 
     static func compactionAccessibilityLabel(_ compactionCount: Int) -> String {

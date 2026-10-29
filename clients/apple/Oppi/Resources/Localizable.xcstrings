@@ -1535,6 +1535,28 @@
         }
       }
     },
+    "Git reported %lld more changes than it listed; those files show no change mark." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Git reported %lld more change than it listed; that file shows no change mark."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Git reported %lld more changes than it listed; those files show no change mark."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Git Status" : {
       "extractionState" : "stale",
       "localizations" : {

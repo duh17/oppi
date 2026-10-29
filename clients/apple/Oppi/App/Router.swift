@@ -405,6 +405,9 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
     var onTextChange: (String) -> Void = { _ in }
     /// The person picked another scope button (`setScopes`).
     var onScopeChange: (Int) -> Void = { _ in }
+    /// The scope bar's accessibility identifier. UIKit builds the bar's
+    /// segmented control itself, when it first shows, so it is tagged then.
+    var scopeAccessibilityIdentifier: String?
     private var hidesWhenScrolling = true
     /// The search became active or ended, by the user or by `setPresented`.
     var onPresentationChange: (Bool) -> Void = { _ in }
@@ -472,9 +475,29 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
         if let titles, titles.indices.contains(selected), bar.selectedScopeButtonIndex != selected {
             bar.selectedScopeButtonIndex = selected
         }
+        tagScopeBar()
+    }
+
+    /// A test aid: UIKit gives no handle on the scope bar, so this tags the
+    /// first segmented control inside the search bar. It relies on
+    /// UISearchBar's private layout and silently does nothing if that changes.
+    private func tagScopeBar() {
+        guard let scopeAccessibilityIdentifier else { return }
+        func firstSegmentedControl(in view: UIView) -> UISegmentedControl? {
+            for subview in view.subviews {
+                if let control = subview as? UISegmentedControl { return control }
+                if let control = firstSegmentedControl(in: subview) { return control }
+            }
+            return nil
+        }
+        let control = firstSegmentedControl(in: searchController.searchBar)
+        if control?.accessibilityIdentifier != scopeAccessibilityIdentifier {
+            control?.accessibilityIdentifier = scopeAccessibilityIdentifier
+        }
     }
 
     func updateSearchResults(for searchController: UISearchController) {
+        tagScopeBar()
         onTextChange(text)
     }
 
@@ -483,6 +506,7 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
     }
 
     func didPresentSearchController(_ searchController: UISearchController) {
+        tagScopeBar()
         onPresentationChange(true)
     }
 

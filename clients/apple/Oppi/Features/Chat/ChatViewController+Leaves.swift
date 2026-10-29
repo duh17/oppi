@@ -73,9 +73,79 @@ extension ChatViewController {
             workspaceId: session?.workspaceId,
             sessionId: sessionId,
             worktreeId: session?.worktreeId,
-            serverId: serverIdHint ?? connection.currentServerId
+            serverId: serverIdHint ?? connection.currentServerId,
+            sessionTouchedFiles: sessionTouchedPaths
         )
     }
+
+    /// The touched paths this chat's Git button and Git panel both count.
+    private var sessionTouchedPaths: [String]? {
+        SessionTouchedList.paths(
+            model.sessionTouchedList,
+            workspaceId: session?.workspaceId,
+            sessionId: sessionId,
+            stats: session?.changeStats
+        )
+    }
+
+    /// Loads the session's full touched list once per count it reports,
+    /// while a This session count can show: the main checkout's Git button
+    /// and panel open on it; a worktree session's panel can switch to it. A
+    /// failure keeps the capped list and asks again after a delay.
+    func loadSessionTouchedListIfNeeded() {
+        guard let session, let workspaceId = session.workspaceId, let api = apiClient else { return }
+        // No Git button or panel to count for: not a repository, or Git status off.
+        guard mayHaveGit else { return }
+        let needed = !ContextBarScoping.isOwnWorktree(session.worktreeId) || model.showGit
+        guard needed, (session.changeStats?.filesChanged ?? 0) > 0 else { return }
+        let filesChanged = session.changeStats?.filesChanged ?? 0
+        if let current = model.sessionTouchedList, current.workspaceId == workspaceId,
+           current.sessionId == sessionId, current.filesChanged == filesChanged {
+            if current.paths != nil || model.sessionTouchedListTask != nil { return }
+            if let failedAt = current.failedAt, Date().timeIntervalSince(failedAt) < Self.touchedListRetryDelay { return }
+        }
+        let sessionId = sessionId
+        model.sessionTouchedList = SessionTouchedList(workspaceId: workspaceId, sessionId: sessionId, filesChanged: filesChanged)
+        model.sessionTouchedListTask?.cancel()
+        model.sessionTouchedListTask = Task { [weak self] in
+            let paths: [String]?
+            do {
+                paths = try await api.listSessionChanges(workspaceId: workspaceId, sessionId: sessionId).files.map(\.path)
+            } catch {
+                paths = nil
+            }
+            guard !Task.isCancelled,
+                  self?.applySessionTouchedList(paths, sessionId: sessionId, filesChanged: filesChanged) == false
+            else { return }
+            // Failed: ask again after the delay, even if nothing else
+            // re-renders. The chat is not held while the task waits.
+            try? await Task.sleep(for: .seconds(Self.touchedListRetryDelay))
+            guard !Task.isCancelled else { return }
+            self?.setNeedsUpdateProperties()
+        }
+    }
+
+    /// Records a load's result; false when it failed.
+    private func applySessionTouchedList(_ paths: [String]?, sessionId: String, filesChanged: Int) -> Bool {
+        model.sessionTouchedListTask = nil
+        guard model.sessionTouchedList?.sessionId == sessionId,
+              model.sessionTouchedList?.filesChanged == filesChanged else { return true }
+        if let paths {
+            model.sessionTouchedList?.paths = paths
+            return true
+        }
+        model.sessionTouchedList?.failedAt = Date()
+        return false
+    }
+
+    /// The chat left: its touched-list load or retry stops; the next
+    /// appearance loads again.
+    func cancelSessionTouchedListLoad() {
+        model.sessionTouchedListTask?.cancel()
+        model.sessionTouchedListTask = nil
+    }
+
+    private static let touchedListRetryDelay: TimeInterval = 10
 
     /// Whether this chat's workspace may be a Git repository, so the bar offers
     /// Git (`ChatBarItems.mayOfferGit`), from the status loaded for this
@@ -133,7 +203,7 @@ extension ChatViewController {
             fileScope: ContextBarScoping.defaultFileScope(sessionId: sessionId, worktreeId: session?.worktreeId)
         )
         let scope = filters
-            ? ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: session?.changeStats?.changedFiles)
+            ? ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: sessionTouchedPaths, stats: session?.changeStats)
             : nil
         return (
             gitStatus,

@@ -115,6 +115,7 @@ final class ChatFilePanelViewController: UIViewController {
             searchText = text
             setNeedsUpdateProperties()
         }
+        search.scopeAccessibilityIdentifier = "fileBrowser.searchScope"
         search.onScopeChange = { [weak self] index in
             guard let self else { return }
             searchScope = FileBrowserSearchScope(rawValue: index) ?? .everywhere
