@@ -68,6 +68,11 @@ final class CodeEditorTextView: UITextView {
         }
     }
 
+    /// The wrapped text area's width in points (nil when lines do not wrap)
+    /// changed. Reported after layout, never from inside it.
+    var onWrapWidthChange: (CGFloat?) -> Void = { _ in }
+    private var reportedWrapWidth: CGFloat?
+
     /// The keyboard's space-bar trackpad began (true) or ended (false). The
     /// system draws its own floating caret meanwhile, so the owner shows it.
     var onFloatingCursorChange: (Bool) -> Void = { _ in }
@@ -228,6 +233,14 @@ final class CodeEditorTextView: UITextView {
         bringSubviewToFront(gutter)
         captureGutterRows()
         updateCurrentLine()
+        let wrapWidth: CGFloat? = wrapsLines ? max(0, textContainer.size.width - 2 * textContainer.lineFragmentPadding) : nil
+        if wrapWidth != reportedWrapWidth {
+            reportedWrapWidth = wrapWidth
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                onWrapWidthChange(reportedWrapWidth)
+            }
+        }
     }
 
     /// Re-sets the content size so the widening setter sees text laid out

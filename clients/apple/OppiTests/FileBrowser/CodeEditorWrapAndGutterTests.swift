@@ -332,6 +332,25 @@ struct CodeEditorWrapAndGutterTests {
                 #expect(abs((match.maxX - match.minX) - CGFloat(digits) * digitWidth) < digitWidth, "\(label): line \(line + 1) has the wrong number of digits")
             }
         }
+        // The numbers the gutter holds are the lines TextKit measured: every
+        // paragraph whose first row is fully in the band, the one paragraph
+        // that started above the top as the pinned number, and nothing else.
+        let numbers = textView.gutterNumbers
+        let pinned = numbers.filter(\.isPinned)
+        #expect(pinned.count <= 1, "\(label): more than one pinned number: \(pinned.map(\.line))")
+        if let pin = pinned.first {
+            #expect(pin.line == straddler?.line, "\(label): pinned line \(pin.line + 1), but the paragraph at the top is line \((straddler?.line ?? -1) + 1)")
+        }
+        for (line, row) in geometry.firstRows where row.top >= geometry.top && row.top + height <= geometry.bottom {
+            #expect(numbers.contains { $0.line == line }, "\(label): line \(line + 1) is missing from the gutter's numbers \(numbers.map { $0.line + 1 })")
+        }
+        for number in numbers where !number.isPinned {
+            guard let row = geometry.firstRows[number.line] else {
+                Issue.record("\(label): the gutter numbers line \(number.line + 1), which TextKit has no first row for")
+                continue
+            }
+            #expect(row.top + height > geometry.top + height / 2 - 0.5 && row.top < geometry.bottom, "\(label): line \(number.line + 1) is numbered but its first row is outside the band")
+        }
         // A number at any other height is a number on no row.
         for ink in inks {
             // The band's bottom edge cuts a number whose row is half out of view.
@@ -423,7 +442,67 @@ struct CodeEditorWrapAndGutterTests {
             let top = try gutter(of: textView).frame.minY
             #expect(inks.count == 1, "only the giant paragraph is on screen; numbers at \(inks.map { $0.bottom - top })")
             #expect((inks.first?.top ?? .infinity) < top + (textView.font?.lineHeight ?? 18) * 1.5, "its number is pinned at the top, \(depth) pt in")
+            // And it is the giant paragraph's own number (line 2), pinned.
+            let numbers = textView.gutterNumbers
+            #expect(numbers.count == 1 && numbers.first?.isPinned == true && numbers.first?.line == 1, "pinned numbers \(numbers.map { "\($0.line + 1)\($0.isPinned ? "P" : "")" }), \(depth) pt in")
         }
+    }
+
+    // MARK: - Indent changes away from the viewport, deep indents
+
+    /// Replace All through the text input indents every line; the lines far
+    /// below the screen must wrap under their new indentation once they are
+    /// scrolled to, with Syntax Highlighting off (no color pass to catch them).
+    @Test func indentsAddedOffScreenReachTheirLinesWhenScrolledToWithSyntaxHighlightingOff() async throws {
+        let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau"
+        let original = (0..<200).map { _ in words }.joined(separator: "\n")
+        let (controller, window) = try makeEditor(path: "run.swift", text: original, highlightsSyntax: false)
+        defer { hideTestWindow(window) }
+        let textView = controller.textView
+        for line in (0..<200).reversed() {
+            let position = try #require(textView.position(from: textView.beginningOfDocument, offset: offset(ofLine: line, in: original)))
+            textView.replace(try #require(textView.textRange(from: position, to: position)), withText: "    ")
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        let target = lineStarts(of: textView.text)[185]
+        textView.setContentOffset(CGPoint(x: 0, y: textView.contentSize.height - textView.bounds.height), animated: false)
+        var aligned = false
+        for _ in 0..<40 where !aligned {
+            window.layoutIfNeeded()
+            let secondX = try caret(textView, at: secondRowStart(textView, paragraphStart: target)).minX
+            aligned = try abs(secondX - caret(textView, at: target + 4).minX) < 0.5
+            if !aligned { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        #expect(aligned, "line 186 wraps under its indentation after scrolling to it")
+    }
+
+    /// A deep indent must not squeeze the text: wrapped rows start at most
+    /// half the wrapped width in.
+    @Test func deepIndentsLeaveRoomForTextOnWrappedRows() async throws {
+        let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau"
+        let deep = String(repeating: " ", count: 30) + words
+        let shallow = String(repeating: " ", count: 8) + words
+        let text = [shallow, deep, "end"].joined(separator: "\n")
+        let (controller, window) = try makeEditor(path: "run.swift", text: text)
+        defer { hideTestWindow(window) }
+        let textView = controller.textView
+        let wrapWidth = textView.textContainer.size.width - 2 * textView.textContainer.lineFragmentPadding
+        let deepStart = offset(ofLine: 1, in: text)
+        let shallowStart = offset(ofLine: 0, in: text)
+        let columnWidth = ("M" as NSString).size(withAttributes: [.font: try #require(textView.font)]).width
+        var capped = false
+        for _ in 0..<40 where !capped {
+            window.layoutIfNeeded()
+            let origin = try caret(textView, at: deepStart).minX
+            let hang = try caret(textView, at: secondRowStart(textView, paragraphStart: deepStart)).minX - origin
+            capped = hang <= wrapWidth / 2 + 0.5
+            if !capped { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        #expect(capped, "a 30-column indent hangs wrapped rows at most half of the \(wrapWidth) pt wrapped width")
+        // An indent that fits is untouched.
+        let shallowOrigin = try caret(textView, at: shallowStart).minX
+        let shallowHang = try caret(textView, at: secondRowStart(textView, paragraphStart: shallowStart)).minX - shallowOrigin
+        #expect(abs(shallowHang - 8 * columnWidth) < 0.5, "an 8-column indent still hangs 8 columns, not \(shallowHang / columnWidth)")
     }
 
     @Test func lineNumbersShowWithSyntaxHighlightingOff() throws {

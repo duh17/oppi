@@ -253,6 +253,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
             style: highlightStyle,
             isEnabled: preferences.highlightsSyntax
         )
+        textView.onWrapWidthChange = { [weak self] width in self?.highlighter?.wrapWidth = width }
         appliedTabWidth = indentation.width
         applyColors()
         session.attachEditor { [weak textView] in textView?.text ?? "" }
