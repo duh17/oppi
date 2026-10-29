@@ -170,6 +170,11 @@ final class CodeEditorTextView: UITextView {
     /// for the viewport, at its first row, and the number of a paragraph that
     /// starts above the top pinned to the first row still on screen.
     var gutterNumbers: [CodeEditorGutterSnapshot.Number] {
+        // Before iOS 27 nothing says when the viewport finished laying out, and
+        // it does so after this view's own `layoutSubviews` returns (the text
+        // container is a child). Drawing runs after the whole layout phase, so
+        // read the viewport when the numbers are asked for.
+        if #unavailable(iOS 27.0) { gutterSnapshot = showsLineNumbers ? CodeEditorGutterSnapshot(capturing: self) : .empty }
         let top = gutter.frame.minY
         return gutterSnapshot.numbers(
             visibleTop: top,
@@ -186,7 +191,7 @@ final class CodeEditorTextView: UITextView {
 
     /// iOS 27: the viewport finished a layout pass, which also happens when
     /// TextKit replaces estimated heights and re-anchors the viewport outside
-    /// `layoutSubviews`. Earlier systems capture after `super.layoutSubviews()`.
+    /// `layoutSubviews`. Earlier systems read the viewport in `gutterNumbers`.
     @available(iOS 27.0, *)
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
@@ -231,7 +236,7 @@ final class CodeEditorTextView: UITextView {
             height: max(0, bounds.height - insets.top - insets.bottom)
         )
         bringSubviewToFront(gutter)
-        captureGutterRows()
+        gutter.setNeedsDisplay()
         updateCurrentLine()
         let wrapWidth: CGFloat? = wrapsLines ? max(0, textContainer.size.width - 2 * textContainer.lineFragmentPadding) : nil
         if wrapWidth != reportedWrapWidth {
