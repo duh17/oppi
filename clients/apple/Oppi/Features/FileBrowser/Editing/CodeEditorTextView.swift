@@ -73,7 +73,8 @@ final class CodeEditorTextView: UITextView {
     var onFloatingCursorChange: (Bool) -> Void = { _ in }
     private(set) var isFloatingCursorActive = false
 
-    private let gutter = CodeEditorGutterView()
+    let gutter = CodeEditorGutterView()
+    private var gutterSnapshot = CodeEditorGutterSnapshot.empty
     private let currentLineBand = UIView()
     private let blockCursor = UIView()
     private var cachedLineIndex: CodeLineIndex?
@@ -153,7 +154,38 @@ final class CodeEditorTextView: UITextView {
             cachedLineIndex?.apply(editedRange: editedRange, changeInLength: changeInLength, in: textStorage.mutableString)
         }
         if digits(for: lineIndex.lineCount) != previousDigits { updateInsets() }
+        // The relayout that follows rebuilds the gutter's rows with the new line numbers.
+        setNeedsLayout()
         gutter.setNeedsDisplay()
+    }
+
+    // MARK: - Gutter rows
+
+    /// The numbers the gutter draws now: one per paragraph TextKit laid out
+    /// for the viewport, at its first row, and the number of a paragraph that
+    /// starts above the top pinned to the first row still on screen.
+    var gutterNumbers: [CodeEditorGutterSnapshot.Number] {
+        let top = gutter.frame.minY
+        return gutterSnapshot.numbers(
+            visibleTop: top,
+            visibleBottom: top + gutter.bounds.height,
+            rowHeight: (font ?? AppFont.monoEditor).lineHeight
+        )
+    }
+
+    /// Rebuilds the gutter's rows from the viewport TextKit has laid out.
+    private func captureGutterRows() {
+        gutterSnapshot = showsLineNumbers ? CodeEditorGutterSnapshot(capturing: self) : .empty
+        gutter.setNeedsDisplay()
+    }
+
+    /// iOS 27: the viewport finished a layout pass, which also happens when
+    /// TextKit replaces estimated heights and re-anchors the viewport outside
+    /// `layoutSubviews`. Earlier systems capture after `super.layoutSubviews()`.
+    @available(iOS 27.0, *)
+    override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
+        super.textViewportLayoutControllerDidLayout(controller)
+        captureGutterRows()
     }
 
     // MARK: - Layout
@@ -194,7 +226,7 @@ final class CodeEditorTextView: UITextView {
             height: max(0, bounds.height - insets.top - insets.bottom)
         )
         bringSubviewToFront(gutter)
-        gutter.setNeedsDisplay()
+        captureGutterRows()
         updateCurrentLine()
     }
 
@@ -366,81 +398,5 @@ final class CodeEditorTextView: UITextView {
     @objc func performEditorKeyCommand(_ sender: UIKeyCommand) {
         guard let command = sender.propertyList as? String else { return }
         inputHandler?.codeEditor(self, perform: command)
-    }
-}
-
-/// Line numbers for the rows on screen, drawn each time the view scrolls or
-/// the text changes. The view is pinned to the viewport by its text view.
-final class CodeEditorGutterView: UIView {
-    weak var textView: CodeEditorTextView?
-    var codeFont = AppFont.monoEditor {
-        didSet { setNeedsDisplay() }
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        contentMode = .redraw
-        isOpaque = true
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    static func numberFont(for codeFont: UIFont) -> UIFont {
-        .monospacedDigitSystemFont(ofSize: max(10, codeFont.pointSize * 0.8), weight: .regular)
-    }
-
-    override func draw(_ rect: CGRect) {
-        guard let textView, let layout = textView.textLayoutManager, let content = layout.textContentManager else { return }
-        let chrome = textView.chrome
-        chrome.gutterBackground.setFill()
-        UIRectFill(bounds)
-        chrome.divider.setFill()
-        UIRectFill(CGRect(x: bounds.width - 1 / max(1, traitCollection.displayScale), y: 0, width: 1 / max(1, traitCollection.displayScale), height: bounds.height))
-
-        let numberFont = Self.numberFont(for: codeFont)
-        let index = textView.lineIndex
-        let currentLine = textView.selectedRange.length == 0 ? textView.caretLineAndColumn.line : -1
-        // Container-space y at the gutter's top edge.
-        let top = textView.contentOffset.y + textView.adjustedContentInset.top - textView.textContainerInset.top
-        let bottom = top + bounds.height
-        let documentStart = content.documentRange.location
-        let right = bounds.width - 10
-
-        func drawNumber(_ line: Int, lineTop: CGFloat, baseline: CGFloat) {
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: numberFont,
-                .foregroundColor: line == currentLine ? chrome.currentNumber : chrome.number,
-            ]
-            let text = String(line + 1) as NSString
-            let width = text.size(withAttributes: attributes).width
-            text.draw(at: CGPoint(x: right - width, y: lineTop + baseline - numberFont.ascender - top), withAttributes: attributes)
-        }
-
-        guard textView.textStorage.length > 0 else {
-            drawNumber(0, lineTop: 0, baseline: codeFont.ascender)
-            return
-        }
-
-        let start = layout.textLayoutFragment(for: CGPoint(x: 0, y: max(0, top)))?.rangeInElement.location ?? documentStart
-        var lastLine = 0
-        var lastBottom: CGFloat = 0
-        layout.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
-            let frame = fragment.layoutFragmentFrame
-            if frame.minY > bottom { return false }
-            let offset = content.offset(from: documentStart, to: fragment.rangeInElement.location)
-            let line = index.line(containing: offset)
-            let first = fragment.textLineFragments.first
-            let baseline = (first?.typographicBounds.minY ?? 0) + (first?.glyphOrigin.y ?? codeFont.ascender)
-            drawNumber(line, lineTop: frame.minY, baseline: baseline)
-            lastLine = line
-            lastBottom = frame.maxY
-            return true
-        }
-        // The empty line after a trailing break has no layout fragment.
-        if lastLine + 1 < index.lineCount, index.starts[index.lineCount - 1] == textView.textStorage.length,
-           lastLine + 1 == index.lineCount - 1, lastBottom <= bottom {
-            drawNumber(lastLine + 1, lineTop: lastBottom, baseline: codeFont.ascender)
-        }
     }
 }
