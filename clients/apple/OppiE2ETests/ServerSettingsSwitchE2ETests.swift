@@ -46,7 +46,7 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
         app.terminate()
         app.open(try await fixture.mintInvite())
         let second = app.buttons["Current server: Offline E2E"]
-        XCTAssertTrue(second.waitForExistence(timeout: 25), "Second real server did not pair and become selected")
+        assertExists(second, within: 25, "Second real server did not pair and become selected")
         tap(second, named: "second server picker")
         let firstRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "e2e-server")).firstMatch
         XCTAssertTrue(firstRow.waitForExistence(timeout: 5), "First pairing was lost")

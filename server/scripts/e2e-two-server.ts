@@ -9,11 +9,15 @@
  * stops it. The invite is minted when the test asks for it, not up front: the run waits on a
  * machine-wide build slot and a cold build first, so an invite minted before that outlives its
  * lifetime on a busy machine and the second pairing fails with "expired or already used".
+ *
+ * Exit: a failed test keeps the second server's data dir (`[two-server] preserving failure data`) for
+ * debugging; every other end, including SIGTERM (exit 143) and SIGINT (130), stops the test run, the
+ * second server and the approver and removes the fixture and data dirs, which hold the second server's tokens.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
 import { createServer as createTCPServer } from "node:net";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
@@ -37,18 +41,6 @@ const needsOfflineTransition = testSelector.split("/")[0] === "OfflinePairedServ
 let failed = true;
 const controlPath = `/two-server/${randomUUID()}`;
 
-/**
- * The app build as WhatsNewManager names it ("1.1.2 (56)"), from the Oppi target in project.yml.
- * The journeys relaunch the app after pairing, and a shared simulator slot that last ran another
- * build would cover that relaunch with What's New. The tests pass this as the last-seen build in
- * the launch arguments (the volatile argument domain), so no preference is written.
- */
-async function appReleaseIdentifier(): Promise<string> {
-  const yml = await readFile(join(root, "clients/apple/project.yml"), "utf8");
-  const match = yml.match(/PRODUCT_BUNDLE_IDENTIFIER: dev\.chenda\.Oppi\n(?:[^\n]*\n){0,3}?\s*MARKETING_VERSION: "([^"]+)"\n\s*CURRENT_PROJECT_VERSION: (\d+)/);
-  if (!match) throw Error("Cannot read the Oppi app version from clients/apple/project.yml");
-  return `${match[1]} (${match[2]})`;
-}
 /** A port nothing listens on right now. Take it only just before its owner binds it: another run can claim a port while a slow step sits between. */
 async function freePort(): Promise<number> {
   const socket = createTCPServer();
@@ -58,9 +50,12 @@ async function freePort(): Promise<number> {
   await new Promise<void>((ok) => socket.close(() => ok()));
   return address.port;
 }
+const helpers = new Set<ChildProcess>();
 function run(command: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<string> {
   return new Promise((ok, fail) => {
     const child = spawn(command, args, { cwd: serverDir, env });
+    helpers.add(child);
+    child.once("close", () => helpers.delete(child));
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -111,6 +106,37 @@ const control = createServer(async (request, response) => {
   await stopSecond();
   response.writeHead(200).end("offline");
 });
+let terminated = false;
+let cleaning: Promise<void> | undefined;
+/** Stops every process this wrapper started and removes what it created. Runs once, on any exit path. */
+function cleanup(keepData: boolean): Promise<void> {
+  cleaning ??= (async () => {
+    control.close();
+    for (const helper of helpers) helper.kill("SIGTERM");
+    approver?.kill("SIGTERM");
+    await rm(fixtureDir, { recursive: true, force: true });
+    await stopSecond();
+    if (keepData) console.error(`[two-server] preserving failure data: ${dataDir}`);
+    else await rm(dataDir, { recursive: true, force: true });
+  })();
+  return cleaning;
+}
+/** The test run gets the signal first, so e2e.sh and sim-pool clean up after themselves, then this wrapper does. */
+async function stopFirst(signal: NodeJS.Signals): Promise<void> {
+  const child = first;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((ok) => {
+    child.once("exit", () => ok());
+    child.kill(signal);
+    setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, 20_000).unref();
+  });
+}
+for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+  process.once(signal, () => {
+    terminated = true;
+    void stopFirst(signal).then(() => cleanup(false)).finally(() => process.exit(code));
+  });
+}
 try {
   await run("npm", ["run", "build"]);
   // After the slow build, so the port is free when the server binds it moments later.
@@ -168,10 +194,9 @@ try {
   if (!address || typeof address === "string") throw Error("Missing control port");
   const controlURL = `http://127.0.0.1:${address.port}${controlPath}`;
   // Its own file per run, named to the test in the environment: concurrent runs cannot meet.
-  await writeFile(fixturePath, JSON.stringify({ inviteURL: `${controlURL}/invite`, stopURL: `${controlURL}/stop`, appBuild: await appReleaseIdentifier() }), { mode: 0o600 });
+  await writeFile(fixturePath, JSON.stringify({ inviteURL: `${controlURL}/invite`, stopURL: `${controlURL}/stop` }), { mode: 0o600 });
   // e2e.sh binds this port a short while from now; claim it as late as possible.
   const firstPort = await freePort();
-  if (firstPort === secondPort) throw Error("E2E ports collided");
   console.log(`[two-server] isolated first port=${firstPort} second port=${secondPort} second PID=${second.pid} data=${dataDir}`);
   first = spawn(e2eScript, ["--native", "--record-video=always", "--only-testing", `OppiE2ETests/${testSelector}`], {
     cwd: root, stdio: "inherit",
@@ -189,11 +214,7 @@ try {
 } catch (error) {
   console.error("[two-server]", error);
 } finally {
-  control.close();
-  approver?.kill("SIGTERM");
-  await rm(fixtureDir, { recursive: true, force: true });
-  await stopSecond();
-  if (failed) console.error(`[two-server] preserving failure data: ${dataDir}`);
-  else await rm(dataDir, { recursive: true, force: true });
+  // A failed test keeps the second server's data dir for debugging; every other end removes it.
+  await cleanup(failed && !terminated);
 }
 process.exitCode = failed ? 1 : 0;

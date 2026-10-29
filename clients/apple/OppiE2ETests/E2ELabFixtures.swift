@@ -49,6 +49,23 @@ extension E2ETestCase {
         }
     }
 
+    /// Waits for `element` and asserts it appeared. On a miss it attaches the app's element tree and a
+    /// screenshot, so a failure under load can be told apart from a missing control after the fact.
+    func assertExists(_ element: XCUIElement, within timeout: TimeInterval, _ message: String) {
+        let found = element.waitForExistence(timeout: timeout)
+        if !found {
+            let tree = XCTAttachment(string: app.debugDescription)
+            tree.name = "app-hierarchy-at-failure"
+            tree.lifetime = .keepAlways
+            add(tree)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "screen-at-failure"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+        }
+        XCTAssertTrue(found, message)
+    }
+
     /// Seeds a set of real server workspaces and optional active/stopped sessions.
     func seedLabWorkspaces(_ fixtures: [E2ELabWorkspaceFixture]) throws {
         for fixture in fixtures {
@@ -625,13 +642,13 @@ struct TwoServerFixture {
     private let inviteURL: URL
     /// POST here to stop the second server; the reply comes after it exited.
     let stopURL: URL
-    private let appBuild: String
 
     /// Launch arguments for the journey's app. The app relaunches after pairing, and a simulator slot
-    /// that last ran another build would show What's New over it; naming this build as already seen
-    /// in the argument domain prevents that without writing any preference.
+    /// that last ran another build would show What's New over it. An empty last-seen build reads as a
+    /// first install, which is not a changelog (`WhatsNewManager.shouldShowChangelog`); the argument
+    /// domain is volatile, so no preference is written.
     var launchArguments: [String] {
-        ["-dev.chenda.Oppi.whatsNew.lastSeenVersion", appBuild]
+        ["-dev.chenda.Oppi.whatsNew.lastSeenVersion", ""]
     }
 
     static func load() throws -> TwoServerFixture {
@@ -641,11 +658,10 @@ struct TwoServerFixture {
         guard let data = FileManager.default.contents(atPath: path),
               let fields = try? JSONSerialization.jsonObject(with: data) as? [String: String],
               let invite = fields["inviteURL"].flatMap(URL.init(string:)),
-              let stop = fields["stopURL"].flatMap(URL.init(string:)),
-              let build = fields["appBuild"], !build.isEmpty else {
+              let stop = fields["stopURL"].flatMap(URL.init(string:)) else {
             throw Unavailable(description: "Two-server fixture \(path) is missing or malformed")
         }
-        return TwoServerFixture(inviteURL: invite, stopURL: stop, appBuild: build)
+        return TwoServerFixture(inviteURL: invite, stopURL: stop)
     }
 
     /// The first server's invite, which `e2e.sh` wrote for this run, after checking it is this run's:
