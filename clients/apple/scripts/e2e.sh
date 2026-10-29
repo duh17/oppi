@@ -155,14 +155,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Suites that pair a second server. A plain run has no second server for them, so the groups that
-# take the whole target skip them; `bun server/scripts/e2e-two-server.ts` (and the batch gate,
-# which routes these suites there) runs each one. Skipped here rather than XCTSkip'd inside the
-# suite, so a missing fixture in the routed run still fails loudly.
-TWO_SERVER_SUITES=(
-    "OppiE2ETests/OfflinePairedServerE2ETests"
-    "OppiE2ETests/ServerSettingsSwitchE2ETests"
+# Suites that pair a second server: every type declared in an E2E file that calls
+# `TwoServerFixture.<member>`, the rule scripts/batch-gate.ts routes by. A plain run has no second
+# server for them, so the groups that take the whole target skip them; `bun
+# server/scripts/e2e-two-server.ts` (and the batch gate, which routes these suites there) runs each
+# one. Skipped here rather than XCTSkip'd inside the suite, so a missing fixture in the routed run
+# still fails loudly.
+TWO_SERVER_SUITES=()
+while IFS= read -r suite; do
+    TWO_SERVER_SUITES+=("OppiE2ETests/$suite")
+done < <(
+    grep -rlE --include='*.swift' 'TwoServerFixture\.' "$IOS_DIR/OppiE2ETests" \
+        | xargs sed -nE 's/^[[:space:]]*(final )?(class|struct) ([A-Za-z0-9_]+).*/\3/p' | sort -u
 )
+if [[ ${#TWO_SERVER_SUITES[@]} -eq 0 ]]; then
+    echo "[e2e] ERROR: no two-server suites found in OppiE2ETests (expected callers of TwoServerFixture)" >&2
+    exit 1
+fi
 
 apply_group_defaults() {
     if $ONLY_TESTING_EXPLICIT; then

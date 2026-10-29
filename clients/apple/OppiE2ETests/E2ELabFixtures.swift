@@ -51,7 +51,13 @@ extension E2ETestCase {
 
     /// Waits for `element` and asserts it appeared. On a miss it attaches the app's element tree and a
     /// screenshot, so a failure under load can be told apart from a missing control after the fact.
-    func assertExists(_ element: XCUIElement, within timeout: TimeInterval, _ message: String) {
+    func assertExists(
+        _ element: XCUIElement,
+        within timeout: TimeInterval,
+        _ message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
         let found = element.waitForExistence(timeout: timeout)
         if !found {
             let tree = XCTAttachment(string: app.debugDescription)
@@ -63,7 +69,7 @@ extension E2ETestCase {
             screenshot.lifetime = .keepAlways
             add(screenshot)
         }
-        XCTAssertTrue(found, message)
+        XCTAssertTrue(found, message, file: file, line: line)
     }
 
     /// Seeds a set of real server workspaces and optional active/stopped sessions.
