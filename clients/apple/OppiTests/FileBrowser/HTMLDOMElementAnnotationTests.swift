@@ -1400,14 +1400,15 @@ struct HTMLDOMElementAnnotationTests {
         // across two reads, so a scroll or zoom still being applied is not mapped.
         var css = try await cssRect(id: "marker", in: fixture.view)
         var metrics = try await metrics(in: fixture.view)
-        for _ in 0..<40 {
+        var stable = false
+        for _ in 0..<40 where !stable {
             let nextCSS = try await cssRect(id: "marker", in: fixture.view)
             let nextMetrics = try await self.metrics(in: fixture.view)
-            let stable = nextCSS == css && nextMetrics == metrics
+            stable = nextCSS == css && nextMetrics == metrics
             css = nextCSS
             metrics = nextMetrics
-            if stable { break }
         }
+        if !stable { Issue.record("Marker rect and viewport metrics never held still across two reads. css \(css) metrics \(metrics)") }
         let mapped = HTMLDOMViewportMapping.viewRect(fromCSSViewportRect: css, metrics: metrics)
         let point = CGPoint(x: mapped.midX, y: mapped.midY)
         let bounds = fixture.view.bounds
@@ -1458,6 +1459,7 @@ struct HTMLDOMElementAnnotationTests {
             previous = current
             try? await Task.sleep(for: .milliseconds(20))
         }
+        Issue.record("Page viewport never settled with the expected state within 100 reads. last \(previous)")
         return previous
     }
 

@@ -1996,7 +1996,7 @@ struct SSHTerminalTests {
         keyboard(top: window.bounds.maxY)
         _ = await waitForMainActorCondition {
             nav.view.layoutIfNeeded()
-            return nav.topViewController === root
+            return nav.topViewController === root && !nav.isNavigationBarHidden
         }
         #expect(nav.topViewController === root)
         #expect(!nav.isNavigationBarHidden, "the screen below needs its Back and title")

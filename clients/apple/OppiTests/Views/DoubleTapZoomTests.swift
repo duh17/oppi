@@ -149,7 +149,7 @@ struct DoubleTapZoomTests {
             body.layoutIfNeeded()
             return body.debugMermaidLayoutCountForTesting >= 2
         }
-        #expect(await waitForMainActorConditionToStayTrue(for: MermaidWidthSettle.delay) {
+        #expect(await waitForMainActorConditionToStayTrue(for: MermaidWidthSettle.delay * 2) {
             body.layoutIfNeeded()
             return body.debugMermaidLayoutCountForTesting == 2
         }, "one layout once the width settles")
