@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   lstatSync,
-  mkdtempSync,
   mkdirSync,
   realpathSync,
   rmSync,
@@ -40,6 +39,7 @@ import { buildMobileOutputGuide } from "../src/oppi-docs.js";
 import { serverResourceId } from "../src/server-resource-id.js";
 import type { AskQuestion, ExtensionUINativeSurface, Session, Workspace } from "../src/types.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -47,7 +47,7 @@ afterEach(() => {
 
 describe("resolveSdkSessionCwdAsync", () => {
   it("uses an owner-only internal cwd for declared control sessions", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-cwd-"));
+    const dataDir = makeTempDir("oppi-control-cwd-");
     const session = {
       control: { domain: "agents", intent: "create" },
     } as Pick<Session, "worktreeId" | "control">;
@@ -63,8 +63,8 @@ describe("resolveSdkSessionCwdAsync", () => {
   });
 
   it("rejects a symlinked control-session parent before creating the cwd", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-cwd-link-"));
-    const outside = mkdtempSync(join(tmpdir(), "oppi-control-cwd-outside-"));
+    const dataDir = makeTempDir("oppi-control-cwd-link-");
+    const outside = makeTempDir("oppi-control-cwd-outside-");
     const session = {
       control: { domain: "schedules", intent: "revise" },
     } as Pick<Session, "worktreeId" | "control">;
@@ -82,7 +82,7 @@ describe("resolveSdkSessionCwdAsync", () => {
   });
 
   it("never falls back to main when a session worktree is unavailable", async () => {
-    const mount = mkdtempSync(join(tmpdir(), "oppi-removed-worktree-cwd-"));
+    const mount = makeTempDir("oppi-removed-worktree-cwd-");
     const workspace = { id: "ws-1", hostMount: mount } as Workspace;
 
     try {
@@ -95,8 +95,8 @@ describe("resolveSdkSessionCwdAsync", () => {
   });
 
   it("never falls back to main when a git worktree directory is gone", async () => {
-    const mount = mkdtempSync(join(tmpdir(), "oppi-missing-dir-cwd-"));
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-missing-dir-cwd-data-"));
+    const mount = makeTempDir("oppi-missing-dir-cwd-");
+    const dataDir = makeTempDir("oppi-missing-dir-cwd-data-");
     execFileSync("git", ["init", "--initial-branch=main"], { cwd: mount });
     execFileSync("git", ["config", "user.email", "oppi-test@example.invalid"], { cwd: mount });
     execFileSync("git", ["config", "user.name", "Oppi Test"], { cwd: mount });
@@ -140,7 +140,7 @@ describe("resolveSandboxGuestCwd", () => {
 
 describe("hostMountValidationError", () => {
   it("accepts an existing directory", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-hostmount-ok-"));
+    const cwd = makeTempDir("oppi-hostmount-ok-");
     try {
       expect(hostMountValidationError(cwd)).toBeUndefined();
     } finally {
@@ -160,7 +160,7 @@ describe("hostMountValidationError", () => {
   });
 
   it("rejects a file path", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-hostmount-file-"));
+    const cwd = makeTempDir("oppi-hostmount-file-");
     const file = join(cwd, "not-a-directory");
     writeFileSync(file, "x");
     try {
@@ -187,8 +187,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 
 describe("SdkBackend control sessions", () => {
   it("runs a focused setup prompt and minimal tools, ignoring global Pi configuration", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-pi-runtime-"));
-    const agentDir = mkdtempSync(join(tmpdir(), "oppi-control-pi-agent-dir-"));
+    const dataDir = makeTempDir("oppi-control-pi-runtime-");
+    const agentDir = makeTempDir("oppi-control-pi-agent-dir-");
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = agentDir;
     writeFileSync(join(agentDir, "auth.json"), "{}");
@@ -259,8 +259,8 @@ describe("SdkBackend control sessions", () => {
   });
 
   it("omits ask when no extension provides it", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-no-ask-"));
-    const agentDir = mkdtempSync(join(tmpdir(), "oppi-control-no-ask-agent-"));
+    const dataDir = makeTempDir("oppi-control-no-ask-");
+    const agentDir = makeTempDir("oppi-control-no-ask-agent-");
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = agentDir;
     writeFileSync(join(agentDir, "auth.json"), "{}");
@@ -291,7 +291,7 @@ describe("SdkBackend control sessions", () => {
   });
 
   it("reopens a current Pi Control session through its private cwd", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-reopen-"));
+    const dataDir = makeTempDir("oppi-control-reopen-");
     const session = makeSession({
       workspaceId: undefined,
       control: { domain: "schedules", intent: "revise" },
@@ -342,7 +342,7 @@ const unheard = { speak() {}, speakSentence() {}, openingWritten() {}, runEnded(
 
 describe("SdkBackend Live Voice", () => {
   it("offers its agent speak only while a call is attached and routes what it says", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-"));
+    const dataDir = makeTempDir("oppi-live-voice-");
     const session = makeSession({ workspaceId: undefined });
     const spoken: Array<{ sessionId: string; text: string }> = [];
     const speech = new LiveVoiceSpeech({
@@ -398,7 +398,7 @@ describe("SdkBackend Live Voice call mode", () => {
       );
 
   it("saves the call start and end in the session without a turn, and a restart ends a call the session still claims", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-mode-"));
+    const dataDir = makeTempDir("oppi-live-voice-mode-");
     const session = makeSession({ workspaceId: undefined });
     const make = () => {
       const speech = new LiveVoiceSpeech(unheard);
@@ -517,7 +517,7 @@ describe("SdkBackend Live Voice call mode", () => {
       sessionId: string;
     }) => Promise<void>,
   ): Promise<void> {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-mode-"));
+    const dataDir = makeTempDir("oppi-live-voice-mode-");
     const session = makeSession({ workspaceId: undefined });
     const speech = new LiveVoiceSpeech(unheard);
     let backend: SdkBackend | undefined;
@@ -605,7 +605,7 @@ describe("SdkBackend Live Voice call mode", () => {
 
 describe("SdkBackend sandbox", () => {
   it("does not forward provider auth secrets into the VM", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-secrets-"));
+    const cwd = makeTempDir("oppi-sandbox-secrets-");
     const skillDir = join(cwd, "skills", "sandbox-review");
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(
@@ -701,7 +701,7 @@ describe("SdkBackend sandbox", () => {
   });
 
   it("takes a sandbox's context file text only from the VM's read", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-classic-context-"));
+    const cwd = makeTempDir("oppi-sandbox-classic-context-");
     // A guest-planted link: the host would follow it to the file the VM shadow hides.
     writeFileSync(join(cwd, ".env"), "HOST_ENV_SECRET=1");
     symlinkSync(".env", join(cwd, "AGENTS.md"));
@@ -766,7 +766,7 @@ describe("SdkBackend sandbox", () => {
   });
 
   it("drops any unavailable saved Agent allowlist entry", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-stale-agent-tool-"));
+    const cwd = makeTempDir("oppi-sandbox-stale-agent-tool-");
     const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
     const execResult = { exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0), ok: true };
     const vm = {
@@ -822,7 +822,7 @@ describe("SdkBackend sandbox", () => {
   });
 
   it("lists sandbox guest paths with ls instead of probing the host", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-ls-guest-"));
+    const cwd = makeTempDir("oppi-sandbox-ls-guest-");
     writeFileSync(join(cwd, "packet.md"), "ok\n");
     const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
     const execResult = {
@@ -960,8 +960,8 @@ describe("SdkBackend sandbox", () => {
     }
 
     it("cannot read ~/.pi/agent/auth.json or outside-mount files through allowlisted grep/find", async () => {
-      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-guest-search-deny-"));
-      const outsideDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-guest-search-outside-"));
+      const cwd = makeTempDir("oppi-sandbox-guest-search-deny-");
+      const outsideDir = makeTempDir("oppi-sandbox-guest-search-outside-");
       const hostSecret = `f1-host-secret-${Date.now()}`;
       const outsideFile = join(outsideDir, "secret.txt");
       writeFileSync(join(cwd, "notes.md"), "host-mount-notes\n");
@@ -1057,7 +1057,7 @@ describe("SdkBackend sandbox", () => {
     });
 
     it("searches workspace files through the mock VM instead of host rg/fd", async () => {
-      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-guest-search-hit-"));
+      const cwd = makeTempDir("oppi-sandbox-guest-search-hit-");
       writeFileSync(join(cwd, "notes.md"), "host-mount-notes\n");
       const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
       const { vm, execCalls } = createGuestSearchVm();
@@ -1134,7 +1134,7 @@ describe("SdkBackend sandbox", () => {
     });
 
     it("keeps allowlisted grep/find active as guest tools and drops other names", async () => {
-      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-guest-search-drop-"));
+      const cwd = makeTempDir("oppi-sandbox-guest-search-drop-");
       const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
       const { vm } = createGuestSearchVm();
       const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
@@ -1187,8 +1187,8 @@ describe("SdkBackend sandbox", () => {
     });
 
     it("keeps a selected host-side extension tool on a sandbox launch allowlist", async () => {
-      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-host-extension-tool-"));
-      const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-host-extension-agent-"));
+      const cwd = makeTempDir("oppi-sandbox-host-extension-tool-");
+      const agentDir = makeTempDir("oppi-sandbox-host-extension-agent-");
       const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
       const extensionDir = join(agentDir, "extensions");
       const selectedExtension = join(extensionDir, "other-tool.ts");
@@ -1286,8 +1286,8 @@ describe("SdkBackend sandbox", () => {
     });
 
     it("keeps a selected host-side extension tool on a sandbox Agent-only allowlist", async () => {
-      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-agent-host-extension-tool-"));
-      const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-agent-host-extension-agent-"));
+      const cwd = makeTempDir("oppi-sandbox-agent-host-extension-tool-");
+      const agentDir = makeTempDir("oppi-sandbox-agent-host-extension-agent-");
       const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
       const extensionDir = join(agentDir, "extensions");
       const selectedExtension = join(extensionDir, "other-tool.ts");
@@ -1384,8 +1384,8 @@ describe("SdkBackend sandbox", () => {
     });
 
     it("workspace-only tools cannot activate a registered host-side extension tool", async () => {
-      const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-workspace-only-tool-"));
-      const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-workspace-only-agent-"));
+      const cwd = makeTempDir("oppi-sandbox-workspace-only-tool-");
+      const agentDir = makeTempDir("oppi-sandbox-workspace-only-agent-");
       const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
       const extensionDir = join(agentDir, "extensions");
       const selectedExtension = join(extensionDir, "other-tool.ts");
@@ -1459,7 +1459,7 @@ describe("SdkBackend host extensions", () => {
   }
 
   it("never registers a server-owned Oppi tool in an ordinary host session", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-no-managed-tool-"));
+    const cwd = makeTempDir("oppi-no-managed-tool-");
     const backend = await SdkBackend.create({
       session: makeSession({ ephemeral: true }),
       workspace: { id: "w1", name: "Ordinary Pi", runtime: "host", hostMount: cwd } as Workspace,
@@ -1482,7 +1482,7 @@ describe("SdkBackend host extensions", () => {
   });
 
   it("reloads the Mobile Output Guide for an ordinary managed workspace session", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-mobile-guide-reload-"));
+    const cwd = makeTempDir("oppi-mobile-guide-reload-");
     let snapshot: MobileOutputGuideSettingsSnapshot = { enabled: false, revision: 0 };
     const getMobileOutputGuideSettings = vi.fn(() => snapshot);
     const backend = await SdkBackend.create({
@@ -1517,7 +1517,7 @@ describe("SdkBackend host extensions", () => {
   });
 
   it("preserves caller identity, shell prefix, and custom shell path across reloads", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-caller-identity-"));
+    const cwd = makeTempDir("oppi-caller-identity-");
     const shellPath = join(cwd, "custom-bash");
     const configuredShellCommandPrefix = "export OPPI_CONFIGURED_SHELL_PREFIX=preserved";
     mkdirSync(join(cwd, ".pi"), { recursive: true });
@@ -1530,7 +1530,7 @@ describe("SdkBackend host extensions", () => {
       join(cwd, ".pi", "settings.json"),
       JSON.stringify({ shellPath, shellCommandPrefix: configuredShellCommandPrefix }),
     );
-    const agentDir = mkdtempSync(join(tmpdir(), "oppi-caller-identity-agent-"));
+    const agentDir = makeTempDir("oppi-caller-identity-agent-");
     writeFileSync(join(agentDir, "auth.json"), "{}");
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -1621,10 +1621,10 @@ describe("SdkBackend host extensions", () => {
   });
 
   it("exposes current model and thinking level to bash shell-outs", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-bash-session-env-"));
+    const cwd = makeTempDir("oppi-bash-session-env-");
     // CI has no Pi credentials; provide a temp agent dir and env key so model
     // resolution finds anthropic and preserves the requested thinking level.
-    const agentDir = mkdtempSync(join(tmpdir(), "oppi-bash-agent-dir-"));
+    const agentDir = makeTempDir("oppi-bash-agent-dir-");
     writeFileSync(
       join(agentDir, "auth.json"),
       JSON.stringify({ anthropic: { type: "api_key", key: "ci-test" } }),
@@ -1701,8 +1701,8 @@ describe("SdkBackend host extensions", () => {
     // provider extension (e.g. kiro/antigravity) must resolve it at start,
     // instead of silently defaulting because extension providers were only
     // registered after the seeded model was resolved.
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-ext-seed-cwd-"));
-    const agentDir = mkdtempSync(join(tmpdir(), "oppi-ext-seed-agent-"));
+    const cwd = makeTempDir("oppi-ext-seed-cwd-");
+    const agentDir = makeTempDir("oppi-ext-seed-agent-");
     mkdirSync(join(agentDir, "extensions"), { recursive: true });
     writeFileSync(join(agentDir, "auth.json"), "{}", "utf-8");
     writeFileSync(
@@ -1762,8 +1762,8 @@ export default function (pi) {
   });
 
   it("applies a scoped thinking pin at createAgentSession when session.model is set", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-scoped-create-cwd-"));
-    const agentDir = mkdtempSync(join(tmpdir(), "oppi-scoped-create-agent-"));
+    const cwd = makeTempDir("oppi-scoped-create-cwd-");
+    const agentDir = makeTempDir("oppi-scoped-create-agent-");
     mkdirSync(join(cwd, ".pi"), { recursive: true });
     mkdirSync(join(agentDir, "extensions"), { recursive: true });
     writeFileSync(join(agentDir, "auth.json"), "{}", "utf-8");
@@ -1836,8 +1836,8 @@ export default function (pi) {
   });
 
   it('keeps bash disabled when launch policy uses noTools: "builtin"', async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-no-builtin-tools-"));
-    const agentDir = mkdtempSync(join(tmpdir(), "oppi-no-builtin-tools-agent-"));
+    const cwd = makeTempDir("oppi-no-builtin-tools-");
+    const agentDir = makeTempDir("oppi-no-builtin-tools-agent-");
     writeFileSync(join(agentDir, "auth.json"), "{}");
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -1871,7 +1871,7 @@ export default function (pi) {
   });
 
   it("loads project extensions through Pi settings discovery instead of workspace allowlists", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-project-extension-"));
+    const cwd = makeTempDir("oppi-project-extension-");
     mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
     writeFileSync(
       join(cwd, ".pi", "extensions", "project-command.ts"),
@@ -1908,7 +1908,7 @@ export default function (pi) {
   });
 
   it("reloads project extensions added after session start", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-project-extension-reload-"));
+    const cwd = makeTempDir("oppi-project-extension-reload-");
     const extensionsDir = join(cwd, ".pi", "extensions");
     mkdirSync(extensionsDir, { recursive: true });
 
@@ -1950,7 +1950,7 @@ export default function (pi) {
   });
 
   it("does not inject ask when no host extension provides it", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-no-builtins-"));
+    const cwd = makeTempDir("oppi-no-builtins-");
     const backend = await SdkBackend.create({
       session: makeSession(),
       workspace: {
@@ -1984,7 +1984,7 @@ export default function (pi) {
 
 describe("SdkBackend saved Agent definitions", () => {
   it("injects saved Agent instructions, virtual context files, skill paths, and tool defaults into the runtime", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-definition-runtime-"));
+    const cwd = makeTempDir("oppi-agent-definition-runtime-");
     const skillDir = join(cwd, "agent-skills", "agent-review");
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(
@@ -2158,7 +2158,7 @@ describe("SdkBackend session state seeding", () => {
 
 describe("SdkBackend skills", () => {
   it("loads project skills through Pi settings discovery instead of workspace skill lists", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-project-skills-"));
+    const cwd = makeTempDir("oppi-project-skills-");
     const skillDir = join(cwd, ".pi", "skills", "project-review");
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(
@@ -2204,7 +2204,7 @@ describe("SdkBackend skills", () => {
 
 describe("SdkBackend prompt templates", () => {
   it("loads project prompt templates into Oppi sessions", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-prompts-"));
+    const cwd = makeTempDir("oppi-prompts-");
     mkdirSync(join(cwd, ".pi", "prompts"), { recursive: true });
     writeFileSync(
       join(cwd, ".pi", "prompts", "grill-me.md"),

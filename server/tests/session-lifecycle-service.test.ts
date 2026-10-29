@@ -33,6 +33,7 @@ import {
   WorkspaceWorktreeError,
 } from "../src/worktrees.js";
 import * as worktrees from "../src/worktrees.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const WORKTREE_REBIND_NOTICE = "Resuming on Main checkout. The worktree is gone.";
 
@@ -150,7 +151,10 @@ function makeService(
   );
   const deleteSession = vi.fn(() => true);
   const deleteSearchIndexSession = vi.fn();
-  const getDataDir = vi.fn(() => options.dataDir ?? join(tmpdir(), "oppi-lifecycle-service-test"));
+  let fallbackDataDir: string | undefined;
+  const getDataDir = vi.fn(
+    () => options.dataDir ?? (fallbackDataDir ??= makeTempDir("oppi-lifecycle-service-test-")),
+  );
   const persistedSessions = new Map<string, Session>();
   if (options.storedSession) {
     persistedSessions.set(options.storedSession.id, structuredClone(options.storedSession));
@@ -899,8 +903,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("rebinds removed-worktree sessions onto main and resumes the same id", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-main-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-data-"));
+      const root = makeTempDir("oppi-lifecycle-resume-main-");
+      const dataDir = makeTempDir("oppi-lifecycle-resume-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const session = makeSession({
@@ -955,8 +959,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("refuses to move a removed-worktree subagent child onto main", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-child-worktree-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-child-data-"));
+      const root = makeTempDir("oppi-lifecycle-child-worktree-");
+      const dataDir = makeTempDir("oppi-lifecycle-child-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const session = makeSession({
@@ -988,8 +992,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("does not notice a second resume after the session is already on main", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-second-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-second-data-"));
+      const root = makeTempDir("oppi-lifecycle-resume-second-");
+      const dataDir = makeTempDir("oppi-lifecycle-resume-second-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const session = makeSession({
@@ -1049,8 +1053,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("refuses to rebind a busy session and keeps its worktree binding", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-busy-main-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-busy-data-"));
+      const root = makeTempDir("oppi-lifecycle-busy-main-");
+      const dataDir = makeTempDir("oppi-lifecycle-busy-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const session = makeSession({
@@ -1078,8 +1082,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("quiesces a connected idle runtime before clearing worktree bindings", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-quiesce-main-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-quiesce-data-"));
+      const root = makeTempDir("oppi-lifecycle-quiesce-main-");
+      const dataDir = makeTempDir("oppi-lifecycle-quiesce-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const session = makeSession({
@@ -1124,8 +1128,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("keeps the rebound binding if a later runtime start fails", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-start-fail-main-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-start-fail-data-"));
+      const root = makeTempDir("oppi-lifecycle-start-fail-main-");
+      const dataDir = makeTempDir("oppi-lifecycle-start-fail-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const session = makeSession({
@@ -1305,8 +1309,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("treats a git worktree record with a missing directory as gone", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-missing-dir-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-missing-dir-data-"));
+      const root = makeTempDir("oppi-lifecycle-resume-missing-dir-");
+      const dataDir = makeTempDir("oppi-lifecycle-resume-missing-dir-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const created = await createWorkspaceWorktree(
@@ -1339,8 +1343,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("does not rebind when the worktree still exists", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-existing-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-existing-data-"));
+      const root = makeTempDir("oppi-lifecycle-resume-existing-");
+      const dataDir = makeTempDir("oppi-lifecycle-resume-existing-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const created = await createWorkspaceWorktree(
@@ -1378,8 +1382,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("fails closed when git worktree listing fails", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-list-fail-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-list-fail-data-"));
+      const root = makeTempDir("oppi-lifecycle-resume-list-fail-");
+      const dataDir = makeTempDir("oppi-lifecycle-resume-list-fail-data-");
       const spy = vi.spyOn(worktrees, "listWorkspaceWorktrees");
       try {
         const workspace = makeGitWorkspace(root);
@@ -1478,8 +1482,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("rebinds removed-worktree sessions onto main when a focused stream opens", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-main-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-data-"));
+      const root = makeTempDir("oppi-lifecycle-open-main-");
+      const dataDir = makeTempDir("oppi-lifecycle-open-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const session = makeSession({
@@ -1523,10 +1527,10 @@ describe("SessionLifecycleService", () => {
     });
 
     it("fails open with 409 while removal is pending instead of rebinding to main", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-pending-remove-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-pending-remove-data-"));
-      const stateDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-pending-remove-state-"));
-      const bin = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-pending-remove-bin-"));
+      const root = makeTempDir("oppi-lifecycle-open-pending-remove-");
+      const dataDir = makeTempDir("oppi-lifecycle-open-pending-remove-data-");
+      const stateDir = makeTempDir("oppi-lifecycle-open-pending-remove-state-");
+      const bin = makeTempDir("oppi-lifecycle-open-pending-remove-bin-");
       const previousPath = process.env.PATH;
       let removal: Promise<unknown> = Promise.resolve();
       try {
@@ -1583,8 +1587,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("refuses to relocate a terminal-owned session when its worktree is gone", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-mirror-main-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-mirror-data-"));
+      const root = makeTempDir("oppi-lifecycle-mirror-main-");
+      const dataDir = makeTempDir("oppi-lifecycle-mirror-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const session = makeSession({
@@ -1652,7 +1656,7 @@ describe("SessionLifecycleService", () => {
       const piSessionsRoot = getPiSessionsRoot();
       mkdirSync(piSessionsRoot, { recursive: true });
       const piSessionDir = mkdtempSync(join(piSessionsRoot, "oppi-lifecycle-import-"));
-      const workspaceDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-workspace-"));
+      const workspaceDir = makeTempDir("oppi-lifecycle-workspace-");
       const jsonlPath = join(piSessionDir, "session.jsonl");
       writeFileSync(
         jsonlPath,
@@ -1715,7 +1719,7 @@ describe("SessionLifecycleService", () => {
       const piSessionsRoot = getPiSessionsRoot();
       mkdirSync(piSessionsRoot, { recursive: true });
       const piSessionDir = mkdtempSync(join(piSessionsRoot, "oppi-lifecycle-control-import-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-data-"));
+      const dataDir = makeTempDir("oppi-lifecycle-data-");
       const controlCwd = join(dataDir, "control-sessions", "control-1");
       const jsonlPath = join(piSessionDir, "session.jsonl");
       writeFileSync(
@@ -1882,8 +1886,8 @@ describe("SessionLifecycleService", () => {
     });
 
     it("rebinds the source onto main before forking without copying a worktree notice", async () => {
-      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-fork-main-"));
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-fork-data-"));
+      const root = makeTempDir("oppi-lifecycle-fork-main-");
+      const dataDir = makeTempDir("oppi-lifecycle-fork-data-");
       try {
         const workspace = makeGitWorkspace(root);
         const sourceSession = makeSession({
@@ -2057,7 +2061,7 @@ describe("SessionLifecycleService", () => {
 
   describe("deleteSession", () => {
     it("does not recreate the internal control cwd when deleting a control session", async () => {
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-delete-"));
+      const dataDir = makeTempDir("oppi-control-delete-");
       const session = makeSession({
         id: "control-delete-1",
         workspaceId: undefined,
@@ -2074,7 +2078,7 @@ describe("SessionLifecycleService", () => {
     });
 
     it("does not create the control conversation cwd when deleting its session", async () => {
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-conversation-delete-"));
+      const dataDir = makeTempDir("oppi-control-conversation-delete-");
       const session = makeSession({
         id: "conversation-delete-1",
         workspaceId: undefined,
@@ -2092,7 +2096,7 @@ describe("SessionLifecycleService", () => {
     });
 
     it("deletes attachment copies from an existing control conversation cwd", async () => {
-      const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-conversation-delete-"));
+      const dataDir = makeTempDir("oppi-control-conversation-delete-");
       const attachments = join(
         dataDir,
         "control-conversation",
@@ -2141,7 +2145,7 @@ describe("SessionLifecycleService", () => {
     });
 
     it("does not delete main-checkout attachments for removed-worktree sessions", async () => {
-      const workspaceDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-removed-worktree-delete-"));
+      const workspaceDir = makeTempDir("oppi-lifecycle-removed-worktree-delete-");
       const mainAttachment = join(workspaceDir, ".pi", "attachments", "delete-1", "keep.txt");
       mkdirSync(join(workspaceDir, ".pi", "attachments", "delete-1"), { recursive: true });
       writeFileSync(mainAttachment, "keep main attachment");
@@ -2164,7 +2168,7 @@ describe("SessionLifecycleService", () => {
     });
 
     it("deletes main-checkout attachments only after an honest detach", async () => {
-      const workspaceDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-detached-delete-"));
+      const workspaceDir = makeTempDir("oppi-lifecycle-detached-delete-");
       const mainAttachment = join(workspaceDir, ".pi", "attachments", "delete-1", "keep.txt");
       mkdirSync(join(workspaceDir, ".pi", "attachments", "delete-1"), { recursive: true });
       writeFileSync(mainAttachment, "main attachment after detach");

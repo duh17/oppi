@@ -1,5 +1,5 @@
-import { mkdirSync, mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -83,6 +83,7 @@ import type { TraceEvent } from "../src/trace.js";
 import type { TracePageResult } from "../src/trace-paging.js";
 import type { TraceOutlineResult } from "../src/trace-outline.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const managers: SessionManager[] = [];
 const harnesses: Harness[] = [];
@@ -90,7 +91,7 @@ const harnessStorage = new WeakMap<Harness, DurableStorage>();
 // Durable sessions discover Skills and AGENTS files under the agent dir: never the developer's.
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 beforeEach(() => {
-  process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "oppi-server-durable-agent-"));
+  process.env.PI_CODING_AGENT_DIR = makeTempDir("oppi-server-durable-agent-");
 });
 afterEach(async () => {
   await Promise.all(managers.splice(0).map((manager) => manager.close()));
@@ -104,7 +105,7 @@ async function fixture(
   responses: FauxResponseStep[],
   options?: { slow?: boolean; settings?: Parameters<typeof SettingsManager.inMemory>[0] },
 ) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-server-durable-test-"));
+  const dir = makeTempDir("oppi-server-durable-test-");
   console.info(`Durable integration artifacts: ${dir}`);
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),

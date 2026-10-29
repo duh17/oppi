@@ -1,7 +1,7 @@
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import { PiTuiMirrorRuntime } from "../src/pi-tui-mirror-runtime.js";
 import type { Storage } from "../src/storage.js";
 import type { ServerMessage, Session, Workspace } from "../src/types.js";
 import { WsMessageHandler, type WsSessionCommands } from "../src/ws-message-handler.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 class FakeBridgeWebSocket extends EventEmitter {
   readyState = WebSocket.OPEN;
@@ -365,7 +366,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   });
 
   it("reports a missing workspace with the suggested git-root workspace", async () => {
-    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-missing-workspace-"));
+    const root = makeTempDir("oppi-mirror-missing-workspace-");
     const cwd = join(root, "packages", "app");
     await mkdir(cwd, { recursive: true });
     await writeFile(join(root, ".git"), "gitdir: .git-test\n");
@@ -396,7 +397,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   });
 
   it("creates a mirror workspace when the terminal requests creation", async () => {
-    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-create-workspace-"));
+    const root = makeTempDir("oppi-mirror-create-workspace-");
     const { runtime, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
 
     const { sessionId } = await connectBridge(runtime, {
@@ -423,7 +424,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     let home: string;
 
     beforeEach(async () => {
-      parent = await mkdtemp(join(tmpdir(), "oppi-mirror-home-"));
+      parent = makeTempDir("oppi-mirror-home-");
       home = join(parent, "home");
       await mkdir(join(home, "scratch"), { recursive: true });
       previousHome = process.env.HOME;
@@ -486,7 +487,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   });
 
   it("uses the nearest git root for requested mirror workspaces", async () => {
-    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-git-workspace-"));
+    const root = makeTempDir("oppi-mirror-git-workspace-");
     const cwd = join(root, "packages", "app");
     await mkdir(cwd, { recursive: true });
     await writeFile(join(root, ".git"), "gitdir: .git-test\n");
@@ -532,7 +533,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   it("closes the bridge when hello registration fails", async () => {
     const { runtime } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
     const ws = new FakeBridgeWebSocket();
-    const missingCwd = await mkdtemp(join(tmpdir(), "oppi-mirror-missing-cwd-"));
+    const missingCwd = makeTempDir("oppi-mirror-missing-cwd-");
     await rm(missingCwd, { recursive: true, force: true });
     runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
 
@@ -887,7 +888,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   });
 
   it("backfills the first user message from the terminal session file", async () => {
-    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-title-"));
+    const root = makeTempDir("oppi-mirror-title-");
     const sessionFile = join(root, "session.jsonl");
     await writeFile(
       sessionFile,
@@ -1959,7 +1960,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   });
 
   it("materializes workspace attachments before forwarding a prompt", async () => {
-    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-attachments-"));
+    const root = makeTempDir("oppi-mirror-attachments-");
     await writeFile(join(root, "note.txt"), "hello from attachment");
     const { runtime } = makeRuntime({ hostMount: root });
     const { ws, sessionId } = await connectBridge(runtime, {
@@ -2020,7 +2021,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   });
 
   it("materializes legacy voice audio details from mirrored tool events", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "oppi-mirror-audio-"));
+    const dataDir = makeTempDir("oppi-mirror-audio-");
     const { runtime } = makeRuntime({ dataDir });
     const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
@@ -2073,7 +2074,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   });
 
   it("forwards materialized image attachments with streaming input", async () => {
-    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-image-"));
+    const root = makeTempDir("oppi-mirror-image-");
     const imageBytes = Buffer.from("fake image bytes");
     await writeFile(join(root, "shot.png"), imageBytes);
     const { runtime } = makeRuntime({ hostMount: root });

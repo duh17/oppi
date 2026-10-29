@@ -6,8 +6,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Storage } from "../src/storage.js";
@@ -22,6 +21,7 @@ import {
   TERMINAL_STDOUT_ENV,
   useCliDataDir,
 } from "./harness/cli-test-env.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 useCliDataDir();
 
@@ -66,7 +66,7 @@ describe("status --json pairing state", () => {
   }
 
   it("reports an unexpired invite as pending until a device enrolls", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-cli-status-invite-"));
+    const dir = makeTempDir("oppi-cli-status-invite-");
     try {
       const env = { OPPI_DATA_DIR: dir };
       const storage = new Storage(dir);
@@ -93,7 +93,7 @@ describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not avai
   "serve on a host with an owner token",
   () => {
     it("in a terminal, offers an invite until a device has enrolled", async () => {
-      const dir = mkdtempSync(join(tmpdir(), "oppi-cli-first-run-token-"));
+      const dir = makeTempDir("oppi-cli-first-run-token-");
       try {
         const env = { ...(await prepareHost(dir)), ...TERMINAL_STDOUT_ENV };
         new Storage(dir).ensurePaired();
@@ -111,7 +111,7 @@ describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not avai
     }, 90_000);
 
     it("in a terminal, keeps an invite that is still pending", async () => {
-      const dir = mkdtempSync(join(tmpdir(), "oppi-cli-first-run-pending-"));
+      const dir = makeTempDir("oppi-cli-first-run-pending-");
       try {
         const env = { ...(await prepareHost(dir)), ...TERMINAL_STDOUT_ENV };
         const storage = new Storage(dir);
@@ -130,7 +130,7 @@ describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not avai
     }, 90_000);
 
     it("in a terminal, treats an invite stored without an expiry as pending", async () => {
-      const dir = mkdtempSync(join(tmpdir(), "oppi-cli-first-run-legacy-"));
+      const dir = makeTempDir("oppi-cli-first-run-legacy-");
       try {
         const env = { ...(await prepareHost(dir)), ...TERMINAL_STDOUT_ENV };
         const storage = new Storage(dir);
@@ -152,7 +152,7 @@ describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not avai
     }, 90_000);
 
     it("without a terminal, such as a service log, prints no invite and keeps the pending one", async () => {
-      const dir = mkdtempSync(join(tmpdir(), "oppi-cli-first-run-service-"));
+      const dir = makeTempDir("oppi-cli-first-run-service-");
       try {
         const env = await prepareHost(dir);
         const storage = new Storage(dir);
@@ -169,7 +169,7 @@ describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not avai
     }, 90_000);
 
     it("reports paired and prints no invite once a device has enrolled", async () => {
-      const dir = mkdtempSync(join(tmpdir(), "oppi-cli-first-run-paired-"));
+      const dir = makeTempDir("oppi-cli-first-run-paired-");
       try {
         const env = await prepareHost(dir);
         new Storage(dir).ensurePaired();
@@ -191,7 +191,7 @@ describe.skipIf(logSkip(!hasOpenSSL, "cli-first-run serve", "openssl is not avai
 describe("doctor model providers", () => {
   /** A bare environment: no host API keys, an empty Pi agent dir, an empty HOME. */
   function doctor(extraEnv: Record<string, string>): string {
-    const root = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-providers-"));
+    const root = makeTempDir("oppi-cli-doctor-providers-");
     try {
       const agentDir = join(root, "agent");
       mkdirSync(agentDir);

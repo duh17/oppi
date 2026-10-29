@@ -1,5 +1,4 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {} from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -45,6 +44,7 @@ import {
   shownEntries,
   upsertEntries,
 } from "./harness/conversation-stream-reference.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const harnesses = new Set<Harness>();
 const subscriptions = new Set<ConversationStreamSubscription>();
@@ -68,7 +68,7 @@ async function fixture(
     provider?: Parameters<typeof fauxProvider>[0];
   },
 ) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-conversation-stream-"));
+  const dir = makeTempDir("oppi-conversation-stream-");
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,

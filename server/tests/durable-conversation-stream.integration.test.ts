@@ -4,8 +4,7 @@
  * session WebSocket. Clients apply frames with Chord's own applier.
  */
 import { generateKeyPairSync, randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket, type RawData } from "ws";
@@ -29,6 +28,7 @@ import {
   shownEntries,
   upsertEntries,
 } from "./harness/conversation-stream-reference.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -196,7 +196,7 @@ afterAll(() => {
 });
 
 beforeEach(async () => {
-  dataDir = mkdtempSync(join(tmpdir(), "oppi-conversation-stream-ws-"));
+  dataDir = makeTempDir("oppi-conversation-stream-ws-");
   console.info(`Conversation stream integration artifacts: ${dataDir}`);
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(dataDir, "agent");
@@ -390,21 +390,18 @@ describe("durable conversation stream over the focused session socket", { timeou
     const textEvents = plain.frames.filter(
       (frame) => frame.type === "text_delta" || frame.type === "message_end",
     );
-    // Retained run artifact: payload sizes for one streamed reply, both paths.
-    writeFileSync(
-      join(tmpdir(), "oppi-conversation-stream-payload.json"),
-      JSON.stringify(
-        {
-          answerChars: LONG_ANSWER.length,
-          updateFrames: updates.length,
-          updateBytes: frameBytes(updates),
-          snapshotAfterTurnBytes: frameBytes([after])[0],
-          classicTextFrames: textEvents.length,
-          classicTextBytes: frameBytes(textEvents),
-        },
-        null,
-        2,
-      ),
+    // Payload sizes for one streamed reply, both paths, in the run log (a file in the
+    // test's temp dir would be removed with it).
+    console.info(
+      "conversation stream payload sizes",
+      JSON.stringify({
+        answerChars: LONG_ANSWER.length,
+        updateFrames: updates.length,
+        updateBytes: frameBytes(updates),
+        snapshotAfterTurnBytes: frameBytes([after])[0],
+        classicTextFrames: textEvents.length,
+        classicTextBytes: frameBytes(textEvents),
+      }),
     );
     await expectConverged(attached);
   });

@@ -1,5 +1,4 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {} from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -8,6 +7,7 @@ import type { Harness } from "@earendil-works/pi-durable";
 import { DurableHarness } from "../src/durable-harness.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const harnesses: Harness[] = [];
 afterEach(async () => {
@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 async function isolatedModels(): Promise<ModelRuntime> {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-durable-models-"));
+  const dir = makeTempDir("oppi-durable-models-");
   return ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,
@@ -27,7 +27,7 @@ async function isolatedModels(): Promise<ModelRuntime> {
 
 describe("durable model runtime", () => {
   it("uses the bound catalog runtime instead of creating a private one", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-durable-models-harness-"));
+    const dir = makeTempDir("oppi-durable-models-harness-");
     const runtime = await isolatedModels();
     vi.spyOn(SettingsManager, "create").mockReturnValue(
       SettingsManager.inMemory({ compaction: { enabled: false } }),
@@ -43,7 +43,7 @@ describe("durable model runtime", () => {
   });
 
   it("refuses to open a production harness before the catalog runtime is bound", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-durable-models-required-"));
+    const dir = makeTempDir("oppi-durable-models-required-");
     const owner = new DurableHarness(dir);
     owner.requireDiscoveredModels();
     await expect(owner.openHost("model-runtime", { cwd: dir })).rejects.toThrow(
@@ -52,7 +52,7 @@ describe("durable model runtime", () => {
   });
 
   it("forwards the server runtime through SessionManager before open", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-durable-models-manager-"));
+    const dir = makeTempDir("oppi-durable-models-manager-");
     const runtime = await isolatedModels();
     const storage = new Storage(dir);
     storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));

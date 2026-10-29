@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -12,13 +11,14 @@ import {
   getCommitGraph,
 } from "../src/git-commits.js";
 import { HOST_GIT_TRUST } from "../src/git-safe.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" });
 }
 
 async function createRepo(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "oppi-git-commits-"));
+  const dir = makeTempDir("oppi-git-commits-");
   git(dir, ["init"]);
   git(dir, ["config", "user.email", "test@example.com"]);
   git(dir, ["config", "user.name", "Test User"]);
@@ -127,7 +127,7 @@ describe("getCommitGraph", () => {
       hasMore: false,
     });
 
-    const notRepo = await mkdtemp(join(tmpdir(), "oppi-git-commits-plain-"));
+    const notRepo = makeTempDir("oppi-git-commits-plain-");
     await expect(getCommitGraph(notRepo, HOST_GIT_TRUST, 0, 10)).rejects.toThrow(
       "Commit graph unavailable",
     );

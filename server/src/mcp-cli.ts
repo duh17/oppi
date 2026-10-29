@@ -1,7 +1,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { McpError } from "./mcp-config.js";
 
@@ -57,6 +57,10 @@ export class McpCli {
     for (const command of ["open", "xdg-open"])
       writeFileSync(join(bin, command), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
     this.phonePath = `${bin}:${process.env.PATH ?? ""}`;
+  }
+  /** Remove the neutral cwd; call once no child started by this CLI can still run. */
+  dispose(): void {
+    rmSync(this.globalCwd, { recursive: true, force: true });
   }
   start(
     args: string[],

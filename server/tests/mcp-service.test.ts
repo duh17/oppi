@@ -1,14 +1,6 @@
 import { createServer, type Server } from "node:http";
-import {
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  realpathSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
 import { once } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { McpCli } from "../src/mcp-cli.js";
@@ -23,6 +15,7 @@ import {
   safeMcpConfig,
 } from "../src/mcp-config.js";
 import type { McpAuthFlowSnapshot, McpServersResponse, Workspace } from "../src/types.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const echo = resolve("tests/fixtures/mcp-echo.cjs");
 const GLOBAL = "/mcp/scopes/global/servers";
@@ -42,7 +35,7 @@ afterEach(async () => {
   );
 });
 function fixture(ttl?: number) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-mcp-proof-"));
+  const dir = makeTempDir("oppi-mcp-proof-");
   const agentDir = join(dir, "agent");
   const project = join(dir, "project");
   mkdirSync(agentDir);

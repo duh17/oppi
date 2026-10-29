@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterAll } from "vitest";
 
 export function sanitizeGitLocalEnvironment(
   environment: NodeJS.ProcessEnv,
@@ -52,13 +53,13 @@ const localSessionsRoot =
 mkdirSync(localSessionsRoot, { recursive: true });
 process.env.OPPI_LOCAL_SESSIONS_ROOT = localSessionsRoot;
 
-// Best-effort cleanup for worker-temp roots we created. Leave pre-set roots alone
-// so callers can point a single suite at a fixture tree.
+// Remove the worker-temp roots we created once the file's tests finish (process "exit"
+// hooks do not run when Vitest terminates a worker). Leave pre-set roots alone so callers
+// can point a single suite at a fixture tree.
 if (!existing) {
-  const cleanup = (): void => {
+  afterAll(() => {
     rmSync(localSessionsRoot, { recursive: true, force: true });
-  };
-  process.once("exit", cleanup);
+  });
 }
 
 // Pi reads mcp.json, settings, trust, and credentials from its agent dir. Sessions
@@ -66,4 +67,6 @@ if (!existing) {
 // logins; tests that need Pi config point PI_CODING_AGENT_DIR at their own fixture.
 const piAgentDir = mkdtempSync(join(tmpdir(), "oppi-vitest-pi-agent-"));
 process.env.PI_CODING_AGENT_DIR = piAgentDir;
-process.once("exit", () => rmSync(piAgentDir, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(piAgentDir, { recursive: true, force: true });
+});

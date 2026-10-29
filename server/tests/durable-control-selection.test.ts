@@ -1,5 +1,4 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {} from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -11,11 +10,12 @@ import { SessionHost } from "../src/durable-harness.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const managers: SessionManager[] = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 beforeEach(() => {
-  process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "oppi-control-selection-agent-"));
+  process.env.PI_CODING_AGENT_DIR = makeTempDir("oppi-control-selection-agent-");
 });
 afterEach(async () => {
   await Promise.all(managers.splice(0).map((manager) => manager.close()));
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 async function startDurable(runtime: "host" | "sandbox") {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-control-selection-"));
+  const dir = makeTempDir("oppi-control-selection-");
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,

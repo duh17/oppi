@@ -586,7 +586,10 @@ export class McpService {
       timer = setTimeout(resolve, this.options.disposeDeadlineMs ?? 3000);
     });
     const settled = Promise.allSettled(children.map((child) => child.done)).then(() => {});
-    this.disposal = Promise.race([settled, deadline]).finally(() => clearTimeout(timer));
+    this.disposal = Promise.race([settled, deadline]).finally(() => {
+      clearTimeout(timer);
+      this.cli.dispose();
+    });
     return this.disposal;
   }
 }

@@ -4,11 +4,11 @@
  */
 import { describe, expect, it } from "vitest";
 import { createServer as createHttpServer } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 import { run, runAsync, seedConfiguredHost, useCliDataDir } from "./harness/cli-test-env.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 useCliDataDir();
 
@@ -16,9 +16,9 @@ useCliDataDir();
 
 describe("oppi local API commands", () => {
   it("implements the spec-backed app-control CLI over local API routes", async () => {
-    const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-cli-workspace-"));
-    const worktreeRoot = mkdtempSync(join(tmpdir(), "oppi-cli-worktree-"));
-    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-app-control-"));
+    const workspaceRoot = makeTempDir("oppi-cli-workspace-");
+    const worktreeRoot = makeTempDir("oppi-cli-worktree-");
+    const cliDir = makeTempDir("oppi-cli-app-control-");
     const requests: Array<{ method: string; path: string; body?: unknown }> = [];
     const api = createHttpServer((req, res) => {
       void (async () => {
@@ -1388,7 +1388,7 @@ describe("oppi local API commands", () => {
   }, 180_000);
 
   it("keeps concurrent read-only local API CLI calls from failing on SQLite locks", async () => {
-    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-concurrent-read-"));
+    const cliDir = makeTempDir("oppi-cli-concurrent-read-");
     const api = createHttpServer((req, res) => {
       if (req.method === "GET" && req.url === "/workspaces") {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -1429,7 +1429,7 @@ describe("oppi local API commands", () => {
   }, 30_000);
 
   it("schedule list --json fails fast on malformed successful API JSON", async () => {
-    const cliDir = mkdtempSync(join(tmpdir(), "oppi-cli-local-api-"));
+    const cliDir = makeTempDir("oppi-cli-local-api-");
     const api = createHttpServer((_req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
       res.end("not-json");

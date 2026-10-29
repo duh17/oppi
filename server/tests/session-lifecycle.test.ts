@@ -5,10 +5,10 @@ import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
  * turn dedupe. Complements stop-lifecycle.test.ts (stop/abort flows).
  */
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { join, sep } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -38,6 +38,7 @@ import {
   uploadRecordToAttachmentRef,
   writeUploadContent,
 } from "../src/uploads/local-upload-store.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const TEST_CONFIG: ServerConfig = {
   port: 7749,
@@ -1391,7 +1392,7 @@ describe("SessionManager prompt", () => {
   });
 
   it("materializes image attachments before sending a prompt", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "oppi-prompt-image-"));
+    const workspaceRoot = makeTempDir("oppi-prompt-image-");
     const imageBytes = Buffer.from("base64data");
     await writeFile(join(workspaceRoot, "screenshot.png"), imageBytes);
     const workspace: Workspace = {
@@ -1427,7 +1428,7 @@ describe("SessionManager prompt", () => {
   });
 
   it("materializes a control-conversation attachment under its cwd and sends the prompt", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "oppi-control-attach-"));
+    const dataDir = makeTempDir("oppi-control-attach-");
     const sessionId = "cc-attach";
     const body = Buffer.from("control notes", "utf8");
     try {
@@ -1465,8 +1466,8 @@ describe("SessionManager prompt", () => {
   });
 
   it("materializes attachments for a sandbox workspace created with an empty folder", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "oppi-sandbox-attach-"));
-    const isolatedHome = await mkdtemp(join(tmpdir(), "oppi-sandbox-attach-home-"));
+    const dataDir = makeTempDir("oppi-sandbox-attach-");
+    const isolatedHome = makeTempDir("oppi-sandbox-attach-home-");
     const previousHome = process.env.HOME;
     const notes = Buffer.from("sandbox notes", "utf8");
     try {
@@ -1518,7 +1519,7 @@ describe("SessionManager prompt", () => {
   });
 
   it("materializes attachments for a host workspace created with an empty folder", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "oppi-host-attach-"));
+    const dataDir = makeTempDir("oppi-host-attach-");
     const notes = Buffer.from("host notes", "utf8");
     try {
       const storage = new Storage(dataDir);
@@ -1556,7 +1557,7 @@ describe("SessionManager prompt", () => {
   });
 
   it("rejects an attachment prompt when the session has neither a workspace nor a control role", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "oppi-plain-attach-"));
+    const dataDir = makeTempDir("oppi-plain-attach-");
     const sessionId = "plain-attach";
     const body = Buffer.from("not admitted", "utf8");
     try {
@@ -1940,7 +1941,7 @@ describe("SessionManager message queue", () => {
   });
 
   it("keeps large queued image broadcasts below websocket payload limits", async () => {
-    const workspaceRoot = await mkdtemp(join(tmpdir(), "oppi-busy-queue-large-image-"));
+    const workspaceRoot = makeTempDir("oppi-busy-queue-large-image-");
     const imageBytes = Buffer.alloc(1_200_000, 0x5a);
     await writeFile(join(workspaceRoot, "large-screenshot.jpg"), imageBytes);
     const workspace: Workspace = {

@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -19,6 +18,10 @@ import {
   type VoiceFeature,
 } from "../src/voice-backend-health.js";
 import { makeResponse } from "./harness/route-test-helpers.js";
+import { makeTempDir } from "./harness/temp-dir.js";
+
+// The route context opens the data dir (ssh identity files); keep that out of the shared tmpdir.
+const sharedDataDir = makeTempDir("oppi-voice-backend-health-data-");
 
 type VoiceConfig = Pick<ServerConfig, "asr" | "tts">;
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
@@ -83,7 +86,7 @@ function routeContext(
       getConfig: () => ({ configVersion: 2, tts }),
       listWorkspaces: () => [],
       listSessions: () => [],
-      getDataDir: () => tmpdir(),
+      getDataDir: () => sharedDataDir,
     },
     sessions: { durableSessionsAvailable: () => false },
     sessionRuntimes: { getActiveSessionIds: () => new Set() },
@@ -379,7 +382,7 @@ describe("voice backend health in GET /server/info", () => {
 
   it("follows Live Voice settings saved after the server loaded its config", async () => {
     const asr = await backend();
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-live-voice-health-"));
+    const dataDir = makeTempDir("oppi-live-voice-health-");
     tempDirs.push(dataDir);
     const store = new ConfigStore(dataDir);
     store.updateConfig({ asr: { liveVoiceBackend: "yuwp" } });

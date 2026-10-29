@@ -1,12 +1,12 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DictationDictionaryStore } from "../src/storage/dictation-dictionary-store.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 describe("dictation dictionary persistence", () => {
   it("isolates workspace ids, preserves ordered global entries, and keeps deletion across reload", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-dictionary-"));
+    const dir = makeTempDir("oppi-dictionary-");
     const store = new DictationDictionaryStore(dir);
     store.add(null, "Duh Ifone");
     store.add("ws-a", "Yuwp");
@@ -23,7 +23,7 @@ describe("dictation dictionary persistence", () => {
   });
 
   it("fails closed on corrupt persisted content rather than reviving old entries or overwriting it", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-dictionary-corrupt-"));
+    const dir = makeTempDir("oppi-dictionary-corrupt-");
     const store = new DictationDictionaryStore(dir);
     store.add(null, "deleted");
     mkdirSync(join(dir, "settings"), { recursive: true });
@@ -33,7 +33,7 @@ describe("dictation dictionary persistence", () => {
   });
 
   it("rejects invalid phrases without logging or persisting them, and detects stale revisions", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-dictionary-validation-"));
+    const dir = makeTempDir("oppi-dictionary-validation-");
     const store = new DictationDictionaryStore(dir);
     expect(() => store.add(null, "bad\nphrase")).toThrow();
     store.add(null, "x".repeat(256));
@@ -45,7 +45,7 @@ describe("dictation dictionary persistence", () => {
   });
 
   it("adds as many ordered phrases as fit and reports duplicates, byte overflow, and the saved cap", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-dictionary-bulk-"));
+    const dir = makeTempDir("oppi-dictionary-bulk-");
     const store = new DictationDictionaryStore(dir);
     const batch = [
       ...Array.from({ length: 101 }, (_, i) => `jargon ${i}`),
@@ -73,7 +73,7 @@ describe("dictation dictionary persistence", () => {
   });
 
   it("selects workspace phrases before global ones, without duplicates, within the hint limits", () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-dictionary-selected-"));
+    const dir = makeTempDir("oppi-dictionary-selected-");
     const store = new DictationDictionaryStore(dir);
     store.addMany(null, ["Oppi", "kypu"]);
     store.addMany("ws-a", ["Yuwp", "Oppi"]);
@@ -82,7 +82,7 @@ describe("dictation dictionary persistence", () => {
     expect(store.selected(undefined)).toEqual(["Oppi", "kypu"]);
 
     // 100 phrases in each scope: the union stops at 100, workspace first.
-    const wide = new DictationDictionaryStore(mkdtempSync(join(tmpdir(), "oppi-dictionary-cap-")));
+    const wide = new DictationDictionaryStore(makeTempDir("oppi-dictionary-cap-"));
     wide.addMany(
       "ws",
       Array.from({ length: 100 }, (_, i) => `w${i}`),
@@ -94,9 +94,7 @@ describe("dictation dictionary persistence", () => {
     expect(wide.selected("ws")).toEqual(Array.from({ length: 100 }, (_, i) => `w${i}`));
 
     // 8192 UTF-8 bytes total: a phrase that would overflow is skipped, smaller ones still fit.
-    const heavy = new DictationDictionaryStore(
-      mkdtempSync(join(tmpdir(), "oppi-dictionary-bytes-")),
-    );
+    const heavy = new DictationDictionaryStore(makeTempDir("oppi-dictionary-bytes-"));
     const big = Array.from({ length: 32 }, (_, i) => `${i}`.padStart(256, "x"));
     heavy.addMany("ws", big.slice(0, 31));
     heavy.addMany(null, ["y".repeat(255), big[31], "tail"]);

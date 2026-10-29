@@ -1,7 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -69,12 +68,13 @@ import {
   makeResponse,
   makeUnconfiguredVoiceBackendHealth,
 } from "./harness/route-test-helpers.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const managers: SessionManager[] = [];
 const gates: Array<() => void> = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 beforeEach(() => {
-  process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "oppi-durable-sessions-agent-"));
+  process.env.PI_CODING_AGENT_DIR = makeTempDir("oppi-durable-sessions-agent-");
 });
 afterEach(async () => {
   // Release any model call a test left parked so shutdown can finish.
@@ -140,7 +140,7 @@ async function fixture(
   responses: FauxResponseStep[],
   options?: { serverDurable?: boolean; tokensPerSecond?: number; git?: boolean },
 ) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-durable-sessions-test-"));
+  const dir = makeTempDir("oppi-durable-sessions-test-");
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,
@@ -1671,7 +1671,7 @@ describe("durable-native threads", () => {
   });
 
   it("adopts a worktree by id and refuses another workspace's", async () => {
-    const other = join(mkdtempSync(join(tmpdir(), "oppi-durable-other-ws-")), "repo");
+    const other = join(makeTempDir("oppi-durable-other-ws-"), "repo");
     mkdirSync(other, { recursive: true });
     gitIn(other, ["init", "--initial-branch=main"]);
     gitIn(other, ["config", "user.email", "oppi-test@example.invalid"]);

@@ -1,5 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +12,7 @@ import { cmdWait } from "../src/cli/commands/wait.js";
 import { localApiRequest, type LocalApiConnection } from "../src/cli/local-api-client.js";
 import { captureCliOutput } from "../src/cli/output.js";
 import { runCli } from "../src/cli/runner.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 vi.mock("../src/cli/local-api-client.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/cli/local-api-client.js")>();
@@ -186,7 +186,7 @@ describe("script-facing CLI touches", () => {
   });
 
   it("config validate failure carries the documented config_invalid code", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-validate-"));
+    const dataDir = makeTempDir("oppi-validate-");
     const bad = join(dataDir, "bad.json");
     writeFileSync(bad, "{ not json");
     const bad2 = await runCli(["config", "validate", "--config-file", bad], {

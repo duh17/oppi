@@ -1,5 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, it, expect } from "vitest";
@@ -14,6 +13,7 @@ import {
   resolveWorkspaceExtensions,
   type ResolvedExtension,
 } from "../src/extension-loader.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 // ─── isValidExtensionName ───
 
@@ -144,7 +144,7 @@ describe("resolveWorkspaceExtensions", () => {
 
 describe("listConfiguredHostExtensions", () => {
   it("picks up new global and project-local extension files on the next allow-list scan", async () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-ext-direct-"));
+    const root = makeTempDir("oppi-ext-direct-");
     const cwd = join(root, "workspace");
     const agentDir = join(root, "agent");
     const globalDir = join(agentDir, "extensions");
@@ -180,7 +180,7 @@ describe("listConfiguredHostExtensions", () => {
   });
 
   it("picks up newly installed package extensions on the next allow-list scan", async () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-ext-package-"));
+    const root = makeTempDir("oppi-ext-package-");
     const cwd = join(root, "workspace");
     const agentDir = join(root, "agent");
     const packageDir = join(agentDir, "npm", "node_modules", "@tintinweb", "pi-subagents");
@@ -229,7 +229,7 @@ describe("listHostExtensions", () => {
   });
 
   it("lists host extensions as normal extensions", () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-ext-"));
+    const root = makeTempDir("oppi-ext-");
     const globalDir = join(root, "global");
     mkdirSync(globalDir, { recursive: true });
     writeFileSync(join(globalDir, "reviewer.ts"), "export default function() {}\n");
@@ -239,7 +239,7 @@ describe("listHostExtensions", () => {
   });
 
   it("lists ask as a normal host extension", () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-ext-"));
+    const root = makeTempDir("oppi-ext-");
     const globalDir = join(root, "global");
     mkdirSync(globalDir, { recursive: true });
     writeFileSync(join(globalDir, "ask.ts"), "export default function() {}\n");
@@ -255,7 +255,7 @@ describe("listHostExtensions", () => {
   });
 
   it("includes project-local .pi/extensions when cwd is provided", () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-ext-"));
+    const root = makeTempDir("oppi-ext-");
     const globalDir = join(root, "global");
     const cwd = join(root, "workspace");
     const localDir = join(cwd, ".pi", "extensions");
@@ -271,7 +271,7 @@ describe("listHostExtensions", () => {
   });
 
   it("excludes test and spec files", () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-ext-"));
+    const root = makeTempDir("oppi-ext-");
     const globalDir = join(root, "global");
     mkdirSync(globalDir, { recursive: true });
 
@@ -289,7 +289,7 @@ describe("listHostExtensions", () => {
   });
 
   it("prefers project-local extension names over global duplicates", () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-ext-"));
+    const root = makeTempDir("oppi-ext-");
     const globalDir = join(root, "global");
     const cwd = join(root, "workspace");
     const localDir = join(cwd, ".pi", "extensions");

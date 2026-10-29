@@ -4,8 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { createServer as createHttpServer } from "node:http";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Storage } from "../src/storage.js";
 import { fakeTailscaleEnv } from "./harness/cli-process.js";
@@ -18,6 +17,7 @@ import {
   seedConfiguredHost,
   useCliDataDir,
 } from "./harness/cli-test-env.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 useCliDataDir();
 
@@ -191,7 +191,7 @@ describe("oppi wait", () => {
 
 describe("local orchestration prerequisites", () => {
   it("requires local owner credentials before calling orchestration APIs", () => {
-    const freshDir = mkdtempSync(join(tmpdir(), "oppi-cli-no-owner-"));
+    const freshDir = makeTempDir("oppi-cli-no-owner-");
     try {
       const { stdout, exitCode } = run(["workspace", "list", "--json"], {
         OPPI_DATA_DIR: freshDir,
@@ -209,7 +209,7 @@ describe("local orchestration prerequisites", () => {
   });
 
   it("requires a running local server after setup", async () => {
-    const configuredDir = mkdtempSync(join(tmpdir(), "oppi-cli-server-required-"));
+    const configuredDir = makeTempDir("oppi-cli-server-required-");
     try {
       seedConfiguredHost(configuredDir);
 
@@ -238,7 +238,7 @@ describe("oppi status", () => {
 
 describe("oppi init", () => {
   it("re-init releases the relay permissions of the push registrations it drops", async () => {
-    const initDir = mkdtempSync(join(tmpdir(), "oppi-cli-init-push-"));
+    const initDir = makeTempDir("oppi-cli-init-push-");
     const released: string[] = [];
     const relay = createHttpServer((req, res) => {
       if (req.method === "DELETE" && req.url === "/v1/permission") {
@@ -289,7 +289,7 @@ describe("oppi init", () => {
 
 describe("oppi token", () => {
   it("token rotate fails before pairing", () => {
-    const freshDir = mkdtempSync(join(tmpdir(), "oppi-cli-token-"));
+    const freshDir = makeTempDir("oppi-cli-token-");
     const { exitCode } = run(["token", "rotate"], { OPPI_DATA_DIR: freshDir });
     expect(exitCode).toBe(1);
     rmSync(freshDir, { recursive: true, force: true });
@@ -324,7 +324,7 @@ describe("oppi pair", () => {
   });
 
   it("honors --ttl for the enforced deadline and keeps the outstanding invite on a rejected --ttl", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-ttl-"));
+    const dataDir = makeTempDir("oppi-cli-pair-ttl-");
     const env = { OPPI_DATA_DIR: dataDir };
     const readPairing = () =>
       JSON.parse(readFileSync(join(dataDir, "config.json"), "utf-8")) as {
@@ -401,7 +401,7 @@ describe.skipIf(
   logSkip(!hasOpenSSL, "oppi pair (tls self-signed)", "openssl executable is unavailable"),
 )("oppi pair (tls self-signed)", () => {
   it("embeds https scheme + cert fingerprint in invite payload", () => {
-    const tlsDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-tls-"));
+    const tlsDataDir = makeTempDir("oppi-cli-pair-tls-");
 
     try {
       const setResult = run(["config", "set", "tls", '{"mode":"self-signed"}'], {
@@ -448,8 +448,8 @@ describe.skipIf(
   logSkip(!hasOpenSSL, "oppi pair (tls tailscale)", "openssl executable is unavailable"),
 )("oppi pair (tls tailscale)", () => {
   it("uses a Tailnet SAN for pairing and recovers it after Tailscale stops", () => {
-    const tlsDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-pair-tailscale-"));
-    const fakeBinDir = mkdtempSync(join(tmpdir(), "oppi-cli-fake-tailscale-"));
+    const tlsDataDir = makeTempDir("oppi-cli-pair-tailscale-");
+    const fakeBinDir = makeTempDir("oppi-cli-fake-tailscale-");
     const fakeTailscalePath = join(fakeBinDir, "tailscale");
 
     writeFileSync(

@@ -1,5 +1,4 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {} from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -22,6 +21,7 @@ import {
 import { readOlderConversationEntries } from "../src/durable-conversation-stream.js";
 import { createLiveEntryRendererSet, type TraceEvent } from "../src/trace.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const harnesses: Harness[] = [];
 afterEach(async () => {
@@ -73,7 +73,7 @@ async function history(options: {
   card?: boolean;
   image?: boolean;
 }) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-durable-history-"));
+  const dir = makeTempDir("oppi-durable-history-");
   const storage = await openNodeSqliteStorage(join(dir, "history.sqlite"));
   const id = await storage.mintId<ConversationId>();
   const taskId = await storage.mintId<TaskId>();
@@ -262,7 +262,7 @@ it("uses the same renderer set for cards and invalidates cursors when its versio
 
 it("stores a user photo in the attachment store and emits a media ref", async () => {
   const f = await history({ stopped: false, image: true });
-  const dataDir = mkdtempSync(join(tmpdir(), "oppi-durable-history-images-"));
+  const dataDir = makeTempDir("oppi-durable-history-images-");
   const images = { dataDir, sessionId: "session-1" };
   const photo = (events: TraceEvent[]) => events.find((event) => event.text?.startsWith("a photo"));
 

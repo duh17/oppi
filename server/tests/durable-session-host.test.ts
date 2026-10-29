@@ -1,12 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -29,6 +21,7 @@ import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { DURABLE_STORE_MISSING } from "../src/session-runtime-capabilities.js";
 import type { ServerMessage, Session } from "../src/types.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const USER_IMAGE_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -38,7 +31,7 @@ const runtimes: DurableHarness[] = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
 beforeEach(() => {
-  process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "oppi-session-host-agent-"));
+  process.env.PI_CODING_AGENT_DIR = makeTempDir("oppi-session-host-agent-");
 });
 
 afterEach(async () => {
@@ -50,7 +43,7 @@ afterEach(async () => {
 }, 20_000);
 
 async function fixture(responses: FauxResponseStep[] = []) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-session-host-"));
+  const dir = makeTempDir("oppi-session-host-");
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,

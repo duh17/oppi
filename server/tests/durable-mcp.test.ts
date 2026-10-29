@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +23,7 @@ import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ServerMessage, Session, Workspace } from "../src/types.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const ECHO_SERVER = fileURLToPath(new URL("./fixtures/mcp-echo-server.mjs", import.meta.url));
 
@@ -32,7 +32,7 @@ let agentDir: string;
 let previousAgentDir: string | undefined;
 
 beforeEach(() => {
-  agentDir = mkdtempSync(join(tmpdir(), "oppi-durable-mcp-agent-"));
+  agentDir = makeTempDir("oppi-durable-mcp-agent-");
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
 });
@@ -66,7 +66,7 @@ async function fixture(
   /** The Pi Tools setting (`defaultTools`); Pi's default when unset. */
   defaultTools?: string[],
 ) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-durable-mcp-test-"));
+  const dir = makeTempDir("oppi-durable-mcp-test-");
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,

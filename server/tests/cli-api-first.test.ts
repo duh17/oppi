@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { createServer as createHttpServer, type ServerResponse } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -11,6 +10,7 @@ import { openDatabase } from "../src/sqlite-compat.js";
 import { ConfigStore } from "../src/storage/config-store.js";
 import { CLI, cliSpawnEnv } from "./harness/cli-process.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 function writeCliConfig(dataDir: string): void {
   mkdirSync(dataDir, { recursive: true });
@@ -62,7 +62,7 @@ type TraceOutlineFixtureEntry = {
 };
 
 async function runTraceOutlineCli(entries: TraceOutlineFixtureEntry[]): Promise<string> {
-  const fixtureDataDir = mkdtempSync(join(tmpdir(), "oppi-cli-trace-outline-"));
+  const fixtureDataDir = makeTempDir("oppi-cli-trace-outline-");
   const api = createHttpServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -153,7 +153,7 @@ async function withOrchApi<T>(
   handler: (res: ServerResponse, ctx: { path: string; body?: Record<string, unknown> }) => void,
   run: (ctx: { dataDir: string; requests: OrchRequest[] }) => Promise<T>,
 ): Promise<T> {
-  const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-orch-"));
+  const dataDir = makeTempDir("oppi-cli-orch-");
   const requests: OrchRequest[] = [];
   const api = createHttpServer((req, res) => {
     void (async () => {
@@ -201,7 +201,7 @@ async function withOrchApi<T>(
 
 describe("CLI app-state API boundary", () => {
   it("prints help without the decorative banner", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-help-"));
+    const dataDir = makeTempDir("oppi-cli-help-");
     try {
       const { stdout, code } = await runCliResult(["session", "--help"], dataDir);
       expect(code).toBe(0);
@@ -214,7 +214,7 @@ describe("CLI app-state API boundary", () => {
   });
 
   it("documents plain send as prompt-when-idle and steer-when-busy", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-send-help-"));
+    const dataDir = makeTempDir("oppi-cli-send-help-");
     try {
       const { stdout, code } = await runCliResult(["session", "send", "--help"], dataDir);
       expect(code).toBe(0);
@@ -226,7 +226,7 @@ describe("CLI app-state API boundary", () => {
   });
 
   it("keeps config set able to repair an invalid config without opening app-state storage", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-invalid-config-repair-"));
+    const dataDir = makeTempDir("oppi-cli-invalid-config-repair-");
     try {
       writeCliConfig(dataDir, 70_000);
 
@@ -263,7 +263,7 @@ describe("CLI app-state API boundary", () => {
     ];
 
     for (const testCase of cases) {
-      const dataDir = mkdtempSync(join(tmpdir(), `oppi-cli-no-session-db-${testCase.name}-`));
+      const dataDir = makeTempDir(`oppi-cli-no-session-db-${testCase.name}-`);
       if (testCase.needsConfig) writeCliConfig(dataDir, 7749);
 
       const lock = openDatabase(join(dataDir, "session-state.db"));
@@ -280,7 +280,7 @@ describe("CLI app-state API boundary", () => {
   }, 45_000);
 
   it("serves workspace reads through the local API without opening session-state SQLite", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-cli-api-first-"));
+    const dataDir = makeTempDir("oppi-cli-api-first-");
     const requests: string[] = [];
     const api = createHttpServer((req, res) => {
       requests.push(`${req.method ?? "GET"} ${req.url ?? "/"}`);

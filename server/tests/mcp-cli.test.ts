@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { McpCli, type McpCliProcess } from "../src/mcp-cli.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 function alive(pid: number): boolean {
   try {
@@ -24,7 +24,7 @@ describe("MCP CLI subprocess supervision", () => {
   ])(
     "%s leaves no server helper alive (%s, %s)",
     async (reason, term, transport) => {
-      const agentDir = mkdtempSync(join(tmpdir(), "oppi-mcp-stdio-"));
+      const agentDir = makeTempDir("oppi-mcp-stdio-");
       const pidFile = join(agentDir, "fixture.pid");
       const args = [resolve("tests/fixtures/mcp-hang.cjs"), pidFile, term];
       writeFileSync(
@@ -75,6 +75,7 @@ describe("MCP CLI subprocess supervision", () => {
         // Only this test's PID, even on a red run. Keep its temp config as evidence.
         if (pid && alive(pid)) process.kill(pid, "SIGKILL");
         await command?.done.catch(() => {});
+        cli.dispose();
       }
     },
     20_000,

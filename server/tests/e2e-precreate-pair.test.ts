@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createPrivateKey } from "node:crypto";
-import { mkdtempSync, readFileSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +18,7 @@ import {
   makeDeviceKeyPair,
   pairRequestBody,
 } from "../scripts/e2e-precreate-pair.mjs";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 describe("e2e pre-create pair helper", () => {
   it("builds a pairing body with pairingToken and a P-256 devicePublicKey", () => {
@@ -35,7 +35,11 @@ describe("e2e pre-create pair helper", () => {
     expect(
       interpretPairResponse(
         200,
-        JSON.stringify({ deviceId: "dev_e2e", accessToken: "at_e2e", expiresAt: 1_700_000_600_000 }),
+        JSON.stringify({
+          deviceId: "dev_e2e",
+          accessToken: "at_e2e",
+          expiresAt: 1_700_000_600_000,
+        }),
       ),
     ).toEqual({
       ok: true,
@@ -78,7 +82,7 @@ describe("e2e helpers run from a symlinked checkout", () => {
   // macOS /tmp is a symlink to /private/tmp. A checkout there once made both
   // helpers skip main() and exit 0 silently, so e2e.sh paired with an empty token.
   it.each(["e2e-precreate-pair.mjs", "e2e-pairing-approver.mjs"])("%s runs main()", (script) => {
-    const link = join(mkdtempSync(join(tmpdir(), "oppi-e2e-link-")), "scripts");
+    const link = join(makeTempDir("oppi-e2e-link-"), "scripts");
     symlinkSync(resolve(import.meta.dirname, "../scripts"), link);
     const env = { ...process.env };
     delete env.E2E_BASE_URL;
@@ -113,7 +117,7 @@ describe("e2e pairing approver token handoff", () => {
 
   it("hands the refreshed access token to the run directory the fixtures read", async () => {
     const keyPair = makeDeviceKeyPair();
-    const directory = mkdtempSync(join(tmpdir(), "oppi-approver-"));
+    const directory = makeTempDir("oppi-approver-");
     const tokenFile = join(directory, "device-token.txt");
     writeTokenFile(tokenFile, "at_old");
 
@@ -180,7 +184,7 @@ describe("e2e pairing approver token handoff", () => {
 
   it("refreshes a minute before expiry, so no poll is sent with a token about to lapse", async () => {
     const keyPair = makeDeviceKeyPair();
-    const directory = mkdtempSync(join(tmpdir(), "oppi-approver-"));
+    const directory = makeTempDir("oppi-approver-");
     const tokenFile = join(directory, "device-token.txt");
     writeTokenFile(tokenFile, "at_old");
 

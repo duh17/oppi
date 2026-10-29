@@ -8,9 +8,9 @@
  * environment from this module together so a new CLI test starts with a stopped
  * fake Tailscale instead of the host's.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { makeTempDir } from "./temp-dir.js";
 
 export const CLI = process.env.OPPI_TEST_CLI ?? resolve(__dirname, "../../dist/src/cli.js");
 
@@ -19,15 +19,13 @@ let stoppedBin: string | undefined;
 /** A `tailscale` that fails every subcommand, `cert` included, and says why. */
 function stoppedTailscaleBin(): string {
   if (!stoppedBin) {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-test-stopped-tailscale-"));
-    mkdirSync(dir, { recursive: true });
+    const dir = makeTempDir("oppi-test-stopped-tailscale-");
     stoppedBin = join(dir, "tailscale");
     writeFileSync(
       stoppedBin,
       "#!/bin/sh\necho 'tailscale is stopped in tests (OPPI_TAILSCALE_BIN)' >&2\nexit 1\n",
       { mode: 0o755 },
     );
-    process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
   }
   return stoppedBin;
 }

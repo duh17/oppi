@@ -1,6 +1,5 @@
-import { mkdtempSync } from "node:fs";
+import {} from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -37,6 +36,7 @@ import { RESULT_GUIDANCE } from "../extensions/durable/background-jobs/delivery.
 import { readDurableInputCardOutput } from "../src/durable-input-cards.js";
 import { readDurableTrace } from "../src/durable-history.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const harnesses = new Set<Harness>();
 afterEach(async () => {
@@ -56,7 +56,7 @@ function tool(name: string, args: Record<string, unknown>): FauxResponseStep {
 }
 const answer = () => fauxAssistantMessage("Integrated the result.");
 async function fixture(responses: FauxResponseStep[], realExec = false, serverOwner = false) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-durable-background-jobs-"));
+  const dir = makeTempDir("oppi-durable-background-jobs-");
   console.info(`Background jobs integration artifacts: ${dir}`);
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
@@ -803,7 +803,7 @@ describe("native Durable background jobs", () => {
   });
 
   it("gives programs a finished command's output and exit code, as pi-durable's bash does", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-durable-bash-structured-"));
+    const dir = makeTempDir("oppi-durable-bash-structured-");
     const models = await ModelRuntime.create({
       authPath: join(dir, "auth.json"),
       modelsPath: null,

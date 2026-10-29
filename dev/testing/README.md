@@ -91,6 +91,16 @@ Set `OPPI_VITEST_MAX_WORKERS` (an integer 1 to 8; anything else is an error) to
 lower the cap on a busy host. Vitest's own `VITEST_MAX_WORKERS` overrides the
 config and bypasses that bound, so do not use it.
 
+Every test file runs with its own `TMPDIR` inside a run-private root
+(`$TMPDIR/oppi-vt-<pid>`, `server/vitest.global-setup.ts` and
+`server/vitest.temp-guard.ts`), so concurrent runs never share entries and a run
+leaves nothing in the shared temp dir; a run killed before teardown is swept by the
+next one. A file fails if it leaves an entry in its `TMPDIR` after its own hooks, and
+the error names the entries. Create fixture directories with `makeTempDir(prefix)`
+from `server/tests/harness/temp-dir.ts` (removed when the file finishes) or remove
+them yourself in `afterEach`/`afterAll`; code under test that creates a temp dir
+must remove it on dispose.
+
 ### One-shot Linux validation on macOS
 
 Use Apple `container` copy-in mode for a clean Linux check without exposing the checkout through a host bind mount. The command streams the working tree into the container, including uncommitted files but excluding local build products.

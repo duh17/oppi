@@ -1,7 +1,6 @@
 import { EventEmitter } from "node:events";
-import { lstatSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { lstatSync, rmSync, symlinkSync } from "node:fs";
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -49,6 +48,7 @@ import { Storage } from "../src/storage.js";
 import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -70,7 +70,7 @@ const controlRow = (overrides: Partial<Session> = {}): Session =>
 describe("control conversation marker gates", () => {
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "oppi-control-conversation-gates-"));
+    dir = makeTempDir("oppi-control-conversation-gates-");
   });
 
   it("is a durable row with no workspace and no declared-control metadata", () => {
@@ -158,7 +158,7 @@ describe("control conversation marker gates", () => {
   });
 
   it("refuses a symlinked cwd root", async () => {
-    const elsewhere = mkdtempSync(join(tmpdir(), "oppi-control-conversation-elsewhere-"));
+    const elsewhere = makeTempDir("oppi-control-conversation-elsewhere-");
     symlinkSync(elsewhere, join(dir, "control-conversation"));
     await expect(
       resolveSdkSessionCwdAsync(undefined, controlRow(), { dataDir: dir }),
@@ -309,9 +309,7 @@ describe("control conversation lifecycle on the durable harness", () => {
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 
   beforeEach(() => {
-    process.env.PI_CODING_AGENT_DIR = mkdtempSync(
-      join(tmpdir(), "oppi-control-conversation-agent-"),
-    );
+    process.env.PI_CODING_AGENT_DIR = makeTempDir("oppi-control-conversation-agent-");
   });
   afterEach(async () => {
     await Promise.all(managers.splice(0).map((manager) => manager.close()));
@@ -321,7 +319,7 @@ describe("control conversation lifecycle on the durable harness", () => {
   });
 
   async function setup() {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-control-conversation-"));
+    const dir = makeTempDir("oppi-control-conversation-");
     const models = await ModelRuntime.create({
       authPath: join(dir, "auth.json"),
       modelsPath: null,

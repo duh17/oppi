@@ -1,5 +1,4 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -20,6 +19,7 @@ import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ServerMessage, Session } from "../src/types.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 // What each kind of durable session selects, pinned by name: the built-in extensions, the tools
 // offered, and the prompt sections, in order, when the conversation is created and after it
@@ -376,7 +376,7 @@ afterEach(async () => {
 
 /** `defaultTools` is the Pi Tools setting; Pi's default when unset. */
 async function fixture(responses: FauxResponseStep[] = [], defaultTools?: string[]) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-durable-selection-"));
+  const dir = makeTempDir("oppi-durable-selection-");
   // No user packages: only Oppi's own extensions.
   process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
   const models = await ModelRuntime.create({

@@ -1,7 +1,7 @@
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -17,6 +17,10 @@ import {
   resolveWorkspaceWorktree,
 } from "../src/worktrees.js";
 import { makeRequest, makeResponse, MockWritableResponse } from "./harness/route-test-helpers.js";
+import { makeTempDir } from "./harness/temp-dir.js";
+
+// Routes that open the data dir create session-state.db in it; keep that out of the shared tmpdir.
+const sharedDataDir = makeTempDir("oppi-session-routes-data-");
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -99,7 +103,7 @@ describe("sessions module", () => {
           },
         ]),
         listSessions: vi.fn(() => []),
-        getDataDir: vi.fn(() => tmpdir()),
+        getDataDir: vi.fn(() => sharedDataDir),
       },
       sessions: {
         mobileRenderer: new MobileRendererRegistry(),
@@ -359,7 +363,7 @@ describe("sessions module", () => {
         })),
         listAllWorkspaceSessionSnapshots: vi.fn(() => []),
         listSessions: vi.fn(() => []),
-        getDataDir: vi.fn(() => tmpdir()),
+        getDataDir: vi.fn(() => sharedDataDir),
       },
       sessions: {
         mobileRenderer: new MobileRendererRegistry(),
@@ -393,8 +397,8 @@ describe("sessions module", () => {
   });
 
   it("creates sessions in data-dir managed worktrees", async () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-session-route-worktree-root-"));
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-route-worktree-data-"));
+    const root = makeTempDir("oppi-session-route-worktree-root-");
+    const dataDir = makeTempDir("oppi-session-route-worktree-data-");
     try {
       const workspace = makeGitWorkspace(root);
       const worktree = await createWorkspaceWorktree(
@@ -481,7 +485,7 @@ describe("sessions module", () => {
           hostMount: tmpdir(),
           runtime: "host",
         })),
-        getDataDir: vi.fn(() => tmpdir()),
+        getDataDir: vi.fn(() => sharedDataDir),
         createSession: vi.fn((name?: string, model?: string) => {
           session.name = name;
           session.model = model;
@@ -544,8 +548,8 @@ describe("sessions module", () => {
   });
 
   it("rebinds and resumes removed-worktree sessions onto main", async () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-session-route-removed-worktree-root-"));
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-route-removed-worktree-data-"));
+    const root = makeTempDir("oppi-session-route-removed-worktree-root-");
+    const dataDir = makeTempDir("oppi-session-route-removed-worktree-data-");
     try {
       const workspace = makeGitWorkspace(root);
       const session: Session = {
@@ -617,10 +621,10 @@ describe("sessions module", () => {
   });
 
   it("returns 409 instead of rebinding to main while worktree removal is pending", async () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-session-route-pending-remove-root-"));
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-route-pending-remove-data-"));
-    const stateDir = mkdtempSync(join(tmpdir(), "oppi-session-route-pending-remove-state-"));
-    const bin = mkdtempSync(join(tmpdir(), "oppi-session-route-pending-remove-bin-"));
+    const root = makeTempDir("oppi-session-route-pending-remove-root-");
+    const dataDir = makeTempDir("oppi-session-route-pending-remove-data-");
+    const stateDir = makeTempDir("oppi-session-route-pending-remove-state-");
+    const bin = makeTempDir("oppi-session-route-pending-remove-bin-");
     const previousPath = process.env.PATH;
     let removal: Promise<unknown> = Promise.resolve();
     try {
@@ -811,7 +815,7 @@ describe("sessions module", () => {
   });
 
   it("handles session attachment routes without workspace scope", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-generic-session-attachment-"));
+    const dataDir = makeTempDir("oppi-test-generic-session-attachment-");
     try {
       const ctx = {
         sessions: { mobileRenderer: new MobileRendererRegistry() },
@@ -871,7 +875,7 @@ describe("sessions module", () => {
   });
 
   it("decodes percent-encoded pipe tool call ids for JSONL lookup", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-pipe-"));
+    const dataDir = makeTempDir("oppi-test-tool-output-pipe-");
     try {
       const toolCallId =
         "call-55e527bc-7a20-4730-8c6f-2e3dfb2569f9-28|fc_b1782a2b-bc1b-9484-87b1-3d687d82b521_0";
@@ -941,7 +945,7 @@ describe("sessions module", () => {
   });
 
   it("returns full tool output from disk", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-full-"));
+    const dataDir = makeTempDir("oppi-test-tool-output-full-");
     try {
       const fullOutputPath = join(dataDir, "tc-1.full.txt");
       writeFileSync(fullOutputPath, "complete tool output", "utf8");
@@ -990,7 +994,7 @@ describe("sessions module", () => {
   });
 
   it("HEAD full tool output returns sidecar length without reading a JSON body", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-head-"));
+    const dataDir = makeTempDir("oppi-test-tool-output-head-");
     try {
       const sidecar = `${"complete tool output\n".repeat(200)}emoji 😀 tail`;
       const fullOutputPath = join(dataDir, "tc-1.full.txt");
@@ -1040,7 +1044,7 @@ describe("sessions module", () => {
   });
 
   it("GET full tool output with Range returns 206 raw sidecar bytes", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-range-"));
+    const dataDir = makeTempDir("oppi-test-tool-output-range-");
     try {
       const sidecar = "0123456789abcdef";
       const fullOutputPath = join(dataDir, "tc-1.full.txt");
@@ -1092,7 +1096,7 @@ describe("sessions module", () => {
   });
 
   it("GET full tool output Range does not split a UTF-8 codepoint", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-tool-output-utf8-"));
+    const dataDir = makeTempDir("oppi-test-tool-output-utf8-");
     try {
       const sidecar = "abc😀def";
       const fullOutputPath = join(dataDir, "tc-1.full.txt");
@@ -1184,9 +1188,9 @@ describe("sessions module", () => {
   });
 
   it("maps overall diff current-file policy misses to HTTP errors", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-route-diff-"));
-    const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-test-route-diff-workspace-"));
-    const outsideRoot = mkdtempSync(join(tmpdir(), "oppi-test-route-diff-outside-"));
+    const dataDir = makeTempDir("oppi-test-route-diff-");
+    const workspaceRoot = makeTempDir("oppi-test-route-diff-workspace-");
+    const outsideRoot = makeTempDir("oppi-test-route-diff-outside-");
     try {
       const outsidePath = join(outsideRoot, "outside.txt");
       const tracePath = join(dataDir, "trace.jsonl");
@@ -1255,7 +1259,7 @@ describe("sessions module", () => {
   });
 
   it("replays a pi-tui mirror JSONL trace without a live leaf id", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-mirror-trace-"));
+    const dataDir = makeTempDir("oppi-test-mirror-trace-");
     try {
       const tracePath = join(dataDir, "mirror.jsonl");
       writeFileSync(
@@ -1766,7 +1770,7 @@ describe("sessions module", () => {
   });
 
   it("filters generic session trace entries by include parts", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-test-generic-trace-include-"));
+    const dataDir = makeTempDir("oppi-test-generic-trace-include-");
     try {
       const tracePath = join(dataDir, "trace.jsonl");
       writeFileSync(

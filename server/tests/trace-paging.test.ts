@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   readSessionTracePageFromFile,
   readSessionTracePageFromFiles,
 } from "../src/trace-paging.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const timestamp = "2026-01-01T00:00:00.000Z";
 
@@ -21,14 +22,14 @@ afterEach(() => {
 });
 
 function tempJsonl(lines: unknown[]): string {
-  tmpDir = mkdtempSync(join(tmpdir(), "trace-paging-test-"));
+  tmpDir = makeTempDir("trace-paging-test-");
   const path = join(tmpDir, "session.jsonl");
   writeFileSync(path, lines.map((line) => JSON.stringify(line)).join("\n"));
   return path;
 }
 
 function tempJsonlFiles(files: unknown[][]): string[] {
-  tmpDir = mkdtempSync(join(tmpdir(), "trace-paging-test-"));
+  tmpDir = makeTempDir("trace-paging-test-");
   return files.map((lines, index) => {
     const path = join(tmpDir ?? tmpdir(), `session-${index + 1}.jsonl`);
     writeFileSync(path, lines.map((line) => JSON.stringify(line)).join("\n"));
@@ -74,7 +75,7 @@ function fixtureEntries(): unknown[] {
 
 describe("trace paging", () => {
   it("sends a user image as a stored media reference, not inline bytes", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "trace-paging-images-"));
+    const dataDir = makeTempDir("trace-paging-images-");
     tmpDir = dataDir;
     const png = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",

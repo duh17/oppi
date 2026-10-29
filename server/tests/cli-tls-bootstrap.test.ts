@@ -4,8 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLI } from "./harness/cli-process.js";
 import {
@@ -21,6 +20,7 @@ import {
   TERMINAL_STDOUT_ENV,
   useCliDataDir,
 } from "./harness/cli-test-env.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 useCliDataDir();
 
@@ -96,7 +96,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }
 
   it("upgrades legacy disabled TLS to self-signed on first serve when Tailscale is stopped", async () => {
-    const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-tls-"));
+    const serveDir = makeTempDir("oppi-cli-serve-tls-");
 
     try {
       setCliConfig(serveDir, "tls", '{"mode":"disabled"}');
@@ -128,7 +128,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 90_000);
 
   it("fresh host: first serve uses Tailscale TLS and a *.ts.net invite when a certificate can be issued", async () => {
-    const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-tailscale-"));
+    const serveDir = makeTempDir("oppi-cli-serve-tailscale-");
 
     try {
       const certFixture = issueTailnetCert(serveDir);
@@ -159,7 +159,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 90_000);
 
   it("fresh host: first serve falls back to self-signed when Tailscale is connected but cannot issue a certificate", async () => {
-    const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-tailscale-nocert-"));
+    const serveDir = makeTempDir("oppi-cli-serve-tailscale-nocert-");
 
     try {
       await writeConfigWithoutTls(serveDir);
@@ -192,7 +192,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 90_000);
 
   it("keeps a TLS mode written while the certificate probe is still running", async () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-cli-pair-race-config-"));
+    const root = makeTempDir("oppi-cli-pair-race-config-");
 
     try {
       const dataDirForPair = join(root, "data");
@@ -231,7 +231,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 60_000);
 
   it("two concurrent first-run pairs end with one stored mode and invites that match it", async () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-cli-pair-race-two-"));
+    const root = makeTempDir("oppi-cli-pair-race-two-");
 
     try {
       const sharedDataDir = join(root, "data");
@@ -274,7 +274,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 60_000);
 
   it("fresh host: `oppi init` says it is checking Tailscale HTTPS and stays quiet without Tailscale", () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-cli-init-quiet-"));
+    const root = makeTempDir("oppi-cli-init-quiet-");
 
     try {
       const readyDir = join(root, "ready");
@@ -305,7 +305,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   ])(
     "refuses to start with an invalid tls block and names the fix: $tls, proxy=$trustedProxy",
     async ({ tls, trustedProxy, field }) => {
-      const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-invalid-tls-"));
+      const serveDir = makeTempDir("oppi-cli-serve-invalid-tls-");
 
       try {
         // Invalid TLS must refuse the network bind, including behind a trusted proxy.
@@ -370,7 +370,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   );
 
   it("fresh host: `oppi pair` before any serve picks Tailscale TLS or self-signed from certificate readiness", () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-cli-pair-fresh-"));
+    const root = makeTempDir("oppi-cli-pair-fresh-");
 
     try {
       const readyDir = join(root, "ready");
@@ -406,7 +406,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   it.each([{ mode: "disabled" }, { mode: "cloudflare" }, { mode: "self-signed", certPath: "" }])(
     "host with an owner token: `oppi init --yes --force` keeps the tls block: %j",
     (tls) => {
-      const initDir = mkdtempSync(join(tmpdir(), "oppi-cli-init-paired-tls-"));
+      const initDir = makeTempDir("oppi-cli-init-paired-tls-");
 
       try {
         writeFileSync(
@@ -424,7 +424,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   );
 
   it("keeps explicit insecure network HTTP on first init and does not call it undecided in doctor", () => {
-    const initDir = mkdtempSync(join(tmpdir(), "oppi-cli-init-insecure-http-"));
+    const initDir = makeTempDir("oppi-cli-init-insecure-http-");
 
     try {
       const tls = { mode: "disabled", allowInsecureNetworkHttp: true };
@@ -443,7 +443,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   });
 
   it("fresh host: `oppi init` picks Tailscale TLS when a certificate can be issued", () => {
-    const root = mkdtempSync(join(tmpdir(), "oppi-cli-init-fresh-"));
+    const root = makeTempDir("oppi-cli-init-fresh-");
 
     try {
       const initDir = join(root, "data");
@@ -458,7 +458,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 60_000);
 
   it("does not replace an explicitly configured TLS mode even when Tailscale can issue a certificate", async () => {
-    const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-explicit-tls-"));
+    const serveDir = makeTempDir("oppi-cli-serve-explicit-tls-");
 
     try {
       setCliConfig(serveDir, "tls", '{"mode":"self-signed"}');
@@ -483,7 +483,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 90_000);
 
   it("preserves disabled TLS for a trusted private-HTTP reverse proxy on first serve", async () => {
-    const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-proxy-tls-"));
+    const serveDir = makeTempDir("oppi-cli-serve-proxy-tls-");
 
     try {
       const freePort = await getFreePort();
@@ -528,7 +528,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 90_000);
 
   it("does not preserve disabled TLS when publicUrl is set without trustedPeers", async () => {
-    const serveDir = mkdtempSync(join(tmpdir(), "oppi-cli-serve-publicurl-tls-"));
+    const serveDir = makeTempDir("oppi-cli-serve-publicurl-tls-");
 
     try {
       const freePort = await getFreePort();
@@ -567,7 +567,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   }, 90_000);
 
   it("doctor on Linux skips the LaunchAgent check instead of aborting on a missing launchctl", () => {
-    const linuxDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-linux-"));
+    const linuxDir = makeTempDir("oppi-cli-doctor-linux-");
     try {
       // A Linux host: no launchd, and any launchctl on PATH fails as "command not found" (127).
       const bin = join(linuxDir, "bin");
@@ -589,7 +589,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   });
 
   it("doctor on a never-served host reports TLS as not chosen, not as disabled", () => {
-    const freshDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-fresh-"));
+    const freshDir = makeTempDir("oppi-cli-doctor-fresh-");
     try {
       const { stdout } = run(["doctor"], { OPPI_DATA_DIR: freshDir });
       const out = stripAnsi(stdout);
@@ -601,7 +601,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   });
 
   it("doctor treats publicUrl without trustedPeers as undecided TLS, as the next serve does", () => {
-    const publicDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-publicurl-"));
+    const publicDir = makeTempDir("oppi-cli-doctor-publicurl-");
     try {
       writeFileSync(
         join(publicDir, "config.json"),
@@ -617,7 +617,7 @@ describe("first-run tls bootstrap (serve, pair, init)", () => {
   });
 
   it("doctor keeps the TLS-disabled warning once the host has an owner token", () => {
-    const pairedDir = mkdtempSync(join(tmpdir(), "oppi-cli-doctor-paired-"));
+    const pairedDir = makeTempDir("oppi-cli-doctor-paired-");
     try {
       writeFileSync(
         join(pairedDir, "config.json"),

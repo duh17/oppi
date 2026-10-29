@@ -15,7 +15,7 @@
  * extensions, matching the "global scope" decision in the issue #19 design.
  */
 
-import { existsSync, mkdtempSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -207,7 +207,6 @@ export class ExtensionProviderCatalog {
   private quotaSources: ExtensionQuotaSource[] = [];
   private quotaGeneration = new AbortController();
   private queue: Promise<void> = Promise.resolve();
-  private readonly discoveryRoot = mkdtempSync(join(tmpdir(), "oppi-provider-catalog-"));
 
   constructor(
     private readonly modelRuntime: ExtensionProviderCatalogRuntime,
@@ -335,11 +334,13 @@ export class ExtensionProviderCatalog {
       .map((resource) => resource.path);
     // Unique empty root so discoverAndLoadExtensions does not also scan the
     // real cwd/.pi/extensions or agentDir/extensions. Paths already come from
-    // the skip-resolve. mkdtempSync (not a fixed $TMPDIR name) owns the dir.
+    // the skip-resolve. mkdtempSync (not a fixed $TMPDIR name) owns the dir, and
+    // the finally below removes it.
     // Only capture declarations during global extension loading. This catalog
     // runtime never starts a session, so callbacks must not fetch until requested.
     const eventBus = createEventBus();
     const loads: Array<{ path: string; result: LoadExtensionsResult; claims: unknown[] }> = [];
+    const discoveryRoot = mkdtempSync(join(tmpdir(), "oppi-provider-catalog-"));
     try {
       for (const path of enabledPaths) {
         const claims: unknown[] = [];
@@ -355,14 +356,15 @@ export class ExtensionProviderCatalog {
         };
         const result = await discoverAndLoadExtensions(
           [path],
-          this.discoveryRoot,
-          this.discoveryRoot,
+          discoveryRoot,
+          discoveryRoot,
           scopedBus,
         );
         loads.push({ path, result, claims });
       }
     } finally {
       eventBus.clear();
+      rmSync(discoveryRoot, { recursive: true, force: true });
     }
     const diagnostics: ExtensionProviderDiagnostic[] = [
       ...skippedSources.map((source) => ({

@@ -1,5 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -9,6 +8,7 @@ import {
 } from "../src/lifecycle-journal-extension.js";
 import { readSessionTracePageFromFile } from "../src/trace-paging.js";
 import { buildSessionContext, type SessionEntry } from "../src/trace.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 describe("lifecycle journal extension", () => {
   it("persists only agent and tool boundaries through the originating manager", () => {
@@ -100,7 +100,7 @@ describe("lifecycle journal extension", () => {
   });
 
   it("keeps the full lifecycle and result with its call at a page boundary", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "oppi-lifecycle-page-"));
+    const directory = makeTempDir("oppi-lifecycle-page-");
     const tracePath = join(directory, "session.jsonl");
     const entries: SessionEntry[] = [
       {

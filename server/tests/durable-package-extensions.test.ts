@@ -1,13 +1,4 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -34,12 +25,13 @@ import { createDurableExtensionRoutes } from "../src/routes/durable-extensions.j
 import type { RouteContext } from "../src/routes/types.js";
 import type { ServerMessage } from "../src/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const managers: SessionManager[] = [];
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 let agentDir: string;
 beforeEach(() => {
-  agentDir = mkdtempSync(join(tmpdir(), "oppi-durable-packages-agent-"));
+  agentDir = makeTempDir("oppi-durable-packages-agent-");
   process.env.PI_CODING_AGENT_DIR = agentDir;
 });
 afterEach(async () => {
@@ -133,7 +125,7 @@ function callsTool(tool: string): FauxResponseStep[] {
 }
 
 async function fixture(responses: FauxResponseStep[]) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-durable-packages-test-"));
+  const dir = makeTempDir("oppi-durable-packages-test-");
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,
@@ -376,7 +368,7 @@ describe("durable extensions from Pi packages", () => {
 
   it("loads a symlinked package whose entry imports a file next to its real directory", async () => {
     // As `~/.pi/agent/extensions/ask -> ~/workspace/oppi/pi-extensions/ask`, with `../durable-ui.js`.
-    const source = mkdtempSync(join(tmpdir(), "oppi-durable-packages-source-"));
+    const source = makeTempDir("oppi-durable-packages-source-");
     mkdirSync(join(source, "linked"));
     writeFileSync(join(source, "shared.ts"), 'export const VERSION: string = "shared";\n');
     writeManifest(join(source, "linked"), "linked");

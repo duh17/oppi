@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -23,6 +22,7 @@ import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { Session } from "../src/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 async function until(check: () => boolean | Promise<boolean>, what: string): Promise<void> {
   const deadline = Date.now() + 15_000;
@@ -38,7 +38,7 @@ describe("Oppi Control sessions on the durable harness, experimental.serverDurab
   let agentDir: string;
 
   beforeEach(() => {
-    agentDir = mkdtempSync(join(tmpdir(), "oppi-control-session-agent-"));
+    agentDir = makeTempDir("oppi-control-session-agent-");
     process.env.PI_CODING_AGENT_DIR = agentDir;
   });
   afterEach(async () => {
@@ -49,7 +49,7 @@ describe("Oppi Control sessions on the durable harness, experimental.serverDurab
   });
 
   async function setup() {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-control-session-"));
+    const dir = makeTempDir("oppi-control-session-");
     const models = await ModelRuntime.create({
       authPath: join(dir, "auth.json"),
       modelsPath: null,

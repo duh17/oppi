@@ -1,6 +1,5 @@
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
@@ -16,6 +15,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { DurableSqlExplorer, parseSqliteJson } from "../extensions/durable/sql-explorer/durable.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const harnesses = new Set<Harness>();
 afterEach(async () => {
@@ -70,7 +70,7 @@ function textOf(content: unknown): string {
 }
 
 async function fixture(responses: FauxResponseStep[], wrapExec?: (env: NodeExecutionEnv) => void) {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-sql-explorer-"));
+  const dir = makeTempDir("oppi-sql-explorer-");
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,

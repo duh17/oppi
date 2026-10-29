@@ -1,5 +1,4 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {} from "node:fs";
 import { join } from "node:path";
 
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -12,9 +11,10 @@ import {
   e2eFauxToolCall,
   registerE2EFauxProvider,
 } from "../src/e2e-faux-provider.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 async function modelRuntime(): Promise<ModelRuntime> {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-e2e-faux-"));
+  const dir = makeTempDir("oppi-e2e-faux-");
   return ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,

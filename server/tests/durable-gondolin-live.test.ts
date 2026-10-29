@@ -1,5 +1,4 @@
-import { mkdtempSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { symlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -9,6 +8,7 @@ import { createEnvConformance, createExpectAssertions } from "@earendil-works/pi
 import { GondolinManager, isQemuAvailable } from "../src/gondolin-manager.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 // Match the other live VM suites: absent prerequisites return early, but VM
 // boot and assertion failures after a successful preflight must still fail.
@@ -42,7 +42,7 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
     ).ok;
   beforeAll(async () => {
     if (!qemuAvailable) return;
-    host = mkdtempSync(join(tmpdir(), "oppi-durable-security-"));
+    host = makeTempDir("oppi-durable-security-");
     console.log("durable security artifacts:", host);
     manager = new GondolinManager();
     vm = await manager.ensureWorkspaceVm(

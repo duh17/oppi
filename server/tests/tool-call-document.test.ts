@@ -1,6 +1,5 @@
 import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
@@ -10,6 +9,7 @@ import { SessionTraceService } from "../src/session-trace-service.js";
 import { McpService } from "../src/mcp-service.js";
 import { durableNestedCalls, validatedNestedCalls } from "../src/tool-nested-calls.js";
 import type { Session } from "../src/types.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const nested = {
   calls: [
@@ -196,7 +196,7 @@ describe("tool call document producer", () => {
     ]);
   });
   it("validates sidecar hints, including modules loaded from disk", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-input-hints-"));
+    const dir = makeTempDir("oppi-input-hints-");
     try {
       const path = join(dir, "renderer.mjs");
       writeFileSync(
@@ -299,14 +299,16 @@ describe("tool call document producer", () => {
     });
   });
   it("produces identical live and raw/mobile trace metadata", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-document-trace-"));
+    const dir = makeTempDir("oppi-document-trace-");
+    let mcp: McpService | undefined;
     try {
       const path = join(dir, "session.jsonl");
       writeFileSync(
         join(dir, "mcp.json"),
         JSON.stringify({ mcpServers: { "dev-radius": { command: "unused" } } }),
       );
-      const mcp = new McpService({ agentDir: dir, listWorkspaces: () => [] });
+      mcp = new McpService({ agentDir: dir, listWorkspaces: () => [] });
+      const configured = mcp;
       const nestedHyphenated = {
         calls: [{ ...nested.calls[0], name: "mcp__dev_radius__getActivityDetail" }],
         complete: true,
@@ -401,7 +403,7 @@ describe("tool call document producer", () => {
           getToolFullOutputPath: () => null,
           getToolPartialOutput: () => null,
         },
-        getMcpServerNames: (s) => mcp.configuredServerNames(s.workspaceId),
+        getMcpServerNames: (s) => configured.configuredServerNames(s.workspaceId),
         ensureSessionContextWindow: (s) => s,
       });
       const raw = await service.getSessionWithTrace({ session });
@@ -428,6 +430,7 @@ describe("tool call document producer", () => {
         });
       }
     } finally {
+      await mcp?.dispose();
       rmSync(dir, { recursive: true, force: true });
     }
   });

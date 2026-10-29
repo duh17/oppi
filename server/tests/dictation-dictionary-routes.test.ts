@@ -1,15 +1,15 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {} from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createDictationDictionaryRoutes } from "../src/routes/dictation-dictionary.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 describe("authenticated dictation dictionary HTTP boundary", () => {
   it("shares global and workspace lists and refuses unknown workspaces and stale edits", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-dictionary-route-"));
+    const dir = makeTempDir("oppi-dictionary-route-");
     const ctx = {
       storage: {
         getDataDir: () => dir,
@@ -54,7 +54,7 @@ describe("authenticated dictation dictionary HTTP boundary", () => {
   });
 
   it("accepts a 100-phrase POST and reports partial overflow without losing saved entries", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "oppi-dictionary-bulk-route-"));
+    const dir = makeTempDir("oppi-dictionary-bulk-route-");
     const ctx = {
       storage: {
         getDataDir: () => dir,

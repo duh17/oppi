@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { CLI, cliSpawnEnv } from "./harness/cli-process.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 it("flag-off CLI loads no Durable implementation or pi-durable modules", () => {
-  const dir = mkdtempSync(join(tmpdir(), "oppi-durable-cli-graph-"));
+  const dir = makeTempDir("oppi-durable-cli-graph-");
   const graph = join(dir, "resolved-urls.txt");
   const hook = join(dir, "resolve-hook.mjs");
   writeFileSync(graph, "");

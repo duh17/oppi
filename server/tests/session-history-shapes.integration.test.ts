@@ -1,6 +1,5 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
-import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
@@ -12,6 +11,7 @@ import type { DurableHarness } from "../src/durable-harness.js";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import type { Session } from "../src/types.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 /**
  * Every client gets the current shapes: a real server on its owner socket, queried with no
@@ -81,7 +81,7 @@ describe.each(clients)("session history shapes for a client with $name", ({ head
   let previousAgentDir: string | undefined;
 
   beforeEach(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), "oppi-history-shapes-"));
+    dataDir = makeTempDir("oppi-history-shapes-");
     // The durable harness loads extensions from the Pi agent directory.
     previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = join(dataDir, "agent");

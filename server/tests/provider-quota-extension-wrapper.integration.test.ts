@@ -8,14 +8,14 @@
  */
 import { createServer, type IncomingHttpHeaders, type Server as HttpServer } from "node:http";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import type { ProviderQuotasStatus } from "../src/provider-quota.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 const LEGACY_TOKEN = "synthetic-legacy-codex-token";
 const OFFICIAL_TOKEN = "synthetic-official-chatgpt-token";
@@ -94,7 +94,7 @@ interface Scenario {
 
 /** Boot a real server whose isolated Pi agent dir holds the given global extensions. */
 async function startScenario(extensions: Record<string, string>): Promise<Scenario> {
-  const agentDir = mkdtempSync(join(tmpdir(), "oppi-quota-wrapper-agent-"));
+  const agentDir = makeTempDir("oppi-quota-wrapper-agent-");
   const extensionsDir = join(agentDir, "extensions");
   mkdirSync(extensionsDir, { recursive: true });
   for (const [name, source] of Object.entries(extensions)) {
@@ -110,7 +110,7 @@ async function startScenario(extensions: Record<string, string>): Promise<Scenar
   );
   process.env.PI_CODING_AGENT_DIR = agentDir;
 
-  const dataDir = mkdtempSync(join(tmpdir(), "oppi-quota-wrapper-data-"));
+  const dataDir = makeTempDir("oppi-quota-wrapper-data-");
   const storage = new Storage(dataDir);
   storage.mutateConfig(() => ({
     port: 0,

@@ -1,14 +1,14 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { RETIRED_RUNTIME_STATUS_FILENAME, removeRetiredRuntimeStatusFile } from "../src/version.js";
+import { makeTempDir } from "./harness/temp-dir.js";
 
 describe("removeRetiredRuntimeStatusFile", () => {
   it("deletes a leftover runtime-status.json and leaves other data-dir files", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-runtime-status-"));
+    const dataDir = makeTempDir("oppi-runtime-status-");
     const statusPath = join(dataDir, RETIRED_RUNTIME_STATUS_FILENAME);
     const keepPath = join(dataDir, "config.json");
     writeFileSync(
@@ -30,7 +30,7 @@ describe("removeRetiredRuntimeStatusFile", () => {
   });
 
   it("is a no-op when the leftover file is absent or not a file", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-runtime-status-missing-"));
+    const dataDir = makeTempDir("oppi-runtime-status-missing-");
     expect(removeRetiredRuntimeStatusFile(dataDir)).toBe(false);
 
     const dirPath = join(dataDir, RETIRED_RUNTIME_STATUS_FILENAME);
