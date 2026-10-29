@@ -1,6 +1,6 @@
 import UIKit
 
-/// A saved workspace or Agent icon (`IconChoiceView` in UIKit): an SF Symbol in
+/// A saved workspace or Agent icon: an SF Symbol in
 /// the theme blue, an emoji, or a Genmoji the server stores, which loads
 /// through the server's icon cache and shows the default symbol until it
 /// arrives. A sandbox workspace adds the lock mark.
@@ -73,8 +73,7 @@ final class IconChoiceUIView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// The size the icon's content takes in its frame, following Dynamic Type
-    /// the way `IconChoiceView` does.
+    /// The size the icon's content takes in its frame, following Dynamic Type.
     private var contentSize: CGFloat {
         AgentIconSizingPolicy.contentSize(
             baseSize: size,

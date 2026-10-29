@@ -1,4 +1,4 @@
-import SwiftUI
+import UIKit
 
 func workspaceListSummary(
     for workspaceId: String,
@@ -277,38 +277,6 @@ struct WorkspaceCreateSheetContext: Identifiable {
     }
 }
 
-extension View {
-    func withServerScopedEnvironment(_ connection: ServerConnection) -> some View {
-        self
-            .environment(connection)
-            .environment(\.apiClient, connection.apiClient)
-            .environment(\.iconAssetCache, connection.iconAssetCache)
-            .environment(connection.chatState)
-            .environment(connection.sessionStore)
-            .environment(connection.workspaceStore)
-            .environment(connection.serverResourceStore)
-            .environment(connection.askRequestStore)
-            .environment(connection.audioPlayer)
-            .environment(connection.gitStatusStore)
-            .environment(connection.fileIndexStore)
-            .environment(connection.messageQueueStore)
-    }
-
-    /// Presenter-local services for a screen pushed or presented from a review
-    /// or chat screen. A hosted screen starts from the app root (the active
-    /// server), so the presenter's own server, API client, and `AppNavigation`
-    /// go on explicitly. The API client wins over the server's for fixtures.
-    func presenterScope(
-        connection: ServerConnection,
-        apiClient: APIClient?,
-        navigation: AppNavigation
-    ) -> some View {
-        environment(\.apiClient, apiClient)
-            .withServerScopedEnvironment(connection)
-            .environment(navigation)
-    }
-}
-
 /// Which rail items stay on the short Duo outer display.
 ///
 /// Items overflow from the bottom. Navigation outranks the frequent actions,
@@ -317,33 +285,4 @@ enum VerticalRailItemPriority: Equatable {
     case navigation
     case keep
     case overflowFirst
-}
-
-/// Reads `@Environment(\.toolbarVerticalEdge)` at the call site.
-///
-/// The value is the system's preferred edge, not "a pill is on screen". It is
-/// nil where iOS never places a vertical bar (a regular iPhone, a full-screen
-/// iPad) and non-nil on Duo's outer display even before a toolbar item joins
-/// the rail. `verticalPreferred` items are what make the system draw that rail.
-/// Below iOS 27.1 the edge is nil.
-@MainActor
-@ViewBuilder
-func readingToolbarVerticalEdge<Content: View>(
-    @ViewBuilder content: @escaping (HorizontalEdge?) -> Content
-) -> some View {
-    if #available(iOS 27.1, *) {
-        ToolbarVerticalEdgeReader(content: content)
-    } else {
-        content(nil)
-    }
-}
-
-@available(iOS 27.1, *)
-private struct ToolbarVerticalEdgeReader<Content: View>: View {
-    @Environment(\.toolbarVerticalEdge) private var edge
-    @ViewBuilder var content: (HorizontalEdge?) -> Content
-
-    var body: some View {
-        content(edge)
-    }
 }

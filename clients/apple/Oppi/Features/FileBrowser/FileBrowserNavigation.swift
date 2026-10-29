@@ -163,8 +163,7 @@ enum FileBrowserNavigationDirection: Equatable, Sendable {
     case next
 }
 
-/// The edge a previous/next file slides from. SwiftUI's `Edge` for it is in
-/// `WorkspaceHomeView.swift`, beside the file viewer factory.
+/// The edge a previous/next file slides from.
 enum FileBrowserPushTransitionEdge: Equatable, Sendable {
     case leading
     case trailing

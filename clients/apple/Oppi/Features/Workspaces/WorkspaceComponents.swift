@@ -1,23 +1,4 @@
-import SwiftUI
 import UIKit
-
-// MARK: - WorkspaceIcon
-
-struct WorkspaceIcon: View {
-    let icon: IconChoice?
-    let size: CGFloat
-    var assetCache: IconAssetCache? = nil
-
-    var body: some View {
-        IconChoiceView(
-            value: icon,
-            purpose: .workspace,
-            size: size,
-            frameSize: size,
-            assetCache: assetCache
-        )
-    }
-}
 
 enum ServerBadgeConnectionState: Sendable, Equatable {
     case connected
@@ -233,7 +214,7 @@ struct WorkspaceSidebarRowConfiguration: UIContentConfiguration {
 
 final class WorkspaceSidebarRowContentView: UIView, UIContentView {
     private let selection = UIView()
-    /// A 26 pt workspace mark drawn at 78 % of its 26 pt box (`IconChoiceView`),
+    /// A 26 pt workspace mark drawn at 78 % of its 26 pt box,
     /// centered in 32 pt with the sandbox lock.
     private let icon = IconChoiceUIView(size: 26 * 0.78, frameSize: 32)
     private let nameLabel = UILabel()

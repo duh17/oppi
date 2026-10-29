@@ -272,6 +272,35 @@ private final class ScreenRailReport {
     weak var controller: HostedScreenController?
 }
 
+/// Reads `@Environment(\.toolbarVerticalEdge)` at the call site.
+///
+/// The value is the system's preferred edge, not "a pill is on screen". It is
+/// nil where iOS never places a vertical bar (a regular iPhone, a full-screen
+/// iPad) and non-nil on Duo's outer display even before a toolbar item joins
+/// the rail. `verticalPreferred` items are what make the system draw that rail.
+/// Below iOS 27.1 the edge is nil.
+@MainActor
+@ViewBuilder
+private func readingToolbarVerticalEdge<Content: View>(
+    @ViewBuilder content: @escaping (HorizontalEdge?) -> Content
+) -> some View {
+    if #available(iOS 27.1, *) {
+        ToolbarVerticalEdgeReader(content: content)
+    } else {
+        content(nil)
+    }
+}
+
+@available(iOS 27.1, *)
+private struct ToolbarVerticalEdgeReader<Content: View>: View {
+    @Environment(\.toolbarVerticalEdge) private var edge
+    @ViewBuilder var content: (HorizontalEdge?) -> Content
+
+    var body: some View {
+        content(edge)
+    }
+}
+
 /// Evaluates the content closure inside the hosted screen's own graph.
 private struct ScreenContentView: View {
     let content: ScreenContent
@@ -444,6 +473,28 @@ extension EnvironmentValues {
     var screenNavigator: ScreenNavigator {
         get { self[ScreenNavigatorKey.self] }
         set { self[ScreenNavigatorKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// The services of `connection` on this view's SwiftUI environment: its
+    /// stores, API client, and icon cache. The app root applies it for the
+    /// active server; a hosted screen that belongs to another server applies it
+    /// again to override the root's.
+    func withServerScopedEnvironment(_ connection: ServerConnection) -> some View {
+        self
+            .environment(connection)
+            .environment(\.apiClient, connection.apiClient)
+            .environment(\.iconAssetCache, connection.iconAssetCache)
+            .environment(connection.chatState)
+            .environment(connection.sessionStore)
+            .environment(connection.workspaceStore)
+            .environment(connection.serverResourceStore)
+            .environment(connection.askRequestStore)
+            .environment(connection.audioPlayer)
+            .environment(connection.gitStatusStore)
+            .environment(connection.fileIndexStore)
+            .environment(connection.messageQueueStore)
     }
 }
 

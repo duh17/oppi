@@ -1,5 +1,5 @@
 // Pure value types the workspace sidebar presents. The sidebar itself is
-// `WorkspaceSidebarViewController`; its SwiftUI workspace row is in
+// `WorkspaceSidebarViewController`; its workspace row is in
 // `WorkspaceComponents.swift`.
 
 enum WorkspaceCatalogAvailability: Equatable {

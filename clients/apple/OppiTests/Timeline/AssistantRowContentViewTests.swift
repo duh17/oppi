@@ -1,16 +1,8 @@
 import Foundation
 import os
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
-
-@MainActor
-private func hierarchySnapshot(_ view: UIView) -> Data {
-    UIGraphicsImageRenderer(bounds: view.bounds).image { context in
-        view.layer.render(in: context.cgContext)
-    }.pngData() ?? Data()
-}
 
 private actor IconAssetFetchGateForTimeline {
     private var continuations: [CheckedContinuation<Data, Never>] = []
@@ -117,74 +109,6 @@ struct AssistantTimelineRowContentViewTests {
         #expect(imageView.image === expectedImage)
         #expect(badge.accessibilityLabel == "Saved Agent, Agent glyph")
         #expect(await fetchCounter.recordedIDs() == [assetId])
-    }
-
-    @MainActor
-    @Test func serverScopedCacheLoadsAgentWorkspaceAndSessionSwiftUISurfaces() async throws {
-        let gate = IconAssetFetchGateForTimeline()
-        let expectedImage = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
-            UIColor.systemPink.setFill()
-            context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
-        }
-        let cache = IconAssetCache(
-            fetch: { assetId in
-                await gate.record(assetId)
-                return await gate.wait()
-            },
-            decode: { _, _ in (expectedImage, NSObject()) }
-        )
-        let connection = ServerConnection()
-        connection.setIconAssetCacheForTesting(cache)
-        let agentAssetId = "ia_" + String(repeating: "A", count: 43)
-        let workspaceAssetId = "ia_" + String(repeating: "B", count: 43)
-        let sessionAssetId = "ia_" + String(repeating: "C", count: 43)
-        let workspace = Workspace(
-            id: "workspace-1",
-            name: "Workspace",
-            icon: .genmoji(assetId: workspaceAssetId, contentDescription: "Workspace glyph"),
-            createdAt: .now,
-            updatedAt: .now
-        )
-        let root = VStack {
-            IconChoiceView(
-                value: .genmoji(assetId: agentAssetId, contentDescription: "Agent glyph"),
-                purpose: .agent,
-                size: 24
-            )
-            WorkspaceIcon(icon: workspace.icon, size: 24)
-            SessionIdentityIconView(
-                sessionId: "session-1",
-                agentId: "agent-1",
-                agentIcon: .genmoji(assetId: sessionAssetId, contentDescription: "Session glyph")
-            )
-        }
-        .frame(width: 160, height: 160)
-        .withServerScopedEnvironment(connection)
-        let controller = UIHostingController(rootView: root)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        controller.view.layoutIfNeeded()
-
-        for _ in 0..<100 {
-            if await gate.recordedIDs().count == 3 { break }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        let before = hierarchySnapshot(controller.view)
-        #expect(Set(await gate.recordedIDs()) == Set([agentAssetId, workspaceAssetId, sessionAssetId]))
-
-        await gate.open()
-        var after = before
-        for _ in 0..<100 {
-            await Task.yield()
-            controller.view.layoutIfNeeded()
-            after = hierarchySnapshot(controller.view)
-            if after != before { break }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-
-        #expect(after != before)
     }
 
     @MainActor

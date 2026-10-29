@@ -1002,6 +1002,22 @@ struct IconAssetCacheTests {
         #expect(await counter.value() == 1)
     }
 
+    private func genmoji(_ assetId: String) -> IconChoiceUIView.Content {
+        .choice(.genmoji(assetId: assetId, contentDescription: "Glyph"), purpose: .agent, sandbox: false)
+    }
+
+    private func shownImage(_ icon: IconChoiceUIView) -> UIImage? {
+        icon.subviews.compactMap { $0 as? UIImageView }.first?.image
+    }
+
+    /// Lets the icon's load task and any stale one run to completion.
+    private func settle() async throws {
+        for _ in 0..<5 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     @Test func rapidAssetReplacementCannotClearTheNewerResultWithAStaleFailure() async throws {
         let gate = IconAssetResultGate()
         let firstID = "ia_" + String(repeating: "A", count: 43)
@@ -1014,48 +1030,20 @@ struct IconAssetCacheTests {
                 return (secondImage, NSObject())
             }
         )
-        let firstIdentity = IconAssetViewLoadIdentity(
-            key: IconAssetLoadKey(assetId: firstID, cache: cache),
-            requestID: UUID()
-        )
-        var currentIdentity = firstIdentity
-        var loadedImage: UIImage?
+        let icon = IconChoiceUIView(size: 24, frameSize: 24)
+        let colors = ComposerThemeColors.placeholder
 
-        let first = Task { @MainActor in
-            await loadIconAssetForView(
-                assetId: firstID,
-                size: 32,
-                cache: cache,
-                identity: firstIdentity,
-                currentIdentity: { currentIdentity },
-                assign: { loadedImage = $0 }
-            )
-        }
+        icon.apply(genmoji(firstID), colors: colors, assetCache: cache)
         for _ in 0..<50 where await gate.requestedIDs().isEmpty { await Task.yield() }
-
-        let secondIdentity = IconAssetViewLoadIdentity(
-            key: IconAssetLoadKey(assetId: secondID, cache: cache),
-            requestID: UUID()
-        )
-        currentIdentity = secondIdentity
-        let second = Task { @MainActor in
-            await loadIconAssetForView(
-                assetId: secondID,
-                size: 32,
-                cache: cache,
-                identity: secondIdentity,
-                currentIdentity: { currentIdentity },
-                assign: { loadedImage = $0 }
-            )
-        }
+        icon.apply(genmoji(secondID), colors: colors, assetCache: cache)
         for _ in 0..<50 where !(await gate.requestedIDs()).contains(secondID) { await Task.yield() }
         await gate.succeed(secondID, data: Data([2]))
-        await second.value
-        #expect(loadedImage === secondImage)
+        for _ in 0..<50 where shownImage(icon) !== secondImage { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(shownImage(icon) === secondImage)
 
         await gate.fail(firstID)
-        await first.value
-        #expect(loadedImage === secondImage)
+        try await settle()
+        #expect(shownImage(icon) === secondImage)
     }
 
     @Test func serverCacheReplacementCannotAssignTheOldCachesResult() async throws {
@@ -1072,49 +1060,21 @@ struct IconAssetCacheTests {
             fetch: { try await newGate.wait(for: $0) },
             decode: { _, _ in (newImage, NSObject()) }
         )
-        let oldIdentity = IconAssetViewLoadIdentity(
-            key: IconAssetLoadKey(assetId: assetID, cache: oldCache),
-            requestID: UUID()
-        )
-        var currentIdentity = oldIdentity
-        var loadedImage: UIImage?
+        let icon = IconChoiceUIView(size: 24, frameSize: 24)
+        let colors = ComposerThemeColors.placeholder
 
-        let oldRequest = Task { @MainActor in
-            await loadIconAssetForView(
-                assetId: assetID,
-                size: 32,
-                cache: oldCache,
-                identity: oldIdentity,
-                currentIdentity: { currentIdentity },
-                assign: { loadedImage = $0 }
-            )
-        }
+        icon.apply(genmoji(assetID), colors: colors, assetCache: oldCache)
         for _ in 0..<50 where await oldGate.requestedIDs().isEmpty { await Task.yield() }
-
-        let newIdentity = IconAssetViewLoadIdentity(
-            key: IconAssetLoadKey(assetId: assetID, cache: newCache),
-            requestID: UUID()
-        )
-        currentIdentity = newIdentity
-        let newRequest = Task { @MainActor in
-            await loadIconAssetForView(
-                assetId: assetID,
-                size: 32,
-                cache: newCache,
-                identity: newIdentity,
-                currentIdentity: { currentIdentity },
-                assign: { loadedImage = $0 }
-            )
-        }
+        icon.apply(genmoji(assetID), colors: colors, assetCache: newCache)
         for _ in 0..<50 where await newGate.requestedIDs().isEmpty { await Task.yield() }
         await newGate.succeed(assetID, data: Data([2]))
-        await newRequest.value
-        #expect(loadedImage === newImage)
+        for _ in 0..<50 where shownImage(icon) !== newImage { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(shownImage(icon) === newImage)
 
         await oldGate.succeed(assetID, data: Data([1]))
-        await oldRequest.value
-        #expect(loadedImage === newImage)
-        #expect(loadedImage !== oldImage)
+        try await settle()
+        #expect(shownImage(icon) === newImage)
+        #expect(shownImage(icon) !== oldImage)
     }
 
     @Test func productionRemoteDecoderAcceptsVisibleGeneratedHEIF() throws {

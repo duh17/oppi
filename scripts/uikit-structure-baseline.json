@@ -43,9 +43,6 @@
     "clients/apple/Oppi/Core/Theme/ThemeStore.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/AgentIconView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/EmbeddedFileViewerView.swift": {
       "import SwiftUI": 1
     },
@@ -183,14 +180,8 @@
     "clients/apple/Oppi/Features/Workspaces/SessionInboxComposeChrome.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceComponents.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateViewController.swift": {
       ".settingsToggle(": 2
-    },
-    "clients/apple/Oppi/Features/Workspaces/WorkspaceHomeView.swift": {
-      "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsModel.swift": {
       "APIClient settings write": 2
