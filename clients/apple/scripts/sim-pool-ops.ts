@@ -358,7 +358,19 @@ export function applyRunCheckout(config: PoolConfig): string {
   log(`[sim-pool] Apple checkout ${process.cwd()}`);
   ensureOppiTestsInfoPlist(config.appleDir);
   ensurePrebuiltFrameworks(config.appleDir);
+  ensureServerDeps(config.oppiRoot);
   return process.cwd();
+}
+
+// The Oppi target's architecture-check build phase runs server/ tooling, so a fresh worktree
+// without server/node_modules fails every build. The script is a ~0.1 s no-op once installed.
+function ensureServerDeps(oppiRoot: string): void {
+  const script = join(oppiRoot, "server", "scripts", "ensure-installed-deps.mjs");
+  if (!existsSync(script)) return;
+  const result = spawnSync("node", [script], { cwd: oppiRoot, stdio: ["ignore", 2, 2] });
+  if (result.status !== 0) {
+    die(`server dependencies are not ready (${script} ${result.error?.message ?? `exited ${result.status ?? result.signal}`}); see its output above`);
+  }
 }
 
 // Xcode rejects a missing linked XCFramework while planning, before Run Script

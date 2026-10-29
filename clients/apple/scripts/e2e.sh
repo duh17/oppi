@@ -375,6 +375,9 @@ trap cleanup EXIT
 
 # ── 1. Prepare the Haiku model lane ──
 
+# A fresh worktree has no server/node_modules; this is a no-op once they match package-lock.json.
+node "$REPO_ROOT/server/scripts/ensure-installed-deps.mjs"
+
 if $FAUX_MODEL; then
     # server/src/e2e-faux-provider.ts registers the faux model only under both gates.
     if [[ "$OPPI_E2E_UI_HARNESS" != "1" ]]; then

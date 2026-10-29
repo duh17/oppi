@@ -18,6 +18,8 @@ It is a no-op when `Vendor/` matches the pins, copies from `~/Library/Caches/opp
 
 Xcode caches the failed build plan, error included, so a DerivedData that already failed this way keeps failing after `Vendor/` is filled. `sim-pool.sh run` drops that plan from the checkout's `.build/dd` automatically; for other builds, delete `<DerivedData>/Build/Intermediates.noindex/XCBuildData/*.xcbuilddata` or use a fresh `-derivedDataPath`.
 
+The Oppi target's architecture-check build phase and the E2E server need `server/node_modules`, which a fresh worktree lacks. `sim-pool.sh run` and `e2e.sh` run `node server/scripts/ensure-installed-deps.mjs` first (a no-op of about 0.1 s once installed, `npm ci` in `server/` otherwise), so a bare worktree needs no manual install; a bare `xcodebuild` or Xcode GUI build still does.
+
 ### Build TailscaleKit
 
 The iOS app embeds the official TailscaleKit framework, which is built locally and not tracked. A cache miss after the pinned libtailscale commit or the omitted-feature list (`BUILD_ID`) changes needs Go (cgo) and Xcode, and keeps Go caches under `clients/apple/.build/tailscalekit`. Other checkouts reuse `~/Library/Caches/oppi-tailscalekit/<build-id>/` without Go or Xcode:
