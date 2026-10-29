@@ -105,11 +105,20 @@ enum UIValidateDump {
             return element.exists ? (preview.identifier, element.frame, preview.reason) : nil
         }
         // The Usage charts: Swift Charts' own accessibility nodes live inside these frames.
+        // Only the part of each slot the person can see: below the navigation bar, inside the scroll
+        // view. A bar scrolled under the bar is not the chart's to excuse.
+        let scroll = app.descendants(matching: .any)["server.usage.scroll"]
+        var visible = scroll.exists ? scroll.frame : CGRect.null
+        let navigationBar = app.navigationBars.firstMatch
+        if !visible.isNull, navigationBar.exists, navigationBar.frame.maxY > visible.minY {
+            visible = CGRect(x: visible.minX, y: navigationBar.frame.maxY, width: visible.width, height: max(0, visible.maxY - navigationBar.frame.maxY))
+        }
         let chartFrames = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "server.usage.chart."))
             .allElementsBoundByIndex
             .filter { $0.exists }
-            .map(\.frame)
+            .map { $0.frame.intersection(visible) }
+            .filter { !$0.isNull && !$0.isEmpty }
         // The Extensions rows: each cell's label reads "<name>, <detail>".
         let extensionRows = app.collectionViews["workspace.edit.extensions.list"].cells.allElementsBoundByIndex
             .filter { $0.exists && $0.identifier.isEmpty }
@@ -308,9 +317,9 @@ enum UIValidateDump {
     /// each bar and axis label its own accessibility node, too small to hit and with no
     /// description, and draws the axis text without exposing it as an element, so the audit
     /// reports `hitRegion`, `sufficientElementDescription`, `dynamicType`, `textClipped`,
-    /// `contrast`, and `elementDetection` on them. Waived: an issue that names a SwiftUI node
-    /// (the page has no other SwiftUI), one whose element's middle sits inside a chart slot's
-    /// frame, and an `elementDetection` with no element while a chart is on screen; everything
+    /// `contrast`, and `elementDetection` on them. Waived: an issue whose element's middle sits
+    /// inside the visible part of a chart slot (below the navigation bar, inside the scroll
+    /// view), and an `elementDetection` with no element while a chart is on screen; everything
     /// else on the page, the UIKit views around the charts, is audited as everywhere else. The same findings were on the SwiftUI Usage screen before it moved
     /// (the audit of main's Usage, same sizes, is under `server-d3/main-before`).
     private static func chartWaiver(for issue: XCUIAccessibilityAuditIssue, chartFrames: [CGRect]) -> String? {
@@ -320,12 +329,8 @@ enum UIValidateDump {
         ]
         guard types.contains(issue.auditType) else { return nil }
         let reason = "\(auditTypeName(issue.auditType)) on a Swift Charts node in the daily or hourly bar chart: "
-            + "the framework's own bar and axis accessibility. Usage has no other SwiftUI, and main's SwiftUI Usage "
-            + "shows the same chart findings (server-d3/main-before)"
-        // The page's only SwiftUI is these leaves, and Charts reports some of its nodes (the thin
-        // donut slices) at frames that do not line up with the slot, so an issue that names a
-        // SwiftUI node is the leaf's whatever its frame says.
-        if issue.detailedDescription.contains("SwiftUI.AccessibilityNode") { return reason }
+            + "the framework's own bar and axis accessibility; main's SwiftUI Usage shows the same chart findings "
+            + "(server-d3/main-before)"
         if let frame = issue.element?.frame {
             // The node's middle, not its whole frame: a bar scrolled half under the bar, or a node with
             // no size, is the chart's all the same.

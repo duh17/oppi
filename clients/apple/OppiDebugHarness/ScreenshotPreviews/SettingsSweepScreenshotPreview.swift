@@ -21,7 +21,9 @@ import SwiftUI
 /// update available, voice backends), `server-paired-devices`, `server-badge` (the pages
 /// Server Settings pushes, over the same fixture model), `usage` (Usage for the fixture
 /// server: two weeks of daily bars, six models, three workspaces), `usage-setup` (no model
-/// provider signed in, so the setup card shows), `usage-detail` (a day opened under the chart).
+/// provider signed in, so the setup card shows), `usage-detail` (a day opened under the chart),
+/// `server-inbox-provider-setup` (All Sessions of the fixture server with no provider signed in: the
+/// setup card as a list cell).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -298,6 +300,11 @@ struct SettingsSweepScreenshotPreview: View {
                 case "server-paired-devices": ServerPairedDevicesViewController(model: model, server: server, root: root)
                 default: ServerBadgeViewController(server: server, root: root)
                 }
+            }
+            .ignoresSafeArea()
+        case "server-inbox-provider-setup":
+            RouterPreviewControllerStack(root: root) { [root] in
+                SessionInboxViewController(root: root)
             }
             .ignoresSafeArea()
         case "usage", "usage-setup", "usage-detail":
@@ -783,6 +790,7 @@ struct SettingsSweepScreenshotPreview: View {
                 ModelInfo(id: "gpt-5-mini", name: "GPT-5 mini", provider: "openai", contextWindow: 400_000),
             ])),
             "/server/metrics/settings": Data(#"{"enabled":true,"revision":3}"#.utf8),
+            "/provider-auth/status": Data(#"{"providers":[{"id":"anthropic","name":"Anthropic","supportsApiKey":true,"authenticated":false}]}"#.utf8),
             "/server/mobile-output-guide": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/dictation/dictionary/global": Data(#"{"revision":3,"phrases":["Oppi","Tailscale","Herdr","Kypu","SwiftUI","Nerd Font Symbols Mono Extended Family Name That Is Long Enough To Wrap Past The Row"],"provider":"xai"}"#.utf8),
             "/dictation/dictionary/workspaces/preview-ws": Data(#"{"revision":1,"phrases":["oppi-dev","WorkspaceStore"],"provider":null}"#.utf8),

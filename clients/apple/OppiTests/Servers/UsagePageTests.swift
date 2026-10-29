@@ -125,6 +125,51 @@ struct UsagePageTests {
         #expect(target.serverId == other.id)
     }
 
+    private func hourlyDetail(cost: Double) -> DailyDetail {
+        DailyDetail(
+            date: "2026-10-26",
+            totals: StatsTotals(sessions: 1, cost: cost, tokens: 10),
+            hourly: [StatsDailyHourlyEntry(
+                hour: 9, sessions: 1, cost: cost, tokens: 10,
+                byModel: ["anthropic/claude-sonnet-5-5": DailyModelEntry(sessions: 1, cost: cost, tokens: 10)]
+            )],
+            sessions: []
+        )
+    }
+
+    @Test("A day reopened after a pull draws its hourly chart again, with the new spend")
+    func hourlyChartRedrawsAfterAPull() async throws {
+        let server = try makeServer("server-a", order: 0)
+        let root = try makeRoot(servers: [server])
+        let client = ScriptedUsageClient()
+        client.statsByRange = [.week: stats()]
+        client.details = ["2026-10-26": hourlyDetail(cost: 1)]
+        let model = UsageModel(serverId: server.id) { client }
+        let page = UsageViewController(server: server, root: root, model: model)
+        let window = try present(page)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { model.stats != nil })
+
+        model.selectDay("2026-10-26")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.hourlyChartBuilds == 1 })
+
+        // A pull forgets the open day; the server now has more spend in the hour already drawn.
+        await model.refresh()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { model.detail == nil })
+        client.details = ["2026-10-26": hourlyDetail(cost: 2.5)]
+        model.selectDay("2026-10-26")
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.hourlyChartBuilds == 2 })
+    }
+
+    @Test("The hourly chart's key changes with the spend in an hour already drawn, not only with the hour count")
+    func hourlyKeyFollowsSpend() {
+        let before = UsageViewController.hourlyChartKey(hourlyDetail(cost: 1), themeKey: "dark")
+        #expect(before == UsageViewController.hourlyChartKey(hourlyDetail(cost: 1), themeKey: "dark"))
+        #expect(before != UsageViewController.hourlyChartKey(hourlyDetail(cost: 2.5), themeKey: "dark"))
+        #expect(before != UsageViewController.hourlyChartKey(hourlyDetail(cost: 1), themeKey: "light"))
+    }
+
     @Test("A switch replaces the page with the new server's own, and the old page's late answer stays there")
     func routeReplacesThePage() async throws {
         let servers = [try makeServer("server-a", order: 0), try makeServer("server-b", order: 1)]
