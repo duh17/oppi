@@ -1,4 +1,4 @@
-import SwiftUI
+import UIKit
 
 /// Maps provider names to theme palette colors.
 ///
@@ -8,36 +8,36 @@ import SwiftUI
 enum ProviderColor {
 
     /// Resolve a color for the given model string using the current theme palette.
-    static func color(for model: String?, palette: ThemePalette) -> Color {
+    static func color(for model: String?, palette: ThemePalette) -> UIColor {
         color(forProvider: provider(from: model), palette: palette)
     }
 
     /// Resolve a color for a raw provider id using the current theme palette.
-    static func color(forProvider provider: String?, palette: ThemePalette) -> Color {
+    static func color(forProvider provider: String?, palette: ThemePalette) -> UIColor {
         guard let provider else {
-            return palette.purple
+            return UIColor(palette.purple)
         }
 
         switch canonicalProvider(provider) {
         case "anthropic":
-            return palette.orange
+            return UIColor(palette.orange)
         case "openai", "azure", "github-copilot":
-            return palette.green
+            return UIColor(palette.green)
         case "google", "google-vertex", "google-antigravity", "google-gemini-cli", "deepseek", "ds4":
-            return palette.blue
+            return UIColor(palette.blue)
         case "meta", "meta-llama", "openrouter", "vercel-ai-gateway", "opencode":
-            return palette.cyan
+            return UIColor(palette.cyan)
         case "amazon-bedrock", "xai":
-            return palette.yellow
+            return UIColor(palette.yellow)
         case "mistral", "mistralai", "mlx-serve":
-            return palette.red
+            return UIColor(palette.red)
         case "qwen":
-            return palette.purple
+            return UIColor(palette.purple)
         case "cursor":
             // Cursor's mark is monochrome, and purple is already Qwen's.
-            return palette.fg
+            return UIColor(palette.fg)
         default:
-            return palette.purple
+            return UIColor(palette.purple)
         }
     }
 

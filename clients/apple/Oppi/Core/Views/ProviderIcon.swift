@@ -48,7 +48,7 @@ struct ProviderIcon: View {
     /// Provider color mapped onto the active theme palette. `ProviderColor`
     /// owns the provider aliases (`openai-codex` reads as OpenAI).
     static func brandColor(for provider: String) -> Color {
-        ProviderColor.color(forProvider: provider, palette: ThemeRuntimeState.currentPalette())
+        Color(uiColor: ProviderColor.color(forProvider: provider, palette: ThemeRuntimeState.currentPalette()))
     }
 
     /// Single-character monogram mark for compact rendering.

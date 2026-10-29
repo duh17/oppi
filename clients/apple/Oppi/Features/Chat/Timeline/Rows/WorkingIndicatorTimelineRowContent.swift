@@ -174,7 +174,7 @@ final class WorkingIndicatorTimelineRowContentView: UIView, UIContentView {
     private func renderIndicator(_ rendered: RenderedIndicator) {
         let indicator = rendered.indicator
         let palette = ThemeRuntimeState.currentPalette()
-        let providerColor = UIColor(ProviderColor.color(for: rendered.modelId, palette: palette))
+        let providerColor = ProviderColor.color(for: rendered.modelId, palette: palette)
         let rawCustomFrames = indicator?.frames
         let customFrames = Self.displayableCustomFrames(rawCustomFrames)
         let hidesIndicator = rawCustomFrames?.isEmpty == true

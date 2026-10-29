@@ -512,6 +512,13 @@ enum ThemeColorContrast {
         contrastingForeground(on: fill, candidates: [.themeFg, .themeBg])
     }
 
+    #if canImport(UIKit)
+    /// `foreground(for:)` for a UIKit fill (`ProviderColor`), so UIKit callers stay off `Color`.
+    static func foreground(for fill: UIColor) -> UIColor {
+        UIColor(foreground(for: Color(uiColor: fill)))
+    }
+    #endif
+
     /// Pick the candidate with the stronger contrast against `fill`.
     /// Light themes can have a dark accent and a dark `themeFg`; using `themeFg`
     /// on that fill makes send arrows disappear.

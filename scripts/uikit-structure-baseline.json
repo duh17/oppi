@@ -16,9 +16,6 @@
     "clients/apple/Oppi/Core/Extensions/Color+Theme.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Formatting/ProviderColor.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Networking/APIClientEnvironment.swift": {
       "import SwiftUI": 1
     },

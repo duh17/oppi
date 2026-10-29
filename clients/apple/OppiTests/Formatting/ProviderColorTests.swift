@@ -64,6 +64,6 @@ struct ProviderColorTests {
 
     private func expectColor(_ model: String?, equals expected: Color) {
         let resolved = ProviderColor.color(for: model, palette: palette)
-        #expect(UIColor(resolved) == UIColor(expected))
+        #expect(resolved == UIColor(expected))
     }
 }

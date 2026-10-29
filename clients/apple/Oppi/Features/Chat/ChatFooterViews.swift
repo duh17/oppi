@@ -627,14 +627,14 @@ final class ChatJumpToBottomView: UIView {
         let visible = chat.scrollController.isJumpToBottomHintVisible
         let busy = chat.sessionManager.isBusy
         let palette = chat.chromeThemeID.palette
-        let provider = UIColor(ProviderColor.color(for: chat.session?.model, palette: palette))
+        let provider = ProviderColor.color(for: chat.session?.model, palette: palette)
         idleArrow.image = UIImage.scaledSymbol("arrow.down", style: .caption1, weight: .bold, color: UIColor(palette.fg))
         badge.backgroundColor = provider
         badge.image = UIImage(
             systemName: "arrow.down",
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 7, weight: .black)
         )?.withTintColor(
-            UIColor(ThemeColorContrast.foreground(for: ProviderColor.color(for: chat.session?.model, palette: palette))),
+            ThemeColorContrast.foreground(for: provider),
             renderingMode: .alwaysOriginal
         )
         busyRing.strokeColor = provider.cgColor
