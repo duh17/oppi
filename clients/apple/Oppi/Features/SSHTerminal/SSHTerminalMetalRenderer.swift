@@ -1434,7 +1434,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             guard !item.style.invisible else { continue }
             var fg = colors.fg
             if item.style.faint { fg = Self.premultiply(fg, alpha: 0.5) }
-            if item.style.underline != 0 {
+            if item.style.underline {
                 let yOff = underlineY(scale: scale)
                 packed.overlays.append(CellInstance(
                     origin: SIMD2(origin.x, origin.y + yOff.y),

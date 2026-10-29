@@ -49,4 +49,25 @@ struct SSHTerminalEngineRenderTests {
         #expect(row[3].text == "e\u{301}")
         #expect(row[3].cluster != nil)
     }
+
+    /// An erase with only a background set leaves cells that hold a color and
+    /// no text or style (vim, tmux and htop status bars). They must paint
+    /// that color, palette or truecolor, and keep the default foreground.
+    @Test func backgroundOnlyErasedCellsKeepTheirColor() throws {
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 6, rows: 3)) { _ in }
+        engine.setColors(
+            foreground: .init(r: 200, g: 201, b: 202), background: .init(r: 10, g: 11, b: 12), dark: true,
+            palette: [1: .init(r: 250, g: 1, b: 2)]
+        )
+        engine.receive(Data("\u{1b}[41m\u{1b}[K\u{1b}[0m\r\n\u{1b}[48;2;9;8;7m\u{1b}[K\u{1b}[0m\r\nplain".utf8))
+        let rows = engine.frame().rows
+        func rgb(_ color: GhosttyColorRgb) -> [UInt8] { [color.r, color.g, color.b] }
+        for (y, expected) in [(0, [UInt8]([250, 1, 2])), (1, [9, 8, 7]), (2, [10, 11, 12])] {
+            for (x, cell) in rows[y].enumerated() {
+                #expect(rgb(cell.background) == expected, "row \(y) column \(x) background")
+                #expect(rgb(cell.foreground) == [200, 201, 202], "row \(y) column \(x) foreground")
+                #expect(cell.style == SSHTerminalCellStyle())
+            }
+        }
+    }
 }

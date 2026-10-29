@@ -11,15 +11,59 @@ struct SSHTerminalGeometry: Equatable, Sendable {
     var pixelHeight: Int { rows * cellHeight }
 }
 
+/// The style bits the renderer draws, one byte per cell. libghostty's
+/// `GhosttyStyle` is 72 bytes and its colors arrive already resolved in the
+/// cell, so only these flags are kept.
+struct SSHTerminalCellStyle: Equatable {
+    private var bits: UInt8 = 0
+
+    init() {}
+
+    init(_ style: GhosttyStyle) {
+        if style.bold { bits |= 1 << 0 }
+        if style.italic { bits |= 1 << 1 }
+        if style.faint { bits |= 1 << 2 }
+        if style.inverse { bits |= 1 << 3 }
+        if style.invisible { bits |= 1 << 4 }
+        if style.strikethrough { bits |= 1 << 5 }
+        if style.underline != 0 { bits |= 1 << 6 } // GHOSTTY_SGR_UNDERLINE_NONE
+    }
+
+    var bold: Bool { bits & (1 << 0) != 0 }
+    var italic: Bool { bits & (1 << 1) != 0 }
+    var faint: Bool { bits & (1 << 2) != 0 }
+    var inverse: Bool { bits & (1 << 3) != 0 }
+    var invisible: Bool { bits & (1 << 4) != 0 }
+    var strikethrough: Bool { bits & (1 << 5) != 0 }
+    /// Any underline kind; the renderer draws every kind as a single line.
+    var underline: Bool { bits & (1 << 6) != 0 }
+}
+
+/// 32 bytes per cell: fields are declared largest first so Swift packs them.
 struct SSHTerminalCell {
-    /// 0 when empty or when `cluster` holds a multi-scalar grapheme.
-    let scalar: UInt32
     /// Set only for combining / multi-scalar cells. Plain ASCII never allocates.
     let cluster: String?
-    let width: Int
+    /// 0 when empty or when `cluster` holds a multi-scalar grapheme.
+    let scalar: UInt32
     let foreground: GhosttyColorRgb
     let background: GhosttyColorRgb
-    let style: GhosttyStyle
+    private let columns: UInt8
+    let style: SSHTerminalCellStyle
+
+    init(
+        scalar: UInt32, cluster: String?, columns: UInt8,
+        foreground: GhosttyColorRgb, background: GhosttyColorRgb, style: SSHTerminalCellStyle
+    ) {
+        self.cluster = cluster
+        self.scalar = scalar
+        self.foreground = foreground
+        self.background = background
+        self.columns = columns
+        self.style = style
+    }
+
+    /// 2 for a wide character, 0 for its spacer, else 1.
+    var width: Int { Int(columns) }
 
     var text: String {
         if let cluster { return cluster }
@@ -53,6 +97,76 @@ struct SSHTerminalFrame {
     var kittyGeneration: UInt64 { kitty?.generation ?? 0 }
 }
 
+/// Output slots for the batched per-cell reads in `SSHTerminalEngine.readRow`.
+/// Allocated once per engine with the key and value arrays already pointing at
+/// them, so reading a cell builds no Swift array and allocates nothing.
+private final class SSHTerminalCellReads {
+    static let cellKeyCount = 4
+    static let styleKeyCount = 3
+
+    /// One raw cell's decode, read back as a single value. The C enums are
+    /// `int`-typed, so the tag and width land in `Int32` fields and compare as
+    /// plain integers: a comparison of the imported enum structs is a generic
+    /// `RawRepresentable` call per cell in unoptimized builds.
+    struct Decoded {
+        var codepoint: UInt32 = 0
+        var tag: Int32 = 0
+        var wide: Int32 = 0
+        var styled = false
+    }
+
+    let decoded = UnsafeMutablePointer<Decoded>.allocate(capacity: 1)
+    let style = UnsafeMutablePointer<GhosttyStyle>.allocate(capacity: 1)
+    let foreground = UnsafeMutablePointer<GhosttyColorRgb>.allocate(capacity: 1)
+    let background = UnsafeMutablePointer<GhosttyColorRgb>.allocate(capacity: 1)
+    /// A raw cell's codepoint, content tag, width and styling: a pure decode
+    /// of the packed value that cannot fail.
+    let cellKeys = UnsafeMutablePointer<GhosttyCellData>.allocate(capacity: cellKeyCount)
+    let cellValues = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: cellKeyCount)
+    /// A styled cell's style, then its colors, which fail when unset. The
+    /// batch stops at the first failure, so fg goes first: colored text on the
+    /// default background, the common styled cell, then takes one call.
+    let styleKeys = UnsafeMutablePointer<GhosttyRenderStateRowCellsData>.allocate(capacity: styleKeyCount)
+    let styleValues = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: styleKeyCount)
+
+    init() {
+        decoded.initialize(to: Decoded())
+        let base = UnsafeMutableRawPointer(decoded)
+        var blank = GhosttyStyle()
+        blank.size = MemoryLayout<GhosttyStyle>.size
+        style.initialize(to: blank)
+        foreground.initialize(to: GhosttyColorRgb())
+        background.initialize(to: GhosttyColorRgb())
+        cellKeys.initialize(from: [
+            GHOSTTY_CELL_DATA_CODEPOINT, GHOSTTY_CELL_DATA_CONTENT_TAG,
+            GHOSTTY_CELL_DATA_WIDE, GHOSTTY_CELL_DATA_HAS_STYLING,
+        ], count: Self.cellKeyCount)
+        let fields: [PartialKeyPath<Decoded>] = [\.codepoint, \.tag, \.wide, \.styled]
+        cellValues.initialize(from: fields.map {
+            base + MemoryLayout<Decoded>.offset(of: $0)!
+        }, count: Self.cellKeyCount)
+        styleKeys.initialize(from: [
+            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
+            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
+        ], count: Self.styleKeyCount)
+        styleValues.initialize(from: [
+            UnsafeMutableRawPointer(style), UnsafeMutableRawPointer(foreground),
+            UnsafeMutableRawPointer(background),
+        ], count: Self.styleKeyCount)
+    }
+
+    deinit {
+        for pointer: UnsafeMutableRawPointer in [
+            .init(decoded), .init(style),
+            .init(foreground), .init(background), .init(cellKeys), .init(cellValues),
+            .init(styleKeys), .init(styleValues),
+        ] {
+            pointer.deallocate()
+        }
+    }
+}
+
 /// Separate from the passive log owner. All C access (including callbacks and
 /// borrowed render data) runs synchronously on MainActor. Frames own their text
 /// and value structs; no borrowed pointer escapes to UIKit. Paint is coalesced
@@ -81,6 +195,7 @@ final class SSHTerminalEngine {
     private var render: GhosttyRenderState?
     private var rowIterator: GhosttyRenderStateRowIterator?
     private var cells: GhosttyRenderStateRowCells?
+    private let cellReads = SSHTerminalCellReads()
     private var encoder: GhosttyKeyEncoder?
     private var mouseEncoder: GhosttyMouseEncoder?
     private var selectionGesture: GhosttySelectionGesture?
@@ -415,6 +530,7 @@ final class SSHTerminalEngine {
         var rebuilt = IndexSet()
         if full {
             var rows = [[SSHTerminalCell]]()
+            rows.reserveCapacity(captured)
             var y = 0
             while ghostty_render_state_row_iterator_next(rowIterator) {
                 rows.append(readRow(foreground: foreground, background: background))
@@ -607,51 +723,126 @@ final class SSHTerminalEngine {
 
     /// One row of cells. A single scalar is stored as `UInt32`; only combining
     /// graphemes allocate a `String`.
+    ///
+    /// The raw cell values come in one borrowed view per row and one batched
+    /// decode per cell (codepoint, content tag, width, styling), which is all a
+    /// plain cell needs: no style means the default foreground, and the
+    /// background is the default unless the cell is a background-color-only
+    /// cell. Only styled, background-color and multi-codepoint cells select the
+    /// cell in libghostty's row state, which owns style lookup, palette
+    /// resolution and grapheme storage.
     private func readRow(foreground: GhosttyColorRgb, background: GhosttyColorRgb) -> [SSHTerminalCell] {
         ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cells)
-        var row = [SSHTerminalCell]()
-        while ghostty_render_state_row_cells_next(cells) {
-            var raw: GhosttyCell = 0
-            var wide = GHOSTTY_CELL_WIDE_NARROW
-            var style = GhosttyStyle()
-            style.size = MemoryLayout<GhosttyStyle>.size
-            var fg = foreground
-            var bg = background
-            var length: UInt32 = 0
-            var hasStyling = false
-            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw)
-            ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide)
-            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING, &hasStyling)
-            if hasStyling {
-                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style)
-            }
-            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &fg)
-            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg)
-            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &length)
-            var scalar: UInt32 = 0
-            var cluster: String?
-            if length == 1 {
-                _ = withUnsafeMutablePointer(to: &scalar) {
-                    ghostty_render_state_row_cells_get(
-                        cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, $0
-                    )
+        var view = GhosttyCellsView()
+        guard ghostty_render_state_row_get(
+            rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS_RAW, &view
+        ) == GHOSTTY_SUCCESS, let raws = view.ptr else { return [] }
+        let reads = cellReads
+        let count = view.len
+        let keyCount = SSHTerminalCellReads.cellKeyCount
+        let codepointTag = GHOSTTY_CELL_CONTENT_CODEPOINT.rawValue
+        let graphemeTag = GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME.rawValue
+        let wideTag = GHOSTTY_CELL_WIDE_WIDE.rawValue
+        let narrowTag = GHOSTTY_CELL_WIDE_NARROW.rawValue
+        let success = GHOSTTY_SUCCESS.rawValue
+        // Written in place: no per-cell uniqueness or capacity check.
+        return [SSHTerminalCell](unsafeUninitializedCapacity: count) { buffer, initialized in
+            guard let out = buffer.baseAddress else { return }
+            var x = 0
+            while x < count {
+                guard ghostty_cell_get_multi(
+                    (raws + x).pointee, keyCount, reads.cellKeys, reads.cellValues, nil
+                ).rawValue == success else {
+                    // A rejected decode would leave the previous cell's values in
+                    // the slots; draw a blank cell instead of repeating them.
+                    (out + x).initialize(to: SSHTerminalCell(
+                        scalar: 0, cluster: nil, columns: 1,
+                        foreground: foreground, background: background, style: SSHTerminalCellStyle()
+                    ))
+                    x += 1
+                    continue
                 }
-            } else if length > 1 {
-                var codepoints = [UInt32](repeating: 0, count: Int(length))
-                _ = codepoints.withUnsafeMutableBufferPointer {
-                    ghostty_render_state_row_cells_get(
-                        cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, $0.baseAddress
-                    )
-                }
-                cluster = String(String.UnicodeScalarView(codepoints.compactMap(Unicode.Scalar.init)))
+                let cell = reads.decoded.pointee
+                (out + x).initialize(to: readCell(
+                    cell, x: x, foreground: foreground, background: background,
+                    codepointTag: codepointTag, graphemeTag: graphemeTag,
+                    columns: cell.wide == wideTag ? 2 : (cell.wide == narrowTag ? 1 : 0)
+                ))
+                x += 1
             }
-            let width = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : (wide == GHOSTTY_CELL_WIDE_NARROW ? 1 : 0)
-            row.append(.init(
-                scalar: scalar, cluster: cluster, width: width,
-                foreground: fg, background: bg, style: style
-            ))
+            initialized = count
         }
-        return row
+    }
+
+    /// One decoded cell; selects it in the row state only when it needs the
+    /// style, a resolved background, or its grapheme.
+    private func readCell(
+        _ cell: SSHTerminalCellReads.Decoded, x: Int,
+        foreground: GhosttyColorRgb, background: GhosttyColorRgb,
+        codepointTag: Int32, graphemeTag: Int32, columns: UInt8
+    ) -> SSHTerminalCell {
+        guard cell.styled || cell.tag != codepointTag else {
+            return SSHTerminalCell(
+                scalar: cell.codepoint, cluster: nil, columns: columns,
+                foreground: foreground, background: background, style: SSHTerminalCellStyle()
+            )
+        }
+        let reads = cellReads
+        var scalar = cell.codepoint
+        var cluster: String?
+        var fg = foreground
+        var bg = background
+        var style = SSHTerminalCellStyle()
+        ghostty_render_state_row_cells_select(cells, UInt16(x))
+        if cell.styled {
+            // The batch stops at the first unset color (written counts the
+            // values read), so bg needs its own read only when fg is unset.
+            var written = 0
+            ghostty_render_state_row_cells_get_multi(
+                cells, SSHTerminalCellReads.styleKeyCount, reads.styleKeys, reads.styleValues, &written
+            )
+            // Nothing written (the select failed) keeps the default style
+            // rather than the previous styled cell's.
+            if written >= 1 { style = SSHTerminalCellStyle(reads.style.pointee) }
+            if written >= 2 { fg = reads.foreground.pointee }
+            if written == 3 {
+                bg = reads.background.pointee
+            } else if written == 1, ghostty_render_state_row_cells_get(
+                cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, reads.background
+            ) == GHOSTTY_SUCCESS {
+                bg = reads.background.pointee
+            }
+        } else if cell.tag != graphemeTag, ghostty_render_state_row_cells_get(
+            cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, reads.background
+        ) == GHOSTTY_SUCCESS {
+            // A background-color-only cell, palette or RGB.
+            bg = reads.background.pointee
+        }
+        if cell.tag == graphemeTag, let text = readCluster() {
+            scalar = 0
+            cluster = text
+        }
+        return SSHTerminalCell(
+            scalar: scalar, cluster: cluster, columns: columns,
+            foreground: fg, background: bg, style: style
+        )
+    }
+
+    /// The selected cell's grapheme when it has more than one codepoint.
+    private func readCluster() -> String? {
+        var length: UInt32 = 0
+        ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &length)
+        guard length > 1 else { return nil }
+        return withUnsafeTemporaryAllocation(of: UInt32.self, capacity: Int(length)) { codepoints in
+            guard ghostty_render_state_row_cells_get(
+                cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, codepoints.baseAddress
+            ) == GHOSTTY_SUCCESS else { return nil }
+            var scalars = String.UnicodeScalarView()
+            for value in codepoints {
+                if let scalar = Unicode.Scalar(value) { scalars.append(scalar) }
+            }
+            return String(scalars)
+        }
     }
 
     private static func sameCursor(_ a: GhosttyRenderStateCursor, _ b: GhosttyRenderStateCursor) -> Bool {
