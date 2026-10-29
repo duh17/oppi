@@ -82,7 +82,7 @@ async function main(): Promise<void> {
     switch (command) {
       case "run": {
         const code = await commandRun(config, peeled.rest.slice(1), {
-          beforeBoot: (udid) => ensureBootCapacity(config, udid),
+          beforeBoot: (udid, wait) => ensureBootCapacity(config, udid, wait),
         });
         // 130/143: canceled by SIGINT/SIGTERM; the next pool command reaps.
         if (code !== 130 && code !== 143) {

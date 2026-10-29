@@ -175,6 +175,17 @@ describe("build stamp", () => {
     expect(current(fx)).toBe(false);
   });
 
+  test("an include chain past the walk limit is never keyed instead of being truncated", () => {
+    const fx = checkout();
+    expect(buildKey(input(fx))).toBeDefined();
+    // Base -> Chain0 -> Chain1 -> ... : 70 files, more than the walk follows.
+    writeFileSync(join(fx.apple, "Base.xcconfig"), '#include "Chain0.xcconfig"\n');
+    for (let i = 0; i < 70; i += 1) {
+      writeFileSync(join(fx.apple, `Chain${i}.xcconfig`), i < 69 ? `#include "Chain${i + 1}.xcconfig"\n` : "LAST = 1\n");
+    }
+    expect(buildKey(input(fx))).toBeUndefined();
+  });
+
   test("only the environment the build reads is keyed", () => {
     const fx = checkout();
     const env = (extra: NodeJS.ProcessEnv) => ({ ...input(fx), env: { DEVELOPER_DIR: "/nonexistent/Xcode.app/Contents/Developer", ...extra } });

@@ -34,7 +34,6 @@ import {
   prepareSimulator,
   resolveRuntime,
   runXcrun,
-  type FirstBootGate,
   type PoolConfig,
 } from "./sim-pool-ops";
 import {
@@ -522,13 +521,14 @@ export async function reapOnce(config: PoolConfig, session: CommandSession): Pro
  * Keeps booting `targetUdid` under the booted-simulator ceiling: shuts down
  * least recently used idle pool simulators, then claims whose owner is gone
  * or idle. Simulators the pool does not manage count but are never touched.
- * When nothing can go, it waits (up to OPPI_SIM_POOL_WAIT seconds, polling every
+ * When nothing can go and `wait` is true, it waits (up to OPPI_SIM_POOL_WAIT seconds, polling every
  * 3 s, re-evaluating each time: a run that finishes leaves an idle simulator to
- * shut down) and then fails; it never boots past the ceiling.
+ * shut down) and then fails; it never boots past the ceiling. With `wait` false it
+ * only reports whether `targetUdid` may boot now.
  */
-export async function ensureBootCapacity(config: PoolConfig, targetUdid: string): Promise<void> {
+export async function ensureBootCapacity(config: PoolConfig, targetUdid: string, wait = true): Promise<boolean> {
   if (config.maxBooted === 0) {
-    return;
+    return true;
   }
   const session = new CommandSession();
   session.installHandlers();
@@ -538,7 +538,10 @@ export async function ensureBootCapacity(config: PoolConfig, targetUdid: string)
     while (true) {
       const booted = await freeBootCapacity(config, session, targetUdid);
       if (booted < config.maxBooted) {
-        return;
+        return true;
+      }
+      if (!wait) {
+        return false;
       }
       if (session.canceled) {
         die("canceled while waiting for booted-simulator capacity");
@@ -684,7 +687,6 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
   session.installHandlers();
   let acquired: AcquireSuccess | undefined;
   let done = false;
-  const firstBoot: FirstBootGate = {};
   try {
     // A session that already holds a claim gets that simulator back. If a
     // reaper or release is working on the slot, wait for it rather than
@@ -751,16 +753,17 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
     session.onSpawned = (child) => {
       recordOwnedPgid(owned, child.pgid);
     };
-    const udid = await ensureSim(session, config, owned.slot, firstBoot);
+    const ensured = await ensureSim(session, config, owned.slot);
+    const udid = ensured.udid;
     await prepareSimulator(
       session,
       config,
       udid,
       "normal",
-      () => ensureBootCapacity(config, udid),
+      (wait) => ensureBootCapacity(config, udid, wait),
       needsCleanBoot(acquired.previous),
+      ensured.created,
     );
-    firstBoot.lock?.release();
     if (session.canceled) {
       return session.cancelExitCode();
     }
@@ -773,7 +776,6 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
     );
     process.stdout.write(`${udid}\n`);
   } finally {
-    firstBoot.lock?.release();
     const stopped = await session.dispose();
     if (acquired && !done) {
       const previousClaim = acquired.previous?.claim;

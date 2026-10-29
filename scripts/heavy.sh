@@ -8,7 +8,7 @@
 #   xcode-build  2   build / build-for-testing phases      (OPPI_HEAVY_XCODE_BUILD)
 #   server-full  1   full vitest suite                     (OPPI_HEAVY_SERVER_FULL)
 #   ui-suite     2   XCUITest / E2E runs                   (OPPI_HEAVY_UI_SUITE)
-#   sim-first-boot 1 sim-pool's simctl create + first boot of a new simulator (OPPI_HEAVY_SIM_FIRST_BOOT)
+#   sim-first-boot 1 sim-pool's first boot of a new or erased simulator (OPPI_HEAVY_SIM_FIRST_BOOT)
 #
 # Other env: OPPI_HEAVY_DIR (slot files, default ~/Library/Caches/oppi-heavy),
 # OPPI_HEAVY_POLL (seconds between retries while every slot is busy, default 5),

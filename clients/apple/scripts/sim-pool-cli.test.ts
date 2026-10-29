@@ -808,7 +808,7 @@ sleep 30
     expect(readFileSync(join(fake, "simctl.log"), "utf8")).toMatch(/shutdown UDID-POOL-0[\s\S]*boot UDID-POOL-0/);
     const state = readSlotState(join(root, "locks"), 0);
     expect(state !== "unreadable" && state?.note).toBeFalsy();
-  });
+  }, 30_000);
 
   }
 

@@ -272,16 +272,24 @@ function gitOutput(root: string, args: string[]): Buffer | undefined {
 /** Environment variables the build reads: xcodebuild's toolchain selection and stamp-git-commit.sh's checkout root. */
 const BUILD_ENV = ["DEVELOPER_DIR", "TOOLCHAINS", "SDKROOT", "OPPI_REPO_ROOT", "OPPI_TELEMETRY_MODE"];
 
+const XCCONFIG_INCLUDE_LIMIT = 64;
+
 /**
  * Every `.xcconfig` the build can read, as `path\0content-or-absent` lines: the ones in `appleDir` plus
  * whatever they `#include` or `#include?` (relative to the including file), so a missing optional include
  * such as `Local.xcconfig` is part of the key as "absent".
  */
-function xcconfigInputs(appleDir: string): string[] {
+function xcconfigInputs(appleDir: string): string[] | undefined {
   const lines: string[] = [];
   const seen = new Set<string>();
+  let overflow = false;
   const visit = (path: string): void => {
-    if (seen.has(path) || seen.size > 64) return;
+    if (seen.has(path) || overflow) return;
+    // An include chain this long is not a real config; a truncated walk would miss files, so never key it.
+    if (seen.size >= XCCONFIG_INCLUDE_LIMIT) {
+      overflow = true;
+      return;
+    }
     seen.add(path);
     let text: string | undefined;
     try {
@@ -301,7 +309,7 @@ function xcconfigInputs(appleDir: string): string[] {
     // No checkout directory: nothing to include.
   }
   for (const name of roots) visit(join(appleDir, name));
-  return lines.sort();
+  return overflow ? undefined : lines.sort();
 }
 
 /** Hash of the checkout's source state (see above), or undefined when it cannot be determined. */
@@ -345,7 +353,9 @@ export function buildKey(input: BuildKeyInput): string | undefined {
   hash.update(source).update("\0").update(JSON.stringify([input.command, input.argv]));
   const developerDir = input.env.DEVELOPER_DIR ?? "";
   hash.update("\0").update(JSON.stringify(BUILD_ENV.map((name) => [name, input.env[name] ?? null])));
-  hash.update("\0").update(xcconfigInputs(input.appleDir).join("\n"));
+  const xcconfigs = xcconfigInputs(input.appleDir);
+  if (!xcconfigs) return undefined;
+  hash.update("\0").update(xcconfigs.join("\n"));
   try {
     // <Xcode>.app/Contents/Developer -> <Xcode>.app/Contents/version.plist
     hash.update(readFileSync(join(developerDir, "..", "version.plist")));
@@ -449,29 +459,24 @@ export async function waitForFlock(
 /** scripts/heavy.sh classes sim-pool takes itself: slot-count env knob and default. */
 const HEAVY_CLASSES = {
   "xcode-build": { knob: "OPPI_HEAVY_XCODE_BUILD", slots: 2 },
-  // One at a time: `simctl create` plus a new device's first boot (about two minutes of migration) spikes
+  // One at a time: a new or erased device's first boot (about two minutes of migration) spikes
   // the load average to 100+ on this host, so concurrent first boots slow every run that is already going.
   "sim-first-boot": { knob: "OPPI_HEAVY_SIM_FIRST_BOOT", slots: 1 },
 } as const;
 
 /**
- * Take one of scripts/heavy.sh's machine-wide `xcode-build` slots (same slot files and
- * env knobs), or nothing when an ancestor already holds that class (OPPI_HEAVY_HELD).
- * The child environment must carry `heldEnv` so a nested heavy.sh does not wait on us.
+ * Take one of scripts/heavy.sh's machine-wide slots of `heavyClass` (same slot files and env knobs),
+ * or nothing when an ancestor already holds that class (OPPI_HEAVY_HELD). The child environment must
+ * carry `heldEnv` so a nested heavy.sh does not wait on us. Resolves undefined when canceled or when
+ * the caller is gone. `deadlineMs` bounds the wait (checked after each full round of busy slots, so
+ * 0 means try once); it throws when the wait outlasts it. Without it the wait is unbounded.
  */
-export function acquireHeavyBuildSlot(
-  env: NodeJS.ProcessEnv,
-  session: Waiter,
-  log: (message: string) => void,
-): Promise<{ lock?: HeldLock; heldEnv: string; waitedSeconds: number } | undefined> {
-  return acquireHeavySlot("xcode-build", env, session, log);
-}
-
 export async function acquireHeavySlot(
   heavyClass: keyof typeof HEAVY_CLASSES,
   env: NodeJS.ProcessEnv,
   session: Waiter,
   log: (message: string) => void,
+  deadlineMs?: number,
 ): Promise<{ lock?: HeldLock; heldEnv: string; waitedSeconds: number } | undefined> {
   const held = env.OPPI_HEAVY_HELD ?? "";
   const marker = `:${heavyClass}:`;
@@ -509,6 +514,9 @@ export async function acquireHeavySlot(
       closeSync(fd);
     }
     if (session.canceled) return undefined;
+    if (deadlineMs !== undefined && Date.now() - started >= deadlineMs) {
+      throw new Error(`timed out after ${Math.round((Date.now() - started) / 1000)}s waiting for a machine-wide ${heavyClass} slot (${dir})`);
+    }
     if (!announced) {
       announced = true;
       log(`[sim-pool] all ${slots} machine-wide ${heavyClass} slots busy (${dir}); waiting`);

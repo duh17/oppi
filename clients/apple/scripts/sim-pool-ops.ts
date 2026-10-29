@@ -15,7 +15,6 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
-  acquireHeavyBuildSlot,
   checkoutDerivedData,
   cloneProducts,
   acquireHeavySlot,
@@ -852,29 +851,20 @@ export async function resolveRuntime(session: CommandSession, config: PoolConfig
 }
 
 /**
- * Holds the machine-wide `sim-first-boot` slot while a simulator is created and booted for the first
- * time (a new device migrates its data for about two minutes and drives the load average past 100).
- * `ensureSim` takes it before it creates or replaces a device; the caller releases it once
- * `prepareSimulator` finished, and in its cleanup path.
+ * The slot's simulator, created (or replaced when its runtime or device type differs) when missing.
+ * `created` means the device has never booted: its first boot migrates data for about two minutes,
+ * which `prepareSimulator` does under the machine-wide `sim-first-boot` slot.
  */
-export type FirstBootGate = { lock?: HeldLock };
-
-export async function ensureSim(session: CommandSession, config: PoolConfig, slot: number, firstBoot: FirstBootGate): Promise<string> {
+export async function ensureSim(
+  session: CommandSession,
+  config: PoolConfig,
+  slot: number,
+): Promise<{ udid: string; created: boolean }> {
   const runtime = await resolveRuntime(session, config);
   const devices = await listDevices(session);
   const found = findMatchingPoolDevice(devices, slot, runtime, config.deviceType);
   if (found.match) {
-    return found.match.udid;
-  }
-  if (!firstBoot.lock) {
-    const heavy = await acquireHeavySlot("sim-first-boot", process.env, session, log);
-    if (!heavy) {
-      die(session.canceled ? "canceled while waiting to create a simulator" : "caller is gone; not creating a simulator");
-    }
-    firstBoot.lock = heavy.lock;
-    if (heavy.waitedSeconds > 0) {
-      log(`[sim-pool] waited ${heavy.waitedSeconds}s for the machine-wide sim-first-boot slot`);
-    }
+    return { udid: found.match.udid, created: false };
   }
   for (const device of found.mismatches) {
     log(
@@ -894,7 +884,7 @@ export async function ensureSim(session: CommandSession, config: PoolConfig, slo
   if (created.code !== 0) {
     die(`failed to create simulator: ${created.stderr.trim()}`);
   }
-  return created.stdout.trim();
+  return { udid: created.stdout.trim(), created: true };
 }
 
 /**
@@ -1026,18 +1016,28 @@ async function runSimctl(session: CommandSession, args: string[], action: string
 }
 
 /**
- * `beforeBoot` runs right before a non-recovery `simctl boot` (recovery reboots
+ * `beforeBoot(wait)` runs right before a non-recovery `simctl boot` (recovery reboots
  * a device that was already booted). The lifecycle uses it to stay under the
- * booted-simulator ceiling.
+ * booted-simulator ceiling: `wait` true blocks until a simulator may boot (or fails);
+ * false only reports whether one may boot now.
+ *
+ * A first boot (`firstBoot`: a newly created device; always true for `recovery`, whose erase makes
+ * the next boot a first boot again) takes the machine-wide `sim-first-boot` slot for the boot, the
+ * readiness wait, and slimming: a new device migrates its data for about two minutes and pushes
+ * the load average past 100, so those run one at a time. The slot is taken after the capacity wait
+ * (a run waiting for capacity does not block other first boots), and capacity is re-checked
+ * without waiting once the slot is held, since a slot wait can outlast free capacity.
+ * The wait for the slot is bounded by OPPI_SIM_POOL_WAIT.
  */
 export async function prepareSimulator(
   session: CommandSession,
   config: PoolConfig,
   udid: string,
   mode: "normal" | "recovery",
-  beforeBoot?: () => Promise<void>,
+  beforeBoot?: (wait: boolean) => Promise<boolean>,
   /** The slot's last run was interrupted (see INTERRUPTED_NOTE): boot the device fresh. */
   cleanBoot = false,
+  firstBoot = false,
 ): Promise<void> {
   if (mode === "recovery") {
     log(`[sim-pool] Recovery: shutting down + erasing simulator ${udid}`);
@@ -1071,21 +1071,55 @@ export async function prepareSimulator(
       await runSimctl(session, ["shutdown", udid], "simctl shutdown");
     }
   }
-  if (mode === "normal" && beforeBoot) {
-    await beforeBoot();
+  let gate: HeldLock | undefined;
+  try {
+    while (true) {
+      if (mode === "normal" && beforeBoot) {
+        await beforeBoot(true);
+      }
+      if (mode !== "recovery" && !firstBoot) {
+        break;
+      }
+      gate ??= await takeFirstBootGate(session, config);
+      if (mode !== "normal" || !beforeBoot || (await beforeBoot(false))) {
+        break;
+      }
+      // Capacity filled while this run waited for the slot: give the slot back and wait for capacity.
+      gate.release();
+      gate = undefined;
+    }
+    await runSimctl(session, ["boot", udid], "simctl boot");
+    if (!(await waitForBootReadyWithRetries(session, config, udid))) {
+      die(
+        session.canceled
+          ? "canceled while waiting for boot-ready"
+          : `simulator ${udid} failed to reach boot-ready state after ${config.bootRetries + 1} readiness waits of ${config.bootTimeout}s`,
+      );
+    }
+    const slim = await slimSimulator(session, config, udid);
+    if (!slim.quiescent) {
+      die(slim.note ?? "slim did not reach quiescence");
+    }
+  } finally {
+    gate?.release();
   }
-  await runSimctl(session, ["boot", udid], "simctl boot");
-  if (!(await waitForBootReadyWithRetries(session, config, udid))) {
-    die(
-      session.canceled
-        ? "canceled while waiting for boot-ready"
-        : `simulator ${udid} failed to reach boot-ready state after ${config.bootRetries + 1} readiness waits of ${config.bootTimeout}s`,
-    );
+}
+
+async function takeFirstBootGate(session: CommandSession, config: PoolConfig): Promise<HeldLock> {
+  let heavy: Awaited<ReturnType<typeof acquireHeavySlot>>;
+  try {
+    heavy = await acquireHeavySlot("sim-first-boot", process.env, session, log, config.waitSeconds * 1000);
+  } catch (error) {
+    return die(`${error instanceof Error ? error.message : String(error)} (OPPI_SIM_POOL_WAIT=${config.waitSeconds})`);
   }
-  const slim = await slimSimulator(session, config, udid);
-  if (!slim.quiescent) {
-    die(slim.note ?? "slim did not reach quiescence");
+  if (!heavy) {
+    return die(session.canceled ? "canceled while waiting for the first-boot slot" : "caller is gone; not booting a new simulator");
   }
+  if (heavy.waitedSeconds > 0) {
+    log(`[sim-pool] waited ${heavy.waitedSeconds}s for the machine-wide sim-first-boot slot`);
+  }
+  // An ancestor that already holds the class (OPPI_HEAVY_HELD) leaves no lock of ours to release.
+  return heavy.lock ?? { path: "", release: () => {} };
 }
 
 /** The app the pool resets between runs (project.yml `Oppi` target; sim-pool-ops.test.ts checks they agree). */
@@ -1698,7 +1732,7 @@ async function runBuildPhase(input: {
       if (cache) {
         log(`[sim-pool] Compilation cache: ${cache.root}`);
       }
-      const heavy = await acquireHeavyBuildSlot(process.env, session, log);
+      const heavy = await acquireHeavySlot("xcode-build", process.env, session, log);
       if (!heavy) {
         phase.uncertain = true;
         phase.code = session.canceled ? session.cancelExitCode() : 143;
@@ -1904,7 +1938,7 @@ function commandRunExitCode(input: {
 export async function commandRun(
   config: PoolConfig,
   rawArgs: string[],
-  hooks: { beforeBoot?: (udid: string) => Promise<void> } = {},
+  hooks: { beforeBoot?: (udid: string, wait: boolean) => Promise<boolean> } = {},
 ): Promise<number> {
   const session = new CommandSession();
   session.installHandlers();
@@ -1947,7 +1981,6 @@ export async function commandRun(
   let prepEnd = runStart;
   let simPrep = 0;
   let slotReset = 0;
-  const firstBoot: FirstBootGate = {};
   let xcodeStart = runStart;
   let xcodeEnd = runStart;
   let videoPath: string | undefined;
@@ -2029,19 +2062,27 @@ export async function commandRun(
       return session.cancelExitCode();
     }
     log(`[sim-pool] Acquired slot ${owned.slot}`);
-    simUdId = await ensureSim(session, config, owned.slot, firstBoot);
+    const ensured = await ensureSim(session, config, owned.slot);
+    simUdId = ensured.udid;
     mkdirSync(derivedData, { recursive: true });
     log(`[sim-pool] Simulator: ${poolDeviceName(owned.slot)} (${simUdId})`);
     log(`[sim-pool] DerivedData: ${derivedData}`);
     prepStart = nowEpoch();
     const bootUdid = simUdId;
     const beforeBoot = hooks.beforeBoot;
-    await prepareSimulator(session, config, bootUdid, "normal", beforeBoot && (() => beforeBoot(bootUdid)), cleanBootOwed);
+    await prepareSimulator(
+      session,
+      config,
+      bootUdid,
+      "normal",
+      beforeBoot && ((wait) => beforeBoot(bootUdid, wait)),
+      cleanBootOwed,
+      ensured.created,
+    );
     cleanBootOwed = false;
     const resetStart = nowEpoch();
     await resetSlotAppState(session, bootUdid);
     slotReset = nowEpoch() - resetStart;
-    firstBoot.lock?.release();
     log(`[sim-pool] Reset app state on ${bootUdid} (${APP_BUNDLE_ID} uninstalled, keychain cleared, ${slotReset}s)`);
     prepEnd = nowEpoch();
     const baseLog = join(logDir, `pool-${owned.slot}-${stamp}.log`);
@@ -2199,7 +2240,6 @@ export async function commandRun(
       throw error;
     }
   } finally {
-    firstBoot.lock?.release();
     if (videoSession && !videoSession.supervised.retired) {
       const completed = await session.complete(videoSession.supervised, {
         stopFirst: true,
