@@ -50,7 +50,6 @@ final class ChatScreenModel {
     var showModelPicker = false
     var showComposer = false
     var showShareRedactionSheet = false
-    var selectedFilePanelTab: ChatFileBrowserPanelTab
 
     var visibleAudioStripItemIDs: Set<String> = []
     var nowPlayingDrawerExpanded = false
@@ -74,10 +73,6 @@ final class ChatScreenModel {
     var isOpeningTerminal = false
     /// The bar title's widest size (`updateTitleMaxWidth`).
     var titleMaxWidth: CGFloat = 320
-
-    init(selectedFilePanelTab: ChatFileBrowserPanelTab) {
-        self.selectedFilePanelTab = selectedFilePanelTab
-    }
 }
 
 /// The chat screen. UIKit owns its structure: the timeline
@@ -218,9 +213,7 @@ final class ChatViewController: UIViewController {
             initialText: initialInputText,
             initialRepoPointers: initialPendingFiles
         )
-        model = ChatScreenModel(
-            selectedFilePanelTab: ChatFileBrowserPanelTabStore.shared.tab(for: sessionId)
-        )
+        model = ChatScreenModel()
         super.init(nibName: nil, bundle: nil)
         navigationItem.largeTitleDisplayMode = .never
     }

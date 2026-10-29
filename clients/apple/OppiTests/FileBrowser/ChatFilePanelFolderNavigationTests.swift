@@ -3,8 +3,8 @@ import Testing
 import UIKit
 @testable import Oppi
 
-/// The chat Files panel's All tab: Back and Forward sit trailing in the bar
-/// and retrace the folder trail.
+/// The chat Files panel: Back and Forward sit trailing in the bar and
+/// retrace the folder trail.
 @Suite("Chat file panel folder Back and Forward")
 @MainActor
 struct ChatFilePanelFolderNavigationTests {
@@ -21,22 +21,17 @@ struct ChatFilePanelFolderNavigationTests {
         let inputs = ChatFilePanelInputs(
             sessionId: "session-1",
             workspaceId: "ws-1",
-            changedFiles: [],
             serverId: "server-1",
             worktreeId: nil,
             reviewCommentSelectionScope: nil,
             connection: ServerConnection(),
             apiClient: api,
             fileIndexStore: FileIndexStore(),
-            gitStatusStore: GitStatusStore(),
-            navigation: AppNavigation(),
-            closePanel: {}
+            navigation: AppNavigation()
         )
         let panel = ChatFilePanelViewController(
             root: makeTestAppRoot(),
             inputs: { inputs },
-            tab: { .all },
-            setTab: { _ in },
             onClose: {}
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
@@ -47,14 +42,15 @@ struct ChatFilePanelFolderNavigationTests {
             window.rootViewController = nil
         }
 
-        // Done alone leads; Back then Forward trail, both off at the root.
+        // Done alone leads; Back, Forward, then View Options trail; Back and
+        // Forward are off at the root.
         _ = await waitForMainActorCondition(timeout: .seconds(2)) {
             window.layoutIfNeeded()
             return panel.navigationItem.rightBarButtonItems != nil
         }
         #expect(panel.navigationItem.leftBarButtonItems?.map(\.title) == ["Done"])
         #expect(panel.navigationItem.rightBarButtonItems?.map(\.accessibilityIdentifier)
-            == [Self.forwardID, Self.backID])
+            == ["fileBrowser.viewOptions", Self.forwardID, Self.backID])
         #expect(try enabled(in: panel) == [false, false])
 
         try await openFolder("src", in: panel)

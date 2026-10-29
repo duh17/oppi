@@ -1,40 +1,9 @@
-import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Chat file browser panel")
 struct ChatFileBrowserPanelTests {
-    @Test func tabStoreDefaultsToChangedWhenSessionHasNoPreference() throws {
-        let fixture = try makeDefaults()
-        defer { fixture.cleanup() }
-        let store = ChatFileBrowserPanelTabStore(defaults: fixture.defaults)
-
-        #expect(store.tab(for: "session-1") == .changed)
-    }
-
-    @Test func tabStoreRemembersSelectionPerSession() throws {
-        let fixture = try makeDefaults()
-        defer { fixture.cleanup() }
-        let store = ChatFileBrowserPanelTabStore(defaults: fixture.defaults)
-
-        store.setTab(.all, for: "session-1")
-        store.setTab(.changed, for: "session-2")
-
-        #expect(store.tab(for: "session-1") == .all)
-        #expect(store.tab(for: "session-2") == .changed)
-    }
-
-    @Test func tabStoreFallsBackToChangedForMissingOrInvalidSessionIds() throws {
-        let fixture = try makeDefaults()
-        defer { fixture.cleanup() }
-        let store = ChatFileBrowserPanelTabStore(defaults: fixture.defaults)
-
-        store.setTab(.all, for: "   ")
-
-        #expect(store.tab(for: "") == .changed)
-        #expect(store.tab(for: "   ") == .changed)
-    }
-
     @Test func trailingColumnFollowsRegularWidthNotAPointThreshold() {
         #expect(TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: .regular))
         #expect(TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: .compact) == false)
@@ -53,83 +22,30 @@ struct ChatFileBrowserPanelTests {
         )
     }
 
-    @Test func changedFileRoutingOpensNonGitRelativePathsThroughSessionRawEndpoint() {
-        #expect(
-            SessionFileOpenRouting.mode(
-                path: ".pi/skills/oppi-dev/scripts/oppi-workflow.sh",
-                gitFile: nil
-            ) == .sessionTouched
-        )
-    }
-
-    @Test func changedFileRoutingKeepsGitFilesOnReviewDetail() {
-        let gitFile = GitFileStatus(
-            status: " M",
-            path: "clients/apple/Oppi/Features/Chat/ChatView.swift",
-            addedLines: 3,
-            removedLines: 1
-        )
-
-        #expect(
-            SessionFileOpenRouting.mode(path: gitFile.path, gitFile: gitFile) == .review
-        )
-    }
-
     @MainActor
-    @Test func panelReadersUseTheSessionCheckoutAndServer() throws {
+    @Test func panelReaderUsesTheSessionCheckoutAndServer() throws {
         let inputs = ChatFilePanelInputs(
             sessionId: "session-1",
             workspaceId: "workspace-1",
-            changedFiles: ["docs/notes.md"],
             serverId: "server-1",
             worktreeId: "wt-agent",
             reviewCommentSelectionScope: nil,
             connection: ServerConnection(),
             apiClient: nil,
             fileIndexStore: FileIndexStore(),
-            gitStatusStore: GitStatusStore(),
-            navigation: AppNavigation(),
-            closePanel: {}
+            navigation: AppNavigation()
         )
         let root = makeTestAppRoot()
 
-        // All: a tapped file pushes the full reader (own chrome and Edit) on the session checkout.
+        // A tapped file pushes the full reader (own chrome and Edit) on the session checkout.
         let reader = try #require(
-            ChatFilePanelViewController.debugAllFilesBrowserForTesting(root: root, inputs: inputs, workspaceId: "workspace-1")
+            ChatFilePanelViewController.debugBrowserForTesting(root: root, inputs: inputs, workspaceId: "workspace-1")
                 .debugPushedReaderForTesting(path: "docs/notes.md", name: "notes.md", size: nil)
         )
         #expect(reader.worktreeId == "wt-agent")
         #expect(reader.serverId == "server-1")
         #expect(reader.source == .workspaceFile)
         #expect(reader.chromeMode == .pushed)
-
-        // Changed: the review detail and its current-bytes reader stay on the same checkout.
-        let file = WorkspaceReviewFile(
-            path: "docs/notes.md",
-            status: " M",
-            addedLines: 1,
-            removedLines: 0,
-            isStaged: false,
-            isUnstaged: true,
-            isUntracked: false,
-            selectedSessionTouched: true
-        )
-        let changed = SessionFilesListViewController(root: root, navigator: .unattached)
-        changed.update(inputs: inputs, searchText: "")
-        let review = try #require(changed.debugReviewDetailForTesting(file: file))
-        #expect(review.worktreeId == "wt-agent")
-        #expect(review.serverId == "server-1")
-        let current = WorkspaceReviewFileDetailViewController(
-            configuration: review,
-            connection: ServerConnection(),
-            apiClient: nil,
-            navigation: AppNavigation()
-        ).currentFileViewerConfiguration
-        #expect(current.source == .workspaceFile)
-        #expect(current.workspaceId == "workspace-1")
-        #expect(current.worktreeId == "wt-agent")
-        #expect(current.serverId == "server-1")
-        #expect(current.sessionId == "session-1")
     }
 
     @Test func checkoutSubtitleNamesWorktreeOrWarnsWhenChatIsOnOne() {
@@ -145,21 +61,5 @@ struct ChatFileBrowserPanelTests {
         #expect(FileBrowserContentRenderingPolicy.checkoutSubtitle(
             source: .hostFile, worktreeId: "wt-agent", sessionWorktreeId: nil
         ) == nil)
-    }
-
-    private struct DefaultsFixture {
-        let suiteName: String
-        let defaults: UserDefaults
-
-        func cleanup() {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-    }
-
-    private func makeDefaults() throws -> DefaultsFixture {
-        let suiteName = "ChatFileBrowserPanelTests.\(UUID().uuidString)"
-        let defaults = (try #require(UserDefaults(suiteName: suiteName)))
-        defaults.removePersistentDomain(forName: suiteName)
-        return DefaultsFixture(suiteName: suiteName, defaults: defaults)
     }
 }

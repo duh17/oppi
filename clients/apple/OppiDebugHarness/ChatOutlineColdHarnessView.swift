@@ -553,8 +553,8 @@ private enum ChatRoutesFixture {
     static let changedPath = "Sources/App.swift"
     /// A Git change from outside the session.
     static let otherChangePath = "README.md"
-    /// A file the session wrote outside Git's changes: the Files panel opens
-    /// its current bytes instead of a review.
+    /// A file the session wrote outside Git's changes: the Git panel's This
+    /// session opens the session's copy instead of a diff.
     static let touchedPath = "Notes/plan.md"
     static let skillName = "route-skill"
     static let seedMarkerId = "chat-routes-user"
@@ -660,7 +660,6 @@ private enum ChatRoutesFixture {
             ScreenshotVolatileDefaults.apply([AppPreferences.ChatDisplay.styleKey: style])
         }
         AppPreferences.Share.setRedactionPolicy(.recommended)
-        ChatFileBrowserPanelTabStore.shared.setTab(.changed, for: sessionId)
         let store = ReviewCommentStore()
         store.load(workspaceId: workspace.id, sessionId: sessionId)
         for comment in store.comments {
@@ -1110,9 +1109,24 @@ private final class ChatRoutesURLProtocol: URLProtocol {
                 "changedFilesOverflow": 0,
             ])
         case ("GET", "\(workspace)/contents"):
+            // App.swift sorts before Route.md by name and after it by date,
+            // so a re-sort visibly flips them.
             body = Self.json([
                 "path": "",
-                "entries": [["name": "App.swift", "path": "Sources/App.swift", "type": "file", "size": 20, "modifiedAt": 1_800_000_000_000]],
+                "entries": [
+                    ["name": "Sources", "path": "Sources/", "type": "directory", "size": 0, "modifiedAt": 1_800_000_000_000],
+                    ["name": "App.swift", "path": "Sources/App.swift", "type": "file", "size": 20, "modifiedAt": 1_800_000_000_000],
+                    ["name": "Route.md", "path": "Route.md", "type": "file", "size": 40, "modifiedAt": 1_900_000_000_000],
+                ],
+                "truncated": false,
+            ])
+        case ("GET", "\(workspace)/contents/Sources"):
+            body = Self.json([
+                "path": "Sources/",
+                "entries": [
+                    ["name": "App.swift", "path": "Sources/App.swift", "type": "file", "size": 20, "modifiedAt": 1_800_000_000_000],
+                    ["name": "RouteView.swift", "path": "Sources/RouteView.swift", "type": "file", "size": 30, "modifiedAt": 1_800_000_000_000],
+                ],
                 "truncated": false,
             ])
         case ("GET", "/skills/route-skill"):
@@ -1124,7 +1138,9 @@ private final class ChatRoutesURLProtocol: URLProtocol {
         case ("GET", "/skills/route-skill/file"):
             body = Self.json(["content": "Route skill notes\n"])
         case ("GET", "\(workspace)/paths"):
-            body = Self.json(["paths": ["Sources/App.swift"], "truncated": false])
+            // "route" matches Route.md at the root and RouteView.swift in
+            // Sources/: a search there differs by scope.
+            body = Self.json(["paths": ["Sources/App.swift", "Sources/RouteView.swift", "Route.md"], "truncated": false])
         case ("GET", "/files/current"):
             contentType = "text/plain"
             body = Data("let route = \"chat\"\n".utf8)

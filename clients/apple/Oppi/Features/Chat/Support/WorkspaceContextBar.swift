@@ -4,16 +4,22 @@ import UIKit
 
 /// Pure-function extraction of the context bar's session-scoping rules.
 ///
-/// A workspace's bar (no session) and a session in a worktree of its own list
-/// the checkout's whole Git status: every change in the session's worktree is
-/// the session's, including ones its shell commands made. A session in the
-/// main checkout shares it with other work, so it lists only the files its
-/// edit and write calls touched ("This session") until the panel's switch
-/// asks for every change ("All changes").
+/// The Git panel is the one place a chat reviews what changed. A workspace's
+/// bar (no session) lists the checkout's whole Git status. A session in a
+/// worktree of its own opens on "This worktree": every change there is the
+/// session's, including ones its shell commands made. A session in the main
+/// checkout shares it with other work, so it opens on "This session": the
+/// files its edit and write calls touched, an approximation, since shell
+/// changes are not tracked. It can widen to "All changes". A worktree session
+/// can narrow to "This session" too.
 enum ContextBarScoping {
-    /// Which changes a main-checkout session's bar lists.
+    /// Which changes a session's bar lists.
     enum FileScope: Hashable {
+        /// The session's worktree: its whole Git status.
+        case worktree
+        /// The files the session's tool calls touched.
         case session
+        /// The shared checkout's whole Git status.
         case all
     }
 
@@ -23,15 +29,20 @@ enum ContextBarScoping {
         return worktreeId != WorkspaceWorktree.mainId
     }
 
-    /// Only a session in the main checkout can narrow to its own files, so
-    /// only its bar offers the This session / All changes switch.
-    static func offersFileScope(sessionId: String?, worktreeId: String?) -> Bool {
-        sessionId != nil && !isOwnWorktree(worktreeId)
+    /// The bar's scope switch, in segment order; none for a workspace's bar.
+    static func fileScopes(sessionId: String?, worktreeId: String?) -> [FileScope] {
+        guard sessionId != nil else { return [] }
+        return isOwnWorktree(worktreeId) ? [.worktree, .session] : [.session, .all]
+    }
+
+    /// What the bar lists when it opens: the switch's first scope.
+    static func defaultFileScope(sessionId: String?, worktreeId: String?) -> FileScope {
+        fileScopes(sessionId: sessionId, worktreeId: worktreeId).first ?? .all
     }
 
     /// Whether the bar lists the session's files instead of the Git status.
     static func filtersToSession(sessionId: String?, worktreeId: String?, fileScope: FileScope) -> Bool {
-        offersFileScope(sessionId: sessionId, worktreeId: worktreeId) && fileScope == .session
+        fileScope == .session && fileScopes(sessionId: sessionId, worktreeId: worktreeId).contains(.session)
     }
 
     /// The Git status narrowed to `changedFiles` (the session's
@@ -68,13 +79,15 @@ enum ContextBarScoping {
         return gitStatus?.removedLines ?? 0
     }
 
+    /// The rows: in This session every touched file, Git's first; otherwise
+    /// Git's changes.
     static func displayFiles(
         gitStatus: GitStatus?,
         filtersToSession: Bool,
         sessionScope: SessionScopedGitStatus?
-    ) -> [GitFileStatus] {
-        if filtersToSession { return sessionScope?.sessionFiles ?? [] }
-        return gitStatus?.files ?? []
+    ) -> [GitPanelFile] {
+        if filtersToSession { return sessionScope?.touchedFiles ?? [] }
+        return (gitStatus?.files ?? []).map(GitPanelFile.init)
     }
 }
 
@@ -216,17 +229,40 @@ final class WorkspaceContextBarView: UIView {
     }()
     private var graphFooterKey: GraphFooterKey?
 
-    /// This bar's This session / All changes choice; not saved.
-    private var fileScope: ContextBarScoping.FileScope = .session {
+    /// The scope switch's choice, until the bar's session or checkout
+    /// changes; not saved. Nil is the checkout's default.
+    private var chosenFileScope: ContextBarScoping.FileScope? {
         didSet {
-            guard fileScope != oldValue else { return }
+            guard chosenFileScope != oldValue else { return }
             selectedPaths.removeAll()
             setNeedsUpdateProperties()
         }
     }
+    private var fileScopes: [ContextBarScoping.FileScope] {
+        ContextBarScoping.fileScopes(sessionId: context.sessionId, worktreeId: context.worktreeId)
+    }
+    private var fileScope: ContextBarScoping.FileScope {
+        chosenFileScope.flatMap { fileScopes.contains($0) ? $0 : nil }
+            ?? ContextBarScoping.defaultFileScope(sessionId: context.sessionId, worktreeId: context.worktreeId)
+    }
+
+    /// The session's whole touched list from the server
+    /// (`listSessionChanges`); the session's `changeStats.changedFiles` is
+    /// capped. Loaded while This session shows, again when the session's
+    /// count moves.
+    private var touchedList: (key: TouchedListKey, paths: [String])? {
+        didSet { if touchedList?.paths != oldValue?.paths { setNeedsUpdateProperties() } }
+    }
+    private var touchedListTask: Task<Void, Never>?
+    private var loadedTouchedListKey: TouchedListKey?
+    private struct TouchedListKey: Equatable {
+        let workspaceId: String
+        let sessionId: String
+        let filesChanged: Int
+    }
 
     // Derived on each render.
-    private var displayFiles: [GitFileStatus] = []
+    private var displayFiles: [GitPanelFile] = []
     private var sessionScope: SessionScopedGitStatus?
     private var filtersToSession = false
 
@@ -268,15 +304,15 @@ final class WorkspaceContextBarView: UIView {
         return button
     }()
     private let selectLabel = UILabel()
-    /// This session / All changes. One control for the bar's life: rebuilt
-    /// with the panel, it lost its selection animation mid-tap and flickered.
+    /// This worktree / This session, or This session / All changes. One
+    /// control for the bar's life: rebuilt with the panel, it lost its
+    /// selection animation mid-tap and flickered.
     private lazy var scopeControl: UISegmentedControl = {
-        let control = UISegmentedControl(items: [String(localized: "This session"), ""])
+        let control = UISegmentedControl(items: ["", ""])
         control.accessibilityIdentifier = "workspace-context-bar.scope"
         control.addAction(UIAction { [weak self, weak control] _ in
-            guard let self, let control else { return }
-            let next: ContextBarScoping.FileScope = control.selectedSegmentIndex == 0 ? .session : .all
-            self.fileScope = next
+            guard let self, let control, fileScopes.indices.contains(control.selectedSegmentIndex) else { return }
+            chosenFileScope = fileScopes[control.selectedSegmentIndex]
         }, for: .valueChanged)
         return control
     }()
@@ -362,7 +398,7 @@ final class WorkspaceContextBarView: UIView {
     // MARK: Derived state
 
     private var offersFileScope: Bool {
-        ContextBarScoping.offersFileScope(sessionId: context.sessionId, worktreeId: context.worktreeId)
+        !fileScopes.isEmpty
     }
 
     private var canLaunch: Bool {
@@ -484,9 +520,11 @@ final class WorkspaceContextBarView: UIView {
         )
         if filtersToSession, let sessionId = context.sessionId {
             let session = connection.sessionStore.sessions.first { $0.id == sessionId }
+            loadTouchedListIfNeeded(sessionId: sessionId, stats: session?.changeStats)
+            let fullList = touchedList.flatMap { $0.key.sessionId == sessionId ? $0.paths : nil }
             sessionScope = ContextBarScoping.sessionScope(
                 gitStatus: context.gitStatus,
-                changedFiles: session?.changeStats?.changedFiles
+                changedFiles: fullList ?? session?.changeStats?.changedFiles
             )
         } else {
             sessionScope = nil
@@ -601,7 +639,7 @@ final class WorkspaceContextBarView: UIView {
     /// the selection updates the rows in place, so a drag across them keeps
     /// its gesture. The graph has its own keys (`renderGraph`).
     private struct PanelKey: Equatable {
-        let files: [GitFileStatus]
+        let files: [GitPanelFile]
         let isSelecting: Bool
         /// The graph's section, or the HEAD row in its place.
         let showsGraph: Bool
@@ -673,6 +711,17 @@ final class WorkspaceContextBarView: UIView {
             )
             add(Self.padded(none, NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)))
         }
+        if filtersToSession {
+            // This session is the tool calls' record, not Git's.
+            let note = Self.label(
+                String(localized: "Approximate: files this session's edit and write calls touched. Changes made by shell commands are not listed."),
+                font: font(.caption2, .caption1),
+                color: UIColor(palette.comment)
+            )
+            note.numberOfLines = 0
+            note.accessibilityIdentifier = "workspace-context-bar.sessionNote"
+            add(Self.padded(note, NSDirectionalEdgeInsets(top: 2, leading: 12, bottom: 8, trailing: 12)))
+        }
 
         if showsGraph {
             // The graph's rows follow in the table.
@@ -710,15 +759,22 @@ final class WorkspaceContextBarView: UIView {
         }
     }
 
-    /// This session / All changes, for a session in the main checkout. The
-    /// count is every uncommitted change, so the other choice says what it adds.
+    /// The session's scopes. Whole-status scopes carry the uncommitted count,
+    /// so the choice says what it adds.
     private func updateScopeSwitch() {
-        let allCount = SessionFormatting.compactCount(context.gitStatus?.uncommittedCount ?? 0)
-        let allTitle = String(localized: "All changes (\(allCount))")
-        if scopeControl.titleForSegment(at: 1) != allTitle {
-            scopeControl.setTitle(allTitle, forSegmentAt: 1)
+        let scopes = fileScopes
+        let count = SessionFormatting.compactCount(context.gitStatus?.uncommittedCount ?? 0)
+        for (index, scope) in scopes.enumerated() where index < scopeControl.numberOfSegments {
+            let title = switch scope {
+            case .worktree: String(localized: "This worktree (\(count))")
+            case .session: String(localized: "This session")
+            case .all: String(localized: "All changes (\(count))")
+            }
+            if scopeControl.titleForSegment(at: index) != title {
+                scopeControl.setTitle(title, forSegmentAt: index)
+            }
         }
-        scopeControl.selectedSegmentIndex = fileScope == .session ? 0 : 1
+        scopeControl.selectedSegmentIndex = scopes.firstIndex(of: fileScope) ?? 0
         scopeControl.setTitleTextAttributes([.font: font(.caption1, .footnote, .medium)], for: .normal)
     }
 
@@ -1035,9 +1091,10 @@ final class WorkspaceContextBarView: UIView {
         return list
     }
 
-    /// A changed file's row, and its selection checkmark while selecting.
+    /// A changed file's row, and its selection checkmark while selecting. A
+    /// file Git does not report says it opens the session's copy, not a diff.
     private func fileRow(
-        _ file: GitFileStatus,
+        _ file: GitPanelFile,
         palette: ThemePalette
     ) -> (view: UIView, mark: UIImageView?) {
         let canTap = context.workspaceId != nil
@@ -1049,11 +1106,20 @@ final class WorkspaceContextBarView: UIView {
             check.widthAnchor.constraint(equalToConstant: 16).isActive = true
             mark = check
         }
-        let content = ChangedFileRow.content(
+        var afterCounts: [UIView] = []
+        if file.gitFile == nil {
+            afterCounts.append(Self.label(
+                String(localized: "no diff"),
+                font: font(.caption2, .caption1),
+                color: UIColor(palette.comment)
+            ))
+        }
+        var content = ChangedFileRow.content(
             path: file.path,
-            added: file.addedLines,
-            removed: file.removedLines,
+            added: file.gitFile?.addedLines,
+            removed: file.gitFile?.removedLines,
             leading: mark.map { [$0] } ?? [],
+            afterCounts: afterCounts,
             showsChevron: !isSelecting && canTap,
             fonts: .init(
                 path: font(.caption2, .caption1, mono: true),
@@ -1063,12 +1129,15 @@ final class WorkspaceContextBarView: UIView {
             verticalInset: usesRegularTypography ? 5 : 4,
             palette: palette
         )
+        if file.gitFile == nil {
+            content.labelParts.append(String(localized: "No diff, opens the session's copy"))
+        }
         let row = PlainRowButton(wrapping: content.stack) { [weak self] in
             guard let self else { return }
             if isSelecting {
                 toggleSelection(file.path)
             } else if canTap {
-                presentFileReview(file)
+                open(file)
             }
         }
         row.accessibilityLabel = content.labelParts.joined(separator: ", ")
@@ -1360,8 +1429,24 @@ final class WorkspaceContextBarView: UIView {
         if context.workspaceId != old.workspaceId
             || context.sessionId != old.sessionId
             || context.worktreeId != old.worktreeId {
+            chosenFileScope = nil
             resetQuickActionCache()
             if isSelecting { Task { await loadQuickActionsIfNeeded() } }
+        }
+    }
+
+    /// The server's whole touched list for This session, once per count the
+    /// session reports; a failure keeps the session's capped list.
+    private func loadTouchedListIfNeeded(sessionId: String, stats: SessionChangeStats?) {
+        guard let workspaceId = context.workspaceId, let apiClient else { return }
+        let key = TouchedListKey(workspaceId: workspaceId, sessionId: sessionId, filesChanged: stats?.filesChanged ?? 0)
+        guard key != loadedTouchedListKey else { return }
+        loadedTouchedListKey = key
+        touchedListTask?.cancel()
+        touchedListTask = Task { [weak self] in
+            guard let response = try? await apiClient.listSessionChanges(workspaceId: workspaceId, sessionId: sessionId),
+                  !Task.isCancelled else { return }
+            self?.touchedList = (key, response.files.map(\.path))
         }
     }
 
@@ -1386,6 +1471,15 @@ final class WorkspaceContextBarView: UIView {
 
     // MARK: Reviews
 
+    /// Git's diff for a file Git reports; otherwise the session's copy.
+    private func open(_ file: GitPanelFile) {
+        if let gitFile = file.gitFile {
+            presentFileReview(gitFile)
+        } else {
+            presentSessionCopy(path: file.path)
+        }
+    }
+
     private func presentFileReview(_ file: GitFileStatus) {
         guard let workspaceId = context.workspaceId else { return }
         let configuration = WorkspaceReviewFileDetailViewController.Configuration(
@@ -1395,7 +1489,7 @@ final class WorkspaceContextBarView: UIView {
             worktreeId: context.worktreeId,
             serverId: context.serverId,
             reviewCommentSelectionScope: reviewScopeClosingTheReview(),
-            navigationFiles: displayFiles.map { $0.toReviewFile() },
+            navigationFiles: displayFiles.compactMap { $0.gitFile?.toReviewFile() },
             allowsHorizontalBackSwipe: false
         )
         let detail = WorkspaceReviewFileDetailViewController(
@@ -1406,6 +1500,28 @@ final class WorkspaceContextBarView: UIView {
         )
         detail.onClose = { [weak self] in self?.dismissReview() }
         presentReview(detail)
+    }
+
+    /// The session's copy of a touched file Git cannot diff, with previous
+    /// and next through the other such files.
+    private func presentSessionCopy(path: String) {
+        guard let workspaceId = context.workspaceId, let sessionId = context.sessionId else { return }
+        let others = displayFiles.filter { $0.gitFile == nil }.map(\.path)
+        let viewer = SessionFilePages.sessionTouchedFileViewer(
+            workspaceId: workspaceId,
+            sessionId: sessionId,
+            serverId: context.serverId,
+            path: path,
+            navigationContext: FileBrowserNavigationContext(files: others.map {
+                FileBrowserSelection(path: $0, name: $0.lastPathComponentForDisplay, size: nil)
+            }),
+            reviewCommentSelectionScope: reviewScopeClosingTheReview(),
+            connection: connection,
+            apiClient: apiClient
+        )
+        // The reader draws its own bar; its Back closes the sheet.
+        viewer.onBackNavigation = { [weak self] in self?.dismissReview() }
+        presentReview(viewer)
     }
 
     private func presentCommit(_ commit: GitCommitSummary) {

@@ -746,7 +746,6 @@ extension ChatViewController {
             "sessionId": sessionId,
             "workspaceId": session?.workspaceId ?? "none",
             "isFilePanelVisible": String(model.isFilePanelVisible),
-            "selectedTab": model.selectedFilePanelTab.rawValue,
             "source": source,
         ])
         if model.isFilePanelVisible {

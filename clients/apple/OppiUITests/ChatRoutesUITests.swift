@@ -535,37 +535,68 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
-    func testFilesPanelPushesAReviewAndCloses() {
+    /// The Files panel is the checkout's browser alone (what changed is the
+    /// Git panel's): its search and View Options in the bar, Git's mark on a
+    /// changed file, and a file pushes its reader inside the panel.
+    func testFilesPanelBrowsesTheCheckoutAndCloses() {
         launch()
         app.buttons["chat.toolbar.files"].tap()
         let files = app.navigationBars["Files"]
         XCTAssertTrue(files.waitForExistence(timeout: 5), "Files panel did not open")
-        let changedSearch = app.searchFields["Search changed files"]
-        XCTAssertTrue(changedSearch.waitForExistence(timeout: 5), "Changed files must search in the panel's bar")
+        XCTAssertTrue(app.searchFields["Search files"].waitForExistence(timeout: 5), "The browser must search in the panel's bar")
+        XCTAssertFalse(app.buttons["Changed"].exists, "The Files panel has no Changed tab")
+        XCTAssertTrue(app.buttons["fileBrowser.viewOptions"].exists, "The panel's bar must offer View Options")
         // The panel's row, not the timeline's file pill beside the column.
-        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "App.swift")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "Changed file row missing")
+        // Git reports it changed, so its row says so.
+        let row = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "App.swift", "Modified, 2 added, 1 removed")
+        ).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "The changed file must carry Git's mark")
+        attachScreenshot("files-panel-browser")
+
+        // View Options sorts: App.swift is first by name, Route.md (newer)
+        // first by date.
+        let routeRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Route.md")).firstMatch
+        XCTAssertTrue(routeRow.waitForExistence(timeout: 5), "The root listing did not load")
+        sortFiles(by: "name")
+        XCTAssertTrue(waitFor(row.frame.minY < routeRow.frame.minY), "Name order lists App.swift before Route.md")
+        sortFiles(by: "modified")
+        XCTAssertTrue(waitFor(routeRow.frame.minY < row.frame.minY), "Newest first lists Route.md before App.swift")
+        attachScreenshot("files-panel-sorted-by-date")
+        sortFiles(by: "name")
+        XCTAssertTrue(waitFor(row.frame.minY < routeRow.frame.minY), "Back to name order")
+
+        // Search scope: "route" from Sources/ finds Route.md (root) and
+        // RouteView.swift everywhere, only RouteView.swift in this folder.
+        // The folder's row ("Sources, Contains changes"), not a timeline pill.
+        app.buttons.matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", "Sources", "Sources, ")).firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Sources"].waitForExistence(timeout: 5), "The Sources folder did not open")
+        let search = app.searchFields["Search files"]
+        search.tap()
+        search.typeText("route")
+        let rootHit = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Route.md")).firstMatch
+        let folderHit = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "RouteView.swift")).firstMatch
+        let scopes = app.segmentedControls.matching(NSPredicate(format: "identifier != %@", "workspace-context-bar.scope"))
+            .containing(.button, identifier: "Everywhere").firstMatch
+        XCTAssertTrue(scopes.waitForExistence(timeout: 5), "Searching below the root must offer Everywhere / this folder")
+        XCTAssertTrue(rootHit.waitForExistence(timeout: 5), "Everywhere must find the root's Route.md")
+        XCTAssertTrue(folderHit.exists, "Everywhere must find Sources/RouteView.swift")
+        attachScreenshot("files-panel-search-everywhere")
+        scopes.buttons["Sources"].tap()
+        XCTAssertTrue(waitForDisappearance(of: rootHit), "This folder must drop Route.md, which is outside Sources/")
+        XCTAssertTrue(folderHit.exists, "This folder must keep Sources/RouteView.swift")
+        attachScreenshot("files-panel-search-this-folder")
+        scopes.buttons["Everywhere"].tap()
+        XCTAssertTrue(rootHit.waitForExistence(timeout: 5), "Everywhere must bring Route.md back")
+        // The search bar's dismiss (iOS 27 labels it Close, beside the field).
+        let endSearch = app.buttons.matching(NSPredicate(format: "label IN %@", ["Close", "Cancel"])).firstMatch
+        endSearch.tap()
+        app.buttons["fileBrowser.inlineBack"].tap()
+        XCTAssertTrue(files.waitForExistence(timeout: 5), "Back must return to the root")
+
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "The listing must stay after a re-sort")
         row.tap()
-        let review = app.navigationBars["App.swift"]
-        XCTAssertTrue(review.waitForExistence(timeout: 5), "The file review was not pushed inside the panel")
-        attachScreenshot("files-panel-push")
-        assertRunning()
-        barButton(review, NSPredicate(format: "identifier == %@", "BackButton")).tap()
-        XCTAssertTrue(files.waitForExistence(timeout: 5), "Back must pop to the file list")
-
-        // A file the session wrote outside Git opens its current bytes.
-        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "plan.md")).firstMatch.tap()
-        popPushedReader(returningTo: files, "The session file")
-
-        // All: the tab's own search takes the bar, and a file pushes its reader.
-        app.buttons["All"].firstMatch.tap()
-        XCTAssertTrue(app.searchFields["Search files"].waitForExistence(timeout: 5), "The All tab must search in the panel's bar")
-        let allRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "App.swift")).firstMatch
-        XCTAssertTrue(allRow.waitForExistence(timeout: 5), "The workspace listing did not load")
-        allRow.tap()
         popPushedReader(returningTo: files, "The workspace file")
-        app.buttons["Changed"].firstMatch.tap()
-        XCTAssertTrue(changedSearch.waitForExistence(timeout: 5), "Changed must take the bar back")
 
         if app.buttons["Done"].exists {
             app.buttons["Done"].tap()
@@ -1022,9 +1053,28 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertFalse(otherChange.exists, "This session must not list a change the session did not make")
         let scope = app.segmentedControls["workspace-context-bar.scope"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5), "A main-checkout session must offer This session / All changes")
+        XCTAssertTrue(
+            app.staticTexts["workspace-context-bar.sessionNote"].exists,
+            "This session must say it is approximate"
+        )
         attachScreenshot("git-panel-this-session")
+
+        // A file the session wrote that Git does not report opens the
+        // session's copy, not a diff.
+        let sessionCopyRow = app.buttons.matching(
+            NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "plan.md", "No diff")
+        ).firstMatch
+        XCTAssertTrue(sessionCopyRow.waitForExistence(timeout: 5), "This session must list a touched file Git does not report")
+        sessionCopyRow.tap()
+        let sessionCopyBack = app.buttons["fullscreen-code.back"]
+        XCTAssertTrue(sessionCopyBack.waitForExistence(timeout: 10), "The session's copy did not open")
+        attachScreenshot("git-panel-session-copy")
+        sessionCopyBack.tap()
+        XCTAssertTrue(waitForDisappearance(of: sessionCopyBack), "Back must close the session's copy")
+        XCTAssertTrue(panel.exists, "Closing the session's copy must leave the Git panel open")
         scope.buttons["All changes (2)"].tap()
         XCTAssertTrue(otherChange.waitForExistence(timeout: 5), "All changes must list every change")
+        XCTAssertFalse(sessionCopyRow.exists, "All changes lists Git's changes only")
         attachScreenshot("git-panel-all-changes")
         scope.buttons["This session"].tap()
         XCTAssertTrue(waitForDisappearance(of: otherChange), "This session must narrow the list again")
@@ -1183,6 +1233,18 @@ final class ChatRoutesUITests: XCTestCase {
     }
 
     /// A text reader pushed inside a panel: its own back control pops it.
+    /// Sorts by View Options' `key` in its own starting direction (names A to
+    /// Z, dates newest first): another key first, so the pick is a new key
+    /// and not a reversal of a choice an earlier run left on the device.
+    private func sortFiles(by key: String) {
+        for pick in [key == "kind" ? "size" : "kind", key] {
+            app.buttons["fileBrowser.viewOptions"].tap()
+            let item = app.buttons["fileBrowser.sort.\(pick)"]
+            XCTAssertTrue(item.waitForExistence(timeout: 5), "View Options must offer sort \(pick)")
+            item.tap()
+        }
+    }
+
     private func popPushedReader(returningTo bar: XCUIElement, _ name: String) {
         let back = app.buttons["fullscreen-code.back"]
         XCTAssertTrue(back.waitForExistence(timeout: 10), "\(name) reader was not pushed")

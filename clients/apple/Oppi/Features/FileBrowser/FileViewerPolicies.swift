@@ -11,8 +11,8 @@ enum FileBrowserContentSource: Equatable {
     case workspaceFile
     case sessionFile(sessionId: String)
     case hostFile
-    /// A file the session reported touching (the chat Files panel's Changed
-    /// tab): each path reads from the host or the session's copy, as
+    /// A file the session reported touching that Git cannot diff (the Git
+    /// panel's This session): each path reads from the host or the session's copy, as
     /// `SessionTouchedFileLoadRoute` decides, and so do its resources.
     case sessionTouched(SessionTouchedFileOrigin)
 

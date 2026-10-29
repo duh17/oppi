@@ -400,9 +400,11 @@ private final class PopoverInCompactWidth: NSObject, UIPopoverPresentationContro
 /// `routerSearchable` installs this on the hosting controller's navigation
 /// item and keeps the screen's search text and the bar in sync both ways.
 @MainActor
-final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchControllerDelegate {
+final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchControllerDelegate, UISearchBarDelegate {
     let searchController = UISearchController(searchResultsController: nil)
     var onTextChange: (String) -> Void = { _ in }
+    /// The person picked another scope button (`setScopes`).
+    var onScopeChange: (Int) -> Void = { _ in }
     private var hidesWhenScrolling = true
     /// The search became active or ended, by the user or by `setPresented`.
     var onPresentationChange: (Bool) -> Void = { _ in }
@@ -413,6 +415,7 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
         searchController.delegate = self
         searchController.obscuresBackgroundDuringPresentation = false
         searchController.searchBar.placeholder = prompt
+        searchController.searchBar.delegate = self
     }
 
     var text: String {
@@ -457,8 +460,26 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchC
         searchController.isActive = presented
     }
 
+    /// Screen state to bar: the scope buttons shown while searching (nil for
+    /// none) and the chosen one. Does not echo back through `onScopeChange`.
+    func setScopes(_ titles: [String]?, selected: Int) {
+        let bar = searchController.searchBar
+        if bar.scopeButtonTitles != titles {
+            bar.scopeButtonTitles = titles
+            searchController.automaticallyShowsScopeBar = titles != nil
+            if titles == nil, bar.showsScopeBar { bar.showsScopeBar = false }
+        }
+        if let titles, titles.indices.contains(selected), bar.selectedScopeButtonIndex != selected {
+            bar.selectedScopeButtonIndex = selected
+        }
+    }
+
     func updateSearchResults(for searchController: UISearchController) {
         onTextChange(text)
+    }
+
+    func searchBar(_ searchBar: UISearchBar, selectedScopeButtonIndexDidChange selectedScope: Int) {
+        onScopeChange(selectedScope)
     }
 
     func didPresentSearchController(_ searchController: UISearchController) {

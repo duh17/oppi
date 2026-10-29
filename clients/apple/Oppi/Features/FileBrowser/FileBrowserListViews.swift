@@ -162,8 +162,13 @@ final class FileBrowserColumnSearchField: UIView {
     let textField = UITextField()
     /// The clear button emptied the field.
     var onClear: (() -> Void)?
+    /// The person picked another search scope (`setScopes`).
+    var onScopeChange: ((Int) -> Void)?
     private let icon = UIImageView(image: UIImage(systemName: "magnifyingglass"))
     private let clearButton = UIButton(type: .system)
+    /// Everywhere / this folder, under the field while a search runs below
+    /// the root, as the bar search's scope bar.
+    private let scopeControl = UISegmentedControl()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -198,15 +203,40 @@ final class FileBrowserColumnSearchField: UIView {
         for view in [icon, clearButton] {
             view.setContentHuggingPriority(.defaultLow, for: .vertical)
         }
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
+        scopeControl.accessibilityIdentifier = "fileBrowser.searchScope"
+        scopeControl.isHidden = true
+        scopeControl.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            onScopeChange?(scopeControl.selectedSegmentIndex)
+        }, for: .valueChanged)
+        let column = UIStackView(arrangedSubviews: [row, scopeControl])
+        column.axis = .vertical
+        column.spacing = 8
+        column.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(column)
         NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            column.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
         ])
         syncClearButton()
+    }
+
+    /// The scope buttons (nil hides them) and the chosen one, without
+    /// echoing back as a change.
+    func setScopes(_ titles: [String]?, selected: Int) {
+        let current = (0..<scopeControl.numberOfSegments).map { scopeControl.titleForSegment(at: $0) ?? "" }
+        if current != (titles ?? []) {
+            scopeControl.removeAllSegments()
+            for (index, title) in (titles ?? []).enumerated() {
+                scopeControl.insertSegment(withTitle: title, at: index, animated: false)
+            }
+        }
+        scopeControl.isHidden = titles == nil
+        if let titles, titles.indices.contains(selected), scopeControl.selectedSegmentIndex != selected {
+            scopeControl.selectedSegmentIndex = selected
+        }
     }
 
     @available(*, unavailable)

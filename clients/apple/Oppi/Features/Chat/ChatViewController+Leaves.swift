@@ -1,7 +1,7 @@
 import UIKit
 
-// The chat's Git and Files panels, the screens they present, and the pages
-// the UIKit Files panel pushes (`SessionFilePages`). UIKit owns the screen
+// The chat's Git and Files panels, the screens they present, and the
+// session-copy page the Git panel opens (`SessionFilePages`). UIKit owns the screen
 // (`ChatViewController`) and its footer, title, and jump hint
 // (`ChatFooterViews`).
 
@@ -130,7 +130,7 @@ extension ChatViewController {
         let filters = ContextBarScoping.filtersToSession(
             sessionId: sessionId,
             worktreeId: session?.worktreeId,
-            fileScope: .session
+            fileScope: ContextBarScoping.defaultFileScope(sessionId: sessionId, worktreeId: session?.worktreeId)
         )
         let scope = filters
             ? ContextBarScoping.sessionScope(gitStatus: gitStatus, changedFiles: session?.changeStats?.changedFiles)
@@ -158,34 +158,25 @@ extension ChatViewController {
             return ChatFilePanelViewController(
                 root: root,
                 inputs: { [weak self] in self?.filePanelInputs },
-                tab: { [weak self] in self?.model.selectedFilePanelTab ?? .changed },
-                setTab: { [weak self] tab in
-                    guard let self else { return }
-                    self.model.selectedFilePanelTab = tab
-                    ChatFileBrowserPanelTabStore.shared.setTab(tab, for: self.sessionId)
-                },
                 onClose: { [weak self] in self?.closeChatFilePanel() }
             )
         }
     }
 
-    /// The Files panel's values: the session's files and checkout, this
-    /// chat's server stores, and its review-comment scope.
+    /// The Files panel's values: the session's checkout, this chat's server
+    /// stores, and its review-comment scope.
     private var filePanelInputs: ChatFilePanelInputs {
         let session = session
         return ChatFilePanelInputs(
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
-            changedFiles: session?.changeStats?.changedFiles ?? [],
             serverId: serverIdHint ?? connection.currentServerId,
             worktreeId: session?.worktreeId,
             reviewCommentSelectionScope: .activeSession(reviewCommentSelectionRouter),
             connection: connection,
             apiClient: apiClient,
             fileIndexStore: connection.fileIndexStore,
-            gitStatusStore: connection.gitStatusStore,
-            navigation: appNavigation,
-            closePanel: { [weak self] in self?.closeChatFilePanel() }
+            navigation: appNavigation
         )
     }
 
@@ -411,64 +402,29 @@ extension ChatViewController: ChatComposerSource {
     }
 }
 
-/// The pages the Files panel's Changed tab pushes: a Git change's review,
-/// or the current bytes of a file the session touched. Each runs in its own
-/// screen, so the panel's server, API client, and navigation go on
-/// explicitly.
+/// The page the Git panel opens for a file the session touched that Git
+/// cannot diff (committed and clean, outside the repository, or in a
+/// worktree that is gone): the session's copy of it. It runs in its own
+/// screen, so the panel's server and API client go on explicitly.
 @MainActor
 enum SessionFilePages {
-    static func reviewDetail(
+    static func sessionTouchedFileViewer(
         workspaceId: String,
         sessionId: String,
-        file: WorkspaceReviewFile,
-        worktreeId: String?,
         serverId: String?,
-        reviewCommentSelectionScope: ReviewCommentSelectionScope?,
-        navigationFiles: [WorkspaceReviewFile]
-    ) -> WorkspaceReviewFileDetailViewController.Configuration {
-        WorkspaceReviewFileDetailViewController.Configuration(
-            workspaceId: workspaceId,
-            selectedSessionId: sessionId,
-            file: file,
-            worktreeId: worktreeId,
-            serverId: serverId,
-            reviewCommentSelectionScope: reviewCommentSelectionScope,
-            navigationFiles: navigationFiles,
-            showsFileListInspector: false
-        )
-    }
-
-    /// Pushes the review with the chat's server, API client, and navigation.
-    static func pushReview(
-        _ configuration: WorkspaceReviewFileDetailViewController.Configuration,
-        inputs: ChatFilePanelInputs,
-        navigator: ScreenNavigator
-    ) {
-        navigator.push(WorkspaceReviewFileDetailViewController(
-            configuration: configuration,
-            connection: inputs.connection,
-            apiClient: inputs.apiClient,
-            navigation: inputs.navigation
-        ))
-    }
-
-    static func pushSessionTouchedFile(
-        workspaceId: String,
-        sessionId: String,
         path: String,
         navigationContext: FileBrowserNavigationContext,
         reviewCommentSelectionScope: ReviewCommentSelectionScope?,
-        inputs: ChatFilePanelInputs,
-        navigator: ScreenNavigator
-    ) {
-        let connection = inputs.connection
+        connection: ServerConnection,
+        apiClient: APIClient?
+    ) -> FileViewerViewController {
         let store = connection.workspaceStore
         let workspace = store.activeServerId
             .flatMap { store.workspacesByServer[$0]?.first { $0.id == workspaceId } }
             ?? store.workspaces.first { $0.id == workspaceId }
         let configuration = FileViewerViewController.Configuration(
             workspaceId: workspaceId,
-            serverId: inputs.serverId,
+            serverId: serverId,
             filePath: path,
             fileName: path.lastPathComponentForDisplay,
             source: .sessionTouched(SessionTouchedFileOrigin(
@@ -481,14 +437,14 @@ enum SessionFilePages {
             navigationContext: navigationContext,
             reviewCommentSelectionScope: reviewCommentSelectionScope
         )
-        navigator.push(FileViewerViewController(
+        return FileViewerViewController(
             configuration: configuration,
             services: .init(
-                apiClient: inputs.apiClient,
+                apiClient: apiClient,
                 audioPlayer: connection.audioPlayer,
                 sessionStore: connection.sessionStore
             )
-        ))
+        )
     }
 
     /// A comment started on a pushed file closes the panel first, so it

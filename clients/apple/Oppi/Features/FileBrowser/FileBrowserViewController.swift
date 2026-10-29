@@ -20,14 +20,18 @@ struct FileBrowserServices {
     }
 }
 
-/// The bar of the chat Files panel's All tab. The embedded browser cannot
-/// reach that screen's bar, so the panel applies it.
+/// The bar of the chat Files panel. The embedded browser cannot reach that
+/// screen's bar, so the panel applies it.
 struct FileBrowserEmbeddedChrome: Equatable {
     var title: String
     /// Back opens the parent folder.
     var canGoBack: Bool
     /// Forward opens the next folder down the trail Back left.
     var canGoForward: Bool
+    /// The search's scope bar (`FileBrowserSearchScope.titles`); nil at the
+    /// root, where there is only one scope.
+    var searchScopeTitles: [String]?
+    var searchScope: FileBrowserSearchScope
 }
 
 /// The keyed markdown viewport store the tree pane and pushed readers share,
@@ -63,6 +67,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     /// The chat panel applies this to its bar.
     var onEmbeddedChromeChange: ((FileBrowserEmbeddedChrome) -> Void)?
+
+    /// The device's sort and visibility choices, shared by every browser.
+    private let viewOptions: FileBrowserViewOptionsStore
 
     private let root: AppRootEnvironment
     private let serverId: String?
@@ -102,7 +109,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     /// neither renders nor reacts, the way a hosted SwiftUI screen stops.
     private var isOnScreen = false
     private var hasAppeared = false
-    private var searchedIndex: [String]?
+    private var searchedKey: SearchKey?
+    private var cachedChangeMarks: (files: [GitFileStatus], marks: FileBrowserChangeMarks)?
     private let viewportRestore = FileBrowserViewportRestore()
 
     // Views.
@@ -138,11 +146,21 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var lastThemeID: ThemeID?
     private var appliedBars: BarState?
     private var sidebarToggle: UIBarButtonItem?
+    private lazy var viewOptionsItem = Self.makeViewOptionsItem(store: viewOptions)
     private var lastChrome: FileBrowserEmbeddedChrome?
+    /// The listing's order and the checkout's Git changes, read each pass.
+    private var arrangement = FileBrowserViewOptions()
+    private var changeMarks = FileBrowserChangeMarks.none
 
     /// The `.fileBrowser` shell route.
-    init(root: AppRootEnvironment, target: FileBrowserNavTarget, showsSidebarToggle: Bool) {
+    init(
+        root: AppRootEnvironment,
+        target: FileBrowserNavTarget,
+        showsSidebarToggle: Bool,
+        viewOptions: FileBrowserViewOptionsStore = .shared
+    ) {
         self.root = root
+        self.viewOptions = viewOptions
         serverId = target.serverId
         scope = target.scope
         initialPath = target.path
@@ -169,9 +187,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         services: FileBrowserServices,
         navigator: ScreenNavigator,
         serverId: String?,
-        scope: FileBrowserScope
+        scope: FileBrowserScope,
+        viewOptions: FileBrowserViewOptionsStore = .shared
     ) {
         self.root = root
+        self.viewOptions = viewOptions
         self.serverId = serverId
         self.scope = scope
         initialPath = ""
@@ -198,9 +218,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     // MARK: Embedding (chat panel)
 
-    /// The panel re-rendered: its stores and its bar's search text.
-    func updateEmbedding(services: FileBrowserServices, searchText: String) {
+    /// The panel re-rendered: its stores and its bar's search text and scope.
+    func updateEmbedding(services: FileBrowserServices, searchText: String, searchScope: FileBrowserSearchScope) {
         self.services = services
+        setSearchScope(searchScope)
         setSearchText(searchText)
     }
 
@@ -236,6 +257,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             setSearchText(columnSearch.textField.text ?? "")
         }, for: .editingChanged)
         columnSearch.onClear = { [weak self] in self?.setSearchText("") }
+        columnSearch.onScopeChange = { [weak self] index in
+            self?.setSearchScope(FileBrowserSearchScope(rawValue: index) ?? .everywhere)
+        }
 
         for subview in [treeColumn, divider, paneContainer] {
             subview.translatesAutoresizingMaskIntoConstraints = false
@@ -252,6 +276,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         installConstraints()
 
         search.onTextChange = { [weak self] text in self?.setSearchText(text) }
+        search.onScopeChange = { [weak self] index in
+            self?.setSearchScope(FileBrowserSearchScope(rawValue: index) ?? .everywhere)
+        }
         installDataSource()
         registerForTraitChanges([UITraitHorizontalSizeClass.self]) { (screen: Self, _) in
             screen.setNeedsUpdateProperties()
@@ -323,10 +350,15 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             beginContent(services)
         }
 
-        // A query stays current with the file index under it.
+        arrangement = viewOptions.options
+        changeMarks = currentChangeMarks(services)
+
+        // A query stays current with the file index under it, and with its
+        // scope's folder.
         let index = services.fileIndexStore.paths
-        if index != searchedIndex {
-            searchedIndex = index
+        let searchKey = SearchKey(index: index, scope: state.searchScope, folder: currentDirectoryPath)
+        if searchKey != searchedKey {
+            searchedKey = searchKey
             if !trimmedQuery.isEmpty {
                 performLocalSearch(query: trimmedQuery)
             }
@@ -451,7 +483,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         endContent()
         uninstallSearch()
         state = ContentState(treeDirectoryPath: restoredDirectory, selectedFile: restoredSelection)
-        searchedIndex = nil
+        searchedKey = nil
         removePane()
         rows = [:]
         taps = [:]
@@ -585,8 +617,25 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var barTitle: String {
         if let selectedFile = state.selectedFile { return selectedFile.name }
         if isRoot { return scope.breadcrumbRootLabel }
-        let trimmed = currentDirectoryPath.hasSuffix("/") ? String(currentDirectoryPath.dropLast()) : currentDirectoryPath
+        return folderName(currentDirectoryPath)
+    }
+
+    private func folderName(_ path: String) -> String {
+        let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
         return trimmed.split(separator: "/").last.map(String.init) ?? scope.breadcrumbRootLabel
+    }
+
+    /// The checkout's Git changes, while the shared status store holds this
+    /// browser's checkout (a chat or workspace screen on it loaded it); the
+    /// browser never moves the store to another checkout itself.
+    private func currentChangeMarks(_ services: FileBrowserServices) -> FileBrowserChangeMarks {
+        guard case .workspace(let workspaceId, let worktreeId) = scope,
+              let status = services.connection.gitStatusStore.status(workspaceId: workspaceId, worktreeId: worktreeId),
+              status.isGitRepo else { return .none }
+        if let cached = cachedChangeMarks, cached.files == status.files { return cached.marks }
+        let marks = FileBrowserChangeMarks(status.files)
+        cachedChangeMarks = (status.files, marks)
+        return marks
     }
 
     private var contentSource: FileBrowserContentSource {
@@ -609,8 +658,9 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         return contentFilePath(relative)
     }
 
+    /// Previous/next walk the folder's files in the order the list shows them.
     private func listingNavigationContext(_ listing: DirectoryListingResponse) -> FileBrowserNavigationContext {
-        FileBrowserNavigationContext(files: listing.entries.compactMap { entry in
+        FileBrowserNavigationContext(files: arrangement.arranged(listing.entries).compactMap { entry in
             guard !entry.isDirectory else { return nil }
             return FileBrowserSelection(
                 path: filePath(for: entry, relativeTo: currentDirectoryPath),
@@ -725,17 +775,37 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         }
     }
 
-    /// Fuzzy match over the file index off the main thread; a result lands
-    /// only while its query is still the current one.
+    /// Fuzzy match over the file index (the scope's part of it) off the main
+    /// thread; a result lands only while its query and scope are still the
+    /// current ones.
     private func performLocalSearch(query: String) {
-        guard let candidates = services?.fileIndexStore.paths else { return }
+        guard let paths = services?.fileIndexStore.paths else { return }
+        let scope = effectiveSearchScope
+        let folder = currentDirectoryPath
         Task { [weak self] in
             let results = await Task.detached {
-                FuzzyMatch.search(query: query, candidates: candidates, limit: 100)
+                FuzzyMatch.search(query: query, candidates: scope.candidates(paths, folder: folder), limit: 100)
             }.value
-            guard let self, trimmedQuery == query else { return }
+            guard let self, trimmedQuery == query, effectiveSearchScope == scope, currentDirectoryPath == folder else { return }
             state.fuzzyResults = results
         }
+    }
+
+    /// This Folder only below the root; at the root both scopes are one.
+    private var effectiveSearchScope: FileBrowserSearchScope {
+        searchScopeTitles == nil ? .everywhere : state.searchScope
+    }
+
+    /// The scope bar's titles: Everywhere and the folder on screen, below
+    /// the root of a workspace (the home folder has no index to search).
+    private var searchScopeTitles: [String]? {
+        guard !isHostHome, !isRoot else { return nil }
+        return FileBrowserSearchScope.titles(folderName: folderName(currentDirectoryPath))
+    }
+
+    private func setSearchScope(_ scope: FileBrowserSearchScope) {
+        guard state.searchScope != scope else { return }
+        state.searchScope = scope
     }
 
     private var searchResultCountText: String {
@@ -1137,6 +1207,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                         name: name,
                         directory: directory.isEmpty ? nil : directory + "/",
                         highlights: Self.fileNameHighlights(fileName: name, fullPath: result.path, positions: result.positions),
+                        mark: changeMarks.mark(forFile: result.path),
                         column: column,
                         isSelected: selectedPath == result.path
                     ))
@@ -1146,7 +1217,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 append(items, to: .body)
             }
         } else if let listing = state.listing {
-            if listing.entries.isEmpty, !column {
+            let entries = arrangement.arranged(listing.entries)
+            if entries.isEmpty, !column {
                 nextOverlay = .empty
             } else {
                 if !isRoot {
@@ -1156,18 +1228,23 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                     nextRows[.breadcrumb] = .breadcrumb(segments: segments, depth: currentDepth, column: column)
                     append([.breadcrumb], to: .header)
                 }
-                if listing.entries.isEmpty {
+                if entries.isEmpty {
                     nextRows[.emptyDirectory] = .emptyDirectory
                     append([.emptyDirectory], to: .body)
                 } else {
                     let context = listingNavigationContext(listing)
                     var items: [Item] = []
-                    for entry in listing.entries {
+                    for entry in entries {
                         if entry.isDirectory {
                             let path = directoryPath(for: entry, relativeTo: currentDirectoryPath)
                             let item = Item.directory(path)
                             guard nextRows[item] == nil else { continue }
-                            nextRows[item] = .directory(name: entry.name, showsChevron: column || routesThroughShell, column: column)
+                            nextRows[item] = .directory(DirectoryRow(
+                                name: entry.name,
+                                hasChanges: changeMarks.folderHasChanges(path),
+                                showsChevron: column || routesThroughShell,
+                                column: column
+                            ))
                             nextTaps[item] = .directory(path)
                             items.append(item)
                         } else {
@@ -1179,6 +1256,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                                 size: entry.formattedSize,
                                 modified: entry.relativeModifiedTime,
                                 isRecent: entry.isRecentlyModified,
+                                mark: changeMarks.mark(forFile: path),
                                 column: column,
                                 isSelected: selectedPath == path
                             ))
@@ -1214,8 +1292,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         taps = nextTaps
         snapshot.reconfigureItems(changed)
 
-        // Rows animate only within one folder or one search; a new folder or
-        // a new search replaces them.
+        // Rows animate only within one folder or one search (a re-sort moves
+        // them); a new folder or a new search replaces them.
         let scopeKey = "\(column):\(isSearching):\(currentDirectoryPath)"
         let animated = snapshotScope == scopeKey && view.window != nil
         snapshotScope = scopeKey
@@ -1316,8 +1394,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             }
             cell.contentConfiguration = content
             applyPlainBackground(to: cell)
-        case .directory(let name, let showsChevron, let column):
-            if column {
+        case .directory(let directory):
+            let name = directory.name
+            let folderDot = directory.hasChanges ? Self.changeDot(comment.withAlphaComponent(0.7), diameter: 6) : nil
+            if directory.column {
                 configureTreeRow(
                     cell,
                     image: Self.treeSymbol("folder.fill"),
@@ -1326,6 +1406,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                     subtitle: nil,
                     trailingText: nil,
                     trailingColor: comment,
+                    changeDot: folderDot,
                     showsChevron: true,
                     isSelected: false
                 )
@@ -1339,15 +1420,21 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 content.textProperties.color = fg
                 content.textProperties.numberOfLines = 1
                 cell.contentConfiguration = content
-                if showsChevron {
-                    cell.accessories = [.disclosureIndicator()]
+                var accessories: [UICellAccessory] = folderDot.map { [$0] } ?? []
+                if directory.showsChevron {
+                    accessories.append(.disclosureIndicator())
                 }
+                cell.accessories = accessories
                 applyListBackground(to: cell)
             }
-            element = (name, false)
+            let changes = directory.hasChanges ? String(localized: "Contains changes") : nil
+            element = ([name, changes].compactMap { $0 }.joined(separator: ", "), false)
         case .file(let file):
             let icon = FileIcon.forPath(file.name)
             let trailingColor = file.isRecent ? UIColor(palette.green) : comment
+            let dot = file.mark.map { Self.changeDot(Self.markColor($0.kind, palette: palette), diameter: 7) }
+            let detail = Self.detailLine(size: file.size, mark: file.mark, palette: palette, font: file.column
+                ? UIFont.scaledMonospaced(.caption2) : UIFont.preferredFont(forTextStyle: .caption2))
             if file.column {
                 configureTreeRow(
                     cell,
@@ -1357,9 +1444,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                         string: file.name,
                         attributes: [.font: Self.font(.callout, file.isSelected ? .semibold : .regular), .foregroundColor: fg]
                     ),
-                    subtitle: file.size.isEmpty ? nil : file.size,
+                    subtitle: detail,
                     trailingText: file.modified,
                     trailingColor: trailingColor,
+                    changeDot: dot,
                     showsChevron: false,
                     isSelected: file.isSelected
                 )
@@ -1370,30 +1458,35 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 content.textProperties.font = UIFont.preferredFont(forTextStyle: .body)
                 content.textProperties.color = fg
                 content.textProperties.numberOfLines = 1
-                content.secondaryText = file.size
-                content.secondaryTextProperties.font = UIFont.preferredFont(forTextStyle: .caption2)
+                content.secondaryAttributedText = detail
                 content.secondaryTextProperties.color = comment
                 content.textToSecondaryTextVerticalPadding = 2
                 cell.contentConfiguration = content
-                cell.accessories = [
+                cell.accessories = (dot.map { [$0] } ?? []) + [
                     .label(text: file.modified, options: .init(tintColor: trailingColor, font: UIFont.preferredFont(forTextStyle: .caption2))),
                     .disclosureIndicator(),
                 ]
                 applyListBackground(to: cell)
             }
-            element = ([file.name, file.size, file.modified].filter { !$0.isEmpty }.joined(separator: ", "), file.isSelected)
+            element = (
+                [file.name, file.mark?.spokenDescription, file.size, file.modified]
+                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "),
+                file.isSelected
+            )
         case .result(let result):
             let icon = FileIcon.forPath(result.name)
             let title = Self.highlightedName(result, palette: palette)
+            let dot = result.mark.map { Self.changeDot(Self.markColor($0.kind, palette: palette), diameter: 7) }
             if result.column {
                 configureTreeRow(
                     cell,
                     image: Self.treeSymbol(icon.symbolName),
                     tint: comment,
                     title: title,
-                    subtitle: result.directory,
+                    subtitle: result.directory.map { NSAttributedString(string: $0) },
                     trailingText: nil,
                     trailingColor: comment,
+                    changeDot: dot,
                     showsChevron: false,
                     isSelected: result.isSelected
                 )
@@ -1409,10 +1502,13 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
                 content.secondaryTextProperties.lineBreakMode = .byTruncatingMiddle
                 content.textToSecondaryTextVerticalPadding = 2
                 cell.contentConfiguration = content
-                cell.accessories = [.disclosureIndicator()]
+                cell.accessories = (dot.map { [$0] } ?? []) + [.disclosureIndicator()]
                 applyListBackground(to: cell)
             }
-            element = ([result.name, result.directory].compactMap { $0 }.joined(separator: ", "), result.isSelected)
+            element = (
+                [result.name, result.mark?.spokenDescription, result.directory].compactMap { $0 }.joined(separator: ", "),
+                result.isSelected
+            )
         }
     }
 
@@ -1450,9 +1546,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         image: UIImage?,
         tint: UIColor,
         title: NSAttributedString,
-        subtitle: String?,
+        subtitle: NSAttributedString?,
         trailingText: String?,
         trailingColor: UIColor,
+        changeDot: UICellAccessory? = nil,
         showsChevron: Bool,
         isSelected: Bool
     ) {
@@ -1467,7 +1564,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         content.attributedText = title
         content.textProperties.numberOfLines = 1
         content.textProperties.lineBreakMode = .byTruncatingMiddle
-        content.secondaryText = subtitle
+        content.secondaryAttributedText = subtitle
         content.secondaryTextProperties.font = UIFont.scaledMonospaced(.caption2)
         content.secondaryTextProperties.color = comment
         content.secondaryTextProperties.numberOfLines = 1
@@ -1475,7 +1572,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         content.textToSecondaryTextVerticalPadding = 2
         content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10)
         cell.contentConfiguration = content
-        var accessories: [UICellAccessory] = []
+        var accessories: [UICellAccessory] = changeDot.map { [$0] } ?? []
         if let trailingText {
             accessories.append(.label(
                 text: trailingText,
@@ -1561,6 +1658,52 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             index = end + 1
         }
         return runs
+    }
+
+    /// A changed file's dot, by how Git changed it; a folder's dimmer one.
+    private static func changeDot(_ color: UIColor, diameter: CGFloat) -> UICellAccessory {
+        // A cell accessory's custom view is sized by its frame: UIKit
+        // refuses one that sizes itself with constraints.
+        let dot = UIView(frame: CGRect(x: 0, y: 0, width: diameter, height: diameter))
+        dot.backgroundColor = color
+        dot.layer.cornerRadius = diameter / 2
+        dot.isAccessibilityElement = false
+        return .customView(configuration: .init(
+            customView: dot,
+            placement: .trailing(),
+            reservedLayoutWidth: .custom(diameter),
+            maintainsFixedSize: true
+        ))
+    }
+
+    private static func markColor(_ kind: FileBrowserChangeMark.Kind, palette: ThemePalette) -> UIColor {
+        switch kind {
+        case .added: UIColor(palette.toolDiffAdded)
+        case .modified: UIColor(palette.orange)
+        case .deleted, .conflicted: UIColor(palette.toolDiffRemoved)
+        case .renamed: UIColor(palette.purple)
+        }
+    }
+
+    /// The size, then Git's line counts in their diff colors.
+    private static func detailLine(
+        size: String,
+        mark: FileBrowserChangeMark?,
+        palette: ThemePalette,
+        font: UIFont
+    ) -> NSAttributedString? {
+        let comment = UIColor(palette.comment)
+        let text = NSMutableAttributedString(string: size, attributes: [.font: font, .foregroundColor: comment])
+        func append(_ string: String, _ color: UIColor) {
+            if text.length > 0 { text.append(NSAttributedString(string: "  ", attributes: [.font: font])) }
+            text.append(NSAttributedString(string: string, attributes: [
+                .font: UIFont.scaled(.caption2, monospacedDigits: true),
+                .foregroundColor: color,
+            ]))
+        }
+        if let added = mark?.addedLines, added > 0 { append("+\(added)", UIColor(palette.toolDiffAdded)) }
+        if let removed = mark?.removedLines, removed > 0 { append("\u{2212}\(removed)", UIColor(palette.toolDiffRemoved)) }
+        return text.length > 0 ? text : nil
     }
 
     private static func treeSymbol(_ name: String) -> UIImage? {
@@ -1658,11 +1801,14 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     private func syncBars(layout: Layout) {
         let title = barTitle
+        let scopeTitles = searchScopeTitles
         guard isShellRoute else {
             let chrome = FileBrowserEmbeddedChrome(
                 title: title,
                 canGoBack: canGoBack,
-                canGoForward: forwardDirectoryPath != nil
+                canGoForward: forwardDirectoryPath != nil,
+                searchScopeTitles: scopeTitles,
+                searchScope: effectiveSearchScope
             )
             if chrome != lastChrome {
                 lastChrome = chrome
@@ -1674,10 +1820,13 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         navigationItem.hidesBackButton = replacesStackBackButton
 
         // The open file's own items (Edit, the editor's status, Preview, and
-        // Done) join this screen's bar.
-        let fileItems = paneViewer?.bar.trailingItems ?? []
-        if !(navigationItem.rightBarButtonItems ?? []).elementsEqual(fileItems, by: ===) {
-            navigationItem.rightBarButtonItems = fileItems
+        // Done) join this screen's bar, outside the folder's View Options.
+        var rightItems = paneViewer?.bar.trailingItems ?? []
+        if layout != .selectedFile {
+            rightItems.append(viewOptionsItem)
+        }
+        if !(navigationItem.rightBarButtonItems ?? []).elementsEqual(rightItems, by: ===) {
+            navigationItem.rightBarButtonItems = rightItems
         }
 
         // The bar's search lists files in place of the folder; the column
@@ -1686,10 +1835,63 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             installSearch()
             search.searchController.hidesNavigationBarDuringPresentation = UIDevice.current.userInterfaceIdiom != .pad
             search.setText(state.searchText)
+            search.setScopes(scopeTitles, selected: effectiveSearchScope.rawValue)
         } else {
             uninstallSearch()
         }
         columnSearch.setText(state.searchText)
+        columnSearch.setScopes(isSearching ? scopeTitles : nil, selected: effectiveSearchScope.rawValue)
+    }
+
+    /// View Options (Files.app's): sort by Name, Date Modified, Size, or Kind
+    /// (the chosen key again flips its direction), Folders First, and Show
+    /// Hidden Files. The menu is read when it opens, so it always shows the
+    /// device's current choice, whichever browser made it.
+    static func makeViewOptionsItem(store: FileBrowserViewOptionsStore = .shared) -> UIBarButtonItem {
+        let menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak store] completion in
+            guard let store else { return completion([]) }
+            completion(viewOptionsMenuElements(store: store))
+        }])
+        let item = UIBarButtonItem(
+            title: String(localized: "View Options"),
+            image: UIImage(systemName: "arrow.up.arrow.down"),
+            menu: menu
+        )
+        item.accessibilityIdentifier = "fileBrowser.viewOptions"
+        return item
+    }
+
+    private static func viewOptionsMenuElements(store: FileBrowserViewOptionsStore) -> [UIMenuElement] {
+        let options = store.options
+        let sorts = FileBrowserSortKey.allCases.map { key in
+            let chosen = options.sortKey == key
+            let action = UIAction(
+                title: key.title,
+                image: chosen ? UIImage(systemName: options.ascending ? "chevron.up" : "chevron.down") : nil
+            ) { _ in
+                store.update { $0.choose(key) }
+            }
+            action.state = chosen ? .on : .off
+            action.accessibilityIdentifier = "fileBrowser.sort.\(key.rawValue)"
+            if chosen {
+                action.accessibilityValue = options.ascending ? String(localized: "Ascending") : String(localized: "Descending")
+            }
+            return action
+        }
+        let foldersFirst = UIAction(title: String(localized: "Folders First")) { _ in
+            store.update { $0.foldersFirst.toggle() }
+        }
+        foldersFirst.state = options.foldersFirst ? .on : .off
+        foldersFirst.accessibilityIdentifier = "fileBrowser.foldersFirst"
+        let hidden = UIAction(title: String(localized: "Show Hidden Files")) { _ in
+            store.update { $0.showsHidden.toggle() }
+        }
+        hidden.state = options.showsHidden ? .on : .off
+        hidden.accessibilityIdentifier = "fileBrowser.showHidden"
+        return [
+            UIMenu(title: String(localized: "Sort By"), options: .displayInline, children: sorts),
+            UIMenu(options: .displayInline, children: [foldersFirst, hidden]),
+        ]
     }
 
     /// The split detail root's sidebar toggle in every phase, then the
@@ -1778,6 +1980,7 @@ private extension FileBrowserViewController {
         var listing: DirectoryListingResponse?
         var error: String?
         var searchText = ""
+        var searchScope = FileBrowserSearchScope.everywhere
         var fuzzyResults: [FuzzyMatch.ScoredPath] = []
         var treeDirectoryPath: String?
         var selectedFile: FileBrowserSelection?
@@ -1806,11 +2009,20 @@ private extension FileBrowserViewController {
         case truncated
     }
 
+    struct DirectoryRow: Equatable {
+        let name: String
+        /// Git reports a change somewhere below it.
+        let hasChanges: Bool
+        let showsChevron: Bool
+        let column: Bool
+    }
+
     struct FileRow: Equatable {
         let name: String
         let size: String
         let modified: String
         let isRecent: Bool
+        let mark: FileBrowserChangeMark?
         let column: Bool
         let isSelected: Bool
     }
@@ -1824,14 +2036,22 @@ private extension FileBrowserViewController {
         let name: String
         let directory: String?
         let highlights: [HighlightRun]
+        let mark: FileBrowserChangeMark?
         let column: Bool
         let isSelected: Bool
+    }
+
+    /// What a search ran over: a new index, scope, or scope folder runs it again.
+    struct SearchKey: Equatable {
+        let index: [String]?
+        let scope: FileBrowserSearchScope
+        let folder: String
     }
 
     enum Row: Equatable {
         case breadcrumb(segments: [FileBrowserBreadcrumbCell.Segment], depth: Int, column: Bool)
         case searchCount(String)
-        case directory(name: String, showsChevron: Bool, column: Bool)
+        case directory(DirectoryRow)
         case file(FileRow)
         case result(ResultRow)
         case emptyDirectory

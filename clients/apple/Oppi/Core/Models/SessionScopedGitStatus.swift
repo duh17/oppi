@@ -4,10 +4,35 @@
 /// (absolute paths from edit/write tool calls). This struct cross-references those
 /// against the workspace's git status (repo-relative paths) to produce a subset
 /// showing only what the current session modified.
+/// A file the Git panel lists: Git's change, or a file the session touched
+/// that Git does not report (committed and clean, outside the repository,
+/// or in a worktree that is gone). A Git file opens its diff; any other
+/// opens the session's copy.
+struct GitPanelFile: Sendable, Equatable {
+    /// Git's path for a Git file; otherwise the path the session's tool
+    /// calls used, which the session's file reader resolves.
+    let path: String
+    let gitFile: GitFileStatus?
+
+    init(_ gitFile: GitFileStatus) {
+        path = gitFile.path
+        self.gitFile = gitFile
+    }
+
+    init(sessionPath: String) {
+        path = sessionPath
+        gitFile = nil
+    }
+}
+
 struct SessionScopedGitStatus: Sendable, Equatable {
 
     /// Files from `gitStatus.files` that were touched by the session.
     let sessionFiles: [GitFileStatus]
+
+    /// Every file the session touched: its Git files in Git's order, then
+    /// the touched files Git does not report, in the session's order.
+    let touchedFiles: [GitPanelFile]
 
     /// Count of session-touched files present in the git status.
     let sessionFileCount: Int
@@ -33,6 +58,7 @@ struct SessionScopedGitStatus: Sendable, Equatable {
         guard !sessionChangedFiles.isEmpty else {
             return Self(
                 sessionFiles: [],
+                touchedFiles: [],
                 sessionFileCount: 0,
                 sessionAddedLines: 0,
                 sessionRemovedLines: 0
@@ -49,11 +75,18 @@ struct SessionScopedGitStatus: Sendable, Equatable {
             gitIndicesByName[fileName(of: path), default: []].append(index)
         }
         var matched = Set<Int>()
+        var outsideGit: [String] = []
+        var seenOutsideGit = Set<String>()
         for sessionChangedFile in sessionChangedFiles {
             let sessionPath = normalized(sessionChangedFile)
+            var found = false
             for index in gitIndicesByName[fileName(of: sessionPath)] ?? []
             where sessionPathMatches(sessionPath: sessionPath, gitRelativePath: gitPaths[index]) {
                 matched.insert(index)
+                found = true
+            }
+            if !found, seenOutsideGit.insert(sessionChangedFile).inserted {
+                outsideGit.append(sessionChangedFile)
             }
         }
         let filtered = gitStatus.files.indices.filter(matched.contains).map { gitStatus.files[$0] }
@@ -63,6 +96,7 @@ struct SessionScopedGitStatus: Sendable, Equatable {
 
         return Self(
             sessionFiles: filtered,
+            touchedFiles: filtered.map(GitPanelFile.init) + outsideGit.map(GitPanelFile.init(sessionPath:)),
             sessionFileCount: filtered.count,
             sessionAddedLines: addedLines,
             sessionRemovedLines: removedLines
