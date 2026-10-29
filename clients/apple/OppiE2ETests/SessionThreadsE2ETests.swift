@@ -406,10 +406,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertFalse(workspaceRow.label.contains(rootCost), "Workspace list ignored the saved choice: \(workspaceRow.label)")
         try returnToInbox()
 
-        // Relaunch on the saved choice: a launch argument would override it.
-        if let index = app.launchArguments.firstIndex(of: "-\(Self.sessionThreadsDefaultsKey)") {
-            app.launchArguments.removeSubrange(index...(index + 1))
-        }
+        // Relaunch on the saved choice.
         app.terminate()
         app.launch()
         XCTAssertTrue(inbox.waitForExistence(timeout: 30), "Inbox did not return after relaunch")
