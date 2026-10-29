@@ -90,7 +90,7 @@ final class E2ELaunchFailureLedgerTests: XCTestCase {
         ledger.recordFailure("inbox missing", for: key())
 
         XCTAssertNil(ledger.failure(for: key(inbox: false)))
-        XCTAssertNil(ledger.failure(for: key(arguments: ["-dev.chenda.Oppi.experiments.sessionThreads", "NO"])))
+        XCTAssertNil(ledger.failure(for: key(arguments: ["-dev.chenda.Oppi.experiments.liveVoice", "NO"])))
         XCTAssertNil(ledger.failure(for: key("B")))
     }
 
