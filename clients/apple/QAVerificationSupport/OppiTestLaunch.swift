@@ -18,9 +18,16 @@ enum OppiTestLaunch {
     /// invite is single-use).
     static let processToken = UUID().uuidString
 
-    /// The test bundle's file name: these UI-test bundles carry no Info.plist,
-    /// so `bundleIdentifier` is nil.
-    private static let isE2ETarget = Bundle(for: TestEndObserver.self).bundleURL.lastPathComponent == "OppiE2ETests.xctest"
+    /// Set by `SWIFT_ACTIVE_COMPILATION_CONDITIONS` on the OppiE2ETests target
+    /// (project.yml). These test bundles carry no Info.plist, so the bundle
+    /// identifier cannot tell the targets apart.
+    private static let isE2ETarget: Bool = {
+#if OPPI_E2E_TESTS
+        true
+#else
+        false
+#endif
+    }()
 
     /// The current test's token (UI target): every app a test makes shares it,
     /// so the first launch starts clean and a relaunch inside the test (a test

@@ -19,9 +19,10 @@ struct E2ELaunchFailureLedger {
     private var failures: [String: String] = [:]
     private var launched: Set<String> = []
 
-    /// Environment that differs per run or per test without changing the path.
+    /// Environment that differs per run without changing the path. The
+    /// auto-open workspace does change it, so it stays in the key.
     private static let ignoredEnvironment: Set<String> = [
-        "PI_E2E_INVITE_URL", "OPPI_E2E_LAUNCH_INVITE", "OPPI_E2E_AUTO_OPEN_WORKSPACE",
+        "PI_E2E_INVITE_URL", "OPPI_E2E_LAUNCH_INVITE",
     ]
 
     static func key(
@@ -54,6 +55,18 @@ struct E2ELaunchFailureLedger {
     }
 }
 
+/// Every launch in the E2E target shares one reset token, whichever class
+/// makes the app: a plain `XCTestCase` preview with its own token would clear
+/// a pairing a later `E2ETestCase` launch needs.
+final class E2ELaunchTokenTests: XCTestCase {
+    func testMakeAppSharesTheProcessTokenInTheE2ETarget() throws {
+        let arguments = OppiTestLaunch.makeApp().launchArguments
+        let tokenIndex = try XCTUnwrap(arguments.firstIndex(of: "-\(OppiTestLaunch.resetTokenKey)"))
+
+        XCTAssertEqual(arguments[tokenIndex + 1], OppiTestLaunch.processToken)
+    }
+}
+
 final class E2ELaunchFailureLedgerTests: XCTestCase {
     private func key(_ className: String = "A", inbox: Bool = true, arguments: [String] = []) -> String {
         E2ELaunchFailureLedger.key(
@@ -79,6 +92,21 @@ final class E2ELaunchFailureLedgerTests: XCTestCase {
         XCTAssertNil(ledger.failure(for: key(inbox: false)))
         XCTAssertNil(ledger.failure(for: key(arguments: ["-dev.chenda.Oppi.experiments.sessionThreads", "NO"])))
         XCTAssertNil(ledger.failure(for: key("B")))
+    }
+
+    func testSiblingThatAutoOpensAnotherWorkspaceStillRuns() {
+        func key(workspace: String) -> String {
+            E2ELaunchFailureLedger.key(
+                className: "A",
+                flags: [:],
+                arguments: [],
+                environment: ["OPPI_E2E_AUTO_OPEN_WORKSPACE": workspace]
+            )
+        }
+        var ledger = E2ELaunchFailureLedger()
+        ledger.recordFailure("workspace missing", for: key(workspace: "one"))
+
+        XCTAssertNil(ledger.failure(for: key(workspace: "two")))
     }
 
     func testFailureAfterAnEarlierSuccessIsNotRecorded() {

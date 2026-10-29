@@ -205,7 +205,7 @@ class E2ETestCase: XCTestCase {
         // drafts. Real transitions are off so taps do not race animation; a case
         // that proves a transition handoff turns them back on in
         // `configureE2ELaunch`.
-        let application = OppiTestLaunch.makeApp(animations: false)
+        let application = OppiTestLaunch.makeApp(resetToken: OppiTestLaunch.processToken, animations: false)
         // A stale preference from an earlier run must not decide which browser
         // a link opens; the web-link case asserts the in-app one.
         application.launchArguments += [

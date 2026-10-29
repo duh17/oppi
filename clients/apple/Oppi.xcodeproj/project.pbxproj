@@ -10919,6 +10919,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.chenda.OppiE2ETests;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) OPPI_E2E_TESTS";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = Oppi;
 			};
@@ -11330,6 +11331,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.chenda.OppiE2ETests;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) OPPI_E2E_TESTS";
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = Oppi;
 			};

@@ -46,28 +46,28 @@ struct TestLaunchContractTests {
         #expect(defaults.string(forKey: WhatsNewManager.lastSeenVersionKey) == WhatsNewManager.currentVersion)
     }
 
-    /// The paired-server index lives in the app group's suite, which only its
-    /// own `UserDefaults` clears; a reset that left it would let the next launch
-    /// see servers an earlier run paired.
-    @Test func resetClearsThePairedServerIndexInTheAppGroup() throws {
-        let shared = SharedConstants.sharedDefaults
-        let key = SharedConstants.pairedServerIdsKey
-        let original = shared.stringArray(forKey: key)
+    /// Each store clears through its own `UserDefaults` (the app group's suite
+    /// is not a domain of the token store). A throwaway suite stands in for the
+    /// app group: the shared unit host's real group domain holds other suites'
+    /// data.
+    @Test func resetClearsEveryStoreItIsGiven() throws {
+        let groupDomain = "test-launch-contract-group-\(UUID().uuidString)"
+        let group = try #require(UserDefaults(suiteName: groupDomain))
         let tokenStore = try makeDefaults()
         defer {
-            if let original { shared.set(original, forKey: key) } else { shared.removeObject(forKey: key) }
+            group.removePersistentDomain(forName: groupDomain)
             cleanUp(tokenStore)
         }
-        shared.set(["sha256:left-by-an-earlier-run"], forKey: key)
+        group.set(["sha256:left-by-an-earlier-run"], forKey: SharedConstants.pairedServerIdsKey)
 
         TestLaunchContract.applyReset(
             token: "run-1",
             tokenStore: tokenStore,
-            cleared: [(shared, SharedConstants.appGroupIdentifier)],
+            cleared: [(group, groupDomain)],
             directories: []
         )
 
-        #expect(shared.stringArray(forKey: key) == nil)
+        #expect(group.stringArray(forKey: SharedConstants.pairedServerIdsKey) == nil)
     }
 
     @Test func sameTokenOnRelaunchKeepsState() throws {

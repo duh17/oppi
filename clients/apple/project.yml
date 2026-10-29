@@ -720,6 +720,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.OppiE2ETests
         CODE_SIGN_IDENTITY: ""
         CODE_SIGNING_ALLOWED: "NO"
+        # QAVerificationSupport/OppiTestLaunch.swift picks the E2E reset token by it.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) OPPI_E2E_TESTS"
 
   OppiMacTests:
     type: bundle.unit-test
