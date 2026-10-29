@@ -89,6 +89,18 @@ private actor ManualRetryClock {
     }
 }
 
+/// True once `condition` holds; false after five seconds, so a regression
+/// fails the test instead of hanging the run.
+@MainActor
+private func waitUntilOnMain(_ condition: () -> Bool) async -> Bool {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while !condition() {
+        guard ContinuousClock.now < deadline else { return false }
+        try? await Task.sleep(for: .milliseconds(2))
+    }
+    return true
+}
+
 /// What a first setup attempt fails with in the retry tests.
 enum SetupRetryFailure: CaseIterable, Sendable {
     case unauthorized, forbidden, refreshRejected, timedOut, unavailable
@@ -1945,10 +1957,12 @@ struct ConnectionCoordinatorTests {
         // The first wait ends normally once it is cancelled, as a sleep that
         // finishes just as the scene goes inactive would.
         var sleeps = 0
+        var firstWaitReturned = false
         coordinator.initialSetupRetrySleep = { duration in
             sleeps += 1
             if sleeps == 1 {
                 while !Task.isCancelled { await Task.yield() }
+                firstWaitReturned = true
                 return
             }
             try await clock.sleep(duration)
@@ -1964,7 +1978,8 @@ struct ConnectionCoordinatorTests {
         coordinator.sceneDidResignActive()
         coordinator.sceneDidBecomeActive()
         #expect(await clock.waitForSleepers(1))
-        for _ in 0..<500 { await Task.yield() }
+        // The cancelled wait has returned and has had its turn on the main actor.
+        #expect(await waitUntilOnMain { firstWaitReturned })
 
         #expect(bootstrapCalls == 1, "the cancelled wait must not run a setup pass")
         #expect(coordinator._isSetupRetryArmedForTesting(server.id), "the new wait must stay armed")
