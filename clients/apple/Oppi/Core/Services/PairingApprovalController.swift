@@ -214,8 +214,15 @@ final class PairingApprovalController {
 
     /// Approves the request `presentedId` names (`Presented.id`): the one the sheet is
     /// showing, on its own server. A tap that arrives after the sheet moved on to another
-    /// request (or none) does nothing, an expired request is never signed, and nothing
-    /// is approved without the device owner's authentication.
+    /// request (or none), or while this one is already being approved, does nothing; an
+    /// expired request is never signed; and nothing is approved without the device owner's
+    /// authentication. A request that leaves while the owner authenticates or the server
+    /// answers (denied elsewhere, settled, expired) is not signed, and nothing is written
+    /// back for it: the sheet has moved on to whatever is presented now.
+    ///
+    /// `now` is this device's clock, compared with the server's `expiresAt`. A skewed device
+    /// clock can call a live request expired or the reverse; the server checks its own clock
+    /// again on approve, so this only spares the owner a doomed authentication.
     func approve(
         presentedId: String,
         coordinator: ConnectionCoordinator,
@@ -224,7 +231,7 @@ final class PairingApprovalController {
             await DeviceOwnerAuthentication.authenticate(reason: reason) == .success
         }
     ) async {
-        guard var current = presented, current.id == presentedId else { return }
+        guard var current = presented, current.id == presentedId, !current.isBusy else { return }
         let key = DenyKey(serverId: current.serverId, approvalId: current.approval.id)
         guard !blocksApprove(key) else {
             presented = nil
@@ -233,16 +240,18 @@ final class PairingApprovalController {
         func isExpired() -> Bool {
             current.approval.expiresAt <= Int64((now().timeIntervalSince1970 * 1_000).rounded())
         }
+        func showsStill() -> Bool { presented?.id == presentedId }
         guard !isExpired() else {
-            current.isBusy = false
             current.errorMessage = String(localized: "This request expired. Ask the device to try again.")
             presented = current
             return
         }
+        // Busy is set in the same turn as the guard above, so a second tap returns there.
         current.isBusy = true
         current.errorMessage = nil
         presented = current
         let authorized = await authenticate(String(localized: "Approve a new device"))
+        guard showsStill() else { return }
         guard authorized else {
             current.isBusy = false
             presented = current
@@ -266,9 +275,11 @@ final class PairingApprovalController {
         }
         do {
             try await connection.approvePairingApproval(current.approval)
-            preferred = nil
-            presented = nil
+            // The connection dropped the approval and synced `presented` to the next request.
+            if showsStill() { presented = nil }
+            if preferred?.serverId == current.serverId, preferred?.approvalId == current.approval.id { preferred = nil }
         } catch {
+            guard showsStill() else { return }
             current.isBusy = false
             current.errorMessage = UserFacingErrorText.normalize(error.localizedDescription)
             presented = current

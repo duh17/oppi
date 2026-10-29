@@ -129,6 +129,69 @@ struct PairingApprovalSheetTests {
         #expect(busyDuring == true)
     }
 
+    @Test("A request that leaves while the owner authenticates is not signed and leaves no stale sheet")
+    func requestLeavingDuringAuthenticationWritesNothingBack() async {
+        let controller = present([approval("pa_1")])
+
+        await controller.approve(
+            presentedId: "sha256:s|pa_1",
+            coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+            authenticate: { _ in
+                // Denied from another device while Face ID is up.
+                controller.apply(pending: [])
+                return true
+            }
+        )
+
+        // Signing would have failed here ("That server is not connected.") and written the
+        // old request back into the sheet.
+        #expect(controller.presented == nil)
+    }
+
+    @Test("When another request takes the sheet during authentication, the owner's yes is not applied to it")
+    func anotherRequestTakingTheSheetIsLeftAlone() async {
+        let controller = present([approval("pa_1", requestedAt: 1)])
+
+        await controller.approve(
+            presentedId: "sha256:s|pa_1",
+            coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+            authenticate: { _ in
+                controller.apply(pending: [(serverId: "sha256:s", serverName: "Mac", approval: self.approval("pa_2", requestedAt: 2))])
+                return true
+            }
+        )
+
+        #expect(controller.presented?.approval.id == "pa_2")
+        #expect(controller.presented?.isBusy == false)
+        #expect(controller.presented?.errorMessage == nil)
+    }
+
+    @Test("A second Approve tap while the first is authenticating asks for nothing more")
+    func doubleTapAuthenticatesOnce() async {
+        let controller = present([approval("pa_1")])
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+        var authentications = 0
+        var release: CheckedContinuation<Bool, Never>?
+        let first = Task {
+            await controller.approve(presentedId: "sha256:s|pa_1", coordinator: coordinator, authenticate: { _ in
+                authentications += 1
+                return await withCheckedContinuation { release = $0 }
+            })
+        }
+        #expect(await waitForMainActorCondition { release != nil })
+
+        await controller.approve(presentedId: "sha256:s|pa_1", coordinator: coordinator, authenticate: { _ in
+            authentications += 1
+            return true
+        })
+
+        #expect(authentications == 1)
+        #expect(controller.presented?.isBusy == true)
+        release?.resume(returning: false)
+        await first.value
+        #expect(controller.presented?.isBusy == false)
+    }
+
     // MARK: - Deny
 
     @Test("Deny queues exactly the presented request on its own server, not the same id on another")

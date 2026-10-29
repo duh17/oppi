@@ -55,7 +55,6 @@ Example:
 
 ### Added
 
-- **Client:** The **Approve New Device?** sheet turns Approve off when its countdown reaches zero, and an approval that expires while you are authenticating is refused with "This request expired" instead of being signed.
 - **Client:** **Usage** follows the server you switch to (each server's totals load on their own), its donut's total follows your text size, and VoiceOver reads the donut as one line ("Spend by model: sonnet-5-5 57%, …, total $55.50") with the model list below it. Tapping a day twice after pulling to refresh shows the new spend in its hourly chart.
 - **Client:** **Server Settings → Paired Devices** also revokes a device with a swipe (it still asks first), **Badge Icon**'s icons have spoken names, and **About This Server** labels the server's version "Oppi Server". The **Mobile Output Guide** switch now saves like every other server setting: if another device changed it first, the switch shows that change and says so.
 - **Client:** **Settings → Appearance** shows a gallery of themes with color previews. **Theme** (or **Light Theme** and **Dark Theme** with Match System) opens one card per theme, drawn in that theme's own colors with a mini chat, a line of code, and its accent swatches; tap a card to switch at once.
@@ -113,6 +112,7 @@ Example:
 
 ### Fixed
 
+- **Client:** **Approve New Device?** no longer sends an approval for a request that expires while you are authenticating (the sheet says it expired) or that another device denied in the meantime, and tapping Approve twice asks you to authenticate only once.
 - **Client:** Deleting a workspace or a session the server refuses (an error answer such as 500 or 409) keeps it on screen and shows the server's message, instead of removing it from the device while it still exists on the server. A session leaves the list once the server has deleted it.
 - **Client:** **Server Settings → Badge Icon** saves the icon before it shows it: when the Keychain write fails the old icon stays marked and an alert says why, instead of the new icon disappearing at the next launch.
 - **Client:** Several images pasted into the composer keep the order you pasted them in, and images still being prepared when you tap Send or clear the draft no longer appear in the next message.

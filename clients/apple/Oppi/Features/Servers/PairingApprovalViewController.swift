@@ -71,9 +71,12 @@ final class PairingApprovalViewController: SettingsListViewController<PairingApp
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         expiryTimer?.invalidate()
-        expiryTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        // In the common modes, so the countdown keeps ticking while the list scrolls.
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.secondPassed() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        expiryTimer = timer
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -108,12 +111,13 @@ final class PairingApprovalViewController: SettingsListViewController<PairingApp
         )
     }
 
-    /// The countdown moves; at zero the request is gone from the server, so the controller
-    /// drops it and the sheet goes.
+    /// The countdown moves. At zero (by this device's clock; the server decides for itself)
+    /// the controller drops the request and the sheet goes, unless an approval is in flight:
+    /// that one settles first, and what it leaves behind is synced after.
     private func secondPassed() {
         tick += 1
         setNeedsUpdateProperties()
-        if isExpired {
+        if isExpired, !presented.isBusy {
             expiryTimer?.invalidate()
             expiryTimer = nil
             controller.sync(coordinator: root.coordinator)
@@ -254,13 +258,14 @@ final class PairingApprovalHeaderCell: UICollectionViewListCell {
     required init?(coder: NSCoder) { nil }
 
     func configure(deviceName: String, serverName: String, symbol: String) {
-        let style = SettingsStyle.current
+        // The old prompt's tokens: themeBlue, themeFg, themeFgDim.
+        let palette = ThemeRuntimeState.currentPalette()
         symbolView.image = UIImage(systemName: symbol)
-        symbolView.tintColor = style.accent
+        symbolView.tintColor = UIColor(palette.blue)
         nameLabel.text = deviceName
-        nameLabel.textColor = style.title
+        nameLabel.textColor = UIColor(palette.fg)
         serverLabel.text = String(localized: "wants to pair with \(serverName)")
-        serverLabel.textColor = UIColor(ThemeRuntimeState.currentPalette().fgDim)
+        serverLabel.textColor = UIColor(palette.fgDim)
     }
 }
 
@@ -275,6 +280,7 @@ final class PairingApprovalActionBar: UIView {
     private let approveButton = UIButton(configuration: .filled())
     private let denyButton = UIButton(configuration: .bordered())
     private let hairline = UIView()
+    private lazy var hairlineHeight = hairline.heightAnchor.constraint(equalToConstant: 1)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -286,7 +292,17 @@ final class PairingApprovalActionBar: UIView {
         denyButton.accessibilityIdentifier = "pairing.approval.deny"
         approveButton.addAction(UIAction { [weak self] _ in self?.onApprove?() }, for: .touchUpInside)
         denyButton.addAction(UIAction { [weak self] _ in self?.onDeny?() }, for: .touchUpInside)
-        let stack = UIStackView(arrangedSubviews: [errorLabel, approveButton, denyButton])
+        // The error line sits 4 pt inside the buttons' edges.
+        let errorRow = UIView()
+        errorLabel.translatesAutoresizingMaskIntoConstraints = false
+        errorRow.addSubview(errorLabel)
+        NSLayoutConstraint.activate([
+            errorLabel.topAnchor.constraint(equalTo: errorRow.topAnchor),
+            errorLabel.bottomAnchor.constraint(equalTo: errorRow.bottomAnchor),
+            errorLabel.leadingAnchor.constraint(equalTo: errorRow.leadingAnchor, constant: 4),
+            errorLabel.trailingAnchor.constraint(equalTo: errorRow.trailingAnchor, constant: -4),
+        ])
+        let stack = UIStackView(arrangedSubviews: [errorRow, approveButton, denyButton])
         stack.axis = .vertical
         stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -297,7 +313,7 @@ final class PairingApprovalActionBar: UIView {
             hairline.topAnchor.constraint(equalTo: topAnchor),
             hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
             hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hairline.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
+            hairlineHeight,
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
@@ -308,13 +324,19 @@ final class PairingApprovalActionBar: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // One device pixel.
+        hairlineHeight.constant = 1 / max(traitCollection.displayScale, 1)
+    }
+
     func configure(isBusy: Bool, canApprove: Bool, errorMessage: String?, palette: ThemePalette) {
         backgroundColor = UIColor(palette.bg)
         hairline.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.25)
         let message = errorMessage.flatMap { $0.isEmpty ? nil : $0 }
         errorLabel.text = message
         errorLabel.textColor = UIColor(palette.red)
-        errorLabel.isHidden = message == nil
+        errorLabel.superview?.isHidden = message == nil
 
         var approve = UIButton.Configuration.filled()
         approve.title = String(localized: "Approve")
