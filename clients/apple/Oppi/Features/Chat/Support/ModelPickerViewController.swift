@@ -133,7 +133,7 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
         // Observation tracking re-runs this when the catalog or theme store changes.
         let cached = chatState.cachedModels
         let ready = chatState.modelsCacheReady
-        let theme = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let theme = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         guard isViewLoaded, cached != models || ready != modelsCacheReady || theme != themeID else { return }
         models = cached
         modelsCacheReady = ready

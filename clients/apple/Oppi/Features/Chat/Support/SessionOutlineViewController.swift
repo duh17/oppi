@@ -177,7 +177,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
     override func updateProperties() {
         super.updateProperties()
         // Observation tracking re-runs this when the theme store changes.
-        let current = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let current = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         guard current != themeID else { return }
         themeID = current
         applyTheme()
@@ -832,7 +832,7 @@ final class TreeSummaryInstructionsViewController: UIViewController, UITextViewD
     override func updateProperties() {
         super.updateProperties()
         // Observation tracking re-runs this when the theme store changes.
-        let palette = (HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
+        let palette = (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
         view.backgroundColor = UIColor(palette.bg)
         captionLabel.textColor = UIColor(palette.comment)
         textView.textColor = UIColor(palette.fg)

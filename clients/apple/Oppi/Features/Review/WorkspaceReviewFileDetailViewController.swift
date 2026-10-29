@@ -177,7 +177,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     private let stashButton = ReviewCommentStashFloatingButton()
     private lazy var column = TrailingColumnController(screen: self)
     private weak var fileList: ReviewFileListViewController?
-    private lazy var navigator: ScreenNavigator? = HostFactory.root(near: self)
+    private lazy var navigator: ScreenNavigator? = AppRootEnvironment.near(self)
         .map { ScreenNavigator.forUIKitScreen(self, root: $0) }
 
     // Bar items, kept while their inputs hold.
@@ -370,7 +370,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
         view.backgroundColor = UIColor(palette.bgDark)
         reconcileContent()
@@ -641,7 +641,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     }
 
     private func updateFileListColumn() {
-        guard showsReviewFileList, let root = HostFactory.root(near: self) else {
+        guard showsReviewFileList, let root = AppRootEnvironment.near(self) else {
             column.show(nil, root: nil)
             return
         }

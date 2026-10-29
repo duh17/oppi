@@ -216,7 +216,7 @@ enum Router {
         let container: RouterModalContainer
         if presentation.navigation != nil {
             let navigation = RouterNavigationController(rootViewController: screen)
-            if let theme = theme ?? HostFactory.root(near: presenter)?.themeStore {
+            if let theme = theme ?? AppRootEnvironment.near(presenter)?.themeStore {
                 navigation.interfaceStyle = { theme.userInterfaceStyle }
             } else {
                 assertionFailure(

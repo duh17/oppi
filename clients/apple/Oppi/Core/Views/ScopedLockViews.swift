@@ -182,7 +182,7 @@ final class ScopedLockCoverViewController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        let palette = (HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
+        let palette = (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
         view.backgroundColor = UIColor(palette.bg)
         symbol.tintColor = UIColor(palette.comment)
         titleLabel.text = titleSource?() ?? coverTitle

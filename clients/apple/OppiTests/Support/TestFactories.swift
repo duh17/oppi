@@ -207,7 +207,7 @@ func makeRecordingAppRoot() -> (root: AppRootEnvironment, recorder: TestOpenRequ
     return (root, recorder)
 }
 
-/// A window that publishes `root`, the same trait `HostFactory.root(near:)`
+/// A window that publishes `root`, the same trait `AppRootEnvironment.near()`
 /// reads in the app, so a producer's tap can find the opener.
 @MainActor
 func makeAppRootWindow(_ root: AppRootEnvironment) -> UIWindow {

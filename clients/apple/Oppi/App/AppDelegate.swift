@@ -121,7 +121,7 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate, @preconcurrency AppI
         guard window == nil, let windowScene = scene as? UIWindowScene, let app else { return }
         let window = UIWindow(windowScene: windowScene)
         // UIKit code anywhere in the window, presented controllers included,
-        // finds the app root here (`HostFactory.root(near:)`).
+        // finds the app root here (`AppRootEnvironment.near()`).
         window.traitOverrides.appRootEnvironment = app.root
         window.rootViewController = app.makeRootViewController()
         self.window = window

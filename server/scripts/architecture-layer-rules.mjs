@@ -1173,7 +1173,7 @@ export function findIosLayerViolations(repoRoot, files = undefined) {
         reason:
           "User-content web links must not bypass the browser preference with UIApplication.shared.open.",
         remediation:
-          "Deliver an AppOpenRequest (.webLink or .system) to AppOpener through HostFactory.root(near:)?.opener or the root's openURL action; only AppOpener system-opens.",
+          "Deliver an AppOpenRequest (.webLink or .system) to AppOpener through AppRootEnvironment.near(_:)?.opener or the root's openURL action; only AppOpener system-opens.",
       },
       {
         rule: "ios-browser-presentation-owner",

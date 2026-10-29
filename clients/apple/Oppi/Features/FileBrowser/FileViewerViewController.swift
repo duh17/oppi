@@ -360,7 +360,7 @@ final class FileViewerViewController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
         view.backgroundColor = UIColor(palette.bg)
         reconcileContent(palette: palette)

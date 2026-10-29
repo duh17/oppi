@@ -35,7 +35,7 @@ enum HostFactory {
 
     /// SwiftUI content embedded in a UIKit view, not a screen, with the app
     /// root of the view tree it sits in. Pass the root explicitly (from the
-    /// embedding representable's environment, or `root(near:)` once attached):
+    /// embedding representable's environment, or `AppRootEnvironment.near(_:)` once attached):
     /// embedded hosts are often not child controllers, so they cannot rely on
     /// inheriting it.
     static func content<Content: View>(_ content: Content, root: AppRootEnvironment?) -> HostedContentController {
@@ -43,37 +43,6 @@ enum HostFactory {
             preconditionFailure("HostFactory.content needs appRootEnvironment(_:) above \(Content.self)")
         }
         return HostedContentController(content: content, root: root)
-    }
-
-    /// The app root above a UIKit controller: the `appRootEnvironment` trait
-    /// (published on the app's window, set on hosted screens) on the
-    /// controller or its view (a view embedded without its controller joining
-    /// the hierarchy still inherits from its superview), or on the controllers
-    /// that presented it.
-    static func root(near controller: UIViewController) -> AppRootEnvironment? {
-        var current: UIViewController? = controller
-        while let candidate = current {
-            if let root = candidate.traitCollection.appRootEnvironment
-                ?? candidate.viewIfLoaded?.traitCollection.appRootEnvironment {
-                return root
-            }
-            current = candidate.presentingViewController
-        }
-        return nil
-    }
-
-    static func root(near view: UIView) -> AppRootEnvironment? {
-        if let root = view.traitCollection.appRootEnvironment {
-            return root
-        }
-        var responder: UIResponder? = view.next
-        while let current = responder {
-            if let controller = current as? UIViewController {
-                return root(near: controller)
-            }
-            responder = current.next
-        }
-        return nil
     }
 }
 
@@ -93,7 +62,7 @@ extension Router {
         onDismiss: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) -> HostedScreenController {
-        guard let root = root ?? HostFactory.root(near: presenter) else {
+        guard let root = root ?? AppRootEnvironment.near(presenter) else {
             preconditionFailure(
                 "Router.present needs appRootEnvironment(_:) above \(type(of: presenter))"
             )

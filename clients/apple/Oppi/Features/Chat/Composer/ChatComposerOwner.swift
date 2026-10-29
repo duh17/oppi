@@ -300,7 +300,7 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
     // MARK: - Expanded composer
 
     private func updateExpandedComposer(_ source: ChatComposerSource) {
-        guard let root = HostFactory.root(near: self) else { return }
+        guard let root = AppRootEnvironment.near(self) else { return }
         expandedPresenter.clearItem = { [weak self] in self?.source?.composerExpandedDidClose() }
         if source.isComposerExpanded {
             // `.overFullScreen` keeps the screen in the window, so it keeps

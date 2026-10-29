@@ -129,7 +129,7 @@ final class USDZSceneView: UIView, UIGestureRecognizerDelegate {
 
     private func installCanvasIfPossible() {
         guard host == nil, let fileURL, window != nil,
-              let root = HostFactory.root(near: self) else { return }
+              let root = AppRootEnvironment.near(self) else { return }
         let host = HostFactory.content(canvas(for: fileURL), root: root)
         host.view.translatesAutoresizingMaskIntoConstraints = false
         host.view.backgroundColor = .clear

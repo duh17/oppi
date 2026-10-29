@@ -445,7 +445,7 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
     /// a server for them.
     private func installResourceHandler() {
         guard !installedResourceHandler,
-              let opener = HostFactory.root(near: view)?.opener else { return }
+              let opener = AppRootEnvironment.near(view)?.opener else { return }
         installedResourceHandler = true
         opener._resourceReferenceHandlerForTesting = { [weak self] reference in
             self?.open(reference: reference)
@@ -475,7 +475,7 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        HostFactory.root(near: view)?.opener._resourceReferenceHandlerForTesting = nil
+        AppRootEnvironment.near(view)?.opener._resourceReferenceHandlerForTesting = nil
         installedResourceHandler = false
     }
 

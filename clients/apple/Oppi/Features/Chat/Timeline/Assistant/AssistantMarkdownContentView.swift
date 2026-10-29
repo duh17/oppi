@@ -472,7 +472,7 @@ enum MarkdownLinkInteractionSupport {
         guard let request else { return defaultAction }
         return UIAction { [weak view] _ in
             guard let view else { return }
-            HostFactory.root(near: view)?.opener.open(request)
+            AppRootEnvironment.near(view)?.opener.open(request)
         }
     }
 
@@ -498,7 +498,7 @@ enum MarkdownLinkInteractionSupport {
             image: UIImage(systemName: "safari")
         ) { [weak textView] _ in
             guard let textView else { return }
-            HostFactory.root(near: textView)?.opener.open(.webLink(normalizedURL))
+            AppRootEnvironment.near(textView)?.opener.open(.webLink(normalizedURL))
         }
 
         let shareAction = UIAction(
@@ -565,7 +565,7 @@ extension AssistantMarkdownContentView: UITextViewDelegate {
             // declines still goes to the app's opener.
             return UIAction { _ in
                 guard !linkOpenHandler(url) else { return }
-                HostFactory.root(near: textView)?.opener.open(request)
+                AppRootEnvironment.near(textView)?.opener.open(request)
             }
         }
         return MarkdownLinkInteractionSupport.primaryAction(

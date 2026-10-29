@@ -126,7 +126,7 @@ private final class NavigationChromeReproChatController: UIViewController {
 
         let collectionView = timeline.makeCollectionView(
             configuration: makeConfiguration(),
-            contentRoot: HostFactory.root(near: self)
+            contentRoot: AppRootEnvironment.near(self)
         )
         collectionView.accessibilityIdentifier = "navChrome.repro.chat"
         collectionView.frame = view.bounds
@@ -177,7 +177,7 @@ private final class NavigationChromeReproChatController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        let palette = HostFactory.root(near: self)?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
+        let palette = AppRootEnvironment.near(self)?.themeStore.activeThemeID.palette ?? ThemeRuntimeState.currentPalette()
         let colors = ComposerThemeColors(palette: palette)
         let open = state.isFilePanelVisible
         view.backgroundColor = colors.bg

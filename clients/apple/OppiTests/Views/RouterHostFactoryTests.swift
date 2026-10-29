@@ -476,17 +476,17 @@ struct RouterHostFactoryTests {
         navigation.pushViewController(plain, animated: false)
         // Trait changes reach the hierarchy on the next update pass.
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            plain.viewIfLoaded?.window != nil && HostFactory.root(near: plain) == root
+            plain.viewIfLoaded?.window != nil && AppRootEnvironment.near(plain) == root
         })
-        #expect(HostFactory.root(near: plain.view) == root)
+        #expect(AppRootEnvironment.near(plain.view) == root)
 
         let presented = UIViewController()
         plain.present(presented, animated: false)
-        #expect(HostFactory.root(near: presented) == root)
+        #expect(AppRootEnvironment.near(presented) == root)
         presented.dismiss(animated: false)
 
         let probe = ServiceProbe()
-        let content = HostFactory.content(ServiceReader(probe: probe), root: HostFactory.root(near: plain.view))
+        let content = HostFactory.content(ServiceReader(probe: probe), root: AppRootEnvironment.near(plain.view))
         plain.addChild(content)
         content.view.frame = plain.view.bounds
         plain.view.addSubview(content.view)

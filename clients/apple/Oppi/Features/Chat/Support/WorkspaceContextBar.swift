@@ -550,7 +550,7 @@ final class WorkspaceContextBarView: UIView {
 
     override func updateProperties() {
         super.updateProperties()
-        let root = HostFactory.root(near: self)
+        let root = AppRootEnvironment.near(self)
         let themeID = root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
 

@@ -179,7 +179,7 @@ final class ShareSessionRedactionViewController: UIViewController, UICollectionV
     /// Observation re-runs this when the review, sharing, or the theme change.
     override func updateProperties() {
         super.updateProperties()
-        let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         palette = themeID.palette
         let blue = UIColor(palette.blue)
         view.backgroundColor = UIColor(palette.bg)

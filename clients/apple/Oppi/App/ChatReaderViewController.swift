@@ -89,7 +89,7 @@ final class ChatReaderViewController: UIViewController {
     // MARK: Content
 
     private func updateContent() {
-        let palette = (HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
+        let palette = (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
         view.backgroundColor = UIColor(palette.bg)
 
         let locks = ScopedLockService.shared
@@ -394,7 +394,7 @@ private final class ChatReaderVideoPageViewController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        let palette = (HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
+        let palette = (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
         view.backgroundColor = UIColor(palette.bg)
         var back = backButton.configuration ?? .plain()
         back.image = UIImage.scaledSymbol("chevron.backward", style: .body, weight: .semibold)

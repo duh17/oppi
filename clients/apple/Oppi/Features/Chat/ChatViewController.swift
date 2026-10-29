@@ -241,7 +241,7 @@ final class ChatViewController: UIViewController {
 
     // MARK: - Derived state
 
-    var root: AppRootEnvironment? { HostFactory.root(near: self) }
+    var root: AppRootEnvironment? { AppRootEnvironment.near(self) }
     var sessionStore: SessionStore { connection.sessionStore }
     var chatState: ChatSessionState { connection.chatState }
     var audioPlayer: AudioPlayerService { connection.audioPlayer }

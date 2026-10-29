@@ -5597,7 +5597,7 @@ extension NativeFullScreenMarkdownBody: UITextViewDelegate {
                     defaultAction.performWithSender(nil, target: nil)
                     return
                 }
-                HostFactory.root(near: textView)?.opener.open(request)
+                AppRootEnvironment.near(textView)?.opener.open(request)
             }
         }
         return MarkdownLinkInteractionSupport.primaryAction(

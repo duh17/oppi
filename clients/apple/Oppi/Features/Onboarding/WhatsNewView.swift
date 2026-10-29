@@ -203,7 +203,7 @@ final class WhatsNewViewController: UIViewController, RouterModalContainer {
 
     override func updateProperties() {
         super.updateProperties()
-        let root = HostFactory.root(near: self)
+        let root = AppRootEnvironment.near(self)
         if let root {
             overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
         }

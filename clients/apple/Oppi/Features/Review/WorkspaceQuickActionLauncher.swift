@@ -76,7 +76,7 @@ struct WorkspaceQuickActionLauncher {
             initialInputText: destination.inputText,
             initialPendingFiles: destination.pendingFileReferences
         )
-        if let root = HostFactory.root(near: presenter) {
+        if let root = AppRootEnvironment.near(presenter) {
             chat.traitOverrides.appRootEnvironment = root
         }
         if let push {

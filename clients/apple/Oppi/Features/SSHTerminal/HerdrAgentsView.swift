@@ -10,7 +10,7 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
     private let collectionView: UICollectionView
     private var dataSource: UICollectionViewDiffableDataSource<String, Item>?
     private var isVisible = false
-    private var themeID: ThemeID { HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID() }
+    private var themeID: ThemeID { AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID() }
 
     /// `machine` is the saved machine's profile ID, nil for Local. Workspace
     /// and pane IDs are only unique within one machine.

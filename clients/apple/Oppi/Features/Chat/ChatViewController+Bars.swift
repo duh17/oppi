@@ -102,7 +102,7 @@ final class ChatBarItems {
         let joinsRail = SystemVerticalBar.traitIsActive(chat.traitCollection)
         let usesCustomBack = chat.usesCustomChatBackButton
         let usesColumn = chat.usesTrailingSidePanel
-        let palette = HostFactory.root(near: chat)?.themeStore.activeThemeID.palette
+        let palette = AppRootEnvironment.near(chat)?.themeStore.activeThemeID.palette
             ?? ThemeRuntimeState.currentPalette()
         let colors = ComposerThemeColors(palette: palette)
 
@@ -813,7 +813,7 @@ extension ChatViewController {
             AgentIconRenderer.render(value: session?.launch?.agentIcon, size: AgentIconSizingPolicy.titleTextMinimum)
                 .withRenderingMode(.alwaysOriginal)
         case .globalAvatar:
-            PiAvatarRenderer.render(size: 22, themeID: HostFactory.root(near: self)?.themeStore.activeThemeID)
+            PiAvatarRenderer.render(size: 22, themeID: AppRootEnvironment.near(self)?.themeStore.activeThemeID)
                 .withRenderingMode(.alwaysOriginal)
         }
     }

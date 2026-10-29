@@ -804,6 +804,7 @@
 		56D29AB5199B19B444E21BC4 /* TestFactories.swift in Sources */ = {isa = PBXBuildFile; fileRef = 760A3E3A52DD69AEB9ED4866 /* TestFactories.swift */; };
 		56D35C5DA75DA43C2F1EE829 /* MermaidKanbanRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E223D33B9B7A41141B8D5B0 /* MermaidKanbanRenderer.swift */; };
 		56D8B745101EBD23D8C7ABAA /* WorkspaceFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57F49C65D24FAC0EB9145592 /* WorkspaceFiles.swift */; };
+		5744BE4F687F1E11BC0ACA0A /* AppRoot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 976C7D84AD4CDB5E3690D1B4 /* AppRoot.swift */; };
 		574EA2098116554622EC71A2 /* WorkspaceCreateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 136C04095841097EDE2C42CC /* WorkspaceCreateTests.swift */; };
 		57738B42E9925961553157BF /* PushSharedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 287BAC9512DAF5F1AE762E31 /* PushSharedStore.swift */; };
 		57A4958DFC5C224966CBFF74 /* MermaidPieRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AAA171971789277768C06B0 /* MermaidPieRenderer.swift */; };
@@ -3674,6 +3675,7 @@
 		96EF956A0402EDFEBACB73DE /* LICENSES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = LICENSES.md; sourceTree = "<group>"; };
 		972479C033A6AD07F10F6B7C /* UsageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageViews.swift; sourceTree = "<group>"; };
 		9738787FCE7065A28EBD4FB6 /* ReviewCommentStashLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewCommentStashLocation.swift; sourceTree = "<group>"; };
+		976C7D84AD4CDB5E3690D1B4 /* AppRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRoot.swift; sourceTree = "<group>"; };
 		9789C72103D1061221093F6B /* MermaidQuadrantConformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidQuadrantConformanceTests.swift; sourceTree = "<group>"; };
 		9793CFAA3EC6E2B7C8F8A113 /* MermaidPerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidPerfBench.swift; sourceTree = "<group>"; };
 		979FDD56F528B3731944F74D /* DeviceCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceCredential.swift; sourceTree = "<group>"; };
@@ -7440,6 +7442,7 @@
 				B18C77A867A3E3FDBD62CE49 /* AppOpener.swift */,
 				24A2F5D5ED95159081B3307F /* AppOpener+Invite.swift */,
 				AF46C70D1975B29E658F177F /* AppOpener+ResourceReferences.swift */,
+				976C7D84AD4CDB5E3690D1B4 /* AppRoot.swift */,
 				30D72CB77E12C80F71163613 /* AppRootEnvironment.swift */,
 				CCFBE92A5DDFD5CE4DD0ACB1 /* AppRootEnvironment+ServerName.swift */,
 				77CBDFC89D9B49147A2CB24C /* AppRootLayer.swift */,
@@ -9846,6 +9849,7 @@
 				A412722B1BF3DFE3C0B90913 /* AppOpener+ResourceReferences.swift in Sources */,
 				E02ADE5599CCDFC9897D081B /* AppOpener.swift in Sources */,
 				72F123A4430F87FB5AAA8153 /* AppPreferenceStore.swift in Sources */,
+				5744BE4F687F1E11BC0ACA0A /* AppRoot.swift in Sources */,
 				3136ABCC0A2B314E56419F26 /* AppRootEnvironment+ServerName.swift in Sources */,
 				CDCA93DA0876967A5CD12899 /* AppRootEnvironment.swift in Sources */,
 				95D6594C8F8A7AA09E3099FE /* AppRootLayer.swift in Sources */,

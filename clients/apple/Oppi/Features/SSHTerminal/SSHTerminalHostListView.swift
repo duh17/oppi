@@ -117,7 +117,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         )
         add.accessibilityIdentifier = "sshTerminal.host.add"
         navigationItem.rightBarButtonItem = add
-        if showsSidebarToggle, let root = HostFactory.root(near: self) {
+        if showsSidebarToggle, let root = AppRootEnvironment.near(self) {
             navigationItem.leftBarButtonItem = WorkspaceSplitSidebarToggle.makeItem(root: root)
         }
     }

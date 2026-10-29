@@ -218,7 +218,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     required init?(coder: NSCoder) { nil }
 
     private var root: AppRootEnvironment? {
-        HostFactory.root(near: self)
+        AppRootEnvironment.near(self)
     }
 
     /// A skill file opens under its own server's scope; other targets live

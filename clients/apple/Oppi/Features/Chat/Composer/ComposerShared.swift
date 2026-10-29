@@ -802,7 +802,7 @@ enum ComposerShared {
     /// the one microphone, whichever session it is on. Read in a pass that Observation
     /// tracks, the mic comes back when the call ends.
     static func dictation(_ manager: VoiceInputManager?, near view: UIView?) -> VoiceInputManager? {
-        if let view, HostFactory.root(near: view)?.liveVoiceCalls.ownsMicrophone == true {
+        if let view, AppRootEnvironment.near(view)?.liveVoiceCalls.ownsMicrophone == true {
             return nil
         }
         return manager

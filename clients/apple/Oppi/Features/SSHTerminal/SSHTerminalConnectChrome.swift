@@ -236,6 +236,6 @@ final class SSHTerminalConnectChrome {
 
 extension UIViewController {
     var sshTerminalThemeID: ThemeID {
-        HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
     }
 }

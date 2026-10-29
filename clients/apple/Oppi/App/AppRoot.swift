@@ -1,0 +1,215 @@
+import Observation
+import UIKit
+
+/// App-scoped services the root publishes to every screen.
+///
+/// The root view applies them with `appRootEnvironment(_:)`. `HostFactory`
+/// re-applies the same set on every SwiftUI screen UIKit hosts, so no screen
+/// depends on SwiftUI passing the presenter's environment across a UIKit seam.
+/// The iOS app on Mac (build 54) crashed on that path: "No Observable object of
+/// type ConnectionCoordinator".
+///
+/// UIKit code finds the same root as a trait (`UITraitCollection.appRootEnvironment`)
+/// with `AppRootEnvironment.near(_:)`. The app's scene publishes it on its window,
+/// so every controller in the window inherits it: presented ones included.
+/// The SwiftUI value is a plain environment value, not bridged to the trait:
+/// a bridged value read nil in `NavigationStack` destinations.
+///
+/// Every member is a store, so the root never changes for the app's
+/// lifetime: a screen that captured it when it was pushed reads the same live
+/// state as the window. A value member (the saved row appearance once was)
+/// went stale in pushed screens until they were rebuilt.
+@MainActor
+struct AppRootEnvironment {
+    let coordinator: ConnectionCoordinator
+    let navigation: AppNavigation
+    let themeStore: ThemeStore
+    let quickCommentTemplateStore: QuickCommentTemplateStore
+    let composerDraftStore: ComposerDraftStore
+    let chatReaderPayloadStore: ChatReaderPayloadStore
+    let sessionRows: SessionRowDisplayStore
+    /// The device-scoped settings store (`SettingsCatalog`). A server's settings
+    /// come from `coordinator.settings(for:)`, one store per server.
+    let settings: SettingsStore
+    /// The app's one Live Voice call, which outlives the chat that started it.
+    let liveVoiceCalls: LiveVoiceCallCenter
+    /// The one owner of every open. UIKit reaches it here; SwiftUI through
+    /// the root's `openURL` action.
+    let opener: AppOpener
+
+    /// The app passes its own opener, the one `AppDelegate` wires to the
+    /// notification delegate.
+    init(
+        coordinator: ConnectionCoordinator,
+        navigation: AppNavigation,
+        themeStore: ThemeStore,
+        quickCommentTemplateStore: QuickCommentTemplateStore,
+        composerDraftStore: ComposerDraftStore,
+        chatReaderPayloadStore: ChatReaderPayloadStore,
+        sessionRows: SessionRowDisplayStore,
+        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter(),
+        opener: AppOpener
+    ) {
+        self.coordinator = coordinator
+        self.navigation = navigation
+        self.themeStore = themeStore
+        self.quickCommentTemplateStore = quickCommentTemplateStore
+        self.composerDraftStore = composerDraftStore
+        self.chatReaderPayloadStore = chatReaderPayloadStore
+        self.sessionRows = sessionRows
+        self.settings = coordinator.deviceSettings
+        self.liveVoiceCalls = liveVoiceCalls
+        self.opener = opener
+    }
+
+    /// Previews and tests: the root owns an opener built for these services.
+    init(
+        coordinator: ConnectionCoordinator,
+        navigation: AppNavigation,
+        themeStore: ThemeStore,
+        quickCommentTemplateStore: QuickCommentTemplateStore,
+        composerDraftStore: ComposerDraftStore,
+        chatReaderPayloadStore: ChatReaderPayloadStore,
+        sessionRows: SessionRowDisplayStore,
+        liveVoiceCalls: LiveVoiceCallCenter = LiveVoiceCallCenter()
+    ) {
+        self.init(
+            coordinator: coordinator,
+            navigation: navigation,
+            themeStore: themeStore,
+            quickCommentTemplateStore: quickCommentTemplateStore,
+            composerDraftStore: composerDraftStore,
+            chatReaderPayloadStore: chatReaderPayloadStore,
+            sessionRows: sessionRows,
+            liveVoiceCalls: liveVoiceCalls,
+            opener: AppOpener(
+                coordinator: coordinator,
+                navigation: navigation,
+                composerDraftStore: composerDraftStore
+            )
+        )
+    }
+}
+
+/// The same services. Lets UIKit skip trait updates for an unchanged set.
+extension AppRootEnvironment: Equatable {
+    nonisolated static func == (lhs: AppRootEnvironment, rhs: AppRootEnvironment) -> Bool {
+        lhs.coordinator === rhs.coordinator
+            && lhs.navigation === rhs.navigation
+            && lhs.themeStore === rhs.themeStore
+            && lhs.quickCommentTemplateStore === rhs.quickCommentTemplateStore
+            && lhs.composerDraftStore === rhs.composerDraftStore
+            && lhs.chatReaderPayloadStore === rhs.chatReaderPayloadStore
+            && lhs.sessionRows === rhs.sessionRows
+            && lhs.settings === rhs.settings
+            && lhs.liveVoiceCalls === rhs.liveVoiceCalls
+            && lhs.opener === rhs.opener
+    }
+}
+
+/// The app scene's lifecycle phase. UIKit code reads it from `AppScenePhase`;
+/// SwiftUI's own `ScenePhase` is not used for app logic.
+enum AppPhase: Sendable {
+    case active, inactive, background
+}
+
+/// The app scene's phase. SwiftUI's own `scenePhase` stays `.background` in a
+/// UIKit scene's hosting controllers, which would pause everything that waits
+/// for `.active` (the chat timeline, the SSH terminal); `appRootEnvironment(_:)`
+/// hands this one to the SwiftUI screens UIKit hosts.
+@MainActor @Observable
+final class AppScenePhase {
+    static let shared = AppScenePhase()
+
+    private(set) var phase: AppPhase
+    var isBackground: Bool { phase == .background }
+    /// How many times the app has entered the background. A measurement that
+    /// started in an earlier epoch spans suspension and is not a duration.
+    private(set) var backgroundEpoch = 0
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
+
+    private init() {
+        phase = switch UIApplication.shared.applicationState {
+        case .active: .active
+        case .background: .background
+        default: .inactive
+        }
+        let transitions: [(Notification.Name, AppPhase)] = [
+            (UIScene.willEnterForegroundNotification, .inactive),
+            (UIScene.didActivateNotification, .active),
+            (UIScene.willDeactivateNotification, .inactive),
+            (UIScene.didEnterBackgroundNotification, .background),
+        ]
+        for (name, phase) in transitions {
+            observers.append(NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if phase == .background { self.backgroundEpoch += 1 }
+                    self.phase = phase
+                }
+            })
+        }
+    }
+}
+
+private struct AppRootTrait: UITraitDefinition {
+    static var defaultValue: AppRootEnvironment? { nil }
+}
+
+extension UITraitCollection {
+    var appRootEnvironment: AppRootEnvironment? {
+        self[AppRootTrait.self]
+    }
+}
+
+extension UITraitOverrides {
+    /// UIKit traps reading an override that was never set, so this reads only
+    /// a set one; nil removes it.
+    var appRootEnvironment: AppRootEnvironment? {
+        get { contains(AppRootTrait.self) ? self[AppRootTrait.self] : nil }
+        set {
+            if let newValue {
+                self[AppRootTrait.self] = newValue
+            } else {
+                remove(AppRootTrait.self)
+            }
+        }
+    }
+}
+
+extension AppRootEnvironment {
+    /// The app root above a UIKit controller: the `appRootEnvironment` trait
+    /// (published on the app's window, set on hosted screens) on the
+    /// controller or its view (a view embedded without its controller joining
+    /// the hierarchy still inherits from its superview), or on the controllers
+    /// that presented it.
+    static func near(_ controller: UIViewController) -> AppRootEnvironment? {
+        var current: UIViewController? = controller
+        while let candidate = current {
+            if let root = candidate.traitCollection.appRootEnvironment
+                ?? candidate.viewIfLoaded?.traitCollection.appRootEnvironment {
+                return root
+            }
+            current = candidate.presentingViewController
+        }
+        return nil
+    }
+
+    static func near(_ view: UIView) -> AppRootEnvironment? {
+        if let root = view.traitCollection.appRootEnvironment {
+            return root
+        }
+        var responder: UIResponder? = view.next
+        while let current = responder {
+            if let controller = current as? UIViewController {
+                return near(controller)
+            }
+            responder = current.next
+        }
+        return nil
+    }
+}

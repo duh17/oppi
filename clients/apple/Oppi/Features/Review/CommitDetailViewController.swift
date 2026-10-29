@@ -174,7 +174,7 @@ final class CommitDetailViewController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        let root = HostFactory.root(near: self)
+        let root = AppRootEnvironment.near(self)
         let themeID = root?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
         view.backgroundColor = UIColor(palette.bgDark)
@@ -633,7 +633,7 @@ final class CommitFileDiffViewController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
         view.backgroundColor = UIColor(palette.bgDark)
         let file = configuration.file

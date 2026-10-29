@@ -465,7 +465,7 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
     /// App Settings' server rows do, then opens Server Settings for it.
     func openServerSettings(for peer: TailnetPeer) {
         guard let server = coordinator.serverStore.servers.first(where: { peer.hasHost($0.host) }),
-              let root = HostFactory.root(near: self) else { return }
+              let root = AppRootEnvironment.near(self) else { return }
         let coordinator = coordinator
         let navigation = root.navigation
         let perform: @MainActor () -> Void = {

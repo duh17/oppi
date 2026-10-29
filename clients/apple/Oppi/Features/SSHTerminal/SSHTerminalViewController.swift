@@ -368,8 +368,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         }
         let locked = AppLockService.shared.isLocked
         let phase = AppScenePhase.shared.phase
-        let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
-        _ = HostFactory.root(near: self)?.themeStore.appTheme
+        let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        _ = AppRootEnvironment.near(self)?.themeStore.appTheme
 
         let terminalColors = colorLoader.theme
         // One palette for everything drawn over the grid: Oppi's theme when
@@ -1146,14 +1146,14 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func serverConnection() -> ServerConnection? {
-        composerConnection ?? HostFactory.root(near: self)?.coordinator.activeConnection
+        composerConnection ?? AppRootEnvironment.near(self)?.coordinator.activeConnection
     }
 
     private func makeComposer() {
         let session = SSHTerminalComposerHost(
             channel: channel,
             connection: serverConnection(),
-            draftStore: HostFactory.root(near: self)?.composerDraftStore,
+            draftStore: AppRootEnvironment.near(self)?.composerDraftStore,
             themeID: chromeTheme,
             terminalColors: lastTerminalColors,
             showRawKeyboard: { [weak self] in self?.showTerminalKeyboard() }
@@ -1318,7 +1318,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private func refreshComposerChrome() {
         let themeID = chromeTheme
         composerSession?.connection = serverConnection()
-        composerSession?.draftStore = HostFactory.root(near: self)?.composerDraftStore
+        composerSession?.draftStore = AppRootEnvironment.near(self)?.composerDraftStore
         composerSession?.refreshChrome(
             themeID: themeID,
             terminalColors: lastTerminalColors,
@@ -1668,7 +1668,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// The paired Oppi server that is this same machine, if any. Only then can
     /// a path open in Oppi's own file routes.
     private var pairedServer: PairedServer? {
-        guard let root = HostFactory.root(near: self), !sshHost.isEmpty else { return nil }
+        guard let root = AppRootEnvironment.near(self), !sshHost.isEmpty else { return nil }
         let servers = root.coordinator.serverStore.servers
         let paired = servers.map { (id: $0.id, host: $0.host) }
         guard let id = SSHTerminalServerMatch.serverId(forHost: sshHost, paired: paired) else { return nil }
@@ -1695,7 +1695,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         switch target {
         case .web(let url, _):
             // The app's one open owner applies the link browser preference.
-            HostFactory.root(near: self)?.opener.open(.webLink(url))
+            AppRootEnvironment.near(self)?.opener.open(.webLink(url))
         case .path(let path):
             openHostPath(path)
         }
@@ -1710,7 +1710,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func openHostPath(_ path: String) {
-        guard let server = pairedServer, let root = HostFactory.root(near: self),
+        guard let server = pairedServer, let root = AppRootEnvironment.near(self),
               let api = root.coordinator.apiClient(for: server.id) else {
             showOpenNotice("This host is not a paired Oppi server, so its files can only be copied.")
             return
@@ -1747,7 +1747,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     /// The folder the shell reported: the Files browser at it, on its server.
     private func browseFilesHere() {
-        guard let server = pairedServer, let root = HostFactory.root(near: self),
+        guard let server = pairedServer, let root = AppRootEnvironment.near(self),
               let api = root.coordinator.apiClient(for: server.id) else { return }
         let folder = channel.workingDirectory
         startOpenTask { [weak self] in
@@ -1822,7 +1822,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// can tell an owner-host path from one the file routes cannot reach.
     private func refreshPairedHome() {
         guard pairedHome == nil, pairedHomeTask == nil, let server = pairedServer,
-              let api = HostFactory.root(near: self)?.coordinator.apiClient(for: server.id) else { return }
+              let api = AppRootEnvironment.near(self)?.coordinator.apiClient(for: server.id) else { return }
         pairedHomeTask = Task { [weak self] in
             let home = try? await Self.hostHome(api: api)
             guard let self else { return }

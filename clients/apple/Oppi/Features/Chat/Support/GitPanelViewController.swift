@@ -85,7 +85,7 @@ final class GitPanelViewController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        let current = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let current = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         if current != themeID {
             themeID = current
             overrideUserInterfaceStyle = current.preferredColorScheme == .light ? .light : .dark

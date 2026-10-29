@@ -122,7 +122,7 @@ final class SessionExtensionContextViewController: UIViewController, UICollectio
     override func updateProperties() {
         super.updateProperties()
         // Observation tracking re-runs this when the theme store changes.
-        let current = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let current = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         guard current != themeID else { return }
         themeID = current
         // System cards follow the trait; match it to the palette's scheme.

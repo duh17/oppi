@@ -352,7 +352,7 @@ final class WorkspaceFileConflictReviewViewController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
-        let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         // The hosted screen's page background, under the bar.
         view.backgroundColor = UIColor(themeID.palette.bg)
         actionsBar.backgroundColor = UIColor(themeID.palette.bgHighlight)

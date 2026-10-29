@@ -126,7 +126,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     override func updateProperties() {
         super.updateProperties()
         // Observation tracking re-runs this when the session row or theme changes.
-        let current = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let current = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         if current != themeID {
             themeID = current
             // System cards follow the trait; match it to the palette's scheme.
@@ -790,7 +790,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     }
 
     private func openSkill(_ name: String) {
-        guard let root = HostFactory.root(near: self) else {
+        guard let root = AppRootEnvironment.near(self) else {
             assertionFailure("Context panel push needs appRootEnvironment")
             return
         }
@@ -840,7 +840,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     /// Starts a control session that edits the extension's file, then closes the
     /// panel and opens that session.
     private func editExtension(_ resource: SessionResourceSnapshot) {
-        guard let root = HostFactory.root(near: self) else { return }
+        guard let root = AppRootEnvironment.near(self) else { return }
         let connection = connection
         let sheet = GuidedControlSessionViewController(
             configuration: GuidedControlComposerConfiguration(
@@ -861,7 +861,7 @@ final class ContextInspectorViewController: UIViewController, UICollectionViewDe
     }
 
     private func openEditSession(_ target: WorkspaceSessionNavTarget) {
-        guard let navigation = HostFactory.root(near: self)?.navigation else { return }
+        guard let navigation = AppRootEnvironment.near(self)?.navigation else { return }
         if let editSheet { Router.finish(editSheet) }
         onClose()
         Task { @MainActor in

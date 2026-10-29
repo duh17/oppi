@@ -354,7 +354,7 @@ final class ChatNowPlayingDrawerView: ExtensionDrawerPanelView {
     override func updateProperties() {
         super.updateProperties()
         guard let audioPlayer else { return }
-        let themeID = HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        let themeID = AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
         surface.apply(palette: palette)
         let title = audioPlayer.nowPlayingPresentation?.title ?? "Now Playing"

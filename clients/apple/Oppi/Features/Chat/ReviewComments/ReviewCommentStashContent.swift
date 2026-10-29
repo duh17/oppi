@@ -286,7 +286,7 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
     }
 
     private var themeID: ThemeID {
-        HostFactory.root(near: self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
+        AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()
     }
 
     private var palette: ThemePalette { themeID.palette }
