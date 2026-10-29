@@ -465,7 +465,22 @@ struct CodeEditorWrapAndGutterTests {
         }
         try await Task.sleep(for: .milliseconds(150))
         let target = lineStarts(of: textView.text)[185]
+        // The scroll callback itself never edits attributes: TextKit moves the
+        // offset while it lays out, and an edit there restarts the layout.
+        let edits = EditCounter()
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSTextStorage.didProcessEditingNotification, object: textView.textStorage, queue: nil
+        ) { _ in edits.count += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        // A drag: many offsets with layout between them, none yielding to the run loop.
+        let bottom = textView.contentSize.height - textView.bounds.height
+        for step in 1...10 {
+            textView.setContentOffset(CGPoint(x: 0, y: bottom * CGFloat(step) / 10), animated: false)
+            window.layoutIfNeeded()
+        }
         textView.setContentOffset(CGPoint(x: 0, y: textView.contentSize.height - textView.bounds.height), animated: false)
+        window.layoutIfNeeded()
+        #expect(edits.count == 0, "scrolling edited the text storage \(edits.count) times from inside the scroll callbacks")
         var aligned = false
         for _ in 0..<40 where !aligned {
             window.layoutIfNeeded()
@@ -505,10 +520,30 @@ struct CodeEditorWrapAndGutterTests {
         #expect(abs(shallowHang - 8 * columnWidth) < 0.5, "an 8-column indent still hangs 8 columns, not \(shallowHang / columnWidth)")
     }
 
+    /// With wrap off, turning Line Numbers back on changes only the inset; the
+    /// gutter must have rows at once, not wait for a viewport layout.
+    @Test func lineNumbersTurnedBackOnShowRowsWithWrapOff() throws {
+        let text = Self.wrappedLines.prefix(60).joined(separator: "\n")
+        let (controller, window) = try makeEditor(path: "notes.md", text: text, wraps: false)
+        defer { hideTestWindow(window) }
+        let textView = controller.textView
+        textView.showsLineNumbers = false
+        window.layoutIfNeeded()
+        #expect(textView.gutterNumbers.isEmpty)
+        textView.showsLineNumbers = true
+        #expect(!textView.gutterNumbers.isEmpty, "no numbers right after Line Numbers came back on")
+        window.layoutIfNeeded()
+        try expectGutterMatchesRows(controller, text: text, "line numbers back on, wrap off")
+    }
+
     @Test func lineNumbersShowWithSyntaxHighlightingOff() throws {
         let text = Self.wrappedLines.prefix(40).joined(separator: "\n")
         let (controller, window) = try makeEditor(path: "notes.md", text: text, highlightsSyntax: false)
         defer { hideTestWindow(window) }
         try expectGutterMatchesRows(controller, text: text, "syntax highlighting off")
     }
+}
+
+private final class EditCounter: @unchecked Sendable {
+    var count = 0
 }

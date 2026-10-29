@@ -44,6 +44,9 @@ final class CodeEditorTextView: UITextView {
             guard oldValue != showsLineNumbers else { return }
             gutter.isHidden = !showsLineNumbers
             updateInsets()
+            // Turning numbers on needs rows now: with wrap off the new inset
+            // may not make TextKit lay the viewport out again.
+            if #available(iOS 27.0, *) { captureGutterRows() }
         }
     }
 
@@ -66,6 +69,12 @@ final class CodeEditorTextView: UITextView {
             guard oldValue != usesBlockCaret else { return }
             updateCurrentLine()
         }
+    }
+
+    /// Width of the text area lines wrap at, from the view's bounds and insets;
+    /// nil when lines do not wrap.
+    var wrappedTextWidth: CGFloat? {
+        wrapsLines ? max(0, bounds.width - textContainerInset.left - textContainerInset.right - 2 * textContainer.lineFragmentPadding) : nil
     }
 
     /// The wrapped text area's width in points (nil when lines do not wrap)
@@ -238,7 +247,7 @@ final class CodeEditorTextView: UITextView {
         bringSubviewToFront(gutter)
         gutter.setNeedsDisplay()
         updateCurrentLine()
-        let wrapWidth: CGFloat? = wrapsLines ? max(0, textContainer.size.width - 2 * textContainer.lineFragmentPadding) : nil
+        let wrapWidth = wrappedTextWidth
         if wrapWidth != reportedWrapWidth {
             reportedWrapWidth = wrapWidth
             DispatchQueue.main.async { [weak self] in

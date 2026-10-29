@@ -110,10 +110,29 @@ final class CodeEditorHighlighter {
     /// line still has room for text.
     var wrapWidth: CGFloat? {
         didSet {
-            guard wrapCap(for: oldValue) != wrapCap(for: wrapWidth), let textView else { return }
-            let storage = textView.textStorage
-            applyParagraphStyles(in: NSRange(location: 0, length: storage.length), storage: storage)
+            guard !awaitsWrapWidth, wrapCap(for: oldValue) != wrapCap(for: wrapWidth) else { return }
+            // A resize drag reports a width per frame: restyle once it settles.
+            capTask?.cancel()
+            capTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled, let self, let textView, textView.markedTextRange == nil else { return }
+                let storage = textView.textStorage
+                applyParagraphStyles(in: NSRange(location: 0, length: storage.length), storage: storage)
+            }
         }
+    }
+
+    /// The first restyle waits for the wrap width, which is known at the first
+    /// layout, so opening a file styles its buffer once.
+    private var awaitsWrapWidth = true
+    private var capTask: Task<Void, Never>?
+
+    /// The wrap width is known: style the buffer for the first time.
+    func beginStyling(wrapWidth: CGFloat?) {
+        guard awaitsWrapWidth else { return }
+        self.wrapWidth = wrapWidth
+        awaitsWrapWidth = false
+        restyle(style)
     }
 
     private func wrapCap(for width: CGFloat?) -> Int {
@@ -138,12 +157,14 @@ final class CodeEditorHighlighter {
 
     deinit {
         scheduled?.cancel()
+        capTask?.cancel()
     }
 
     /// Theme or font changed: reset every run to the base style, then repaint.
     func restyle(_ style: Style) {
         self.style = style
         paragraphStyles = [:]
+        guard !awaitsWrapWidth else { return }
         // New text (Use Disk Version) or new colors: a pass already parsing
         // must not paint its now-stale spans.
         generation += 1
@@ -168,11 +189,15 @@ final class CodeEditorHighlighter {
     }
 
     func viewportDidChange() {
-        guard let window = currentWindow() else { return }
+        guard !awaitsWrapWidth, let visible = viewportRange() else { return }
         guard isEnabled else {
-            if styledGeneration != generation || NSIntersectionRange(window, styledWindow) != window { styleParagraphs(in: window) }
+            // Not from inside the scroll callback: TextKit moves the offset
+            // while it lays out, and an attribute edit there restarts it.
+            let styled = styledGeneration == generation && NSIntersectionRange(visible, styledWindow) == visible
+            if !styled, scheduled == nil { schedule(after: .zero) }
             return
         }
+        guard let window = window(around: visible) else { return }
         if paintedGeneration == generation, NSIntersectionRange(window, paintedWindow) == window { return }
         if scheduled == nil { schedule(after: .zero) }
     }
@@ -188,7 +213,7 @@ final class CodeEditorHighlighter {
 
     private func pass() async {
         scheduled = nil
-        guard let textView else { return }
+        guard let textView, !awaitsWrapWidth else { return }
         guard isEnabled else {
             // No colors, but a line edited since the last pass may need a new wrap indent.
             if textView.markedTextRange != nil {
@@ -281,18 +306,28 @@ final class CodeEditorHighlighter {
         storage.endEditing()
     }
 
-    /// Lines around the viewport: a screen of rows above and below it.
-    private func currentWindow() -> NSRange? {
+    /// What TextKit has laid out: the visible rows plus its overdraw.
+    private func viewportRange() -> NSRange? {
         guard let textView, let layout = textView.textLayoutManager, let content = layout.textContentManager else { return nil }
         let length = textView.textStorage.length
         guard length > 0 else { return nil }
-        let text = textView.textStorage.mutableString
-        var visible = NSRange(location: 0, length: min(length, 8_000))
         if let viewport = layout.textViewportLayoutController.viewportRange {
             let start = content.offset(from: content.documentRange.location, to: viewport.location)
             let end = content.offset(from: content.documentRange.location, to: viewport.endLocation)
-            if start >= 0, end >= start { visible = NSRange(location: start, length: end - start) }
+            if start >= 0, end >= start { return NSRange(location: start, length: end - start) }
         }
+        return NSRange(location: 0, length: min(length, 8_000))
+    }
+
+    private func currentWindow() -> NSRange? {
+        viewportRange().flatMap { window(around: $0) }
+    }
+
+    /// Lines around the viewport: a screen of rows above and below it.
+    private func window(around visible: NSRange) -> NSRange? {
+        guard let textView else { return nil }
+        let length = textView.textStorage.length
+        let text = textView.textStorage.mutableString
         let margin = max(4_000, visible.length)
         let start = max(0, visible.location - margin)
         let end = min(length, NSMaxRange(visible) + margin)

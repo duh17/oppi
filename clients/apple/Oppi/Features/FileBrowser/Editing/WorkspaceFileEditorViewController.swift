@@ -305,6 +305,12 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         refreshStatus()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // The first layout knows the wrap width; style the buffer once, here.
+        if textView.bounds.width > 0 { highlighter?.beginStyling(wrapWidth: textView.wrappedTextWidth) }
+    }
+
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         // Covered or popped: checkpoint and start a save; never wait.
