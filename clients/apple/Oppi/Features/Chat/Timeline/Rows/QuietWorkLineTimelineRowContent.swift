@@ -221,6 +221,12 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         }
     }
 
+    /// The subheadline at the standard text size (15 pt).
+    private static let textBaseSize = UIFont.preferredFont(
+        forTextStyle: .subheadline,
+        compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
+    ).pointSize
+
     private static let stackedCornerRadius: CGFloat = 18
     private static let textVerticalInset: CGFloat = 6
     private static let stackedHorizontalPadding: CGFloat = 18
@@ -248,12 +254,8 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     /// `preferredFont(...).pointSize` is already scaled at an accessibility size,
     /// so the base comes from the standard size instead.
     private static func font(weight: UIFont.Weight, compatibleWith traits: UITraitCollection?) -> UIFont {
-        let base = UIFont.preferredFont(
-            forTextStyle: .subheadline,
-            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
-        ).pointSize
-        return UIFontMetrics(forTextStyle: .subheadline).scaledFont(
-            for: .monospacedDigitSystemFont(ofSize: base, weight: weight),
+        UIFontMetrics(forTextStyle: .subheadline).scaledFont(
+            for: .monospacedDigitSystemFont(ofSize: textBaseSize, weight: weight),
             compatibleWith: traits
         )
     }

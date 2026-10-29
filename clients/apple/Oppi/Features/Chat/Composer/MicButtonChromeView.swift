@@ -348,7 +348,7 @@ final class MicButtonChromeView: UIControl {
                 imageView.isHidden = true
                 textLabel.isHidden = false
                 textLabel.text = languageLabel ?? "??"
-                textLabel.font = Self.languageMarkFont(diameter: diameter)
+                textLabel.font = Self.languageMarkFont(diameter: diameter, compatibleWith: traitCollection)
                 textLabel.textColor = indicator
             }
         } else {
@@ -368,10 +368,11 @@ final class MicButtonChromeView: UIControl {
     /// the disc: about `diameter * 0.4` at the standard size (UIKit rounds the
     /// scaled size to the nearest point) and never past half the diameter, where
     /// the two letters still fit the label's width.
-    static func languageMarkFont(diameter: CGFloat) -> UIFont {
+    static func languageMarkFont(diameter: CGFloat, compatibleWith traits: UITraitCollection? = nil) -> UIFont {
         UIFontMetrics(forTextStyle: .body).scaledFont(
             for: .systemFont(ofSize: diameter * 0.4, weight: .bold),
-            maximumPointSize: diameter * 0.5
+            maximumPointSize: diameter * 0.5,
+            compatibleWith: traits
         )
     }
 
