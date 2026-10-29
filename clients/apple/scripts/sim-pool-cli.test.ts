@@ -51,7 +51,7 @@ case "$sub" in
     if [[ "\${1:-}" == "runtimes" ]]; then cat "$dir/runtimes.json"; exit 0; fi
     cat "$dir/devices.json"
     ;;
-  bootstatus|boot|shutdown|erase|delete|create|spawn|io)
+  bootstatus|boot|shutdown|erase|delete|create|spawn|io|uninstall|keychain)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     # Model CoreSimulator: boot bakes the caller's SIMCTL_CHILD_* into the
     # device environment until shutdown; spawn env prints that environment.
@@ -917,6 +917,9 @@ exit 0
     expect(simctl).toContain("bootstatus");
     expect(simctl).not.toContain("erase");
     expect(simctl).not.toMatch(/^shutdown /m);
+    // The leased slot starts every run without the previous run's app, data, or keychain.
+    const calls = readFileSync(join(fake, "xcrun.calls"), "utf8");
+    expect(calls).toMatch(/simctl uninstall \S+ dev\.chenda\.Oppi\n(.*\n)*simctl keychain \S+ reset\n/);
     const state = readSlotState(join(root, "locks"), 0);
     expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
   });
@@ -1089,7 +1092,7 @@ case "$sub" in
     fi
     exit 0
     ;;
-  erase|boot|delete|create|spawn|io)
+  erase|boot|delete|create|spawn|io|uninstall|keychain)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     exit 0
     ;;
@@ -1546,7 +1549,7 @@ case "$sub" in
     if [[ "\${1:-}" == "runtimes" ]]; then cat "$dir/runtimes.json"; exit 0; fi
     cat "$dir/devices.json"
     ;;
-  bootstatus|boot|erase|delete|create|spawn|io)
+  bootstatus|boot|erase|delete|create|spawn|io|uninstall|keychain)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     if [[ "$sub" == "create" ]]; then echo UDID-CREATED; fi
     if [[ "$sub" == "io" ]]; then echo "Recording started" >&2; fi
@@ -1646,7 +1649,7 @@ case "$sub" in
     if [[ "\${1:-}" == "runtimes" ]]; then cat "$dir/runtimes.json"; exit 0; fi
     cat "$dir/devices.json"
     ;;
-  bootstatus|boot|erase|delete|create|spawn|io)
+  bootstatus|boot|erase|delete|create|spawn|io|uninstall|keychain)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     if [[ "$sub" == "create" ]]; then echo UDID-CREATED; fi
     if [[ "$sub" == "io" ]]; then echo "Recording started" >&2; fi
@@ -1733,7 +1736,7 @@ case "$sub" in
     if [[ "\${1:-}" == "runtimes" ]]; then cat "$dir/runtimes.json"; exit 0; fi
     cat "$dir/devices.json"
     ;;
-  bootstatus|boot|erase|delete|create|spawn|io)
+  bootstatus|boot|erase|delete|create|spawn|io|uninstall|keychain)
     printf '%s\\n' "$sub \${1:-}" >> "$dir/simctl.log"
     if [[ "$sub" == "create" ]]; then echo UDID-CREATED; fi
     if [[ "$sub" == "io" ]]; then echo "Recording started" >&2; fi

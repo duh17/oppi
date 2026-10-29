@@ -1053,6 +1053,22 @@ export async function prepareSimulator(
   }
 }
 
+/** The app the pool resets between runs (project.yml `Oppi` target). */
+const APP_BUNDLE_ID = "dev.chenda.Oppi";
+
+/**
+ * Drops everything a previous run left in a leased slot: the app, its data container (defaults, drafts,
+ * `lastSeenVersion`, app-group data) and the simulator keychain (paired servers and tokens). A
+ * killed or older run's state must not reach this run (the app dials stored servers at launch, and a stale
+ * `lastSeenVersion` puts a What's New sheet over the UI). `xcodebuild test-without-building` installs the
+ * app again; the booted simulator, its installed runtime and the other apps stay. Uninstalling an app that is
+ * not installed succeeds.
+ */
+export async function resetSlotAppState(session: CommandSession, udid: string): Promise<void> {
+  await runSimctl(session, ["uninstall", udid, APP_BUNDLE_ID], "simctl uninstall");
+  await runSimctl(session, ["keychain", udid, "reset"], "simctl keychain reset");
+}
+
 async function acquireRunSlot(
   config: PoolConfig,
   argv: string[],
@@ -1871,6 +1887,7 @@ export async function commandRun(
   let prepStart = runStart;
   let prepEnd = runStart;
   let simPrep = 0;
+  let slotReset = 0;
   let xcodeStart = runStart;
   let xcodeEnd = runStart;
   let videoPath: string | undefined;
@@ -1961,6 +1978,10 @@ export async function commandRun(
     const beforeBoot = hooks.beforeBoot;
     await prepareSimulator(session, config, bootUdid, "normal", beforeBoot && (() => beforeBoot(bootUdid)), cleanBootOwed);
     cleanBootOwed = false;
+    const resetStart = nowEpoch();
+    await resetSlotAppState(session, bootUdid);
+    slotReset = nowEpoch() - resetStart;
+    log(`[sim-pool] Reset app state on ${bootUdid} (${APP_BUNDLE_ID} uninstalled, keychain cleared, ${slotReset}s)`);
     prepEnd = nowEpoch();
     const baseLog = join(logDir, `pool-${owned.slot}-${stamp}.log`);
     const baseArtifact = baseLog.replace(/\.log$/, ".json");
@@ -2217,6 +2238,7 @@ export async function commandRun(
               } : {}),
               slot_wait: slotWaitEnd - slotWaitStart,
               simulator_prepare: simPrep,
+              simulator_reset: slotReset,
               xcodebuild: xcodeEnd - xcodeStart,
               total_wall: runEnd - runStart,
             },
