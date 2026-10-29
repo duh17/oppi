@@ -39,6 +39,10 @@ struct CodeEditorFenceIndex {
     private var open: OpenFence?
     /// Every line that starts before this offset has been read.
     private(set) var scannedThrough = 0
+    /// The start of the farthest line anything asked about. Unlike
+    /// `scannedThrough` it is never cut back when an edit discards what was
+    /// read, so every paragraph built from an answer can still be reported.
+    private(set) var askedThrough = 0
     /// The next place each marker may be: a real hit, or the end of the window
     /// searched without finding one (searching is bounded, so a keystroke does
     /// not scan the rest of a large buffer for a marker that never occurs).
@@ -59,12 +63,22 @@ struct CodeEditorFenceIndex {
     private static let searchWindow = 16_384
 
     mutating func contains(_ offset: Int, in text: NSString) -> Bool {
-        state(at: offset, in: text) != .outside
+        askedThrough = max(askedThrough, offset)
+        return resolve(at: offset, in: text) != .outside
     }
 
-    mutating func state(at offset: Int, in text: NSString) -> State {
+    private mutating func resolve(at offset: Int, in text: NSString) -> State {
         advance(past: offset, in: text)
         return knownState(at: offset)
+    }
+
+    /// Forgets everything read, keeping what was asked about.
+    mutating func reset() {
+        fences = []
+        open = nil
+        scannedThrough = 0
+        tick = Candidate()
+        tilde = Candidate()
     }
 
     /// The state entering the line that starts at `offset`, which the scan has
@@ -96,33 +110,51 @@ struct CodeEditorFenceIndex {
         let length = text.length
         let location = min(edited.location, length)
         let lineStart = text.lineRange(for: NSRange(location: location, length: 0)).location
+        // The line holding the edit's last character: when the edit ends in a
+        // line break that is the new line after it, so `blockEnd - changeInLength`
+        // is a line boundary in the old text too.
+        let editEnd = min(NSMaxRange(edited), length)
+        let blockEnd = NSMaxRange(text.lineRange(for: NSRange(location: editEnd, length: 0)))
+        let oldEditEnd = NSMaxRange(edited) - delta
+        let oldBlockEnd = blockEnd - delta
+        let oldScanned = scannedThrough
+
+        // Where the farthest asked line is now.
+        if askedThrough >= oldEditEnd {
+            askedThrough += delta
+        } else if askedThrough >= location {
+            askedThrough = editEnd
+        }
         tick = Candidate()
         tilde = Candidate()
-        let oldScanned = scannedThrough
-        // Nothing at or after the edited line was read: nothing there can be stale.
-        guard lineStart < oldScanned else { return nil }
 
-        // The state entering the line after the edited block, before and after.
-        let blockEnd = NSMaxRange(text.lineRange(for: NSRange(location: location, length: min(edited.length, length - location))))
-        let oldBlockEnd = blockEnd - delta
-        let before: State? = oldBlockEnd < oldScanned ? knownState(at: oldBlockEnd) : nil
+        // The state entering the line after the edited block, before the edit.
+        // Known when the scan had passed that line, or had read the whole old text.
+        let before: State? = oldBlockEnd < oldScanned || oldScanned >= length - delta ? knownState(at: oldBlockEnd) : nil
 
         // Forget everything from the edited line on; a fence that spans it is open again.
-        var reopened: OpenFence?
-        while let last = fences.last, NSMaxRange(last.range) > lineStart {
-            fences.removeLast()
-            if last.range.location < lineStart {
-                reopened = OpenFence(start: last.range.location, openerEnd: last.openerEnd, character: last.character, length: last.length)
+        if lineStart < oldScanned {
+            var reopened: OpenFence?
+            while let last = fences.last, NSMaxRange(last.range) > lineStart {
+                fences.removeLast()
+                if last.range.location < lineStart {
+                    reopened = OpenFence(start: last.range.location, openerEnd: last.openerEnd, character: last.character, length: last.length)
+                }
             }
+            if let current = open, current.start >= lineStart { open = nil }
+            if let reopened { open = reopened }
+            scannedThrough = lineStart
         }
-        if let current = open, current.start >= lineStart { open = nil }
-        if let reopened { open = reopened }
-        scannedThrough = lineStart
 
-        let after = state(at: blockEnd, in: text)
-        guard let before, before != after else { return nil }
-        let end = min(length, max(blockEnd, oldScanned + delta))
-        return NSRange(location: lineStart, length: end - lineStart)
+        // Nothing asked about at or after the edited line: nothing there can be stale.
+        guard askedThrough > lineStart else { return nil }
+        let after = resolve(at: blockEnd, in: text)
+        // Equal states entering the line after the block: everything after it is as it was.
+        if let before, before == after { return nil }
+        // Otherwise, or when the old state was already forgotten, every line up
+        // to the farthest one anything asked about may be stale.
+        let askedLineEnd = NSMaxRange(text.lineRange(for: NSRange(location: min(askedThrough, length), length: 0)))
+        return NSRange(location: lineStart, length: min(length, max(blockEnd, askedLineEnd)) - lineStart)
     }
 
     // MARK: - Scanning

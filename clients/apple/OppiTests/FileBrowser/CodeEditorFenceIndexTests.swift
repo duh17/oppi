@@ -157,4 +157,56 @@ struct CodeEditorFenceIndexTests {
         #expect(stale?.location == 0)
         #expect((stale?.length ?? 0) >= text.utf16.count - 10)
     }
+
+    /// Applies an edit to `index` the way the editor does; returns the new text
+    /// and the lines reported stale.
+    private func apply(
+        _ index: inout CodeEditorFenceIndex, to before: String, replacing range: NSRange, with replacement: String
+    ) -> (text: String, stale: NSRange?) {
+        let after = (before as NSString).replacingCharacters(in: range, with: replacement)
+        let stale = index.apply(
+            editAt: NSRange(location: range.location, length: replacement.utf16.count),
+            changeInLength: replacement.utf16.count - range.length,
+            in: after as NSString
+        )
+        return (after, stale)
+    }
+
+    @Test func aFenceChangeAfterAnUnrelatedEditStillReportsEveryLineAlreadyAskedAbout() {
+        // Every line was asked about. An edit that changes nothing leaves the scan
+        // stopped at the marker-looking line after it, short of the last line, and
+        // the next edit, which opens a fence, must still reach the last line.
+        let text = "``\n- one\ntext```\n- two\n"
+        var index = CodeEditorFenceIndex()
+        _ = insideLines(text, index: &index)
+        let unrelated = apply(&index, to: text, replacing: NSRange(location: 8, length: 0), with: "x")
+        #expect(unrelated.stale == nil)
+        let opened = apply(&index, to: unrelated.text, replacing: NSRange(location: 2, length: 0), with: "`")
+        let twoStart = (opened.text as NSString).range(of: "- two").location
+        #expect(opened.stale.map { NSMaxRange($0) > twoStart } == true, "stale \(String(describing: opened.stale)), the last asked line starts at \(twoStart)")
+        var fresh = CodeEditorFenceIndex()
+        #expect(insideLines(opened.text, index: &index) == insideLines(opened.text, index: &fresh))
+    }
+
+    @Test func aReturnThatSplitsALineEndingInAFenceMarkerOpensTheFence() {
+        // "ab```" is text; after Return, "```" is a line of its own and opens a fence.
+        let text = "ab```\n- item\nafter\n"
+        var index = CodeEditorFenceIndex()
+        _ = insideLines(text, index: &index)
+        let split = apply(&index, to: text, replacing: NSRange(location: 2, length: 0), with: "\n")
+        #expect(split.stale != nil, "the lines after the new fence line changed")
+        var fresh = CodeEditorFenceIndex()
+        #expect(insideLines(split.text, index: &index) == insideLines(split.text, index: &fresh))
+    }
+
+    @Test func undoingAJoinThatHidAFenceMarkerRestoresTheFence() {
+        // "intro```" hides the opener; splitting it (what undoing the join does) restores a closed fence.
+        let joined = "intro```\ncode\n```\nout\n"
+        var index = CodeEditorFenceIndex()
+        _ = insideLines(joined, index: &index)
+        let undone = apply(&index, to: joined, replacing: NSRange(location: 5, length: 0), with: "\n")
+        #expect(undone.stale != nil, "\"out\" is no longer inside a fence")
+        var fresh = CodeEditorFenceIndex()
+        #expect(insideLines(undone.text, index: &index) == insideLines(undone.text, index: &fresh))
+    }
 }
