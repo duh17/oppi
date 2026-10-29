@@ -31,12 +31,6 @@ struct CodeEditorFenceIndex {
 
         /// The state after this line.
         var stateAfter: State { opens ? .inside(character: character, length: length) : .outside }
-
-        func shifted(by delta: Int) -> Marker {
-            var copy = self
-            copy.line.location += delta
-            return copy
-        }
     }
 
     /// Sorted by line; covers the text before `scannedThrough`.
@@ -157,22 +151,23 @@ struct CodeEditorFenceIndex {
         let before: State? = tailKnown ? knownState(at: oldBlockEnd) : nil
 
         // The markers before the edited line stay; those on the block's lines are replaced.
-        let headEnd = firstMarker(endingAfter: lineStart)
-        let tailStart = tailKnown ? firstMarker(startingAtOrAfter: oldBlockEnd) : markers.count
-        let head = Array(markers[..<min(headEnd, markers.count)])
-        let tail = tailStart < markers.count ? Array(markers[tailStart...]) : []
-        let entering = head.last?.stateAfter ?? .outside
+        let headEnd = min(firstMarker(endingAfter: lineStart), markers.count)
+        let tailStart = tailKnown ? max(headEnd, firstMarker(startingAtOrAfter: oldBlockEnd)) : markers.count
+        let entering = headEnd > 0 ? markers[headEnd - 1].stateAfter : .outside
         let block = Self.scan(text, from: lineStart, to: blockEnd, entering: entering)
 
         if let before, before == block.state {
             // The state entering the line after the block is unchanged, so the
             // markers after it are still right: they only move with the text.
-            markers = head + block.markers + tail.map { $0.shifted(by: delta) }
+            markers.replaceSubrange(headEnd..<tailStart, with: block.markers)
+            if delta != 0 {
+                for index in (headEnd + block.markers.count)..<markers.count { markers[index].line.location += delta }
+            }
             scannedThrough = max(blockEnd, oldScanned + delta)
             return nil
         }
         // Everything after the block was read under a different state, or never read.
-        markers = head + block.markers
+        markers.replaceSubrange(headEnd..<markers.count, with: block.markers)
         scannedThrough = blockEnd
         guard askedThrough > lineStart else { return nil }
         let askedLineEnd = NSMaxRange(text.lineRange(for: NSRange(location: min(askedThrough, length), length: 0)))
