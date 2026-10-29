@@ -152,7 +152,7 @@ extension WorkspaceDetailViewController {
                 )
                 badge.tintColor = tint
                 badge.accessibilityLabel = String(localized: "Unlocked")
-                badge.accessibilityIdentifier = "lockBadge.unlocked"
+                badge.accessibilityIdentifier = "lockBadge.unlocked.\(workspaceId)"
                 trailing.append(SessionListBarItems.railItem(badge, priority: .keep))
             }
             trailing.append(SessionListBarItems.railItem(worktreeRailItem(bars.title, tint: tint), priority: .keep))
