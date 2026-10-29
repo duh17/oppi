@@ -55,6 +55,7 @@ Example:
 
 ### Added
 
+- **Client:** The **Approve New Device?** sheet turns Approve off when its countdown reaches zero, and an approval that expires while you are authenticating is refused with "This request expired" instead of being signed.
 - **Client:** **Usage** follows the server you switch to (each server's totals load on their own), its donut's total follows your text size, and VoiceOver reads the donut as one line ("Spend by model: sonnet-5-5 57%, …, total $55.50") with the model list below it. Tapping a day twice after pulling to refresh shows the new spend in its hourly chart.
 - **Client:** **Server Settings → Paired Devices** also revokes a device with a swipe (it still asks first), **Badge Icon**'s icons have spoken names, and **About This Server** labels the server's version "Oppi Server". The **Mobile Output Guide** switch now saves like every other server setting: if another device changed it first, the switch shows that change and says so.
 - **Client:** **Settings → Appearance** shows a gallery of themes with color previews. **Theme** (or **Light Theme** and **Dark Theme** with Match System) opens one card per theme, drawn in that theme's own colors with a mini chat, a line of code, and its accent swatches; tap a card to switch at once.
