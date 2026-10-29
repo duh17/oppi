@@ -390,6 +390,13 @@ private enum ANSIColorCache {
         private var cached: ANSIThemeColors?
         private var cachedThemeID: ThemeID?
 
+        func reset() {
+            lock.lock()
+            cached = nil
+            cachedThemeID = nil
+            lock.unlock()
+        }
+
         func current() -> ANSIThemeColors {
             let currentThemeID = ThemeRuntimeState.currentThemeID()
 
@@ -411,6 +418,8 @@ private enum ANSIColorCache {
     }
 
     private static let cacheBox = CacheBox()
+
+    static func reset() { cacheBox.reset() }
 
     static func current() -> ANSIThemeColors {
         cacheBox.current()
@@ -761,3 +770,10 @@ private struct SGRState {
         return colors.fg
     }
 }
+
+#if DEBUG
+/// Drops the process-wide ANSI theme color cache (`HarnessLaunchReset`).
+enum ANSIRenderingCaches {
+    static func resetForTesting() { ANSIColorCache.reset() }
+}
+#endif

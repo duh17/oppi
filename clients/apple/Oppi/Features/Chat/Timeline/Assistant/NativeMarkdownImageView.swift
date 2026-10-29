@@ -24,6 +24,15 @@ final class NativeMarkdownImageView: UIView {
     private static let svgDataCache = NSCache<NSURL, NSData>()
     private static let animatedRasterDataCache = NSCache<NSURL, NSData>()
 
+    #if DEBUG
+    /// Drops every fetched image and image data (`HarnessLaunchReset`).
+    static func resetCachesForTesting() {
+        imageCache.removeAllObjects()
+        svgDataCache.removeAllObjects()
+        animatedRasterDataCache.removeAllObjects()
+    }
+    #endif
+
     private enum PreparedImageArtifact {
         case raster(image: UIImage, pixelSize: CGSize)
         case web(data: Data, mimeType: String, aspectRatio: CGFloat?)

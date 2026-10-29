@@ -858,6 +858,16 @@ private enum ToolImageAttachmentDataCache {
     private static var cachedBytes = 0
     private static var inFlight: [String: Task<Data, Error>] = [:]
 
+    #if DEBUG
+    static func resetForTesting() {
+        for task in inFlight.values { task.cancel() }
+        inFlight.removeAll()
+        cachedData.removeAll()
+        cacheOrder.removeAll()
+        cachedBytes = 0
+    }
+    #endif
+
     static func key(for attachment: ToolPresentationBuilder.ToolMediaAttachment) -> String {
         [
             attachment.id,
@@ -1540,3 +1550,11 @@ private enum NativeExpandedReadMediaParser {
         return mimeType.lowercased().hasPrefix(mimePrefix)
     }
 }
+
+#if DEBUG
+/// Drops the process-wide attachment data cache (`HarnessLaunchReset`).
+@MainActor
+enum NativeExpandedToolViewCaches {
+    static func resetForTesting() { ToolImageAttachmentDataCache.resetForTesting() }
+}
+#endif

@@ -24,6 +24,11 @@ enum ImageDecodeCache {
 
     private static let cacheBox = CacheBox()
 
+    #if DEBUG
+    /// Drops every decoded image (`HarnessLaunchReset`).
+    static func resetForTesting() { cacheBox.cache.removeAllObjects() }
+    #endif
+
     static func decode(base64: String, maxPixelSize: CGFloat = 1600) -> UIImage? {
         let key = decodeKey(for: base64, maxPixelSize: maxPixelSize) as NSString
         if let cached = cacheBox.cache.object(forKey: key) {

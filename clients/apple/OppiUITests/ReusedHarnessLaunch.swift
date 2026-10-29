@@ -20,6 +20,7 @@ enum ReusedHarnessLaunch {
     private static var entries: [String: Entry] = [:]
 
     static let markerID = "harness.reset.generation"
+    static let failureID = "harness.reset.failure"
 
     /// A class's opt-in, unless the run sets `OPPI_UI_REUSE_LAUNCH=0`
     /// (`TEST_RUNNER_OPPI_UI_REUSE_LAUNCH=0` through xcodebuild): every test then
@@ -71,8 +72,15 @@ enum ReusedHarnessLaunch {
         OppiTestLaunch.requestInProcessReset(generation: entry.generation)
 
         let marker = entry.app.descendants(matching: .any)[markerID]
+        let failure = entry.app.descendants(matching: .any)[failureID]
         let deadline = Date().addingTimeInterval(10)
         while Date() < deadline, marker.value as? String != String(entry.generation) {
+            if failure.exists {
+                let reason = failure.value as? String ?? failure.label
+                discard(owner: owner)
+                XCTFail("Launch reuse: the app could not vouch for reset generation \(entry.generation): \(reason).")
+                return nil
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
         guard marker.value as? String == String(entry.generation) else {

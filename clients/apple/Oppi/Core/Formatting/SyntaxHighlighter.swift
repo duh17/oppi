@@ -23,6 +23,11 @@ enum SyntaxHighlighter {
     /// Maximum lines that receive syntax color. Displayed source is not truncated.
     static let maxLines = SyntaxTokenScanner.maxLines
 
+    #if DEBUG
+    /// Drops the process-wide theme attribute cache (`HarnessLaunchReset`).
+    static func resetCachesForTesting() { TokenAttrs.resetCache() }
+    #endif
+
     // MARK: - Pre-computed Token Attributes
 
     /// Resolved UIColor attribute dictionaries for each token type.
@@ -46,6 +51,13 @@ enum SyntaxHighlighter {
             private let lock = NSLock()
             private var cached: TokenAttrs?
             private var cachedThemeID: ThemeID?
+
+            func reset() {
+                lock.lock()
+                cached = nil
+                cachedThemeID = nil
+                lock.unlock()
+            }
 
             func attrs(for themeID: ThemeID) -> TokenAttrs {
                 lock.lock()
@@ -77,6 +89,8 @@ enum SyntaxHighlighter {
         }
 
         private static let cacheBox = CacheBox()
+
+        static func resetCache() { cacheBox.reset() }
 
         // Called from Task.detached for performance — must remain nonisolated.
         static func forTheme(_ themeID: ThemeID) -> Self {

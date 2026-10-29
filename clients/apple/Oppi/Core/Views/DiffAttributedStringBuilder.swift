@@ -19,6 +19,11 @@ let diffCodeColumnAttributeKey = NSAttributedString.Key("oppiDiffCodeColumn")
 ///    background; syntax owns the foreground, so both show together.
 enum DiffAttributedStringBuilder {
 
+    #if DEBUG
+    /// Drops the process-wide theme style cache (`HarnessLaunchReset`).
+    static func resetCachesForTesting() { StyleAttrs.resetCache() }
+    #endif
+
     // MARK: - Cached Style Attrs
 
     private struct StyleAttrs {
@@ -50,6 +55,13 @@ enum DiffAttributedStringBuilder {
             private var cached: StyleAttrs?
             private var cachedThemeID: ThemeID?
 
+            func reset() {
+                lock.lock()
+                cached = nil
+                cachedThemeID = nil
+                lock.unlock()
+            }
+
             func current() -> StyleAttrs {
                 let currentThemeID = ThemeRuntimeState.currentThemeID()
 
@@ -71,6 +83,8 @@ enum DiffAttributedStringBuilder {
         }
 
         private static let cacheBox = CacheBox()
+
+        static func resetCache() { cacheBox.reset() }
 
         static func current() -> Self {
             cacheBox.current()

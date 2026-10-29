@@ -26,22 +26,20 @@ final class AudioScriptReaderUITests: XCTestCase {
     }
 
     private func launchScriptReader() {
-        let launch = { () -> XCUIApplication in
-            let application = OppiTestLaunch.makeApp()
-            application.launchArguments.append("--screenshot-preview")
-            application.launchEnvironment["SCREENSHOT_SCREEN"] = "audio-script-reader"
-            application.launchEnvironment[OppiTestLaunch.reuseLaunchKey] = "1"
+        let application = OppiTestLaunch.makeApp()
+        application.launchArguments.append("--screenshot-preview")
+        application.launchEnvironment["SCREENSHOT_SCREEN"] = "audio-script-reader"
+        application.launchEnvironment[OppiTestLaunch.reuseLaunchKey] = "1"
+        app = ReusedHarnessLaunch.app(
+            owner: "AudioScriptReaderUITests",
+            signature: OppiTestLaunch.launchSignature(of: application),
+            readyID: "audioLyrics.transcript"
+        ) {
             application.launch()
             // The notification prompt belongs to the first launch only.
             self.dismissNotificationPrompt()
             return application
         }
-        app = ReusedHarnessLaunch.app(
-            owner: "AudioScriptReaderUITests",
-            signature: "audio-script-reader",
-            readyID: "audioLyrics.transcript",
-            launch: launch
-        )
     }
 
     func testDragStopsFollowingCurrentLineResumesAndTapSeeks() {

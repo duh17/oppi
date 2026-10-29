@@ -100,4 +100,15 @@ enum OppiTestLaunch {
         notify_post(resetNotification)
         notify_cancel(token)
     }
+
+    /// What makes two launches the same launch: the constructed app's arguments and
+    /// environment without the reset token, which differs per test by design.
+    static func launchSignature(of app: XCUIApplication) -> String {
+        var arguments = app.launchArguments
+        if let index = arguments.firstIndex(of: "-\(resetTokenKey)") {
+            arguments.removeSubrange(index...min(index + 1, arguments.count - 1))
+        }
+        let environment = app.launchEnvironment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        return (arguments + ["--"] + environment).joined(separator: "\n")
+    }
 }

@@ -58,7 +58,7 @@ class UIHarnessTestCase: XCTestCase {
         tailFillerRows: Int = 0,
         freshProcess: Bool = false
     ) {
-        var environment = [
+        let environment = [
             "PI_UI_HANG_HARNESS": "1",
             "PI_UI_HANG_UI_TEST_MODE": "1",
             "PI_UI_HANG_MIXED_CONTENT": mixedContent ? "1" : "0",
@@ -70,26 +70,24 @@ class UIHarnessTestCase: XCTestCase {
             "PI_UI_HANG_REAL_BUSY": realBusyLane ? "1" : "0",
             "PI_UI_HANG_TAIL_FILLER_ROWS": String(tailFillerRows),
         ]
-        let launch = { () -> XCUIApplication in
-            let application = OppiTestLaunch.makeApp()
-            application.launchArguments.append("--ui-hang-harness")
-            application.launchEnvironment.merge(environment) { _, new in new }
-            application.launch()
-            return application
-        }
+        let application = OppiTestLaunch.makeApp()
+        application.launchArguments.append("--ui-hang-harness")
+        application.launchEnvironment.merge(environment) { _, new in new }
 
         if ReusedHarnessLaunch.isEnabled(optedIn: Self.reusesLaunch) {
-            environment[OppiTestLaunch.reuseLaunchKey] = "1"
-            let signature = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+            application.launchEnvironment[OppiTestLaunch.reuseLaunchKey] = "1"
             app = ReusedHarnessLaunch.app(
                 owner: Self.reuseOwner,
-                signature: signature,
+                signature: OppiTestLaunch.launchSignature(of: application),
                 readyID: "harness.ready",
-                freshProcess: freshProcess,
-                launch: launch
-            )
+                freshProcess: freshProcess
+            ) {
+                application.launch()
+                return application
+            }
         } else {
-            app = launch()
+            application.launch()
+            app = application
         }
 
         XCTAssertTrue(

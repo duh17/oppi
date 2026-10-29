@@ -19,6 +19,8 @@ enum DebugHarnessLaunch {
         }
         guard let controller = makeHarnessRoot(root: root, generation: HarnessLaunchReset.isEnabled ? 0 : nil) else { return nil }
         if HarnessLaunchReset.isEnabled {
+            // Nothing came before this root, so there is nothing to wait for.
+            controller.publishResetMarker()
             HarnessLaunchReset.install(root: root, controller: controller)
         }
         return controller
@@ -82,7 +84,7 @@ enum DebugHarnessLaunch {
 /// window the same way, so a preview's sheets match its content.
 final class HarnessRootViewController: UIViewController {
     private let themeStore: ThemeStore
-    private let content: UIViewController
+    let content: UIViewController
     private let appLock = AppLockService.shared
     private let resetGeneration: UInt64?
 
@@ -103,9 +105,6 @@ final class HarnessRootViewController: UIViewController {
         content.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(content.view)
         content.didMove(toParent: self)
-        if let resetGeneration {
-            view.addSubview(HarnessLaunchReset.markerView(generation: resetGeneration))
-        }
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (controller: Self, _: UITraitCollection) in
             controller.themeStore.followSystemAppearance(from: controller)
         }
@@ -114,6 +113,22 @@ final class HarnessRootViewController: UIViewController {
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
         themeStore.applyToWindow(of: self)
+    }
+
+    /// Publishes the reuse generation this root was built for, once.
+    func publishResetMarker() {
+        guard let resetGeneration, view.viewWithTag(HarnessLaunchReset.markerTag) == nil else { return }
+        view.addSubview(HarnessLaunchReset.markerView(
+            id: HarnessLaunchReset.markerID, value: String(resetGeneration), tag: HarnessLaunchReset.markerTag
+        ))
+    }
+
+    /// Says why a reset could not be vouched for, in place of the generation marker.
+    func publishResetFailure(_ reason: String) {
+        guard view.viewWithTag(HarnessLaunchReset.failureTag) == nil else { return }
+        view.addSubview(HarnessLaunchReset.markerView(
+            id: HarnessLaunchReset.failureID, value: reason, tag: HarnessLaunchReset.failureTag
+        ))
     }
 
     override func updateProperties() {
@@ -130,19 +145,31 @@ final class HarnessRootViewController: UIViewController {
 /// tests it posts the Darwin notification `dev.chenda.Oppi.test.reset` with a
 /// generation as the notification state (`QAVerificationSupport/OppiTestLaunch.swift`
 /// repeats these names). The app then runs the launch contract's reset in process
-/// (`TestLaunchContract.applyInProcessReset`), dismisses what is presented, and
-/// swaps the window root for a fresh harness root. That root carries the
-/// generation as `harness.reset.generation`, so a test can fail with the stale
-/// marker when a reset did not take. Nothing is written to persistent defaults
-/// beyond the contract's own bookkeeping, and a launch without the environment
-/// never listens.
+/// (`TestLaunchContract.applyInProcessReset`), drops the process-wide caches a
+/// fresh process would not have, puts the persisted theme back, dismisses what is
+/// presented, and swaps the window root for a fresh harness root. It publishes
+/// the generation as `harness.reset.generation` only once the previous root and
+/// its content are gone; if they are not, it publishes `harness.reset.failure`
+/// with the reason instead, so a test fails on a leak rather than run on one.
+/// Nothing is written to persistent defaults beyond the contract's own
+/// bookkeeping, and a launch without the environment and a reset token never
+/// listens.
 @MainActor
 final class HarnessLaunchReset {
     static let launchKey = "OPPI_TEST_REUSE_LAUNCH"
     static let notificationName = "dev.chenda.Oppi.test.reset"
     static let markerID = "harness.reset.generation"
+    static let failureID = "harness.reset.failure"
+    static let markerTag = 0x0F51_0001
+    static let failureTag = 0x0F51_0002
 
-    static var isEnabled: Bool { ProcessInfo.processInfo.environment[launchKey] == "1" }
+    /// Run-loop turns (50 ms apart) the previous root and content get to be released before the reset is failed.
+    private static let releaseAttempts = 20
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment[launchKey] == "1"
+            && UserDefaults.standard.string(forKey: TestLaunchContract.resetTokenKey) != nil
+    }
 
     private static var installed: HarnessLaunchReset?
 
@@ -162,15 +189,16 @@ final class HarnessLaunchReset {
         reset.listen()
     }
 
-    /// An invisible accessibility element that names the generation this root was built for.
-    static func markerView(generation: UInt64) -> UIView {
+    /// An invisible accessibility element carrying `value`.
+    static func markerView(id: String, value: String, tag: Int) -> UIView {
         let marker = UIView(frame: CGRect(x: 0, y: 0, width: 2, height: 2))
+        marker.tag = tag
         marker.alpha = 0.02
         marker.isUserInteractionEnabled = false
         marker.isAccessibilityElement = true
-        marker.accessibilityIdentifier = markerID
-        marker.accessibilityLabel = "Harness reset generation"
-        marker.accessibilityValue = String(generation)
+        marker.accessibilityIdentifier = id
+        marker.accessibilityLabel = value
+        marker.accessibilityValue = value
         return marker
     }
 
@@ -185,11 +213,68 @@ final class HarnessLaunchReset {
     private func reset(generation: UInt64) {
         guard let window = current?.view.window else { return }
         TestLaunchContract.applyInProcessReset(generation: generation)
+        Self.resetProcessCaches()
+        // The new root's state starts from the theme in effect when it is built, so the
+        // last test's theme must be gone first; the old root restores its own on disappear.
+        ThemeRuntimeState.setThemeID(ThemeID.loadPersisted())
         window.endEditing(true)
-        window.rootViewController?.presentedViewController?.dismiss(animated: false)
-        guard let fresh = DebugHarnessLaunch.makeHarnessRoot(root: root, generation: generation) else { return }
-        current = fresh
-        window.rootViewController = fresh
+
+        let swapRoot = { [self] in
+            let old = window.rootViewController as? HarnessRootViewController
+            guard let fresh = DebugHarnessLaunch.makeHarnessRoot(root: root, generation: generation) else { return }
+            current = fresh
+            window.rootViewController = fresh
+            let released = ReleasedCheck(old: old, content: old?.content)
+            confirmReleased(released, fresh: fresh, attempt: 0)
+        }
+        if let presenter = window.rootViewController, presenter.presentedViewController != nil {
+            presenter.dismiss(animated: false, completion: swapRoot)
+        } else {
+            swapRoot()
+        }
+    }
+
+    /// Weak references only: the check must not be what keeps the old root alive.
+    private struct ReleasedCheck {
+        weak var old: HarnessRootViewController?
+        weak var content: UIViewController?
+        var survivors: [String] {
+            var names: [String] = []
+            if old != nil { names.append("HarnessRootViewController") }
+            if content != nil { names.append("its content controller") }
+            return names
+        }
+    }
+
+    private func confirmReleased(_ released: ReleasedCheck, fresh: HarnessRootViewController, attempt: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 0 : 0.05)) { [weak self, weak fresh] in
+            MainActor.assumeIsolated {
+                guard let self, let fresh else { return }
+                let survivors = released.survivors
+                if survivors.isEmpty {
+                    fresh.publishResetMarker()
+                } else if attempt >= Self.releaseAttempts {
+                    fresh.publishResetFailure("previous harness still alive after reset: \(survivors.joined(separator: ", "))")
+                } else {
+                    self.confirmReleased(released, fresh: fresh, attempt: attempt + 1)
+                }
+            }
+        }
+    }
+
+    /// One entry point per cache owner, so a reused test runs as cold as a launched one.
+    private static func resetProcessCaches() {
+        ToolRowRenderCache.evictAll()
+        MarkdownSegmentCache.shared.clearAll()
+        DocumentRenderPipeline.debugRemoveAllCachedRendersForTesting()
+        NativeExpandedToolViewCaches.resetForTesting()
+        ImageDecodeCache.resetForTesting()
+        SyntaxHighlighter.resetCachesForTesting()
+        ANSIRenderingCaches.resetForTesting()
+        DiffAttributedStringBuilder.resetCachesForTesting()
+        NativeMarkdownImageView.resetCachesForTesting()
+        FeatureEducationTipPresentationCoordinator.shared.resetForTesting()
+        InlineVideoStillFrameStore.shared.removeAll()
     }
 }
 #endif

@@ -91,10 +91,12 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
     /// space beside a call, must leave the row expanded so it can be the first
     /// half of the double-tap that opens the reader.
     func testNotebookSingleTapKeepsRowExpandedForReaderDoubleTap() throws {
-        // After an in-process reset the timeline jumps away from the notebook row
-        // once `harness.notebook.scroll` lands, so the header is never hittable (cause
-        // not found; evicting the render caches and waiting 3 s did not change it).
-        // A new process behaves, so this test starts one.
+        // Needs its own process. After an in-process reset the timeline jumps away from the
+        // notebook row once `harness.notebook.scroll` lands, so the header is never hittable.
+        // Ruled out: a 3 s wait, the process-wide caches (cleared by the reset), a leaked
+        // previous root or content (checked by the reset), the previous test's theme.
+        // Hypothesis, unverified: a timeline built on an already-visible window anchors its
+        // scroll differently from one built before the first frame.
         launchHarness(noStream: true, includeVisualFixtures: true, freshProcess: true)
         XCTAssertGreaterThanOrEqual(waitForDiagnosticAtLeast("diag.visualTools", minimum: 9, timeout: 6), 9)
 

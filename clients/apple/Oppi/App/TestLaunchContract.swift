@@ -45,8 +45,9 @@ enum TestLaunchContract {
     /// here writes defaults except the contract's own bookkeeping.
     @MainActor
     static func applyInProcessReset(generation: UInt64, defaults: UserDefaults = .standard) {
+        // Only a launch that carries a reset token has the contract to repeat.
+        guard let launchToken = defaults.string(forKey: resetTokenKey) else { return }
         let state = persistentState(defaults: defaults)
-        let launchToken = defaults.string(forKey: resetTokenKey) ?? "launch"
         applyReset(
             token: "\(launchToken)#reuse\(generation)",
             tokenStore: defaults,
