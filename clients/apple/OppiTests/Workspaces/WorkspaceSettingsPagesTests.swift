@@ -88,7 +88,7 @@ struct WorkspaceSettingsPagesTests {
         _ make: (WorkspaceSettingsModel, ServerConnection, AppRootEnvironment) -> UIViewController
     ) throws -> Mounted {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let client = APIClient(
             environment: OppiClientEnvironment(baseURL: URL(string: "http://localhost:7749")!, bearerToken: "sk_test"),
             configuration: config
@@ -383,7 +383,7 @@ struct WorkspaceDetailsAndListTests {
 
     private func makeConnection(_ workspaces: [Workspace]) -> ServerConnection {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let client = APIClient(
             environment: OppiClientEnvironment(baseURL: URL(string: "http://localhost:7749")!, bearerToken: "sk_test"),
             configuration: config

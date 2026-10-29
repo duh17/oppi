@@ -752,7 +752,7 @@ struct ServerConnectionLifecycleTests {
         )))
 
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         conn.setAPIClientForTesting(APIClient(
             environment: OppiClientEnvironment(
                 baseURL: URL(string: "https://join.example.test")!,

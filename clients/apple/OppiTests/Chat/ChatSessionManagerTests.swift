@@ -21,7 +21,7 @@ struct ChatSessionManagerTests {
 
     private func makeURLProtocolAPIClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         return APIClient(
             baseURL: URL(string: "http://localhost:7749")!,
             token: "sk_test",

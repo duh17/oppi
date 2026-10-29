@@ -178,7 +178,7 @@ struct GitStatusStoreTests {
     private func makeMockAPIClient() -> APIClient {
         // Create an APIClient with a mock URLSession that won't actually make requests
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         return APIClient(
             baseURL: URL(string: "http://localhost:1234")!,
             token: "test-token",

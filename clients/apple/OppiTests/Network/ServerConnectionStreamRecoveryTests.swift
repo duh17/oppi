@@ -625,7 +625,7 @@ struct ServerConnectionStreamRecoveryTests {
 
     private func makeMockAPIClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         return APIClient(
             baseURL: URL(string: "http://127.0.0.1:7749")!,
             token: "sk_test",

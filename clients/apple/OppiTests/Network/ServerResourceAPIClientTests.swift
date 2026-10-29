@@ -265,7 +265,7 @@ struct ServerResourceAPIClientTests {
 
     private func makeClient() -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         guard let baseURL = URL(string: "http://localhost:7749") else {
             fatalError("Invalid test URL")
         }

@@ -7,7 +7,7 @@ import UIKit
 struct APIClientToolOutputTests {
     private func makeClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [MockURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let environment = OppiClientEnvironment(
             baseURL: URL(string: "http://localhost:7749")!,
             bearerToken: "sk_test"

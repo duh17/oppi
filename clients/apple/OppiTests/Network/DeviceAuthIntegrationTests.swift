@@ -39,7 +39,7 @@ private actor RecordingDeviceAuthTransport: DeviceAuthTransport {
 struct DeviceAuthAPIClientTests {
     private func makeClient(token: String) -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [MockURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let environment = OppiClientEnvironment(
             baseURL: URL(string: "http://localhost:7749")!,
             bearerToken: token
@@ -316,7 +316,7 @@ struct DeviceAuthSelfReferentialWiringTests {
     /// device-key-migrated server). This is the shape that previously deadlocked.
     private func makeSelfReferentialClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [MockURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let environment = OppiClientEnvironment(
             baseURL: URL(string: "http://localhost:7749")!,
             bearerToken: ""

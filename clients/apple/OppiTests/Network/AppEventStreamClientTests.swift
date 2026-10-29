@@ -1104,7 +1104,7 @@ struct StickyRefreshReconciliationTests {
 
     private func makeReconciliationAPIClient(token: String = "sk_reconcile") -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         return APIClient(
             environment: OppiClientEnvironment(
                 baseURL: URL(string: "http://reconcile.example.test:7749")!,

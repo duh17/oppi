@@ -6,7 +6,7 @@ import Testing
 struct DictationDictionaryAPIClientTests {
     @Test func dictionaryResponseDecodesAlongsideBulkAddMetadata() async throws {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let client = try APIClient(
             baseURL: #require(URL(string: "http://localhost:7749")),
             token: "sk_test", configuration: config

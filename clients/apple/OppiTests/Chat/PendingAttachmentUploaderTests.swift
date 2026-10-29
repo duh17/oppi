@@ -6,7 +6,7 @@ import Testing
 struct PendingAttachmentUploaderTests {
     @Test func alreadyUploadedAttachmentPassesThroughWithoutNetworkUpload() async throws {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         let client = APIClient(
             baseURL: URL(string: "http://localhost:7749")!,
             token: "test-token",
@@ -43,7 +43,7 @@ struct PendingAttachmentUploaderTests {
 
     @Test func uploadsLocalFileIntoExistingAgentSession() async throws {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         let client = APIClient(
             baseURL: URL(string: "http://localhost:7749")!,
             token: "test-token",
@@ -90,7 +90,7 @@ struct PendingAttachmentUploaderTests {
 
     @Test func uploadsFileBackedVideoWithoutLoadingClipData() async throws {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         let client = APIClient(
             baseURL: URL(string: "http://localhost:7749")!,
             token: "test-token",

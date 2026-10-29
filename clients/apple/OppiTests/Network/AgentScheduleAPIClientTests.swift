@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 struct AgentScheduleAPIClientTests {
     private func makeClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         return APIClient(
             baseURL: URL(string: "http://localhost:7749")!,
             token: "sk_test",
@@ -901,7 +901,7 @@ struct IconAssetCacheTests {
 
     @Test func serverConnectionOwnsACacheForItsConfiguredAPIClient() {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         let client = APIClient(
             baseURL: URL(string: "http://localhost:7749")!,
             token: "sk_test",

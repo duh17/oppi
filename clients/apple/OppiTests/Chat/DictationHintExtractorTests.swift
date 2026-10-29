@@ -24,7 +24,7 @@ struct DictationHintWiringTests {
         }
 
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let api = try APIClient(
             baseURL: #require(URL(string: "http://localhost:7749")),
             token: "sk_test", configuration: config
@@ -483,7 +483,7 @@ struct DictationHintWiringTests {
         let entered = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let api = try APIClient(
             baseURL: #require(URL(string: "http://localhost:7749")),
             token: "sk_test", configuration: config

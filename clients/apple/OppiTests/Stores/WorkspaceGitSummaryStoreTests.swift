@@ -45,7 +45,7 @@ struct WorkspaceGitSummaryStoreTests {
         }
         defer { TestURLProtocol.handler = nil }
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         let api = APIClient(
             baseURL: testUnwrap(URL(string: "https://preview.oppi")),
             token: "token",

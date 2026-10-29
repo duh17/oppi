@@ -142,7 +142,7 @@ struct WorkspaceStoreOfflineTests {
 
     private func makeAPIClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [WorkspaceStoreMockURLProtocol.self]
+        TestURLProtocol.install(in: config)
         return APIClient(
             baseURL: URL(string: "http://localhost:7749")!,
             token: "sk_test",

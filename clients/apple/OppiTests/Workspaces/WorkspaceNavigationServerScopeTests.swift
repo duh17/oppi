@@ -110,7 +110,7 @@ struct WorkspaceNavigationServerScopeTests {
 
     private static func makeAPIClient(host: String) throws -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         return APIClient(
             baseURL: (testUnwrap(URL(string: "http://\(host):7749"))),
             token: "sk_test",

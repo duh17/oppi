@@ -110,7 +110,7 @@ struct APIClientTests {
 
     private func makeClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [MockURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let environment = OppiClientEnvironment(
             baseURL: URL(string: "http://localhost:7749")!,
             bearerToken: "sk_test"
@@ -258,7 +258,7 @@ struct APIClientTests {
     @Test func availabilityObserverIgnoresHTTPStatusAndDecodingFailures() async throws {
         let recorder = AvailabilityFailureRecorder()
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         let client = APIClient(
             environment: OppiClientEnvironment(
                 baseURL: URL(string: "http://localhost:7749")!,
@@ -291,7 +291,7 @@ struct APIClientTests {
     @Test func availabilityObserverReportsNetworkFailureOnce() async throws {
         let recorder = AvailabilityFailureRecorder()
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MockURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         let client = APIClient(
             environment: OppiClientEnvironment(
                 baseURL: URL(string: "http://localhost:7749")!,

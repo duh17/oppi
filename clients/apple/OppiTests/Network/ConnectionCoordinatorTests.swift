@@ -2104,7 +2104,7 @@ struct ConnectionCoordinatorTests {
 
     private func makeTestAPIClient(host: String) throws -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: configuration)
         return APIClient(
             baseURL: (testUnwrap(URL(string: "http://\(host):7749"))),
             token: "sk_test",

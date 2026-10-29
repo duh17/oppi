@@ -6,7 +6,7 @@ import Testing
 struct AuthDeviceAPIClientTests {
     private func makeClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [TestURLProtocol.self]
+        TestURLProtocol.install(in: config)
         let environment = OppiClientEnvironment(
             baseURL: URL(string: "http://localhost:7749")!,
             bearerToken: "sk_test"
