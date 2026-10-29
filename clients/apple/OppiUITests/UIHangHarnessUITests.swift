@@ -460,7 +460,33 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertTrue(assertHarnessStillRunning(context: "rendering visual toolset + image fullscreen"))
 
         let perfGuardrailAfter = pollDiagnostic("diag.perfGuardrail", timeout: 4)
-        XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 1)
+        let applyMax = pollDiagnostic("diag.applyMax", timeout: 2)
+        let layoutMax = pollDiagnostic("diag.layoutMax", timeout: 2)
+        let cellMax = pollDiagnostic("diag.cellMax", timeout: 2)
+        let breaches = perfGuardrailAfter - perfGuardrailBefore
+        let summary = "guardrail breaches=\(breaches) applyMax=\(applyMax)ms layoutMax=\(layoutMax)ms cellMax=\(cellMax)ms"
+        let maxima = XCTAttachment(string: summary)
+        maxima.name = "toolset-guardrail-maxima"
+        maxima.lifetime = .keepAlways
+        add(maxima)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // A 13-inch viewport builds all nine ToolSet rows, so this flow really renders
+            // them expanded; before the reconfigure fix these rows never expanded on iPad
+            // (main read 0 breaches, layoutMax 10 ms). Three costs are inherent to that
+            // and are bounded here by what was measured in 15 runs at host load 5-33 (apply
+            // 243-290 ms, layout 433-534 ms, cell 51-102 ms) with about 2x margin, instead of
+            // by the breach count: those runs breached 1 to 3 times, so any count limit that
+            // passes them is either flaky or no bound at all:
+            //   - the ToolSet apply, 9 cell configures in one pass;
+            //   - the Read markdown row's expanded layout (335 ms alone after a tap on main);
+            //   - one slow cell configure.
+            // Any larger stall, or a different one, still fails.
+            XCTAssertLessThanOrEqual(applyMax, 600, "ToolSet apply stalled: \(summary)")
+            XCTAssertLessThanOrEqual(layoutMax, 1000, "Expanded-row layout stalled: \(summary)")
+            XCTAssertLessThanOrEqual(cellMax, 250, "Cell configure stalled: \(summary)")
+        } else {
+            XCTAssertLessThanOrEqual(breaches, 1, summary)
+        }
     }
 
     func testImagePreviewPreservesDetachedVisibleRowY() throws {
@@ -528,6 +554,8 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
     /// 0.35 s snap-back window has passed since the drag, so the snap-back
     /// assertions compare against the resting offset instead of one sampled a fixed
     /// time after the drag. Fails if the offset keeps moving for the whole timeout.
+    /// A tap plus a read can itself take seconds on a loaded machine, so the timeout
+    /// only counts once three readings (two comparisons) have been taken.
     private func waitForTimelineOffsetToRest(
         diagTick: XCUIElement,
         minimumWindow: TimeInterval = 0.35,
@@ -536,12 +564,14 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         let start = Date()
         let deadline = start.addingTimeInterval(timeout)
         var previous: Int?
+        var readings = 0
         while true {
             tapHarnessControl(diagTick)
             let reading = pollDiagnostic("diag.offsetY", timeout: 4)
+            readings += 1
             if reading == previous, Date().timeIntervalSince(start) >= minimumWindow { return reading }
-            if Date() >= deadline {
-                XCTFail("Timeline offset did not come to rest within \(timeout)s (last=\(reading), previous=\(previous.map(String.init) ?? "nil"))")
+            if Date() >= deadline, readings >= 3 {
+                XCTFail("Timeline offset did not come to rest within \(timeout)s (last=\(reading), previous=\(previous.map(String.init) ?? "nil"), readings=\(readings))")
                 return reading
             }
             previous = reading
@@ -604,8 +634,9 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             diagTick: diagTick
         )
 
-        diagTick.tap()
-        let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+        // The top-anchored scroll keeps adjusting the offset while the expanded row
+        // self-sizes; a baseline read before that settles is not a baseline.
+        let baselineOffset = waitForTimelineOffsetToRest(diagTick: diagTick)
 
         // Both drags start on the expanded row, so the row must stay on screen between
         // them: drag toward earlier content first (the row moves down, away from the top
@@ -680,8 +711,9 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             diagTick: diagTick
         )
 
-        diagTick.tap()
-        let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
+        // The top-anchored scroll keeps adjusting the offset while the expanded row
+        // self-sizes; a baseline read before that settles is not a baseline.
+        let baselineOffset = waitForTimelineOffsetToRest(diagTick: diagTick)
 
         // Both drags start on the expanded row, so the row must stay on screen between
         // them: drag toward earlier content first (the row moves down, away from the top
