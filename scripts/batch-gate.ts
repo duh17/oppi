@@ -2,7 +2,7 @@
 // Repository gate for a batch of commits: a merge queue or CI runs it after `.githooks/pre-push`
 // passes on the batch, with the named suites every commit in the batch asked for.
 //
-//   bun scripts/batch-gate.ts --worktree <path> [--target <branch>] [--test <s>]... [--profile <p>]...
+//   bun scripts/batch-gate.ts --worktree <path> [--target <branch>] [--test <s>[@<p>[,<p>]]]... [--profile <p>]...
 //
 // --worktree defaults to the current directory; the gate resolves symlinks in it, so lanes run
 // at the checkout's canonical path (the one pre-push built in). --target is accepted and ignored: callers
@@ -14,8 +14,10 @@
 //
 // --test values:
 //   OppiTests/<Suite>[/<test>]      iOS unit filter; one OppiUnitTests run on the iPhone pool
-//   OppiUITests/<Suite>[/<test>]    UI test filter; one `-scheme Oppi` run per --profile
-//                                   (iphone, ipad, duo; default iphone), profiles in parallel
+//   OppiUITests/<Suite>[/<test>]    UI test filter; one `-scheme Oppi` run per profile, profiles in
+//                                   parallel. A profile's run holds only the filters scoped to it
+//                                   (see "@<profile>" below); an unscoped filter runs on every
+//                                   --profile (iphone, ipad, duo; default iphone)
 //   OppiE2ETests/<Suite>[/<test>]   paired-server E2E filter (clients/apple/scripts/e2e.sh --native).
 //                                   A suite that reads the two-server fixture (its file calls
 //                                   TwoServerFixture.<member>) runs through server/scripts/e2e-two-server.ts
@@ -28,6 +30,10 @@
 //                                   lists the prefixed forms to choose from. Other bare names are unknown.
 //   e2e-group:<name>                an E2E group (clients/apple/scripts/e2e.sh --group <name>)
 //   server/tests/<file>.test.ts     a server Vitest file (the `server/` prefix is optional)
+// Any --test value may end in @<profile>[,<profile>]: the profiles its UI tests run on, so a batch of
+// commits does not run one commit's iPhone-only suite on another's iPad lane. Only UI tests are
+// profile-specific; the scope is ignored for every other kind. The same selector named twice, or
+// with a different scope, collapses to one filter per profile.
 // Anything else fails the gate: a typo must not pass as "nothing to run". So does a suite
 // that the test target does not declare, and an iOS run that executed zero tests.
 // Every lane runs even when an earlier one failed, so one gate reports every red suite.
@@ -114,6 +120,13 @@ export function swiftSources(dir: string): string[] {
   });
 }
 
+/** A `--test` value split into its selector and the profiles it is scoped to (none when unscoped). */
+function splitScope(test: string): { selector: string; scope: string[] } {
+  const at = test.lastIndexOf("@");
+  if (at < 0) return { selector: test, scope: [] };
+  return { selector: test.slice(0, at), scope: test.slice(at + 1).split(",") };
+}
+
 export function planGate(
   worktree: string,
   tests: string[],
@@ -122,23 +135,35 @@ export function planGate(
     declarations((TARGET_SOURCES[target] ?? [target]).flatMap((dir) => swiftSources(join(worktree, "clients", "apple", dir)))),
 ): Plan {
   const errors: string[] = [];
-  const unit: string[] = [];
-  const ui: string[] = [];
-  const e2e: string[] = [];
-  const groups: string[] = [];
-  const server: string[] = [];
+  const unit = new Set<string>();
+  /** Profile -> UI filters scoped to it, in the order first named. */
+  const uiByProfile = new Map<string, Set<string>>();
+  const e2e = new Set<string>();
+  const groups = new Set<string>();
+  const server = new Set<string>();
   const resolved: { filter: string; line: string }[] = [];
   const known = new Map<string, Declarations>();
   const declared = (target: string) => {
     if (!known.has(target)) known.set(target, declaredIn(target));
     return known.get(target)!;
   };
-  for (const test of tests) {
-    if (/^OppiTests(?:\/[\w.()-]+)+$/.test(test)) unit.push(test);
-    else if (/^OppiUITests(?:\/[\w.()-]+)+$/.test(test)) ui.push(test);
-    else if (/^OppiE2ETests(?:\/[\w.()-]+)+$/.test(test)) e2e.push(test);
-    else if (/^e2e-group:[\w-]+$/.test(test)) groups.push(test.slice("e2e-group:".length));
-    else if (/^(?:server\/)?tests\/[\w./-]+\.test\.ts$/.test(test) && !test.includes("..")) server.push(test.replace(/^server\//, ""));
+  const defaultProfiles = profiles.length > 0 ? profiles : ["iphone"];
+  const scopeUi = (filter: string, scope: string[]) => {
+    for (const profile of scope.length > 0 ? scope : defaultProfiles) {
+      if (!uiByProfile.has(profile)) uiByProfile.set(profile, new Set());
+      uiByProfile.get(profile)!.add(filter);
+    }
+  };
+  for (const named of tests) {
+    const { selector: test, scope } = splitScope(named);
+    for (const profile of scope) {
+      if (!PROFILES.has(profile)) errors.push(`unknown profile '${profile}' in --test '${named}' (iphone, ipad, duo)`);
+    }
+    if (/^OppiTests(?:\/[\w.()-]+)+$/.test(test)) unit.add(test);
+    else if (/^OppiUITests(?:\/[\w.()-]+)+$/.test(test)) scopeUi(test, scope);
+    else if (/^OppiE2ETests(?:\/[\w.()-]+)+$/.test(test)) e2e.add(test);
+    else if (/^e2e-group:[\w-]+$/.test(test)) groups.add(test.slice("e2e-group:".length));
+    else if (/^(?:server\/)?tests\/[\w./-]+\.test\.ts$/.test(test) && !test.includes("..")) server.add(test.replace(/^server\//, ""));
     else if (BARE_IOS_SELECTOR.test(test) && !NOT_BARE.has(test.split("/")[0])) {
       // A bare `<Suite>[/<test>]` names the one test target that declares <Suite>.
       const suite = test.split("/")[0];
@@ -148,15 +173,17 @@ export function planGate(
       else {
         const filter = `${owners[0]}/${test}`;
         resolved.push({ filter, line: `--test '${test}' resolved to ${filter}` });
-        (owners[0] === "OppiTests" ? unit : owners[0] === "OppiUITests" ? ui : e2e).push(filter);
+        if (owners[0] === "OppiUITests") scopeUi(filter, scope);
+        else (owners[0] === "OppiTests" ? unit : e2e).add(filter);
       }
-    } else errors.push(`unknown --test '${test}'`);
+    } else errors.push(`unknown --test '${named}'`);
   }
   for (const profile of profiles) {
     if (!PROFILES.has(profile)) errors.push(`unknown --profile '${profile}' (iphone, ipad, duo)`);
   }
   const failed = new Set<string>();
-  for (const filter of [...unit, ...ui, ...e2e]) {
+  const allUi = new Set([...uiByProfile.values()].flatMap((filters) => [...filters]));
+  for (const filter of [...unit, ...allUi, ...e2e]) {
     const problem = undeclaredFilter(filter, declared(filter.split("/")[0]));
     if (problem) {
       errors.push(`--test '${filter}': ${problem}`);
@@ -171,34 +198,32 @@ export function planGate(
   // win over the worktree under test, or the gate would build and test different code.
   const pinned = { OPPI_ROOT: worktree };
   const lanes: Lane[] = [];
-  if (server.length > 0) {
+  if (server.size > 0) {
     lanes.push({ name: "server", steps: [{ cwd: join(worktree, "server"), command: "npm", args: ["exec", "--offline", "--", "vitest", "run", ...server] }] });
   }
-  if (unit.length > 0) {
+  if (unit.size > 0) {
     lanes.push({
       name: "ios-unit",
       steps: [{
         cwd: apple,
         command: simPool,
-        args: ["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "OppiUnitTests", "test", ...unit.map((f) => `-only-testing:${f}`)],
+        args: ["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "OppiUnitTests", "test", ...[...unit].map((f) => `-only-testing:${f}`)],
         env: pinned,
         requireTests: true,
       }],
     });
   }
-  if (ui.length > 0) {
-    for (const profile of profiles.length > 0 ? profiles : ["iphone"]) {
-      lanes.push({
-        name: `ui-${profile}`,
-        steps: [{
-          cwd: apple,
-          command: simPool,
-          args: ["run", "--device-profile", profile, "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test", ...ui.map((f) => `-only-testing:${f}`)],
-          env: pinned,
-          requireTests: true,
-        }],
-      });
-    }
+  for (const [profile, filters] of uiByProfile) {
+    lanes.push({
+      name: `ui-${profile}`,
+      steps: [{
+        cwd: apple,
+        command: simPool,
+        args: ["run", "--device-profile", profile, "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test", ...[...filters].map((f) => `-only-testing:${f}`)],
+        env: pinned,
+        requireTests: true,
+      }],
+    });
   }
   // E2E runs start a paired server each; keep them one after another in a single lane.
   // A two-server suite runs through its wrapper, which starts the second server and then
@@ -206,10 +231,10 @@ export function planGate(
   const twoServerScript = join(worktree, "server", "scripts", "e2e-two-server.ts");
   const needsTwoServer = (filter: string) => declared("OppiE2ETests").twoServer.has(filter.split("/")[1]);
   const e2eSteps: Step[] = [
-    ...e2e.filter((filter) => !needsTwoServer(filter)).map((filter) => ({ args: ["--native", "--only-testing", filter] })),
-    ...groups.map((group) => ({ args: ["--group", group] })),
+    ...[...e2e].filter((filter) => !needsTwoServer(filter)).map((filter) => ({ args: ["--native", "--only-testing", filter] })),
+    ...[...groups].map((group) => ({ args: ["--group", group] })),
   ].map(({ args }) => ({ cwd: worktree, command: e2eScript, args, env: pinned, requireTests: true }));
-  for (const filter of e2e.filter(needsTwoServer)) {
+  for (const filter of [...e2e].filter(needsTwoServer)) {
     e2eSteps.push({
       cwd: worktree,
       command: "bun",

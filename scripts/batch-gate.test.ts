@@ -50,6 +50,50 @@ describe("batch gate plan", () => {
     ]);
   });
 
+  test("a UI test scoped to a profile runs only on that profile's lane", () => {
+    // One batch: one entry's suites are iPhone-only, another's are iPad or both, a third names no profile.
+    const lanes = planGate("/wt", [
+      "OppiUITests/ChatRoutesUITests@iphone",
+      "OppiUITests/SharedSupportTests@iphone,ipad",
+      "OppiUITests/ChatRoutesUITests/testOpen@ipad",
+      "OppiUITests/ChatRoutesUITests@iphone",
+      "OppiUITests/SharedSupportTests",
+    ], [], types);
+    expect(lanes.errors).toEqual([]);
+    const only = (name: string) => lanes.lanes.find((lane) => lane.name === name)!.steps[0].args.filter((arg) => arg.startsWith("-only-testing:"));
+    expect(lanes.lanes.map((lane) => lane.name)).toEqual(["ui-iphone", "ui-ipad"]);
+    // Duplicates collapse; the unscoped suite takes the default profile only; nothing leaks across profiles.
+    expect(only("ui-iphone")).toEqual(["-only-testing:OppiUITests/ChatRoutesUITests", "-only-testing:OppiUITests/SharedSupportTests"]);
+    expect(only("ui-ipad")).toEqual(["-only-testing:OppiUITests/SharedSupportTests", "-only-testing:OppiUITests/ChatRoutesUITests/testOpen"]);
+  });
+
+  test("an unscoped UI test runs on every --profile; a scope overrides it; non-UI scopes change nothing", () => {
+    const lanes = planGate("/wt", [
+      "OppiUITests/ChatRoutesUITests",
+      "OppiUITests/SharedSupportTests@duo",
+      "OppiTests/FooTests@ipad",
+      "OppiTests/FooTests",
+      "tests/mcp-service.test.ts@ipad",
+      "OppiE2ETests/ChatE2ETests/testSend@ipad",
+    ], ["iphone", "ipad"], types);
+    expect(lanes.errors).toEqual([]);
+    const only = (name: string) => lanes.lanes.find((lane) => lane.name === name)!.steps[0].args.filter((arg) => arg.startsWith("-only-testing:"));
+    expect(lanes.lanes.map((lane) => lane.name)).toEqual(["server", "ios-unit", "ui-iphone", "ui-ipad", "ui-duo", "e2e"]);
+    expect(only("ui-iphone")).toEqual(["-only-testing:OppiUITests/ChatRoutesUITests"]);
+    expect(only("ui-ipad")).toEqual(["-only-testing:OppiUITests/ChatRoutesUITests"]);
+    expect(only("ui-duo")).toEqual(["-only-testing:OppiUITests/SharedSupportTests"]);
+    expect(only("ios-unit")).toEqual(["-only-testing:OppiTests/FooTests"]);
+    expect(lanes.lanes.find((lane) => lane.name === "server")!.steps[0].args.slice(-1)).toEqual(["tests/mcp-service.test.ts"]);
+  });
+
+  test("an unknown profile in a scope is an error", () => {
+    const plan = planGate("/wt", ["OppiUITests/ChatRoutesUITests@watch", "OppiUITests/ChatRoutesUITests@"], [], types);
+    expect(plan.errors).toEqual([
+      "unknown profile 'watch' in --test 'OppiUITests/ChatRoutesUITests@watch' (iphone, ipad, duo)",
+      "unknown profile '' in --test 'OppiUITests/ChatRoutesUITests@' (iphone, ipad, duo)",
+    ]);
+  });
+
   test("a suite that needs the second server runs through the two-server wrapper, one step per selector", () => {
     const plan = planGate("/wt", [
       "OppiE2ETests/PairTwoE2ETests",
