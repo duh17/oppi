@@ -8,7 +8,7 @@ final class SettingsEditorViewController: SettingsListViewController<SettingsEdi
     enum Section: Hashable, Sendable { case keyboard, display, indentation, typing }
     enum Item: Hashable, Sendable {
         case keybindings, keyBar, customizeKeyBar
-        case syntax, lineNumbers, currentLine, wrap
+        case syntax, lineNumbers, currentLine, wrapText, wrapCode
         case detectIndentation, indentWith, tabWidth
         case closeBrackets
     }
@@ -29,7 +29,7 @@ final class SettingsEditorViewController: SettingsListViewController<SettingsEdi
     override func sections() -> [SettingsSectionModel<Section, Item>] {
         // Read every value so any change re-runs this pass.
         _ = (preferences.keybindings, preferences.showsKeyBar, preferences.keyBarKeys, preferences.highlightsSyntax)
-        _ = (preferences.showsLineNumbers, preferences.highlightsCurrentLine, preferences.wrapsLines)
+        _ = (preferences.showsLineNumbers, preferences.highlightsCurrentLine, preferences.wrapsText, preferences.wrapsCode)
         _ = (preferences.detectsIndentation, preferences.indentsWithTabs, preferences.tabWidth, preferences.closesBrackets)
         return [
             SettingsSectionModel(
@@ -42,7 +42,7 @@ final class SettingsEditorViewController: SettingsListViewController<SettingsEdi
                 .display,
                 header: String(localized: "Display"),
                 footer: String(localized: "The editor uses your code font and size from Text."),
-                items: [.syntax, .lineNumbers, .currentLine, .wrap]
+                items: [.syntax, .lineNumbers, .currentLine, .wrapText, .wrapCode]
             ),
             SettingsSectionModel(
                 .indentation,
@@ -68,7 +68,8 @@ final class SettingsEditorViewController: SettingsListViewController<SettingsEdi
         case .syntax: AnyHashable(preferences.highlightsSyntax)
         case .lineNumbers: AnyHashable(preferences.showsLineNumbers)
         case .currentLine: AnyHashable(preferences.highlightsCurrentLine)
-        case .wrap: AnyHashable(preferences.wrapsLines)
+        case .wrapText: AnyHashable(preferences.wrapsText)
+        case .wrapCode: AnyHashable(preferences.wrapsCode)
         case .detectIndentation: AnyHashable(preferences.detectsIndentation)
         case .indentWith: AnyHashable(preferences.indentsWithTabs)
         case .tabWidth: AnyHashable(preferences.tabWidth)
@@ -148,8 +149,10 @@ final class SettingsEditorViewController: SettingsListViewController<SettingsEdi
             toggleRow(cell, title: String(localized: "Line Numbers"), isOn: preferences.showsLineNumbers) { [weak self] in self?.preferences.showsLineNumbers = $0 }
         case .currentLine:
             toggleRow(cell, title: String(localized: "Highlight Current Line"), isOn: preferences.highlightsCurrentLine) { [weak self] in self?.preferences.highlightsCurrentLine = $0 }
-        case .wrap:
-            toggleRow(cell, title: String(localized: "Wrap Lines"), isOn: preferences.wrapsLines) { [weak self] in self?.preferences.wrapsLines = $0 }
+        case .wrapText, .wrapCode:
+            let kind: CodeEditorWrapKind = item == .wrapText ? .text : .code
+            let title = kind == .text ? String(localized: "Wrap Markdown and Text") : String(localized: "Wrap Code")
+            toggleRow(cell, title: title, isOn: preferences.wrapsLines(for: kind)) { [weak self] in self?.preferences.setWrapsLines($0, for: kind) }
         case .detectIndentation:
             toggleRow(cell, title: String(localized: "Detect From File"), isOn: preferences.detectsIndentation) { [weak self] in self?.preferences.detectsIndentation = $0 }
         case .closeBrackets:

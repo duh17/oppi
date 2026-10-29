@@ -465,11 +465,11 @@ final class WorkspaceFileEditBarItems {
     private let previewItem: UIBarButtonItem
     private let doneItem: UIBarButtonItem
 
-    init(onTogglePreview: @escaping @MainActor () -> Void, onDone: @escaping @MainActor () -> Void) {
+    init(wrapKind: CodeEditorWrapKind, onTogglePreview: @escaping @MainActor () -> Void, onDone: @escaping @MainActor () -> Void) {
         optionsItem = UIBarButtonItem(
             title: String(localized: "Editor Options"),
             image: UIImage(systemName: "slider.horizontal.3"),
-            menu: WorkspaceFileEditorOptions.menu()
+            menu: WorkspaceFileEditorOptions.menu(wrapKind: wrapKind)
         )
         optionsItem.accessibilityIdentifier = "workspace-file-editor.options"
         previewItem = UIBarButtonItem(primaryAction: UIAction { _ in onTogglePreview() })
@@ -499,15 +499,17 @@ final class WorkspaceFileEditBarItems {
 /// Built each time it opens, so it shows the current values.
 @MainActor
 enum WorkspaceFileEditorOptions {
-    static func menu(preferences: CodeEditorPreferences = .shared) -> UIMenu {
+    /// `wrapKind` is the open file's: Wrap Lines in the menu changes that
+    /// kind's setting, as Settings > Editor does.
+    static func menu(wrapKind: CodeEditorWrapKind, preferences: CodeEditorPreferences = .shared) -> UIMenu {
         UIMenu(children: [
             UIDeferredMenuElement.uncached { completion in
-                completion(elements(preferences))
+                completion(elements(preferences, wrapKind: wrapKind))
             },
         ])
     }
 
-    private static func elements(_ preferences: CodeEditorPreferences) -> [UIMenuElement] {
+    private static func elements(_ preferences: CodeEditorPreferences, wrapKind: CodeEditorWrapKind) -> [UIMenuElement] {
         let keybindings = UIMenu(
             title: String(localized: "Keybindings"),
             options: [.displayInline, .singleSelection],
@@ -518,16 +520,14 @@ enum WorkspaceFileEditorOptions {
                 ) { _ in preferences.keybindings = keybindings }
             }
         )
-        let toggles: [(String, ReferenceWritableKeyPath<CodeEditorPreferences, Bool>)] = [
-            (String(localized: "Syntax Highlighting"), \.highlightsSyntax),
-            (String(localized: "Line Numbers"), \.showsLineNumbers),
-            (String(localized: "Wrap Lines"), \.wrapsLines),
-            (String(localized: "Keyboard Bar"), \.showsKeyBar),
+        let toggles: [(String, Bool, (Bool) -> Void)] = [
+            (String(localized: "Syntax Highlighting"), preferences.highlightsSyntax, { preferences.highlightsSyntax = $0 }),
+            (String(localized: "Line Numbers"), preferences.showsLineNumbers, { preferences.showsLineNumbers = $0 }),
+            (String(localized: "Wrap Lines"), preferences.wrapsLines(for: wrapKind), { preferences.setWrapsLines($0, for: wrapKind) }),
+            (String(localized: "Keyboard Bar"), preferences.showsKeyBar, { preferences.showsKeyBar = $0 }),
         ]
-        let settings = UIMenu(options: .displayInline, children: toggles.map { title, keyPath in
-            UIAction(title: title, state: preferences[keyPath: keyPath] ? .on : .off) { _ in
-                preferences[keyPath: keyPath].toggle()
-            }
+        let settings = UIMenu(options: .displayInline, children: toggles.map { title, isOn, set in
+            UIAction(title: title, state: isOn ? .on : .off) { _ in set(!isOn) }
         })
         return [keybindings, settings]
     }

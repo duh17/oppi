@@ -1030,6 +1030,7 @@ final class FileViewerViewController: UIViewController {
         let editing = isEditingText
         if editing, let editSession {
             let editItems = editBarItems ?? WorkspaceFileEditBarItems(
+                wrapKind: CodeEditorWrapKind(grammar: CodeEditorHighlightEngine.grammar(forPath: editSession.identity.path)),
                 onTogglePreview: { [weak self] in self?.isShowingEditPreview.toggle() },
                 onDone: { [weak self] in self?.endEditing() }
             )

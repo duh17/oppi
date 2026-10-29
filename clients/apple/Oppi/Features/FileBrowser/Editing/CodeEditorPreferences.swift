@@ -131,6 +131,21 @@ enum CodeEditorBarKey: Hashable, Sendable {
     }
 }
 
+/// What a file's wrap preference follows: prose wraps by default, code does not.
+enum CodeEditorWrapKind: Sendable {
+    /// Markdown and plain text.
+    case text
+    /// Every file with a code grammar.
+    case code
+
+    init(grammar: CodeEditorHighlightEngine.Grammar) {
+        switch grammar {
+        case .markdown, .plain: self = .text
+        case .treeSitter, .scanner: self = .code
+        }
+    }
+}
+
 /// Device-local editor settings. The editor and Settings read the same
 /// observable instance, so a change in either shows in the other at once.
 @MainActor @Observable
@@ -142,7 +157,10 @@ final class CodeEditorPreferences {
     var keybindings: CodeEditorKeybindings { didSet { defaults.set(keybindings.rawValue, forKey: Key.keybindings) } }
     var showsLineNumbers: Bool { didSet { defaults.set(showsLineNumbers, forKey: Key.lineNumbers) } }
     var highlightsCurrentLine: Bool { didSet { defaults.set(highlightsCurrentLine, forKey: Key.currentLine) } }
-    var wrapsLines: Bool { didSet { defaults.set(wrapsLines, forKey: Key.wrap) } }
+    /// Wrap Lines for Markdown and plain text (on unless the user chose).
+    var wrapsText: Bool { didSet { defaults.set(wrapsText, forKey: Key.wrapText) } }
+    /// Wrap Lines for code (off unless the user chose).
+    var wrapsCode: Bool { didSet { defaults.set(wrapsCode, forKey: Key.wrapCode) } }
     var highlightsSyntax: Bool { didSet { defaults.set(highlightsSyntax, forKey: Key.syntax) } }
     var closesBrackets: Bool { didSet { defaults.set(closesBrackets, forKey: Key.brackets) } }
     /// Follow the open file's own tabs/spaces and width when it has indented lines.
@@ -159,7 +177,11 @@ final class CodeEditorPreferences {
         static let keybindings = prefix + "keybindings"
         static let lineNumbers = prefix + "lineNumbers"
         static let currentLine = prefix + "currentLine"
-        static let wrap = prefix + "wrapLines"
+        /// One setting for every file until wrapping became per kind; read once
+        /// as the user's choice for both kinds, never written again.
+        static let legacyWrap = prefix + "wrapLines"
+        static let wrapText = prefix + "wrapText"
+        static let wrapCode = prefix + "wrapCode"
         static let syntax = prefix + "syntaxHighlighting"
         static let brackets = prefix + "closeBrackets"
         static let detectIndent = prefix + "detectIndentation"
@@ -177,7 +199,9 @@ final class CodeEditorPreferences {
         keybindings = defaults.string(forKey: Key.keybindings).flatMap(CodeEditorKeybindings.init(rawValue:)) ?? .standard
         showsLineNumbers = bool(Key.lineNumbers, true)
         highlightsCurrentLine = bool(Key.currentLine, true)
-        wrapsLines = bool(Key.wrap, true)
+        let legacyWrap = defaults.object(forKey: Key.legacyWrap) == nil ? nil : defaults.bool(forKey: Key.legacyWrap)
+        wrapsText = bool(Key.wrapText, legacyWrap ?? true)
+        wrapsCode = bool(Key.wrapCode, legacyWrap ?? false)
         highlightsSyntax = bool(Key.syntax, true)
         closesBrackets = bool(Key.brackets, true)
         detectsIndentation = bool(Key.detectIndent, true)
@@ -187,6 +211,20 @@ final class CodeEditorPreferences {
         showsKeyBar = bool(Key.keyBar, true)
         keyBarKeys = (defaults.stringArray(forKey: Key.keyBarKeys)?.compactMap(CodeEditorBarKey.init(id:)))
             ?? CodeEditorBarKey.defaults
+    }
+
+    func wrapsLines(for kind: CodeEditorWrapKind) -> Bool {
+        switch kind {
+        case .text: wrapsText
+        case .code: wrapsCode
+        }
+    }
+
+    func setWrapsLines(_ wraps: Bool, for kind: CodeEditorWrapKind) {
+        switch kind {
+        case .text: wrapsText = wraps
+        case .code: wrapsCode = wraps
+        }
     }
 
     /// Indentation from settings, before the file's own style is detected.

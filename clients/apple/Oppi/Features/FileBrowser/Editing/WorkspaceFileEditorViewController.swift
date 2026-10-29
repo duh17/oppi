@@ -139,6 +139,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     private let isMarkdown: Bool
     private let grammar: CodeEditorHighlightEngine.Grammar
     private let languageName: String
+    private let wrapKind: CodeEditorWrapKind
     private let onDone: () -> Void
     private let makePreview: (String) -> UIViewController
     private var highlighter: CodeEditorHighlighter?
@@ -165,6 +166,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         let path = session.identity.path
         self.isMarkdown = FileType.detect(from: path) == .markdown
         self.grammar = CodeEditorHighlightEngine.grammar(forPath: path)
+        self.wrapKind = CodeEditorWrapKind(grammar: grammar)
         self.languageName = switch grammar {
         case .markdown: "Markdown"
         case .treeSitter(let language), .scanner(let language): language.displayName
@@ -275,7 +277,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         super.updateProperties()
         textView.showsLineNumbers = preferences.showsLineNumbers
         textView.highlightsCurrentLine = preferences.highlightsCurrentLine
-        textView.wrapsLines = preferences.wrapsLines
+        textView.wrapsLines = preferences.wrapsLines(for: wrapKind)
         highlighter?.isEnabled = preferences.highlightsSyntax
         if indentation.width != appliedTabWidth {
             appliedTabWidth = indentation.width

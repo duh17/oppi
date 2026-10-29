@@ -19,7 +19,7 @@ struct CodeEditorLineWrapTests {
         let defaults = try #require(UserDefaults(suiteName: "editor-wrap-\(UUID().uuidString)"))
         let preferences = CodeEditorPreferences(defaults: defaults)
         preferences.keybindings = .vim
-        preferences.wrapsLines = wrapsLines
+        preferences.wrapsText = wrapsLines
         preferences.showsLineNumbers = showsLineNumbers
         let session = try #require(WorkspaceFileEditSession(
             identity: WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md"),
@@ -132,7 +132,7 @@ struct CodeEditorLineWrapTests {
         let textView = controller.textView
         textView.contentOffset.x = 500
 
-        preferences.wrapsLines = true
+        preferences.wrapsText = true
         controller.updatePropertiesIfNeeded()
         window.layoutIfNeeded()
 
