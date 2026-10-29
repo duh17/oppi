@@ -11,14 +11,21 @@ enum OppiTestLaunch {
     static let resetTokenKey = "dev.chenda.Oppi.test.resetToken"
     static let animationsKey = "dev.chenda.Oppi.test.animations"
 
-    /// One token for the whole test process. E2E uses it so only the first
-    /// launch resets and relaunches keep the pairing and drafts they prove.
+    /// One token for the whole test process. The E2E target uses it for every
+    /// launch, plain `XCTestCase` previews included: only the first launch
+    /// resets, so relaunches keep the pairing and drafts they prove, and no
+    /// class can clear a pairing a later `E2ETestCase` launch still needs (its
+    /// invite is single-use).
     static let processToken = UUID().uuidString
 
-    /// The current test's token: every app a test makes shares it, so the
-    /// first launch starts clean and a relaunch inside the test (a test that
-    /// proves a saved choice survives one) keeps what the test wrote. The next
-    /// test gets a new token.
+    /// The test bundle's file name: these UI-test bundles carry no Info.plist,
+    /// so `bundleIdentifier` is nil.
+    private static let isE2ETarget = Bundle(for: TestEndObserver.self).bundleURL.lastPathComponent == "OppiE2ETests.xctest"
+
+    /// The current test's token (UI target): every app a test makes shares it,
+    /// so the first launch starts clean and a relaunch inside the test (a test
+    /// that proves a saved choice survives one) keeps what the test wrote. The
+    /// next test gets a new token.
     nonisolated(unsafe) private static var testToken: String?
     nonisolated(unsafe) private static var observer: TestEndObserver?
 
@@ -29,6 +36,7 @@ enum OppiTestLaunch {
     }
 
     private static func currentTestToken() -> String {
+        if isE2ETarget { return processToken }
         if observer == nil {
             let observer = TestEndObserver()
             XCTestObservationCenter.shared.addTestObserver(observer)
@@ -42,7 +50,7 @@ enum OppiTestLaunch {
 
     /// - Parameters:
     ///   - resetToken: Launches that share a token share state after the first.
-    ///     `nil` uses the current test's token, so each test starts clean.
+    ///     `nil` uses the target's token: one per test in UI, one per process in E2E.
     ///   - animations: `false` turns UIKit animations off for the launch.
     static func makeApp(
         resetToken: String? = nil,

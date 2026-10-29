@@ -24,8 +24,11 @@ enum TestLaunchContract {
     static func applyAtLaunch(defaults: UserDefaults = .standard) {
         applyReset(
             token: defaults.string(forKey: resetTokenKey),
-            defaults: defaults,
-            domains: [AppIdentifiers.subsystem, SharedConstants.appGroupIdentifier],
+            tokenStore: defaults,
+            cleared: [
+                (defaults, AppIdentifiers.subsystem),
+                (SharedConstants.sharedDefaults, SharedConstants.appGroupIdentifier),
+            ],
             directories: [
                 ComposerDraftStore.intentSessionPromptFileURL().deletingLastPathComponent(),
                 WorkspaceFileDraftStore.shared.directory,
@@ -36,24 +39,26 @@ enum TestLaunchContract {
         }
     }
 
-    /// Clears `domains` and `directories` once per `token`. A nil token is a
-    /// normal launch and changes nothing.
+    /// Clears each `cleared` persistent domain through its own `UserDefaults`
+    /// (the app group's suite is its own store, not a domain of `.standard`) and
+    /// every directory once per `token`, then records the token in `tokenStore`.
+    /// A nil token is a normal launch and changes nothing.
     static func applyReset(
         token: String?,
-        defaults: UserDefaults,
-        domains: [String],
+        tokenStore: UserDefaults,
+        cleared: [(defaults: UserDefaults, domain: String)],
         directories: [URL],
         fileManager: FileManager = .default
     ) {
-        guard let token, !token.isEmpty, defaults.string(forKey: appliedTokenKey) != token else { return }
-        for domain in domains {
+        guard let token, !token.isEmpty, tokenStore.string(forKey: appliedTokenKey) != token else { return }
+        for (defaults, domain) in cleared {
             defaults.removePersistentDomain(forName: domain)
         }
         for directory in directories {
             try? fileManager.removeItem(at: directory)
         }
-        WhatsNewManager.markSeen(in: defaults)
-        defaults.set(token, forKey: appliedTokenKey)
+        WhatsNewManager.markSeen(in: tokenStore)
+        tokenStore.set(token, forKey: appliedTokenKey)
     }
 }
 #endif

@@ -19,7 +19,12 @@ struct TestLaunchContractTests {
     }
 
     private func apply(_ token: String?, _ defaults: UserDefaults) {
-        TestLaunchContract.applyReset(token: token, defaults: defaults, domains: [domain], directories: [directory])
+        TestLaunchContract.applyReset(
+            token: token,
+            tokenStore: defaults,
+            cleared: [(defaults, domain)],
+            directories: [directory]
+        )
     }
 
     private func writeDraft() throws {
@@ -39,6 +44,30 @@ struct TestLaunchContractTests {
         #expect(defaults.object(forKey: "reader.speed") == nil)
         #expect(!FileManager.default.fileExists(atPath: directory.path))
         #expect(defaults.string(forKey: WhatsNewManager.lastSeenVersionKey) == WhatsNewManager.currentVersion)
+    }
+
+    /// The paired-server index lives in the app group's suite, which only its
+    /// own `UserDefaults` clears; a reset that left it would let the next launch
+    /// see servers an earlier run paired.
+    @Test func resetClearsThePairedServerIndexInTheAppGroup() throws {
+        let shared = SharedConstants.sharedDefaults
+        let key = SharedConstants.pairedServerIdsKey
+        let original = shared.stringArray(forKey: key)
+        let tokenStore = try makeDefaults()
+        defer {
+            if let original { shared.set(original, forKey: key) } else { shared.removeObject(forKey: key) }
+            cleanUp(tokenStore)
+        }
+        shared.set(["sha256:left-by-an-earlier-run"], forKey: key)
+
+        TestLaunchContract.applyReset(
+            token: "run-1",
+            tokenStore: tokenStore,
+            cleared: [(shared, SharedConstants.appGroupIdentifier)],
+            directories: []
+        )
+
+        #expect(shared.stringArray(forKey: key) == nil)
     }
 
     @Test func sameTokenOnRelaunchKeepsState() throws {

@@ -11,12 +11,6 @@ enum ChatTopBarTestLayout {
     ]
 }
 
-/// A class's launch precondition failed (`requireLaunchStep`).
-struct E2ELaunchFailure: Error, CustomStringConvertible {
-    let message: String
-    var description: String { message }
-}
-
 struct E2ELifecycleDiagnosticSnapshot: Equatable {
     let sequence: Int
     let phase: String
@@ -41,8 +35,11 @@ class E2ETestCase: XCTestCase {
     /// runs these UI tests serially in the harness.
     nonisolated(unsafe) private static var _app: XCUIApplication?
 
-    /// The first launch-check failure per test class, by class name.
-    nonisolated(unsafe) private static var launchFailures: [String: String] = [:]
+    /// Launch configurations that never reached their first surface.
+    nonisolated(unsafe) private static var launchLedger = E2ELaunchFailureLedger()
+
+    /// This test's launch configuration, set while it launches.
+    private var launchKey = ""
 
     var app: XCUIApplication {
         Self._app!
@@ -127,9 +124,6 @@ class E2ETestCase: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         continueAfterFailure = false
-        if let reason = Self.launchFailures[String(describing: type(of: self))] {
-            throw E2ELaunchFailure(message: "Skipped relaunch: an earlier test in this class failed to launch. First failure: \(reason)")
-        }
         resetDeviceOrientation()
         try seedE2EFixtures()
         // The app (and its launch environment) is shared across classes, so a
@@ -206,11 +200,12 @@ class E2ETestCase: XCTestCase {
         }
         let inviteURL = invite.url
 
-        // One reset token per test process: the first launch starts from clean
-        // app state, and relaunches keep the pairing and drafts. Real transitions
-        // are off so taps do not race animation; a case that proves a transition
-        // handoff turns them back on in `configureE2ELaunch`.
-        let application = OppiTestLaunch.makeApp(resetToken: OppiTestLaunch.processToken, animations: false)
+        // The E2E target shares one reset token per process: the first launch
+        // starts from clean app state, and relaunches keep the pairing and
+        // drafts. Real transitions are off so taps do not race animation; a case
+        // that proves a transition handoff turns them back on in
+        // `configureE2ELaunch`.
+        let application = OppiTestLaunch.makeApp(animations: false)
         // A stale preference from an earlier run must not decide which browser
         // a link opens; the web-link case asserts the in-app one.
         application.launchArguments += [
@@ -234,6 +229,24 @@ class E2ETestCase: XCTestCase {
             application.launchEnvironment.removeValue(forKey: "OPPI_E2E_AUTO_CREATE_SESSION")
         }
         configureE2ELaunch(application)
+        launchKey = E2ELaunchFailureLedger.key(
+            className: String(describing: type(of: self)),
+            flags: [
+                "workspaceHomeOnly": e2eLaunchesWorkspaceHomeOnly,
+                "sessionsInboxOnly": e2eLaunchesSessionsInboxOnly,
+                "autoCreatesSession": e2eAutoCreatesSessionOnLaunch,
+                "startsInChat": e2eStartsInAutoCreatedChat,
+                "skipsNavigation": e2eSkipsLaunchNavigation,
+            ],
+            arguments: application.launchArguments,
+            environment: application.launchEnvironment
+        )
+        if let reason = Self.launchLedger.failure(for: launchKey) {
+            throw E2ELaunchFailure(
+                message: "Not relaunched: this launch configuration already failed its first launch in this run. First failure: \(reason)"
+            )
+        }
+        defer { Self.launchLedger.recordSuccess(for: launchKey) }
         application.launch()
         Self._app = application
 
@@ -336,13 +349,13 @@ class E2ETestCase: XCTestCase {
         )
     }
 
-    /// A launch check that fails means the app never reached the surface every
-    /// test in this class starts from. The first reason is kept and the rest of
-    /// the class fails at `setUp` with it, instead of relaunching and waiting out
-    /// the same ceiling once per test.
+    /// A launch check that fails means the app never reached the surface this
+    /// launch configuration starts from. The first reason is kept and the same
+    /// configuration fails before launching again (`E2ELaunchFailureLedger`),
+    /// instead of waiting out the same ceiling once per test.
     private func requireLaunchStep(_ passed: Bool, _ message: String) throws {
         guard !passed else { return }
-        Self.launchFailures[String(describing: type(of: self))] = message
+        Self.launchLedger.recordFailure(message, for: launchKey)
         terminateSharedApp()
         throw E2ELaunchFailure(message: message)
     }
