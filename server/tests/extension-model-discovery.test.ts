@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, mkdirSync, utimesSync, writeFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  utimesSync,
+  writeFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -297,6 +305,7 @@ function modelIds(runtime: ModelRuntime): string[] {
 
 describe("ExtensionProviderCatalog", () => {
   const tempDirs: string[] = [];
+  const catalogs: ExtensionProviderCatalog[] = [];
 
   function makeTempDir(prefix: string): string {
     const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -304,7 +313,8 @@ describe("ExtensionProviderCatalog", () => {
     return dir;
   }
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(catalogs.splice(0).map((catalog) => catalog.dispose()));
     for (const dir of tempDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -331,14 +341,60 @@ describe("ExtensionProviderCatalog", () => {
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
     });
-    return {
-      cwd,
-      agentDir,
-      runtime,
-      catalog: new ExtensionProviderCatalog(runtime, { cwd, agentDir }),
-      extensionsDir,
-    };
+    const catalog = new ExtensionProviderCatalog(runtime, { cwd, agentDir });
+    catalogs.push(catalog);
+    return { cwd, agentDir, runtime, catalog, extensionsDir };
   }
+
+  const catalogRoots = (): string[] =>
+    readdirSync(tmpdir()).filter((name) => name.startsWith("oppi-provider-catalog-"));
+
+  it("keeps the discovery root as an extension's working directory until the catalog is disposed", async () => {
+    const key = "__oppiCatalogExecCwd";
+    const extension = staticProviderExtension(
+      "execext",
+      "exec-model",
+      `
+      pi.events.emit("oppi:provider-quota:v1", {
+        providerId: "execext",
+        async fetch() {
+          const result = await pi.exec(process.execPath, ["-e", "process.stdout.write(process.cwd())"]);
+          globalThis.${key} = result.stdout;
+          return { authenticated: true, windows: [] };
+        },
+      });`,
+    );
+    const { catalog, runtime } = await setupCatalog(extension);
+    await catalog.sync();
+    expect(catalogRoots()).toHaveLength(1);
+
+    // The quota callback runs after sync() returned and execs without a cwd.
+    await fetchProviderQuotas({
+      modelRuntime: runtime,
+      adapters: catalog.getQuotaAdapters(runtime),
+      now: () => 1000,
+    });
+    const execCwd = (globalThis as Record<string, unknown>)[key];
+    delete (globalThis as Record<string, unknown>)[key];
+    expect(typeof execCwd === "string" && existsSync(execCwd)).toBe(true);
+
+    await catalog.dispose();
+    expect(catalogRoots()).toEqual([]);
+    // A late sync after dispose neither reloads nor recreates the root.
+    expect((await catalog.sync({ force: true })).skipped).toBe(true);
+    expect(catalogRoots()).toEqual([]);
+  });
+
+  it("removes the discovery root of a one-shot discovery", async () => {
+    const { cwd, agentDir } = await setupCatalog(staticProviderExtension("oneshot", "m"));
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const result = await discoverExtensionProviders(runtime, { cwd, agentDir });
+    expect(result.registeredProviderIds).toContain("oneshot");
+    expect(catalogRoots()).toEqual([]);
+  });
 
   it("loads a provider-owned quota callback without fetching until the native quota route asks", async () => {
     const extension = staticProviderExtension(
@@ -762,6 +818,7 @@ export default function (pi) {
       },
       { cwd, agentDir },
     );
+    catalogs.push(catalog);
 
     expect((await catalog.sync()).registeredProviderIds).toContain("keepprov");
     expect(catalog.getQuotaAdapters(runtime)).toHaveLength(1);

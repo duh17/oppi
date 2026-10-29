@@ -126,9 +126,9 @@ export async function discoverExtensionProviders(
   modelRuntime: ExtensionProviderCatalogRuntime,
   options: ExtensionProviderDiscoveryOptions,
 ): Promise<ExtensionProviderDiscoveryResult> {
-  const result = await new ExtensionProviderCatalog(modelRuntime, options).sync({
-    force: true,
-  });
+  const catalog = new ExtensionProviderCatalog(modelRuntime, options);
+  // One-shot: nothing outlives this call, so the discovery root goes with it.
+  const result = await catalog.sync({ force: true }).finally(() => catalog.dispose());
   return {
     registeredProviderIds: result.registeredProviderIds,
     diagnostics: result.diagnostics,
@@ -207,6 +207,9 @@ export class ExtensionProviderCatalog {
   private quotaSources: ExtensionQuotaSource[] = [];
   private quotaGeneration = new AbortController();
   private queue: Promise<void> = Promise.resolve();
+  /** Created by the first discovery, removed by dispose(). */
+  private discoveryRoot?: string;
+  private disposed = false;
 
   constructor(
     private readonly modelRuntime: ExtensionProviderCatalogRuntime,
@@ -234,9 +237,36 @@ export class ExtensionProviderCatalog {
     return run;
   }
 
+  /**
+   * Stop reconciling and remove the discovery root. Waits for a sync already in flight, so
+   * the root is not deleted under it; later syncs change nothing. Never rejects.
+   */
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    await this.queue;
+    this.quotaGeneration.abort();
+    this.quotaSources = [];
+    const root = this.discoveryRoot;
+    this.discoveryRoot = undefined;
+    if (!root) return;
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch (error) {
+      log.warn("extension_model_discovery.root_cleanup_failed", { error: errorMessage(error) });
+    }
+  }
+
   private async syncExclusive(
     options: ExtensionProviderSyncOptions,
   ): Promise<ExtensionProviderSyncResult> {
+    if (this.disposed) {
+      return {
+        registeredProviderIds: [...this.registeredIds],
+        diagnostics: [],
+        skipped: true,
+        unregisteredProviderIds: [],
+      };
+    }
     let fingerprint: string;
     try {
       fingerprint = extensionDiscoveryFingerprint(this.options.agentDir);
@@ -334,13 +364,16 @@ export class ExtensionProviderCatalog {
       .map((resource) => resource.path);
     // Unique empty root so discoverAndLoadExtensions does not also scan the
     // real cwd/.pi/extensions or agentDir/extensions. Paths already come from
-    // the skip-resolve. mkdtempSync (not a fixed $TMPDIR name) owns the dir, and
-    // the finally below removes it.
+    // the skip-resolve. mkdtempSync (not a fixed $TMPDIR name) owns the dir. The
+    // root is the extensions' cwd for the rest of the catalog's life (a provider's
+    // exec without a cwd runs there long after sync returns), so dispose() removes it.
     // Only capture declarations during global extension loading. This catalog
     // runtime never starts a session, so callbacks must not fetch until requested.
     const eventBus = createEventBus();
     const loads: Array<{ path: string; result: LoadExtensionsResult; claims: unknown[] }> = [];
-    const discoveryRoot = mkdtempSync(join(tmpdir(), "oppi-provider-catalog-"));
+    const discoveryRoot = (this.discoveryRoot ??= mkdtempSync(
+      join(tmpdir(), "oppi-provider-catalog-"),
+    ));
     try {
       for (const path of enabledPaths) {
         const claims: unknown[] = [];
@@ -364,7 +397,6 @@ export class ExtensionProviderCatalog {
       }
     } finally {
       eventBus.clear();
-      rmSync(discoveryRoot, { recursive: true, force: true });
     }
     const diagnostics: ExtensionProviderDiagnostic[] = [
       ...skippedSources.map((source) => ({

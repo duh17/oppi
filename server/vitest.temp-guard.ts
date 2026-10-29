@@ -12,9 +12,9 @@
  * Must be listed before vitest.setup.ts in `setupFiles`: Vitest runs afterAll hooks in
  * reverse registration order, so setup-owned directories are removed before this check.
  */
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join } from "node:path";
 import { afterAll, expect } from "vitest";
 
 const runRoot = process.env.OPPI_VITEST_RUN_TMP;
@@ -38,14 +38,29 @@ function removeTree(path: string): void {
   }
 }
 
+/**
+ * A short random name (three base36 characters) under the run root, retried on collision.
+ * Short on purpose: see RUN_ROOT_PREFIX in vitest.global-setup.ts.
+ */
+function makeFileDir(root: string): string {
+  for (;;) {
+    const path = join(root, Math.random().toString(36).slice(2, 5).padEnd(3, "0"));
+    try {
+      mkdirSync(path);
+      return path;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+}
+
 if (runRoot) {
   const inheritedTmpdir = process.env.TMPDIR;
   // Node processes (this worker and the CLIs and helpers tests spawn) keep their compile cache
   // in `$TMPDIR/node-compile-cache` and write it when they exit, possibly after this file's
   // directory is gone. Pin it to the shared TMPDIR's reused directory before redirecting.
   process.env.NODE_COMPILE_CACHE ??= join(tmpdir(), "node-compile-cache");
-  // A trailing separator makes mkdtemp create the directory inside the root (join() drops it).
-  const fileTmp = mkdtempSync(`${runRoot}${sep}`);
+  const fileTmp = makeFileDir(runRoot);
   process.env.TMPDIR = fileTmp;
 
   afterAll(() => {

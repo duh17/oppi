@@ -1238,6 +1238,7 @@ export class Server {
       for (const timer of this.accessExpiryTimers.values()) clearTimeout(timer);
       this.accessExpiryTimers.clear();
       await this.uploadGcInFlight;
+      await this.extensionProviderCatalog?.dispose();
       await this.mcp?.dispose();
     }
 

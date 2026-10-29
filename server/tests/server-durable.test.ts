@@ -106,7 +106,6 @@ async function fixture(
   options?: { slow?: boolean; settings?: Parameters<typeof SettingsManager.inMemory>[0] },
 ) {
   const dir = makeTempDir("oppi-server-durable-test-");
-  console.info(`Durable integration artifacts: ${dir}`);
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
     modelsPath: null,
@@ -4387,10 +4386,8 @@ describe("server durable managed runtime", () => {
     const outlineMs = performance.now() - outlineStart;
     expect(outline.outline.itemCount).toBe(2001);
     expect(resume).not.toHaveBeenCalled();
-    const perf = { pages: timings.length, timingsMs: timings, outlineMs };
-    writeFileSync(join(f.dir, "trace-perf.json"), JSON.stringify(perf, null, 2));
     process.stdout.write(
-      `Durable 2000-entry perf: pages=${timings.length} min=${Math.min(...timings).toFixed(2)} max=${Math.max(...timings).toFixed(2)} avg=${(timings.reduce((a, b) => a + b, 0) / timings.length).toFixed(2)}ms outline=${outlineMs.toFixed(2)}ms artifact=${join(f.dir, "trace-perf.json")}\n`,
+      `Durable 2000-entry perf: pages=${timings.length} min=${Math.min(...timings).toFixed(2)} max=${Math.max(...timings).toFixed(2)} avg=${(timings.reduce((a, b) => a + b, 0) / timings.length).toFixed(2)}ms outline=${outlineMs.toFixed(2)}ms\n`,
     );
   });
 

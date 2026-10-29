@@ -113,6 +113,7 @@ Example:
 
 ### Fixed
 
+- **Server:** The server no longer leaves an `oppi-provider-catalog-*` and an `oppi-mcp-*` folder in the temp folder on every start; it removes both when it stops.
 - **Client:** **Approve New Device?** no longer sends an approval for a request that expires while you are authenticating (the sheet says it expired) or that another device denied in the meantime, and tapping Approve twice asks you to authenticate only once.
 - **Client:** Deleting a workspace or a session the server refuses (an error answer such as 500 or 409) keeps it on screen and shows the server's message, instead of removing it from the device while it still exists on the server. A session leaves the list once the server has deleted it.
 - **Client:** **Server Settings → Badge Icon** saves the icon before it shows it: when the Keychain write fails the old icon stays marked and an alert says why, instead of the new icon disappearing at the next launch.

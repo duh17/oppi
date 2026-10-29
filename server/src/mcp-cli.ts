@@ -3,7 +3,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createLogger } from "./logger.js";
 import { McpError } from "./mcp-config.js";
+
+const log = createLogger({ base: { component: "mcp_cli" } });
 
 /** Resolve the package's declared CLI, not dist/cli.js (the unbundled shim). */
 function piCliPath(): string {
@@ -58,9 +61,18 @@ export class McpCli {
       writeFileSync(join(bin, command), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
     this.phonePath = `${bin}:${process.env.PATH ?? ""}`;
   }
-  /** Remove the neutral cwd; call once no child started by this CLI can still run. */
+  /**
+   * Remove the neutral cwd; call once no child started by this CLI can still run. A failed
+   * removal is logged, never thrown, so shutdown still completes.
+   */
   dispose(): void {
-    rmSync(this.globalCwd, { recursive: true, force: true });
+    try {
+      rmSync(this.globalCwd, { recursive: true, force: true });
+    } catch (error) {
+      log.warn("mcp_cli.cwd_cleanup_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   start(
     args: string[],

@@ -197,7 +197,6 @@ afterAll(() => {
 
 beforeEach(async () => {
   dataDir = makeTempDir("oppi-conversation-stream-ws-");
-  console.info(`Conversation stream integration artifacts: ${dataDir}`);
   previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = join(dataDir, "agent");
   const models = await ModelRuntime.create({
