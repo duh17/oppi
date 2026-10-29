@@ -41,6 +41,7 @@ Options:
   --faux-model          Serve the scripted test-only model oppi-e2e-faux/oppi-e2e-faux-1
                         instead of Haiku (no Anthropic login needed). Needs --durable.
   --group GROUP         E2E target group: gate (default), extended, recovery, history, quick-session, extension-attention, all, smoke, regression, full-regression, media, or screenshot.
+                        all, regression, and full-regression skip the two-server suites (they need server/scripts/e2e-two-server.ts).
   --only-testing TARGET Run one XCTest bundle, suite, or test target. May be repeated.
   --skip-testing TARGET Skip one XCTest bundle, suite, or test target. May be repeated.
   --record-video[=POLICY]
@@ -154,6 +155,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Suites that pair a second server. A plain run has no second server for them, so the groups that
+# take the whole target skip them; `bun server/scripts/e2e-two-server.ts` (and the batch gate,
+# which routes these suites there) runs each one. Skipped here rather than XCTSkip'd inside the
+# suite, so a missing fixture in the routed run still fails loudly.
+TWO_SERVER_SUITES=(
+    "OppiE2ETests/OfflinePairedServerE2ETests"
+    "OppiE2ETests/ServerSettingsSwitchE2ETests"
+)
+
 apply_group_defaults() {
     if $ONLY_TESTING_EXPLICIT; then
         return
@@ -165,9 +175,11 @@ apply_group_defaults() {
             # Preserve broad release coverage. Release wrappers may add their
             # own explicit skip list for labs known to be non-blocking.
             ONLY_TESTING+=("OppiE2ETests")
+            SKIP_TESTING+=("${TWO_SERVER_SUITES[@]}")
             ;;
         all)
             ONLY_TESTING+=("OppiE2ETests")
+            SKIP_TESTING+=("${TWO_SERVER_SUITES[@]}")
             ;;
         release-gate|gate|release-smoke|smoke)
             E2E_GROUP="gate"
@@ -206,6 +218,7 @@ apply_group_defaults() {
         regression)
             ONLY_TESTING+=("OppiE2ETests")
             SKIP_TESTING+=(
+                "${TWO_SERVER_SUITES[@]}"
                 "OppiE2ETests/BrowserAutomationVideoToolRowE2ETests"
                 "OppiE2ETests/ExtensionUISnapshotLabE2ETests"
                 "OppiE2ETests/FeatureEducationTipsPreviewE2ETests"
