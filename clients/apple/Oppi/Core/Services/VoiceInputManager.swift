@@ -2244,6 +2244,16 @@ final class VoiceInputManager {
 
 }
 
+// MARK: - Log Names
+extension VoiceInputManager.EngineMode {
+    var logName: String {
+        switch self {
+        case .onDevice: return "on_device"
+        case .remote: return "remote"
+        }
+    }
+}
+
 // MARK: - Testing Support
 
 #if DEBUG
@@ -2298,15 +2308,6 @@ extension VoiceInputManager {
             } else {
                 providerRegistry.provider(for: .classicDictation)?.invalidateCache()
             }
-        }
-    }
-}
-
-extension VoiceInputManager.EngineMode {
-    var logName: String {
-        switch self {
-        case .onDevice: return "on_device"
-        case .remote: return "remote"
         }
     }
 }
