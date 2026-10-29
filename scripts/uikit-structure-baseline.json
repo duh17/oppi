@@ -16,9 +16,6 @@
     "clients/apple/Oppi/Core/Extensions/Color+Theme.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Extensions/View+iPadReadableContent.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Formatting/ProviderColor.swift": {
       "import SwiftUI": 1
     },
@@ -62,9 +59,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/ScopedLockViews.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/SettingsKit.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditDraft.swift": {
