@@ -391,6 +391,48 @@ describe("sim-pool CLI", () => {
     return { root, fake, apple, env, calls, simctl };
   }
 
+  test("a build whose inputs did not change is skipped; a changed file, another invocation, or another commit builds", () => {
+    const fx = slotlessFixture("skip-build");
+    const git = (...args: string[]) => {
+      const r = spawnSync("git", ["-C", fx.root, "-c", "user.name=t", "-c", "user.email=t@t", ...args], { encoding: "utf8" });
+      expect(r.status).toBe(0);
+    };
+    // Everything the harness writes next to the checkout is ignored, like .build and Vendor in the real repo.
+    writeFileSync(join(fx.root, ".gitignore"), "/bin/\n/fake/\n/home/\n/heavy/\n/locks/\n.build/\n");
+    writeFileSync(join(fx.apple, "A.swift"), "let a = 1\n");
+    git("add", ".");
+    git("commit", "-q", "-m", "init");
+    const build = (scheme = "OppiUnitTests") => {
+      const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", scheme, "build-for-testing"], { cwd: fx.apple, env: fx.env, encoding: "utf8" });
+      expect(result.status).toBe(0);
+      return result.stderr + result.stdout;
+    };
+    expect(build()).not.toContain("Build skipped");
+    expect(fx.calls()).toHaveLength(1);
+    // Nothing changed: no second xcodebuild, and the summary says why.
+    expect(build()).toContain("Build skipped");
+    expect(fx.calls()).toHaveLength(1);
+    const logs = join(fx.apple, ".build", "logs");
+    const summaries = readdirSync(logs).filter((name) => name.endsWith(".summary.json")).sort();
+    const skipped = JSON.parse(readFileSync(join(logs, summaries.at(-1)!), "utf8"));
+    expect(skipped.build_phase.build_skipped).toBe(true);
+    // A tracked edit rebuilds; so does a different scheme (another invocation), and then the first scheme again,
+    // because the products now belong to the other build.
+    writeFileSync(join(fx.apple, "A.swift"), "let a = 2\n");
+    expect(build()).not.toContain("Build skipped");
+    expect(fx.calls()).toHaveLength(2);
+    expect(build("Oppi")).not.toContain("Build skipped");
+    expect(fx.calls()).toHaveLength(3);
+    expect(build()).not.toContain("Build skipped");
+    expect(fx.calls()).toHaveLength(4);
+    // A new commit with the same tree rebuilds; the build after it is skipped again.
+    git("commit", "-q", "--allow-empty", "-m", "empty");
+    expect(build()).not.toContain("Build skipped");
+    expect(fx.calls()).toHaveLength(5);
+    expect(build()).toContain("Build skipped");
+    expect(fx.calls()).toHaveLength(5);
+  }, 60_000);
+
   test("a build with no test action runs in the checkout DerivedData without a simulator slot", () => {
     const fx = slotlessFixture("build-only");
     const productsDir = join(fx.root, "clone");

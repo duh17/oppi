@@ -15,7 +15,7 @@
 //      same counting semaphore), only around the xcodebuild build itself.
 //   3. the simulator slot, taken after 1 and 2 are released.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -214,6 +214,130 @@ export function markPackagesResolved(packages: string): void {
 
 export function checkoutDerivedData(buildBase: string): string {
   return join(buildBase, "dd");
+}
+
+/*
+ * Skip a build whose inputs did not change.
+ *
+ * The checkout's one DerivedData (`.build/dd`) carries one stamp: the key of the last build that
+ * succeeded there, and a fingerprint of the products it left. A build may be skipped only when
+ * the key of the build about to run equals the stamp and the products still match it. The key
+ * covers what the build reads: this checkout's HEAD commit, its tracked diff against HEAD (staged
+ * and unstaged), the content of every untracked non-ignored file, the ignored `Vendor/*\/BUILD_ID`
+ * pins, the Xcode that builds, and the whole xcodebuild invocation (command, flags, build
+ * settings, compilation-cache arguments). It spans the whole repository, not just `clients/apple`:
+ * build phases and `project.yml` reach `protocol/`, `install.sh`, and the architecture checks.
+ * Wrong skips are the failure to avoid, so everything that is unsure rebuilds:
+ *   - One stamp per DerivedData, not one per invocation: a build of another scheme rewrites the
+ *     shared products, so an older stamp would vouch for products it no longer describes.
+ *   - The stamp is deleted before any build starts and written only after a build succeeded
+ *     whose key still matches the checkout afterwards (a file edited during the build leaves no stamp).
+ *   - Products edited or replaced behind the pool's back (a raw xcodebuild into `.build/dd`) change
+ *     their fingerprint (path, size, and mtime of every entry below `Build/Products`).
+ *   - Not a git checkout, or any git/read error: no key, so the build runs.
+ */
+const BUILD_STAMP = "oppi-build-stamp.json";
+
+type BuildStamp = { key: string; products: string };
+
+function gitOutput(root: string, args: string[]): Buffer | undefined {
+  const result = spawnSync("git", ["-C", root, ...args], { maxBuffer: 1 << 30 });
+  return result.status === 0 ? result.stdout : undefined;
+}
+
+/** Hash of the checkout's source state (see above), or undefined when it cannot be determined. */
+export function checkoutSourceState(root: string): string | undefined {
+  const head = gitOutput(root, ["rev-parse", "HEAD"]);
+  const diff = gitOutput(root, ["diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv", "--no-renames"]);
+  const untracked = gitOutput(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  if (!head || !diff || !untracked) return undefined;
+  const hash = createHash("sha256");
+  hash.update(head).update("\0diff\0").update(diff).update("\0untracked\0");
+  try {
+    for (const name of untracked.toString("utf8").split("\0").filter(Boolean).sort()) {
+      const path = join(root, name);
+      const stat = lstatSync(path);
+      hash.update(name).update("\0");
+      hash.update(stat.isSymbolicLink() ? `link:${readlinkSync(path)}` : stat.isFile() ? readFileSync(path) : "nonfile");
+      hash.update("\0");
+    }
+  } catch {
+    return undefined;
+  }
+  return hash.digest("hex");
+}
+
+export type BuildKeyInput = {
+  root: string;
+  appleDir: string;
+  command: string;
+  /** The full xcodebuild invocation after the command, in the order it runs, including injected build settings. */
+  argv: string[];
+  env: NodeJS.ProcessEnv;
+};
+
+/** Key of the build `input` would run, or undefined when the build cannot be keyed (always build). */
+export function buildKey(input: BuildKeyInput): string | undefined {
+  const source = checkoutSourceState(input.root);
+  if (!source) return undefined;
+  const hash = createHash("sha256");
+  hash.update(source).update("\0").update(JSON.stringify([input.command, input.argv]));
+  const developerDir = input.env.DEVELOPER_DIR ?? "";
+  hash.update("\0").update(developerDir);
+  try {
+    // <Xcode>.app/Contents/Developer -> <Xcode>.app/Contents/version.plist
+    hash.update(readFileSync(join(developerDir, "..", "version.plist")));
+  } catch {
+    // A missing version.plist leaves the toolchain path alone in the key.
+  }
+  try {
+    const vendor = join(input.appleDir, "Vendor");
+    for (const name of readdirSync(vendor).sort()) {
+      const pin = join(vendor, name, "BUILD_ID");
+      hash.update(`\0${name}\0`).update(existsSync(pin) ? readFileSync(pin) : "no-pin");
+    }
+  } catch {
+    hash.update("\0no-vendor");
+  }
+  return hash.digest("hex");
+}
+
+/** Path, size, and mtime of every entry the build left in Build/Products (the walk costs about 0.1 s). */
+export function productsFingerprint(derivedData: string): string | undefined {
+  const products = join(derivedData, "Build", "Products");
+  try {
+    const lines = readdirSync(products, { recursive: true, encoding: "utf8" })
+      .sort()
+      .map((name) => {
+        const stat = lstatSync(join(products, name));
+        return `${name} ${stat.size} ${stat.mtimeMs}`;
+      });
+    return lines.length > 0 ? createHash("sha256").update(lines.join("\n")).digest("hex") : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when the last successful build in `derivedData` has this key and its products are untouched. */
+export function buildIsCurrent(derivedData: string, key: string): boolean {
+  try {
+    const stamp = JSON.parse(readFileSync(join(derivedData, BUILD_STAMP), "utf8")) as Partial<BuildStamp>;
+    return stamp.key === key && stamp.products !== undefined && stamp.products === productsFingerprint(derivedData);
+  } catch {
+    return false;
+  }
+}
+
+/** Run before every build: a build that fails or is interrupted must leave no stamp behind. */
+export function forgetBuild(derivedData: string): void {
+  rmSync(join(derivedData, BUILD_STAMP), { force: true });
+}
+
+/** Run after a successful build; `recheck` must still produce `key` or the sources moved during the build. */
+export function recordBuild(derivedData: string, key: string, recheck: () => string | undefined): void {
+  const products = productsFingerprint(derivedData);
+  if (!products || recheck() !== key) return;
+  writeFileSync(join(derivedData, BUILD_STAMP), JSON.stringify({ key, products } satisfies BuildStamp));
 }
 
 /** A held flock; `release` is idempotent. */

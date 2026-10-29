@@ -18,14 +18,18 @@ import {
   acquireHeavyBuildSlot,
   checkoutDerivedData,
   cloneProducts,
+  buildIsCurrent,
+  buildKey,
   compilationCache,
   completionArgvForXctestrun,
+  forgetBuild,
   markPackagesResolved,
   packagesResolvedMarker,
   findXctestrun,
   isXcodebuild,
   planRun,
   pruneRunDirectories,
+  recordBuild,
   runDirectory,
   SLOTLESS_BUILD_DESTINATION,
   slotlessBuildSettings,
@@ -1304,7 +1308,9 @@ function printSummary(input: {
   const buildOnly = build != null && build.logFile === input.logFile;
   if (build) {
     lines.push(
-      `Build (no simulator slot): ${build.endedAt - build.startedAt}s after checkout lock wait ${build.lockWaitSeconds}s + xcode-build slot wait ${build.heavyWaitSeconds}s`,
+      build.skipped
+        ? `Build skipped (nothing changed since the last successful build): checkout lock wait ${build.lockWaitSeconds}s`
+        : `Build (no simulator slot): ${build.endedAt - build.startedAt}s after checkout lock wait ${build.lockWaitSeconds}s + xcode-build slot wait ${build.heavyWaitSeconds}s`,
       `Build DerivedData: ${build.derivedData}`,
     );
     if (!buildOnly) {
@@ -1567,6 +1573,8 @@ type BuildPhase = {
   endedAt: number;
   lockWaitSeconds: number;
   heavyWaitSeconds: number;
+  /** Nothing changed since the last successful build in this DerivedData, so xcodebuild did not run. */
+  skipped?: boolean;
   xctestrun?: string;
 };
 
@@ -1576,6 +1584,7 @@ function buildPhaseMetadata(build: BuildPhase): Record<string, unknown> {
     log_path: build.logFile,
     exit_code: build.code,
     hang_detected: build.hung,
+    ...(build.skipped ? { build_skipped: true } : {}),
     ...(build.xctestrun ? { xctestrun: build.xctestrun } : {}),
   };
 }
@@ -1626,52 +1635,71 @@ async function runBuildPhase(input: {
   try {
     phase.lockWaitSeconds = nowEpoch() - lockStart;
     dropBuildDescriptionsMissingVendor(process.cwd(), derivedData);
-    if (scheme && input.argv.includes("build-for-testing")) {
-      // xcodebuild never deletes an xctestrun; after an SDK bump the old one would sit
-      // beside the new one, and the test phase must find exactly the one this build writes.
-      removeXctestruns(join(derivedData, "Build", "Products"), scheme);
-    }
     const cache = compilationCache(process.env, config.appleDir, derivedData, input.argv);
-    if (cache?.packages) {
-      const resolved = await resolveSharedPackages(session, config, cache.packages, scheme ?? "Oppi", input.logFile);
-      if (resolved) {
-        phase.code = resolved.code;
-        phase.uncertain = resolved.uncertain;
+    // The whole invocation, so another scheme, flag, or setting never reuses this build.
+    const invocation = [...input.argv, ...(cache?.args ?? []), ...input.extraSettings, ...slotlessBuildSettings(input.argv), ...(cache?.settings ?? [])];
+    const keyNow = () =>
+      buildKey({ root: config.oppiRoot, appleDir: config.appleDir, command: input.command, argv: invocation, env: process.env });
+    const key = keyNow();
+    if (key && buildIsCurrent(derivedData, key)) {
+      phase.skipped = true;
+      phase.code = 0;
+      phase.startedAt = nowEpoch();
+      phase.endedAt = phase.startedAt;
+      writeFileSync(input.logFile, "Build skipped: HEAD, working tree, toolchain, and build flags are unchanged since the last successful build in this DerivedData.\n");
+      log(`[sim-pool] Build skipped: nothing changed since the last successful build in ${derivedData}`);
+    } else {
+      // A build that fails or is interrupted must not leave the previous build's stamp vouching for new products.
+      forgetBuild(derivedData);
+      if (scheme && input.argv.includes("build-for-testing")) {
+        // xcodebuild never deletes an xctestrun; after an SDK bump the old one would sit
+        // beside the new one, and the test phase must find exactly the one this build writes.
+        removeXctestruns(join(derivedData, "Build", "Products"), scheme);
+      }
+      if (cache?.packages) {
+        const resolved = await resolveSharedPackages(session, config, cache.packages, scheme ?? "Oppi", input.logFile);
+        if (resolved) {
+          phase.code = resolved.code;
+          phase.uncertain = resolved.uncertain;
+          return phase;
+        }
+      }
+      if (cache) {
+        log(`[sim-pool] Compilation cache: ${cache.root}`);
+      }
+      const heavy = await acquireHeavyBuildSlot(process.env, session, log);
+      if (!heavy) {
+        phase.uncertain = true;
+        phase.code = session.canceled ? session.cancelExitCode() : 143;
         return phase;
       }
-    }
-    if (cache) {
-      log(`[sim-pool] Compilation cache: ${cache.root}`);
-    }
-    const heavy = await acquireHeavyBuildSlot(process.env, session, log);
-    if (!heavy) {
-      phase.uncertain = true;
-      phase.code = session.canceled ? session.cancelExitCode() : 143;
-      return phase;
-    }
-    phase.heavyWaitSeconds = heavy.waitedSeconds;
-    try {
-      log(`[sim-pool] Building without a simulator slot in ${derivedData}`);
-      log(`[sim-pool] Build log: ${input.logFile}`);
-      phase.startedAt = nowEpoch();
-      const result = await runXcodebuildAttempt({
-        session,
-        config,
-        command: input.command,
-        argv: [...input.argv, ...(cache?.args ?? [])],
-        logFile: input.logFile,
-        derivedData,
-        destination: SLOTLESS_BUILD_DESTINATION,
-        extraSettings: [...input.extraSettings, ...slotlessBuildSettings(input.argv), ...(cache?.settings ?? [])],
-        env: { ...process.env, OPPI_HEAVY_HELD: heavy.heldEnv },
-      });
-      phase.endedAt = nowEpoch();
-      phase.code = result.code;
-      phase.hung = result.hung;
-      phase.uncertain = !result.stop.quiescent || session.canceled;
-      releaseCheckout = result.stop.quiescent;
-    } finally {
-      heavy.lock?.release();
+      phase.heavyWaitSeconds = heavy.waitedSeconds;
+      try {
+        log(`[sim-pool] Building without a simulator slot in ${derivedData}`);
+        log(`[sim-pool] Build log: ${input.logFile}`);
+        phase.startedAt = nowEpoch();
+        const result = await runXcodebuildAttempt({
+          session,
+          config,
+          command: input.command,
+          argv: [...input.argv, ...(cache?.args ?? [])],
+          logFile: input.logFile,
+          derivedData,
+          destination: SLOTLESS_BUILD_DESTINATION,
+          extraSettings: [...input.extraSettings, ...slotlessBuildSettings(input.argv), ...(cache?.settings ?? [])],
+          env: { ...process.env, OPPI_HEAVY_HELD: heavy.heldEnv },
+        });
+        phase.endedAt = nowEpoch();
+        phase.code = result.code;
+        phase.hung = result.hung;
+        phase.uncertain = !result.stop.quiescent || session.canceled;
+        releaseCheckout = result.stop.quiescent;
+      } finally {
+        heavy.lock?.release();
+      }
+      if (key && phase.code === 0 && !phase.uncertain && !phase.hung) {
+        recordBuild(derivedData, key, keyNow);
+      }
     }
     if (phase.code === 0 && !phase.uncertain && input.cloneFor) {
       try {
