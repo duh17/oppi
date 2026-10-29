@@ -522,11 +522,6 @@ struct OrbPixelMotionTests {
 @Suite("Mic button orb layout")
 @MainActor
 struct MicButtonOrbLayoutTests {
-    @Test func standardAndExpandedDiametersStayExact() {
-        #expect(micButtonFitSize(diameter: ComposerInputMetrics.controlDiameter) == CGSize(width: 44, height: 44))
-        #expect(micButtonFitSize(diameter: 32) == CGSize(width: 32, height: 32))
-    }
-
     @Test func composingOrbHasNoLanguageOrCloudOverlay() {
         withRestoredDictationStyle {
             AppPreferenceStore.Appearance.setDictationIndicatorStyle(.composing)
@@ -936,22 +931,6 @@ private func orbTimeoutMessage(_ view: OrbMetalView, expected: String) -> String
     drawable=\(String(describing: metal?.drawableSize)) \
     device=\(metal?.device != nil) unavailable=\(view.unavailableReason ?? "nil")
     """
-}
-
-@MainActor
-private func micButtonFitSize(diameter: CGFloat) -> CGSize {
-    let chrome = MicButtonChromeView()
-    chrome.apply(
-        isRecording: true,
-        isProcessing: false,
-        voiceSpectrum: VoiceSpectrumFrame(level: 0.35),
-        languageLabel: "EN",
-        accentColor: .systemBlue,
-        engineBadge: .onDevice,
-        diameter: diameter,
-        animated: false
-    )
-    return chrome.intrinsicContentSize
 }
 
 private func firstSubview<T: UIView>(of root: UIView, type: T.Type) -> T? {

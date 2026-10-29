@@ -2495,6 +2495,10 @@ struct VoiceInputManagerTests {
         #expect(serverProvider.prepareSessionCallCount == 1)
         #expect(onDeviceProvider.prepareSessionCallCount == 0)
         #expect(manager.state == .recording)
+        // The composer's mic names the server route to VoiceOver.
+        let mic = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
+        #expect(mic.engineBadge == .remote)
+        #expect(mic.accessibilityValue == "Server")
     }
 
     /// server dictation advertised but remote setup fails — remote mode should surface the
