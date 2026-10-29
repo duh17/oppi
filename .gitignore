@@ -31,6 +31,8 @@ scripts/*
 !scripts/uikit-structure-guard.ts
 !scripts/uikit-structure-baseline.json
 !scripts/screenshot-screen-guard.ts
+!scripts/ax-id-guard.ts
+!scripts/ax-id-baseline.json
 !scripts/pre-push-plan.ts
 !scripts/pre-push-plan.test.ts
 !scripts/heavy.sh

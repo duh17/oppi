@@ -282,7 +282,7 @@ A switch accessory (`.settingsToggle(`) keeps one `UISwitch` for the cell's life
 
 ### Identifiers
 
-Identifiers that exist stay as they are (`settings.chatStyle` and `settings.row.*` are pinned in UI tests). A new row's identifier is `settings.<page>.<row>`, `server.<page>.<row>`, or `workspace.<page>.<row>`. The identifier goes on the row's button (index, menu, action, state) or on the control (a switch, a segmented control), not on the cell.
+Identifiers that exist stay as they are (`settings.chatStyle` and `settings.row.*` are pinned in UI tests). A new row's identifier is `settings.<page>.<row>`, `server.<page>.<row>`, or `workspace.<page>.<row>`. The identifier goes on the row's button (index, menu, action, state) or on the control (a switch, a segmented control), not on the cell. The naming rule for every identifier, and the guard that holds it, is in [iOS accessibility and agent testability](testing/ios-accessibility-testability.md#identifier-naming).
 
 ### Words
 

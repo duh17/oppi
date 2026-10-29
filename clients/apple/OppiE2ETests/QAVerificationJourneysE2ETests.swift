@@ -97,6 +97,8 @@ final class QAVerificationJourneysE2ETests: E2ETestCase {
         // One seeded item must still resolve uniquely without that scope.
         let message = QAVerificationExecutor.Target.value(marker, role: .textField)
         let moveToFollowUp = QAVerificationExecutor.Target.id("arrow.down.right", role: .button)
+        // The queue editor has no move controls any more: this journey is stale until it is retargeted or removed.
+        // ax-id-guard: absent-on-purpose
         let moveToSteering = QAVerificationExecutor.Target.id("arrow.up.left", role: .button)
 
         let before: AuthoritativeQueue

@@ -15,9 +15,30 @@ Use native control semantics so a person and an XCUITest driver can identify a c
 - When `Open Current File` is available, that custom action stays on the header element.
 - Reuse clears or replaces identifiers, labels, values, traits, custom actions, and hidden state, including placeholder or non-tool chrome.
 
+## Identifier naming
+
+An identifier is `<surface>.<area>[.<element>][.<key>]`. Segments are lowerCamelCase ASCII joined by dots, with no hyphens, spaces, or display text. `<surface>` is the screen or shared component that owns the control (`chat`, `composer`, `session`, `workspace`, `server`, `settings`, `fileBrowser`, `fileViewer`, `fullScreen`, `quickSession`, `sshTerminal`, `liveVoice`, `extension`, `review`, `harness`, `diag`). Use the root the owning screen's route is called; do not add a second root for one screen.
+
+- **A repeated element ends in a stable model key** (item id, session id, workspace id, server id, path, symbol name), never an index or rendered text: `lockBadge.locked.<sessionId>`, `fileBrowser.row.<path>`, `chat.messageQueue.remove.<itemId>`. Without the key every row gets the same id and a test must fall back to `firstMatch`.
+- **One control, one id across presentation modes.** The code viewer's leave control is `fullScreen.code.close` as a sheet and when pushed. System Back stays `BackButton`.
+- **Two controls on screen at once do not share an id.** The expanded composer sits over the chat's composer bar, so its model and thinking buttons are `expanded.composer.model` and `expanded.composer.thinking`; the bar keeps `session.toolbar.model` and `session.toolbar.thinking`.
+- **An actionable row puts its id on the button**, not the cell. A cell carries an id only for a read-only row. A cell that is recycled for several row kinds clears its id first (`cell.accessibilityIdentifier = nil`), so a recycled action row does not keep its id as another row.
+- **A test finds a control by its id, not its label.** The label is copy, and a test reads it only to assert the copy. Controls that tests reach: `server.switcher` (the server pill or rail item; its label is `Current server: <name>`), `fileBrowser.row.<path>` (a folder's path ends in `/`), `fileViewer.previous` and `fileViewer.next`. System chrome without an id (alert buttons) is found by its system label; the search bar's dismiss, which differs by width, goes through `XCUIApplication.dismissSearch(_:)` in `QAVerificationSupport/OppiUITestSupport.swift`.
+
+Existing identifiers stay unless a change already touches that screen and its tests. `settings.chatStyle` and `settings.row.*` stay. The hyphenated families (`workspace-file-editor.*`, `fullscreen-code.*`, `semantic-pick.*`, `review-comment.*`, `extension-strip-*`) are the baseline below.
+
+### The guard
+
+`scripts/ax-id-guard.ts` runs in the iOS architecture check (`bun server/scripts/check-architecture-boundaries.ts --scope ios`, and the build's boundary phase) and fails on two things:
+
+1. **A test identifier the app does not define.** Every dotted, lowerCamel-rooted string literal in `OppiUITests`, `OppiE2ETests`, and `QAVerificationSupport` must match a string literal or an interpolated template in the app sources (`Oppi`, `OppiCore`, `Shared`, `OppiDebugHarness`, the extensions). An id built from a prefix argument (`accessibilityPrefix:`, `identifierPrefix:`) plus a key resolves for any key under that prefix. A lookup of a removed id fails on a simulator, and a check that it is absent passes whatever the app does, so delete the check or point it at the current id. A target that is absent on purpose (the QA negative proofs) carries `// ax-id-guard: absent-on-purpose` on its line or the line above. A flat kebab id, or a template with fewer than four literal characters, is not judged.
+2. **A new identifier that breaks the naming rule.** The identifiers that already break it are a ratchet: `scripts/ax-id-baseline.json` holds a count per file, a file absent from it has baseline 0, and a count may only go down. After renaming ids, `bun scripts/ax-id-guard.ts --update` lowers the baseline; commit the reduced file with the rename. Ordinary runs never write it. Only literals set through `accessibilityIdentifier`, `identifier:`, or `accessibilityPrefix:` are counted.
+
+`bun scripts/ax-id-guard.ts --collisions` also lists each conforming literal that more than one app file sets (the ids a query must scope).
+
 ## Model control
 
-The model control keeps `session.toolbar.model`. Its purpose label is `Model`. Its value is the displayed model name.
+The model control keeps `session.toolbar.model`. Its purpose label is `Model`. Its value is the displayed model name. The expanded composer's own copy is `expanded.composer.model` (see Identifier naming).
 
 ## Live Voice call controls
 
