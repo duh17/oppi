@@ -1674,7 +1674,6 @@
 		B4B8DD5105B3D1A07311D0A3 /* MacPendingAttachmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C88513D18E6AFDE4E730CA88 /* MacPendingAttachmentTests.swift */; };
 		B4ECC45E1EE5B42C367061C0 /* MermaidSequenceRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D1E894886D53C5996B0BF12 /* MermaidSequenceRenderer.swift */; };
 		B4EDDEFDDEC20EB36117C751 /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56EDE27997D709AB6CD7939E /* WorkspaceStore.swift */; };
-		B528E35A4947F14C9269194F /* WrappingLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C265D98EFB31254D4CDC16F3 /* WrappingLabel.swift */; };
 		B529C41255794268C65FB229 /* TimelineInlineVideoNativePlayE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94CB003D4B03D38558E5AB99 /* TimelineInlineVideoNativePlayE2ETests.swift */; };
 		B54F968ED6483D4F77F5DE98 /* MermaidThemeContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DEEBA56210523A5AFBB7D5 /* MermaidThemeContractTests.swift */; };
 		B55284ACBD6EB410E55DAA73 /* PiDefaultPromptViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A309AD3649A6997370E56C /* PiDefaultPromptViewController.swift */; };
@@ -3968,7 +3967,6 @@
 		C218A9904C6FE7A792F27FF8 /* ChatFilesNavigationReproUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFilesNavigationReproUITests.swift; sourceTree = "<group>"; };
 		C254090F53F0DC2CAC8DF42A /* ChatTimelineOwnedClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelineOwnedClockTests.swift; sourceTree = "<group>"; };
 		C255F570C7EE296DBD9D61B4 /* WorkspaceExtensionsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceExtensionsViewController.swift; sourceTree = "<group>"; };
-		C265D98EFB31254D4CDC16F3 /* WrappingLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WrappingLabel.swift; sourceTree = "<group>"; };
 		C291A96578A5068670D2BC38 /* ToolElapsedTimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolElapsedTimeTests.swift; sourceTree = "<group>"; };
 		C2D67ADB6CCCF099AFBB5D52 /* ChatTimelinePerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelinePerf.swift; sourceTree = "<group>"; };
 		C33441810EF69A9FF55106FA /* MacLocalHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLocalHTTP.swift; sourceTree = "<group>"; };
@@ -7651,7 +7649,6 @@
 				B143243806FE11EDF4C22132 /* UsageRouteViewController.swift */,
 				47AF617293D232F93CF46BAC /* UsageViewController.swift */,
 				972479C033A6AD07F10F6B7C /* UsageViews.swift */,
-				C265D98EFB31254D4CDC16F3 /* WrappingLabel.swift */,
 			);
 			path = Server;
 			sourceTree = "<group>";
@@ -10677,7 +10674,6 @@
 				B4EDDEFDDEC20EB36117C751 /* WorkspaceStore.swift in Sources */,
 				9EB5408F526B2D45297C7DDD /* WorkspaceToggleRows.swift in Sources */,
 				5F8EB709E604133F1A71A1A2 /* WorkspaceWorktree.swift in Sources */,
-				B528E35A4947F14C9269194F /* WrappingLabel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

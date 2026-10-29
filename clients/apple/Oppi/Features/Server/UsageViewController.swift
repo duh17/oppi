@@ -31,17 +31,17 @@ final class UsageViewController: UIViewController {
     private let detailSpinner = UIActivityIndicatorView(style: .medium)
     private let detailView = UsageDailyDetailView()
     private let modelsSection = UIStackView()
-    private let modelsHeading = WrappingLabel()
+    private let modelsHeading = UILabel()
     private let donutSlot = UIView()
     /// The total in the ring's middle, or under it at large text sizes (`donutTotalBelow`).
-    private let donutTotalCenter = WrappingLabel()
-    private let donutTotalBelow = WrappingLabel()
+    private let donutTotalCenter = UILabel()
+    private let donutTotalBelow = UILabel()
     private let modelList = UIStackView()
     private let modelsToggle = UIButton(type: .system)
     private let workspacesSection = UIStackView()
-    private let workspacesHeading = WrappingLabel()
+    private let workspacesHeading = UILabel()
     private let workspaceList = UIStackView()
-    private let noWorkspaces = WrappingLabel()
+    private let noWorkspaces = UILabel()
 
     private let chartHost = UsageChartHost()
     private let donutHost = UsageChartHost()
@@ -137,10 +137,16 @@ final class UsageViewController: UIViewController {
         for label in [donutTotalCenter, donutTotalBelow] {
             label.numberOfLines = 0
             label.textAlignment = .center
-            label.accessibilityIdentifier = "server.usage.donut.total"
             label.translatesAutoresizingMaskIntoConstraints = false
         }
         donutSlot.addSubview(donutTotalCenter)
+        // One element speaks the whole donut; its labels and the ring's own nodes are not separate.
+        donutSlot.isAccessibilityElement = true
+        donutSlot.accessibilityTraits = .staticText
+        donutSlot.accessibilityIdentifier = "server.usage.donut"
+        donutTotalCenter.isAccessibilityElement = false
+        donutTotalBelow.isAccessibilityElement = false
+        chartSlot.markAsChartSlot(UsageChartIdentifier.daily)
         NSLayoutConstraint.activate([
             donutTotalCenter.centerXAnchor.constraint(equalTo: donutSlot.centerXAnchor),
             donutTotalCenter.centerYAnchor.constraint(equalTo: donutSlot.centerYAnchor),
@@ -305,6 +311,8 @@ final class UsageViewController: UIViewController {
             }
         }
         renderDonutTotal(model.metric.formatted(total), visible: total > 0, colors: colors)
+        donutSlot.accessibilityLabel = model.donutSummaryTitle
+        donutSlot.accessibilityValue = model.donutSummary
         modelList.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for item in model.visibleModels {
             let row = UsageModelRowView()

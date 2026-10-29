@@ -31,7 +31,7 @@ struct UsageColors {
 
 enum UsageText {
     static func heading(_ text: String, colors: UsageColors) -> UILabel {
-        let label = WrappingLabel()
+        let label = UILabel()
         label.text = text
         label.font = .preferredFont(forTextStyle: .subheadline).withWeight(.semibold)
         label.adjustsFontForContentSizeCategory = true
@@ -42,7 +42,7 @@ enum UsageText {
     }
 
     static func caption(_ text: String, colors: UsageColors, style: UIFont.TextStyle = .caption1) -> UILabel {
-        let label = WrappingLabel()
+        let label = UILabel()
         label.text = text
         label.font = .preferredFont(forTextStyle: style)
         label.adjustsFontForContentSizeCategory = true
@@ -134,9 +134,9 @@ final class UsageHeroView: UIView {
 
 private final class UsageMetricBox: UIControl {
     let metric: StatsMetric
-    private let titleLabel = WrappingLabel()
-    private let valueLabel = WrappingLabel()
-    private let trendLabel = WrappingLabel()
+    private let titleLabel = UILabel()
+    private let valueLabel = UILabel()
+    private let trendLabel = UILabel()
     private let marker = UIView()
 
     init(metric: StatsMetric) {
@@ -215,7 +215,7 @@ private final class UsageMetricBox: UIControl {
 /// A provider's logo as a template image, or its monogram when there is no logo.
 final class UsageProviderGlyphView: UIView {
     private let imageView = UIImageView()
-    private let monogram = WrappingLabel()
+    private let monogram = UILabel()
     private let side: CGFloat
 
     init(side: CGFloat) {
@@ -302,12 +302,12 @@ final class UsageShareBar: UIView {
 /// its prompt-cache line. One accessibility element that reads all of it.
 final class UsageModelRowView: UIView {
     private let glyph = UsageProviderGlyphView(side: 14)
-    private let nameLabel = WrappingLabel()
-    private let providerLabel = WrappingLabel()
-    private let valueLabel = WrappingLabel()
-    private let shareLabel = WrappingLabel()
+    private let nameLabel = UILabel()
+    private let providerLabel = UILabel()
+    private let valueLabel = UILabel()
+    private let shareLabel = UILabel()
     private let bar = UsageShareBar()
-    private let cacheLabel = WrappingLabel()
+    private let cacheLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -396,9 +396,9 @@ final class UsageModelRowView: UIView {
 /// One workspace in the breakdown: its name, its sessions, and its cost.
 final class UsageWorkspaceRowView: UIView {
     private let icon = UIImageView(image: UIImage(systemName: "folder.fill"))
-    private let nameLabel = WrappingLabel()
-    private let sessionsLabel = WrappingLabel()
-    private let costLabel = WrappingLabel()
+    private let nameLabel = UILabel()
+    private let sessionsLabel = UILabel()
+    private let costLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -459,11 +459,11 @@ final class UsageWorkspaceRowView: UIView {
 /// One session in a day's detail: provider glyph, name, model, workspace, cost, and time.
 final class UsageSessionRowView: UIView {
     private let glyph = UsageProviderGlyphView(side: 12)
-    private let nameLabel = WrappingLabel()
-    private let modelLabel = WrappingLabel()
-    private let detailLabel = WrappingLabel()
-    private let costLabel = WrappingLabel()
-    private let timeLabel = WrappingLabel()
+    private let nameLabel = UILabel()
+    private let modelLabel = UILabel()
+    private let detailLabel = UILabel()
+    private let costLabel = UILabel()
+    private let timeLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -536,12 +536,12 @@ final class UsageDailyDetailView: UIView {
     let chartSlot = UIView()
     var onClose: (() -> Void)?
 
-    private let titleLabel = WrappingLabel()
-    private let totalsLabel = WrappingLabel()
+    private let titleLabel = UILabel()
+    private let totalsLabel = UILabel()
     private let closeButton = UIButton(type: .system)
-    private let sessionsHeading = WrappingLabel()
+    private let sessionsHeading = UILabel()
     private let sessionList = UIStackView()
-    private let moreLabel = WrappingLabel()
+    private let moreLabel = UILabel()
     private let stack = UIStackView()
 
     override init(frame: CGRect) {
@@ -549,9 +549,6 @@ final class UsageDailyDetailView: UIView {
         layer.cornerRadius = 12
         layer.cornerCurve = .continuous
 
-        let titles = UIStackView(arrangedSubviews: [titleLabel, totalsLabel])
-        titles.axis = .vertical
-        titles.spacing = 2
         var close = UIButton.Configuration.plain()
         close.image = UIImage(systemName: "xmark.circle.fill")
         close.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .title3)
@@ -560,9 +557,24 @@ final class UsageDailyDetailView: UIView {
         closeButton.accessibilityIdentifier = "server.usage.detail.close"
         closeButton.setContentHuggingPriority(.required, for: .horizontal)
         closeButton.addAction(UIAction { [weak self] _ in self?.onClose?() }, for: .touchUpInside)
-        let header = UIStackView(arrangedSubviews: [titles, closeButton])
-        header.alignment = .top
-        header.spacing = 8
+        // Pinned both sides, so the labels measure at the width the close button leaves them.
+        let header = UIView()
+        for view in [titleLabel, totalsLabel, closeButton] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: header.topAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            titleLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8),
+            totalsLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
+            totalsLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            totalsLabel.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8),
+            totalsLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+            closeButton.topAnchor.constraint(equalTo: header.topAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            closeButton.bottomAnchor.constraint(lessThanOrEqualTo: header.bottomAnchor),
+        ])
 
         sessionList.axis = .vertical
         sessionsHeading.text = String(localized: "Sessions")
@@ -591,10 +603,21 @@ final class UsageDailyDetailView: UIView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
         accessibilityIdentifier = "server.usage.detail"
+        chartSlot.markAsChartSlot(UsageChartIdentifier.hourly)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The title and totals are pinned between the margin and the close button, so their width
+    /// is fixed by constraints; handing it back as the wrap width keeps their measured height
+    /// (and the audit's reading of it) in step with it.
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        for label in [titleLabel, totalsLabel] where label.bounds.width > 0 && label.preferredMaxLayoutWidth != label.bounds.width {
+            label.preferredMaxLayoutWidth = label.bounds.width
+        }
+    }
 
     func configure(_ detail: DailyDetail, hasHourlyChart: Bool, colors: UsageColors) {
         backgroundColor = colors.comment.withAlphaComponent(0.06)
@@ -627,8 +650,8 @@ final class UsageDailyDetailView: UIView {
 final class UsageMessageView: UIView {
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let icon = UIImageView(image: UIImage(systemName: "exclamationmark.triangle"))
-    private let titleLabel = WrappingLabel()
-    private let messageLabel = WrappingLabel()
+    private let titleLabel = UILabel()
+    private let messageLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)

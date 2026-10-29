@@ -8,8 +8,8 @@ import UIKit
 final class ProviderSetupPromptView: UIView {
     private let stack = UIStackView()
     private let symbol = UIImageView()
-    private let titleLabel = WrappingLabel()
-    private let messageLabel = WrappingLabel()
+    private let titleLabel = UILabel()
+    private let messageLabel = UILabel()
     private let button = UIButton(configuration: .borderedProminent())
     private var onConfigure: (() -> Void)?
 
@@ -56,6 +56,20 @@ final class ProviderSetupPromptView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The labels wrap at the width the card gives them. Handing it over before the stack
+    /// measures keeps a narrow phone at an accessibility text size from sizing them for the
+    /// wider pass that came first, which drew them clipped (a label in a stack keeps the
+    /// height it measured for the pass before).
+    override func layoutSubviews() {
+        let inner = max(0, bounds.width - stack.directionalLayoutMargins.leading - stack.directionalLayoutMargins.trailing)
+        let title = max(0, inner - symbol.intrinsicContentSize.width - 6)
+        if inner > 0, messageLabel.preferredMaxLayoutWidth != inner || titleLabel.preferredMaxLayoutWidth != title {
+            messageLabel.preferredMaxLayoutWidth = inner
+            titleLabel.preferredMaxLayoutWidth = title
+        }
+        super.layoutSubviews()
+    }
 
     func apply(
         message: String,

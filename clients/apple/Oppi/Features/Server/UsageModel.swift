@@ -81,6 +81,24 @@ final class UsageModel {
 
     var totalMetricValue: Double { aggregatedModels.reduce(0) { $0 + $1.value(for: metric) } }
 
+    /// What the donut says to VoiceOver: what it divides, then each model's share and the total.
+    var donutSummaryTitle: String {
+        switch metric {
+        case .cost: String(localized: "Spend by model")
+        case .sessions: String(localized: "Sessions by model")
+        case .tokens: String(localized: "Tokens by model")
+        }
+    }
+
+    var donutSummary: String {
+        let total = totalMetricValue
+        let shares = aggregatedModels.map { item in
+            let share = total > 0 ? Int((item.value(for: metric) / total * 100).rounded()) : 0
+            return "\(item.displayName) \(share)%"
+        }
+        return (shares + [String(localized: "total \(metric.formatted(total))")]).joined(separator: ", ")
+    }
+
     // MARK: - Loading
 
     /// The first load: stats for the current range, and the provider status.

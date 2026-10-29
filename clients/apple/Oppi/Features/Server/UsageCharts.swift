@@ -68,22 +68,29 @@ struct UsageDailyChartLeaf: View {
             onDaySelected: onDaySelected
         )
         .id(colors.themeKey)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(UsageChartIdentifier.daily)
     }
 }
 
-/// The identifiers of the chart leaves, which the accessibility audit's waiver finds
-/// them by (`UIValidateDump`).
+/// The identifiers of the slots that hold the chart leaves (semantic groups in the UIKit
+/// page), which the accessibility audit's waiver finds them by (`UIValidateDump`).
 enum UsageChartIdentifier {
     static let prefix = "server.usage.chart."
     static let daily = prefix + "daily"
-    static let donut = prefix + "donut"
     static let hourly = prefix + "hourly"
 }
 
-/// The models' share of the metric as a donut. Its total is a UIKit label over (or under)
-/// it, so the number follows Dynamic Type instead of shrinking into the ring.
+extension UIView {
+    /// Makes this slot visible to the accessibility tree as a group with `identifier`, so its
+    /// frame names the area a chart leaf's own nodes sit in.
+    func markAsChartSlot(_ identifier: String) {
+        accessibilityContainerType = .semanticGroup
+        accessibilityIdentifier = identifier
+    }
+}
+
+/// The models' share of the metric as a donut, hidden from accessibility: the page gives its
+/// slot one element that speaks the shares (`UsageModel.donutSummary`). Its total is a UIKit
+/// label over (or under) it, so the number follows Dynamic Type instead of shrinking into the ring.
 struct UsageModelDonutLeaf: View {
     let models: [AggregatedStatsModel]
     let metric: StatsMetric
@@ -102,8 +109,9 @@ struct UsageModelDonutLeaf: View {
         .frame(width: 140, height: 140)
         .frame(maxWidth: .infinity)
         .id(colors.themeKey)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(UsageChartIdentifier.donut)
+        // One element for the whole ring is the page's (`UsageViewController`'s donut slot); the
+        // model list below carries each slice, so the chart's per-slice nodes only add noise.
+        .accessibilityHidden(true)
     }
 }
 
@@ -147,8 +155,6 @@ struct UsageHourlyChartLeaf: View {
         .chartXScale(domain: 0...23)
         .frame(height: 160)
         .id(colors.themeKey)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(UsageChartIdentifier.hourly)
     }
 }
 

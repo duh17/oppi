@@ -233,6 +233,8 @@ enum UIValidateDump {
         if !element.label.isEmpty {
             parts.append("\"\(escape(element.label))\"")
         }
+        let frame = element.frame
+        parts.append("@(\(Int(frame.minX)),\(Int(frame.minY)) \(Int(frame.width))x\(Int(frame.height)))")
         return parts.joined(separator: " ")
     }
 
@@ -301,26 +303,34 @@ enum UIValidateDump {
         return nil
     }
 
-    /// Usage's three charts are Swift Charts leaves (`UsageCharts.swift`, framework-required
+    /// Usage's bar charts (daily and hourly; the donut hides its nodes) are Swift Charts leaves (`UsageCharts.swift`, framework-required
     /// SwiftUI; the daily one is `StatsDailyChart`, shared with the Mac). The framework makes
     /// each bar and axis label its own accessibility node, too small to hit and with no
     /// description, and draws the axis text without exposing it as an element, so the audit
     /// reports `hitRegion`, `sufficientElementDescription`, `dynamicType`, `textClipped`,
-    /// `contrast`, and `elementDetection` on them. Only an issue whose element sits inside a
-    /// chart leaf's frame is waived, and an `elementDetection` with no element while a chart is
-    /// on screen; everything else on the page, the UIKit views around the charts, is audited as
-    /// everywhere else. The same findings were on the SwiftUI Usage screen before it moved.
+    /// `contrast`, and `elementDetection` on them. Waived: an issue that names a SwiftUI node
+    /// (the page has no other SwiftUI), one whose element's middle sits inside a chart slot's
+    /// frame, and an `elementDetection` with no element while a chart is on screen; everything
+    /// else on the page, the UIKit views around the charts, is audited as everywhere else. The same findings were on the SwiftUI Usage screen before it moved
+    /// (the audit of main's Usage, same sizes, is under `server-d3/main-before`).
     private static func chartWaiver(for issue: XCUIAccessibilityAuditIssue, chartFrames: [CGRect]) -> String? {
         guard !chartFrames.isEmpty else { return nil }
         let types: [XCUIAccessibilityAuditType] = [
             .hitRegion, .sufficientElementDescription, .dynamicType, .textClipped, .contrast, .elementDetection,
         ]
         guard types.contains(issue.auditType) else { return nil }
-        let reason = "\(auditTypeName(issue.auditType)) on a Swift Charts node in a Usage chart leaf: the "
-            + "framework's own bar and axis accessibility, the same chart as before the UIKit move"
+        let reason = "\(auditTypeName(issue.auditType)) on a Swift Charts node in the daily or hourly bar chart: "
+            + "the framework's own bar and axis accessibility. Usage has no other SwiftUI, and main's SwiftUI Usage "
+            + "shows the same chart findings (server-d3/main-before)"
+        // The page's only SwiftUI is these leaves, and Charts reports some of its nodes (the thin
+        // donut slices) at frames that do not line up with the slot, so an issue that names a
+        // SwiftUI node is the leaf's whatever its frame says.
+        if issue.detailedDescription.contains("SwiftUI.AccessibilityNode") { return reason }
         if let frame = issue.element?.frame {
-            // Intersects, not contains: a bar scrolled half under the bar is the chart's all the same.
-            return chartFrames.contains { $0.intersects(frame) } ? reason : nil
+            // The node's middle, not its whole frame: a bar scrolled half under the bar, or a node with
+            // no size, is the chart's all the same.
+            let middle = CGPoint(x: frame.midX, y: frame.midY)
+            return chartFrames.contains { $0.insetBy(dx: -1, dy: -1).contains(middle) } ? reason : nil
         }
         return issue.auditType == .elementDetection ? reason : nil
     }

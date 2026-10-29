@@ -242,6 +242,27 @@ struct UsageModelTests {
         #expect(model.metric == .tokens)
     }
 
+    @Test("The donut speaks each model's share and the total for the metric shown")
+    func donutSummary() async {
+        func model(_ name: String, cost: Double, tokens: Int) -> StatsModelBreakdown {
+            StatsModelBreakdown(model: name, sessions: 1, cost: cost, tokens: tokens, inputTokens: 1, cacheRead: nil, cacheWrite: nil, share: 0)
+        }
+        let client = ScriptedUsageClient()
+        client.statsByRange = [.week: stats(sessions: 2, models: [
+            model("anthropic/claude-sonnet-5-5", cost: 3, tokens: 100),
+            model("openai/gpt-5-mini", cost: 1, tokens: 300),
+        ])]
+        let usage = make(client)
+        usage.start()
+        #expect(await waitForMainActorCondition { usage.stats != nil })
+
+        #expect(usage.donutSummaryTitle == "Spend by model")
+        #expect(usage.donutSummary == "sonnet-5-5 75%, gpt-5-mini 25%, total $4.00")
+        usage.selectMetric(.tokens)
+        #expect(usage.donutSummaryTitle == "Tokens by model")
+        #expect(usage.donutSummary == "gpt-5-mini 75%, sonnet-5-5 25%, total 400")
+    }
+
     @Test("The trend compares the second half of the range with the first, and says nothing for a small change")
     func trend() {
         #expect(UsageTrend.make(values: [1]) == nil)
