@@ -180,14 +180,15 @@ final class SessionThreadsE2ETests: E2ETestCase {
         // A child row keeps the row's swipe actions.
         finished.swipeLeft()
         XCTAssertTrue(app.buttons["Resume"].waitForExistence(timeout: 5), "A stopped child row did not offer Resume")
-        finished.swipeRight()
-        XCTAssertTrue(waitForNonExistence(app.buttons["Resume"], timeout: 5), "Swipe did not close")
-        // A swipe that closes the actions can go on to pull the sidebar in; close it.
-        dismissSidebarIfOpen()
-        assertStillOnInbox("swiping a child row")
+        XCTAssertFalse(app.buttons["chat.toolbar.files"].exists, "Swiping a child row opened a chat")
+        // A tap on a row with its actions open only closes them.
+        finished.tap()
+        XCTAssertTrue(waitForNonExistence(app.buttons["Resume"], timeout: 5), "Tap did not close the swipe actions")
+        XCTAssertFalse(app.buttons["chat.toolbar.files"].exists, "Closing the actions opened a chat")
         try assertStopped(finishedFix, "after swiping its row")
 
         // Tapping a child opens its own chat; the list keeps the thread open on return.
+        XCTAssertTrue(reveal(finished, in: inbox), "Child row missing after its swipe closed")
         finished.tap()
         try assertOpenedAsEndedHistory(finishedFix, via: "finished child row")
         app.buttons["chat.toolbar.back"].tap()
