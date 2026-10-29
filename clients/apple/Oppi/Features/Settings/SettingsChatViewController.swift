@@ -99,7 +99,7 @@ final class SettingsChatViewController: SettingsListViewController<SettingsChatV
 
     /// Two steps in nine seconds, so the conversation pill reads like a real
     /// finished turn.
-    private static let conversationSample = QuietTimelineWorkLine(
+    static let conversationSample = QuietTimelineWorkLine(
         id: "settings-conversation-pill-preview",
         turnID: "settings-conversation-pill-preview",
         sourceItemIDs: [],
@@ -277,6 +277,8 @@ final class SettingsSegmentedRowCell: UICollectionViewListCell {
     private let titleLabel = UILabel()
     private let control = UISegmentedControl()
     private var onChange: ((Int) -> Void)?
+    private var sideBySideConstraints: [NSLayoutConstraint] = []
+    private var stackedConstraints: [NSLayoutConstraint] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -294,13 +296,36 @@ final class SettingsSegmentedRowCell: UICollectionViewListCell {
         contentView.addSubview(control)
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            control.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
             control.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            control.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            control.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
+        sideBySideConstraints = [
+            titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            control.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 8),
+            control.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            control.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+        ]
+        // Accessibility sizes: the title wraps above a full-width control, as in
+        // `SettingsSliderRowCell`, instead of the two sharing one line.
+        stackedConstraints = [
+            titleLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.layoutMarginsGuide.trailingAnchor),
+            control.leadingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.leadingAnchor),
+            control.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            control.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+        ]
+        arrangeForTextSize()
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
+            self.arrangeForTextSize()
+        }
+    }
+
+    private func arrangeForTextSize() {
+        let stacked = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+        NSLayoutConstraint.deactivate(stacked ? sideBySideConstraints : stackedConstraints)
+        NSLayoutConstraint.activate(stacked ? stackedConstraints : sideBySideConstraints)
+        titleLabel.numberOfLines = stacked ? 0 : 1
+        titleLabel.setContentCompressionResistancePriority(stacked ? .defaultLow : .required, for: .horizontal)
     }
 
     @available(*, unavailable)
@@ -345,6 +370,7 @@ final class SettingsWorkPreviewCell: UICollectionViewListCell {
         caption.translatesAutoresizingMaskIntoConstraints = false
         caption.font = .preferredFont(forTextStyle: .caption1)
         caption.adjustsFontForContentSizeCategory = true
+        caption.numberOfLines = 0
         captionIcon.translatesAutoresizingMaskIntoConstraints = false
         captionIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption1)
         container.translatesAutoresizingMaskIntoConstraints = false

@@ -174,7 +174,7 @@ extension SettingsKitTests {
         let page = KitRowsPage()
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 2400)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 3600)
         window.rootViewController = page
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -198,6 +198,14 @@ extension SettingsKitTests {
         #expect(abs(indexLines.title.midY - indexLines.value.midY) < 1, "the value should share the title's line at .large")
         let menuBefore = try Self.menuRowLines(in: page)
         #expect(abs(menuBefore.title.midY - menuBefore.value.midY) < 1, "the choice should share the title's line at .large")
+        // The Style row's control shares the title's line at the standard size.
+        let segmentedBefore = try Self.segmentedRowFrames(in: page)
+        #expect(abs(segmentedBefore.title.midY - segmentedBefore.control.midY) < 1, "the control should share the title's line at .large")
+        // The preview pill holds its text at the standard size.
+        let pillBefore = try Self.workPreviewFrames(in: page)
+        for text in pillBefore.texts {
+            #expect(pillBefore.pill.insetBy(dx: -0.5, dy: -0.5).contains(text), "work preview text sits outside its pill at .large: \(text)")
+        }
 
         page.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
         var after = before
@@ -219,6 +227,19 @@ extension SettingsKitTests {
         #expect(menuStacked.value.minY >= menuStacked.title.maxY - 0.5, "the choice should sit under the title at XXXL")
         #expect(menuStacked.value.maxX <= menuStacked.cellWidth + 0.5, "the choice runs off the row at XXXL")
 
+        // The Style row's control sits under its title, inside the row.
+        let segmentedStacked = try Self.segmentedRowFrames(in: page)
+        #expect(segmentedStacked.control.minY >= segmentedStacked.title.maxY - 0.5, "the control should sit under the title at XXXL")
+        #expect(segmentedStacked.control.maxX <= segmentedStacked.cellWidth + 0.5, "the control runs off the row at XXXL")
+        #expect(segmentedStacked.control.maxY <= segmentedStacked.cellHeight + 0.5, "the control runs off the bottom of the row at XXXL")
+        // The preview pill grows around its text instead of letting it spill out.
+        let pillStacked = try Self.workPreviewFrames(in: page)
+        #expect(pillStacked.texts.count >= 2, "the pill's text was not found")
+        for text in pillStacked.texts {
+            #expect(pillStacked.pill.insetBy(dx: -0.5, dy: -0.5).contains(text), "work preview text spills out of its pill at XXXL: \(text)")
+        }
+        #expect(pillStacked.pill.maxY <= pillStacked.cellHeight + 0.5, "the pill runs off the bottom of the row at XXXL")
+
         // Nothing the rows say is clipped or truncated at the larger size.
         page.view.layoutIfNeeded()
         for row in rows {
@@ -236,7 +257,7 @@ extension SettingsKitTests {
                 }
             }
             // Every row has its text inspected: the index row has a title and a value.
-            #expect(checked >= (row == .index || row == .slider || row == .entry ? 2 : 1), "\(row): only \(checked) labels were checked")
+            #expect(checked >= (row == .index || row == .slider || row == .entry || row == .work ? 2 : 1), "\(row): only \(checked) labels were checked")
         }
     }
 
@@ -262,6 +283,35 @@ extension SettingsKitTests {
         return (title.convert(title.bounds, to: cell), value.convert(value.bounds, to: cell), cell.bounds.width)
     }
 
+    /// The Style row's title and control frames in the cell's space, and the cell's size.
+    private static func segmentedRowFrames(in page: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, control: CGRect, cellWidth: CGFloat, cellHeight: CGFloat) {
+        page.view.layoutIfNeeded()
+        let indexPath = try #require(page.dataSource?.indexPath(for: .segmented))
+        let cell = try #require(page.collectionView.cellForItem(at: indexPath))
+        let title = try #require(Self.labels(in: cell).first { $0.text == "Style" })
+        let control = try #require(Self.views(of: UISegmentedControl.self, in: cell).first)
+        return (title.convert(title.bounds, to: cell), control.convert(control.bounds, to: cell), cell.bounds.width, cell.bounds.height)
+    }
+
+    /// The preview pill's frame and the frames of the text drawn on it, in the cell's space.
+    private static func workPreviewFrames(in page: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (pill: CGRect, texts: [CGRect], cellHeight: CGFloat) {
+        page.view.layoutIfNeeded()
+        let indexPath = try #require(page.dataSource?.indexPath(for: .work))
+        let cell = try #require(page.collectionView.cellForItem(at: indexPath))
+        let pill = try #require(Self.views(of: TimelineChromeSurfaceView.self, in: cell).first)
+        let texts = Self.labels(in: cell)
+            .filter { $0.text != "Preview" && !($0.text ?? $0.attributedText?.string ?? "").isEmpty && !$0.isHidden }
+            .map { $0.convert($0.bounds, to: cell) }
+        return (pill.convert(pill.bounds, to: cell), texts, cell.bounds.height)
+    }
+
+    private static func views<T: UIView>(of type: T.Type, in view: UIView) -> [T] {
+        var found: [T] = []
+        if let match = view as? T { found.append(match) }
+        for subview in view.subviews { found += views(of: type, in: subview) }
+        return found
+    }
+
     private static func labels(in view: UIView) -> [UILabel] {
         var found: [UILabel] = []
         if let label = view as? UILabel { found.append(label) }
@@ -273,7 +323,7 @@ extension SettingsKitTests {
 /// One of each kit row, with text long enough to wrap at the largest sizes.
 private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row> {
     enum Section: Hashable, Sendable { case rows }
-    enum Row: CaseIterable, Hashable, Sendable { case index, menu, menuLong, action, state, slider, entry, toggle, info }
+    enum Row: CaseIterable, Hashable, Sendable { case index, menu, menuLong, action, state, slider, entry, segmented, work, toggle, info }
 
     init() {
         super.init(title: "Kit", listIdentifier: "test.kit.list", scope: .device)
@@ -327,8 +377,27 @@ private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section,
         ) {}
     }
 
+    private lazy var segmentedRow = UICollectionView.CellRegistration<SettingsSegmentedRowCell, Row> { cell, _, _ in
+        cell.configure(
+            title: "Style",
+            identifier: "test.segmented",
+            options: [("Full", false), ("Compact", false), ("Chat", true)]
+        ) { _ in }
+    }
+
+    /// The conversation pill: "Worked 9s · 2 steps" on a capsule.
+    private lazy var workRow = UICollectionView.CellRegistration<SettingsWorkPreviewCell, Row> { cell, _, _ in
+        cell.configureWorkLine(
+            SettingsChatViewController.conversationSample,
+            chromeStyle: .conversation,
+            caption: "Preview",
+            symbol: "bubble.left.and.text.bubble.right",
+            labelColor: .secondaryLabel
+        )
+    }
+
     override func prepareRegistrations() {
-        _ = (indexRow, menuRow, menuLongRow, actionRow, stateRow, sliderRow, entryRow)
+        _ = (indexRow, menuRow, menuLongRow, actionRow, stateRow, sliderRow, entryRow, segmentedRow, workRow)
     }
 
     override func dequeue(_ item: Row, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -340,6 +409,8 @@ private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section,
         case .state: collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
         case .slider: collectionView.dequeueConfiguredReusableCell(using: sliderRow, for: indexPath, item: item)
         case .entry: collectionView.dequeueConfiguredReusableCell(using: entryRow, for: indexPath, item: item)
+        case .segmented: collectionView.dequeueConfiguredReusableCell(using: segmentedRow, for: indexPath, item: item)
+        case .work: collectionView.dequeueConfiguredReusableCell(using: workRow, for: indexPath, item: item)
         case .toggle, .info: super.dequeue(item, at: indexPath)
         }
     }

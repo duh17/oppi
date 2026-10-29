@@ -320,6 +320,67 @@ struct QuietWorkLineRowContentTests {
         }
     }
 
+    /// A timeline cell sizes itself from this view. At an accessibility size its
+    /// text must make the chip taller, not spill out of a 44 pt one.
+    @Test func chipGrowsAroundItsTextAtAccessibilitySizes() async throws {
+        let workLine = QuietTimelineWorkLine(
+            id: "quiet-work-line:test",
+            turnID: "test",
+            sourceItemIDs: ["test"],
+            buckets: [.init(kind: .read, count: 4), .init(kind: .tooling, count: 7), .init(kind: .edit, count: 1, editStats: .init(added: 12, removed: 3))],
+            displayStyle: .icons,
+            isExpanded: false,
+            isLive: false,
+            liveStartedAt: Date(timeIntervalSince1970: 0),
+            intervalEndedAt: Date(timeIntervalSince1970: 9)
+        )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        for chromeStyle in [ChatTimelineChromeStyle.standard, .conversation] {
+            let view = QuietWorkLineTimelineRowContentView(
+                configuration: QuietWorkLineTimelineRowConfiguration(workLine: workLine, chromeStyle: chromeStyle)
+            )
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
+            let host = UIViewController()
+            view.translatesAutoresizingMaskIntoConstraints = false
+            host.view.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: host.view.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: host.view.trailingAnchor),
+                view.topAnchor.constraint(equalTo: host.view.topAnchor),
+            ])
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer { host.traitOverrides.remove(UITraitPreferredContentSizeCategory.self); hideTestWindow(window); window.rootViewController = nil }
+
+            func fittedHeight() -> CGFloat {
+                view.layoutIfNeeded()
+                return view.systemLayoutSizeFitting(CGSize(width: 390, height: UIView.layoutFittingCompressedSize.height),
+                    withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
+            }
+            host.traitOverrides.preferredContentSizeCategory = .large
+            let standardHeight = fittedHeight()
+            host.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+            var height = standardHeight
+            for _ in 0..<150 {
+                height = fittedHeight()
+                if height > standardHeight { break }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(height > standardHeight + 20, "\(chromeStyle): the row stayed \(height) pt at AX5")
+
+            view.frame.size.height = height
+            view.layoutIfNeeded()
+            let chip = try #require(chipView(in: view)).frame
+            for label in [try #require(summaryLabel(in: view)), try #require(durationLabel(in: view))] where !label.isHidden {
+                #expect(
+                    chip.insetBy(dx: -0.5, dy: -0.5).contains(label.frame),
+                    "\(chromeStyle): \"\(label.text ?? label.attributedText?.string ?? "")\" spills out of the chip at AX5: \(label.frame) outside \(chip)"
+                )
+            }
+        }
+    }
+
     @Test func collapsedStripFillDiffersFromUserMessageBubble() throws {
         let view = QuietWorkLineTimelineRowContentView(
             configuration: QuietWorkLineTimelineRowConfiguration(

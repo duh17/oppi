@@ -57,6 +57,8 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     private let chevronView = UIImageView()
     private var standardConstraints: [NSLayoutConstraint] = []
     private var conversationConstraints: [NSLayoutConstraint] = []
+    private var standardStackedConstraints: [NSLayoutConstraint] = []
+    private var conversationStackedConstraints: [NSLayoutConstraint] = []
     private var currentConfiguration: QuietWorkLineTimelineRowConfiguration
     nonisolated(unsafe) private var durationTimer: Timer?
     private var durationStartedAt: Date?
@@ -143,49 +145,106 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         addSubview(durationLabel)
         addSubview(chevronView)
         // The button spans the chip horizontally and the full row vertically,
-        // so the inset conversation pill keeps a 44 pt target.
+        // so the inset conversation pill keeps a 44 pt touch target.
         NSLayoutConstraint.activate([
             button.leadingAnchor.constraint(equalTo: chipView.leadingAnchor),
             button.trailingAnchor.constraint(equalTo: chipView.trailingAnchor),
             button.topAnchor.constraint(equalTo: topAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
             button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            summaryLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
-            durationLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
             chevronView.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
         ])
+        // The chip grows around its text, so a larger text size makes a taller
+        // chip instead of text spilling out of a 44 pt one.
+        let textInset = Self.textVerticalInset
+        let contained = [
+            summaryLabel.topAnchor.constraint(greaterThanOrEqualTo: chipView.topAnchor, constant: textInset),
+            summaryLabel.bottomAnchor.constraint(lessThanOrEqualTo: chipView.bottomAnchor, constant: -textInset),
+            durationLabel.topAnchor.constraint(greaterThanOrEqualTo: chipView.topAnchor, constant: textInset),
+            durationLabel.bottomAnchor.constraint(lessThanOrEqualTo: chipView.bottomAnchor, constant: -textInset),
+        ]
+        let centered = [
+            summaryLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
+            durationLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
+        ]
         let strip = ChatTimelineChromeStyle.standard.workLine
-        standardConstraints = [
+        let stripEdges = [
             chipView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: strip.margins.leading),
             chipView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -strip.margins.trailing),
             chipView.topAnchor.constraint(equalTo: topAnchor, constant: strip.margins.top),
             chipView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -strip.margins.bottom),
+        ]
+        standardConstraints = stripEdges + contained + centered + [
             summaryLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: strip.padding.leading),
             durationLabel.leadingAnchor.constraint(greaterThanOrEqualTo: summaryLabel.trailingAnchor, constant: 8),
             durationLabel.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -strip.padding.trailing),
         ]
         let pill = ChatTimelineChromeStyle.conversation.workLine
-        conversationConstraints = [
+        let pillEdges = [
             chipView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pill.margins.leading),
-            chipView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -pill.margins.trailing),
             chipView.topAnchor.constraint(equalTo: topAnchor, constant: pill.margins.top),
             chipView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pill.margins.bottom),
+        ]
+        conversationConstraints = pillEdges + contained + centered + [
+            chipView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -pill.margins.trailing),
             summaryLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: pill.padding.leading),
             durationLabel.leadingAnchor.constraint(equalTo: summaryLabel.trailingAnchor, constant: 5),
             chevronView.leadingAnchor.constraint(equalTo: durationLabel.trailingAnchor, constant: 6),
             chevronView.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -pill.padding.trailing),
         ]
+        // Accessibility sizes: the summary wraps, the detail sits under it, and
+        // the chip spans the row, since neither line fits beside the other.
+        let stackedPadding = Self.stackedHorizontalPadding
+        let stackedText = [
+            summaryLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: stackedPadding),
+            summaryLabel.topAnchor.constraint(equalTo: chipView.topAnchor, constant: Self.stackedVerticalPadding),
+            durationLabel.leadingAnchor.constraint(equalTo: summaryLabel.leadingAnchor),
+            durationLabel.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 2),
+            durationLabel.bottomAnchor.constraint(equalTo: chipView.bottomAnchor, constant: -Self.stackedVerticalPadding),
+        ]
+        standardStackedConstraints = stripEdges + stackedText + [
+            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: chipView.trailingAnchor, constant: -stackedPadding),
+            durationLabel.trailingAnchor.constraint(lessThanOrEqualTo: chipView.trailingAnchor, constant: -stackedPadding),
+        ]
+        conversationStackedConstraints = pillEdges + stackedText + [
+            chipView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pill.margins.trailing),
+            chevronView.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -stackedPadding),
+            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevronView.leadingAnchor, constant: -6),
+            durationLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevronView.leadingAnchor, constant: -6),
+        ]
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (self: Self, _) in
+            self.apply(configuration: self.currentConfiguration)
+        }
+    }
+
+    private static let stackedCornerRadius: CGFloat = 18
+    private static let textVerticalInset: CGFloat = 6
+    private static let stackedHorizontalPadding: CGFloat = 18
+    private static let stackedVerticalPadding: CGFloat = 10
+
+    private var isStacked: Bool {
+        traitCollection.preferredContentSizeCategory.isAccessibilityCategory
     }
 
     private func applyChromeLayout(_ chromeStyle: ChatTimelineChromeStyle) {
         let isConversation = chromeStyle == .conversation
-        NSLayoutConstraint.deactivate(isConversation ? standardConstraints : conversationConstraints)
-        NSLayoutConstraint.activate(isConversation ? conversationConstraints : standardConstraints)
+        NSLayoutConstraint.deactivate(
+            standardConstraints + conversationConstraints + standardStackedConstraints + conversationStackedConstraints
+        )
+        let active = switch (isConversation, isStacked) {
+        case (false, false): standardConstraints
+        case (true, false): conversationConstraints
+        case (false, true): standardStackedConstraints
+        case (true, true): conversationStackedConstraints
+        }
+        NSLayoutConstraint.activate(active)
         chevronView.isHidden = !isConversation
         // Standard strips truncate a long bucket summary; the pill's text is
-        // short and must stay whole.
-        summaryLabel.adjustsFontSizeToFitWidth = !isConversation
-        durationLabel.textAlignment = isConversation ? .left : .right
+        // short and must stay whole. At accessibility sizes both wrap instead.
+        summaryLabel.adjustsFontSizeToFitWidth = !isConversation && !isStacked
+        summaryLabel.numberOfLines = isStacked ? 0 : 1
+        durationLabel.numberOfLines = isStacked ? 0 : 1
+        durationLabel.textAlignment = isConversation || isStacked ? .left : .right
         let baseSize = UIFont.preferredFont(forTextStyle: .subheadline).pointSize
         let font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
             for: .monospacedDigitSystemFont(ofSize: baseSize, weight: isConversation ? .regular : .semibold)
@@ -204,7 +263,10 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
             isHighlighted: configuration.isHighlighted,
             palette: ThemeRuntimeState.currentPalette()
         )
-        chipView.shape = configuration.chromeStyle.workLine.shape
+        // A capsule is for one line; a wrapped, two-line pill is a rounded rectangle.
+        chipView.shape = configuration.chromeStyle == .conversation && isStacked
+            ? .roundedRect(radius: Self.stackedCornerRadius, curve: .continuous)
+            : configuration.chromeStyle.workLine.shape
         chipView.backgroundColor = colors.fill
         switch configuration.chromeStyle {
         case .standard:
