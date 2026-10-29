@@ -122,7 +122,13 @@ struct CodeEditorFenceIndex {
     mutating func apply(editAt edited: NSRange, changeInLength delta: Int, in text: NSString) -> NSRange? {
         let length = text.length
         let location = min(edited.location, length)
-        let lineStart = text.lineRange(for: NSRange(location: location, length: 0)).location
+        var lineStart = text.lineRange(for: NSRange(location: location, length: 0)).location
+        // An edit between a carriage return and its line feed (or one that joins
+        // them) changes the line before it too: "```\r\n" is one line, "```\r" and
+        // "\n" are two.
+        if location > 0, text.character(at: location - 1) == 0x0D {
+            lineStart = text.lineRange(for: NSRange(location: location - 1, length: 0)).location
+        }
         // The line holding the edit's last character: when the edit ends in a
         // line break that is the new line after it, so `blockEnd - changeInLength`
         // is a line boundary in the old text too.
@@ -147,7 +153,8 @@ struct CodeEditorFenceIndex {
 
         // The old state entering the line after the block, from the old markers.
         let oldTextRead = oldScanned >= length - delta
-        let tailKnown = oldBlockEnd < oldScanned || oldTextRead
+        // `<=`: the state entering the line at `oldScanned` is known, since every line before it was read.
+        let tailKnown = oldBlockEnd <= oldScanned || oldTextRead
         let before: State? = tailKnown ? knownState(at: oldBlockEnd) : nil
 
         // The markers before the edited line stay; those on the block's lines are replaced.

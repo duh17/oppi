@@ -7,13 +7,17 @@ import Testing
 /// something already asked about.
 @Suite("Code editor fence index")
 struct CodeEditorFenceIndexTests {
+    /// Line starts as the index sees them: a line ends at \n, \r, or \r\n, and
+    /// text that ends in a line break has an empty last line.
     private func lineStarts(_ text: String) -> [Int] {
+        let ns = text as NSString
         var starts: [Int] = []
-        var start = 0
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            starts.append(start)
-            start += line.utf16.count + 1
+        var cursor = 0
+        while cursor < ns.length {
+            starts.append(cursor)
+            cursor = NSMaxRange(ns.lineRange(for: NSRange(location: cursor, length: 0)))
         }
+        if ns.length == 0 || CodeText.isLineBreak(ns.character(at: ns.length - 1)) { starts.append(ns.length) }
         return starts
     }
 
@@ -244,5 +248,99 @@ struct CodeEditorFenceIndexTests {
         #expect(broken.stale != nil && NSMaxRange(broken.stale!) >= broken.text.utf16.count - 12, "stale \(String(describing: broken.stale))")
         var fresh = CodeEditorFenceIndex()
         #expect(insideLines(broken.text, index: &index) == insideLines(broken.text, index: &fresh))
+    }
+
+    @Test func typingMoreOnAnOpenerRightAfterItOpenedTheFenceReportsNothingAgain() {
+        // Open a fence above lines something asked about, then keep typing the
+        // info string on the same line: only the first keystroke changes anything.
+        let text = "``\n- item\n- more\n"
+        var index = CodeEditorFenceIndex()
+        _ = insideLines(text, index: &index)
+        let opened = apply(&index, to: text, replacing: NSRange(location: 2, length: 0), with: "`")
+        #expect(opened.stale != nil)
+        let info = apply(&index, to: opened.text, replacing: NSRange(location: 3, length: 0), with: "s")
+        #expect(info.stale == nil, "a second keystroke on the opener reported \(String(describing: info.stale))")
+        let more = apply(&index, to: info.text, replacing: NSRange(location: 4, length: 0), with: "w")
+        #expect(more.stale == nil)
+        var fresh = CodeEditorFenceIndex()
+        #expect(insideLines(more.text, index: &index) == insideLines(more.text, index: &fresh))
+    }
+
+    @Test func anEditBetweenACarriageReturnAndItsLineFeedKeepsTheLinesFenceMarker() {
+        // Deleting the line feed of a CRLF fence line leaves "```\r" as a line of its own.
+        let text = "a\r\n```\r\nbody\r\n```\r\nafter\r\n"
+        var index = CodeEditorFenceIndex()
+        _ = insideLines(text, index: &index)
+        let lineFeed = (text as NSString).range(of: "```\r\nbody").location + 4
+        let result = apply(&index, to: text, replacing: NSRange(location: lineFeed, length: 1), with: "")
+        var fresh = CodeEditorFenceIndex()
+        #expect(insideLines(result.text, index: &index) == insideLines(result.text, index: &fresh), "the opener's marker was lost")
+    }
+
+    // MARK: - Every single-character edit
+
+    /// Line starts as the index sees them (a line ends at \n, \r, or \r\n).
+    private func starts(of text: NSString) -> [Int] {
+        var result: [Int] = []
+        var cursor = 0
+        while cursor < text.length {
+            result.append(cursor)
+            cursor = NSMaxRange(text.lineRange(for: NSRange(location: cursor, length: 0)))
+        }
+        return result
+    }
+
+    /// For a small corpus with both fence kinds, 0/3/4-space indents, info
+    /// strings and CRLF: ask the first lines, then insert or delete each
+    /// interesting character at every offset. The index must answer like a
+    /// fresh scan, and the report must cover every asked line outside the
+    /// edit whose answer changed.
+    @Test func everySingleCharacterEditKeepsAnswersRightAndReportsEveryAskedLineThatChanged() {
+        let corpus = "intro\r\n```swift\r\n- code\r\n```\n- item\n   ~~~ info\r\ntext\n~~~\r\n    ``` four\n```\n``` a`b\n> quote\r\n```\r\n- tail"
+        let characters = ["`", "~", " ", "\n", "\r", "x"]
+        var failures: [String] = []
+        var edits = 0
+        for askedLines in [3, Int.max] {
+            var cases: [(NSRange, String)] = []
+            let length = (corpus as NSString).length
+            for offset in 0...length {
+                for character in characters { cases.append((NSRange(location: offset, length: 0), character)) }
+                if offset < length { cases.append((NSRange(location: offset, length: 1), "")) }
+            }
+            for (range, replacement) in cases {
+                edits += 1
+                let old = corpus as NSString
+                var index = CodeEditorFenceIndex()
+                let asked = Array(starts(of: old).prefix(askedLines))
+                for start in asked { _ = index.contains(start, in: old) }
+                let new = old.replacingCharacters(in: range, with: replacement) as NSString
+                let delta = replacement.utf16.count - range.length
+                let stale = index.apply(editAt: NSRange(location: range.location, length: replacement.utf16.count), changeInLength: delta, in: new)
+                let label = "edit \(range) with \(replacement.debugDescription), asked \(asked.count) lines"
+
+                var freshNew = CodeEditorFenceIndex()
+                for start in starts(of: new) where index.contains(start, in: new) != freshNew.contains(start, in: new) {
+                    failures.append("\(label): line at \(start) answers differently from a fresh scan")
+                }
+                // The asked lines outside the edit's own lines: block start/end in the old text.
+                var blockStart = old.lineRange(for: NSRange(location: min(range.location, old.length), length: 0)).location
+                if range.location > 0, old.character(at: range.location - 1) == 0x0D {
+                    blockStart = old.lineRange(for: NSRange(location: range.location - 1, length: 0)).location
+                }
+                let blockEnd = NSMaxRange(old.lineRange(for: NSRange(location: min(NSMaxRange(range), old.length), length: 0)))
+                var freshOld = CodeEditorFenceIndex()
+                var freshNow = CodeEditorFenceIndex()
+                for start in asked where start < blockStart || start >= blockEnd {
+                    let now = start < blockStart ? start : start + delta
+                    guard now < new.length else { continue }
+                    if freshOld.contains(start, in: old) != freshNow.contains(now, in: new) {
+                        if stale.map({ NSLocationInRange(now, $0) }) != true {
+                            failures.append("\(label): asked line at \(start) (now \(now)) changed but the report was \(String(describing: stale))")
+                        }
+                    }
+                }
+            }
+        }
+        #expect(failures.isEmpty, "\(failures.count) of \(edits) edits failed, first: \(failures.prefix(4))")
     }
 }

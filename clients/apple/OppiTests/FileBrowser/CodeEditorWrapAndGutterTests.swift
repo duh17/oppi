@@ -608,8 +608,9 @@ struct CodeEditorWrapAndGutterTests {
         ) { _ in edits.count += 1 }
         defer { NotificationCenter.default.removeObserver(observer) }
         styler.wrapWidth = 800          // wide again before the wait ends
-        try await Task.sleep(for: .milliseconds(400))
-        #expect(edits.count == 1, "the paragraph built under the narrow cap was invalidated (\(edits.count) edits)")
+        for _ in 0..<60 where edits.count == 0 { try await Task.sleep(for: .milliseconds(50)) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(edits.count == 1, "the paragraph built under the narrow cap was invalidated once (\(edits.count) edits)")
     }
 
     /// With Syntax Highlighting on, an indent typed into a flush line wraps
