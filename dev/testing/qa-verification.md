@@ -2,7 +2,7 @@
 
 Parent-facing contributor CLI for strict iOS UI verification with source-bound receipts.
 
-This is the reduced core: one CLI, one XCTest executor, one simple paired success, and one steering→follow-up queue transition. It does not include Jev, speed claims, or a terminal-mirror journey.
+This is the reduced core: one CLI, one XCTest executor, one simple paired success, and one steering-item removal. It does not include Jev, speed claims, or a terminal-mirror journey.
 
 ## Owner
 
@@ -13,10 +13,10 @@ This is the reduced core: one CLI, one XCTest executor, one simple paired succes
 | ID | Lane | Claim |
 | --- | --- | --- |
 | `composer-ready` | paired E2E | Unique `chat.input` accepts synthetic text (exact field value); unique `chat.send` becomes enabled |
-| `queue-move-steering-to-followup` | paired E2E | One command-seeded steering item moves to follow-up; UI plus one correlated `POST .../command` `get_queue` `command_result` |
-| negatives | hang harness | Ambiguous/missing target, missing/ambiguous scope, absent postcondition, unconfirmed dispatch, unrelated wait, and evidence failure do not false-pass |
+| `queue-remove-steering` | paired E2E | One command-seeded steering item is removed through its `chat.messageQueue.remove.<itemId>` control; UI plus one correlated `POST .../command` `get_queue` `command_result` (item absent, queue version advanced) |
+| negatives | hang harness | Ambiguous/missing target, missing scope, absent postcondition, unconfirmed dispatch, unrelated wait, and evidence failure do not false-pass |
 
-Queue setup uses existing `prompt` / `steer` / `get_queue` commands. Composer-send/stop is not the queue claim. Refresh is not the oracle. The required queue oracle is UI follow-up plus one correlated `get_queue` `command_result` with strict row fields (no defaulted version/id/message/createdAt/attachments). A visible version-mismatch banner is a required failure: honest product FAIL, not a harness pass. Terminal mirror is not exercised (`runtime=oppi`, `terminalMirrorExercised=false`). Hang-harness negatives mock the in-memory queue store.
+Queue setup uses existing `prompt` / `steer` / `get_queue` commands. Composer-send/stop is not the queue claim. Refresh is not the oracle. The required queue oracle is the item's control gone from the UI plus one correlated `get_queue` `command_result` with strict row fields (no defaulted version/id/message/createdAt/attachments). A visible version-mismatch banner is a required failure: honest product FAIL, not a harness pass. Terminal mirror is not exercised (`runtime=oppi`, `terminalMirrorExercised=false`). Hang-harness negatives mock the in-memory queue store.
 
 The busy-turn seed can race the live model. That is a bounded fixture caveat, not permission to weaken the banner oracle or replace the real queue with a mock.
 

@@ -145,7 +145,7 @@ describe("qa-verify catalog", () => {
     const composer = journeyById("composer-ready");
     expect(composer?.requestedStepIds).toEqual(["wait-input", "type-marker", "wait-send"]);
     expect(composer?.requiredAssertionIds.length).toBeGreaterThan(0);
-    expect(journeyById("queue-move-steering-to-followup")?.requiredAssertionIds).toContain(
+    expect(journeyById("queue-remove-steering")?.requiredAssertionIds).toContain(
       "queue-update-error-banner",
     );
     expect(journeyById("negative-unrelated-wait")?.innerStatus).toBe("unknown");
@@ -287,7 +287,7 @@ describe("qa-verify admission", () => {
         { file: "composer.json", parsed: validReceipt(catalog, nonce, src), malformed: false },
         {
           file: "queue.json",
-          parsed: validReceipt(journeyById("queue-move-steering-to-followup")!, nonce, src),
+          parsed: validReceipt(journeyById("queue-remove-steering")!, nonce, src),
           malformed: false,
         },
       ],
@@ -308,7 +308,7 @@ describe("qa-verify admission", () => {
         { file: "composer.json", parsed: validReceipt(catalog, nonce, src), malformed: false },
         {
           file: "queue.json",
-          parsed: validReceipt(journeyById("queue-move-steering-to-followup")!, nonce, src),
+          parsed: validReceipt(journeyById("queue-remove-steering")!, nonce, src),
           malformed: false,
         },
       ],
@@ -334,7 +334,7 @@ describe("qa-verify admission", () => {
           { file: "composer.json", parsed: validReceipt(catalog, nonce, src), malformed: false },
           {
             file: "queue.json",
-            parsed: validReceipt(journeyById("queue-move-steering-to-followup")!, nonce, src),
+            parsed: validReceipt(journeyById("queue-remove-steering")!, nonce, src),
             malformed: false,
           },
         ],
@@ -351,7 +351,7 @@ describe("qa-verify admission", () => {
           { file: "composer.json", parsed: validReceipt(catalog, nonce, src), malformed: false },
           {
             file: "queue.json",
-            parsed: validReceipt(journeyById("queue-move-steering-to-followup")!, nonce, src),
+            parsed: validReceipt(journeyById("queue-remove-steering")!, nonce, src),
             malformed: false,
           },
         ],
@@ -372,7 +372,7 @@ describe("qa-verify admission", () => {
         { file: "b.json", parsed: receipt, malformed: false },
         {
           file: "queue.json",
-          parsed: validReceipt(journeyById("queue-move-steering-to-followup")!, nonce, src),
+          parsed: validReceipt(journeyById("queue-remove-steering")!, nonce, src),
           malformed: false,
         },
       ],

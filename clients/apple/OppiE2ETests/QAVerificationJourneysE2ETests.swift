@@ -51,35 +51,26 @@ final class QAVerificationJourneysE2ETests: E2ETestCase {
         )
     }
 
-    func testQueueMoveSteeringToFollowUp() throws {
+    func testQueueRemoveSteeringItem() throws {
         let receipt = QAVerificationReceipt(
-            journeyId: "queue-move-steering-to-followup",
-            subject: "One synthetic steering item moves to follow-up; UI plus one correlated get_queue command_result",
+            journeyId: "queue-remove-steering",
+            subject: "One synthetic steering item is removed; UI plus one correlated get_queue command_result",
             driver: "strict",
             requestedStepIds: [
                 "wait-queue-pill",
                 "tap-queue-pill",
-                "wait-steering-message",
-                "wait-move-followup",
-                "tap-move-followup",
-                "wait-followup-control",
-                "wait-steering-move-gone",
-                "wait-message-still-present",
+                "wait-remove",
+                "tap-remove",
+                "wait-remove-gone",
             ],
             requiredAssertionIds: [
                 "authoritative-get-queue",
-                "queue-id-once",
-                "item-absent-steering",
-                "item-present-followup",
-                "item-content-unchanged",
+                "item-absent-queue",
                 "queue-version-advanced",
-                "ui-followup-visible",
+                "ui-item-gone",
                 "queue-update-error-banner",
             ],
             mockedBoundaries: []
-        )
-        receipt.semanticsGaps.append(
-            "Queue row move controls still expose SF Symbol identifiers (arrow.down.right / arrow.up.left)."
         )
         receipt.semanticsGaps.append(
             "Busy-turn seed may race the live model; a leftover version-mismatch banner is a product FAIL."
@@ -92,15 +83,7 @@ final class QAVerificationJourneysE2ETests: E2ETestCase {
         waitForWebSocketConnected()
         let sessionId = waitForFocusedSessionId(timeout: 20)
         let workspaceId = try e2eWorkspaceId()
-        let marker = "QA_QUEUE_MOVE_\(sessionId.prefix(8))"
-        // Drawer identifier is duplicated in the accessibility tree (4 matches).
-        // One seeded item must still resolve uniquely without that scope.
-        let message = QAVerificationExecutor.Target.value(marker, role: .textField)
-        let moveToFollowUp = QAVerificationExecutor.Target.id("arrow.down.right", role: .button)
-        // The queue editor has no move controls any more: this journey is stale until it is retargeted or removed.
-        // ax-id-guard: absent-on-purpose
-        let moveToSteering = QAVerificationExecutor.Target.id("arrow.up.left", role: .button)
-
+        let marker = "QA_QUEUE_REMOVE_\(sessionId.prefix(8))"
         let before: AuthoritativeQueue
         let beforeItem: QueueItemSnapshot
         do {
@@ -112,31 +95,31 @@ final class QAVerificationJourneysE2ETests: E2ETestCase {
             before = try authoritativeQueue(workspaceId: workspaceId, sessionId: sessionId)
             beforeItem = try uniqueSteeringItem(before, message: marker)
             guard before.followUp.isEmpty else {
-                throw QAVerificationFailure.postcondition("Follow-up was not empty before the UI move")
+                throw QAVerificationFailure.postcondition("Follow-up was not empty before the UI removal")
             }
         } catch let error as QAVerificationFailure {
             receipt.recordFailure(error)
             throw error
         }
 
+        // The remove control's id ends in the queue item's id.
+        let remove = QAVerificationExecutor.Target.id("chat.messageQueue.remove.\(beforeItem.id)", role: .button)
+
         try executor.waitHittable(queuePill, timeout: 20, stepId: "wait-queue-pill")
         try executor.tap(
             queuePill,
             timeout: 8,
             stepId: "tap-queue-pill",
-            confirming: .exists(message)
+            confirming: .exists(remove)
         )
-        try executor.waitExists(message, timeout: 8, stepId: "wait-steering-message")
-        try executor.waitHittable(moveToFollowUp, timeout: 8, stepId: "wait-move-followup")
+        try executor.waitHittable(remove, timeout: 8, stepId: "wait-remove")
         try executor.tap(
-            moveToFollowUp,
+            remove,
             timeout: 8,
-            stepId: "tap-move-followup",
-            confirming: .exists(moveToSteering)
+            stepId: "tap-remove",
+            confirming: .gone(remove)
         )
-        try executor.waitExists(moveToSteering, timeout: 8, stepId: "wait-followup-control")
-        try executor.waitGone(moveToFollowUp, timeout: 8, stepId: "wait-steering-move-gone")
-        try executor.waitExists(message, timeout: 8, stepId: "wait-message-still-present")
+        try executor.waitGone(remove, timeout: 8, stepId: "wait-remove-gone")
 
         let after: AuthoritativeQueue
         do {
@@ -158,33 +141,12 @@ final class QAVerificationJourneysE2ETests: E2ETestCase {
             throw error
         }
 
-        let afterItems = after.steering + after.followUp
-        let idMatches = afterItems.filter { $0.id == beforeItem.id }
+        let remaining = (after.steering + after.followUp).filter { $0.id == beforeItem.id }
         receipt.recordAssertion(
-            name: "queue-id-once",
-            status: idMatches.count == 1 ? .pass : .fail,
-            expected: "id \(beforeItem.id) occurs exactly once",
-            observed: "count=\(idMatches.count)"
-        )
-        receipt.recordAssertion(
-            name: "item-absent-steering",
-            status: after.steering.contains(where: { $0.id == beforeItem.id }) ? .fail : .pass,
-            expected: "id absent from steering",
-            observed: "steering=\(after.steering.map(\.id))"
-        )
-        let follow = after.followUp.first { $0.id == beforeItem.id }
-        receipt.recordAssertion(
-            name: "item-present-followup",
-            status: follow == nil ? .fail : .pass,
-            expected: "id present in follow-up",
-            observed: "followUp=\(after.followUp.map(\.id))"
-        )
-        let contentOK = follow.map { $0.contentEquals(beforeItem) } ?? false
-        receipt.recordAssertion(
-            name: "item-content-unchanged",
-            status: contentOK ? .pass : .fail,
-            expected: "id/message/createdAt/attachments unchanged",
-            observed: follow.map { $0.contentDescription } ?? "missing"
+            name: "item-absent-queue",
+            status: remaining.isEmpty ? .pass : .fail,
+            expected: "id \(beforeItem.id) absent from steering and follow-up",
+            observed: "steering=\(after.steering.map(\.id)) followUp=\(after.followUp.map(\.id))"
         )
         receipt.recordAssertion(
             name: "queue-version-advanced",
@@ -193,10 +155,10 @@ final class QAVerificationJourneysE2ETests: E2ETestCase {
             observed: "\(after.version)"
         )
         receipt.recordAssertion(
-            name: "ui-followup-visible",
+            name: "ui-item-gone",
             status: .pass,
-            expected: "unique follow-up move-back control and marker still unique",
-            observed: "arrow.up.left unique; marker unique; arrow.down.right gone"
+            expected: "the item's remove control is gone",
+            observed: "\(remove) gone"
         )
         let errorQuery = app.staticTexts.matching(
             NSPredicate(
@@ -246,7 +208,7 @@ final class QAVerificationJourneysE2ETests: E2ETestCase {
             command: "steer"
         )
         if !app.descendants(matching: .any)["chat.stop"].exists {
-            throw QAVerificationFailure.unknown("Busy turn ended before the queue move; fixture could not hold streaming")
+            throw QAVerificationFailure.unknown("Busy turn ended before the queue removal; fixture could not hold streaming")
         }
     }
 
@@ -393,17 +355,4 @@ private struct QueueItemSnapshot: Equatable {
     var createdAt: Int
     var attachmentsPresent: Bool
     var attachmentCount: Int?
-
-    func contentEquals(_ other: QueueItemSnapshot) -> Bool {
-        id == other.id
-            && message == other.message
-            && createdAt == other.createdAt
-            && attachmentsPresent == other.attachmentsPresent
-            && attachmentCount == other.attachmentCount
-    }
-
-    var contentDescription: String {
-        let attachments = attachmentsPresent ? "count=\(attachmentCount ?? -1)" : "missing"
-        return "id=\(id) message=\(message) createdAt=\(createdAt) attachments=\(attachments)"
-    }
 }
