@@ -171,6 +171,36 @@ final class SessionInboxMessageCapsuleTests {
         )
     }
 
+    /// A bar caps the category it hands its items. The mic is drawn at the `body` size of
+    /// the capsule's own category, as the placeholder is, and follows it when it changes:
+    /// a symbol sized from the app's category (or scaled twice) came out about twice the
+    /// size the SwiftUI capsule drew it at, beside the same text.
+    @Test func theMicIsDrawnAtTheBodySizeOfTheCapsulesOwnCategory() async throws {
+        let capsule = capsule(SessionInboxMessageCapsule.Content(showsDictation: true, columnWidth: 393))
+        let window = try #require(retainedWindows.last)
+        let mic = try #require(capsule.subviews.compactMap { $0 as? UIButton }.first)
+
+        func bodyMicHeight() throws -> CGFloat {
+            let size = UIFont.preferredFont(forTextStyle: .body, compatibleWith: capsule.traitCollection).pointSize
+            let configuration = UIImage.SymbolConfiguration(pointSize: size, weight: .regular, scale: .default)
+            return try #require(UIImage(systemName: "mic", withConfiguration: configuration)).size.height
+        }
+        var seen: [CGFloat] = []
+        for category in [UIContentSizeCategory.extraExtraLarge, .large, .accessibilityExtraExtraExtraLarge] {
+            capsule.traitOverrides.preferredContentSizeCategory = category
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+            window.layoutIfNeeded()
+            let expected = try bodyMicHeight()
+            seen.append(expected)
+            let actual = try #require(mic.currentImage).size.height
+            #expect(abs(actual - expected) < 0.5, "At \(category.rawValue) the mic is \(actual) pt tall, not the body size's \(expected)")
+        }
+        // The category is set on the capsule itself, so no bar caps it here: sizes rise with it.
+        // (A bar's own cap is the bar's; see the capsule's doc comment.)
+        #expect(seen[1] < seen[0] && seen[0] < seen[2], "Body sizes for XXL, large, AX5 should rise large < XXL < AX5: \(seen)")
+    }
+
     @Test func applyingNewContentRemeasuresTheCapsule() {
         let capsule = capsule(SessionInboxMessageCapsule.Content(showsDictation: true, columnWidth: 300))
         let before = capsule.intrinsicContentSize.width

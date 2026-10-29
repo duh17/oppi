@@ -109,7 +109,10 @@ final class SessionInboxMessageCapsule: UIControl {
         placeholderLabel.isUserInteractionEnabled = false
         addSubview(placeholderLabel)
 
-        micButton.setImage(UIImage.scaledSymbol("mic", style: .body), for: .normal)
+        // Drawn at its own point size, centered: the symbol is not scaled a second time
+        // on top of the capsule's content-size category (see `updateMicImage`).
+        micButton.imageView?.contentMode = .center
+        updateMicImage()
         micButton.addAction(UIAction { [weak self] _ in self?.onDictate() }, for: .touchUpInside)
         // The capsule is the one accessibility element; the mic is its custom action.
         micButton.isAccessibilityElement = false
@@ -122,6 +125,7 @@ final class SessionInboxMessageCapsule: UIControl {
         accessibilityIdentifier = "workspace.quickSession.start"
         registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitPreferredContentSizeCategory.self]) {
             (capsule: SessionInboxMessageCapsule, _: UITraitCollection) in
+            capsule.updateMicImage()
             capsule.invalidateIntrinsicContentSize()
         }
         apply(content, palette: nil)
@@ -129,6 +133,16 @@ final class SessionInboxMessageCapsule: UIControl {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The mic at the `body` size the capsule's own category gives it. A bar caps the
+    /// category it hands its items, and the placeholder follows that cap; a symbol sized
+    /// with `UIFont.scaled` and `.scaled(...)` configuration came out about twice the
+    /// size the old SwiftUI capsule drew it at, beside the same text.
+    private func updateMicImage() {
+        let size = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection).pointSize
+        let configuration = UIImage.SymbolConfiguration(pointSize: size, weight: .regular, scale: .default)
+        micButton.setImage(UIImage(systemName: "mic", withConfiguration: configuration), for: .normal)
+    }
 
     /// Draws `content`; a theme palette recolors the mic and placeholder. The capsule
     /// re-measures only when what it draws changes.
