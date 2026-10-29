@@ -31,6 +31,10 @@ describe("pre-push gate planning", () => {
     ["gate allowlist", [".gitignore"], ["none", "none", false, true]],
     ["server gate policy", ["server/testing-policy.json"], ["full", "none", false, true]],
     ["unknown fails closed", ["tools/release.ts"], ["full", "unit", true, false]],
+    // batch-gate is executable gate code: it keeps the fail-closed lanes of an unknown path and
+    // also runs its own self-test (the hook's run_self_test), which only harness=true triggers.
+    ["batch gate", ["scripts/batch-gate.ts"], ["full", "unit", true, true]],
+    ["batch gate test", ["scripts/batch-gate.test.ts"], ["full", "unit", true, true]],
   ] as const)("classifies %s", (_name, paths, expected) => {
     const plan = planForPaths(paths);
     expect([plan.server, plan.apple, plan.mac, plan.harness]).toEqual(expected);

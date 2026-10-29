@@ -26,6 +26,13 @@ const gatePolicyPaths = new Set([
   "dev/testing/README.md",
 ]);
 
+// Gate code that is also executable product-adjacent tooling: its own tests run in the hook's
+// self-test (harness), and it keeps the lanes of an unclassified path (no `continue` below).
+const harnessTestedPaths = new Set([
+  "scripts/batch-gate.ts",
+  "scripts/batch-gate.test.ts",
+]);
+
 function strongerServer(lhs: ServerGateMode, rhs: ServerGateMode): ServerGateMode {
   const rank: Record<ServerGateMode, number> = { none: 0, changed: 1, full: 2 };
   return rank[rhs] > rank[lhs] ? rhs : lhs;
@@ -97,6 +104,8 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
   let harness = false;
 
   for (const path of changedPaths) {
+    if (harnessTestedPaths.has(path)) harness = true;
+
     if (gatePolicyPaths.has(path) || path.startsWith(".github/workflows/")) {
       harness = true;
       if (!path.startsWith("server/")) continue;
