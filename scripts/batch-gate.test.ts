@@ -27,6 +27,10 @@ const sources: Record<string, string[]> = {
 };
 const types = (target: string) => declarations(sources[target] ?? []);
 
+/** Filters a lane runs as `-only-testing:` values: a UI lane hands them to ui-shards.ts after `--`. */
+const onlyTesting = (step: { command: string; args: string[] }) =>
+  step.command === "bun" ? step.args.slice(step.args.indexOf("--") + 1).map((filter) => `-only-testing:${filter}`) : step.args.filter((arg) => arg.startsWith("-only-testing:"));
+
 describe("batch gate plan", () => {
   test("named suites become one lane per kind, UI tests one lane per profile", () => {
     const plan = planGate("/wt", [
@@ -43,7 +47,15 @@ describe("batch gate plan", () => {
     expect(Object.keys(byName)).toEqual(["server", "ios-unit", "ui-iphone", "ui-ipad", "e2e"]);
     expect(byName.server[0].slice(-2)).toEqual(["tests/cli-a.test.ts", "tests/mcp-service.test.ts"]);
     expect(byName["ios-unit"][0].slice(-2)).toEqual(["-only-testing:OppiTests/FooTests", "-only-testing:OppiTests/BarTests/baz()"]);
-    expect(byName["ui-ipad"][0].slice(0, 3)).toEqual(["run", "--device-profile", "ipad"]);
+    // Each profile's lane hands its UI filters to the shard runner, which builds once and splits them over the profile's slots.
+    const uiLane = (profile: string) => plan.lanes.find((lane) => lane.name === `ui-${profile}`)!.steps;
+    expect(uiLane("ipad").map((step) => [step.command, step.args.slice(1)])).toEqual([
+      ["bun", ["--profile", "ipad", "--", "OppiUITests/ChatRoutesUITests"]],
+    ]);
+    expect(byName["ui-iphone"][0][0]).toBe("/wt/clients/apple/scripts/ui-shards.ts");
+    expect(uiLane("iphone")[0].env?.OPPI_ROOT).toBe("/wt");
+    // The shard runner fails zero-test shards itself; its lane output has no single sim-pool artifact to count.
+    expect(uiLane("iphone")[0].requireTests).toBeUndefined();
     expect(byName.e2e).toEqual([
       ["--native", "--only-testing", "OppiE2ETests/ChatE2ETests/testSend"],
       ["--group", "gate"],
@@ -60,7 +72,7 @@ describe("batch gate plan", () => {
       "OppiUITests/SharedSupportTests",
     ], [], types);
     expect(lanes.errors).toEqual([]);
-    const only = (name: string) => lanes.lanes.find((lane) => lane.name === name)!.steps[0].args.filter((arg) => arg.startsWith("-only-testing:"));
+    const only = (name: string) => onlyTesting(lanes.lanes.find((lane) => lane.name === name)!.steps[0]);
     expect(lanes.lanes.map((lane) => lane.name)).toEqual(["ui-iphone", "ui-ipad"]);
     // Duplicates collapse; the unscoped suite takes the default profile only; nothing leaks across profiles.
     expect(only("ui-iphone")).toEqual(["-only-testing:OppiUITests/ChatRoutesUITests", "-only-testing:OppiUITests/SharedSupportTests"]);
@@ -77,7 +89,7 @@ describe("batch gate plan", () => {
       "OppiE2ETests/ChatE2ETests/testSend@ipad",
     ], ["iphone", "ipad"], types);
     expect(lanes.errors).toEqual([]);
-    const only = (name: string) => lanes.lanes.find((lane) => lane.name === name)!.steps[0].args.filter((arg) => arg.startsWith("-only-testing:"));
+    const only = (name: string) => onlyTesting(lanes.lanes.find((lane) => lane.name === name)!.steps[0]);
     expect(lanes.lanes.map((lane) => lane.name)).toEqual(["server", "ios-unit", "ui-iphone", "ui-ipad", "ui-duo", "e2e"]);
     expect(only("ui-iphone")).toEqual(["-only-testing:OppiUITests/ChatRoutesUITests"]);
     expect(only("ui-ipad")).toEqual(["-only-testing:OppiUITests/ChatRoutesUITests"]);

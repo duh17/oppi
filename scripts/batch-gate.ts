@@ -18,10 +18,12 @@
 //
 // --test values:
 //   OppiTests/<Suite>[/<test>]      iOS unit filter; one OppiUnitTests run on the iPhone pool
-//   OppiUITests/<Suite>[/<test>]    UI test filter; one `-scheme Oppi` run per profile, profiles in
-//                                   parallel. A profile's run holds only the filters scoped to it
-//                                   (see "@<profile>" below); an unscoped filter runs on every
-//                                   --profile (iphone, ipad, duo; default iphone)
+//   OppiUITests/<Suite>[/<test>]    UI test filter; one lane per profile, profiles in parallel. A
+//                                   profile's lane holds only the filters scoped to it (see
+//                                   "@<profile>" below); an unscoped filter runs on every --profile
+//                                   (iphone, ipad, duo; default iphone). A lane builds once and runs
+//                                   its filters as parallel shards in that profile's pool slots
+//                                   (clients/apple/scripts/ui-shards.ts)
 //   OppiE2ETests/<Suite>[/<test>]   paired-server E2E filter (clients/apple/scripts/e2e.sh --native).
 //                                   A suite that reads the two-server fixture (its file calls
 //                                   TwoServerFixture.<member>) runs through server/scripts/e2e-two-server.ts
@@ -200,6 +202,7 @@ export function planGate(
   const resolutions = resolved.filter(({ filter }) => !failed.has(filter)).map(({ line }) => line);
   const apple = join(worktree, "clients", "apple");
   const simPool = join(apple, "scripts", "sim-pool.sh");
+  const uiShards = join(apple, "scripts", "ui-shards.ts");
   const e2eScript = join(apple, "scripts", "e2e.sh");
   // sim-pool prefers an inherited OPPI_ROOT over the cwd; a caller's own checkout must not
   // win over the worktree under test, or the gate would build and test different code.
@@ -220,16 +223,13 @@ export function planGate(
       }],
     });
   }
+  // One lane per profile; ui-shards.ts builds once and splits the profile's filters over its pool
+  // slots (see its header). It fails a shard that ran no tests and a run that executed none, so the
+  // lane does not need the zero-test check, which reads one sim-pool log.
   for (const [profile, filters] of uiByProfile) {
     lanes.push({
       name: `ui-${profile}`,
-      steps: [{
-        cwd: apple,
-        command: simPool,
-        args: ["run", "--device-profile", profile, "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test", ...[...filters].map((f) => `-only-testing:${f}`)],
-        env: pinned,
-        requireTests: true,
-      }],
+      steps: [{ cwd: apple, command: "bun", args: [uiShards, "--profile", profile, "--", ...filters], env: pinned }],
     });
   }
   // E2E runs start a paired server each; keep them one after another in a single lane.

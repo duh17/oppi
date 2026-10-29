@@ -17,6 +17,7 @@
     "sim-pool-ops.ts",
     "sim-pool-build.ts",
     "unit-shards.ts",
+    "ui-shards.ts",
     "sim-pool-lifecycle.ts",
     "xcode-toolchain.ts",
     "sim-pool-ffi.d.ts",

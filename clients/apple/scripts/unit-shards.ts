@@ -141,14 +141,16 @@ export async function runShard(
   outDir: string,
   label = `shard-${index + 1}`,
   env: NodeJS.ProcessEnv = process.env,
+  /** UI shards keep xcodebuild's default diagnostics: their xcresult is read by people, not by a rerun. */
+  diagnostics = false,
 ): Promise<ShardResult> {
   const output = join(outDir, `${label}.out`);
   const fd = openSync(output, "w");
   const started = Date.now();
-  // No failure diagnostics (simctl diagnose runs minutes and, cut short by sim-pool's
-  // completion stop, leaves an unreadable xcresult, so failed tests could not be rerun).
+  // Unit shards collect no failure diagnostics (simctl diagnose runs minutes and, cut short by
+  // sim-pool's completion stop, leaves an unreadable xcresult, so failed tests could not be rerun).
   const child = spawn(join(scriptDir, "sim-pool.sh"), [
-    "run", "--", "xcodebuild", "test-without-building", "-xctestrun", xctestrun, "-collect-test-diagnostics", "never", ...flags,
+    "run", "--", "xcodebuild", "test-without-building", "-xctestrun", xctestrun, ...(diagnostics ? [] : ["-collect-test-diagnostics", "never"]), ...flags,
   ], {
     cwd: appleDir,
     stdio: ["ignore", fd, fd],
@@ -229,13 +231,20 @@ function recordFlake(id: string): number {
   return heads.size;
 }
 
-/** Tests the shard's xcodebuild ran, from the Swift Testing result line in its log. */
-function executedTests(summary: string | undefined): number {
+/**
+ * Tests the shard's xcodebuild ran, from its log: the Swift Testing result line (unit tests), or
+ * XCTest's `Executed N tests` line or, when the run died before printing it, the count of finished
+ * test cases (UI tests). A run that finished some cases is a failure, not an infrastructure failure.
+ */
+export function executedTests(summary: string | undefined): number {
   if (!summary || !existsSync(summary)) return 0;
   const log = JSON.parse(readFileSync(summary, "utf8")).log_path as string | undefined;
   if (!log || !existsSync(log)) return 0;
-  const run = [...readFileSync(log, "utf8").matchAll(/^[✔✘] Test run with ([0-9]+) tests? in [0-9]+ suites? (?:passed|failed) after/gm)].at(-1);
-  return run ? Number(run[1]) : 0;
+  const text = readFileSync(log, "utf8");
+  const swift = [...text.matchAll(/^[✔✘] Test run with ([0-9]+) tests? in [0-9]+ suites? (?:passed|failed) after/gm)].at(-1);
+  const xctest = [...text.matchAll(/^Test Suite '(?:All tests|Selected tests)' (?:passed|failed) at .+\r?\n[ \t]+Executed ([0-9]+) tests?/gm)].at(-1);
+  const cases = [...text.matchAll(/^Test Case '.+' (?:passed|failed) \(/gm)].length;
+  return Math.max(swift ? Number(swift[1]) : 0, xctest ? Number(xctest[1]) : 0, cases);
 }
 
 async function main(argv: string[]): Promise<number> {
