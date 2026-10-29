@@ -82,6 +82,8 @@ const sessionOperationIds = [
   "getSessionEvents",
   "listSessionChanges",
   "getSessionDiff",
+  "getSessionWorktreeChanges",
+  "getSessionWorktreeDiff",
   "getSessionToolOutput",
   "headSessionToolOutput",
   "openSessionStream",

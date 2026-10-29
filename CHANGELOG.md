@@ -70,6 +70,7 @@ Example:
 - **Server:** With `asr.liveVoiceBackend` set to `yuwp`, Live Voice hears your Dictation Dictionary: each call sends its workspace's and the global phrases to Yuwp as vocabulary hints, so project names and jargon are more likely to come through as you spell them. Dictionary edits apply from the next call. See [Live Voice wire](server/docs/asr.md#live-voice-yuwp-realtime-transcription).
 - **Server:** The `auto-name` Pi extension names an unnamed session from its first message with a small model, in terminal Pi, classic sessions, and durable sessions. It ships in the npm install and shows in **Server Settings → Extensions** as `auto-name`, off until you turn it on there (globally, or per workspace for classic sessions); pick its model in `~/.pi/agent/auto-name.json`. It replaces the built-in Auto-Name setting (see Removed). See [Auto-Name](docs/extensions.md#auto-name).
 - **Server:** A name given at creation, such as `oppi session create --name`, is also the Pi session's name, so extensions that name sessions leave it alone.
+- **Protocol:** A session in its own worktree carries that worktree's changes against the point it branched from the main checkout, read from git once at the end of each turn: changed files, lines added and removed, and the file list, on the session summary the session list already receives. Files a shell command created or a commit holds count too. `GET /workspaces/{id}/sessions/{id}/worktree-changes` lists them with each file's status and line counts, and `worktree-diff?path=` gives one file's diff; after the worktree is removed both answer from the last turn end. The server never commits or creates refs for this and runs no git per tool call.
 
 ### Changed
 
@@ -117,6 +118,7 @@ Example:
 
 - **Server:** The server no longer leaves an `oppi-provider-catalog-*` and an `oppi-mcp-*` folder in the temp folder on every start; it removes both when it stops.
 - **Client:** **Approve New Device?** no longer sends an approval for a request that expires while you are authenticating (the sheet says it expired) or that another device denied in the meantime, and tapping Approve twice asks you to authenticate only once.
+- **Server:** A session's touched files no longer include harness links such as `agent://…` or `local://…` that an edit or write call named.
 - **Client:** Deleting a workspace or a session the server refuses (an error answer such as 500 or 409) keeps it on screen and shows the server's message, instead of removing it from the device while it still exists on the server. A session leaves the list once the server has deleted it.
 - **Client:** **Server Settings → Badge Icon** saves the icon before it shows it: when the Keychain write fails the old icon stays marked and an alert says why, instead of the new icon disappearing at the next launch.
 - **Client:** Several images pasted into the composer keep the order you pasted them in, and images still being prepared when you tap Send or clear the draft no longer appear in the next message.

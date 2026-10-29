@@ -54,6 +54,42 @@ export interface WorkspaceReviewDiffHunk {
   lines: WorkspaceReviewDiffLine[];
 }
 
+/** One file of a worktree session's worktree vs its base. */
+export interface SessionWorktreeChangedFile {
+  /** Repo-relative path. */
+  path: string;
+  /** `A`, `M`, `D`, `T`, or `??` (untracked). Absent from a stored list (`live: false`). */
+  status?: string;
+  /** Null for binary files and untracked files too large to count. Absent when stored. */
+  addedLines?: number | null;
+  removedLines?: number | null;
+  /** This session's own edit/write calls touched the file (others in the worktree may have too). */
+  sessionTouched: boolean;
+}
+
+/**
+ * `GET /workspaces/{workspaceId}/sessions/{sessionId}/worktree-changes`: the session's
+ * worktree vs the merge-base of its HEAD and the main checkout's HEAD, committed,
+ * uncommitted, and untracked changes together. Shared by every session in that worktree.
+ */
+export interface SessionWorktreeChangesResponse {
+  workspaceId: string;
+  sessionId: string;
+  worktreeId: string;
+  /** False: the worktree is gone (landed and removed); the list stored at the last turn end. */
+  live: boolean;
+  baseSha: string;
+  headSha: string;
+  /** Unix ms when git was read. */
+  computedAt: number;
+  /** Sorted by path; bounded (500 live, 100 stored). */
+  files: SessionWorktreeChangedFile[];
+  changedFileCount: number;
+  changedFilesOverflow: number;
+  addedLines: number;
+  removedLines: number;
+}
+
 export interface WorkspaceReviewDiffResponse {
   workspaceId: string;
   path: string;

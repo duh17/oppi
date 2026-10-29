@@ -939,8 +939,12 @@ final class SessionStore {
         // Change stats are snapshots. A lower mutation count is stale, so
         // retaining the whole existing snapshot avoids regressing paths,
         // counts, or overflow together.
+        // The worktree's git read is its own snapshot, ordered by when it was read.
+        let worktree = Self.newerWorktreeChangeStats(existing.worktree, incoming.worktree)
         guard incoming.mutatingToolCalls >= existing.mutatingToolCalls else {
-            return existing
+            var kept = existing
+            kept.worktree = worktree
+            return kept
         }
 
         let incomingPathsAreComplete =
@@ -961,8 +965,21 @@ final class SessionStore {
             changedFiles: changedFiles,
             changedFilesOverflow: filesChanged > changedFiles.count
                 ? filesChanged - changedFiles.count
-                : nil
+                : nil,
+            worktree: worktree
         )
+    }
+
+    /// The later git read wins, even when it shrinks (a reverted file); a
+    /// summary or state that predates it never rolls it back. A summary without
+    /// one keeps the last (a worktree removed after landing keeps its count).
+    private static func newerWorktreeChangeStats(
+        _ existing: SessionWorktreeChangeStats?,
+        _ incoming: SessionWorktreeChangeStats?
+    ) -> SessionWorktreeChangeStats? {
+        guard let incoming else { return existing }
+        guard let existing else { return incoming }
+        return incoming.computedAt < existing.computedAt ? existing : incoming
     }
 
     private func isWorkingStatus(_ status: SessionStatus) -> Bool {

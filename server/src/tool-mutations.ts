@@ -62,10 +62,21 @@ export function extractToolMutations(rawToolName: unknown, rawArgs: unknown): Pa
   return legacy;
 }
 
+/**
+ * A file path from tool args, or null. Harness URLs (`agent://`, `local://`,
+ * `proc://`, `artifact://`, `mcp://`, `ssh://`, `history://`, `issue://`,
+ * `pr://`, `omp://`, ...) are not workspace files, so they never count as changes.
+ */
 export function extractPath(candidate: unknown): string | null {
   if (typeof candidate !== "string") return null;
   const normalized = candidate.trim();
-  return normalized.length > 0 ? normalized : null;
+  if (normalized.length === 0 || hasUrlScheme(normalized)) return null;
+  return normalized;
+}
+
+/** `scheme://...`; a Windows drive (`C:\`) has no `//` and stays a path. */
+export function hasUrlScheme(path: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(path);
 }
 
 function mutationFromOldNew(

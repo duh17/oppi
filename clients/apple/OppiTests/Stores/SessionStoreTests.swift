@@ -419,6 +419,47 @@ struct SessionStorePartitioningTests {
         ])
     }
 
+    @Test func worktreeChangeStatsFollowTheLatestGitRead() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        func worktree(_ files: Int, at computedAt: Double) -> SessionWorktreeChangeStats {
+            SessionWorktreeChangeStats(
+                filesChanged: files, changedFiles: (0..<files).map { "f\($0)" }, addedLines: files,
+                removedLines: 0, baseSha: "base", headSha: "head", computedAt: computedAt
+            )
+        }
+
+        var full = makeTestSession(
+            id: "s1", workspaceId: "w1", status: .ready, lastActivity: Date(timeIntervalSince1970: 100)
+        )
+        full.changeStats = SessionChangeStats(
+            mutatingToolCalls: 2, filesChanged: 1, changedFiles: ["a.txt"], changedFilesOverflow: nil,
+            worktree: worktree(2, at: 100)
+        )
+        store.upsert(full)
+
+        // A summary without a read (an older server path) keeps the last one.
+        var summary = SessionSummary(from: full)
+        summary.lastActivity = Date(timeIntervalSince1970: 200)
+        summary.changeStats?.worktree = nil
+        #expect(store.applySummary(summary))
+        #expect(store.session(id: "s1")?.changeStats?.worktree == worktree(2, at: 100))
+
+        // A later read wins even when it shrinks (a file reverted).
+        summary.lastActivity = Date(timeIntervalSince1970: 300)
+        summary.changeStats?.worktree = worktree(1, at: 300)
+        #expect(store.applySummary(summary))
+        #expect(store.session(id: "s1")?.changeStats?.worktree?.filesChanged == 1)
+
+        // An older read, even beside a newer tool count, does not.
+        summary.lastActivity = Date(timeIntervalSince1970: 400)
+        summary.changeStats?.mutatingToolCalls = 5
+        summary.changeStats?.worktree = worktree(9, at: 250)
+        #expect(store.applySummary(summary))
+        #expect(store.session(id: "s1")?.changeStats?.worktree?.filesChanged == 1)
+        #expect(store.session(id: "s1")?.changeStats?.mutatingToolCalls == 5)
+    }
+
     @Test func lossyLifecycleSummariesPreserveFocusedChangedFilesAndContextScope() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

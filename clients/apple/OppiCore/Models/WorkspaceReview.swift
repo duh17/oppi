@@ -31,6 +31,43 @@ struct WorkspaceReviewDiffResponse: Codable, Sendable, Equatable {
     let cacheKey: String?
 }
 
+/// Mirrors `SessionWorktreeChangedFile` in `server/src/types/review.ts`.
+struct SessionWorktreeChangedFile: Codable, Sendable, Equatable, Identifiable {
+    /// Repo-relative path.
+    let path: String
+    /// `A`, `M`, `D`, `T`, or `??` (untracked); nil in a stored list.
+    let status: String?
+    /// Nil for binary or uncounted files, and in a stored list.
+    let addedLines: Int?
+    let removedLines: Int?
+    /// This session's own edit/write calls touched the file.
+    let sessionTouched: Bool
+
+    var id: String { path }
+}
+
+/// `GET /workspaces/{workspaceId}/sessions/{sessionId}/worktree-changes`: a
+/// worktree session's worktree vs its base (merge-base with the main
+/// checkout's HEAD), committed, uncommitted, and untracked together. Shared by
+/// every session in that worktree. Mirrors `SessionWorktreeChangesResponse`.
+struct SessionWorktreeChangesResponse: Codable, Sendable, Equatable {
+    let workspaceId: String
+    let sessionId: String
+    let worktreeId: String
+    /// False: the worktree is gone (landed and removed); the list stored at
+    /// the last turn end, without per-file status or counts.
+    let live: Bool
+    let baseSha: String
+    let headSha: String
+    /// Unix ms when the server read git.
+    let computedAt: Double
+    let files: [SessionWorktreeChangedFile]
+    let changedFileCount: Int
+    let changedFilesOverflow: Int
+    let addedLines: Int
+    let removedLines: Int
+}
+
 struct WorkspaceQuickActionOption: Codable, Sendable, Equatable, Identifiable {
     enum Source: String, Codable, Sendable, Equatable {
         case prompt

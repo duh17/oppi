@@ -1505,7 +1505,16 @@ export function updateSessionChangeStats(
     filesChanged: stats.filesChanged,
     changedFiles: stats.changedFiles,
     ...(stats.changedFilesOverflow > 0 ? { changedFilesOverflow: stats.changedFilesOverflow } : {}),
+    ...(existing?.worktree ? { worktree: existing.worktree } : {}),
   };
+}
+
+/** Store the worktree's git-read change set beside the session's touched list. */
+export function setSessionWorktreeChangeStats(
+  session: Session,
+  worktree: NonNullable<NonNullable<Session["changeStats"]>["worktree"]>,
+): void {
+  ensureSessionChangeStats(session).worktree = worktree;
 }
 
 // ─── Session Message Counters ───

@@ -188,8 +188,8 @@ describe("sandbox git: repository-controlled execution", () => {
       untrackedCount: 1,
       ahead: 1,
       behind: 0,
-      // a.txt (+1 -1) plus the untracked b.md line count.
-      addedLines: 3,
+      // a.txt (+1 -1) plus the untracked b.md's one line.
+      addedLines: 2,
       removedLines: 1,
     });
     expect(status.recentCommits.map((commit) => commit.message)).toEqual(["second", "first"]);

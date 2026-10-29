@@ -435,12 +435,32 @@ struct TokenUsage: Codable, Sendable, Equatable {
     var cacheWrite: Int?
 }
 
+/// Mirrors `SessionChangeStats` in `server/src/types/session.ts`.
+/// `filesChanged`/`changedFiles` are the files this session's own edit/write
+/// calls touched (approximate: bash and other tools are not seen).
 struct SessionChangeStats: Codable, Sendable, Equatable {
     var mutatingToolCalls: Int
     var compactionCount: Int? = nil
     var filesChanged: Int
     var changedFiles: [String]
     var changedFilesOverflow: Int?
+    /// Worktree sessions: the worktree's changes vs its base, read from git at
+    /// the last turn end. Shared by every session in that worktree.
+    var worktree: SessionWorktreeChangeStats? = nil
+}
+
+/// Mirrors `SessionWorktreeChangeStats`: stored at turn end, carried by summaries.
+struct SessionWorktreeChangeStats: Codable, Sendable, Equatable {
+    var filesChanged: Int
+    /// Repo-relative, sorted; at most 100 (`changedFilesOverflow` counts the rest).
+    var changedFiles: [String]
+    var changedFilesOverflow: Int? = nil
+    var addedLines: Int
+    var removedLines: Int
+    var baseSha: String
+    var headSha: String
+    /// Unix ms when the server read git.
+    var computedAt: Double
 }
 
 struct SessionSummaryAttentionCounts: Sendable, Equatable {

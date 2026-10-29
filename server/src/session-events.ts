@@ -14,6 +14,13 @@ import {
   type ProgramStatusChangeListener,
 } from "./program-status.js";
 import { resolveWorkspaceWorktree } from "./worktrees.js";
+import {
+  isWorktreeSession,
+  noteWorktreeActivity,
+  readWorktreeChanges,
+  storedWorktreeChangeStats,
+} from "./session-git-changes.js";
+import { buildSessionSummary } from "./session-summary.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { EventTags } from "./telemetry/catalog.js";
 import type { ServerTelemetry } from "./telemetry/server-telemetry.js";
@@ -21,6 +28,7 @@ import {
   appendSessionMessage,
   applyMessageEndToSession,
   incrementSessionCompactionCount,
+  setSessionWorktreeChangeStats,
   updateSessionChangeStats,
   type TranslationContext,
 } from "./session-protocol.js";
@@ -213,6 +221,8 @@ export class SessionEventProcessor {
   /** Drops a git-status lookup that lost the debounce race. */
   private gitStatusGeneration = new Map<string, number>();
   private static readonly GIT_STATUS_DEBOUNCE_MS = 2000;
+  /** In-flight turn-end worktree reads; `again` queues one more after a settle mid-read. */
+  private readonly worktreeChangeReads = new Map<string, { again: boolean }>();
   private static readonly CONTEXT_USAGE_BROADCAST_MIN_INTERVAL_MS = 500;
   private static readonly CONTEXT_USAGE_BROADCAST_MIN_TOKEN_DELTA = 128;
 
@@ -314,6 +324,9 @@ export class SessionEventProcessor {
         session.status = pendingStopMode === "terminate" ? "stopping" : "ready";
         session.currentTurnStartedAt = undefined;
         shouldFlushNow = true;
+        // Settled, not agent_end: Pi emits agent_end before an automatic retry, and
+        // the worktree is read once per finished run.
+        this.refreshWorktreeChanges(key, session);
         break;
 
       case "session_info_changed": {
@@ -384,6 +397,8 @@ export class SessionEventProcessor {
 
       case "tool_execution_end": {
         this.maybeEmitGitStatus(key, session, event.toolName);
+        // In-memory generation bump; the cached worktree change set is stale after any tool.
+        noteWorktreeActivity(session);
         this.addEstimatedContextChars(key, active, estimateToolResultChars(event.result));
         if (metrics) {
           const toolCallId =
@@ -638,5 +653,53 @@ export class SessionEventProcessor {
       .catch(() => {
         // Silently ignore git errors
       });
+  }
+
+  /**
+   * Turn end in a worktree session: read the worktree's changes from git once and
+   * store them on `changeStats.worktree`, so session lists show the count without
+   * running git. A settle that lands while a read runs queues one more read. A
+   * worktree that is gone (landed and removed) keeps the last stored value.
+   */
+  private refreshWorktreeChanges(key: string, session: Session): void {
+    const workspaceId = session.workspaceId;
+    if (!workspaceId || !isWorktreeSession(session)) return;
+    const inFlight = this.worktreeChangeReads.get(key);
+    if (inFlight) {
+      inFlight.again = true;
+      return;
+    }
+    const state = { again: false };
+    this.worktreeChangeReads.set(key, state);
+
+    const run = async (): Promise<void> => {
+      try {
+        do {
+          state.again = false;
+          const workspace = this.deps.storage.getWorkspace(workspaceId);
+          if (!workspace) return;
+          const result = await readWorktreeChanges(
+            { session, workspace, dataDir: this.deps.storage.getDataDir() },
+            { fresh: true },
+          );
+          if (result.kind !== "ok") continue;
+          setSessionWorktreeChangeStats(session, storedWorktreeChangeStats(result.snapshot));
+          this.deps.markSessionDirty(key);
+          this.deps.broadcast(key, {
+            type: "session_summary",
+            summary: buildSessionSummary(session),
+          });
+        } while (state.again);
+      } finally {
+        // Same tick as the last `again` check, so a settle after it starts a new read.
+        this.worktreeChangeReads.delete(key);
+      }
+    };
+    run().catch((err: unknown) => {
+      log.warn("session_events.worktree_changes_failed", {
+        sessionId: session.id,
+        error: safeErrorMessage(err),
+      });
+    });
   }
 }

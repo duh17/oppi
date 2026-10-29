@@ -773,6 +773,7 @@ function projectChangeStats(stats: NonNullable<Session["changeStats"]>): Session
     ...(stats.changedFilesOverflow !== undefined
       ? { changedFilesOverflow: stats.changedFilesOverflow }
       : {}),
+    ...(stats.worktree ? { worktree: stats.worktree } : {}),
   };
 }
 

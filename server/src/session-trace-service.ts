@@ -11,7 +11,15 @@ import {
 } from "./diff-core.js";
 import { type MobileRendererRegistry, resolveToolDisplay } from "./mobile-renderer.js";
 import type { SessionRuntimes } from "./runtime-router.js";
+import {
+  isWorktreeSession,
+  readStoredWorktreeDiff,
+  readWorktreeBaseline,
+  readWorktreeChanges,
+  sessionTouchedPaths,
+} from "./session-git-changes.js";
 import { sessionWorkRoot } from "./session-work-root.js";
+import { hasUrlScheme } from "./tool-mutations.js";
 import type { Storage } from "./storage.js";
 import {
   collectSessionTraceJsonlPaths,
@@ -35,7 +43,11 @@ import {
   type TraceOutlineMetrics,
   type TraceOutlineSnapshot,
 } from "./trace-outline.js";
-import type { Session, WorkspaceReviewDiffResponse } from "./types.js";
+import type {
+  Session,
+  SessionWorktreeChangesResponse,
+  WorkspaceReviewDiffResponse,
+} from "./types.js";
 import { buildDiffHunks } from "./workspace-review-diff.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
 
@@ -81,12 +93,17 @@ export type SessionOverallDiffResult =
   | { kind: "current-file-outside-workspace" }
   | { kind: "current-file-not-file" }
   | { kind: "current-file-too-large"; maxSizeMegabytes: number }
-  | { kind: "current-file-unreadable" };
+  | { kind: "current-file-unreadable" }
+  | { kind: "not-worktree-session" };
 
 type CurrentFileTextResult =
   | { kind: "ok"; text: string }
-  | Exclude<SessionOverallDiffResult, { kind: "ok" | "trace-not-found" | "mutations-not-found" }>;
+  | Exclude<
+      SessionOverallDiffResult,
+      { kind: "ok" | "trace-not-found" | "mutations-not-found" | "not-worktree-session" }
+    >;
 
+/** The session's own edit/write touched list (approximate: bash and other tools are not seen). */
 export interface SessionChangesResult {
   workspaceId: string;
   sessionId: string;
@@ -94,6 +111,12 @@ export interface SessionChangesResult {
   changedFileCount: number;
   changedFilesOverflow: number;
 }
+
+export type SessionWorktreeChangesResult =
+  | { kind: "ok"; changes: SessionWorktreeChangesResponse }
+  | { kind: "not-worktree-session" }
+  /** The worktree is gone or unreadable and no turn end stored its changes. */
+  | { kind: "unavailable" };
 
 export interface SessionTraceServiceDeps {
   storage: Pick<Storage, "getDataDir" | "getSession" | "getWorkspace">;
@@ -424,22 +447,140 @@ export class SessionTraceService {
     };
   }
 
+  /** The session's touched list: the This session scope, and the Files panel's Changed tab. */
   listSessionChanges(session: Session): SessionChangesResult {
     const changeStats = session.changeStats;
+    const files = (changeStats?.changedFiles ?? []).filter((path) => !hasUrlScheme(path));
     return {
       workspaceId: session.workspaceId ?? "",
       sessionId: session.id,
-      files: (changeStats?.changedFiles ?? []).map((path) => ({ path })),
-      changedFileCount: changeStats?.filesChanged ?? 0,
+      files: files.map((path) => ({ path })),
+      changedFileCount: Math.max(changeStats?.filesChanged ?? 0, files.length),
       changedFilesOverflow: changeStats?.changedFilesOverflow ?? 0,
     };
   }
 
+  /**
+   * A worktree session's worktree vs its base, per file with status and +/-.
+   * Reuses the snapshot the last turn end (or a recent read) cached, so a read
+   * right after a turn runs no git. A removed worktree answers the list stored
+   * at its last turn end (`live: false`, no per-file status or counts).
+   */
+  async getSessionWorktreeChanges(session: Session): Promise<SessionWorktreeChangesResult> {
+    if (!isWorktreeSession(session)) return { kind: "not-worktree-session" };
+    const workspace = session.workspaceId
+      ? this.deps.storage.getWorkspace(session.workspaceId)
+      : undefined;
+    const result = await readWorktreeChanges({
+      session,
+      workspace,
+      dataDir: this.deps.storage.getDataDir?.(),
+    });
+    const base = {
+      workspaceId: session.workspaceId ?? "",
+      sessionId: session.id,
+      worktreeId: session.worktreeId?.trim() ?? "",
+    };
+    if (result.kind === "ok") {
+      const { snapshot } = result;
+      const touched = sessionTouchedPaths(session, snapshot.root);
+      return {
+        kind: "ok",
+        changes: {
+          ...base,
+          live: true,
+          baseSha: snapshot.baseSha,
+          headSha: snapshot.headSha,
+          computedAt: snapshot.computedAt,
+          files: snapshot.files.map((file) => ({
+            path: file.path,
+            status: file.status,
+            addedLines: file.addedLines,
+            removedLines: file.removedLines,
+            sessionTouched: touched.has(file.path),
+          })),
+          changedFileCount: snapshot.totalFiles,
+          changedFilesOverflow: snapshot.totalFiles - snapshot.files.length,
+          addedLines: snapshot.addedLines,
+          removedLines: snapshot.removedLines,
+        },
+      };
+    }
+
+    const stored = session.changeStats?.worktree;
+    if (!stored) return { kind: "unavailable" };
+    const touched = sessionTouchedPaths(session, undefined);
+    const paths = stored.changedFiles;
+    return {
+      kind: "ok",
+      changes: {
+        ...base,
+        live: false,
+        baseSha: stored.baseSha,
+        headSha: stored.headSha,
+        computedAt: stored.computedAt,
+        files: paths.map((path) => ({ path, sessionTouched: touched.has(path) })),
+        changedFileCount: stored.filesChanged,
+        changedFilesOverflow: Math.max(0, stored.filesChanged - paths.length),
+        addedLines: stored.addedLines,
+        removedLines: stored.removedLines,
+      },
+    };
+  }
+
+  /**
+   * The worktree's net diff for one file: its text at the worktree's base vs the
+   * file now. A removed worktree (landed) is read at the base and HEAD stored at
+   * its last turn end; when neither git read works, the trace diff answers.
+   */
+  async getSessionWorktreeDiff(params: {
+    session: Session;
+    path: string;
+  }): Promise<SessionOverallDiffResult> {
+    const { session, path } = params;
+    if (!isWorktreeSession(session)) return { kind: "not-worktree-session" };
+    const workspace = session.workspaceId
+      ? this.deps.storage.getWorkspace(session.workspaceId)
+      : undefined;
+    const context = { session, workspace, dataDir: this.deps.storage.getDataDir?.() };
+    const tooLarge: SessionOverallDiffResult = {
+      kind: "current-file-too-large",
+      maxSizeMegabytes: Math.round(MAX_SESSION_FILE_BYTES / (1024 * 1024)),
+    };
+
+    const baseline = await readWorktreeBaseline(context, path);
+    if (baseline.kind === "too-large") return tooLarge;
+    if (baseline.kind === "ok") {
+      const current = await this.readCurrentFileText(session, path, baseline.root);
+      if (current.kind === "ok") {
+        return worktreeDiff(session, path, baseline.baseSha, baseline.baselineText, current.text);
+      }
+      if (current.kind === "current-file-not-found" && baseline.baselineText !== null) {
+        return worktreeDiff(session, path, baseline.baseSha, baseline.baselineText, null);
+      }
+      return current;
+    }
+
+    const stored = await readStoredWorktreeDiff(
+      { ...context, stored: session.changeStats?.worktree },
+      path,
+    );
+    if (stored.kind === "too-large") return tooLarge;
+    if (stored.kind === "ok") {
+      return worktreeDiff(session, path, stored.baseSha, stored.baselineText, stored.currentText);
+    }
+    return this.getSessionOverallDiff(params);
+  }
+
+  /** `hostWorktreeRoot`: a host worktree root the caller already resolved (skips `git worktree list`). */
   private async readCurrentFileText(
     session: Session,
     reqPath: string,
+    hostWorktreeRoot?: string,
   ): Promise<CurrentFileTextResult> {
-    const sessionRoot = await sessionWorkRoot(session, this.deps.storage, { create: false });
+    const sessionRoot = hostWorktreeRoot
+      ? ({ kind: "ok", root: hostWorktreeRoot, workspace: undefined } as const)
+      : await sessionWorkRoot(session, this.deps.storage, { create: false });
     if (sessionRoot.kind !== "ok") return { kind: "workspace-root-not-found" };
 
     const { root: workRoot, workspace } = sessionRoot;
@@ -549,6 +690,33 @@ export class SessionTraceService {
 
     return existingPaths(candidates);
   }
+}
+
+/** A git net diff in the session diff shape; null text is an absent file. */
+function worktreeDiff(
+  session: Session,
+  path: string,
+  baseSha: string,
+  baseline: string | null,
+  current: string | null,
+): SessionOverallDiffResult {
+  const baselineText = baseline ?? "";
+  const currentText = current ?? "";
+  const flatLines = computeDiffLines(baselineText, currentText);
+  const stats = computeLineDiffStatsFromLines(flatLines);
+  return {
+    kind: "ok",
+    diff: {
+      workspaceId: session.workspaceId ?? "",
+      path,
+      baselineText,
+      currentText,
+      addedLines: stats.added,
+      removedLines: stats.removed,
+      hunks: buildDiffHunks(flatLines),
+      cacheKey: `${session.id}:${path}:worktree:${baseSha}`,
+    },
+  };
 }
 
 async function existingPaths(candidates: string[]): Promise<string[]> {

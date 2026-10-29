@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import { isServerDurableSession } from "./session-runtime-capabilities.js";
+import { hasUrlScheme } from "./tool-mutations.js";
 import type { Session, SessionChangeStats, SessionSummary } from "./types.js";
 
 /**
@@ -73,12 +74,20 @@ function buildSessionSummaryChangeStats(
     filesChanged: stats.filesChanged,
     changedFiles,
     ...(changedFilesOverflow > 0 ? { changedFilesOverflow } : {}),
+    // Stored at turn end (bounded to 100 paths), so list rows need no git.
+    ...(stats.worktree ? { worktree: stats.worktree } : {}),
   };
 }
 
 function isSummarySafeChangedFile(file: string): boolean {
   const trimmed = file.trim();
-  return trimmed.length > 0 && !isAbsolute(trimmed) && !trimmed.startsWith("~");
+  return (
+    trimmed.length > 0 &&
+    !isAbsolute(trimmed) &&
+    !trimmed.startsWith("~") &&
+    // Rows recorded before tool paths rejected URL schemes (agent://, local://, ...).
+    !hasUrlScheme(trimmed)
+  );
 }
 
 /** Stable digest used to suppress no-op summary fanout. */

@@ -28,6 +28,15 @@ The recent lane is time-bounded with `sinceMs` and `untilMs`. Older stopped sess
 
 `SessionTraceService` owns trace paging, outline snapshots, recovery, tool output lookup, overall diffs, changed-file summaries, and raw changed-file previews.
 
+### Session changes: touched list and worktree git view
+
+A session has two change views, and they answer different questions:
+
+- **Touched list** (`changeStats.changedFiles`, `GET …/sessions/{id}/changes`, per-file `GET …/diff?path=`): the paths the session's own `edit`/`write` calls named, recorded per tool call by `updateSessionChangeStats` with no git. It is approximate (bash and other tools are not seen) and is the only view a main-checkout session has. Harness URLs (`agent://`, `local://`, …) never count (`extractPath`). The per-file diff is rebuilt from the trace's mutations (`diff-core.ts`), so it shows what this session's edits did.
+- **Worktree view** (`changeStats.worktree`, `GET …/sessions/{id}/worktree-changes`, per-file `GET …/worktree-diff?path=`): for a session in its own worktree (`worktreeId` set and not `main`), git's answer for the worktree vs its base, the merge-base of its HEAD and `main-worktree/HEAD` (the workspace's main checkout). Committed, uncommitted, and untracked changes count together, whoever made them, so it is the worktree's change set: every session in that worktree shares it, and `sessionTouched` marks the files this session's own calls named.
+
+`session-git-changes.ts` owns the worktree view and its git budget. Git is read-only here (no commits, refs, index writes, or stash), and nothing runs per tool call: a tool end only bumps an in-memory generation for the worktree. `agent_settled` (not `agent_end`, which precedes an automatic retry) runs one read and stores the bounded result on `changeStats.worktree` (counts, lines, base and HEAD, up to 100 paths), which session summaries carry, so list rows never run git. A read is `rev-parse HEAD main-worktree/HEAD`, `merge-base` only for a new (HEAD, target) pair, then `diff --raw --numstat --no-renames <base>` and `ls-files --others --exclude-standard` in parallel; the worktree's path comes from `git worktree list` once per process. `worktree-changes` reuses the last snapshot while the worktree's generation, its gitdir `index` and `HEAD` mtimes, and a 10-second age all match, so a read right after a turn costs no git; `worktree-diff` reads the base blob with one `cat-file` and the current file from the worktree. When the worktree is gone (landed and removed), `worktree-changes` answers the list stored at the last turn end (`live: false`) and `worktree-diff` reads the stored base and HEAD blobs from the main checkout's object store, falling back to the trace diff. A later turn end that cannot read the worktree keeps the stored value.
+
 Session detail uses bounded trace pages and lightweight outline data where possible. Full trace reads remain behind recovery and compatibility paths:
 
 - `readSessionTrace(...)` for server-owned persisted traces,

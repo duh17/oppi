@@ -1,7 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { performance } from "node:perf_hooks";
 import { gzipSync } from "node:zlib";
-import { SessionTraceService, type SessionTraceViewMode } from "../session-trace-service.js";
+import {
+  SessionTraceService,
+  type SessionOverallDiffResult,
+  type SessionTraceViewMode,
+} from "../session-trace-service.js";
 import { admitSessionRoute } from "../session-route-scope.js";
 import type { Session, SessionEventsResponse } from "../types.js";
 import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
@@ -33,6 +37,8 @@ type SessionTraceRouteHandlers = {
     method: string,
   ) => Promise<void>;
   handleGetSessionOverallDiff: (session: Session, url: URL, res: ServerResponse) => Promise<void>;
+  handleGetSessionWorktreeChanges: (session: Session, res: ServerResponse) => Promise<void>;
+  handleGetSessionWorktreeDiff: (session: Session, url: URL, res: ServerResponse) => Promise<void>;
   handleGenericGetSession: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleGenericGetSessionTrace: (
     req: IncomingMessage,
@@ -200,7 +206,43 @@ export function createSessionTraceRouteHandlers(
       return;
     }
 
-    const result = await traceService.getSessionOverallDiff({ session, path: reqPath });
+    writeSessionDiff(res, await traceService.getSessionOverallDiff({ session, path: reqPath }));
+  }
+
+  /** `GET .../worktree-changes`: the worktree vs its base, for the Git panel's This worktree scope. */
+  async function handleGetSessionWorktreeChanges(
+    session: Session,
+    res: ServerResponse,
+  ): Promise<void> {
+    const result = await traceService.getSessionWorktreeChanges(session);
+    switch (result.kind) {
+      case "ok":
+        helpers.json(res, result.changes);
+        return;
+      case "not-worktree-session":
+        helpers.error(res, 400, "Session is not in its own worktree");
+        return;
+      case "unavailable":
+        helpers.error(res, 404, "Worktree changes not available");
+        return;
+    }
+  }
+
+  /** `GET .../worktree-diff?path=`: one file's net git diff vs the worktree's base. */
+  async function handleGetSessionWorktreeDiff(
+    session: Session,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<void> {
+    const reqPath = url.searchParams.get("path")?.trim();
+    if (!reqPath) {
+      helpers.error(res, 400, "path parameter required");
+      return;
+    }
+    writeSessionDiff(res, await traceService.getSessionWorktreeDiff({ session, path: reqPath }));
+  }
+
+  function writeSessionDiff(res: ServerResponse, result: SessionOverallDiffResult): void {
     switch (result.kind) {
       case "ok":
         helpers.json(res, result.diff);
@@ -228,6 +270,9 @@ export function createSessionTraceRouteHandlers(
         return;
       case "current-file-unreadable":
         helpers.error(res, 500, "Failed to read current file");
+        return;
+      case "not-worktree-session":
+        helpers.error(res, 400, "Session is not in its own worktree");
         return;
     }
   }
@@ -482,6 +527,8 @@ export function createSessionTraceRouteHandlers(
     sessionFileHandlers,
     handleGetSessionAttachment,
     handleGetSessionOverallDiff,
+    handleGetSessionWorktreeChanges,
+    handleGetSessionWorktreeDiff,
     handleGenericGetSession,
     handleGenericGetSessionTrace,
     handleGenericGetSessionDialogs,

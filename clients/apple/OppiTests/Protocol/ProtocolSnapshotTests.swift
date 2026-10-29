@@ -345,6 +345,11 @@ struct ProtocolSnapshotTests {
         #expect(stats?.filesChanged == 6)
         #expect(stats?.changedFiles == ["src/main.ts", "README.md"])
         #expect(stats?.changedFilesOverflow == 4)
+        #expect(stats?.worktree?.filesChanged == 3)
+        #expect(stats?.worktree?.changedFiles == ["README.md", "scripts/build.sh", "src/main.ts"])
+        #expect(stats?.worktree?.addedLines == 42)
+        #expect(stats?.worktree?.removedLines == 7)
+        #expect(stats?.worktree?.baseSha == "0123456789abcdef0123456789abcdef01234567")
     }
 
     @Test func extensionUIRequest() throws {

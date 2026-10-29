@@ -2323,6 +2323,29 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
     }
 
+    /// A worktree session's worktree vs its base, per file with status and
+    /// line counts (the Git panel's This worktree). 400 for a session in the
+    /// main checkout.
+    func getSessionWorktreeChanges(
+        workspaceId: String,
+        sessionId: String
+    ) async throws -> SessionWorktreeChangesResponse {
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/worktree-changes")
+        return try JSONDecoder().decode(SessionWorktreeChangesResponse.self, from: data)
+    }
+
+    /// One file's net git diff vs the worktree's base (removed worktree: at the
+    /// base and HEAD stored at its last turn end).
+    func getSessionWorktreeDiff(
+        workspaceId: String,
+        sessionId: String,
+        path: String
+    ) async throws -> WorkspaceReviewDiffResponse {
+        let encodedPath = try encodeQueryPath(path)
+        let data = try await get("/workspaces/\(workspaceId)/sessions/\(sessionId)/worktree-diff?path=\(encodedPath)")
+        return try JSONDecoder().decode(WorkspaceReviewDiffResponse.self, from: data)
+    }
+
     // MARK: - Push Registration
 
     /// Give the server this device's push key and relay send token (protocol/push/spec.md, section 5).

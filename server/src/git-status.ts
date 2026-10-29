@@ -295,7 +295,7 @@ const UNTRACKED_LINE_COUNT_MAX_BYTES = 256 * 1024;
  * Returns a map from relative path to line count. Binary or oversized files
  * are silently skipped (they'll keep addedLines=null in the response).
  */
-function countUntrackedFileLines(
+export function countUntrackedFileLines(
   repoRoot: string,
   relativePaths: string[],
   trust: GitTrust,
@@ -318,8 +318,10 @@ function countUntrackedFileLines(
         continue;
       }
 
-      const lineCount = content.split("\n").length;
-      result.set(relPath, lineCount);
+      // Lines as git counts them: a final line without a newline still counts,
+      // a trailing newline does not start another.
+      const newlines = content.split("\n").length - 1;
+      result.set(relPath, content.endsWith("\n") ? newlines : newlines + 1);
     } catch {
       // File vanished or unreadable — skip silently
     }

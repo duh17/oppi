@@ -132,11 +132,11 @@ describe("getGitStatus", () => {
       expect(status.untrackedCount).toBe(1);
       const file = status.files.find((f) => f.path === "untracked.txt" && f.status === "??");
       expect(file).toBeDefined();
-      // Untracked files now get line counts from reading the file directly
-      expect(file!.addedLines).toBe(2); // "new file\n" = 2 elements from split("\n")
+      // Untracked files get line counts from reading the file, as git would count them
+      expect(file!.addedLines).toBe(1);
       expect(file!.removedLines).toBe(0);
       // Total should include the untracked file's lines
-      expect(status.addedLines).toBe(2);
+      expect(status.addedLines).toBe(1);
     } finally {
       rmSync(join(repoDir, "untracked.txt"));
     }
