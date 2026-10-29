@@ -538,7 +538,9 @@ struct MarkdownReaderRenderAheadContractTests {
                 visibleHeightCeiling: 400
             )
             if let intent { body.restoreViewportAfterMutableTransition(intent) }
-            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 400))
+            // The tool row sizes its viewport after the reader's first layout, so
+            // the reader first lays out far shorter than the ceiling.
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 84))
             window.addSubview(body)
             body.frame = window.bounds
             window.makeKeyAndVisible()
@@ -550,7 +552,7 @@ struct MarkdownReaderRenderAheadContractTests {
 
         let inline = try reservedTextHeight(allowsVerticalScrolling: false)
         let scrolling = try reservedTextHeight(allowsVerticalScrolling: true)
-        #expect(inline >= 400, "the trimmed text must still fill the viewport")
+        #expect(inline >= 400, "the trimmed text must still fill the tallest viewport the owner can give it")
         #expect(inline < scrolling / 4)
 
         // A stream that finished at the tail hands the reader a tail position,
@@ -559,6 +561,34 @@ struct MarkdownReaderRenderAheadContractTests {
         #expect(abs(handedOffTail - scrolling) < 1)
         let handedOffTop = try reservedTextHeight(allowsVerticalScrolling: false, handOff: .top)
         #expect(abs(handedOffTop - inline) < 1)
+    }
+
+    @MainActor
+    @Test("items that start in the visible viewport settle before first layout once the runway budget is spent")
+    func visibleItemsSettleUpFrontPastTheRunwayBudget() {
+        // The table costs far more than the 8 ms opening budget, so the code
+        // blocks after it can only be settled by the visible-viewport rule.
+        let rows = (1...8).map {
+            "| 01:4\($0):42 | row \($0) evidence long enough to wrap in a narrow column so the table takes real layout time |"
+        }
+        let content = (["| Time | Evidence |", "| --- | --- |"] + rows).joined(separator: "\n")
+            + "\n\n"
+            + (1...3).map { "```text\nblock \($0)\n```" }.joined(separator: "\n\n")
+        let body = NativeFullScreenMarkdownBody(
+            content: content,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.addSubview(body)
+        body.frame = window.bounds
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        body.layoutIfNeeded()
+
+        #expect(body.debugRenderedSegmentCountForTesting == 4)
+        #expect(body.debugWillDisplayRenderAheadMissCountForTesting == 0)
     }
 
     @MainActor

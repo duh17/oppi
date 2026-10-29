@@ -481,11 +481,11 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
             //   - the Read markdown row's expanded layout, about 110 ms alone now that the
             //     inline reader lays out one viewport of text instead of the whole 8 KB
             //     document (it was 335 ms); layout 228-269 ms in 6 runs at host load 5-27,
-            //     bounded at 550 ms;
+            //     bounded at 400 ms, so a revert of the trim (layout 483-495 ms) fails;
             //   - one slow cell configure (cell 58-101 ms in 6 runs), bounded at 200 ms.
             // Any larger stall, or a different one, still fails.
             XCTAssertLessThanOrEqual(applyMax, 600, "ToolSet apply stalled: \(summary)")
-            XCTAssertLessThanOrEqual(layoutMax, 550, "Expanded-row layout stalled: \(summary)")
+            XCTAssertLessThanOrEqual(layoutMax, 400, "Expanded-row layout stalled: \(summary)")
             XCTAssertLessThanOrEqual(cellMax, 200, "Cell configure stalled: \(summary)")
         } else {
             XCTAssertLessThanOrEqual(breaches, 1, summary)
