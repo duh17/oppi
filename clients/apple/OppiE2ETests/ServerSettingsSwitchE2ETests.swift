@@ -14,7 +14,6 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
     override func configureE2ELaunch(_ application: XCUIApplication) {
         do {
             application.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = try TwoServerFixture.firstServerLaunchInvite()
-            application.launchArguments += try TwoServerFixture.load().launchArguments
         } catch {
             XCTFail("\(error)")
         }

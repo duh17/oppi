@@ -649,14 +649,6 @@ struct TwoServerFixture {
     /// POST here to stop the second server; the reply comes after it exited.
     let stopURL: URL
 
-    /// Launch arguments for the journey's app. The app relaunches after pairing, and a simulator slot
-    /// that last ran another build would show What's New over it. An empty last-seen build reads as a
-    /// first install, which is not a changelog (`WhatsNewManager.shouldShowChangelog`); the argument
-    /// domain is volatile, so no preference is written.
-    var launchArguments: [String] {
-        ["-dev.chenda.Oppi.whatsNew.lastSeenVersion", ""]
-    }
-
     static func load() throws -> TwoServerFixture {
         guard let path = E2ELabServerContext.environmentValue(for: ["OPPI_TWO_SERVER_FIXTURE"]) else {
             throw Unavailable(description: "OPPI_TWO_SERVER_FIXTURE is not set: run through server/scripts/e2e-two-server.ts")
