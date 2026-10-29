@@ -594,7 +594,8 @@ final class SessionThreadsE2ETests: E2ETestCase {
         [
             ("cost", previewFact("$3.14")),
             ("context usage", previewFact("48%")),
-            ("files touched", previewFact("7 files touched")),
+            // A session in the main checkout counts its files approximately; the sample has no worktree.
+            ("files touched", previewFact("Approximately 7 files touched")),
             ("compactions", previewFact("2 compactions")),
             ("time", previewFact(label: "m ago")),
         ]
