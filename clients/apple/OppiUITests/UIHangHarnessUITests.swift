@@ -548,8 +548,41 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         }
     }
 
+    /// Scrolls the visual fixture rows into view before a focus button expands one of
+    /// them. A tall iPad viewport then holds every fixture row as a built cell, which
+    /// is the state where an expansion change must reconfigure a row instead of
+    /// reaching it only when it is first built.
+    private func revealVisualFixtureRows() {
+        let tableFocus = app.descendants(matching: .any)["harness.visual.table.focus"]
+        tapHarnessControl(tableFocus)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+    }
+
+    /// The realized row of `itemID`, once its own header reports `Expanded` and it is
+    /// the top visible row. `diag.*Expanded` reads the reducer, not the cell, so the
+    /// header's accessibility value is what proves the row painted expanded.
+    private func expandedTopRow(itemID: String, topDiagnostic: String, diagTick: XCUIElement) -> XCUIElement {
+        let header = app.descendants(matching: .any)["chat.timeline.row.\(itemID).header"]
+        XCTAssertTrue(header.waitForExistence(timeout: 4), "Header for \(itemID) is not on screen")
+        let deadline = Date().addingTimeInterval(4)
+        while Date() < deadline, (header.value as? String)?.contains("Expanded") != true {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(
+            (header.value as? String)?.contains("Expanded") == true,
+            "Row \(itemID) did not paint expanded (header value=\(String(describing: header.value)))"
+        )
+        diagTick.tap()
+        XCTAssertEqual(waitForDiagnostic(topDiagnostic, equals: 1, timeout: 4), 1)
+        let row = app.descendants(matching: .any)["chat.timeline.row.\(itemID)"]
+        XCTAssertTrue(row.exists, "Row \(itemID) is not realized")
+        return row
+    }
+
     func testExpandedExtensionMarkdownGestureOwnsVerticalScroll() throws {
-        launchHarness(noStream: true, includeVisualFixtures: true)
+        // The focused row scrolls to the viewport top, so enough rows must follow it
+        // for an iPad-height viewport to still have room to drag the timeline.
+        launchHarness(noStream: true, includeVisualFixtures: true, tailFillerRows: 30)
 
         let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 8, timeout: 6)
         XCTAssertGreaterThanOrEqual(visualTools, 8)
@@ -562,34 +595,45 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
         XCTAssertTrue(timeline.waitForExistence(timeout: 4))
 
+        revealVisualFixtureRows()
         extensionFocus.tap()
         XCTAssertEqual(waitForDiagnostic("diag.extensionExpanded", equals: 1, timeout: 4), 1)
+        let extensionRow = expandedTopRow(
+            itemID: "alpha-visual-tool-extension-b",
+            topDiagnostic: "diag.extensionTop",
+            diagTick: diagTick
+        )
 
         diagTick.tap()
         let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
 
-        let offsetAfterUpDrag = dragTimelineUntilOffsetMoves(
+        // Both drags start on the expanded row, so the row must stay on screen between
+        // them: drag toward earlier content first (the row moves down, away from the top
+        // edge), then back. The reverse order can fling a short row out of the viewport.
+        let offsetAfterDownDrag = dragTimelineUntilOffsetMoves(
             timeline,
             diagTick: diagTick,
             baseline: baselineOffset,
             minimumDelta: 24,
-            direction: .increasing,
-            context: "upward drag inside expanded extension markdown"
+            direction: .decreasing,
+            context: "downward drag inside expanded extension markdown",
+            startingInside: extensionRow
         )
 
-        let offsetAfterDownDrag = dragTimelineUntilOffsetMoves(
+        let offsetAfterUpDrag = dragTimelineUntilOffsetMoves(
             timeline,
             diagTick: diagTick,
-            baseline: offsetAfterUpDrag,
+            baseline: offsetAfterDownDrag,
             minimumDelta: 24,
-            direction: .decreasing,
-            context: "downward drag inside expanded extension markdown"
+            direction: .increasing,
+            context: "upward drag inside expanded extension markdown",
+            startingInside: extensionRow
         )
 
         let offsetAfterPastExtensionDrag = dragTimelineUntilOffsetMoves(
             timeline,
             diagTick: diagTick,
-            baseline: offsetAfterDownDrag,
+            baseline: offsetAfterUpDrag,
             minimumDelta: 48,
             direction: .increasing,
             context: "scrolling past expanded extension markdown"
@@ -613,7 +657,8 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
     }
 
     func testExpandedExtensionTextScrollOwnership() throws {
-        launchHarness(noStream: true, includeVisualFixtures: true)
+        // See testExpandedExtensionMarkdownGestureOwnsVerticalScroll.
+        launchHarness(noStream: true, includeVisualFixtures: true, tailFillerRows: 30)
 
         let visualTools = waitForDiagnosticAtLeast("diag.visualTools", minimum: 8, timeout: 6)
         XCTAssertGreaterThanOrEqual(visualTools, 8)
@@ -626,34 +671,45 @@ final class UIHangHarnessUITests: UIHarnessTestCase {
         XCTAssertTrue(diagTick.waitForExistence(timeout: 4))
         XCTAssertTrue(timeline.waitForExistence(timeout: 4))
 
+        revealVisualFixtureRows()
         extensionFocus.tap()
         XCTAssertEqual(waitForDiagnostic("diag.extensionTextExpanded", equals: 1, timeout: 4), 1)
+        let extensionRow = expandedTopRow(
+            itemID: "alpha-visual-tool-extension-a",
+            topDiagnostic: "diag.extensionTextTop",
+            diagTick: diagTick
+        )
 
         diagTick.tap()
         let baselineOffset = pollDiagnostic("diag.offsetY", timeout: 4)
 
-        let offsetAfterUpDrag = dragTimelineUntilOffsetMoves(
+        // Both drags start on the expanded row, so the row must stay on screen between
+        // them: drag toward earlier content first (the row moves down, away from the top
+        // edge), then back. The reverse order can fling a short row out of the viewport.
+        let offsetAfterDownDrag = dragTimelineUntilOffsetMoves(
             timeline,
             diagTick: diagTick,
             baseline: baselineOffset,
             minimumDelta: 24,
-            direction: .increasing,
-            context: "upward drag inside expanded extension text"
+            direction: .decreasing,
+            context: "downward drag inside expanded extension text",
+            startingInside: extensionRow
         )
 
-        let offsetAfterDownDrag = dragTimelineUntilOffsetMoves(
+        let offsetAfterUpDrag = dragTimelineUntilOffsetMoves(
             timeline,
             diagTick: diagTick,
-            baseline: offsetAfterUpDrag,
+            baseline: offsetAfterDownDrag,
             minimumDelta: 24,
-            direction: .decreasing,
-            context: "downward drag inside expanded extension text"
+            direction: .increasing,
+            context: "upward drag inside expanded extension text",
+            startingInside: extensionRow
         )
 
         let offsetAfterPastExtensionDrag = dragTimelineUntilOffsetMoves(
             timeline,
             diagTick: diagTick,
-            baseline: offsetAfterDownDrag,
+            baseline: offsetAfterUpDrag,
             minimumDelta: 48,
             direction: .increasing,
             context: "scrolling past expanded extension text"

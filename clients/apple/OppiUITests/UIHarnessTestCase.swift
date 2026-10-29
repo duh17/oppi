@@ -28,7 +28,8 @@ class UIHarnessTestCase: XCTestCase {
         queueHarness: Bool = false,
         includeWriteMarkdownFixture: Bool = false,
         assistantOverlapFixture: Bool = false,
-        realBusyLane: Bool = false
+        realBusyLane: Bool = false,
+        tailFillerRows: Int = 0
     ) {
         app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--ui-hang-harness")
@@ -41,6 +42,7 @@ class UIHarnessTestCase: XCTestCase {
         app.launchEnvironment["PI_UI_HANG_QUEUE_HARNESS"] = queueHarness ? "1" : "0"
         app.launchEnvironment["PI_UI_HANG_ASSISTANT_OVERLAP_FIXTURE"] = assistantOverlapFixture ? "1" : "0"
         app.launchEnvironment["PI_UI_HANG_REAL_BUSY"] = realBusyLane ? "1" : "0"
+        app.launchEnvironment["PI_UI_HANG_TAIL_FILLER_ROWS"] = String(tailFillerRows)
         app.launch()
 
         XCTAssertTrue(
@@ -256,10 +258,39 @@ class UIHarnessTestCase: XCTestCase {
         case decreasing
     }
 
-    func dragTimeline(_ element: XCUIElement, from: CGVector, to: CGVector) {
+    /// `settling` ends the drag with a held finger, so the timeline stops where the
+    /// finger does instead of flinging a row out of the viewport it must start in.
+    func dragTimeline(_ element: XCUIElement, from: CGVector, to: CGVector, settling: Bool = false) {
         let start = element.coordinate(withNormalizedOffset: from)
         let end = element.coordinate(withNormalizedOffset: to)
-        start.press(forDuration: 0.02, thenDragTo: end)
+        if settling {
+            start.press(forDuration: 0.02, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+        } else {
+            start.press(forDuration: 0.02, thenDragTo: end)
+        }
+    }
+
+    /// Normalized drag path whose start and end both lie in the part of `row` that
+    /// is on screen inside `timeline`; nil when too little of the row is visible.
+    private func dragPath(
+        inside row: XCUIElement,
+        of timeline: XCUIElement,
+        direction: OffsetDirection
+    ) -> (from: CGVector, to: CGVector)? {
+        let timelineFrame = timeline.frame
+        let visible = row.frame.intersection(timelineFrame)
+        guard !visible.isNull, visible.height >= 120, timelineFrame.width > 0, timelineFrame.height > 0 else {
+            return nil
+        }
+        let x = (visible.midX - timelineFrame.minX) / timelineFrame.width
+        let upperY = (visible.minY + visible.height * 0.3 - timelineFrame.minY) / timelineFrame.height
+        let lowerY = (visible.minY + visible.height * 0.7 - timelineFrame.minY) / timelineFrame.height
+        switch direction {
+        case .increasing:
+            return (CGVector(dx: x, dy: lowerY), CGVector(dx: x, dy: upperY))
+        case .decreasing:
+            return (CGVector(dx: x, dy: upperY), CGVector(dx: x, dy: lowerY))
+        }
     }
 
     func dragTimelineUntilOffsetMoves(
@@ -268,7 +299,8 @@ class UIHarnessTestCase: XCTestCase {
         baseline: Int,
         minimumDelta: Int,
         direction: OffsetDirection,
-        context: String
+        context: String,
+        startingInside row: XCUIElement? = nil
     ) -> Int {
         let dragPaths: [(from: CGVector, to: CGVector)]
         switch direction {
@@ -288,8 +320,24 @@ class UIHarnessTestCase: XCTestCase {
         }
 
         var lastOffset = baseline
-        for path in dragPaths {
-            dragTimeline(timeline, from: path.from, to: path.to)
+        for fixedPath in dragPaths {
+            // A drag that must prove a row owns the gesture starts on that row's
+            // body. The fixed fractions can land on other rows once the viewport is
+            // taller than the row, and the timeline then scrolls either way.
+            let path: (from: CGVector, to: CGVector)
+            if let row {
+                guard let rowPath = dragPath(inside: row, of: timeline, direction: direction) else {
+                    XCTFail(
+                        "Drag start is not inside the row during \(context) " +
+                        "(row=\(row.frame), timeline=\(timeline.frame))"
+                    )
+                    return lastOffset
+                }
+                path = rowPath
+            } else {
+                path = fixedPath
+            }
+            dragTimeline(timeline, from: path.from, to: path.to, settling: row != nil)
             diagTick.tap()
             lastOffset = pollDiagnostic("diag.offsetY", timeout: 4)
 

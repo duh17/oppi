@@ -592,6 +592,10 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
     /// Row width the agent message cards' folds were last decided at, so a width
     /// change can ask them again (see `apply`).
     private var lastFoldDecisionRowWidth: CGFloat = 0
+    /// Expansion state the realized rows were last configured with. The reducer
+    /// also changes expansion outside a row tap (expand-all, a collapse on memory
+    /// pressure); `apply` diffs against this set to reconfigure those rows.
+    private var configuredExpandedItemIDs: Set<String> = []
     var lastObservedContentOffsetY: CGFloat?
     var lastObservedContentHeight: CGFloat?
     var isTimelineBusy = false
@@ -1106,8 +1110,9 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         currentChildTailByID = configuration.childTailByID
         streamingAssistantID = configuration.streamingAssistantID
         updateLiveTailItemIDs(in: collectionView, configuration: configuration)
-        let expandedChanged = (reducer?.expandedItemIDs ?? [])
+        let expandedChanged = configuredExpandedItemIDs
             .symmetricDifference(configuration.reducer.expandedItemIDs)
+        configuredExpandedItemIDs = configuration.reducer.expandedItemIDs
         if !expandedChanged.isEmpty {
             (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
                 .removeCachedHeights(for: expandedChanged)
@@ -1217,6 +1222,7 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             && configuration.streamingAssistantID == previousStreamingAssistantID
             && configuration.isBusy == isTimelineBusy
             && liveRowsChanged.isEmpty
+            && expandedChanged.isEmpty
             && configuration.showsWorkingIndicator == previousShowsWorkingIndicator
             && configuration.hiddenCount == previousHiddenCount
             && configuration.hasOlderServerPage == previousHasOlderServerPage
@@ -1475,6 +1481,9 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
             forceReconfigureIDs.append(finalAssistantID)
         }
         forceReconfigureIDs.append(contentsOf: liveRowsChanged.filter { applyPlan.nextItemByID[$0] != nil })
+        // Expansion the reducer changed outside a row tap: realized rows keep
+        // their old configuration until reconfigured.
+        forceReconfigureIDs.append(contentsOf: expandedChanged.filter { applyPlan.nextItemByID[$0] != nil })
         // An agent message's fold is decided at the row's width. A width change
         // (rotation, a panel opening, an iPad column resize) re-measures rows but
         // reconfigures none of them, so the card is asked again here.
@@ -2231,6 +2240,16 @@ final class ChatTimelineController: NSObject, UICollectionViewDelegate, UIGestur
         #if DEBUG
         debugReconfiguredItemIDs.append(contentsOf: itemIDs)
         #endif
+        // The rows are configured with the reducer's expansion as of now.
+        if let expanded = reducer?.expandedItemIDs {
+            for id in itemIDs {
+                if expanded.contains(id) {
+                    configuredExpandedItemIDs.insert(id)
+                } else {
+                    configuredExpandedItemIDs.remove(id)
+                }
+            }
+        }
         TimelineSnapshotApplier.reconfigureItems(
             itemIDs,
             dataSource: dataSource,

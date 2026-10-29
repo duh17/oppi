@@ -101,6 +101,19 @@ enum UIHangHarnessConfig {
 #endif
     }
 
+    /// Short assistant rows after the visual fixtures (`PI_UI_HANG_TAIL_FILLER_ROWS`).
+    /// A focused row scrolls to the top of the viewport only while enough content
+    /// follows it. A tall iPad viewport otherwise clamps the timeline at its bottom,
+    /// where a test has nowhere to drag it. Read from the environment on every use:
+    /// a relaunch outside the test's own launch does not need this knob.
+    static var tailFillerRowCount: Int {
+#if DEBUG
+        Int(ProcessInfo.processInfo.environment["PI_UI_HANG_TAIL_FILLER_ROWS"] ?? "") ?? 0
+#else
+        0
+#endif
+    }
+
     static var mixedContentFixtures: Bool {
 #if DEBUG
         launchContext.mixedContentFixtures
@@ -586,6 +599,14 @@ private struct UIHangHarnessContent: View {
                     fileURL: URL(fileURLWithPath: "/tmp/\(sessionPrefix)-harness-audio.wav"),
                     timestamp: visualTS.addingTimeInterval(0.2)
                 ))
+
+                for fillerIndex in 0..<UIHangHarnessConfig.tailFillerRowCount {
+                    items.append(.assistantMessage(
+                        id: "\(sessionPrefix)-visual-tail-filler-\(fillerIndex)",
+                        text: "Tail filler \(fillerIndex + 1): content below the visual fixtures.",
+                        timestamp: visualTS.addingTimeInterval(1 + Double(fillerIndex) * 0.01)
+                    ))
+                }
             }
 
             if UIHangHarnessConfig.assistantOverlapFixture {
@@ -851,6 +872,10 @@ private struct UIHangHarnessContent: View {
 
     private var extensionMarkdownIsTopVisibleValue: Int {
         scrollController.currentTopVisibleItemId == extensionMarkdownToolID ? 1 : 0
+    }
+
+    private var extensionTextIsTopVisibleValue: Int {
+        scrollController.currentTopVisibleItemId == extensionTextToolID ? 1 : 0
     }
 
     private var notebookIsExpandedValue: Int {
@@ -1172,6 +1197,7 @@ private struct UIHangHarnessContent: View {
             diagnosticValue(id: "diag.assistantRenderedOverlapPx", value: assistantOverlapRenderedValue)
             diagnosticValue(id: "diag.assistantOverflowPx", value: assistantOverflowValue)
             diagnosticValue(id: "diag.extensionTop", value: extensionMarkdownIsTopVisibleValue)
+            diagnosticValue(id: "diag.extensionTextTop", value: extensionTextIsTopVisibleValue)
             diagnosticValue(id: "diag.applyMs", value: perf.applyLastMs)
             diagnosticValue(id: "diag.layoutMs", value: perf.layoutLastMs)
             diagnosticValue(id: "diag.cellMs", value: perf.cellConfigureLastMs)

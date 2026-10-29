@@ -518,6 +518,48 @@ struct ChatTimelineCoordinatorTests {
         #expect(card.presentation.fields?.first?.value == "Readable result")
     }
 
+    /// A realized row must follow expansion the reducer changes outside a row tap
+    /// (expand-all, a memory-pressure collapse). A large iPad viewport realizes every
+    /// row up front, so no later dequeue picks the change up.
+    @MainActor
+    @Test func reducerDrivenExpansionReconfiguresRealizedRows() throws {
+        let harness = makeTimelineHarness(sessionId: "session-a")
+        let body = (1...60).map { "output line \($0)" }.joined(separator: "\n")
+        let itemID = "custom-log"
+        let item = ChatItem.customEvent(
+            id: itemID,
+            message: "Job completed\n\(body)",
+            presentation: TraceEventPresentation(kind: "custom", title: "Job completed", subtitle: nil,
+                status: nil, body: body, fields: nil, accent: nil)
+        )
+        let config = makeTimelineConfiguration(
+            items: [item],
+            sessionId: "session-a",
+            reducer: harness.reducer,
+            toolOutputStore: harness.toolOutputStore,
+            toolArgsStore: harness.toolArgsStore,
+            connection: harness.connection,
+            scrollController: harness.scrollController,
+            audioPlayer: harness.audioPlayer
+        )
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+        let collapsed = try #require(configuredTimelineCell(in: harness.collectionView, item: 0)
+            .contentConfiguration as? CustomTimelineRowConfiguration)
+        #expect(!collapsed.isExpanded)
+
+        harness.reducer.expandedItemIDs.insert(itemID)
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+        let expanded = try #require(configuredTimelineCell(in: harness.collectionView, item: 0)
+            .contentConfiguration as? CustomTimelineRowConfiguration)
+        #expect(expanded.isExpanded)
+
+        harness.reducer.expandedItemIDs.remove(itemID)
+        harness.coordinator.apply(configuration: config, to: harness.collectionView)
+        let collapsedAgain = try #require(configuredTimelineCell(in: harness.collectionView, item: 0)
+            .contentConfiguration as? CustomTimelineRowConfiguration)
+        #expect(!collapsedAgain.isExpanded)
+    }
+
     @MainActor
     @Test func longCustomEventTogglesBetweenPreviewAndTerminalViewport() throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
