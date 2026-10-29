@@ -36,6 +36,12 @@ enum AgentManagementPresentation {
     static let piOptionalToolsFooter =
         "Pi and its extensions register these tools off; turning one on adds it to Pi's defaultTools. MCP servers can still turn on codemode or tool_search when their exposure needs it."
 
+    /// A load cancelled under its screen (Back, a replaced connection) is not
+    /// a failure to report: the screen keeps what it showed.
+    static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
+    }
+
     static func rows(savedAgents: [AgentDefinitionSummary]) -> [AgentManagementRow] {
         [.pi] + savedAgents.map(AgentManagementRow.saved)
     }

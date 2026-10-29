@@ -93,6 +93,43 @@ struct AgentListViewControllerTests {
         }, "a successful retry clears the row")
     }
 
+    @Test("a load cancelled under the list shows no failure row and keeps what was listed")
+    func cancelledLoadShowsNoFailure() async throws {
+        AgentsURLProtocol.reset()
+        AgentsURLProtocol.mode = .cancelled
+        let root = makeTestAppRoot()
+        root.coordinator.activeConnection.setAPIClientForTesting(AgentsURLProtocol.makeClient())
+        let screen = AgentListViewController(root: root)
+        let window = try Self.show(screen)
+        defer { Self.hide(window) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.requestCount > 0 })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(500)) {
+            screen.view.layoutIfNeeded()
+            return Self.buttons("agents.state", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
+                && Self.button("agents.row.pi", in: screen.view) != nil
+        }, "a cancel is not a failure to report")
+
+        // Agents already listed stay listed when a later load is cancelled.
+        AgentsURLProtocol.mode = .available
+        screen.beginAppearanceTransition(true, animated: false)
+        screen.endAppearanceTransition()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            screen.view.layoutIfNeeded()
+            return Self.button("agents.row.reviewer", in: screen.view) != nil
+        })
+        let before = AgentsURLProtocol.requestCount
+        AgentsURLProtocol.mode = .cancelled
+        screen.beginAppearanceTransition(true, animated: false)
+        screen.endAppearanceTransition()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { AgentsURLProtocol.requestCount > before })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(500)) {
+            screen.view.layoutIfNeeded()
+            return Self.button("agents.row.reviewer", in: screen.view) != nil
+                && Self.buttons("agents.state", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
+        })
+    }
+
     @Test("a load that was running when the server went away neither sticks on loading nor shows its late answer")
     func serverChangeMidLoadDropsTheOldResult() async throws {
         AgentsURLProtocol.reset()

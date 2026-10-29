@@ -406,22 +406,19 @@ final class RouterRoutesUITests: XCTestCase {
         app.buttons["workspace.agents.open"].tap()
         let agents = app.navigationBars["Agents"]
         XCTAssertTrue(agents.waitForExistence(timeout: 5), "Agents did not open in the UIKit bar")
-        // The shell's paired server has a client (`switchToServer` needs one) but no host answers, so
-        // the load fails and the list says so in a row with Retry, not an alert. The "Server offline"
-        // wording (no client at all) is covered by AgentListViewControllerTests and `agents-offline`.
-        let offline = app.buttons["agents.state"]
-        // Only a state row with a Retry is a button; a loading row is plain text.
-        XCTAssertTrue(offline.waitForExistence(timeout: 5), "Agents has no inline state row with Retry")
-        XCTAssertFalse(app.alerts.firstMatch.exists, "Agents and Pi report a failed load in a row, never an alert")
+        // The shell's paired server points at this machine's own address, so what the load does
+        // depends on the host (refused, or a pinned-certificate cancel). Either way the list and
+        // Pi report it in a row, never an alert, and a cancel never reads as a failure.
+        XCTAssertTrue(app.buttons["agents.row.pi"].waitForExistence(timeout: 5), "Agents has no Pi row")
+        assertNoAlertOrCancelledRow()
         app.buttons["agents.row.pi"].tap()
         XCTAssertTrue(app.navigationBars["Pi"].waitForExistence(timeout: 5), "Agents did not push Pi")
-        XCTAssertFalse(app.alerts.firstMatch.exists, "Agents and Pi report a failed load in a row, never an alert")
+        assertNoAlertOrCancelledRow()
         attachScreenshot("shell-agents-pi")
         assertRunning()
         app.buttons["BackButton"].firstMatch.tap()
         XCTAssertTrue(agents.waitForExistence(timeout: 5), "Back must return to Agents")
-        XCTAssertTrue(app.buttons["agents.state"].waitForExistence(timeout: 5), "Back must show the offline row again")
-        XCTAssertFalse(app.alerts.firstMatch.exists, "Agents and Pi report a failed load in a row, never an alert")
+        assertNoAlertOrCancelledRow()
         if !isSplit {
             app.buttons["BackButton"].tap()
             XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Agents")
@@ -638,6 +635,16 @@ final class RouterRoutesUITests: XCTestCase {
     /// vertical rail.
     private var cancelButton: XCUIElement {
         app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"])).firstMatch
+    }
+
+    /// Agents and Pi report a failed load in a row, never an alert, and a cancelled load shows nothing.
+    private func assertNoAlertOrCancelledRow(file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertFalse(app.alerts.firstMatch.exists, "A failed load must not raise an alert", file: file, line: line)
+        for identifier in ["agents.state", "agents.pi.state"] {
+            XCTAssertNotEqual(app.buttons[identifier].exists ? app.buttons[identifier].label : "", "cancelled", file: file, line: line)
+            XCTAssertNotEqual(app.staticTexts[identifier].exists ? app.staticTexts[identifier].label : "", "cancelled", file: file, line: line)
+        }
+        XCTAssertFalse(app.staticTexts["cancelled"].exists, "A cancelled load must not show as a failure", file: file, line: line)
     }
 
     private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {
