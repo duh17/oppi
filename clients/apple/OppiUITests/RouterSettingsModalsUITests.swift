@@ -546,6 +546,8 @@ final class RouterSettingsModalsUITests: XCTestCase {
         let dismiss = app.buttons["fullScreen.code.close"]
         opener()
         XCTAssertTrue(dismiss.waitForExistence(timeout: 5), "The review sheet did not open")
+        // The leave control keeps one id in every mode; a sheet's reads Done, a pushed viewer's reads Back.
+        XCTAssertEqual(dismiss.label, "Done", "The review must open as a sheet, not a pushed viewer")
         attachScreenshot("review-sheet")
         assertRunning()
         dismiss.tap()

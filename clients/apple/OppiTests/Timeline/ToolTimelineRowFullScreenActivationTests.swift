@@ -220,10 +220,10 @@ struct ToolTimelineRowFullScreenActivationTests {
         let controller = try #require(reader.page as? FullScreenCodeViewController)
         controller.loadViewIfNeeded()
         let navigation = try #require(controller.children.first as? UINavigationController)
-        #expect(
-            navigation.topViewController?.navigationItem.leftBarButtonItem?.accessibilityIdentifier
-                == "fullScreen.code.close"
-        )
+        let leave = try #require(navigation.topViewController?.navigationItem.leftBarButtonItem)
+        // One id in every mode; the label tells the modes apart (a sheet says Done).
+        #expect(leave.accessibilityIdentifier == "fullScreen.code.close")
+        #expect(leave.accessibilityLabel == FullScreenViewerNavigationChrome.DismissMode.embedded.accessibilityLabel)
     }
 
     @Test("chat reader image destination uses embedded back chrome")

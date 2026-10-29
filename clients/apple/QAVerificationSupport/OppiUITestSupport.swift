@@ -13,18 +13,20 @@ extension XCUIApplication {
     }
 
     /// Ends the search `field` has started, as a person does. The system draws its own
-    /// control for that, with no identifier: a Close or Cancel button beside the field
-    /// where the search bar takes the navigation bar (compact width), and only the
-    /// field's Clear text button in a regular-width column. Clearing the text returns
-    /// the list to its unfiltered content.
+    /// control for that, with no identifier, and which one depends on the window's
+    /// horizontal size class (not the field's: a regular-width column reports compact).
+    /// Compact width has a Close or Cancel button beside the field and requires it, so a
+    /// missing one fails instead of clearing. Regular width has only the field's Clear
+    /// text button; clearing the text returns the list to its unfiltered content.
     func dismissSearch(_ field: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
-        let leave = buttons.matching(NSPredicate(format: "label IN %@", ["Close", "Cancel"])).firstMatch
-        if leave.exists {
+        if windows.firstMatch.horizontalSizeClass == .compact {
+            let leave = buttons.matching(NSPredicate(format: "label IN %@", ["Close", "Cancel"])).firstMatch
+            XCTAssertTrue(leave.exists, "A compact-width search must offer Close or Cancel", file: file, line: line)
             leave.tap()
-            return
+        } else {
+            let clear = field.buttons["Clear text"]
+            XCTAssertTrue(clear.exists, "A regular-width search must offer Clear text", file: file, line: line)
+            clear.tap()
         }
-        let clear = field.buttons["Clear text"]
-        XCTAssertTrue(clear.exists, "The search has neither a Close/Cancel button nor a Clear text button", file: file, line: line)
-        clear.tap()
     }
 }
