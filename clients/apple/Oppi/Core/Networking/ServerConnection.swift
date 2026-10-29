@@ -67,6 +67,9 @@ final class ServerConnection {
         try await client.serverInfo(bootstrapDeadline: deadline)
     }
     private var transportFailureDisposition: TransportFailureDisposition?
+    /// Whether the last `.retryable` setup pass ended on a failure waiting can
+    /// clear (unreachable, timeout, 408, 5xx), not an answer like 401 or 404.
+    private var retryableFailureIsTransient = false
     var networkPathType: () -> String = { NetworkPathTelemetry.pathType }
     var automaticRouteReachabilityProbe: @MainActor (
         EndpointSelection, ServerCredentials, TailnetTransportRoute.Snapshot
@@ -134,6 +137,12 @@ final class ServerConnection {
 
     var canAutomaticallyRetryInitialTransport: Bool {
         transportFailureDisposition != .failClosed
+    }
+
+    /// Whether a timer may retry first setup after its last pass. Boundaries
+    /// (path, route, foreground) retry on `canAutomaticallyRetryInitialTransport`.
+    var canRetryInitialTransportOnTimer: Bool {
+        transportFailureDisposition == .retryable && retryableFailureIsTransient
     }
     private var installedAPIClientIdentity: UUID?
     private var installedAPIClientConfigurationGeneration: UInt64?
@@ -806,6 +815,7 @@ final class ServerConnection {
                 return false
             }
             transportFailureDisposition = .retryable
+            retryableFailureIsTransient = lastError.map(ServerRouteFailure.isTransient) ?? false
             logger.warning("HTTPS candidate pass exhausted")
             return false
         } catch is CancellationError {
@@ -965,6 +975,7 @@ final class ServerConnection {
         persistentStreamGeneration &+= 1
         let clientGeneration = persistentStreamGeneration
         transportFailureDisposition = nil
+        retryableFailureIsTransient = false
         resetTransportState(
             credentials: credentials,
             endpointSelection: selection,

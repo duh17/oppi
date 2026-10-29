@@ -179,6 +179,20 @@ enum ServerRouteFailure {
         }
         return false
     }
+
+    /// A failure a later identical attempt can get past on its own: the server
+    /// was unreachable, timed out, or failed on its end. `mayAdvance` also lets
+    /// 401 and 404 fall through to the next route, but waiting does not change
+    /// those answers.
+    static func isTransient(_ error: Error) -> Bool {
+        if APIClientAvailabilityFailure(error: error) != nil {
+            return true
+        }
+        if case APIError.server(let status, _) = error {
+            return status == 408 || status >= 500
+        }
+        return false
+    }
 }
 
 enum ServerTransportPlanResolver {

@@ -137,6 +137,9 @@ final class ConnectionCoordinator {
     var _initialLANEndpointForTesting: (@MainActor (String) async -> LANDiscoveredEndpoint?)?
     var _serverInfoBootstrapForTesting: ServerConnectionInfoBootstrap?
     var _apiClientFactoryForTesting: ServerConnectionAPIClientFactory?
+    func _isSetupRetryArmedForTesting(_ serverId: String) -> Bool {
+        initialSetupRetries[serverId]?.task != nil
+    }
     #endif
 
     private let lanDiscovery: LANDiscovery
@@ -1274,8 +1277,10 @@ final class ConnectionCoordinator {
         }
     }
 
-    /// A setup pass for a shell with no transport ended without one. A retryable
-    /// failure (not auth, integrity, or version rejection) arms the backoff.
+    /// A setup pass for a shell with no transport ended without one. A failure
+    /// waiting can clear (unreachable, timeout, 408, 5xx) arms the backoff; an
+    /// answer like 401 or 404, or a terminal failure, does not. Boundaries still
+    /// retry the former two through `recoverUnconfiguredServerAfterBoundary`.
     private func noteInitialSetupFailure(
         _ connection: ServerConnection,
         serverId: String,
@@ -1285,7 +1290,7 @@ final class ConnectionCoordinator {
         // connection's failed reconfigure is the stream recovery's business.
         guard isCurrentPreparation(preparationID, serverId: serverId),
               connection.credentials == nil else { return }
-        guard connection.canAutomaticallyRetryInitialTransport else {
+        guard connection.canRetryInitialTransportOnTimer else {
             endInitialSetupRetry(serverId)
             return
         }
@@ -1298,6 +1303,9 @@ final class ConnectionCoordinator {
         let delay = Self.initialSetupRetryDelay(attempt: retry.attempt)
         initialSetupRetries[serverId]?.task = Task { @MainActor [weak self] in
             do { try await self?.initialSetupRetrySleep(delay) } catch { return }
+            // A wait that ends as the scene goes inactive is stale: its entry
+            // may already belong to the wait armed when the scene came back.
+            guard !Task.isCancelled else { return }
             await self?.runInitialSetupRetry(serverId)
         }
     }

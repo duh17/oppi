@@ -34,7 +34,6 @@ private actor ManualRetryClock {
     private(set) var delays: [Duration] = []
     private(set) var cancelledCount = 0
     private var sleepers: [(id: UUID, continuation: CheckedContinuation<Void, Error>)] = []
-    private var change: CheckedContinuation<Void, Never>?
 
     func sleep(_ duration: Duration) async throws {
         let id = UUID()
@@ -54,7 +53,6 @@ private actor ManualRetryClock {
             } else {
                 sleepers.append((id: id, continuation: continuation))
             }
-            notifyChange()
         }
     }
 
@@ -62,27 +60,47 @@ private actor ManualRetryClock {
         guard let index = sleepers.firstIndex(where: { $0.id == id }) else { return }
         sleepers.remove(at: index).continuation.resume(throwing: CancellationError())
         cancelledCount += 1
-        notifyChange()
-    }
-
-    private func notifyChange() {
-        change?.resume()
-        change = nil
     }
 
     var pendingCount: Int { sleepers.count }
 
-    func waitForSleepers(_ count: Int) async {
-        while sleepers.count < count { await withCheckedContinuation { change = $0 } }
+    /// True once `count` sleeps are waiting; false after five seconds, so a
+    /// regression fails the test instead of hanging the run.
+    func waitForSleepers(_ count: Int) async -> Bool {
+        await wait { sleepers.count >= count }
     }
 
-    func waitForCancelled(_ count: Int) async {
-        while cancelledCount < count { await withCheckedContinuation { change = $0 } }
+    func waitForCancelled(_ count: Int) async -> Bool {
+        await wait { cancelledCount >= count }
+    }
+
+    private func wait(until condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !condition() {
+            guard ContinuousClock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        return true
     }
 
     func fire() {
         guard !sleepers.isEmpty else { return }
         sleepers.removeFirst().continuation.resume()
+    }
+}
+
+/// What a first setup attempt fails with in the retry tests.
+enum SetupRetryFailure: CaseIterable, Sendable {
+    case unauthorized, forbidden, refreshRejected, timedOut, unavailable
+
+    var error: Error {
+        switch self {
+        case .unauthorized: APIError.server(status: 401, message: "Unauthorized")
+        case .forbidden: APIError.server(status: 403, message: "Forbidden")
+        case .refreshRejected: DeviceAuthError.refreshRejected(code: "revoked")
+        case .timedOut: URLError(.timedOut)
+        case .unavailable: APIError.server(status: 503, message: "Unavailable")
+        }
     }
 }
 
@@ -1850,9 +1868,9 @@ struct ConnectionCoordinatorTests {
         #expect(bootstrapCalls == 1)
         #expect(coordinator.connection(for: server.id)?.apiClient == nil)
 
-        await clock.waitForSleepers(1)
+        #expect(await clock.waitForSleepers(1))
         await clock.fire()
-        await clock.waitForSleepers(1)
+        #expect(await clock.waitForSleepers(1))
         #expect(bootstrapCalls == 2)
         await clock.fire()
         await thirdAttempt.waitUntilStarted()
@@ -1873,9 +1891,10 @@ struct ConnectionCoordinatorTests {
         #expect(delays == [1, 2, 4, 8, 16, 30, 30, 30].map { Duration.seconds($0) })
     }
 
-    @Test func nonRetryableSetupFailureIsNotRetried() async {
+    @Test(arguments: [SetupRetryFailure.unauthorized, .forbidden, .refreshRejected])
+    func rejectedSetupIsNeverRetried(_ failure: SetupRetryFailure) async {
         let (coordinator, _) = makeCoordinator()
-        let server = makeServer(id: "sha256:setup-terminal", name: "Terminal", host: "studio.tail1234.ts.net")
+        let server = makeServer(id: "sha256:setup-rejected", name: "Rejected", host: "studio.tail1234.ts.net")
         coordinator.serverStore.addOrUpdate(server)
         coordinator.activatePairedServerShell(server)
         let clock = ManualRetryClock()
@@ -1884,17 +1903,73 @@ struct ConnectionCoordinatorTests {
         var bootstrapCalls = 0
         coordinator._serverInfoBootstrapForTesting = { _, _ in
             bootstrapCalls += 1
-            throw APIError.server(status: 400, message: "Unsupported")
+            throw failure.error
         }
 
         await coordinator.prepareSelectedServerShell(for: server)
 
-        #expect(coordinator.connection(for: server.id)?.canAutomaticallyRetryInitialTransport == false)
-        #expect(await clock.delays.isEmpty)
+        #expect(!coordinator._isSetupRetryArmedForTesting(server.id), "\(failure) must not arm a retry")
         coordinator.sceneDidResignActive()
         coordinator.sceneDidBecomeActive()
+        #expect(!coordinator._isSetupRetryArmedForTesting(server.id))
+        await clock.fire()
         #expect(await clock.delays.isEmpty)
         #expect(bootstrapCalls == 1)
+    }
+
+    @Test(arguments: [SetupRetryFailure.timedOut, .unavailable])
+    func transientSetupFailureArmsARetry(_ failure: SetupRetryFailure) async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:setup-transient", name: "Transient", host: "studio.tail1234.ts.net")
+        coordinator.serverStore.addOrUpdate(server)
+        coordinator.activatePairedServerShell(server)
+        let clock = ManualRetryClock()
+        coordinator.initialSetupRetrySleep = { try await clock.sleep($0) }
+        coordinator.sceneDidBecomeActive()
+        coordinator._serverInfoBootstrapForTesting = { _, _ in throw failure.error }
+
+        await coordinator.prepareSelectedServerShell(for: server)
+
+        #expect(coordinator._isSetupRetryArmedForTesting(server.id), "\(failure) must arm a retry")
+        #expect(await clock.waitForSleepers(1))
+        #expect(await clock.delays == [.seconds(1)])
+        coordinator.sceneDidResignActive()
+    }
+
+    @Test func aWaitCancelledByAnInactiveBounceDoesNotRunOrOrphanTheNewWait() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:setup-bounce", name: "Bounce", host: "studio.tail1234.ts.net")
+        coordinator.serverStore.addOrUpdate(server)
+        coordinator.activatePairedServerShell(server)
+        let clock = ManualRetryClock()
+        // The first wait ends normally once it is cancelled, as a sleep that
+        // finishes just as the scene goes inactive would.
+        var sleeps = 0
+        coordinator.initialSetupRetrySleep = { duration in
+            sleeps += 1
+            if sleeps == 1 {
+                while !Task.isCancelled { await Task.yield() }
+                return
+            }
+            try await clock.sleep(duration)
+        }
+        coordinator.sceneDidBecomeActive()
+        var bootstrapCalls = 0
+        coordinator._serverInfoBootstrapForTesting = { _, _ in
+            bootstrapCalls += 1
+            throw URLError(.timedOut)
+        }
+
+        await coordinator.prepareSelectedServerShell(for: server)
+        coordinator.sceneDidResignActive()
+        coordinator.sceneDidBecomeActive()
+        #expect(await clock.waitForSleepers(1))
+        for _ in 0..<500 { await Task.yield() }
+
+        #expect(bootstrapCalls == 1, "the cancelled wait must not run a setup pass")
+        #expect(coordinator._isSetupRetryArmedForTesting(server.id), "the new wait must stay armed")
+        #expect(await clock.pendingCount == 1)
+        coordinator.sceneDidResignActive()
     }
 
     @Test func setupRetryStopsWhileTheSceneIsInactiveAndResumesWhenItIsActive() async {
@@ -1912,18 +1987,18 @@ struct ConnectionCoordinatorTests {
         }
 
         await coordinator.prepareSelectedServerShell(for: server)
-        await clock.waitForSleepers(1)
+        #expect(await clock.waitForSleepers(1))
         coordinator.sceneDidResignActive()
-        await clock.waitForCancelled(1)
+        #expect(await clock.waitForCancelled(1))
         await clock.fire()
         #expect(bootstrapCalls == 1, "no attempt may run while the scene is inactive")
 
         coordinator.sceneDidBecomeActive()
-        await clock.waitForSleepers(1)
+        #expect(await clock.waitForSleepers(1))
         #expect(await clock.delays == [.seconds(1), .seconds(1)])
         #expect(bootstrapCalls == 1)
         coordinator.sceneDidResignActive()
-        await clock.waitForCancelled(2)
+        #expect(await clock.waitForCancelled(2))
     }
 
     @Test func removingAServerEndsItsSetupRetry() async {
@@ -1941,9 +2016,9 @@ struct ConnectionCoordinatorTests {
         }
 
         await coordinator.prepareSelectedServerShell(for: server)
-        await clock.waitForSleepers(1)
+        #expect(await clock.waitForSleepers(1))
         await coordinator.removeServer(id: server.id)
-        await clock.waitForCancelled(1)
+        #expect(await clock.waitForCancelled(1))
         await clock.fire()
 
         #expect(bootstrapCalls == 1)
