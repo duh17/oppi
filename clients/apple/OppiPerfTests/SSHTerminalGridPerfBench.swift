@@ -21,7 +21,11 @@ struct SSHTerminalGridPerfBench {
         let width = max(1, Int((metrics.cellSize.width * CGFloat(Self.columns) * 2).rounded()))
         let height = max(1, Int((metrics.cellSize.height * CGFloat(Self.rows) * 2).rounded()))
 
+        // Main-thread cost of creating a renderer: terminal open pays this, so
+        // glyph warmup must not move the first-draw hitch here.
+        let initStart = DispatchTime.now().uptimeNanoseconds
         let coldRenderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: 2)
+        let rendererInitNs = DispatchTime.now().uptimeNanoseconds &- initStart
         let coldEngine = try SSHTerminalEngine(
             geometry: .init(columns: Self.columns, rows: Self.rows, cellWidth: 8, cellHeight: 17)
         ) { _ in }
@@ -77,6 +81,7 @@ struct SSHTerminalGridPerfBench {
         print("METRIC ssh_terminal_plain_encode_us=\(String(format: "%.1f", Double(plain.encodeNs.median) / 1_000))")
         print("METRIC ssh_terminal_styled_frame_us=\(String(format: "%.1f", Double(styled.frameNs.median) / 1_000))")
         print("METRIC ssh_terminal_styled_encode_us=\(String(format: "%.1f", Double(styled.encodeNs.median) / 1_000))")
+        print("METRIC ssh_terminal_renderer_init_us=\(String(format: "%.1f", Double(rendererInitNs) / 1_000))")
         print("METRIC ssh_terminal_styled_cold_encode_us=\(String(format: "%.1f", Double(cold.encodeNs) / 1_000))")
         print("METRIC ssh_terminal_dirty_one_row_encode_us=\(String(format: "%.1f", Double(dirtySamples.encodeNs.median) / 1_000))")
         print("METRIC ssh_terminal_color_emoji_encode_us=\(String(format: "%.1f", Double(emoji.encodeNs) / 1_000))")
