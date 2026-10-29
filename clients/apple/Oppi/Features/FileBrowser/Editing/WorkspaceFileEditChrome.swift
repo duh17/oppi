@@ -465,7 +465,12 @@ final class WorkspaceFileEditBarItems {
     private let previewItem: UIBarButtonItem
     private let doneItem: UIBarButtonItem
 
-    init(wrapKind: CodeEditorWrapKind, onTogglePreview: @escaping @MainActor () -> Void, onDone: @escaping @MainActor () -> Void) {
+    /// The open file's wrap kind, read when the options menu opens: the viewer
+    /// keeps one of these across file switches, so it cannot capture the kind.
+    let wrapKind: @MainActor () -> CodeEditorWrapKind
+
+    init(wrapKind: @escaping @MainActor () -> CodeEditorWrapKind, onTogglePreview: @escaping @MainActor () -> Void, onDone: @escaping @MainActor () -> Void) {
+        self.wrapKind = wrapKind
         optionsItem = UIBarButtonItem(
             title: String(localized: "Editor Options"),
             image: UIImage(systemName: "slider.horizontal.3"),
@@ -499,12 +504,12 @@ final class WorkspaceFileEditBarItems {
 /// Built each time it opens, so it shows the current values.
 @MainActor
 enum WorkspaceFileEditorOptions {
-    /// `wrapKind` is the open file's: Wrap Lines in the menu changes that
-    /// kind's setting, as Settings > Editor does.
-    static func menu(wrapKind: CodeEditorWrapKind, preferences: CodeEditorPreferences = .shared) -> UIMenu {
+    /// `wrapKind` is the open file's, read when the menu opens: Wrap Lines in
+    /// the menu changes that kind's setting, as Settings > Editor does.
+    static func menu(wrapKind: @escaping @MainActor () -> CodeEditorWrapKind, preferences: CodeEditorPreferences = .shared) -> UIMenu {
         UIMenu(children: [
             UIDeferredMenuElement.uncached { completion in
-                completion(elements(preferences, wrapKind: wrapKind))
+                completion(elements(preferences, wrapKind: wrapKind()))
             },
         ])
     }

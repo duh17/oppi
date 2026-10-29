@@ -1059,6 +1059,54 @@ struct WorkspaceFileEditEntryTests {
         #expect(editing, "Edit did not switch to the editing toolbar; items: \(Self.titles(in: content))")
     }
 
+    /// The viewer keeps one set of editing bar items while it shows file after
+    /// file. Editor Options > Wrap Lines must follow the file that is open when
+    /// the menu opens, not the one the items were made for: edit main.swift,
+    /// press Done, show notes.md, and the menu would change the code setting.
+    @Test func editorOptionsFollowTheOpenFileAfterSwitchingFiles() async throws {
+        let client = TreePaneEditURLProtocol.makeClient()
+        _ = try await client.serverInfo()
+        let content = FileViewerViewController(
+            configuration: .init(
+                workspaceId: "w-tree",
+                serverId: "srv-tree-\(UUID().uuidString)",
+                filePath: "main.swift",
+                fileName: "main.swift",
+                chromeMode: .treePane
+            ),
+            services: .init(apiClient: client)
+        )
+        let host = UINavigationController(rootViewController: content)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1_024, height: 768))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { hideTestWindow(window) }
+
+        var edit: UIBarButtonItem?
+        let shown = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.layoutIfNeeded()
+            edit = Self.barButtonItem(titled: "Edit", in: content)
+            return edit != nil
+        }
+        #expect(shown, "tree-pane reader offered no Edit; items: \(Self.titles(in: content))")
+        #expect(Self.activate(try #require(edit)))
+        var done: UIBarButtonItem?
+        let editing = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.layoutIfNeeded()
+            done = Self.barButtonItems(in: content).first { $0.accessibilityIdentifier == "workspace-file-editor.done" }
+            return done != nil
+        }
+        #expect(editing, "Edit did not open the editor; items: \(Self.titles(in: content))")
+        let items = try #require(content.editBarItems)
+        #expect(items.wrapKind() == .code, "main.swift is code")
+
+        #expect(Self.activate(try #require(done)))
+        content.show(FileBrowserSelection(path: "notes.md", name: "notes.md", size: nil), navigationContext: nil)
+        host.view.layoutIfNeeded()
+        #expect(content.editBarItems === items, "the viewer reuses its editing bar items across files")
+        #expect(items.wrapKind() == .text, "notes.md is Markdown: Wrap Lines must change the text setting")
+    }
+
     /// The Files screen shows the open file's Edit in its own bar. Locking
     /// the workspace tears the content down; the file's items must go with
     /// it, or the cover keeps an Edit whose target is gone.

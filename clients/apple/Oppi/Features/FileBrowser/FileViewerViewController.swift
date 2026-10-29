@@ -233,7 +233,7 @@ final class FileViewerViewController: UIViewController {
     private let stashButton = ReviewCommentStashFloatingButton()
 
     // Bar items, kept while their inputs hold.
-    private var editBarItems: WorkspaceFileEditBarItems?
+    private(set) var editBarItems: WorkspaceFileEditBarItems?
     private var editItem: UIBarButtonItem?
     private var editItemKey: EditItemKey?
     private var shareItem: UIBarButtonItem?
@@ -1030,7 +1030,10 @@ final class FileViewerViewController: UIViewController {
         let editing = isEditingText
         if editing, let editSession {
             let editItems = editBarItems ?? WorkspaceFileEditBarItems(
-                wrapKind: CodeEditorWrapKind(grammar: CodeEditorHighlightEngine.grammar(forPath: editSession.identity.path)),
+                wrapKind: { [weak self] in
+                    // The open file's, not the file these items were made for.
+                    CodeEditorWrapKind(grammar: CodeEditorHighlightEngine.grammar(forPath: self?.currentFilePath ?? ""))
+                },
                 onTogglePreview: { [weak self] in self?.isShowingEditPreview.toggle() },
                 onDone: { [weak self] in self?.endEditing() }
             )
