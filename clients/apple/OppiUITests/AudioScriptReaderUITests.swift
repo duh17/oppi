@@ -3,6 +3,7 @@ import XCTest
 /// Script reader journey on the `audio-script-reader` preview: a silent clip paused
 /// at 0:31, which is transcript line 2. Proves the UIKit transcript's follow,
 /// unfollow, and tap-to-seek behavior against real `AudioPlayerService` playback.
+@MainActor
 final class AudioScriptReaderUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -10,12 +11,41 @@ final class AudioScriptReaderUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Both tests drive the same preview and the player lives in the preview's view,
+    /// so one launch serves the class: the app resets in process between tests.
+    override class func tearDown() {
+        MainActor.assumeIsolated { ReusedHarnessLaunch.discard(owner: "AudioScriptReaderUITests") }
+        super.tearDown()
+    }
+
+    override func tearDownWithError() throws {
+        if (testRun?.totalFailureCount ?? 0) > 0 {
+            ReusedHarnessLaunch.discard(owner: "AudioScriptReaderUITests")
+        }
+        try super.tearDownWithError()
+    }
+
+    private func launchScriptReader() {
+        let launch = { () -> XCUIApplication in
+            let application = OppiTestLaunch.makeApp()
+            application.launchArguments.append("--screenshot-preview")
+            application.launchEnvironment["SCREENSHOT_SCREEN"] = "audio-script-reader"
+            application.launchEnvironment[OppiTestLaunch.reuseLaunchKey] = "1"
+            application.launch()
+            // The notification prompt belongs to the first launch only.
+            self.dismissNotificationPrompt()
+            return application
+        }
+        app = ReusedHarnessLaunch.app(
+            owner: "AudioScriptReaderUITests",
+            signature: "audio-script-reader",
+            readyID: "audioLyrics.transcript",
+            launch: launch
+        )
+    }
+
     func testDragStopsFollowingCurrentLineResumesAndTapSeeks() {
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments.append("--screenshot-preview")
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = "audio-script-reader"
-        app.launch()
-        dismissNotificationPrompt()
+        launchScriptReader()
 
         let transcript = app.collectionViews["audioLyrics.transcript"]
         XCTAssertTrue(transcript.waitForExistence(timeout: 8), "Script reader transcript did not appear")
@@ -42,11 +72,7 @@ final class AudioScriptReaderUITests: XCTestCase {
     }
 
     func testSpeedAndSleepTimerControls() {
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments.append("--screenshot-preview")
-        app.launchEnvironment["SCREENSHOT_SCREEN"] = "audio-script-reader"
-        app.launch()
-        dismissNotificationPrompt()
+        launchScriptReader()
         XCTAssertTrue(app.cells["audioLyrics.line.2"].waitForExistence(timeout: 8))
 
         let speed = app.buttons["Playback Speed"]

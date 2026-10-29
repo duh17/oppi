@@ -14,6 +14,8 @@ import XCTest
 /// long content, then double-tap the expanded content area to trigger full-screen.
 @MainActor
 final class UIHarnessExpandTests: UIHarnessTestCase {
+    /// Every test drives harness screens only; the app keeps one launch per launch configuration.
+    override class var reusesLaunch: Bool { true }
 
     // MARK: - Full-Screen Expand Tests
 
@@ -89,7 +91,11 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
     /// space beside a call, must leave the row expanded so it can be the first
     /// half of the double-tap that opens the reader.
     func testNotebookSingleTapKeepsRowExpandedForReaderDoubleTap() throws {
-        launchHarness(noStream: true, includeVisualFixtures: true)
+        // After an in-process reset the timeline jumps away from the notebook row
+        // once `harness.notebook.scroll` lands, so the header is never hittable (cause
+        // not found; evicting the render caches and waiting 3 s did not change it).
+        // A new process behaves, so this test starts one.
+        launchHarness(noStream: true, includeVisualFixtures: true, freshProcess: true)
         XCTAssertGreaterThanOrEqual(waitForDiagnosticAtLeast("diag.visualTools", minimum: 9, timeout: 6), 9)
 
         let scroll = app.descendants(matching: .any)["harness.notebook.scroll"]

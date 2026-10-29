@@ -6,6 +6,8 @@ import XCTest
 /// fixture data and synthetic streaming.
 @MainActor
 final class UIHangHarnessUITests: UIHarnessTestCase {
+    /// Every test drives harness screens only; the app keeps one launch per launch configuration.
+    override class var reusesLaunch: Bool { true }
 
     private var stressModeEnabled: Bool {
         ProcessInfo.processInfo.environment["PI_UI_HANG_STRESS"] == "1"

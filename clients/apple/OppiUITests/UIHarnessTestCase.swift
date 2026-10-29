@@ -21,6 +21,32 @@ class UIHarnessTestCase: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Override to `true` in a class whose tests only drive harness screens and
+    /// leave nothing that survives an in-process reset (`ReusedHarnessLaunch`).
+    /// The class then keeps one app launch across tests that ask for the same
+    /// launch configuration; each test starts after the app has re-run the
+    /// launch contract's reset and rebuilt the harness root, and fails with the
+    /// stale generation when that did not take. Classes that need a fresh
+    /// process per test (a relaunch, a route, an E2E pairing) keep the default;
+    /// one test of a reusing class can pass `freshProcess: true` to `launchHarness`.
+    class var reusesLaunch: Bool { false }
+
+    private static var reuseOwner: String { String(describing: self) }
+
+    override class func tearDown() {
+        MainActor.assumeIsolated { ReusedHarnessLaunch.discard(owner: reuseOwner) }
+        super.tearDown()
+    }
+
+    override func tearDownWithError() throws {
+        // A failed test can leave state a reset does not clear (a stuck gesture,
+        // a hung main thread); the next test launches fresh instead.
+        if ReusedHarnessLaunch.isEnabled(optedIn: Self.reusesLaunch), (testRun?.totalFailureCount ?? 0) > 0 {
+            ReusedHarnessLaunch.discard(owner: Self.reuseOwner)
+        }
+        try super.tearDownWithError()
+    }
+
     func launchHarness(
         noStream: Bool,
         includeVisualFixtures: Bool = false,
@@ -29,21 +55,42 @@ class UIHarnessTestCase: XCTestCase {
         includeWriteMarkdownFixture: Bool = false,
         assistantOverlapFixture: Bool = false,
         realBusyLane: Bool = false,
-        tailFillerRows: Int = 0
+        tailFillerRows: Int = 0,
+        freshProcess: Bool = false
     ) {
-        app = OppiTestLaunch.makeApp()
-        app.launchArguments.append("--ui-hang-harness")
-        app.launchEnvironment["PI_UI_HANG_HARNESS"] = "1"
-        app.launchEnvironment["PI_UI_HANG_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["PI_UI_HANG_MIXED_CONTENT"] = mixedContent ? "1" : "0"
-        app.launchEnvironment["PI_UI_HANG_NO_STREAM"] = noStream ? "1" : "0"
-        app.launchEnvironment["PI_UI_HANG_INCLUDE_VISUAL_FIXTURES"] = includeVisualFixtures ? "1" : "0"
-        app.launchEnvironment["PI_UI_HANG_INCLUDE_WRITE_MD_FIXTURE"] = includeWriteMarkdownFixture ? "1" : "0"
-        app.launchEnvironment["PI_UI_HANG_QUEUE_HARNESS"] = queueHarness ? "1" : "0"
-        app.launchEnvironment["PI_UI_HANG_ASSISTANT_OVERLAP_FIXTURE"] = assistantOverlapFixture ? "1" : "0"
-        app.launchEnvironment["PI_UI_HANG_REAL_BUSY"] = realBusyLane ? "1" : "0"
-        app.launchEnvironment["PI_UI_HANG_TAIL_FILLER_ROWS"] = String(tailFillerRows)
-        app.launch()
+        var environment = [
+            "PI_UI_HANG_HARNESS": "1",
+            "PI_UI_HANG_UI_TEST_MODE": "1",
+            "PI_UI_HANG_MIXED_CONTENT": mixedContent ? "1" : "0",
+            "PI_UI_HANG_NO_STREAM": noStream ? "1" : "0",
+            "PI_UI_HANG_INCLUDE_VISUAL_FIXTURES": includeVisualFixtures ? "1" : "0",
+            "PI_UI_HANG_INCLUDE_WRITE_MD_FIXTURE": includeWriteMarkdownFixture ? "1" : "0",
+            "PI_UI_HANG_QUEUE_HARNESS": queueHarness ? "1" : "0",
+            "PI_UI_HANG_ASSISTANT_OVERLAP_FIXTURE": assistantOverlapFixture ? "1" : "0",
+            "PI_UI_HANG_REAL_BUSY": realBusyLane ? "1" : "0",
+            "PI_UI_HANG_TAIL_FILLER_ROWS": String(tailFillerRows),
+        ]
+        let launch = { () -> XCUIApplication in
+            let application = OppiTestLaunch.makeApp()
+            application.launchArguments.append("--ui-hang-harness")
+            application.launchEnvironment.merge(environment) { _, new in new }
+            application.launch()
+            return application
+        }
+
+        if ReusedHarnessLaunch.isEnabled(optedIn: Self.reusesLaunch) {
+            environment[OppiTestLaunch.reuseLaunchKey] = "1"
+            let signature = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
+            app = ReusedHarnessLaunch.app(
+                owner: Self.reuseOwner,
+                signature: signature,
+                readyID: "harness.ready",
+                freshProcess: freshProcess,
+                launch: launch
+            )
+        } else {
+            app = launch()
+        }
 
         XCTAssertTrue(
             app.descendants(matching: .any)["harness.ready"].waitForExistence(timeout: 10),

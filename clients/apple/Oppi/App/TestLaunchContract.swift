@@ -12,6 +12,11 @@ import UIKit
 ///   draft stores, and pin What's New as seen for this build. The same token on
 ///   a later launch (a relaunch of the same test app) keeps everything.
 /// - `-dev.chenda.Oppi.test.animations NO`: UIKit animations off for the launch.
+/// - `OPPI_TEST_REUSE_LAUNCH=1` (launch environment): a debug harness or
+///   preview keeps running across tests. The test posts the Darwin notification
+///   `dev.chenda.Oppi.test.reset` with a generation in its state; the app runs
+///   the reset again in process, rebuilds the harness root, and publishes the
+///   generation as `harness.reset.generation` (`HarnessLaunchReset`).
 ///
 /// These keys are repeated in `QAVerificationSupport/OppiTestLaunch.swift`.
 enum TestLaunchContract {
@@ -22,9 +27,39 @@ enum TestLaunchContract {
     /// First thing at launch, before any store reads defaults or any scene mounts.
     @MainActor
     static func applyAtLaunch(defaults: UserDefaults = .standard) {
+        let state = persistentState(defaults: defaults)
         applyReset(
             token: defaults.string(forKey: resetTokenKey),
             tokenStore: defaults,
+            cleared: state.cleared,
+            directories: state.directories
+        )
+        if defaults.object(forKey: animationsKey) != nil, !defaults.bool(forKey: animationsKey) {
+            UIView.setAnimationsEnabled(false)
+        }
+    }
+
+    /// The same reset, run again inside a live process for a launch the test
+    /// reuses across tests (`HarnessLaunchReset`): each `generation` is a new
+    /// token, so the contract clears what the earlier test left. Nothing
+    /// here writes defaults except the contract's own bookkeeping.
+    @MainActor
+    static func applyInProcessReset(generation: UInt64, defaults: UserDefaults = .standard) {
+        let state = persistentState(defaults: defaults)
+        let launchToken = defaults.string(forKey: resetTokenKey) ?? "launch"
+        applyReset(
+            token: "\(launchToken)#reuse\(generation)",
+            tokenStore: defaults,
+            cleared: state.cleared,
+            directories: state.directories
+        )
+    }
+
+    @MainActor
+    private static func persistentState(
+        defaults: UserDefaults
+    ) -> (cleared: [(defaults: UserDefaults, domain: String)], directories: [URL]) {
+        (
             cleared: [
                 (defaults, AppIdentifiers.subsystem),
                 (SharedConstants.sharedDefaults, SharedConstants.appGroupIdentifier),
@@ -34,9 +69,6 @@ enum TestLaunchContract {
                 WorkspaceFileDraftStore.shared.directory,
             ]
         )
-        if defaults.object(forKey: animationsKey) != nil, !defaults.bool(forKey: animationsKey) {
-            UIView.setAnimationsEnabled(false)
-        }
     }
 
     /// Clears each `cleared` persistent domain through its own `UserDefaults`

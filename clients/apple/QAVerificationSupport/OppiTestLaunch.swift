@@ -1,3 +1,4 @@
+import notify
 import XCTest
 
 /// The one place UI and E2E tests build the Oppi `XCUIApplication`
@@ -10,6 +11,10 @@ import XCTest
 enum OppiTestLaunch {
     static let resetTokenKey = "dev.chenda.Oppi.test.resetToken"
     static let animationsKey = "dev.chenda.Oppi.test.animations"
+    /// Launch environment for a debug harness or preview whose launch a test
+    /// class reuses across tests (`ReusedHarnessLaunch`).
+    static let reuseLaunchKey = "OPPI_TEST_REUSE_LAUNCH"
+    static let resetNotification = "dev.chenda.Oppi.test.reset"
 
     /// One token for the whole test process. The E2E target uses it for every
     /// launch, plain `XCTestCase` previews included: only the first launch
@@ -82,5 +87,17 @@ enum OppiTestLaunch {
             arguments += ["-\(animationsKey)", "NO"]
         }
         app.launchArguments = arguments
+    }
+
+    /// Asks a launch started with `reuseLaunchKey` to run the reset contract
+    /// again in process and rebuild its harness root. The generation travels as
+    /// the Darwin notification's state; the app publishes it back as
+    /// `harness.reset.generation`, which is how the caller knows the reset took.
+    static func requestInProcessReset(generation: UInt64) {
+        var token: Int32 = NOTIFY_TOKEN_INVALID
+        guard notify_register_check(resetNotification, &token) == NOTIFY_STATUS_OK else { return }
+        notify_set_state(token, generation)
+        notify_post(resetNotification)
+        notify_cancel(token)
     }
 }
