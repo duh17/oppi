@@ -34,6 +34,25 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         didSet { setNeedsUpdateProperties() }
     }
     private var loadTask: Task<Void, Never>?
+    private var isOnScreen = false
+    /// The server and API client the last load started with. The page reads
+    /// both in `updateProperties()`, so a connection that comes up, drops, or
+    /// moves to another server reloads the list without a Retry.
+    private var loadedSource: LoadSource?
+    /// The server `agents` came from.
+    private var agentsServerId: String?
+
+    private struct LoadSource: Equatable {
+        let serverId: String?
+        let client: ObjectIdentifier?
+    }
+
+    private var currentSource: LoadSource {
+        LoadSource(
+            serverId: root.coordinator.activeServerId,
+            client: root.coordinator.activeConnection.apiClient.map(ObjectIdentifier.init)
+        )
+    }
 
     init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
         self.root = root
@@ -77,8 +96,8 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
         // Like the SwiftUI `.task` it replaces, a load each time it shows.
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in await self?.loadAgents() }
+        isOnScreen = true
+        startLoad()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -88,6 +107,7 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        isOnScreen = false
         loadTask?.cancel()
     }
 
@@ -100,6 +120,8 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         super.updateProperties()
         ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         ControlScreenList.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
+        // The connection or the server changed under the screen: load again.
+        if isOnScreen, currentSource != loadedSource { startLoad() }
         applySnapshot()
     }
 
@@ -139,8 +161,9 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         }
         let state = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
             guard let self else { return }
-            if let message = error {
-                cell.configure(.failure(message, retry: { [weak self] in self?.retry() }), identifier: "agents.state")
+            // A Retry keeps its row and turns it into the loading row.
+            if !isLoading, let message = error {
+                cell.configure(.failure(message, retry: { [weak self] in self?.startLoad() }), identifier: "agents.state")
             } else {
                 cell.configure(.loading("Loading saved Agents…"), identifier: "agents.state")
             }
@@ -310,21 +333,28 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
 
     private func refresh() {
         loadTask?.cancel()
+        loadedSource = currentSource
         loadTask = Task { [weak self] in
             await self?.loadAgents()
             self?.refreshControl.endRefreshing()
         }
     }
 
-    /// The state row's Retry: the failure clears so the load shows as loading.
-    private func retry() {
-        error = nil
+    private func startLoad() {
         loadTask?.cancel()
+        loadedSource = currentSource
         loadTask = Task { [weak self] in await self?.loadAgents() }
     }
 
     private func loadAgents() async {
+        // Agents of another server never stay up while this server loads.
+        if agentsServerId != root.coordinator.activeServerId {
+            agents = []
+            agentsServerId = nil
+        }
         guard let apiClient = root.coordinator.activeConnection.apiClient else {
+            // A cancelled load leaves the flag to the load that replaced it.
+            isLoading = false
             error = "Server offline"
             return
         }
@@ -333,12 +363,19 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         defer { if !Task.isCancelled { isLoading = false } }
         do {
             let loaded = try await apiClient.listAgents()
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isCurrent(apiClient) else { return }
             agents = loaded
+            agentsServerId = root.coordinator.activeServerId
             error = nil
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isCurrent(apiClient) else { return }
             self.error = error.localizedDescription
         }
+    }
+
+    /// Whether `apiClient` still serves the active server: an answer that
+    /// arrives after the connection or the server changed is not this list's.
+    private func isCurrent(_ apiClient: APIClient) -> Bool {
+        root.coordinator.activeConnection.apiClient === apiClient
     }
 }

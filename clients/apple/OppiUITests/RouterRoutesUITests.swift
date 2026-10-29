@@ -406,19 +406,22 @@ final class RouterRoutesUITests: XCTestCase {
         app.buttons["workspace.agents.open"].tap()
         let agents = app.navigationBars["Agents"]
         XCTAssertTrue(agents.waitForExistence(timeout: 5), "Agents did not open in the UIKit bar")
-        // The preview shell's server answers nothing: the list says so in a row with Retry, not an alert.
+        // The shell's paired server has a client (`switchToServer` needs one) but no host answers, so
+        // the load fails and the list says so in a row with Retry, not an alert. The "Server offline"
+        // wording (no client at all) is covered by AgentListViewControllerTests and `agents-offline`.
         let offline = app.buttons["agents.state"]
         // Only a state row with a Retry is a button; a loading row is plain text.
         XCTAssertTrue(offline.waitForExistence(timeout: 5), "Agents has no inline state row with Retry")
-        XCTAssertFalse(app.alerts.firstMatch.exists, "Offline Agents must not raise an alert")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Agents and Pi report a failed load in a row, never an alert")
         app.buttons["agents.row.pi"].tap()
         XCTAssertTrue(app.navigationBars["Pi"].waitForExistence(timeout: 5), "Agents did not push Pi")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Agents and Pi report a failed load in a row, never an alert")
         attachScreenshot("shell-agents-pi")
         assertRunning()
         app.buttons["BackButton"].firstMatch.tap()
         XCTAssertTrue(agents.waitForExistence(timeout: 5), "Back must return to Agents")
         XCTAssertTrue(app.buttons["agents.state"].waitForExistence(timeout: 5), "Back must show the offline row again")
-        XCTAssertFalse(app.alerts.firstMatch.exists, "Offline Agents must not raise an alert")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Agents and Pi report a failed load in a row, never an alert")
         if !isSplit {
             app.buttons["BackButton"].tap()
             XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Agents")

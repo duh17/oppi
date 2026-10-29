@@ -5,8 +5,8 @@ import UIKit
 /// Oppi bar, which starts a guided session that edits SYSTEM.md.
 @MainActor
 final class PiAgentDetailViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case identity, prompt, tools }
-    private enum Item: Hashable { case identity, file, prompt, tools }
+    private enum Section: Hashable { case identity, state, prompt, tools }
+    private enum Item: Hashable { case identity, state, file, prompt, tools }
 
     private let root: AppRootEnvironment
     private let collectionView = ControlScreenList.makeCollectionView()
@@ -23,6 +23,11 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         didSet { setNeedsUpdateProperties() }
     }
     private var isLoading = false {
+        didSet { setNeedsUpdateProperties() }
+    }
+    /// Why the last load failed. It shows as a state row with Retry, never an
+    /// alert; `tools.error` (a failed save) is the only alert.
+    private var loadError: String? {
         didSet { setNeedsUpdateProperties() }
     }
     private var showsFilePromptReview = false {
@@ -79,8 +84,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         super.viewIsAppearing(animated)
         // Coming back from Tools keeps the selection it saved.
         guard !tools.hasLoadedTools else { return }
-        loadTask?.cancel()
-        loadTask = Task { [weak self] in await self?.load() }
+        startLoad()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -91,7 +95,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         for presenter in [fileReview, defaultPromptViewer] { presenter.sync() }
-        // An error that arrived while the screen was off screen shows now.
+        // A failed save that arrived while the screen was off screen shows now.
         setNeedsUpdateProperties()
     }
 
@@ -113,6 +117,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         _ = tools.defaultTools
         applySnapshot()
         updateModals()
+        // A failed save of the tools, which the Tools page made.
         errorAlert.show(title: "Pi", message: tools.error, from: self) { [tools] in tools.error = nil }
     }
 
@@ -121,8 +126,11 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     private func applySnapshot() {
         guard let dataSource else { return }
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.identity, .prompt, .tools])
+        snapshot.appendSections([.identity])
+        if loadError != nil { snapshot.appendSections([.state]) }
+        snapshot.appendSections([.prompt, .tools])
         snapshot.appendItems([.identity], toSection: .identity)
+        if loadError != nil { snapshot.appendItems([.state], toSection: .state) }
         snapshot.appendItems([.file, .prompt], toSection: .prompt)
         snapshot.appendItems([.tools], toSection: .tools)
         snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
@@ -132,6 +140,15 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     private func installDataSource() {
         let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
             self?.configure(cell, item: item)
+        }
+        let state = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
+            guard let self else { return }
+            // A Retry keeps its row and turns it into the loading row.
+            if !isLoading, let message = loadError {
+                cell.configure(.failure(message, retry: { [weak self] in self?.startLoad() }), identifier: "agents.pi.state")
+            } else {
+                cell.configure(.loading("Loading Pi settings…"), identifier: "agents.pi.state")
+            }
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
             elementKind: UICollectionView.elementKindSectionHeader
@@ -153,7 +170,11 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             view.contentConfiguration = content
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
+            if case .state = item {
+                collectionView.dequeueConfiguredReusableCell(using: state, for: indexPath, item: item)
+            } else {
+                collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
+            }
         }
         dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
             kind == UICollectionView.elementKindSectionHeader
@@ -166,6 +187,8 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         let palette = palette
         ControlScreenList.background(cell, grouped: true, palette: palette)
         switch item {
+        case .state:
+            break // drawn by the state registration, never by this cell
         case .identity:
             ControlScreenList.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
@@ -298,8 +321,18 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         }
     }
 
+    private func startLoad() {
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in await self?.load() }
+    }
+
     private func load() async {
-        guard let apiClient = root.coordinator.activeConnection.apiClient else { return }
+        guard let apiClient = root.coordinator.activeConnection.apiClient else {
+            // A cancelled load leaves the flag to the load that replaced it.
+            isLoading = false
+            loadError = "Server offline"
+            return
+        }
         isLoading = true
         // A replaced load leaves the flag to the load that replaced it.
         defer { if !Task.isCancelled { isLoading = false } }
@@ -316,10 +349,15 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
                 builtInTools: catalog.builtInTools,
                 optionalTools: catalog.optionalTools ?? []
             )
-            tools.error = nil
+            loadError = nil
         } catch {
-            guard !Task.isCancelled else { return }
-            tools.error = error.localizedDescription
+            // A load cancelled under the page (Back, a replaced connection) is not a failure to report.
+            guard !Task.isCancelled, !Self.isCancellation(error) else { return }
+            loadError = error.localizedDescription
         }
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 }
