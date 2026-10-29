@@ -332,25 +332,53 @@ final class SSHTerminalChannel {
     }
 
     /// Interprets queued events in order until the session ends. Each wake
-    /// drains everything waiting, so consecutive output chunks become one
-    /// terminal write. A stuck consumer past the queue cap fails the session.
+    /// drains everything waiting, so consecutive output chunks share terminal
+    /// writes. A stuck consumer past the queue cap fails the session.
     func consume(_ queue: SSHTerminalEventQueue) async {
         for await _ in queue.wake {
-            process(queue.drain(), releasingTo: queue)
+            await process(queue.drain(), releasingTo: queue)
             if !connected { break }
         }
         queue.finish()
         if connected { close(reason: "The SSH connection closed.") }
     }
 
-    private func process(_ items: [SSHTerminalEventQueue.Item], releasingTo queue: SSHTerminalEventQueue) {
+    /// Consecutive output chunks are joined into one terminal write of about
+    /// this many bytes (two SSH packets), so a burst is parsed in steps the
+    /// clock below can check. A step is never smaller than one data item, which
+    /// today is at most one SSH packet (32 KiB, `SSHConnection.maximumPacketSize`),
+    /// so raising the packet size would weaken the slice budget.
+    static let ingestWriteBytes = 64 * 1024
+    /// The longest the main actor parses one burst before it yields, so
+    /// display-link frames and input run between steps. Half a 120 Hz frame.
+    /// A time budget, not a byte one: parse cost per byte differs about 25x
+    /// between workloads (SSHTerminalThroughputBench) and again between devices.
+    static let ingestSliceBudget = Duration.milliseconds(4)
+
+    /// Events keep their order across yields: the next batch is drained only
+    /// after this one finished, and a non-data event is applied only after
+    /// every byte queued before it. Interpreted bytes are released before each
+    /// yield, so the remote can resume while the main actor is away.
+    private func process(_ items: [SSHTerminalEventQueue.Item], releasingTo queue: SSHTerminalEventQueue) async {
+        let clock = ContinuousClock()
+        var sliceStart = clock.now
         var run = Data()
-        var dataBytes = 0
+        var unreleased = 0
         for item in items {
             switch item {
             case .event(.data(let bytes)):
-                dataBytes += bytes.count
+                unreleased += bytes.count
                 run.append(bytes)
+                guard run.count >= Self.ingestWriteBytes else { continue }
+                interpret(run)
+                run.removeAll(keepingCapacity: true)
+                guard clock.now - sliceStart >= Self.ingestSliceBudget else { continue }
+                queue.release(bytes: unreleased)
+                unreleased = 0
+                await Task.yield()
+                sliceStart = clock.now
+                // A close while yielded (user, background, registry) ends the burst.
+                guard connected else { return }
                 continue
             case .event(let event):
                 interpret(run)
@@ -364,7 +392,7 @@ final class SSHTerminalChannel {
             if !connected { break }
         }
         interpret(run)
-        queue.release(bytes: dataBytes)
+        queue.release(bytes: unreleased)
     }
 
     private var exitSubject: String { command.map { "`\($0)`" } ?? "Shell" }

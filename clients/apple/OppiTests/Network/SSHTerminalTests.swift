@@ -1369,6 +1369,28 @@ struct SSHTerminalTests {
         #expect(channel.engine.frame().rows[0].prefix(6).map(\.text).joined() == "onetwo")
     }
 
+    /// A burst is parsed in slices with the main actor free between them, and a
+    /// close that runs in such a gap ends the burst: nothing after it is
+    /// interpreted. The title queued after the burst is the proof: if the
+    /// consumer ran the whole burst in one go, it would already be set.
+    @Test func outputBurstYieldsBetweenSlicesAndACloseInAGapEndsIt() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let queue = SSHTerminalEventQueue(limit: 64 * 1024 * 1024)
+        // About 8 MiB of styled lines: far beyond one slice budget of parsing.
+        let chunk = Data(String(repeating: "\u{1b}[1;31mx\u{1b}[m\u{1b}[2K\r\n", count: 1024).utf8)
+        for _ in 0..<(8 * 1024 * 1024 / chunk.count) { queue.push(.data(chunk)) }
+        queue.push(.data(Data("\u{1b}]2;late\u{7}".utf8)))
+        queue.push(.exitStatus(0))
+        let before = channel.engine.changeCount
+        let consumer = Task { await channel.consume(queue) }
+        // This main-actor code runs mid-burst only if the consumer yields.
+        while channel.engine.changeCount == before { await Task.yield() }
+        channel.close(reason: "Closed by the user.")
+        await consumer.value
+        #expect(channel.title.isEmpty)
+    }
+
     @Test func directKeyboardTapClicksWhenTheAppWantsThemAndOtherwiseToggles() {
         #expect(SSHTerminalTapAction.resolve(
             terminalTyping: true, keyboardUp: false, otherInputFocused: false, appWantsClicks: true
