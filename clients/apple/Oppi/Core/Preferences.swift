@@ -518,6 +518,12 @@ enum AppPreferences {
         static func setLayout(_ layout: SSHTerminalBarLayout) {
             preference.save(layout, in: .standard)
         }
+
+        /// Forgets the saved layout, so the bar follows the default again,
+        /// including a default a later version changes.
+        static func reset() {
+            preference.reset(in: .standard)
+        }
     }
 
     // MARK: - Appearance

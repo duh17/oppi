@@ -24,7 +24,6 @@ struct BarLayout<Action: BarLayoutAction>: Hashable, Sendable {
     /// A saved layout is used exactly as saved; an action added after it was
     /// saved is appended to its order and, not being in its `shown`, offered
     /// in the menu.
-    static var defaultShown: Set<Action> { Action.defaultShown }
     static var defaultValue: Self { Self(order: Array(Action.allCases), shown: Action.defaultShown) }
 
     /// The bar someone gets without choosing one.

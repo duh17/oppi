@@ -270,7 +270,7 @@ struct ScreenshotPreviewView: View {
         case "chat-top-bar-default":
             ChatTopBarScreenshotPreview(
                 order: ChatTopBarAction.allCases,
-                shown: ChatTopBarLayout.defaultShown
+                shown: ChatTopBarAction.defaultShown
             )
         case "chat-top-bar-terminal":
             ChatTopBarScreenshotPreview(

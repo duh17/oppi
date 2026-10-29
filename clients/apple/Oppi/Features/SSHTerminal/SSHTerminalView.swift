@@ -53,13 +53,30 @@ enum SSHTerminalBottomBar {
     /// The least room between two pills.
     static let pillGap: CGFloat = 8
 
-    /// How many buttons the middle pill has room for between Back and the
-    /// trailing pill, in a bar `width` wide inside `safeInsets`. Whatever is
-    /// left over goes to the … menu.
-    static func middleCapacity(width: CGFloat, safeInsets: UIEdgeInsets, trailingWidth: CGFloat) -> Int {
+    /// How many buttons the middle pill has room for between Back and a
+    /// trailing pill of `trailingItems` 44 pt items, in a bar `width` wide
+    /// inside `safeInsets`. Whatever is left over goes to the … menu.
+    static func middleCapacity(width: CGFloat, safeInsets: UIEdgeInsets, trailingItems: Int) -> Int {
         let room = width - safeInsets.left - safeInsets.right - 2 * sideInset
-            - SSHTerminalGlassPill.height - trailingWidth - 2 * pillGap
+            - SSHTerminalGlassPill.height - CGFloat(trailingItems) * SSHTerminalGlassPill.itemWidth - 2 * pillGap
         return max(0, Int((room / SSHTerminalGlassPill.itemWidth).rounded(.down)))
+    }
+}
+
+/// What the middle pill's capacity depends on besides the layout and the
+/// trailing pill: the bar's width and its side safe-area insets.
+struct SSHTerminalBarFit: Equatable {
+    var width: CGFloat = 0
+    var left: CGFloat = 0
+    var right: CGFloat = 0
+
+    init() {}
+
+    @MainActor
+    init(_ view: UIView) {
+        width = view.bounds.width
+        left = view.safeAreaInsets.left
+        right = view.safeAreaInsets.right
     }
 }
 

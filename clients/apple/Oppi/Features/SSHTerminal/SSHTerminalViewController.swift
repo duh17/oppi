@@ -46,8 +46,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// so the menu opened now matches the bar on screen.
     private var barPlacement = SSHTerminalBarPlacement(middle: [], trailing: [], menu: [])
     private var barLayoutObserver: NSObjectProtocol?
-    /// The width the middle pill's capacity was last worked out for.
-    private var barWidth: CGFloat = 0
+    /// The width and side insets the middle pill's capacity was last worked out for.
+    private var barFit = SSHTerminalBarFit()
     private var menuTitle: String?
     private var composerBar: ComposerBarController?
     private var composerSession: SSHTerminalComposerHost?
@@ -255,9 +255,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         super.viewDidLayoutSubviews()
         updateComposerHeight()
         updateCursorShift()
-        // A rotation or a resized iPad window changes how many middle
-        // buttons fit.
-        if abs(view.bounds.width - barWidth) > 0.5 { setNeedsUpdateProperties() }
+        // A rotation, a resized iPad window, or a notch moving sides changes
+        // how many middle buttons fit.
+        if SSHTerminalBarFit(view) != barFit { setNeedsUpdateProperties() }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -457,6 +457,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         backPill.button.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .touchUpInside)
         morePill.herdr.addAction(UIAction { [weak self] _ in self?.showHerdr() }, for: .touchUpInside)
         middlePill.perform = { [weak self] action in self?.perform(action) }
+        middlePill.deliverPaste = { [weak self] items in self?.gridView?.paste(itemProviders: items) }
         connectionBanner.onReconnect = { [weak self] in self?.reconnect() }
         noticeCard.onDismiss = { [weak self] key in
             self?.attention.dismiss(key)
@@ -563,7 +564,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// moves above the grid's top.
     private func installGrid(_ grid: SSHTerminalGridView) {
         gridView = grid
-        middlePill.pasteTarget = grid
         gridClip.addSubview(grid)
         let bottom = grid.bottomAnchor.constraint(
             equalTo: view.keyboardLayoutGuide.topAnchor,
@@ -807,10 +807,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     /// The actions this terminal can offer now. One that could only fail is
     /// neither drawn nor in the menu.
-    private var availableBarActions: Set<SSHTerminalBarAction> {
+    private func availableBarActions(openTerminals: Int) -> Set<SSHTerminalBarAction> {
         var available = Set(SSHTerminalBarAction.allCases)
         if !herdr.available { available.remove(.herdr) }
-        if (session?.openTerminals().count ?? 0) < 2 { available.remove(.switcher) }
+        if openTerminals < 2 { available.remove(.switcher) }
         // The Files browser over this terminal's folder needs the host to
         // report one and to be a paired Oppi server.
         if channel.workingDirectory.isEmpty || pairedServer == nil { available.remove(.browseFiles) }
@@ -831,9 +831,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         case .keyboard: showTerminalKeyboard()
         case .chatBar: focusChatBar()
         case .escape, .interrupt, .tab, .up, .down, .enter:
-            guard canSendKeys else { return }
             channel.keys(action.strokes)
-        case .paste: break // The system paste control delivers to the grid itself.
+        case .paste: break // The system paste control delivers through middlePill.deliverPaste.
         case .browseFiles: browseFilesHere()
         case .herdr: showHerdr()
         case .switcher: break // A menu, not an action.
@@ -863,29 +862,33 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             attention.glyphFrame.rect = statusGlyph.glyphFrame.rect
         }
         let foreground = lastTerminalColors?.foreground.map(UIColor.init)
-        let available = availableBarActions
+        let openTerminals = session?.openTerminals().count ?? 0
+        let available = availableBarActions(openTerminals: openTerminals)
         let trailing = barLayout.bar(available: available).filter { $0.group == .trailing }
         morePill.apply(
             themeID: themeID,
             trailing: trailing,
             herdrWaiting: herdr.available ? herdr.needsAttention : nil,
             showsStatus: showsStatus,
-            openTerminals: session?.openTerminals().count ?? 0,
+            openTerminals: openTerminals,
             foreground: foreground
         )
         installSwitcherMenu()
-        // The trailing pill's width is settled now; the middle gets the rest.
-        barWidth = view.bounds.width
-        let trailingWidth = morePill.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+        // The middle gets what the trailing pill's 44 pt items (status, its
+        // actions, and …) leave.
+        barFit = SSHTerminalBarFit(view)
         barPlacement = barLayout.placement(
             available: available,
             middleCapacity: SSHTerminalBottomBar.middleCapacity(
-                width: view.bounds.width, safeInsets: view.safeAreaInsets, trailingWidth: trailingWidth
+                width: view.bounds.width,
+                safeInsets: view.safeAreaInsets,
+                trailingItems: (showsStatus ? 1 : 0) + trailing.count + 1
             )
         )
         middlePill.show(barPlacement.middle)
         middlePill.apply(
             tint: foreground ?? UIColor(themeID.palette.fg),
+            background: lastTerminalColors?.background.map(UIColor.init) ?? UIColor(themeID.palette.bg),
             selected: selectedInput,
             keysEnabled: canSendKeys
         )
@@ -1469,6 +1472,16 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func showTerminalKeyboard() {
+        // During a password prompt typing is already the terminal's: bring its
+        // keyboard back without making that the user's choice, so the chat bar
+        // still returns (with the keyboard) when the prompt ends.
+        if automaticTerminalTyping {
+            refocusAfterSecurePrompt = true
+            DispatchQueue.main.async { [weak self] in
+                _ = self?.gridView?.becomeFirstResponder()
+            }
+            return
+        }
         manualInputChoice()
         modeOverride = .terminal
         DispatchQueue.main.async { [weak self] in
@@ -1496,13 +1509,14 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     /// Typing moved off the chat bar automatically for a password prompt; the
-    /// input bar comes back when that prompt ends. Any choice the user makes
-    /// in the meantime (a tap on the bar or the grid, **Use Chat Bar**, **Type
-    /// in Terminal**) wins over the automatic switch back.
+    /// input bar comes back when that prompt ends. Choosing **Chat Bar** in the
+    /// meantime wins over the automatic switch back. **Type in Terminal** only
+    /// brings the keyboard back, and a tap on the grid is never a choice.
     private var automaticTerminalTyping = false
     private var modeOverrideBeforeSecurePrompt: SSHTerminalInputMode?
     /// Whether ending the automatic switch focuses the chat bar it puts back.
-    /// Hiding the keyboard during the prompt keeps the bar, not the keyboard.
+    /// Hiding the keyboard during the prompt keeps the bar, not the keyboard,
+    /// until Type in Terminal brings it back.
     private var refocusAfterSecurePrompt = true
 
     private func manualInputChoice() {

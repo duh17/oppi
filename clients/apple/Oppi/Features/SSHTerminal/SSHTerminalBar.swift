@@ -1,5 +1,6 @@
 import GhosttyVt
 import UIKit
+import UniformTypeIdentifiers
 
 /// A button the SSH terminal's bottom bar can show. Settings > SSH Terminal >
 /// Bottom Bar picks which and in what order (`SSHTerminalBarLayout`), and the
@@ -132,7 +133,6 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
         switch self {
         case .herdr: "sshTerminal.herdr"
         case .switcher: "sshTerminal.switcher"
-        case .paste: "sshTerminal.bar.paste"
         default: "sshTerminal.bar.\(rawValue)"
         }
     }
@@ -191,18 +191,37 @@ extension BarLayout where Action == SSHTerminalBarAction {
 /// Rebuilt only when that list changes. Every button runs `perform`, so a tap,
 /// VoiceOver activation, and the … menu item for the same action do the same
 /// thing. Paste is the system paste control, which reads the clipboard
-/// without the Allow Paste alert and delivers to the grid.
+/// without the Allow Paste alert. Its target is this pill, not the grid: with
+/// the grid as its target, a tap made the grid first responder, which raised
+/// the keyboard (and resized the shell) for a paste that needs none, and an
+/// image did not arrive. The pill cannot become first responder, so the items
+/// arrive here with the keyboard down and go on to the grid through
+/// `deliverPaste`.
 final class SSHTerminalBarMiddlePill: SSHTerminalGlassPill {
     var perform: (SSHTerminalBarAction) -> Void = { _ in }
-    /// Where the paste control delivers: the grid.
-    weak var pasteTarget: UIPasteConfigurationSupporting? {
-        didSet { pasteControl?.target = pasteTarget }
-    }
+    /// What the paste control's items are handed to: the grid's paste.
+    var deliverPaste: ([NSItemProvider]) -> Void = { _ in }
 
     private(set) var actions: [SSHTerminalBarAction] = []
     private var buttons: [SSHTerminalBarAction: SSHTerminalPillButton] = [:]
     private var pasteControl: UIPasteControl?
     private var tint: UIColor = .label
+    private var pasteBackground: UIColor = .black
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // What the grid takes: text, or an image it saves on the host.
+        pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [
+            UTType.plainText.identifier, UTType.image.identifier,
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func paste(itemProviders: [NSItemProvider]) {
+        deliverPaste(itemProviders)
+    }
 
     func show(_ next: [SSHTerminalBarAction]) {
         guard next != actions else { return }
@@ -232,17 +251,22 @@ final class SSHTerminalBarMiddlePill: SSHTerminalGlassPill {
     /// `selected` is the input that typing goes to now (`.keyboard` or
     /// `.chatBar`): its button draws filled and carries the selected trait.
     /// Keys dim while there is no connection to send them on.
-    func apply(tint: UIColor, selected: SSHTerminalBarAction?, keysEnabled: Bool) {
+    /// `background` is the terminal's: the paste control draws its capsule in
+    /// it, since iOS will not draw a secure control on a clear background.
+    func apply(tint: UIColor, background: UIColor, selected: SSHTerminalBarAction?, keysEnabled: Bool) {
         // Compared resolved: a theme color is a new dynamic UIColor every pass.
-        let changed = tint.resolvedColor(with: traitCollection) != self.tint.resolvedColor(with: traitCollection)
+        func same(_ one: UIColor, _ two: UIColor) -> Bool {
+            one.resolvedColor(with: traitCollection) == two.resolvedColor(with: traitCollection)
+        }
+        let changed = !same(tint, self.tint) || !same(background, pasteBackground)
+        self.tint = tint
+        pasteBackground = background
         if changed, pasteControl != nil {
             // The paste control takes its colors only when it is made.
-            self.tint = tint
             let shown = actions
             actions = []
             show(shown)
         }
-        self.tint = tint
         for (action, button) in buttons {
             button.apply(tint: tint)
             if action == .keyboard || action == .chatBar {
@@ -261,10 +285,10 @@ final class SSHTerminalBarMiddlePill: SSHTerminalGlassPill {
         style.displayMode = .iconOnly
         style.cornerStyle = .capsule
         style.baseForegroundColor = tint
-        style.baseBackgroundColor = .clear
+        style.baseBackgroundColor = pasteBackground
         let paste = UIPasteControl(configuration: style)
         paste.translatesAutoresizingMaskIntoConstraints = false
-        paste.target = pasteTarget
+        paste.target = self
         paste.accessibilityIdentifier = SSHTerminalBarAction.paste.accessibilityIdentifier
         let width = paste.widthAnchor.constraint(equalToConstant: SSHTerminalGlassPill.itemWidth)
         width.priority = .required - 1

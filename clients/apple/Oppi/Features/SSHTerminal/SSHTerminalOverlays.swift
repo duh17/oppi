@@ -71,9 +71,13 @@ class SSHTerminalGlassPill: UIView {
         if bounds.contains(point), let hit = super.hitTest(point, with: event), hit !== self { return hit }
         // Around the glass: the nearest button's column.
         let buttons = stack.arrangedSubviews.filter { !$0.isHidden && $0.isUserInteractionEnabled }
-        return buttons.min {
+        let nearest = buttons.min {
             abs(convert($0.center, from: stack).x - point.x) < abs(convert($1.center, from: stack).x - point.x)
         }
+        // iOS gives a paste control the clipboard only for a touch inside its
+        // own bounds; one in the strip around it pasted nothing (simulator,
+        // 2026-10-29). That strip is the grid's.
+        return nearest is UIPasteControl ? nil : nearest
     }
 }
 

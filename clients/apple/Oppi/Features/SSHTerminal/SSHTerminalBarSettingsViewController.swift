@@ -71,7 +71,7 @@ final class SSHTerminalBarSettingsViewController: SettingsListViewController<
             SettingsSectionModel(
                 .middle,
                 header: String(localized: "Middle"),
-                footer: String(localized: "A button turned off moves into the \u{2026} menu, except keys and Paste, which the keyboard bars have. Buttons that don't fit the screen move into the menu too."),
+                footer: String(localized: "A button turned off moves into the \u{2026} menu, except keys and Paste, which the keyboard bars have. A button that doesn't fit the screen moves into the menu too, except Paste, which is left out."),
                 items: items(.middle)
             ),
             SettingsSectionModel(
@@ -99,7 +99,8 @@ final class SSHTerminalBarSettingsViewController: SettingsListViewController<
             title: String(localized: "Reset to Default"),
             identifier: "settings.sshTerminal.bar.reset"
         ) { [weak self] in
-            self?.save(.defaultValue)
+            AppPreferences.SSHTerminalBar.reset()
+            self?.setNeedsUpdateProperties()
         }
     }
 

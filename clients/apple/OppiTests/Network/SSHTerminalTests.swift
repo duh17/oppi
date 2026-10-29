@@ -2224,6 +2224,93 @@ struct SSHTerminalTests {
         #expect(textView.text.isEmpty)
     }
 
+    /// Type in Terminal during a password prompt brings back the keyboard the
+    /// user hid; it is not a choice to stay in the terminal, so the chat bar
+    /// still returns when the prompt ends, with the keyboard they brought back.
+    @Test func typeInTerminalDuringAPasswordPromptStillReturnsToTheChatBar() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
+        try await settle(mounted)
+        let grid = try #require(mounted.controller.gridView)
+        let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
+        #expect(draft() != nil, "pi gets the chat bar")
+
+        channel.engine.receive(Data("\r\n[sudo] password for duh: ".utf8))
+        grid.drawFrame()
+        try await settle(mounted)
+        #expect(grid.isFirstResponder, "the prompt is typed into the terminal")
+
+        let strip = try #require(grid.inputAccessoryView)
+        let hide = try #require(mounted.find(in: strip, matching: {
+            $0.accessibilityIdentifier == "sshTerminal.hideKeyboard"
+        }) as? UIButton)
+        hide.sendActions(for: .touchUpInside)
+        try await settle(mounted)
+        #expect(!grid.isFirstResponder)
+
+        let typeInTerminal = try #require(mounted.find {
+            $0.accessibilityIdentifier == "sshTerminal.bar.keyboard"
+        } as? UIButton)
+        typeInTerminal.sendActions(for: .touchUpInside)
+        try await settle(mounted)
+        #expect(grid.isFirstResponder, "Type in Terminal brings the keyboard back")
+        #expect(grid.isSecureTextEntry)
+        #expect(draft() == nil, "the password still cannot reach the draft")
+
+        // The prompt ends when two painted pictures agree it has gone.
+        for _ in 0..<2 {
+            channel.engine.receive(Data("\r\n".utf8))
+            grid.drawFrame()
+            try await settle(mounted)
+        }
+        #expect(!grid.isSecureTextEntry)
+        let textView = try #require(draft(), "the chat bar comes back")
+        #expect(textView.isFirstResponder, "with the keyboard the user brought back")
+    }
+
+    /// The bar's input buttons move typing where they say, and the one in use
+    /// carries the selected trait for VoiceOver (and the filled glyph).
+    @Test func theBarsInputButtonsMoveTypingAndMarkTheInputInUse() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        try await settle(mounted)
+        let grid = try #require(mounted.controller.gridView)
+        let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
+        func button(_ id: String) throws -> UIButton {
+            try #require(mounted.find { $0.accessibilityIdentifier == id } as? UIButton, "\(id)")
+        }
+        func selected(_ id: String) throws -> Bool { try button(id).accessibilityTraits.contains(.selected) }
+
+        // A shell types into the terminal, but nothing starts typing on its own.
+        #expect(try selected("sshTerminal.bar.keyboard"))
+        #expect(try !selected("sshTerminal.bar.chatBar"))
+        #expect(!grid.isFirstResponder)
+        #expect(draft() == nil)
+
+        try button("sshTerminal.bar.chatBar").sendActions(for: .touchUpInside)
+        try await settle(mounted)
+        let textView = try #require(draft(), "Chat Bar brings the chat bar")
+        #expect(textView.isFirstResponder, "and focuses it")
+        #expect(try selected("sshTerminal.bar.chatBar"))
+        #expect(try !selected("sshTerminal.bar.keyboard"))
+
+        try button("sshTerminal.bar.keyboard").sendActions(for: .touchUpInside)
+        try await settle(mounted)
+        #expect(grid.isFirstResponder, "Type in Terminal types into the terminal")
+        #expect(draft() == nil)
+        #expect(try selected("sshTerminal.bar.keyboard"))
+        #expect(try !selected("sshTerminal.bar.chatBar"))
+    }
+
     /// The screen updates its properties on the next runloop pass.
     private func settle(_ mounted: MountedTerminalTestController) async throws {
         for _ in 0..<4 {

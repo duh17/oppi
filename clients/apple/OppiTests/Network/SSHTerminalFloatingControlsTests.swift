@@ -284,6 +284,44 @@ struct SSHTerminalFloatingPillTests {
     }
 }
 
+@Suite("SSH terminal middle pill")
+@MainActor
+struct SSHTerminalBarMiddlePillTests {
+    /// The strip around a bar button reaches it, but not around Paste: iOS
+    /// gives the paste control the clipboard only for a touch inside it, so
+    /// the strip there falls through to the grid instead of pasting nothing.
+    @Test func theStripAroundPasteIsTheGridsButOtherButtonsKeepTheirs() throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let root = UIViewController()
+        window.rootViewController = root
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let host = root.view!
+        let pill = SSHTerminalBarMiddlePill()
+        pill.show([.keyboard, .paste])
+        host.addSubview(pill)
+        NSLayoutConstraint.activate([
+            pill.topAnchor.constraint(equalTo: host.topAnchor, constant: 40),
+            pill.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 40),
+        ])
+        host.layoutIfNeeded()
+        let keyboard = try #require(pill.button(for: .keyboard))
+        let paste = try #require(pill.stack.arrangedSubviews.first { $0 is UIPasteControl })
+        func above(_ view: UIView) -> CGPoint {
+            host.convert(CGPoint(x: view.bounds.midX, y: -3), from: view)
+        }
+        #expect(host.hitTest(above(keyboard), with: nil) === keyboard)
+        #expect(host.hitTest(above(paste), with: nil) === host, "above Paste is not Paste")
+        let inside = host.convert(CGPoint(x: paste.bounds.midX, y: paste.bounds.midY), from: paste)
+        #expect(host.hitTest(inside, with: nil).map { $0.isDescendant(of: paste) } == true, "on Paste is Paste")
+    }
+}
+
 @Suite("SSH terminal bottom bar layout")
 struct SSHTerminalBarPlacementTests {
     private let everything = Set(SSHTerminalBarAction.allCases)
@@ -323,10 +361,10 @@ struct SSHTerminalBarPlacementTests {
     @MainActor
     @Test func theMiddleGetsWhatIsLeftBetweenBackAndTheTrailingPill() {
         // iPhone portrait: 393 pt, Back, and a 4-item trailing pill leave room for 3.
-        #expect(SSHTerminalBottomBar.middleCapacity(width: 393, safeInsets: .zero, trailingWidth: 176) == 3)
+        #expect(SSHTerminalBottomBar.middleCapacity(width: 393, safeInsets: .zero, trailingItems: 4) == 3)
         // Landscape safe-area insets take their share.
         let landscape = UIEdgeInsets(top: 0, left: 59, bottom: 21, right: 59)
-        #expect(SSHTerminalBottomBar.middleCapacity(width: 852, safeInsets: landscape, trailingWidth: 88) == 12)
-        #expect(SSHTerminalBottomBar.middleCapacity(width: 100, safeInsets: .zero, trailingWidth: 88) == 0)
+        #expect(SSHTerminalBottomBar.middleCapacity(width: 852, safeInsets: landscape, trailingItems: 2) == 12)
+        #expect(SSHTerminalBottomBar.middleCapacity(width: 100, safeInsets: .zero, trailingItems: 2) == 0)
     }
 }
