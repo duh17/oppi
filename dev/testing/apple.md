@@ -33,10 +33,13 @@ Nerd Font icons ship in the app as `Oppi/Resources/Fonts/NerdFonts/SymbolsNerdFo
 
 ### Build the terminal engine
 
-The iOS app statically links a pinned libghostty-vt build, without SIMD C++
-libraries. Kitty graphics is compiled in; PNG decode is an embedder callback,
-and file image loads are not enabled. The framework is untracked. A cache miss
-needs exactly Zig 0.16.0 and Xcode with the iOS device and simulator SDKs:
+The iOS app statically links a pinned libghostty-vt build (ReleaseFast with
+SIMD; simdutf and highway are built without libc++ into the archive). Kitty
+graphics is compiled in; PNG decode is an embedder callback, and file image
+loads are not enabled. The framework is untracked. A cache miss needs network
+access and Xcode with the iOS device and simulator SDKs. Ghostty requires
+exactly Zig 0.16.0: the script uses a PATH `zig` at that version, else
+downloads the official release into the cache and checks its SHA-256:
 
 ```bash
 clients/apple/scripts/build-ghostty-vt.sh

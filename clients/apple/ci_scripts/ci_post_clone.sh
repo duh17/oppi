@@ -77,28 +77,6 @@ host_arch() {
   esac
 }
 
-ensure_zig() {
-  if command -v zig >/dev/null 2>&1 && [[ "$(zig version)" == "0.16.0" ]]; then
-    return
-  fi
-  local zarch tarball url
-  case "$(uname -m)" in
-    arm64) zarch="aarch64" ;;
-    x86_64) zarch="x86_64" ;;
-    *)
-      echo "error: unsupported arch $(uname -m)" >&2
-      exit 1
-      ;;
-  esac
-  tarball="zig-${zarch}-macos-0.16.0.tar.xz"
-  url="https://ziglang.org/download/0.16.0/${tarball}"
-  echo "Installing Zig 0.16.0"
-  curl -fsSL "$url" -o "$TOOL_ROOT/$tarball"
-  tar -xJf "$TOOL_ROOT/$tarball" -C "$TOOL_ROOT"
-  ln -sfn "$TOOL_ROOT/zig-${zarch}-macos-0.16.0/zig" "$TOOL_ROOT/bin/zig"
-  [[ "$(zig version)" == "0.16.0" ]]
-}
-
 go_is_new_enough() {
   command -v go >/dev/null 2>&1 || return 1
   local version major minor patch
@@ -139,7 +117,7 @@ mkdir -p "$TOOL_ROOT/bin"
 export PATH="$TOOL_ROOT/bin:$PATH"
 
 oppi_ci_select_xcode
-ensure_zig
+# build-ghostty-vt.sh fetches its own pinned, checksummed Zig on a cache miss.
 ensure_go
 "$ROOT/scripts/ensure-prebuilt-frameworks.sh"
 echo "Vendored iOS frameworks are ready."

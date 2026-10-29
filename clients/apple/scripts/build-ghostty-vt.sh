@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
 # Build the pinned, static VT engine; no Ghostty app, renderer or GUI resources.
 # A cache/vendor hit needs neither Zig nor network access. A cache miss needs
-# Zig 0.16.0 and Xcode with iPhoneOS + iPhoneSimulator SDKs.
+# network access and Xcode with iPhoneOS + iPhoneSimulator SDKs; it uses a
+# PATH Zig only at exactly ZIG_VERSION, else the checksummed official release.
 set -euo pipefail
 
 # main as of 2026-10-13: OSC 7501 program status at spec revision 0.4, whose
 # support reply lists the accepted states and kinds (b7207b2ef).
 COMMIT="7597e85fd0c9c46716632c1a744f13690c1a3572"
-# SIMD stays off so the static lib does not bundle those C++ libraries.
+# ReleaseFast with SIMD, as Ghostty ships it: both Release modes drop Zig's
+# runtime safety checks, so Fast only trades library size for speed, and the
+# vendored simdutf/highway build without libc++ into the static archive. On
+# SSHTerminalThroughputBench this ran 1.4-2.7x the ReleaseSmall no-SIMD build
+# on every workload except long escape codes.
 # Kitty graphics is compiled in. PNG decode is an embedder callback, and
 # file, temporary-file, and shared-memory loads stay off unless a terminal
 # sets those options. Direct and zlib payloads do not need a PNG decoder.
-BUILD_ID="$COMMIT-zig0.16.0-small-nosimd-kitty-v1"
+ZIG_VERSION="0.16.0"
+BUILD_ID="$COMMIT-zig$ZIG_VERSION-fast-simd-kitty-v1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/Vendor/GhosttyVt"
-CACHE="${OPPI_GHOSTTY_VT_CACHE:-$HOME/Library/Caches/oppi-ghostty-vt}/$BUILD_ID"
+CACHE_ROOT="${OPPI_GHOSTTY_VT_CACHE:-$HOME/Library/Caches/oppi-ghostty-vt}"
+CACHE="$CACHE_ROOT/$BUILD_ID"
 WORK="$ROOT/.build/ghostty-vt"
 
 current() {
@@ -43,8 +50,45 @@ if current "$CACHE"; then
     echo "Reused GhosttyVt from $CACHE."
     exit 0
 fi
-command -v zig >/dev/null || { echo 'error: install Zig 0.16.0 to build GhosttyVt' >&2; exit 1; }
-[[ "$(zig version)" == '0.16.0' ]] || { echo 'error: GhosttyVt requires exactly Zig 0.16.0' >&2; exit 1; }
+# Ghostty's build refuses any other Zig, and Homebrew moves past the pin.
+# Runs inside $(...), where errexit is off, so every step returns on failure.
+# Extraction goes to a private directory renamed into place, so a concurrent
+# or interrupted install never leaves a partial toolchain at $dir.
+pinned_zig() {
+    if command -v zig >/dev/null && [[ "$(zig version)" == "$ZIG_VERSION" ]]; then
+        command -v zig
+        return
+    fi
+    local arch sha dir tmp
+    case "$(uname -m)" in
+        arm64) arch=aarch64 sha=b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489 ;;
+        x86_64) arch=x86_64 sha=0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7 ;;
+        *) echo "error: no Zig $ZIG_VERSION download for $(uname -m)" >&2; return 1 ;;
+    esac
+    dir="$CACHE_ROOT/zig-$arch-macos-$ZIG_VERSION"
+    if [[ ! -x "$dir/zig" ]]; then
+        tmp="$CACHE_ROOT/.zig-$ZIG_VERSION.$$"
+        rm -rf "$tmp"
+        mkdir -p "$tmp" || return 1
+        echo "Downloading Zig $ZIG_VERSION" >&2
+        curl -fsSL "https://ziglang.org/download/$ZIG_VERSION/zig-$arch-macos-$ZIG_VERSION.tar.xz" \
+            -o "$tmp/zig.tar.xz" || { rm -rf "$tmp"; return 1; }
+        echo "$sha  $tmp/zig.tar.xz" | shasum -a 256 -c - >&2 || { rm -rf "$tmp"; return 1; }
+        tar -xJf "$tmp/zig.tar.xz" -C "$tmp" || { rm -rf "$tmp"; return 1; }
+        # Another run may have installed it meanwhile; keep theirs. A $dir with
+        # no zig was damaged outside this script (installs arrive by rename), so
+        # replace it. mv onto an existing directory would nest inside it.
+        [[ -x "$dir/zig" ]] || rm -rf "$dir"
+        if [[ ! -e "$dir" ]]; then
+            mv "$tmp/zig-$arch-macos-$ZIG_VERSION" "$dir" || [[ -x "$dir/zig" ]] ||
+                { rm -rf "$tmp"; return 1; }
+        fi
+        rm -rf "$tmp"
+    fi
+    [[ "$("$dir/zig" version)" == "$ZIG_VERSION" ]] || { echo "error: $dir/zig is not $ZIG_VERSION" >&2; return 1; }
+    printf '%s\n' "$dir/zig"
+}
+ZIG="$(pinned_zig)"
 # shellcheck source=xcode-toolchain.sh
 source "$ROOT/scripts/xcode-toolchain.sh"
 oppi_use_xcode_toolchain
@@ -56,9 +100,12 @@ if [[ ! -d "$WORK/source/.git" ]]; then
 fi
 git -C "$WORK/source" fetch -q --depth 1 origin "$COMMIT"
 git -C "$WORK/source" checkout -q --detach "$COMMIT"
-(cd "$WORK/source" && zig build -Demit-lib-vt=true -Demit-xcframework=true \
-    -Doptimize=ReleaseSmall -Dsimd=false \
+(cd "$WORK/source" && "$ZIG" build -Demit-lib-vt=true -Demit-xcframework=true \
+    -Doptimize=ReleaseFast -Dsimd=true \
     --prefix "$WORK/output")
+# A fresh product dir: copying into a previous one would keep a stale archive
+# beside the new one when the library file name changes.
+rm -rf "$WORK/product"
 mkdir -p "$WORK/product"
 cp -R "$WORK/output/lib/ghostty-vt.xcframework" "$WORK/product/"
 printf '%s\n' "$BUILD_ID" > "$WORK/product/BUILD_ID"
