@@ -16,7 +16,10 @@
 //   OppiTests/<Suite>[/<test>]      iOS unit filter; one OppiUnitTests run on the iPhone pool
 //   OppiUITests/<Suite>[/<test>]    UI test filter; one `-scheme Oppi` run per --profile
 //                                   (iphone, ipad, duo; default iphone), profiles in parallel
-//   OppiE2ETests/<Suite>[/<test>]   paired-server E2E filter (clients/apple/scripts/e2e.sh --native)
+//   OppiE2ETests/<Suite>[/<test>]   paired-server E2E filter (clients/apple/scripts/e2e.sh --native).
+//                                   A suite that reads the two-server fixture (its file calls
+//                                   TwoServerFixture.<member>) runs through server/scripts/e2e-two-server.ts
+//                                   instead, which owns the second server that suite pairs with.
 //   <Suite>Tests[/<test>]           a bare iOS selector (suite name ending in Tests): runs as
 //                                   <Target>/<Suite>Tests[/<test>] for the one test target
 //                                   (OppiTests, OppiUITests, OppiE2ETests) that declares it; the gate
@@ -43,8 +46,12 @@ const PROFILES = new Set(["iphone", "ipad", "duo"]);
 /** `resolutions`: one line per bare iOS selector, naming the prefixed filter it became. */
 export type Plan = { lanes: Lane[]; errors: string[]; resolutions: string[] };
 
-/** `functionsOf`: functions declared in the files that declare or extend each type. */
-export type Declarations = { types: Set<string>; functionsOf: Map<string, Set<string>> };
+/**
+ * `functionsOf`: functions declared in the files that declare or extend each type.
+ * `twoServer`: types declared in a file that calls the two-server fixture (`TwoServerFixture.<member>`);
+ * their tests need the second server that `server/scripts/e2e-two-server.ts` starts.
+ */
+export type Declarations = { types: Set<string>; functionsOf: Map<string, Set<string>>; twoServer: Set<string> };
 
 /** Swift string literals (kept) and comments (dropped), so prose in a comment is not a declaration. */
 const STRINGS_AND_COMMENTS = /"""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|(\/\*[\s\S]*?\*\/|\/\/[^\n]*)/g;
@@ -54,17 +61,21 @@ const stripComments = (text: string) => text.replace(STRINGS_AND_COMMENTS, (all,
 export function declarations(sources: string[]): Declarations {
   const types = new Set<string>();
   const functionsOf = new Map<string, Set<string>>();
+  const twoServer = new Set<string>();
   for (const source of sources) {
     const text = stripComments(source);
+    // A call such as `TwoServerFixture.load()`; the type's own declaration is not a use.
+    const usesFixture = /\bTwoServerFixture\./.test(text);
     const functions = [...text.matchAll(/\bfunc\s+(\w+)/g)].map((match) => match[1]);
     for (const match of text.matchAll(/\b(struct|class|enum|actor|extension)\s+(\w+)/g)) {
       if (match[1] !== "extension") types.add(match[2]);
+      if (usesFixture) twoServer.add(match[2]);
       const known = functionsOf.get(match[2]) ?? new Set<string>();
       for (const name of functions) known.add(name);
       functionsOf.set(match[2], known);
     }
   }
-  return { types, functionsOf };
+  return { types, functionsOf, twoServer };
 }
 
 /** Source folders compiled into each test target (project.yml). */
@@ -192,17 +203,25 @@ export function planGate(
     }
   }
   // E2E runs start a paired server each; keep them one after another in a single lane.
-  const e2eArgs = [
-    ...e2e.map((filter) => ["--native", "--only-testing", filter]),
-    ...groups.map((group) => ["--group", group]),
-  ];
-  if (e2eArgs.length > 0) {
-    lanes.push({
-      name: "e2e",
-      // One filter or group per step, so a step that ran zero tests is caught exactly.
-      steps: e2eArgs.map((args) => ({ cwd: worktree, command: e2eScript, args, env: pinned, requireTests: true })),
+  // A two-server suite runs through its wrapper, which starts the second server and then
+  // runs e2e.sh for that one suite; its `TWO_SERVER_TEST` is `<Suite>[/<test>]`.
+  const twoServerScript = join(worktree, "server", "scripts", "e2e-two-server.ts");
+  const needsTwoServer = (filter: string) => declared("OppiE2ETests").twoServer.has(filter.split("/")[1]);
+  const e2eSteps: Step[] = [
+    ...e2e.filter((filter) => !needsTwoServer(filter)).map((filter) => ({ args: ["--native", "--only-testing", filter] })),
+    ...groups.map((group) => ({ args: ["--group", group] })),
+  ].map(({ args }) => ({ cwd: worktree, command: e2eScript, args, env: pinned, requireTests: true }));
+  for (const filter of e2e.filter(needsTwoServer)) {
+    e2eSteps.push({
+      cwd: worktree,
+      command: "bun",
+      args: [twoServerScript],
+      env: { ...pinned, TWO_SERVER_TEST: filter.slice("OppiE2ETests/".length) },
+      requireTests: true,
     });
   }
+  // One filter or group per step, so a step that ran zero tests is caught exactly.
+  if (e2eSteps.length > 0) lanes.push({ name: "e2e", steps: e2eSteps });
   return { lanes, errors, resolutions };
 }
 

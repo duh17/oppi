@@ -14,7 +14,16 @@ const sources: Record<string, string[]> = {
   ],
   // SharedSupportTests stands in for QAVerificationSupport, which both UI and E2E targets compile.
   OppiUITests: ["final class ChatRoutesUITests: XCTestCase { func testOpen() {} }\n", "struct SharedSupportTests {}\n"],
-  OppiE2ETests: ["final class ChatE2ETests: E2ETestCase {}\n", "extension ChatE2ETests { func testSend() {} }\n", "struct SharedSupportTests {}\n"],
+  OppiE2ETests: [
+    "final class ChatE2ETests: E2ETestCase {}\n",
+    "extension ChatE2ETests { func testSend() {} }\n",
+    "struct SharedSupportTests {}\n",
+    // A suite whose file calls the two-server fixture needs the wrapper that owns the second server.
+    "final class PairTwoE2ETests: E2ETestCase { func testPair() async throws { let f = try TwoServerFixture.load() } }\n",
+    // The fixture's own declaration, and a mention in a comment, are not uses.
+    "struct TwoServerFixture { static func load() {} }\nfinal class HelperE2ETests: XCTestCase { func testHelper() {} }\n",
+    "// calls TwoServerFixture.load() elsewhere\nfinal class QuotedE2ETests: E2ETestCase { func testQuoted() {} }\n",
+  ],
 };
 const types = (target: string) => declarations(sources[target] ?? []);
 
@@ -47,6 +56,27 @@ describe("batch gate plan", () => {
       ["--native", "--only-testing", "OppiE2ETests/ChatE2ETests/testSend"],
       ["--group", "gate"],
     ]);
+  });
+
+  test("a suite that needs the second server runs through the two-server wrapper, one step per selector", () => {
+    const plan = planGate("/wt", [
+      "OppiE2ETests/PairTwoE2ETests",
+      "OppiE2ETests/ChatE2ETests/testSend",
+      "PairTwoE2ETests/testPair",
+      "OppiE2ETests/HelperE2ETests",
+      "OppiE2ETests/QuotedE2ETests",
+    ], [], types);
+    expect(plan.errors).toEqual([]);
+    const steps = plan.lanes.find((lane) => lane.name === "e2e")!.steps;
+    // Ordinary E2E steps first; the wrapper's steps keep the order the selectors were named in.
+    expect(steps.map((step) => [step.command, step.args, step.env?.TWO_SERVER_TEST])).toEqual([
+      ["/wt/clients/apple/scripts/e2e.sh", ["--native", "--only-testing", "OppiE2ETests/ChatE2ETests/testSend"], undefined],
+      ["/wt/clients/apple/scripts/e2e.sh", ["--native", "--only-testing", "OppiE2ETests/HelperE2ETests"], undefined],
+      ["/wt/clients/apple/scripts/e2e.sh", ["--native", "--only-testing", "OppiE2ETests/QuotedE2ETests"], undefined],
+      ["bun", ["/wt/server/scripts/e2e-two-server.ts"], "PairTwoE2ETests"],
+      ["bun", ["/wt/server/scripts/e2e-two-server.ts"], "PairTwoE2ETests/testPair"],
+    ]);
+    expect(steps.every((step) => step.requireTests && step.env?.OPPI_ROOT === "/wt")).toBe(true);
   });
 
   test("a bare suite plans exactly like its prefixed form, on the one target that declares it", () => {
