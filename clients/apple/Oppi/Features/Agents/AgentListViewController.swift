@@ -12,7 +12,9 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
     private enum Item: Hashable {
         case pi
         case saved(String)
-        case loading
+        /// Saved Agents are loading, or the load failed. One row, as in
+        /// Extensions and MCP Servers.
+        case state
     }
 
     private let root: AppRootEnvironment
@@ -32,7 +34,6 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         didSet { setNeedsUpdateProperties() }
     }
     private var loadTask: Task<Void, Never>?
-    private let errorAlert = ControlErrorAlert()
 
     init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
         self.root = root
@@ -85,12 +86,6 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        // An error that arrived while the screen was off screen shows now.
-        setNeedsUpdateProperties()
-    }
-
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         loadTask?.cancel()
@@ -106,7 +101,6 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         ControlScreenList.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
         applySnapshot()
-        errorAlert.show(title: "Agents", message: error, from: self) { [weak self] in self?.error = nil }
     }
 
     /// The sidebar toggle at the split detail root.
@@ -132,8 +126,8 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
             case .saved(let agent): Item.saved(agent.id)
             }
         }.filter { shown.insert($0).inserted })
-        if isLoading && agents.isEmpty {
-            snapshot.appendItems([.loading])
+        if error != nil || (isLoading && agents.isEmpty) {
+            snapshot.appendItems([.state])
         }
         snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { dataSource.snapshot().indexOfItem($0) != nil })
         dataSource.apply(snapshot, animatingDifferences: false)
@@ -142,6 +136,14 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
     private func installDataSource() {
         let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
             self?.configure(cell, item: item)
+        }
+        let state = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
+            guard let self else { return }
+            if let message = error {
+                cell.configure(.failure(message, retry: { [weak self] in self?.retry() }), identifier: "agents.state")
+            } else {
+                cell.configure(.loading("Loading saved Agents…"), identifier: "agents.state")
+            }
         }
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
             elementKind: UICollectionView.elementKindSectionHeader
@@ -158,7 +160,11 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
             view.contentConfiguration = content
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
+            if case .state = item {
+                collectionView.dequeueConfiguredReusableCell(using: state, for: indexPath, item: item)
+            } else {
+                collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
+            }
         }
         dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
             kind == UICollectionView.elementKindSectionHeader
@@ -226,9 +232,8 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
                 )
             }
             cell.accessories = [.disclosureIndicator()]
-        case .loading:
-            ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Loading saved Agents…")
+        case .state:
+            break // drawn by the state registration, never by this cell
         }
     }
 
@@ -311,9 +316,16 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         }
     }
 
+    /// The state row's Retry: the failure clears so the load shows as loading.
+    private func retry() {
+        error = nil
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in await self?.loadAgents() }
+    }
+
     private func loadAgents() async {
         guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            error = "Server is offline"
+            error = "Server offline"
             return
         }
         isLoading = true

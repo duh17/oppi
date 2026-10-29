@@ -14,7 +14,7 @@ import SwiftUI
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
-/// `agents-pi`, `agent-icon-picker`, `agent-edit`, `agent-edit-tools`, `-skills`, `-extensions`, `-workspaces` (the pages it pushes), `pi-tools`, `schedule-edit`, `schedule-edit-cron`, `schedule-edit-existing`,
+/// `agents-offline` (the Agents list with no server client: the Server offline row), `agents-pi`, `agent-icon-picker`, `agent-edit`, `agent-edit-tools`, `-skills`, `-extensions`, `-workspaces` (the pages it pushes), `pi-tools`, `schedule-edit`, `schedule-edit-cron`, `schedule-edit-existing`,
 /// `schedule-time-zone`, `workspaces` (the server's workspace list), `workspaces-empty`, `workspace-create`, `workspace-create-configure`, `server-settings`
 /// (Server Settings for the fixture server, loaded), `server-settings-loading` (its
 /// summary and loading rows, before the first answer), `server-about` (About This Server: an
@@ -224,6 +224,8 @@ struct SettingsSweepScreenshotPreview: View {
         case "workspaces", "workspaces-empty":
             connection.workspaceStore.setActiveServer(server.id)
             connection.workspaceStore.workspacesByServer[server.id] = page == "workspaces" ? Self.workspaceList : []
+        case "agents-offline":
+            connection.setAPIClientForTesting(nil)
         case "agents":
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
@@ -402,7 +404,7 @@ struct SettingsSweepScreenshotPreview: View {
         case "schedules":
             RouterPreviewControllerStack(root: root) { ScheduleListViewController(root: root) }
                 .ignoresSafeArea()
-        case "agents":
+        case "agents", "agents-offline":
             RouterPreviewControllerStack(root: root) { AgentListViewController(root: root) }
                 .ignoresSafeArea()
         case "agents-pi", "agents-pi-file":

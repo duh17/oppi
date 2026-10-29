@@ -405,15 +405,20 @@ final class RouterRoutesUITests: XCTestCase {
         revealSidebar(isSplit: isSplit)
         app.buttons["workspace.agents.open"].tap()
         let agents = app.navigationBars["Agents"]
-        dismissOfflineAgentsAlert()
         XCTAssertTrue(agents.waitForExistence(timeout: 5), "Agents did not open in the UIKit bar")
+        // The preview shell's server answers nothing: the list says so in a row with Retry, not an alert.
+        let offline = app.buttons["agents.state"]
+        // Only a state row with a Retry is a button; a loading row is plain text.
+        XCTAssertTrue(offline.waitForExistence(timeout: 5), "Agents has no inline state row with Retry")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Offline Agents must not raise an alert")
         app.buttons["agents.row.pi"].tap()
         XCTAssertTrue(app.navigationBars["Pi"].waitForExistence(timeout: 5), "Agents did not push Pi")
         attachScreenshot("shell-agents-pi")
         assertRunning()
         app.buttons["BackButton"].firstMatch.tap()
-        dismissOfflineAgentsAlert()
         XCTAssertTrue(agents.waitForExistence(timeout: 5), "Back must return to Agents")
+        XCTAssertTrue(app.buttons["agents.state"].waitForExistence(timeout: 5), "Back must show the offline row again")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Offline Agents must not raise an alert")
         if !isSplit {
             app.buttons["BackButton"].tap()
             XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Agents")
@@ -630,17 +635,6 @@ final class RouterRoutesUITests: XCTestCase {
     /// vertical rail.
     private var cancelButton: XCUIElement {
         app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"])).firstMatch
-    }
-
-    /// The preview shell has no server, so each time the Agents list appears it
-    /// reports "Server is offline" in an alert that hides the screen behind it.
-    /// Whether that alert lands before or after a query is a race, so dismiss it
-    /// where the walk needs the list.
-    private func dismissOfflineAgentsAlert() {
-        let alert = app.alerts["Agents"]
-        guard alert.waitForExistence(timeout: 5) else { return }
-        alert.buttons["OK"].tap()
-        XCTAssertTrue(waitForDisappearance(of: alert), "The Agents alert did not close")
     }
 
     private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {
