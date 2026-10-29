@@ -158,7 +158,9 @@ export function planGate(
   const e2eScript = join(apple, "scripts", "e2e.sh");
   // sim-pool prefers an inherited OPPI_ROOT over the cwd; a caller's own checkout must not
   // win over the worktree under test, or the gate would build and test different code.
-  const pinned = { OPPI_ROOT: worktree };
+  // A lane that finds every simulator slot busy queues for one (30 min) instead of failing after
+  // sim-pool's 60 s default: a gate lane has no caller to retry it, and a busy pool is not a test failure.
+  const pinned = { OPPI_ROOT: worktree, OPPI_SIM_POOL_WAIT: "1800" };
   const lanes: Lane[] = [];
   if (server.length > 0) {
     lanes.push({ name: "server", steps: [{ cwd: join(worktree, "server"), command: "npm", args: ["exec", "--offline", "--", "vitest", "run", ...server] }] });

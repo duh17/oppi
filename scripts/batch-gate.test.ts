@@ -19,6 +19,14 @@ const sources: Record<string, string[]> = {
 const types = (target: string) => declarations(sources[target] ?? []);
 
 describe("batch gate plan", () => {
+  test("every simulator lane queues for a free slot instead of failing after sim-pool's default wait", () => {
+    const plan = planGate("/wt", ["OppiTests/FooTests", "OppiUITests/ChatRoutesUITests", "OppiE2ETests/ChatE2ETests/testSend"], ["iphone", "ipad"], types);
+    expect(plan.errors).toEqual([]);
+    const steps = plan.lanes.flatMap((lane) => lane.steps);
+    expect(steps).toHaveLength(4);
+    for (const step of steps) expect(Number(step.env?.OPPI_SIM_POOL_WAIT)).toBeGreaterThanOrEqual(1800);
+  });
+
   test("named suites become one lane per kind, UI tests one lane per profile", () => {
     const plan = planGate("/wt", [
       "OppiTests/FooTests",

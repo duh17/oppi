@@ -35,7 +35,7 @@ The local hook reads the refs Git pushes, classifies changed paths, and runs pla
 A merge queue or CI that lands batches of commits can gate a batch with two repo-owned commands, run from a checkout of the batch (no queue-specific tooling):
 
 1. `.githooks/pre-push`, which reads the refs Git pushes on stdin. A non-zero exit fails the batch.
-2. `bun scripts/batch-gate.ts --worktree <path> [--target <branch>] [--test <selector>]... [--profile <p>]...`, for the suites the batch's commits asked for. `--worktree` defaults to the current directory. `--target` is accepted and ignored. `--profile` (`iphone`, `ipad`, `duo`; default `iphone`) applies to `OppiUITests/` selectors, one `-scheme Oppi` run per profile in parallel. `--test` selectors:
+2. `bun scripts/batch-gate.ts --worktree <path> [--target <branch>] [--test <selector>]... [--profile <p>]...`, for the suites the batch's commits asked for. `--worktree` defaults to the current directory. `--target` is accepted and ignored. `--profile` (`iphone`, `ipad`, `duo`; default `iphone`) applies to `OppiUITests/` selectors, one `-scheme Oppi` run per profile in parallel. A lane that finds every simulator slot of its profile busy queues for one for up to 30 minutes (`OPPI_SIM_POOL_WAIT=1800` in the lane's environment) instead of failing after sim-pool's 60-second default. `--test` selectors:
    - `OppiTests/<Suite>[/<test>]`: one OppiUnitTests run on the iPhone pool.
    - `OppiUITests/<Suite>[/<test>]`: UI tests per `--profile`.
    - `OppiE2ETests/<Suite>[/<test>]`: paired-server E2E through `clients/apple/scripts/e2e.sh --native`.

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   applyPoolBuildSettings,
+  DEVICE_PROFILES,
   applyRunCheckout,
   dropBuildDescriptionsMissingVendor,
   ensureOppiTestsInfoPlist,
@@ -408,6 +409,24 @@ describe("sim-pool checkout targeting", () => {
       rest: ["run", "--", "xcodebuild", "--root", "not-ours", "--device-profile", "duo"],
     });
     expect(() => extractPoolFlags(["run", "--device-profile"])).toThrow("--device-profile requires a value");
+  });
+
+  test("no two device profiles share a run slot or a claim slot, and run lanes never reach claim ranges", () => {
+    const owner = new Map<number, string>();
+    for (const [name, profile] of Object.entries(DEVICE_PROFILES)) {
+      const ranges = [
+        ["run", profile.slotStart, profile.count],
+        ["claim", profile.claimSlotStart, profile.claimCount],
+      ] as const;
+      for (const [kind, start, count] of ranges) {
+        for (let slot = start; slot < start + count; slot += 1) {
+          expect(owner.get(slot)).toBeUndefined();
+          owner.set(slot, `${name} ${kind}`);
+        }
+      }
+    }
+    // The iPad lane is four slots, 6-9, between the iPhone and Duo run slots.
+    expect([DEVICE_PROFILES.ipad.slotStart, DEVICE_PROFILES.ipad.count]).toEqual([6, 4]);
   });
 
   test("duo device profile selects the iPhone Duo lane and yields to explicit env", () => {

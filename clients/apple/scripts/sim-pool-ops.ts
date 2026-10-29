@@ -193,7 +193,7 @@ function gitTopLevel(cwd: string): string | null {
  * and the dedicated slot range; explicit OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME,
  * OPPI_SIM_POOL_SLOT_START, and OPPI_SIM_POOL_COUNT still win.
  *
- * Slot map: 0-5 iPhone runs, 8-9 iPad runs, 10 Duo runs. `claim` hands out
+ * Slot map: 0-5 iPhone runs, 6-9 iPad runs, 10 Duo runs. `claim` hands out
  * session-owned simulators from a separate range per profile (20-27 iPhone,
  * 30-37 Duo, 40-47 iPad) so a long-lived claim never blocks a run lane.
  */
@@ -220,8 +220,8 @@ export const DEVICE_PROFILES: Record<string, DeviceProfile> = {
   ipad: {
     deviceType: "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
     runtime: "",
-    slotStart: 8,
-    count: 2,
+    slotStart: 6,
+    count: 4,
     claimSlotStart: 40,
     claimCount: 8,
   },
@@ -469,7 +469,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
     claimCount: profile?.claimCount ?? 0,
     idleMinutes: parsePositiveInt(env.OPPI_SIM_POOL_IDLE_MINUTES ?? "30", "OPPI_SIM_POOL_IDLE_MINUTES", 0),
     keepWarm: parsePositiveInt(env.OPPI_SIM_POOL_KEEP_WARM ?? "2", "OPPI_SIM_POOL_KEEP_WARM", 0),
-    maxBooted: parsePositiveInt(env.OPPI_SIM_POOL_MAX_BOOTED ?? "8", "OPPI_SIM_POOL_MAX_BOOTED", 0),
+    maxBooted: parsePositiveInt(env.OPPI_SIM_POOL_MAX_BOOTED ?? "12", "OPPI_SIM_POOL_MAX_BOOTED", 0),
   };
 }
 
@@ -2509,7 +2509,7 @@ clients/apple, even if the script was launched from another tree.
 
 --device-profile NAME (or OPPI_SIM_DEVICE_PROFILE) selects a named lane:
   iphone  iPhone 16 Pro, run slots 0-5 (the default pool), claim slots 20-27
-  ipad    iPad Pro 13-inch (M5), run slots 8-9, claim slots 40-47
+  ipad    iPad Pro 13-inch (M5), run slots 6-9, claim slots 40-47
   duo     iPhone Duo on iOS 27.1, run slot 10, claim slots 30-37
 Explicit OPPI_SIM_DEVICE_TYPE, OPPI_SIM_RUNTIME, OPPI_SIM_POOL_SLOT_START, and
 OPPI_SIM_POOL_COUNT override the profile.
@@ -2533,7 +2533,7 @@ run, claim, and release the reaper shuts down pool simulators idle for
 OPPI_SIM_POOL_IDLE_MINUTES (30) except the OPPI_SIM_POOL_KEEP_WARM (2) most
 recently used. Before booting, the
 pool shuts down least recently used idle pool simulators to keep at most
-OPPI_SIM_POOL_MAX_BOOTED (8) simulators booted, counting simulators it does not
+OPPI_SIM_POOL_MAX_BOOTED (12) simulators booted, counting simulators it does not
 manage; when nothing is idle it boots anyway and says so. Unused simulator
 daemons are disabled unless OPPI_SIM_SLIM=0. Compiler index store is
 disabled unless OPPI_SIM_POOL_INDEX_STORE=1 or the command already sets
