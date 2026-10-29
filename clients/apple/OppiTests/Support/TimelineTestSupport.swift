@@ -395,6 +395,12 @@ func makeWindowedTimelineHarness(
     // failed on every run after an uninstall and passed from the second run on. Windowed layout tests
     // measure rows, not tips, so mark the tool tips shown; tests that want the banner force it
     // (`forcesInlineFeatureTipsForTesting`), which ignores this state.
+    // The mark is deliberately left in place for the rest of the process: putting the previous history back
+    // when the last harness goes (tried: restoring it, a volatile store, an occupied presenter) makes
+    // asyncMermaidRenderReflowsTimelineWithoutUserTouch fail again on a fresh install, so that test depends
+    // on the history staying marked after the harnesses are gone (cause not found; tracked as a follow-up).
+    // The pool's per-run uninstall bounds the leak to one run's process, and tests that expect a first-run
+    // tip already cannot rely on it: they `resetForTesting()` and force it.
     for descriptor in [FeatureEducationTips.openToolDetails, FeatureEducationTips.toolOutputShortcuts] {
         FeatureEducationTipPresentationStore.standard.markShown(id: descriptor.id)
     }
