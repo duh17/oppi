@@ -315,8 +315,8 @@ final class PairingApprovalActionBar: UIView {
             hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
             hairlineHeight,
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             stack.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -4),
         ])
     }
