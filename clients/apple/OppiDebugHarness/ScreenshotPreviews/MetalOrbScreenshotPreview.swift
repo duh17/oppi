@@ -152,6 +152,7 @@ private struct PreviewDictationDisc: View {
         .frame(width: diameter, height: diameter)
         .clipShape(Circle())
         .contentShape(Circle())
+        .accessibilityValue("EN, On-device")
     }
 }
 

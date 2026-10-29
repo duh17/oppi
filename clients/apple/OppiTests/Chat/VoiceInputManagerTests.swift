@@ -1999,6 +1999,10 @@ struct VoiceInputManagerTests {
         #expect(manager.activeEngine == .classicDictation)
         #expect(manager.activeLanguageLabel == "EN")
         #expect(manager.routeIndicator == .onDevice)
+        // The composer's mic button speaks the route, so VoiceOver says where dictation runs.
+        let mic = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
+        #expect(mic.engineBadge == .onDevice)
+        #expect(mic.accessibilityValue == "On-device")
         #expect(systemAccess.activateAudioSessionCallCount == 1)
         #expect(session.startCallCount == 1)
 
