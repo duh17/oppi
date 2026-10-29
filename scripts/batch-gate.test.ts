@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { declarations, executedTests, planGate } from "./batch-gate";
+import { declarations, executedTests, planGate, PROFILE_SCOPE_CAPABILITY } from "./batch-gate";
 
 const sources: Record<string, string[]> = {
   OppiTests: [
@@ -226,6 +226,14 @@ echo "Artifact: ${real}/summary.json"
   chmodSync(join(scripts, "sim-pool.sh"), 0o755);
   return checkout;
 }
+
+describe("batch gate capability probe", () => {
+  test("--supports-profile-scope prints the capability line and exits 0 without a checkout", () => {
+    const run = Bun.spawnSync(["bun", join(import.meta.dir, "batch-gate.ts"), "--supports-profile-scope"], { cwd: tmpdir(), stdout: "pipe", stderr: "pipe" });
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.toString()).toBe(`${PROFILE_SCOPE_CAPABILITY}\n`);
+  });
+});
 
 describe("batch gate worktree path", () => {
   // A merge queue passes a symlinked temp path (/var/... -> /private/var/...). The pre-push hook

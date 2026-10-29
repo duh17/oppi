@@ -8,6 +8,10 @@
 // at the checkout's canonical path (the one pre-push built in). --target is accepted and ignored: callers
 // pass the branch the batch will land on, and this gate does not need it.
 //
+// `bun scripts/batch-gate.ts --supports-profile-scope` prints PROFILE_SCOPE_CAPABILITY and exits 0
+// without running anything: a queue probes it before passing @<profile> selectors, because a gate
+// from before that suffix exists rejects it. An older gate exits 2 on the unknown flag.
+//
 // Exit codes: 0 every lane passed (or no suites were named); 1 a lane failed; 2 a bad
 // argument, test selector, or not an Oppi checkout; 143 stopped by SIGTERM/SIGINT; the
 // failing exit code of the server-deps sync, which runs before any lane.
@@ -46,6 +50,9 @@ import { join } from "node:path";
 type Step = { cwd: string; command: string; args: string[]; env?: NodeJS.ProcessEnv; requireTests?: boolean };
 /** Lanes run in parallel; a lane's steps run in order and all run even after one fails. */
 type Lane = { name: string; steps: Step[] };
+
+/** The line `--supports-profile-scope` prints; the queue matches it exactly (land-queue.ts gateSupportsProfileScope). */
+export const PROFILE_SCOPE_CAPABILITY = "batch-gate: profile-scope";
 
 const PROFILES = new Set(["iphone", "ipad", "duo"]);
 
@@ -334,6 +341,10 @@ async function runLane(lane: Lane): Promise<{ lane: Lane; code: number; seconds:
 }
 
 async function main(argv: string[]): Promise<number> {
+  if (argv.length === 1 && argv[0] === "--supports-profile-scope") {
+    console.log(PROFILE_SCOPE_CAPABILITY);
+    return 0;
+  }
   let worktree = process.cwd();
   const tests: string[] = [];
   const profiles: string[] = [];
