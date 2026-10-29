@@ -45,7 +45,7 @@ final class PairedDevicesE2ETests: E2ETestCase {
         XCTAssertTrue(list.waitForExistence(timeout: 10), "Paired Devices page did not appear")
 
         let revoke = app.buttons["server.pairedDevices.revoke.\(throwawayId)"]
-        scrollUntilVisible(revoke, in: list)
+        scrollUntilHittable(revoke, in: list)
         XCTAssertTrue(revoke.exists, "Other device has no Revoke button")
         XCTAssertEqual(revoke.label, "Revoke \(throwawayDeviceName)", "Revoke button is not labelled for VoiceOver")
         let throwawayRow = rosterRow("server.pairedDevices.row.\(throwawayId)")
@@ -123,11 +123,5 @@ final class PairedDevicesE2ETests: E2ETestCase {
         tap(switcher, named: "server switcher", timeout: 10)
         tap(app.buttons["hostSwitcher.serverSettings"], named: "Server Settings", timeout: 5)
         XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 10), "Server settings did not open")
-    }
-
-    private func scrollUntilVisible(_ element: XCUIElement, in list: XCUIElement) {
-        for _ in 0..<8 where !(element.exists && element.isHittable) {
-            list.swipeUp()
-        }
     }
 }

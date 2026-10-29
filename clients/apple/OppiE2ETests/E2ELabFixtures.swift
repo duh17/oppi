@@ -35,6 +35,15 @@ struct E2ELabGitWorktreeFixture {
 }
 
 extension E2ETestCase {
+    /// Swipes `list` up until `element` can be tapped. A collection view only builds the rows near
+    /// the viewport, and a page's height depends on what it loaded (an offline server's page is
+    /// taller, with error rows), so one swipe cannot be assumed to reach a row at the bottom.
+    func scrollUntilHittable(_ element: XCUIElement, in list: XCUIElement, maxSwipes: Int = 8) {
+        for _ in 0..<maxSwipes where !(element.exists && element.isHittable) {
+            list.swipeUp()
+        }
+    }
+
     /// Seeds a set of real server workspaces and optional active/stopped sessions.
     func seedLabWorkspaces(_ fixtures: [E2ELabWorkspaceFixture]) throws {
         for fixture in fixtures {
@@ -611,6 +620,14 @@ struct TwoServerFixture {
     private let inviteURL: URL
     /// POST here to stop the second server; the reply comes after it exited.
     let stopURL: URL
+    private let appBuild: String
+
+    /// Launch arguments for the journey's app. The app relaunches after pairing, and a simulator slot
+    /// that last ran another build would show What's New over it; naming this build as already seen
+    /// in the argument domain prevents that without writing any preference.
+    var launchArguments: [String] {
+        ["-dev.chenda.Oppi.whatsNew.lastSeenVersion", appBuild]
+    }
 
     static func load() throws -> TwoServerFixture {
         guard let path = E2ELabServerContext.environmentValue(for: ["OPPI_TWO_SERVER_FIXTURE"]) else {
@@ -619,10 +636,11 @@ struct TwoServerFixture {
         guard let data = FileManager.default.contents(atPath: path),
               let fields = try? JSONSerialization.jsonObject(with: data) as? [String: String],
               let invite = fields["inviteURL"].flatMap(URL.init(string:)),
-              let stop = fields["stopURL"].flatMap(URL.init(string:)) else {
+              let stop = fields["stopURL"].flatMap(URL.init(string:)),
+              let build = fields["appBuild"], !build.isEmpty else {
             throw Unavailable(description: "Two-server fixture \(path) is missing or malformed")
         }
-        return TwoServerFixture(inviteURL: invite, stopURL: stop)
+        return TwoServerFixture(inviteURL: invite, stopURL: stop, appBuild: build)
     }
 
     /// The first server's invite, which `e2e.sh` wrote for this run, after checking it is this run's:

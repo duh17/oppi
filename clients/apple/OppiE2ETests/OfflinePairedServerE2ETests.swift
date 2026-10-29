@@ -12,6 +12,7 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
     override func configureE2ELaunch(_ application: XCUIApplication) {
         do {
             application.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = try TwoServerFixture.firstServerLaunchInvite()
+            application.launchArguments += try TwoServerFixture.load().launchArguments
         } catch {
             XCTFail("\(error)")
         }
@@ -78,7 +79,7 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
         let list = app.collectionViews["server.details.list"]
         XCTAssertTrue(list.waitForExistence(timeout: 10))
         let remove = app.buttons["server.remove"]
-        if !remove.isHittable { list.swipeUp() }
+        scrollUntilHittable(remove, in: list)
         tap(remove, named: "Remove Server")
         XCTAssertTrue(app.staticTexts["Remove Offline E2E?"].waitForExistence(timeout: 5), "Removal confirmation missing")
         // The action sheet dismisses on an outside tap (iPad: a popover) as it does on Cancel.

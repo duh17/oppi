@@ -13,7 +13,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
 import { createServer as createTCPServer } from "node:net";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
@@ -37,6 +37,18 @@ const needsOfflineTransition = testSelector.split("/")[0] === "OfflinePairedServ
 let failed = true;
 const controlPath = `/two-server/${randomUUID()}`;
 
+/**
+ * The app build as WhatsNewManager names it ("1.1.2 (56)"), from the Oppi target in project.yml.
+ * The journeys relaunch the app after pairing, and a shared simulator slot that last ran another
+ * build would cover that relaunch with What's New. The tests pass this as the last-seen build in
+ * the launch arguments (the volatile argument domain), so no preference is written.
+ */
+async function appReleaseIdentifier(): Promise<string> {
+  const yml = await readFile(join(root, "clients/apple/project.yml"), "utf8");
+  const match = yml.match(/PRODUCT_BUNDLE_IDENTIFIER: dev\.chenda\.Oppi\n(?:[^\n]*\n){0,3}?\s*MARKETING_VERSION: "([^"]+)"\n\s*CURRENT_PROJECT_VERSION: (\d+)/);
+  if (!match) throw Error("Cannot read the Oppi app version from clients/apple/project.yml");
+  return `${match[1]} (${match[2]})`;
+}
 /** A port nothing listens on right now. Take it only just before its owner binds it: another run can claim a port while a slow step sits between. */
 async function freePort(): Promise<number> {
   const socket = createTCPServer();
@@ -156,7 +168,7 @@ try {
   if (!address || typeof address === "string") throw Error("Missing control port");
   const controlURL = `http://127.0.0.1:${address.port}${controlPath}`;
   // Its own file per run, named to the test in the environment: concurrent runs cannot meet.
-  await writeFile(fixturePath, JSON.stringify({ inviteURL: `${controlURL}/invite`, stopURL: `${controlURL}/stop` }), { mode: 0o600 });
+  await writeFile(fixturePath, JSON.stringify({ inviteURL: `${controlURL}/invite`, stopURL: `${controlURL}/stop`, appBuild: await appReleaseIdentifier() }), { mode: 0o600 });
   // e2e.sh binds this port a short while from now; claim it as late as possible.
   const firstPort = await freePort();
   if (firstPort === secondPort) throw Error("E2E ports collided");
