@@ -244,7 +244,8 @@ enum AgentsLoadStateTests {
             var row: UIButton?
             #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
                 screen.view.layoutIfNeeded()
-                row = AgentListViewControllerTests.buttons("agents.state", in: screen.view).first { !$0.isHiddenInHierarchy }
+                row = AgentListViewControllerTests.buttons("agents.state", in: screen.view)
+                    .first { !$0.isHiddenInHierarchy && $0.accessibilityLabel == PinnedServerTrustDelegate.rejectionMessage }
                 return row != nil
             })
             #expect(row?.accessibilityLabel == "The server's certificate doesn't match the paired one.")
@@ -264,7 +265,8 @@ enum AgentsLoadStateTests {
             var row: UIButton?
             #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
                 screen.view.layoutIfNeeded()
-                row = AgentListViewControllerTests.buttons("agents.pi.state", in: screen.view).first { !$0.isHiddenInHierarchy }
+                row = AgentListViewControllerTests.buttons("agents.pi.state", in: screen.view)
+                    .first { !$0.isHiddenInHierarchy && $0.accessibilityLabel == PinnedServerTrustDelegate.rejectionMessage }
                 return row != nil
             })
             #expect(row?.accessibilityLabel == "The server's certificate doesn't match the paired one.")
