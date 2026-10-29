@@ -508,7 +508,9 @@ run_server_gate() {
   # its private git dir) after the gate, and the log must outlive it to explain a red lane.
   log_dir="$(git rev-parse --path-format=absolute --git-common-dir)/oppi/pre-push-logs"
   mkdir -p "$log_dir"
-  test_log="$log_dir/server-$(date +%Y%m%d-%H%M%S).log"
+  # mktemp, not the bare timestamp: the folder is shared by every worktree, and two lanes started
+  # in the same second would open (and truncate) one file. BSD mktemp wants the X's last.
+  test_log="$(mktemp "$log_dir/server-$(date +%Y%m%d-%H%M%S)-XXXXXX")"
   echo "[server] test log: $test_log"
 
   set +e
@@ -529,27 +531,34 @@ run_server_gate() {
   if [[ "$status" -ne 0 ]]; then
     # Name the failures in the gate output itself: the log path may not be readable by whoever
     # reads the gate log. Capped so a flood of failures cannot bury it; the full log has the rest.
-    local fail_lines max_fail_lines=40
-    fail_lines="$(sed -E $'s/\x1b\\[[0-9;]*m//g' "$test_log" | grep -E '^ FAIL ' || true)"
+    local fail_lines="" max_fail_lines=40
     echo "[server] tests failed (exit $status)" >&2
-    if [[ -n "$fail_lines" ]]; then
-      # Here-strings, not pipes: under pipefail an early-exiting head would SIGPIPE the writer.
-      head -n "$max_fail_lines" <<< "$fail_lines" >&2
-      local fail_count
-      fail_count="$(wc -l <<< "$fail_lines" | tr -d ' ')"
-      if [[ "$fail_count" -gt "$max_fail_lines" ]]; then
-        echo "[server] ... $((fail_count - max_fail_lines)) more FAIL lines in the log" >&2
+    if [[ -s "$test_log" ]]; then
+      fail_lines="$(sed -E $'s/\x1b\\[[0-9;]*m//g' "$test_log" | grep -E '^ FAIL ' || true)"
+      if [[ -n "$fail_lines" ]]; then
+        # Here-strings, not pipes: under pipefail an early-exiting head would SIGPIPE the writer.
+        head -n "$max_fail_lines" <<< "$fail_lines" >&2
+        local fail_count
+        fail_count="$(wc -l <<< "$fail_lines" | tr -d ' ')"
+        if [[ "$fail_count" -gt "$max_fail_lines" ]]; then
+          echo "[server] ... $((fail_count - max_fail_lines)) more FAIL lines in the log" >&2
+        fi
+      else
+        # No test FAIL line (crash, unhandled error, runner failure): show the log tail instead.
+        tail -n 30 "$test_log" >&2
       fi
+      sed -E $'s/\x1b\\[[0-9;]*m//g' "$test_log" \
+        | grep -E '^ Test Files|^      Tests|^     Errors|^   Duration' >&2 || true
     else
-      # No test FAIL line (crash, unhandled error, runner failure): show the log tail instead.
-      tail -n 30 "$test_log" >&2
+      # The runner never wrote the log (e.g. the heavy.sh wrapper failed before its redirect).
+      echo "[server] no test output was captured" >&2
     fi
-    sed -E $'s/\x1b\\[[0-9;]*m//g' "$test_log" \
-      | grep -E '^ Test Files|^      Tests|^     Errors|^   Duration' >&2 || true
     echo "[server] full log: $test_log" >&2
     return "$status"
   fi
   grep -E '^ Test Files|^      Tests|^   Duration' "$test_log" || true
+  # A green lane has nothing to explain; only red logs stay in the shared folder.
+  rm -f "$test_log"
 }
 
 run_apple_gate() {
