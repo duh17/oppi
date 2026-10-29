@@ -4,13 +4,7 @@ import Foundation
 /// Cancellation is control flow for stale/background requests, not a Pi resource failure.
 enum WorkspacePiResourceErrorPolicy {
     static func shouldPresent(_ error: any Error) -> Bool {
-        if error is CancellationError { return false }
-        if let urlError = error as? URLError, urlError.code == .cancelled { return false }
-
-        let nsError = error as NSError
-        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return false }
-
-        return true
+        !error.isLoadCancellation
     }
 }
 

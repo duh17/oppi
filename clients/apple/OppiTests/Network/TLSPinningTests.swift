@@ -5,6 +5,40 @@ import Foundation
 @Suite("TLSPinning")
 struct TLSPinningTests {
 
+    @Test("a cancel is a load cancellation in every form it arrives in")
+    func loadCancellationCoversEveryCancelForm() {
+        let cancels: [any Error] = [
+            CancellationError(),
+            URLError(.cancelled),
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled),
+        ]
+        for error in cancels {
+            #expect(error.isLoadCancellation, "\(error)")
+        }
+    }
+
+    @Test("a bare NSURLErrorCancelled NSError bridges to URLError.cancelled")
+    func bareNSErrorBridgesToURLErrorCancelled() {
+        // The shared rule only checks `URLError.cancelled`; it matches the
+        // NSError form because of this bridging.
+        let bare: any Error = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+        #expect((bare as? URLError)?.code == .cancelled)
+    }
+
+    @Test("other failures, including a rejected certificate, are not cancellations")
+    func loadCancellationRejectsRealFailures() {
+        let failures: [any Error] = [
+            URLError(.timedOut),
+            URLError(.serverCertificateUntrusted),
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut),
+            NSError(domain: NSCocoaErrorDomain, code: NSURLErrorCancelled),
+            APIError.server(status: 500, message: "boom"),
+        ]
+        for error in failures {
+            #expect(!error.isLoadCancellation, "\(error)")
+        }
+    }
+
     @Test("sha256 fingerprint is url-safe, unpadded base64 of the digest")
     func sha256FingerprintKnownValue() {
         // SHA-256("") in standard base64 is "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=".

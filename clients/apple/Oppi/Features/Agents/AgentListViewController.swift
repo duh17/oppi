@@ -369,7 +369,7 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
             error = nil
         } catch {
             // A cancelled load leaves the row and the list as they were.
-            guard !Task.isCancelled, isCurrent(apiClient), !AgentManagementPresentation.isCancellation(error) else { return }
+            guard !Task.isCancelled, isCurrent(apiClient), !error.isLoadCancellation else { return }
             self.error = error.localizedDescription
         }
     }

@@ -352,7 +352,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             loadError = nil
         } catch {
             // A load cancelled under the page (Back, a replaced connection) is not a failure to report.
-            guard !Task.isCancelled, isCurrent(apiClient), !AgentManagementPresentation.isCancellation(error) else { return }
+            guard !Task.isCancelled, isCurrent(apiClient), !error.isLoadCancellation else { return }
             loadError = error.localizedDescription
         }
     }

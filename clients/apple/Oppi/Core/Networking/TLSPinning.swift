@@ -134,3 +134,18 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         ServerTLSTrustPolicy.normalizeFingerprint(value)
     }
 }
+
+extension Error {
+    /// A load cancelled under its screen (Back, a replaced connection, a
+    /// superseded refresh) is control flow, not a failure to report: the
+    /// screen keeps what it showed. Covers Swift concurrency's
+    /// `CancellationError` and URLSession's cancel, including the
+    /// `NSURLErrorCancelled` form that arrives as a bare `NSError`.
+    ///
+    /// A rejected server certificate is not one: `APIClient` names it
+    /// `.serverCertificateUntrusted` instead of leaving it a cancel, so every
+    /// load-error screen can rely on this one rule.
+    var isLoadCancellation: Bool {
+        self is CancellationError || (self as? URLError)?.code == .cancelled
+    }
+}

@@ -168,6 +168,37 @@ struct WorkspaceDetailSortTests {
         #expect(sorted.map(\.id) == ["older", "newer"])
     }
 
+    @Test func cancelledRefreshDoesNotPresentBlockingLoadError() {
+        let cancels: [any Error] = [
+            CancellationError(),
+            URLError(.cancelled),
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled),
+        ]
+        for error in cancels {
+            #expect(!WorkspaceDetailLoadErrorPolicy.shouldPresent(
+                error: error,
+                workspaceId: "ws-known",
+                hadVisibleData: false,
+                knownWorkspaceIds: ["ws-known"]
+            ), "\(error)")
+        }
+    }
+
+    @Test func timeoutAndUntrustedCertificateStillPresentBlockingLoadError() {
+        let failures: [any Error] = [
+            URLError(.timedOut),
+            URLError(.serverCertificateUntrusted),
+        ]
+        for error in failures {
+            #expect(WorkspaceDetailLoadErrorPolicy.shouldPresent(
+                error: error,
+                workspaceId: "ws-known",
+                hadVisibleData: false,
+                knownWorkspaceIds: ["ws-known"]
+            ), "\(error)")
+        }
+    }
+
     @Test func knownWorkspaceNotFoundDoesNotPresentBlockingLoadError() {
         let shouldPresent = WorkspaceDetailLoadErrorPolicy.shouldPresent(
             error: APIError.server(status: 404, message: "Workspace not found"),
@@ -217,10 +248,15 @@ struct WorkspacePiResourceErrorPolicyTests {
     @Test func cancellationDoesNotPresentAsSettingsError() {
         #expect(!WorkspacePiResourceErrorPolicy.shouldPresent(CancellationError()))
         #expect(!WorkspacePiResourceErrorPolicy.shouldPresent(URLError(.cancelled)))
+        #expect(!WorkspacePiResourceErrorPolicy.shouldPresent(
+            NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+        ))
     }
 
     @Test func nonCancellationErrorPresentsAsSettingsError() {
         #expect(WorkspacePiResourceErrorPolicy.shouldPresent(URLError(.notConnectedToInternet)))
+        #expect(WorkspacePiResourceErrorPolicy.shouldPresent(URLError(.timedOut)))
+        #expect(WorkspacePiResourceErrorPolicy.shouldPresent(URLError(.serverCertificateUntrusted)))
         #expect(WorkspacePiResourceErrorPolicy.shouldPresent(APIError.server(status: 500, message: "boom")))
     }
 }

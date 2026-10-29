@@ -218,7 +218,7 @@ enum AgentsLoadStateTests {
             } catch let error as URLError {
                 #expect(error.code == .serverCertificateUntrusted)
                 #expect(error.localizedDescription == "The server's certificate doesn't match the paired one.")
-                #expect(!AgentManagementPresentation.isCancellation(error))
+                #expect(!error.isLoadCancellation)
             }
 
             AgentsURLProtocol.mode = .cancelled
@@ -227,7 +227,7 @@ enum AgentsLoadStateTests {
                 Issue.record("a cancelled request must fail")
             } catch let error as URLError {
                 #expect(error.code == .cancelled)
-                #expect(AgentManagementPresentation.isCancellation(error))
+                #expect(error.isLoadCancellation)
             }
         }
 

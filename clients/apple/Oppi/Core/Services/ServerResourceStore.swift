@@ -204,7 +204,7 @@ final class ServerResourceStore {
         case .failure(let error):
             if partitions[serverId]?.skillsGeneration == skillsGeneration {
                 update(serverId) {
-                    if Self.isCancellation(error) {
+                    if error.isLoadCancellation {
                         $0.skillsSync = skillsSyncBeforeRefresh
                     } else {
                         $0.skillsSync.markSyncFailed()
@@ -232,7 +232,7 @@ final class ServerResourceStore {
         case .failure(let error):
             if partitions[serverId]?.extensionsGeneration == extensionsGeneration {
                 update(serverId) {
-                    if Self.isCancellation(error) {
+                    if error.isLoadCancellation {
                         $0.extensionsSync = extensionsSyncBeforeRefresh
                     } else {
                         $0.extensionsSync.markSyncFailed()
@@ -686,16 +686,4 @@ final class ServerResourceStore {
         let text = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? "The server could not save this setting." : text
     }
-
-    private static func isCancellation(_ error: Error) -> Bool {
-        if error is CancellationError {
-            return true
-        }
-        if let urlError = error as? URLError, urlError.code == .cancelled {
-            return true
-        }
-        let nsError = error as NSError
-        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
-    }
-
 }

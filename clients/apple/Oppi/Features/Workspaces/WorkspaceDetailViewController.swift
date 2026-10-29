@@ -10,8 +10,7 @@ enum WorkspaceDetailLoadErrorPolicy {
     ) -> Bool {
         guard !hadVisibleData else { return false }
 
-        if error is CancellationError { return false }
-        if let urlError = error as? URLError, urlError.code == .cancelled { return false }
+        if error.isLoadCancellation { return false }
 
         if let apiError = error as? APIError,
            case .server(let status, let message) = apiError,
