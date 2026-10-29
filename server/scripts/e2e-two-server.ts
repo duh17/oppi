@@ -1,8 +1,14 @@
 #!/usr/bin/env bun
 /** Isolated native two-server iOS journey. Run from the checkout with:
  * bun server/scripts/e2e-two-server.ts
- * TWO_SERVER_TEST=<E2E test class> picks the journey (default OfflinePairedServerE2ETests).
+ * TWO_SERVER_TEST=<E2E test class>[/<test>] picks the journey (default OfflinePairedServerE2ETests).
  * The ordinary clients/apple/scripts/e2e.sh run owns the first server; this wrapper owns only the second.
+ *
+ * The test reaches this wrapper through a per-run fixture file (TwoServerFixture in the E2E target):
+ * the first server's port, a URL that mints a fresh invite for the second server, and a URL that
+ * stops it. The invite is minted when the test asks for it, not up front: the run waits on a
+ * machine-wide build slot and a cold build first, so an invite minted before that outlives its
+ * lifetime on a busy machine and the second pairing fails with "expired or already used".
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
@@ -17,19 +23,21 @@ const root = resolve(import.meta.dir, "../..");
 const serverDir = join(root, "server");
 const e2eScript = join(root, "clients/apple/scripts/e2e.sh");
 const dataDir = await mkdtemp(join(tmpdir(), "oppi-e2e-second-"));
+// /tmp, like e2e.sh's run dir: the UI test runner reads it by the path in its environment.
+const fixtureDir = await mkdtemp("/tmp/oppi-e2e-two-server-");
+const fixturePath = join(fixtureDir, "fixture.json");
 const name = "Offline E2E";
 let second: ChildProcess | undefined;
 let first: ChildProcess | undefined;
 let approver: ChildProcess | undefined;
 let stoppedForTest = false;
-// The iOS test class to run against the two servers. Only the offline journey asks the harness to stop the second.
-const testClass = process.env.TWO_SERVER_TEST ?? "OfflinePairedServerE2ETests";
-const needsOfflineTransition = testClass === "OfflinePairedServerE2ETests";
+// The iOS test to run against the two servers: `<class>` or `<class>/<test>`. Only the offline journey asks the harness to stop the second.
+const testSelector = process.env.TWO_SERVER_TEST ?? "OfflinePairedServerE2ETests";
+const needsOfflineTransition = testSelector.split("/")[0] === "OfflinePairedServerE2ETests";
 let failed = true;
-const controlPath = `/offline/${randomUUID()}`;
-const fixturePath = "/tmp/oppi-e2e-two-server.json";
-let ownsFixture = false;
+const controlPath = `/two-server/${randomUUID()}`;
 
+/** A port nothing listens on right now. Take it only just before its owner binds it: another run can claim a port while a slow step sits between. */
 async function freePort(): Promise<number> {
   const socket = createTCPServer();
   await new Promise<void>((ok, fail) => socket.once("error", fail).listen(0, "127.0.0.1", ok));
@@ -58,8 +66,31 @@ async function stopSecond(): Promise<void> {
     setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, 5000).unref();
   });
 }
+let serverEnv: NodeJS.ProcessEnv = process.env;
+let secondHost = "127.0.0.1";
+let mintQueue: Promise<unknown> = Promise.resolve();
+/** One signed invite for the second server. Each issue replaces the outstanding one, so mints run one at a time. */
+function mintInvite(): Promise<string> {
+  const minted = mintQueue.then(() => run("node", ["--input-type=module", "-e", `
+    import { Storage } from "./dist/src/storage.js";
+    import { generateInvite } from "./dist/src/invite.js";
+    const s = new Storage(process.env.OPPI_DATA_DIR);
+    console.log(generateInvite(s, () => process.env.E2E_APP_HOST || "127.0.0.1", () => "${name}", { requestedName: "${name}", pairingTokenTtlMs: 600000 }).inviteURL);
+  `], { ...serverEnv, E2E_APP_HOST: secondHost }));
+  mintQueue = minted.catch(() => undefined);
+  return minted;
+}
 const control = createServer(async (request, response) => {
-  if (request.method !== "POST" || request.url !== controlPath || stoppedForTest) {
+  if (request.method === "POST" && request.url === `${controlPath}/invite` && !stoppedForTest) {
+    try {
+      response.writeHead(200).end(await mintInvite());
+    } catch (error) {
+      console.error("[two-server] invite mint failed", error);
+      response.writeHead(500).end("invite mint failed");
+    }
+    return;
+  }
+  if (request.method !== "POST" || request.url !== `${controlPath}/stop` || stoppedForTest) {
     response.writeHead(404).end();
     return;
   }
@@ -69,12 +100,11 @@ const control = createServer(async (request, response) => {
   response.writeHead(200).end("offline");
 });
 try {
-  // Never let the stock harness's stale-port cleaner touch an existing listener.
-  const firstPort = await freePort();
-  const secondPort = await freePort();
-  if (firstPort === secondPort) throw Error("E2E ports collided");
   await run("npm", ["run", "build"]);
+  // After the slow build, so the port is free when the server binds it moments later.
+  const secondPort = await freePort();
   const env = { ...process.env, OPPI_DATA_DIR: dataDir };
+  serverEnv = env;
   await run("node", ["dist/src/cli.js", "config", "set", "port", String(secondPort)], env);
   await run("node", ["dist/src/cli.js", "config", "set", "host", "0.0.0.0"], env);
   await run("node", ["dist/src/cli.js", "config", "set", "tls", '{"mode":"self-signed"}'], env);
@@ -120,28 +150,24 @@ try {
     });
     if (!response.ok) throw Error("Second E2E workspace seed failed: " + response.status + " " + await response.text());
   `], { ...env, NODE_TLS_REJECT_UNAUTHORIZED: "0", E2E_BASE_URL: `https://127.0.0.1:${secondPort}`, E2E_ACCESS_TOKEN: access });
-  const invite = await run("node", ["--input-type=module", "-e", `
-    import { Storage } from "./dist/src/storage.js";
-    import { generateInvite } from "./dist/src/invite.js";
-    const s = new Storage(process.env.OPPI_DATA_DIR);
-    console.log(generateInvite(s, () => process.env.E2E_APP_HOST || "127.0.0.1", () => "${name}", { requestedName: "${name}", pairingTokenTtlMs: 600000 }).inviteURL);
-  `], env);
+  secondHost = process.env.E2E_APP_HOST || "127.0.0.1";
   await new Promise<void>((ok, fail) => control.once("error", fail).listen(0, "127.0.0.1", ok));
   const address = control.address();
   if (!address || typeof address === "string") throw Error("Missing control port");
   const controlURL = `http://127.0.0.1:${address.port}${controlPath}`;
-  // Xcode's test runner reads /tmp directly, as E2ETestCase does for the first invite.
-  // Exclusive creation prevents one isolated run from replacing another's fixture.
-  await writeFile(fixturePath, JSON.stringify({ invite, stopURL: controlURL, firstPort: String(firstPort) }), { mode: 0o600, flag: "wx" });
-  ownsFixture = true;
+  // Its own file per run, named to the test in the environment: concurrent runs cannot meet.
+  await writeFile(fixturePath, JSON.stringify({ inviteURL: `${controlURL}/invite`, stopURL: `${controlURL}/stop` }), { mode: 0o600 });
+  // e2e.sh binds this port a short while from now; claim it as late as possible.
+  const firstPort = await freePort();
+  if (firstPort === secondPort) throw Error("E2E ports collided");
   console.log(`[two-server] isolated first port=${firstPort} second port=${secondPort} second PID=${second.pid} data=${dataDir}`);
-  first = spawn(e2eScript, ["--native", "--record-video=always", "--only-testing", `OppiE2ETests/${testClass}`], {
+  first = spawn(e2eScript, ["--native", "--record-video=always", "--only-testing", `OppiE2ETests/${testSelector}`], {
     cwd: root, stdio: "inherit",
     env: {
       ...process.env, OPPI_ROOT: root, E2E_PORT: String(firstPort),
       E2E_APP_HOST: "127.0.0.1",
-      SECOND_E2E_INVITE: invite, SIMCTL_CHILD_SECOND_E2E_INVITE: invite,
-      SECOND_E2E_OFFLINE_URL: controlURL, SIMCTL_CHILD_SECOND_E2E_OFFLINE_URL: controlURL,
+      // The UI test runner sees TEST_RUNNER_-prefixed variables with the prefix stripped.
+      TEST_RUNNER_OPPI_TWO_SERVER_FIXTURE: fixturePath,
     },
   });
   const exit = await new Promise<number>((ok, fail) => { first?.once("error", fail); first?.once("exit", (code) => ok(code ?? 1)); });
@@ -153,7 +179,7 @@ try {
 } finally {
   control.close();
   approver?.kill("SIGTERM");
-  if (ownsFixture) await rm(fixturePath);
+  await rm(fixtureDir, { recursive: true, force: true });
   await stopSecond();
   if (failed) console.error(`[two-server] preserving failure data: ${dataDir}`);
   else await rm(dataDir, { recursive: true, force: true });

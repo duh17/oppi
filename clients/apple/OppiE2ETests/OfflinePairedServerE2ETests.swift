@@ -2,7 +2,7 @@ import XCTest
 
 /// Two real isolated HTTPS servers: pair both, make only the second unreachable,
 /// then exercise the user-visible offline selection and local-only removal path.
-/// Run with `bun server/scripts/e2e-two-server.ts`, not plain `clients/apple/scripts/e2e.sh`.
+/// Run with `bun server/scripts/e2e-two-server.ts` (or name it to the batch gate), not plain `clients/apple/scripts/e2e.sh`.
 @MainActor
 final class OfflinePairedServerE2ETests: E2ETestCase {
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
@@ -10,32 +10,15 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
     override var e2eRequiresFreshLaunch: Bool { true }
 
     override func configureE2ELaunch(_ application: XCUIApplication) {
-        guard let fixtureData = try? Data(contentsOf: URL(fileURLWithPath: "/tmp/oppi-e2e-two-server.json")),
-              let fixture = try? JSONSerialization.jsonObject(with: fixtureData) as? [String: String],
-              let expectedPort = fixture["firstPort"].flatMap(Int.init) else {
-            XCTFail("Current two-server port fixture is unavailable to the UI runner")
-            return
+        do {
+            application.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = try TwoServerFixture.firstServerLaunchInvite()
+        } catch {
+            XCTFail("\(error)")
         }
-        // Same per-run (or legacy /tmp) invite handoff that E2ETestCase pairs with.
-        let fileInvite = try? E2ELabServerContext.readInviteURLWithSource().url
-        let filePort = fileInvite.flatMap { try? E2ELabServerContext.baseURL(inviteURLString: $0).port }
-        guard filePort == expectedPort, let fileInvite else {
-            XCTFail("UI runner received a stale first-server invite file")
-            return
-        }
-        application.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = fileInvite
     }
 
     func testOfflinePickerInboxSidebarRetrySettingsAndConfirmedRemoval() async throws {
-        // The Xcode test runner does not pass arbitrary host environment values.
-        // Match E2ETestCase's /tmp invite-file handoff for this isolated fixture.
-        let fixtureData = try Data(contentsOf: URL(fileURLWithPath: "/tmp/oppi-e2e-two-server.json"))
-        let fixture = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: fixtureData) as? [String: String],
-            "Run the two-server harness; second server fixture is required"
-        )
-        let secondInvite = try XCTUnwrap(fixture["invite"])
-        let offlineURL = try XCTUnwrap(fixture["stopURL"].flatMap(URL.init(string:)))
+        let fixture = try TwoServerFixture.load()
         let first = app.buttons["Current server: e2e-server"]
         XCTAssertTrue(first.waitForExistence(timeout: 15), "First server did not pair")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
@@ -47,7 +30,7 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
         app.launchEnvironment.removeValue(forKey: "PI_E2E_INVITE_URL")
         app.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = "skip"
         app.terminate()
-        app.open(try XCTUnwrap(URL(string: secondInvite)))
+        app.open(try await fixture.mintInvite())
         let second = app.buttons["Current server: Offline E2E"]
         XCTAssertTrue(second.waitForExistence(timeout: 25), "Second real server did not pair and become selected")
         XCTAssertEqual(second.value as? String, "Connected", "Second server was not online before failure")
@@ -62,10 +45,7 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
         )], timeout: 30), .completed, "First server did not reconnect")
 
         // The host kills only its second child, and replies after that process exits.
-        var stop = URLRequest(url: offlineURL)
-        stop.httpMethod = "POST"
-        let (_, stopResponse) = try await URLSession.shared.data(for: stop)
-        XCTAssertEqual((stopResponse as? HTTPURLResponse)?.statusCode, 200, "The harness did not make the paired second server unreachable")
+        try await fixture.stopSecondServer()
 
         tap(first, named: "server picker after failure")
         let offlineRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Offline E2E")).firstMatch

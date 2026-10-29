@@ -600,6 +600,66 @@ enum E2ELabServerContext {
     }
 }
 
+/// The second server of a two-server journey. `server/scripts/e2e-two-server.ts` owns that server and
+/// writes one fixture file per run, named in `TEST_RUNNER_OPPI_TWO_SERVER_FIXTURE`, so concurrent runs
+/// never share state. Run these suites through that script (or the batch gate), not plain `e2e.sh`.
+struct TwoServerFixture {
+    struct Unavailable: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    private let inviteURL: URL
+    /// POST here to stop the second server; the reply comes after it exited.
+    let stopURL: URL
+
+    static func load() throws -> TwoServerFixture {
+        guard let path = E2ELabServerContext.environmentValue(for: ["OPPI_TWO_SERVER_FIXTURE"]) else {
+            throw Unavailable(description: "OPPI_TWO_SERVER_FIXTURE is not set: run through server/scripts/e2e-two-server.ts")
+        }
+        guard let data = FileManager.default.contents(atPath: path),
+              let fields = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+              let invite = fields["inviteURL"].flatMap(URL.init(string:)),
+              let stop = fields["stopURL"].flatMap(URL.init(string:)) else {
+            throw Unavailable(description: "Two-server fixture \(path) is missing or malformed")
+        }
+        return TwoServerFixture(inviteURL: invite, stopURL: stop)
+    }
+
+    /// The first server's invite, which `e2e.sh` wrote for this run, after checking it is this run's:
+    /// an invite file from another run would pair the app with someone else's server.
+    static func firstServerLaunchInvite() throws -> String {
+        let invite = try E2ELabServerContext.readInviteURLWithSource().url
+        let port = try E2ELabServerContext.baseURL(inviteURLString: invite).port
+        guard let expected = E2ELabServerContext.environmentValue(for: ["E2E_PORT"]).flatMap(Int.init), port == expected else {
+            throw Unavailable(description: "UI runner received a stale first-server invite file")
+        }
+        return invite
+    }
+
+    /// A fresh invite for the second server, minted now. One minted when the harness started would
+    /// expire during a long build-slot wait, and each invite pairs one device only.
+    func mintInvite() async throws -> URL {
+        var request = URLRequest(url: inviteURL)
+        request.httpMethod = "POST"
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let text = String(data: data, encoding: .utf8),
+              let invite = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw Unavailable(description: "The harness did not mint a second-server invite")
+        }
+        return invite
+    }
+
+    func stopSecondServer() async throws {
+        var request = URLRequest(url: stopURL)
+        request.httpMethod = "POST"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw Unavailable(description: "The harness did not make the paired second server unreachable")
+        }
+    }
+}
+
 final class E2EInviteURLResolutionTests: XCTestCase {
     func testHarnessFileWinsOverStaleProcessEnvironment() {
         let resolved = E2ELabServerContext.resolveInviteURL(

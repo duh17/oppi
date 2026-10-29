@@ -4,7 +4,7 @@ import XCTest
 /// HTTPS servers, both paired: open Server Settings for the first, switch to the second
 /// through the page's own switcher, and nothing of the first may stay on screen.
 /// Run with `TWO_SERVER_TEST=ServerSettingsSwitchE2ETests bun server/scripts/e2e-two-server.ts`
-/// (`OPPI_SIM_DEVICE_PROFILE=ipad` for iPad), not plain `clients/apple/scripts/e2e.sh`.
+/// (`OPPI_SIM_DEVICE_PROFILE=ipad` for iPad) or name it to the batch gate, not plain `clients/apple/scripts/e2e.sh`.
 @MainActor
 final class ServerSettingsSwitchE2ETests: E2ETestCase {
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
@@ -12,19 +12,11 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
     override var e2eRequiresFreshLaunch: Bool { true }
 
     override func configureE2ELaunch(_ application: XCUIApplication) {
-        guard let fixtureData = try? Data(contentsOf: URL(fileURLWithPath: "/tmp/oppi-e2e-two-server.json")),
-              let fixture = try? JSONSerialization.jsonObject(with: fixtureData) as? [String: String],
-              let expectedPort = fixture["firstPort"].flatMap(Int.init) else {
-            XCTFail("Current two-server port fixture is unavailable to the UI runner")
-            return
+        do {
+            application.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = try TwoServerFixture.firstServerLaunchInvite()
+        } catch {
+            XCTFail("\(error)")
         }
-        let fileInvite = try? E2ELabServerContext.readInviteURLWithSource().url
-        let filePort = fileInvite.flatMap { try? E2ELabServerContext.baseURL(inviteURLString: $0).port }
-        guard filePort == expectedPort, let fileInvite else {
-            XCTFail("UI runner received a stale first-server invite file")
-            return
-        }
-        application.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = fileInvite
     }
 
     /// The summary row's name, which is the one place the page says which server it is for.
@@ -43,12 +35,7 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
     }
 
     func testSwitchingServersShowsTheOtherServersSettingsAndNothingOfTheFirst() async throws {
-        let fixtureData = try Data(contentsOf: URL(fileURLWithPath: "/tmp/oppi-e2e-two-server.json"))
-        let fixture = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: fixtureData) as? [String: String],
-            "Run the two-server harness; second server fixture is required"
-        )
-        let secondInvite = try XCTUnwrap(fixture["invite"])
+        let fixture = try TwoServerFixture.load()
         let first = app.buttons["Current server: e2e-server"]
         XCTAssertTrue(first.waitForExistence(timeout: 15), "First server did not pair")
 
@@ -56,7 +43,7 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
         app.launchEnvironment.removeValue(forKey: "PI_E2E_INVITE_URL")
         app.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = "skip"
         app.terminate()
-        app.open(try XCTUnwrap(URL(string: secondInvite)))
+        app.open(try await fixture.mintInvite())
         let second = app.buttons["Current server: Offline E2E"]
         XCTAssertTrue(second.waitForExistence(timeout: 25), "Second real server did not pair and become selected")
         tap(second, named: "second server picker")
