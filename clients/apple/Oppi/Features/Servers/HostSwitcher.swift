@@ -91,6 +91,10 @@ struct HostSwitcherModel {
 
     var currentLockBadge: ScopedLockState { locks.badge(.server(current.id)) }
 
+    /// The bar's switcher, on the rail or as the pill. Tests find it by this id and read the
+    /// current server from its label.
+    static let switcherIdentifier = "server.switcher"
+
     var accessibilityLabel: String { "Current server: \(current.name)" }
 
     func menuTitle(for server: PairedServer) -> String {

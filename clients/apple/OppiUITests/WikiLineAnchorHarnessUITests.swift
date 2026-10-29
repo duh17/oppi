@@ -45,7 +45,7 @@ final class WikiLineAnchorHarnessUITests: XCTestCase {
         )
         saveScreenshot(name: "wiki-line-anchor-code")
 
-        let dismissButton = app.buttons["fullscreen-code.back"]
+        let dismissButton = app.buttons["fullScreen.code.close"]
         XCTAssertTrue(dismissButton.waitForExistence(timeout: 5), "Anchored code viewer did not expose back control")
         dismissButton.tap()
         _ = waitForDiagnostic("diag.wikiAnchor.codeOpened", timeout: 5) { $0 == 0 }

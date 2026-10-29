@@ -791,7 +791,7 @@ private struct SessionThreadDetailContentView: View {
                             .font(.body.weight(depth == 0 ? .semibold : .regular))
                             .foregroundStyle(session.status == .stopped ? theme.text.secondary : theme.text.primary)
                             .lineLimit(1)
-                        LockBadge(state: locks.badge(lockTarget))
+                        LockBadge(state: locks.badge(lockTarget), key: session.id)
                         Spacer(minLength: 4)
                         if !hidesDetails {
                             SessionPromptCacheBadge(session: session, status: promptCache[session.id])

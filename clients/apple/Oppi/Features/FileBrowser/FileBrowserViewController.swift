@@ -1115,7 +1115,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         // folder row must never reuse a file row's cell.
         let registration = { [weak self] (cell: UICollectionViewListCell, _: IndexPath, item: Item) in
             guard let self, let row = rows[item] else { return }
-            configure(cell, row: row)
+            configure(cell, row: row, path: item.path)
         }
         let folderCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item>(handler: registration)
         let fileCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item>(handler: registration)
@@ -1386,14 +1386,14 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
 
     // MARK: Cells
 
-    private func configure(_ cell: UICollectionViewListCell, row: Row) {
+    private func configure(_ cell: UICollectionViewListCell, row: Row, path: String?) {
         let palette = palette
         let comment = UIColor(palette.comment)
         let fg = UIColor(palette.fg)
         cell.accessories = []
         // The tappable rows set this; state rows read as their text.
         var element: (label: String, isSelected: Bool)?
-        defer { exposeRow(cell, as: element) }
+        defer { exposeRow(cell, as: element, path: path) }
         switch row {
         case .breadcrumb:
             return
@@ -1550,20 +1550,23 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     /// A tappable row's one accessibility element is its content, typed a
     /// button with the row's texts as its label, as the SwiftUI rows were.
     /// Runs after the content configuration: a list cell makes itself the
-    /// element once it has content. Every field is set on reuse.
-    private func exposeRow(_ cell: UICollectionViewListCell, as element: (label: String, isSelected: Bool)?) {
+    /// element once it has content. Every field is set on reuse. The id ends in the
+    /// entry's path (a folder's ends in "/"), so a row is found by its path, not its text.
+    private func exposeRow(_ cell: UICollectionViewListCell, as element: (label: String, isSelected: Bool)?, path: String?) {
         let content = cell.contentView
         cell.isAccessibilityElement = false
-        guard let element else {
+        guard let element, let path else {
             content.isAccessibilityElement = false
             content.accessibilityTraits = .none
             content.accessibilityLabel = nil
+            content.accessibilityIdentifier = nil
             cell.accessibilityElements = nil
             return
         }
         content.isAccessibilityElement = true
         content.accessibilityTraits = element.isSelected ? [.button, .selected] : .button
         content.accessibilityLabel = element.label
+        content.accessibilityIdentifier = "fileBrowser.row.\(path)"
         cell.accessibilityElements = [content]
     }
 
@@ -2047,6 +2050,14 @@ private extension FileBrowserViewController {
         case truncated
         /// Git's status lists only some of its changes.
         case marksIncomplete
+
+        /// The entry's path; nil for a state row.
+        var path: String? {
+            switch self {
+            case .directory(let path), .file(let path), .result(let path): path
+            case .breadcrumb, .searchCount, .emptyDirectory, .truncated, .marksIncomplete: nil
+            }
+        }
     }
 
     struct DirectoryRow: Equatable {

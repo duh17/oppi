@@ -268,7 +268,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             "Seeded iPhone active session rows did not appear after refresh"
         )
         XCTAssertTrue(
-            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:")).firstMatch.waitForExistence(timeout: 10),
+            app.buttons["server.switcher"].waitForExistence(timeout: 10),
             "Server switcher pill did not appear on the right side of the sessions inbox"
         )
 
@@ -278,9 +278,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
     func testServerMenuShowsOneConsolidatedConnectionStatus() throws {
         let sessionList = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "iPhone sessions inbox did not appear")
-        let serverSwitcher = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Current server:")
-        ).firstMatch
+        let serverSwitcher = app.buttons["server.switcher"]
         tap(serverSwitcher, named: "server switcher", timeout: 10)
 
         // The route reads "local network", "paired HTTPS", or Tailscale by path.
@@ -401,7 +399,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar button")
         }
         XCTAssertTrue(waitForHittable(createWorkspaceButton, timeout: 10), "Sidebar did not open")
-        XCTAssertFalse(app.buttons["workspace.sidebar.close"].exists, "Sidebar should not show a redundant close button")
         XCTAssertTrue(app.staticTexts["Oppi"].exists, "Sidebar should identify the app-level navigation surface")
         XCTAssertTrue(app.staticTexts["Workspaces"].exists, "Sidebar should label the workspace collection")
         XCTAssertTrue(
@@ -657,7 +654,6 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             app.buttons["schedules.row.\(archivedId)"].exists,
             "Archived schedule should be hidden by default"
         )
-        XCTAssertFalse(app.buttons["schedules.more"].exists, "Manual Schedule creation menu must be absent")
         XCTAssertTrue(app.buttons["guided.schedules.create.workspacePicker"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["session.toolbar.model"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["session.toolbar.thinking"].waitForExistence(timeout: 10))

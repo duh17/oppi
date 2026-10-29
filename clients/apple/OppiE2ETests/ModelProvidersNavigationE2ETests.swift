@@ -23,9 +23,7 @@ final class ModelProvidersNavigationE2ETests: E2ETestCase {
     }
 
     private func openServerSwitcher() {
-        let switcher = app.buttons
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:"))
-            .firstMatch
+        let switcher = app.buttons["server.switcher"]
         tap(switcher, named: "server switcher", timeout: 10)
     }
 

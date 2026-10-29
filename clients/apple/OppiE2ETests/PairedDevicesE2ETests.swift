@@ -117,9 +117,7 @@ final class PairedDevicesE2ETests: E2ETestCase {
     }
 
     private func openServerSettings() {
-        let switcher = app.buttons
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:"))
-            .firstMatch
+        let switcher = app.buttons["server.switcher"]
         tap(switcher, named: "server switcher", timeout: 10)
         tap(app.buttons["hostSwitcher.serverSettings"], named: "Server Settings", timeout: 5)
         XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 10), "Server settings did not open")

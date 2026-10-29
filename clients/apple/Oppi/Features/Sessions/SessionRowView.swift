@@ -123,7 +123,7 @@ final class SessionRowView: UIView {
 
         titleLabel.text = session.displayTitle
         titleLabel.textColor = colors.fg
-        SessionRowText.setLockBadge(content.lockBadge, on: lockLabel, color: colors.comment)
+        SessionRowText.setLockBadge(content.lockBadge, on: lockLabel, color: colors.comment, key: session.id)
         durableLabel.setHiddenIfChanged(!content.isDurable)
         durableLabel.attributedText = SessionRowText.symbol("infinity", style: .caption2, weight: .semibold, color: colors.comment)
         durableLabel.accessibilityIdentifier = "session.durableMarker.\(session.id)"
@@ -862,7 +862,9 @@ enum SessionRowText {
     }
 
     /// `lock.fill` while locked, `lock.open.fill` while unlocked for now (`LockBadge`).
-    static func setLockBadge(_ state: ScopedLockState, on label: UILabel, color: UIColor) {
+    /// `key` is the id of what the badge belongs to (session, workspace, server): the same
+    /// badge repeats in every row, so its identifier ends in that key.
+    static func setLockBadge(_ state: ScopedLockState, on label: UILabel, color: UIColor, key: String) {
         switch state {
         case .none:
             label.setHiddenIfChanged(true)
@@ -872,7 +874,7 @@ enum SessionRowText {
             let locked = state == .locked
             label.attributedText = symbol(locked ? "lock.fill" : "lock.open.fill", style: .caption2, weight: .semibold, color: color)
             label.accessibilityLabel = locked ? "Locked" : "Unlocked"
-            label.accessibilityIdentifier = locked ? "lockBadge.locked" : "lockBadge.unlocked"
+            label.accessibilityIdentifier = "lockBadge.\(locked ? "locked" : "unlocked").\(key)"
         }
     }
 

@@ -372,7 +372,7 @@ final class RouterRoutesUITests: XCTestCase {
         let drawerButton = app.buttons["workspace.sidebar.open"]
         let isSplit = !drawerButton.waitForExistence(timeout: 3)
 
-        let hostPill = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:")).firstMatch
+        let hostPill = app.buttons["server.switcher"]
         XCTAssertTrue(hostPill.waitForExistence(timeout: 5), "All Sessions has no host pill")
         hostPill.tap()
         let metricsItem = app.buttons["hostSwitcher.serverMetrics"]
@@ -383,8 +383,8 @@ final class RouterRoutesUITests: XCTestCase {
         let range = app.segmentedControls["server.metrics.range"]
         XCTAssertTrue(range.exists, "Server Metrics has no range control")
         // The host switcher is on the Metrics bar (or the Duo's rail), not a pill left on All Sessions.
-        let metricsPill = metricsBar.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:")).firstMatch
-        let railPill = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:")).firstMatch
+        let metricsPill = metricsBar.buttons["server.switcher"]
+        let railPill = app.buttons["server.switcher"]
         XCTAssertTrue(metricsPill.exists || (railPill.exists && !app.collectionViews["workspace.sessionList"].exists), "Server Metrics has no host switcher")
         if isSplit {
             // The sidebar floats over the detail column: the page must start right of it, not under it.

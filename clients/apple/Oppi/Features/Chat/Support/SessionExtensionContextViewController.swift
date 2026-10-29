@@ -150,6 +150,9 @@ final class SessionExtensionContextViewController: UIViewController, UICollectio
     private func configure(_ cell: UICollectionViewListCell, item: Item) {
         let palette = palette
         cell.accessories = []
+        // One registration serves every row kind; a recycled action row must not
+        // keep its id as a tool row.
+        cell.accessibilityIdentifier = nil
         switch item {
         case .path:
             var content = UIListContentConfiguration.cell()

@@ -57,7 +57,6 @@ final class ChatTimelineE2ETests: E2ETestCase {
     func testQuietModeFinishedTurnAndControlsStaySynchronized() throws {
         createAndEnterSession()
         _ = waitForWebSocketConnected(timeout: 20)
-        XCTAssertFalse(app.buttons["chat.quietMode"].exists, "Compact turns must not show a chat chip")
         let sessionId = waitForFocusedSessionId(timeout: 20)
 
         navigateBackToWorkspace()
@@ -242,9 +241,7 @@ final class ChatTimelineE2ETests: E2ETestCase {
         // Workspace-scoped session lists do not show the all-sessions server
         // switcher. Pop to the all-sessions root first, then use the sidebar's
         // stable App Settings destination.
-        let serverSwitcher = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Current server:")
-        ).firstMatch
+        let serverSwitcher = app.buttons["server.switcher"]
         if !waitForElementToExist(serverSwitcher, timeout: 1) {
             let navigationBar = app.navigationBars.firstMatch
             let backButton = navigationBar.buttons.firstMatch

@@ -6,6 +6,8 @@ import UIKit
 /// after the item's name, before any value or status.
 struct LockBadge: View {
     let state: ScopedLockState
+    /// The id of what the badge belongs to; it repeats per row, so the identifier ends in it.
+    let key: String
 
     var body: some View {
         switch state {
@@ -14,11 +16,11 @@ struct LockBadge: View {
         case .locked:
             symbol("lock.fill")
                 .accessibilityLabel("Locked")
-                .accessibilityIdentifier("lockBadge.locked")
+                .accessibilityIdentifier("lockBadge.locked.\(key)")
         case .unlocked:
             symbol("lock.open.fill")
                 .accessibilityLabel("Unlocked")
-                .accessibilityIdentifier("lockBadge.unlocked")
+                .accessibilityIdentifier("lockBadge.unlocked.\(key)")
         }
     }
 

@@ -143,9 +143,7 @@ final class WorkspaceCRUDHappyPathE2ETests: E2ETestCase {
         // The server switcher is in the All Sessions bar, not the sidebar.
         try ensureAtSessionsInbox()
 
-        let serverSwitcher = app.buttons
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:"))
-            .firstMatch
+        let serverSwitcher = app.buttons["server.switcher"]
         tap(serverSwitcher, named: "server switcher", timeout: 10)
         tap(app.buttons["hostSwitcher.serverSettings"], named: "server settings", timeout: 5)
 

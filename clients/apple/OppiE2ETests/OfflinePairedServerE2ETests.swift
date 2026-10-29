@@ -19,7 +19,7 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
 
     func testOfflinePickerInboxSidebarRetrySettingsAndConfirmedRemoval() async throws {
         let fixture = try TwoServerFixture.load()
-        let first = app.buttons["Current server: e2e-server"]
+        let first = app.serverSwitcher(named: "e2e-server")
         XCTAssertTrue(first.waitForExistence(timeout: 15), "First server did not pair")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "Connected"), object: first
@@ -31,7 +31,7 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
         app.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = "skip"
         app.terminate()
         app.open(try await fixture.mintInvite())
-        let second = app.buttons["Current server: Offline E2E"]
+        let second = app.serverSwitcher(named: "Offline E2E")
         assertExists(second, within: 25, "Second real server did not pair and become selected")
         XCTAssertEqual(second.value as? String, "Connected", "Second server was not online before failure")
         tap(second, named: "second server picker")

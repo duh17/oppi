@@ -92,7 +92,7 @@ final class QuickSessionE2ETests: E2ETestCase {
         if !agentModelSearch.exists { app.swipeDown() }
         tap(agentModelSearch, named: "search for the Haiku Agent model")
         agentModelSearch.typeText("Haiku 5.5")
-        let agentStar = app.buttons["Set as default"]
+        let agentStar = app.buttons["model.picker.star.\(modelId)"]
         if !waitForElementToExist(agentStar, timeout: 5) {
             print("[e2e] Agent model picker accessibility: \(app.debugDescription)")
         }
@@ -117,7 +117,7 @@ final class QuickSessionE2ETests: E2ETestCase {
         if !piModelSearch.exists { app.swipeDown() }
         tap(piModelSearch, named: "search for the Haiku Pi model")
         piModelSearch.typeText("Haiku 5.5")
-        let piStar = app.buttons["Set as default"]
+        let piStar = app.buttons["model.picker.star.\(modelId)"]
         if !waitForElementToExist(piStar, timeout: 5) {
             print("[e2e] Pi model picker accessibility: \(app.debugDescription)")
         }

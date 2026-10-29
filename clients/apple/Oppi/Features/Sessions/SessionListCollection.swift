@@ -1157,6 +1157,7 @@ final class SessionListServerSwitcher {
         if joinsRail {
             item.image = UIImage(systemName: model.current.resolvedBadgeIcon.symbolName)
             item.tintColor = state.uiColor(colors)
+            item.accessibilityIdentifier = HostSwitcherModel.switcherIdentifier
             item.accessibilityLabel = model.accessibilityLabel
             item.accessibilityValue = state.title
         } else {
@@ -1262,7 +1263,7 @@ final class ServerSwitcherPillButton: UIButton {
         )
         nameLabel.text = server.name
         nameLabel.textColor = colors.fg
-        SessionRowText.setLockBadge(model.currentLockBadge, on: lockLabel, color: colors.comment)
+        SessionRowText.setLockBadge(model.currentLockBadge, on: lockLabel, color: colors.comment, key: server.id)
         let connected = state == .connected
         let busy = state == .connecting || state == .recovering
         spinner.isHidden = connected || !busy
@@ -1272,6 +1273,7 @@ final class ServerSwitcherPillButton: UIButton {
         stateLabel.text = state.title
         stateLabel.textColor = tint
         chevron.tintColor = colors.comment
+        accessibilityIdentifier = HostSwitcherModel.switcherIdentifier
         accessibilityLabel = model.accessibilityLabel
         accessibilityValue = state.title
     }

@@ -292,7 +292,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
     // MARK: - Full-screen interaction
 
     private func fullScreenDismissControl() -> XCUIElement {
-        app.descendants(matching: .any)["fullscreen-code.back"].firstMatch
+        app.descendants(matching: .any)["fullScreen.code.close"].firstMatch
     }
 
     private func openFullScreenFromExpandedTool(
@@ -355,7 +355,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
 
         XCTAssertTrue(
             dismiss.waitForExistence(timeout: 4),
-            "Full-screen viewer did not expose fullscreen-code.back"
+            "Full-screen viewer did not expose fullScreen.code.close"
         )
 
         if let expectedFullscreenContentIdentifier {
@@ -385,7 +385,7 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
 
         XCTAssertTrue(
             waitForElementToDisappear(dismiss, timeout: 5),
-            "fullscreen-code.back did not disappear after tap"
+            "fullScreen.code.close did not disappear after tap"
         )
 
         if let expectedFullscreenContentIdentifier {

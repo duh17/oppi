@@ -124,7 +124,7 @@ final class SemanticPickJourneyUITests: XCTestCase {
             input.tap()
             input.typeText("Check this object")
         }
-        let save = app.buttons["Save comment"]
+        let save = app.buttons["review-comment.inline-save"]
         XCTAssertTrue(save.waitForExistence(timeout: 3))
         XCTAssertTrue(save.isEnabled)
         save.tap()

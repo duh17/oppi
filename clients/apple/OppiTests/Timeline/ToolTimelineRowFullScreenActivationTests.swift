@@ -222,7 +222,7 @@ struct ToolTimelineRowFullScreenActivationTests {
         let navigation = try #require(controller.children.first as? UINavigationController)
         #expect(
             navigation.topViewController?.navigationItem.leftBarButtonItem?.accessibilityIdentifier
-                == "fullscreen-code.back"
+                == "fullScreen.code.close"
         )
     }
 

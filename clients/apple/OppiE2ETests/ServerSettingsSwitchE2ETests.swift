@@ -36,7 +36,7 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
 
     func testSwitchingServersShowsTheOtherServersSettingsAndNothingOfTheFirst() async throws {
         let fixture = try TwoServerFixture.load()
-        let first = app.buttons["Current server: e2e-server"]
+        let first = app.serverSwitcher(named: "e2e-server")
         XCTAssertTrue(first.waitForExistence(timeout: 15), "First server did not pair")
 
         // Pair the second server by deep link, as the offline journey does, then come back to the first.
@@ -44,7 +44,7 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
         app.launchEnvironment["OPPI_E2E_LAUNCH_INVITE"] = "skip"
         app.terminate()
         app.open(try await fixture.mintInvite())
-        let second = app.buttons["Current server: Offline E2E"]
+        let second = app.serverSwitcher(named: "Offline E2E")
         assertExists(second, within: 25, "Second real server did not pair and become selected")
         tap(second, named: "second server picker")
         let firstRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "e2e-server")).firstMatch
@@ -69,7 +69,7 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
 
         // The page is the second server's: its name, its switcher, and no row or text of the first.
         waitForSummary(named: "Offline E2E", "Server Settings did not follow the switch")
-        XCTAssertTrue(app.buttons["Current server: Offline E2E"].waitForExistence(timeout: 10), "The switcher did not move to the second server")
+        XCTAssertTrue(second.waitForExistence(timeout: 10), "The switcher did not move to the second server")
         XCTAssertFalse(first.exists, "The switcher still names the first server")
         XCTAssertEqual(app.navigationBars.matching(identifier: "Server Settings").count, 1, "A switch must not stack a second Server Settings")
         let leftovers = list.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", "e2e-server", "e2e-server"))
@@ -87,7 +87,7 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
         try saveLabScreenshot(name: "server-settings-second-server")
 
         // And back: the first server's page again.
-        tap(app.buttons["Current server: Offline E2E"], named: "Server Settings switcher")
+        tap(second, named: "Server Settings switcher")
         tap(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "e2e-server")).firstMatch, named: "first server in the Server Settings switcher")
         waitForSummary(named: "e2e-server", "Server Settings did not follow the switch back")
 
@@ -99,7 +99,7 @@ final class ServerSettingsSwitchE2ETests: E2ETestCase {
         XCTAssertTrue(providersBar.waitForExistence(timeout: 10), "Model Providers did not open")
         tap(first, named: "Model Providers switcher")
         tap(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Offline E2E")).firstMatch, named: "second server in the Model Providers switcher")
-        XCTAssertTrue(app.buttons["Current server: Offline E2E"].waitForExistence(timeout: 10), "Model Providers did not follow its own switcher")
+        XCTAssertTrue(second.waitForExistence(timeout: 10), "Model Providers did not follow its own switcher")
         XCTAssertTrue(providersBar.exists, "A switch from Model Providers closed it")
         app.buttons["BackButton"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 10), "Back from Model Providers did not return to Server Settings")

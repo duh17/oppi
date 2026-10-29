@@ -553,7 +553,7 @@ final class TimelineDocumentPositionE2ETests: E2ETestCase {
         // Re-enter once so the measured journey starts from the same persisted
         // trace rendering path used after document navigation, rather than the
         // synthetic stream's transient row layout.
-        let backButton = app.buttons["fullscreen-code.back"]
+        let backButton = app.buttons["fullScreen.code.close"]
         let streamedLink = try waitForStableWikiLink(label: linkLabel)
         tap(streamedLink, named: "workspace document wiki link fixture warm-up", timeout: 5)
         XCTAssertTrue(waitForElementToExist(backButton, timeout: 20), "Workspace document did not open")

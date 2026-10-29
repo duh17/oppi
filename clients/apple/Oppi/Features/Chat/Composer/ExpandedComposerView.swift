@@ -330,10 +330,12 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
         micButton.accessibilityIdentifier = "expanded.voiceInput"
         micButton.menuProvider = { [weak self] in self?.voiceEntryMenu() }
         modelButton.addAction(UIAction { [weak self] _ in self?.configuration.onModelTap() }, for: .touchUpInside)
-        modelButton.accessibilityIdentifier = "session.toolbar.model"
+        // Own ids: the chat's composer bar stays mounted under this one and keeps
+        // `session.toolbar.model` / `.thinking`.
+        modelButton.accessibilityIdentifier = "expanded.composer.model"
         modelButton.accessibilityLabel = "Model"
         thinkingButton.addAction(UIAction { [weak self] _ in self?.presentThinkingPicker() }, for: .touchUpInside)
-        thinkingButton.accessibilityIdentifier = "session.toolbar.thinking"
+        thinkingButton.accessibilityIdentifier = "expanded.composer.thinking"
         thinkingButton.accessibilityLabel = "Thinking level"
         countersLabel.font = UIFont.monospacedDigitSystemFont(
             ofSize: UIFont.preferredFont(forTextStyle: .caption1).pointSize,

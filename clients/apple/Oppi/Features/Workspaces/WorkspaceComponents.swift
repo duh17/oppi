@@ -315,7 +315,7 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         )
         nameLabel.text = workspace.name
         nameLabel.textColor = colors.fg
-        SessionRowText.setLockBadge(configuration.lockBadge, on: lockLabel, color: colors.comment)
+        SessionRowText.setLockBadge(configuration.lockBadge, on: lockLabel, color: colors.comment, key: workspace.id)
 
         let status = configuration.status
         statusLabel.isHidden = !status.isVisible || hidesDetails

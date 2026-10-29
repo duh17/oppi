@@ -470,17 +470,13 @@ final class FullScreenCodeViewController: UIViewController {
         vc.view.backgroundColor = UIColor(palette.bgDark)
 
         let dismissMode: FullScreenViewerNavigationChrome.DismissMode?
-        let dismissAccessibilityIdentifier: String?
         switch presentationMode {
         case .sheet:
             dismissMode = .modal
-            dismissAccessibilityIdentifier = "fullscreen-code.dismiss"
         case .embedded:
             dismissMode = .embedded
-            dismissAccessibilityIdentifier = "fullscreen-code.back"
         case .contentOnly:
             dismissMode = nil
-            dismissAccessibilityIdentifier = nil
         }
         if let dismissMode {
             vc.navigationItem.leftBarButtonItem = FullScreenViewerNavigationChrome.makeDismissButton(
@@ -488,7 +484,8 @@ final class FullScreenCodeViewController: UIViewController {
                 target: self,
                 action: #selector(doneTapped),
                 palette: palette,
-                accessibilityIdentifier: dismissAccessibilityIdentifier
+                // One id for the leave control in every presentation mode.
+                accessibilityIdentifier: "fullScreen.code.close"
             )
         }
 

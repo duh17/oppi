@@ -37,7 +37,7 @@ final class FileBrowserMotionUITests: XCTestCase {
         assertMarker("FILE_MOTION_BETA")
         tapPrevious()
         assertMarker("FILE_MOTION_ALPHA")
-        XCTAssertFalse(app.buttons["Previous file"].exists)
+        XCTAssertFalse(app.buttons["fileViewer.previous"].exists)
     }
 
     func testOrdinaryPreviousNextWithReduceMotion() throws {
@@ -75,7 +75,7 @@ final class FileBrowserMotionUITests: XCTestCase {
         assertMarker("FILE_MOTION_BETA")
         tapPrevious()
         assertMarker("FILE_MOTION_ALPHA")
-        XCTAssertFalse(app.buttons["Previous file"].exists)
+        XCTAssertFalse(app.buttons["fileViewer.previous"].exists)
     }
 
     func testReviewPreviousNextWithReduceMotion() throws {
@@ -178,13 +178,13 @@ final class FileBrowserMotionUITests: XCTestCase {
     }
 
     private func tapNext() {
-        let button = app.buttons["Next file"]
+        let button = app.buttons["fileViewer.next"]
         XCTAssertTrue(button.waitForExistence(timeout: 4), "Next file control missing")
         button.tap()
     }
 
     private func tapPrevious() {
-        let button = app.buttons["Previous file"]
+        let button = app.buttons["fileViewer.previous"]
         XCTAssertTrue(button.waitForExistence(timeout: 4), "Previous file control missing")
         button.tap()
     }

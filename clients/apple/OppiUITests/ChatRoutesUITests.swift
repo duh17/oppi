@@ -28,7 +28,6 @@ final class ChatRoutesUITests: XCTestCase {
         // The default layout is pinned in the volatile domain, so this reads
         // the default and not whatever an earlier run saved on this simulator.
         launchScreen("chat-top-bar-default")
-        dismissMicrophonePrompt()
         let context = app.buttons["chat.toolbar.context"]
         XCTAssertTrue(context.waitForExistence(timeout: 15), "The context ring is the default bar")
         for id in ["files", "git", "outline", "terminal"] {
@@ -70,7 +69,6 @@ final class ChatRoutesUITests: XCTestCase {
     /// keeps each item's glance on its label's line (Git's changes here).
     func testDefaultBarHintPointsAtTheMenuUntilItIsOpened() {
         launchScreen("chat-top-bar-default", arguments: ["--reset-feature-tips"])
-        dismissMicrophonePrompt()
         let tip = app.descendants(matching: .any)["feature-tip.chat-top-bar-more.tip"]
         XCTAssertTrue(tip.waitForExistence(timeout: 15), "A chat on the default bar must show the chat tools hint")
         let message = app.descendants(matching: .any)
@@ -106,7 +104,6 @@ final class ChatRoutesUITests: XCTestCase {
     /// button beside it, and the button still says the full count.
     func testGitBadgeOfHundredsStaysClearOfTheNextButton() {
         launchScreen("chat-top-bar-all", environment: ["CHAT_ROUTES_MANY_CHANGES": "1"])
-        dismissMicrophonePrompt()
         let git = app.buttons["chat.toolbar.git"]
         let outline = app.buttons["chat.toolbar.outline"]
         XCTAssertTrue(outline.waitForExistence(timeout: 15), "The all-on bar must load")
@@ -132,7 +129,6 @@ final class ChatRoutesUITests: XCTestCase {
     /// Elsewhere there is no rail and the test skips.
     func testVerticalRailCarriesTheGitLogoInOrder() throws {
         launchScreen("chat-top-bar-all")
-        dismissMicrophonePrompt()
         XCTAssertTrue(app.buttons["chat.toolbar.context"].waitForExistence(timeout: 15), "The all-on bar must load")
         guard app.buttons["chat.rail.session"].exists else {
             throw XCTSkip("No vertical toolbar rail on this device")
@@ -152,7 +148,6 @@ final class ChatRoutesUITests: XCTestCase {
     /// A bar someone customized needs no hint about where its buttons went.
     func testCustomizedBarShowsNoMenuHint() {
         launchScreen("chat-top-bar-all", arguments: ["--reset-feature-tips"])
-        dismissMicrophonePrompt()
         XCTAssertTrue(app.buttons["chat.toolbar.files"].waitForExistence(timeout: 15), "The all-on bar must load")
         XCTAssertFalse(
             app.descendants(matching: .any)["feature-tip.chat-top-bar-more.tip"].waitForExistence(timeout: 4),
@@ -165,7 +160,6 @@ final class ChatRoutesUITests: XCTestCase {
     /// user hid — Git, Outline, and the ring — are in the … menu instead.
     func testTopBarWithTerminalOnAndTheRestInTheMenu() {
         launchScreen("chat-top-bar-terminal")
-        dismissMicrophonePrompt()
         XCTAssertTrue(
             app.buttons["chat.toolbar.terminal"].waitForExistence(timeout: 15),
             "Terminal must show when it is on"
@@ -191,7 +185,6 @@ final class ChatRoutesUITests: XCTestCase {
     /// menu has nothing but Customize Top Bar….
     func testTopBarShowsEveryButtonWhenAllAreOn() {
         launchScreen("chat-top-bar-all")
-        dismissMicrophonePrompt()
         let order = [
             "chat.toolbar.files", "chat.toolbar.git", "chat.toolbar.outline", "chat.toolbar.context", "chat.toolbar.terminal",
         ]
@@ -213,7 +206,6 @@ final class ChatRoutesUITests: XCTestCase {
     /// Every button off: only … is left, and the menu offers all five.
     func testTopBarShowsOnlyTheMenuWhenEveryButtonIsOff() {
         launchScreen("chat-top-bar-none")
-        dismissMicrophonePrompt()
         let more = app.buttons["chat.toolbar.more"]
         XCTAssertTrue(more.waitForExistence(timeout: 15), "… is the only bar control left")
         for id in ["files", "git", "outline", "context", "terminal"] {
@@ -237,7 +229,6 @@ final class ChatRoutesUITests: XCTestCase {
     /// order with a reorder handle on every row.
     func testTopBarFollowsTheChosenOrder() {
         launchScreen("chat-top-bar-reordered")
-        dismissMicrophonePrompt()
         let order = [
             "chat.toolbar.outline", "chat.toolbar.files", "chat.toolbar.context", "chat.toolbar.git", "chat.toolbar.terminal",
         ]
@@ -525,14 +516,15 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(app.searchFields["Search files"].waitForExistence(timeout: 5), "The browser must search in the panel's bar")
         XCTAssertTrue(app.buttons["fileBrowser.viewOptions"].exists, "The panel's bar must offer View Options")
         // The folder's row, not a timeline pill: Git changed a file inside it.
-        let sources = app.buttons["Sources, Contains changes"]
-        XCTAssertTrue(sources.waitForExistence(timeout: 5), "The root must mark the folder that holds a change")
+        let sources = app.buttons["fileBrowser.row.Sources/"]
+        XCTAssertTrue(sources.waitForExistence(timeout: 5), "The root must list the Sources folder")
+        XCTAssertTrue(sources.label.contains("Contains changes"), "The root must mark the folder that holds a change: \(sources.label)")
         attachScreenshot("files-panel-browser")
 
         // View Options sorts: Alpha.txt is first by name, Route.md (newer)
         // first by date.
-        let alphaRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Alpha.txt")).firstMatch
-        let routeRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Route.md")).firstMatch
+        let alphaRow = app.buttons["fileBrowser.row.Alpha.txt"]
+        let routeRow = app.buttons["fileBrowser.row.Route.md"]
         XCTAssertTrue(routeRow.waitForExistence(timeout: 5), "The root listing did not load")
         sortFiles(by: "name")
         XCTAssertTrue(waitFor(alphaRow.frame.minY < routeRow.frame.minY), "Name order lists Alpha.txt before Route.md")
@@ -546,10 +538,12 @@ final class ChatRoutesUITests: XCTestCase {
         sources.tap()
         let sourcesBar = app.navigationBars["Sources"]
         XCTAssertTrue(sourcesBar.waitForExistence(timeout: 5), "The Sources folder did not open")
-        let row = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "App.swift", "Modified, 2 added, 1 removed")
-        ).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "The changed file must carry Git's mark")
+        let row = app.buttons["fileBrowser.row.Sources/App.swift"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "The Sources folder must list App.swift")
+        XCTAssertTrue(
+            waitFor(row.label.contains("Modified, 2 added, 1 removed")),
+            "The changed file must carry Git's mark: \(row.label)"
+        )
         attachScreenshot("files-panel-changed-file")
 
         // Search scope: "route" from Sources/ finds Route.md (root) and
@@ -557,8 +551,8 @@ final class ChatRoutesUITests: XCTestCase {
         let search = app.searchFields["Search files"]
         search.tap()
         search.typeText("route")
-        let rootHit = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Route.md")).firstMatch
-        let folderHit = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "RouteView.swift")).firstMatch
+        let rootHit = app.buttons["fileBrowser.row.Route.md"]
+        let folderHit = app.buttons["fileBrowser.row.Sources/RouteView.swift"]
         let scopes = app.segmentedControls["fileBrowser.searchScope"]
         XCTAssertTrue(scopes.waitForExistence(timeout: 5), "Searching below the root must offer Everywhere / this folder")
         XCTAssertTrue(rootHit.waitForExistence(timeout: 5), "Everywhere must find the root's Route.md")
@@ -570,8 +564,7 @@ final class ChatRoutesUITests: XCTestCase {
         attachScreenshot("files-panel-search-this-folder")
         scopes.buttons["Everywhere"].tap()
         XCTAssertTrue(rootHit.waitForExistence(timeout: 5), "Everywhere must bring Route.md back")
-        // The search bar's dismiss (iOS 27 labels it Close, beside the field).
-        app.buttons.matching(NSPredicate(format: "label IN %@", ["Close", "Cancel"])).firstMatch.tap()
+        app.dismissSearch(search)
 
         XCTAssertTrue(row.waitForExistence(timeout: 5), "Ending the search must show the folder again")
         row.tap()
@@ -732,7 +725,7 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
 
         // The chat presents the picker; it stays live under the composer.
-        app.buttons["session.toolbar.model"].firstMatch.tap()
+        app.buttons["expanded.composer.model"].tap()
         let models = app.navigationBars["Models"]
         XCTAssertTrue(models.waitForExistence(timeout: 5), "Model picker did not open above the composer")
         dragToBottom(models)
@@ -796,7 +789,7 @@ final class ChatRoutesUITests: XCTestCase {
         let body = app.descendants(matching: .any)["full-screen.markdown.body"]
         XCTAssertTrue(body.waitForExistence(timeout: 5), "A double tap opens the queued message rendered")
         attachScreenshot("message-queue-full-screen")
-        app.buttons["fullscreen-code.back"].tap()
+        app.buttons["fullScreen.code.close"].tap()
         XCTAssertTrue(waitForDisappearance(of: body), "Back returns to the chat")
 
         XCTAssertTrue(waitFor(collapse.isHittable), "The drawer is still open after the reader")
@@ -1047,7 +1040,7 @@ final class ChatRoutesUITests: XCTestCase {
         ).firstMatch
         XCTAssertTrue(sessionCopyRow.waitForExistence(timeout: 5), "This session must list a touched file Git does not report")
         sessionCopyRow.tap()
-        let sessionCopyBack = app.buttons["fullscreen-code.back"]
+        let sessionCopyBack = app.buttons["fullScreen.code.close"]
         XCTAssertTrue(sessionCopyBack.waitForExistence(timeout: 10), "The session's copy did not open")
         attachScreenshot("git-panel-session-copy")
         sessionCopyBack.tap()
@@ -1164,7 +1157,7 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
 
         app.buttons["chatRoutes.openFileViewer"].tap()
-        let back = app.buttons["fullscreen-code.back"]
+        let back = app.buttons["fullScreen.code.close"]
         XCTAssertTrue(back.waitForExistence(timeout: 10), "File viewer did not open with its back control")
         attachScreenshot("file-viewer")
         back.tap()
@@ -1249,7 +1242,7 @@ final class ChatRoutesUITests: XCTestCase {
     }
 
     private func popPushedReader(returningTo bar: XCUIElement, _ name: String) {
-        let back = app.buttons["fullscreen-code.back"]
+        let back = app.buttons["fullScreen.code.close"]
         XCTAssertTrue(back.waitForExistence(timeout: 10), "\(name) reader was not pushed")
         assertRunning()
         back.tap()
@@ -1397,16 +1390,6 @@ final class ChatRoutesUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         return condition()
-    }
-
-    /// The chat fixtures touch dictation, which asks for the microphone on a
-    /// fresh simulator. Answer it before the screenshots.
-    private func dismissMicrophonePrompt() {
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let dontAllow = springboard.buttons["Don’t Allow"]
-        if dontAllow.waitForExistence(timeout: 5) {
-            dontAllow.tap()
-        }
     }
 
     private func attachScreenshot(_ name: String) {

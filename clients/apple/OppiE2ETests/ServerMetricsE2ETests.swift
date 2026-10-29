@@ -11,9 +11,7 @@ final class ServerMetricsE2ETests: E2ETestCase {
     override var e2eAutoCreatesSessionOnLaunch: Bool { false }
 
     func testServerMetricsShowsLiveServerSamples() {
-        let switcher = app.buttons
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:"))
-            .firstMatch
+        let switcher = app.buttons["server.switcher"]
         tap(switcher, named: "server switcher", timeout: 10)
         XCTAssertTrue(
             app.buttons["hostSwitcher.serverSettings"].waitForExistence(timeout: 5),

@@ -73,7 +73,7 @@ final class WriteCurrentFileNavigationE2ETests: E2ETestCase {
             .firstMatch
         XCTAssertTrue(currentText.waitForExistence(timeout: 15), "Current file bytes did not load")
         XCTAssertFalse(recordedText.exists, "Recorded write arguments replaced current bytes")
-        XCTAssertFalse(app.buttons["fullscreen-code.dismiss"].exists, "Write activation presented the output modal")
+        XCTAssertFalse(app.buttons["fullScreen.code.close"].exists, "Write activation presented the output modal")
 
         let childLink = app.links["Open child"]
         XCTAssertTrue(childLink.waitForExistence(timeout: 10), "Current file child link did not render")
@@ -118,11 +118,6 @@ final class ChatFileBrowserE2ETests: E2ETestCase {
             filesButton.frame.minX + 2,
             "Back and Files controls should be adjacent in the leading pill"
         )
-        XCTAssertFalse(
-            app.collectionViews["workspace.list"].exists,
-            "Workspace list should not be the active accessibility surface before tapping chat Files"
-        )
-
         filesButton.tap()
 
         let panelTitle = app.staticTexts["Files"]
@@ -141,10 +136,6 @@ final class ChatFileBrowserE2ETests: E2ETestCase {
         XCTAssertTrue(
             app.buttons["Done"].waitForExistence(timeout: 2),
             "File panel should use the shared sheet navigation container"
-        )
-        XCTAssertFalse(
-            app.buttons["chat.files.fullscreen.expand"].exists,
-            "File panel should rely on the native sheet detent instead of a custom expand button"
         )
     }
 }

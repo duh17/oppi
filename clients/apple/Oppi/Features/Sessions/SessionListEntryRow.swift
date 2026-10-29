@@ -272,7 +272,7 @@ final class SessionThreadLinkView: UIControl {
         titleLabel.textColor = colors.blue
         detailLabel.text = (["· \(root.displayTitle)"] + [workspaceName].compactMap { $0 }).joined(separator: " · ")
         detailLabel.textColor = colors.comment
-        SessionRowText.setLockBadge(lockBadge, on: lockLabel, color: colors.comment)
+        SessionRowText.setLockBadge(lockBadge, on: lockLabel, color: colors.comment, key: root.id)
         chevron.tintColor = colors.comment
         accessibilityLabel = "In thread from \(root.displayTitle)" + (workspaceName.map { " in \($0)" } ?? "")
     }

@@ -37,6 +37,7 @@ final class AdjacentFileNavigatorButtons {
                 palette: palette
             )
             let direction: FileBrowserNavigationDirection = corner == .leading ? .previous : .next
+            button.accessibilityIdentifier = corner == .leading ? "fileViewer.previous" : "fileViewer.next"
             button.addAction(UIAction { [weak self] _ in self?.onSelect(direction) }, for: .primaryActionTriggered)
             host.addSubview(button)
             FullScreenFloatingControlChrome.pinStandaloneButton(button, to: host, leading: corner == .leading)

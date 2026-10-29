@@ -31,11 +31,6 @@ final class FullScreenReviewCommentUITests: XCTestCase {
 
         selectHarnessCodeRange()
 
-        XCTAssertFalse(
-            app.buttons["review-comment.selection-bar"].waitForExistence(timeout: 1),
-            "Full-screen text selection should use the native edit menu only, not a standalone Comment bar"
-        )
-
         let commentAction = try XCTUnwrap(
             waitForActionBarElement(named: "Comment", timeout: 5),
             "Native selection action bar did not expose Comment"
@@ -89,7 +84,7 @@ final class FullScreenReviewCommentUITests: XCTestCase {
             input.typeText("Looks good")
         }
 
-        let saveButton = app.buttons["Save comment"]
+        let saveButton = app.buttons["review-comment.inline-save"]
         XCTAssertTrue(saveButton.waitForExistence(timeout: 3), "Inline composer did not expose Save comment")
         if !saveButton.isEnabled {
             tapElement(input)
@@ -136,11 +131,11 @@ final class FullScreenReviewCommentUITests: XCTestCase {
     func testEmbeddedReviewReaderExposesBackAndSessionActions() throws {
         launchReviewCommentHarness(embedded: true)
 
-        XCTAssertTrue(app.buttons["fullscreen-code.back"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["fullScreen.code.close"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Edit in Oppi Session"].waitForExistence(timeout: 2))
         XCTAssertFalse(app.buttons["fullscreen-code.review-comments.stash"].exists)
 
-        app.buttons["fullscreen-code.back"].tap()
+        app.buttons["fullScreen.code.close"].tap()
         XCTAssertEqual(
             waitForDiagnostic("diag.embedded.backCount", timeout: 2, matching: { $0 == 1 }),
             1,

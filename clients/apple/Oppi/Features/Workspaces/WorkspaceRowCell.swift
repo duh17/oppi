@@ -105,7 +105,7 @@ final class WorkspaceRowCell: UICollectionViewListCell {
         serverLabel.text = server
         serverLabel.isHidden = server == nil
         serverLabel.textColor = colors.comment
-        SessionRowText.setLockBadge(lock, on: lockLabel, color: colors.comment)
+        SessionRowText.setLockBadge(lock, on: lockLabel, color: colors.comment, key: workspace.id)
         button.accessibilityIdentifier = identifier
         button.accessibilityLabel = workspace.name
         button.accessibilityValue = ([description, folder, server, lock.accessibilityWord] as [String?])

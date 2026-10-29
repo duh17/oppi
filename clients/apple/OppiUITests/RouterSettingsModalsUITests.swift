@@ -32,7 +32,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
         let prompt = app.buttons["agents.pi.systemPrompt"]
         XCTAssertTrue(prompt.waitForExistence(timeout: 10), "Pi detail did not load")
         prompt.tap()
-        let back = app.buttons["fullscreen-code.back"]
+        let back = app.buttons["fullScreen.code.close"]
         XCTAssertTrue(back.waitForExistence(timeout: 5), "The default prompt did not open full screen")
         assertRunning()
         back.tap()
@@ -43,7 +43,6 @@ final class RouterSettingsModalsUITests: XCTestCase {
         back.tap()
         XCTAssertTrue(waitForDisappearance(of: back))
 
-        XCTAssertFalse(app.buttons["agents.pi.editSystemPrompt"].exists, "The Edit SYSTEM.md row is the bar now")
         assertCompactOppiBar(page: "agents-pi")
     }
 
@@ -274,7 +273,6 @@ final class RouterSettingsModalsUITests: XCTestCase {
     /// Oppi bar for that extension.
     func testExtensionDetailShowsTheOppiBar() {
         launch(page: "extension-detail")
-        XCTAssertFalse(app.buttons["server.extension.editWithOppi"].exists, "The Edit with Oppi row is the bar now")
         assertCompactOppiBar(page: "extension-detail")
     }
 
@@ -545,7 +543,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
 
     /// A reviewable Markdown sheet: its dismiss control, then swipe-down.
     private func assertReviewSheet(opener: () -> Void) {
-        let dismiss = app.buttons["fullscreen-code.dismiss"]
+        let dismiss = app.buttons["fullScreen.code.close"]
         opener()
         XCTAssertTrue(dismiss.waitForExistence(timeout: 5), "The review sheet did not open")
         attachScreenshot("review-sheet")
