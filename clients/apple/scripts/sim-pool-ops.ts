@@ -18,6 +18,7 @@ import {
   acquireHeavyBuildSlot,
   checkoutDerivedData,
   cloneProducts,
+  acquireHeavySlot,
   buildIsCurrent,
   buildKey,
   compilationCache,
@@ -850,12 +851,30 @@ export async function resolveRuntime(session: CommandSession, config: PoolConfig
   return selected;
 }
 
-export async function ensureSim(session: CommandSession, config: PoolConfig, slot: number): Promise<string> {
+/**
+ * Holds the machine-wide `sim-first-boot` slot while a simulator is created and booted for the first
+ * time (a new device migrates its data for about two minutes and drives the load average past 100).
+ * `ensureSim` takes it before it creates or replaces a device; the caller releases it once
+ * `prepareSimulator` finished, and in its cleanup path.
+ */
+export type FirstBootGate = { lock?: HeldLock };
+
+export async function ensureSim(session: CommandSession, config: PoolConfig, slot: number, firstBoot: FirstBootGate): Promise<string> {
   const runtime = await resolveRuntime(session, config);
   const devices = await listDevices(session);
   const found = findMatchingPoolDevice(devices, slot, runtime, config.deviceType);
   if (found.match) {
     return found.match.udid;
+  }
+  if (!firstBoot.lock) {
+    const heavy = await acquireHeavySlot("sim-first-boot", process.env, session, log);
+    if (!heavy) {
+      die(session.canceled ? "canceled while waiting to create a simulator" : "caller is gone; not creating a simulator");
+    }
+    firstBoot.lock = heavy.lock;
+    if (heavy.waitedSeconds > 0) {
+      log(`[sim-pool] waited ${heavy.waitedSeconds}s for the machine-wide sim-first-boot slot`);
+    }
   }
   for (const device of found.mismatches) {
     log(
@@ -1069,8 +1088,8 @@ export async function prepareSimulator(
   }
 }
 
-/** The app the pool resets between runs (project.yml `Oppi` target). */
-const APP_BUNDLE_ID = "dev.chenda.Oppi";
+/** The app the pool resets between runs (project.yml `Oppi` target; sim-pool-ops.test.ts checks they agree). */
+export const APP_BUNDLE_ID = "dev.chenda.Oppi";
 
 /**
  * Drops everything a previous run left in a leased slot: the app, its data container (defaults, drafts,
@@ -1928,6 +1947,7 @@ export async function commandRun(
   let prepEnd = runStart;
   let simPrep = 0;
   let slotReset = 0;
+  const firstBoot: FirstBootGate = {};
   let xcodeStart = runStart;
   let xcodeEnd = runStart;
   let videoPath: string | undefined;
@@ -2009,7 +2029,7 @@ export async function commandRun(
       return session.cancelExitCode();
     }
     log(`[sim-pool] Acquired slot ${owned.slot}`);
-    simUdId = await ensureSim(session, config, owned.slot);
+    simUdId = await ensureSim(session, config, owned.slot, firstBoot);
     mkdirSync(derivedData, { recursive: true });
     log(`[sim-pool] Simulator: ${poolDeviceName(owned.slot)} (${simUdId})`);
     log(`[sim-pool] DerivedData: ${derivedData}`);
@@ -2021,6 +2041,7 @@ export async function commandRun(
     const resetStart = nowEpoch();
     await resetSlotAppState(session, bootUdid);
     slotReset = nowEpoch() - resetStart;
+    firstBoot.lock?.release();
     log(`[sim-pool] Reset app state on ${bootUdid} (${APP_BUNDLE_ID} uninstalled, keychain cleared, ${slotReset}s)`);
     prepEnd = nowEpoch();
     const baseLog = join(logDir, `pool-${owned.slot}-${stamp}.log`);
@@ -2178,6 +2199,7 @@ export async function commandRun(
       throw error;
     }
   } finally {
+    firstBoot.lock?.release();
     if (videoSession && !videoSession.supervised.retired) {
       const completed = await session.complete(videoSession.supervised, {
         stopFirst: true,
@@ -2574,7 +2596,8 @@ OPPI_SIM_POOL_IDLE_MINUTES (30) except the OPPI_SIM_POOL_KEEP_WARM (2) most
 recently used. Before booting, the
 pool shuts down least recently used idle pool simulators to keep at most
 OPPI_SIM_POOL_MAX_BOOTED (12) simulators booted, counting simulators it does not
-manage; when nothing is idle it boots anyway and says so. Unused simulator
+manage; when nothing is idle it waits up to OPPI_SIM_POOL_WAIT seconds for
+capacity and then fails, never booting past the ceiling. Unused simulator
 daemons are disabled unless OPPI_SIM_SLIM=0. Compiler index store is
 disabled unless OPPI_SIM_POOL_INDEX_STORE=1 or the command already sets
 COMPILER_INDEX_STORE_ENABLE. Ordinary run does not delete unavailable

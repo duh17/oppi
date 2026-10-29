@@ -34,6 +34,7 @@ import {
   prepareSimulator,
   resolveRuntime,
   runXcrun,
+  type FirstBootGate,
   type PoolConfig,
 } from "./sim-pool-ops";
 import {
@@ -520,8 +521,10 @@ export async function reapOnce(config: PoolConfig, session: CommandSession): Pro
 /**
  * Keeps booting `targetUdid` under the booted-simulator ceiling: shuts down
  * least recently used idle pool simulators, then claims whose owner is gone
- * or idle. Simulators the pool does not manage count but are never touched;
- * when nothing can go, the boot proceeds and the log says so.
+ * or idle. Simulators the pool does not manage count but are never touched.
+ * When nothing can go, it waits (up to OPPI_SIM_POOL_WAIT seconds, polling every
+ * 3 s, re-evaluating each time: a run that finishes leaves an idle simulator to
+ * shut down) and then fails; it never boots past the ceiling.
  */
 export async function ensureBootCapacity(config: PoolConfig, targetUdid: string): Promise<void> {
   if (config.maxBooted === 0) {
@@ -530,46 +533,70 @@ export async function ensureBootCapacity(config: PoolConfig, targetUdid: string)
   const session = new CommandSession();
   session.installHandlers();
   try {
-    const devices = await listDevices(session);
-    let booted = devices.filter((device) => isBooted(device) && device.udid !== targetUdid).length;
-    if (booted < config.maxBooted) {
-      return;
-    }
-    const others = devices.filter((device) => device.udid !== targetUdid);
-    const idle = idlePoolSlots(config.lockDir, others).sort((a, b) => a.lastUsedMs - b.lastUsedMs);
-    const claimed: number[] = [];
-    for (const device of others) {
-      const slot = poolSlot(device);
-      if (slot != null && isBooted(device) && restingSlot(config.lockDir, slot).kind === "claimed") {
-        claimed.push(slot);
+    const deadline = Date.now() + config.waitSeconds * 1000;
+    let announced = false;
+    while (true) {
+      const booted = await freeBootCapacity(config, session, targetUdid);
+      if (booted < config.maxBooted) {
+        return;
       }
-    }
-    const now = Date.now();
-    for (const slot of idle) {
-      if (booted < config.maxBooted || session.canceled) {
-        break;
+      if (session.canceled) {
+        die("canceled while waiting for booted-simulator capacity");
       }
-      log(
-        `[sim-pool] ${booted} simulators booted (limit ${config.maxBooted}); shutting down least recently used ${poolDeviceName(slot.slot)} (idle ${formatAge(now - slot.lastUsedMs)})`,
-      );
-      const outcome = await shutdownPoolSlot(session, config, slot.slot, slot.udid, "capacity", {
-        idleSince: slot.lastUsedMs,
-      });
-      if (outcome === "shutdown") {
-        booted -= 1;
+      if (Date.now() >= deadline) {
+        die(
+          `${booted} simulators booted (limit ${config.maxBooted}) and none is idle in the pool (waited ${config.waitSeconds}s); ` +
+            "wait for a run to finish, release a claim, shut down a simulator that is not a pool slot, or raise OPPI_SIM_POOL_MAX_BOOTED",
+        );
       }
-    }
-    if (booted >= config.maxBooted && claimed.length > 0 && !session.canceled) {
-      booted -= (await reapClaims(session, config, devices, claimed)).shutdowns;
-    }
-    if (booted >= config.maxBooted) {
-      log(
-        `[sim-pool] ${booted} simulators booted (limit ${config.maxBooted}) and none is idle in the pool; booting anyway`,
-      );
+      if (!announced) {
+        log(
+          `[sim-pool] ${booted} simulators booted (limit ${config.maxBooted}) and none is idle in the pool; waiting up to ${config.waitSeconds}s for capacity`,
+        );
+        announced = true;
+      }
+      await session.waitWhileIdle(3000);
     }
   } finally {
     await session.dispose();
   }
+}
+
+/** One pass of shutting down what may go; returns how many simulators other than `targetUdid` stay booted. */
+async function freeBootCapacity(config: PoolConfig, session: CommandSession, targetUdid: string): Promise<number> {
+  const devices = await listDevices(session);
+  let booted = devices.filter((device) => isBooted(device) && device.udid !== targetUdid).length;
+  if (booted < config.maxBooted) {
+    return booted;
+  }
+  const others = devices.filter((device) => device.udid !== targetUdid);
+  const idle = idlePoolSlots(config.lockDir, others).sort((a, b) => a.lastUsedMs - b.lastUsedMs);
+  const claimed: number[] = [];
+  for (const device of others) {
+    const slot = poolSlot(device);
+    if (slot != null && isBooted(device) && restingSlot(config.lockDir, slot).kind === "claimed") {
+      claimed.push(slot);
+    }
+  }
+  const now = Date.now();
+  for (const slot of idle) {
+    if (booted < config.maxBooted || session.canceled) {
+      break;
+    }
+    log(
+      `[sim-pool] ${booted} simulators booted (limit ${config.maxBooted}); shutting down least recently used ${poolDeviceName(slot.slot)} (idle ${formatAge(now - slot.lastUsedMs)})`,
+    );
+    const outcome = await shutdownPoolSlot(session, config, slot.slot, slot.udid, "capacity", {
+      idleSince: slot.lastUsedMs,
+    });
+    if (outcome === "shutdown") {
+      booted -= 1;
+    }
+  }
+  if (booted >= config.maxBooted && claimed.length > 0 && !session.canceled) {
+    booted -= (await reapClaims(session, config, devices, claimed)).shutdowns;
+  }
+  return booted;
 }
 
 /**
@@ -657,6 +684,7 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
   session.installHandlers();
   let acquired: AcquireSuccess | undefined;
   let done = false;
+  const firstBoot: FirstBootGate = {};
   try {
     // A session that already holds a claim gets that simulator back. If a
     // reaper or release is working on the slot, wait for it rather than
@@ -723,7 +751,7 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
     session.onSpawned = (child) => {
       recordOwnedPgid(owned, child.pgid);
     };
-    const udid = await ensureSim(session, config, owned.slot);
+    const udid = await ensureSim(session, config, owned.slot, firstBoot);
     await prepareSimulator(
       session,
       config,
@@ -732,6 +760,7 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
       () => ensureBootCapacity(config, udid),
       needsCleanBoot(acquired.previous),
     );
+    firstBoot.lock?.release();
     if (session.canceled) {
       return session.cancelExitCode();
     }
@@ -744,6 +773,7 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
     );
     process.stdout.write(`${udid}\n`);
   } finally {
+    firstBoot.lock?.release();
     const stopped = await session.dispose();
     if (acquired && !done) {
       const previousClaim = acquired.previous?.claim;

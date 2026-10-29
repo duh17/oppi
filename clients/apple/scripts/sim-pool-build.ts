@@ -446,24 +446,43 @@ export async function waitForFlock(
   }
 }
 
+/** scripts/heavy.sh classes sim-pool takes itself: slot-count env knob and default. */
+const HEAVY_CLASSES = {
+  "xcode-build": { knob: "OPPI_HEAVY_XCODE_BUILD", slots: 2 },
+  // One at a time: `simctl create` plus a new device's first boot (about two minutes of migration) spikes
+  // the load average to 100+ on this host, so concurrent first boots slow every run that is already going.
+  "sim-first-boot": { knob: "OPPI_HEAVY_SIM_FIRST_BOOT", slots: 1 },
+} as const;
+
 /**
  * Take one of scripts/heavy.sh's machine-wide `xcode-build` slots (same slot files and
  * env knobs), or nothing when an ancestor already holds that class (OPPI_HEAVY_HELD).
  * The child environment must carry `heldEnv` so a nested heavy.sh does not wait on us.
  */
-export async function acquireHeavyBuildSlot(
+export function acquireHeavyBuildSlot(
+  env: NodeJS.ProcessEnv,
+  session: Waiter,
+  log: (message: string) => void,
+): Promise<{ lock?: HeldLock; heldEnv: string; waitedSeconds: number } | undefined> {
+  return acquireHeavySlot("xcode-build", env, session, log);
+}
+
+export async function acquireHeavySlot(
+  heavyClass: keyof typeof HEAVY_CLASSES,
   env: NodeJS.ProcessEnv,
   session: Waiter,
   log: (message: string) => void,
 ): Promise<{ lock?: HeldLock; heldEnv: string; waitedSeconds: number } | undefined> {
   const held = env.OPPI_HEAVY_HELD ?? "";
-  const heldEnv = held.includes(":xcode-build:") ? held : `${held || ":"}xcode-build:`;
-  if (held.includes(":xcode-build:")) {
+  const marker = `:${heavyClass}:`;
+  const heldEnv = held.includes(marker) ? held : `${held || ":"}${heavyClass}:`;
+  if (held.includes(marker)) {
     return { heldEnv, waitedSeconds: 0 };
   }
-  const slots = Number(env.OPPI_HEAVY_XCODE_BUILD ?? "2");
+  const { knob, slots: defaultSlots } = HEAVY_CLASSES[heavyClass];
+  const slots = Number(env[knob] ?? String(defaultSlots));
   if (!Number.isInteger(slots) || slots < 1) {
-    throw new Error(`invalid OPPI_HEAVY_XCODE_BUILD '${env.OPPI_HEAVY_XCODE_BUILD}'`);
+    throw new Error(`invalid ${knob} '${env[knob]}'`);
   }
   const dir = env.OPPI_HEAVY_DIR ?? join(env.HOME ?? homedir(), "Library", "Caches", "oppi-heavy");
   mkdirSync(dir, { recursive: true });
@@ -472,7 +491,7 @@ export async function acquireHeavyBuildSlot(
   let announced = false;
   while (true) {
     for (let slot = 0; slot < slots; slot += 1) {
-      const path = join(dir, `xcode-build.${slot}`);
+      const path = join(dir, `${heavyClass}.${slot}`);
       const fd = openSync(path, "a");
       if (flockFd(fd, LOCK_EX | LOCK_NB) === 0) {
         let isHeld = true;
@@ -492,11 +511,11 @@ export async function acquireHeavyBuildSlot(
     if (session.canceled) return undefined;
     if (!announced) {
       announced = true;
-      log(`[sim-pool] all ${slots} machine-wide xcode-build slots busy (${dir}); waiting`);
+      log(`[sim-pool] all ${slots} machine-wide ${heavyClass} slots busy (${dir}); waiting`);
     }
     // Like heavy.sh: a waiter whose caller is gone (a killed pre-push hook) does not build later.
     if (callerGone(env)) {
-      log("[sim-pool] caller is gone; not starting the queued build");
+      log(`[sim-pool] caller is gone; not starting the queued ${heavyClass} job`);
       return undefined;
     }
     await session.waitWhileIdle(pollMs);

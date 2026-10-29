@@ -8,6 +8,7 @@
 #   xcode-build  2   build / build-for-testing phases      (OPPI_HEAVY_XCODE_BUILD)
 #   server-full  1   full vitest suite                     (OPPI_HEAVY_SERVER_FULL)
 #   ui-suite     2   XCUITest / E2E runs                   (OPPI_HEAVY_UI_SUITE)
+#   sim-first-boot 1 sim-pool's simctl create + first boot of a new simulator (OPPI_HEAVY_SIM_FIRST_BOOT)
 #
 # Other env: OPPI_HEAVY_DIR (slot files, default ~/Library/Caches/oppi-heavy),
 # OPPI_HEAVY_POLL (seconds between retries while every slot is busy, default 5),
@@ -18,8 +19,8 @@
 # Fairness: there is no queue. A waiter retries every OPPI_HEAVY_POLL seconds and a newcomer
 # tries at once, so a newcomer can take a slot that freed between a waiter's polls.
 #
-# sim-pool takes xcode-build slots itself (clients/apple/scripts/sim-pool-build.ts: flock(2) on
-# these same slot files, the same env knobs), so `sim-pool run` needs no heavy.sh wrapper.
+# sim-pool takes xcode-build and sim-first-boot slots itself (clients/apple/scripts/sim-pool-build.ts:
+# flock(2) on these same slot files, the same env knobs), so `sim-pool run` needs no heavy.sh wrapper.
 #
 # The kernel holds each slot through lockf(1) exactly as long as the command runs; a crashed
 # holder frees its slot at once, so there is no stale-lock takeover logic. The command's exit
@@ -33,6 +34,7 @@ case "$class" in
   xcode-build) slots="${OPPI_HEAVY_XCODE_BUILD:-2}" ;;
   server-full) slots="${OPPI_HEAVY_SERVER_FULL:-1}" ;;
   ui-suite) slots="${OPPI_HEAVY_UI_SUITE:-2}" ;;
+  sim-first-boot) slots="${OPPI_HEAVY_SIM_FIRST_BOOT:-1}" ;;
   *) echo "heavy.sh: unknown class $class" >&2; exit 2 ;;
 esac
 [[ "$slots" =~ ^[1-9][0-9]*$ ]] || { echo "heavy.sh: invalid slot count '$slots' for $class" >&2; exit 2; }

@@ -64,6 +64,11 @@ describe.skipIf(!hasLockf)("heavy.sh", () => {
   test("rejects an unknown class and a bad slot count", async () => {
     expect(await run(["bogus", "--", "true"]).exited).toBe(2);
     expect(await run(["xcode-build", "--", "true"], { OPPI_HEAVY_XCODE_BUILD: "0" }).exited).toBe(2);
+    expect(await run(["sim-first-boot", "--", "true"], { OPPI_HEAVY_SIM_FIRST_BOOT: "0" }).exited).toBe(2);
+  });
+
+  test("accepts the sim-first-boot class sim-pool uses for a new simulator's first boot", async () => {
+    expect(await run(["sim-first-boot", "--", "true"]).exited).toBe(0);
   });
 
   test("makes the third job wait while two slots are busy, then runs it when one frees", async () => {

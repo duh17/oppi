@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { acquireHeavySlot } from "./sim-pool-build";
 import { claimVerdict, planIdleReap } from "./sim-pool-lifecycle";
 import {
   readSlotState,
@@ -96,7 +97,7 @@ switch (sub) {
   }
   case "boot": setState(rest[0], "Booted"); break;
   case "shutdown": setState(rest[0], "Shutdown"); break;
-  case "bootstatus": case "spawn": break;
+  case "bootstatus": case "spawn": case "uninstall": case "keychain": break;
   default: process.exit(127);
 }
 `,
@@ -464,10 +465,103 @@ describe("sim-pool booted ceiling", () => {
       OPPI_SIM_POOL_MAX_BOOTED: "1",
       OPPI_SIM_POOL_IDLE_MINUTES: "0",
     });
-    expectOk(result);
+    // Both idle pool simulators went, least recently used first, and Chen's own stayed: the ceiling
+    // (1) is still full, so the run does not boot past it.
     expect(sim.shutdowns().filter((name) => name !== "Oppi-Pool-0")).toEqual(["Oppi-Pool-4", "Oppi-Pool-3"]);
     expect(sim.state("Chen iPhone")).toBe("Booted");
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("1 simulators booted (limit 1) and none is idle in the pool");
+    expect(sim.state("Oppi-Pool-0")).toBe("Shutdown");
+  }, CLI_TIMEOUT);
+
+  test("a run waits for capacity instead of booting past the ceiling, and boots once one frees up", async () => {
+    const sim = fakeSimulators([
+      { name: "Oppi-Pool-0", state: "Shutdown", type: IPHONE },
+      { name: "Chen iPhone", state: "Booted", type: IPHONE },
+    ]);
+    writeCheckout(sim.root);
+    const child = spawn(
+      "bun",
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
+      {
+        cwd: sim.root,
+        env: {
+          ...sim.env,
+          OPPI_ROOT: sim.root,
+          OPPI_SIM_POOL_COUNT: "1",
+          OPPI_SIM_DEVICE_TYPE: IPHONE,
+          OPPI_SIM_POOL_MAX_BOOTED: "1",
+          OPPI_SIM_POOL_WAIT: "40",
+        },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr!.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+    const deadline = Date.now() + 30_000;
+    while (!stderr.includes("waiting up to 40s for capacity") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    // Still waiting: nothing was booted past the ceiling.
+    expect(stderr).toContain("waiting up to 40s for capacity");
+    expect(sim.state("Oppi-Pool-0")).toBe("Shutdown");
+    spawnSync("xcrun", ["simctl", "shutdown", "UDID-Chen iPhone"], { env: sim.env });
+    expect(await exited).toBe(0);
     expect(sim.state("Oppi-Pool-0")).toBe("Booted");
-    expect(result.stderr).toContain("booting anyway");
+  }, CLI_TIMEOUT);
+});
+
+describe("sim-pool first boot of a new simulator", () => {
+  test("creating and first-booting a simulator waits for the machine-wide first-boot slot", async () => {
+    const sim = fakeSimulators([]);
+    writeCheckout(sim.root);
+    const heavyEnv = { ...sim.env, OPPI_HEAVY_DIR: join(sim.root, "heavy"), OPPI_HEAVY_POLL: "0.2" };
+    const held = await acquireHeavySlot("sim-first-boot", heavyEnv, { canceled: false, waitWhileIdle: async () => {} }, () => {});
+    expect(held?.lock).toBeDefined();
+    const child = spawn(
+      "bun",
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
+      {
+        cwd: sim.root,
+        env: { ...heavyEnv, OPPI_ROOT: sim.root, OPPI_SIM_POOL_COUNT: "1", OPPI_SIM_DEVICE_TYPE: IPHONE },
+        stdio: ["ignore", "ignore", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr!.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+    const deadline = Date.now() + 30_000;
+    while (!stderr.includes("sim-first-boot slots busy") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(stderr).toContain("1 machine-wide sim-first-boot slots busy");
+    // The simulator is not created while another run holds the first-boot slot.
+    expect(sim.state("Oppi-Pool-0")).toBeUndefined();
+    held!.lock!.release();
+    expect(await exited).toBe(0);
+    expect(sim.state("Oppi-Pool-0")).toBe("Booted");
+  }, CLI_TIMEOUT);
+
+  test("a simulator that already exists boots without the first-boot slot", async () => {
+    const sim = fakeSimulators([{ name: "Oppi-Pool-0", state: "Shutdown", type: IPHONE }]);
+    writeCheckout(sim.root);
+    const heavyEnv = { ...sim.env, OPPI_HEAVY_DIR: join(sim.root, "heavy"), OPPI_HEAVY_POLL: "0.2" };
+    const held = await acquireHeavySlot("sim-first-boot", heavyEnv, { canceled: false, waitWhileIdle: async () => {} }, () => {});
+    try {
+      const result = spawnSync(
+        "bun",
+        [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
+        { cwd: sim.root, env: { ...heavyEnv, OPPI_ROOT: sim.root, OPPI_SIM_POOL_COUNT: "1", OPPI_SIM_DEVICE_TYPE: IPHONE }, encoding: "utf8" },
+      );
+      expectOk(result);
+      expect(sim.state("Oppi-Pool-0")).toBe("Booted");
+    } finally {
+      held!.lock!.release();
+    }
   }, CLI_TIMEOUT);
 });
