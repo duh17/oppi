@@ -40,8 +40,12 @@ class TestURLProtocol: URLProtocol, @unchecked Sendable {
         var request = self.request
         let owner = request.value(forHTTPHeaderField: Self.ownerHeader)
         request.setValue(nil, forHTTPHeaderField: Self.ownerHeader)
-        guard let owner, let handler = Self.handlers.withLockUnchecked({ $0[owner] }) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+        guard let owner else {
+            fail("\(request.url?.absoluteString ?? "request") names no owning test: build the session with TestURLProtocol.install(in:)")
+            return
+        }
+        guard let handler = Self.handlers.withLockUnchecked({ $0[owner] }) else {
+            fail("\(request.url?.absoluteString ?? "request") reached TestURLProtocol with no handler set by \(owner)")
             return
         }
         do {
@@ -52,6 +56,15 @@ class TestURLProtocol: URLProtocol, @unchecked Sendable {
         } catch {
             client?.urlProtocol(self, didFailWithError: error)
         }
+    }
+
+    /// A setup mistake is not a server answer: it fails with its own error, and the run,
+    /// so it can never satisfy a test that expects the request to fail.
+    private func fail(_ message: String) {
+        Issue.record(Comment(rawValue: message))
+        client?.urlProtocol(self, didFailWithError: NSError(
+            domain: "TestURLProtocol", code: 1, userInfo: [NSLocalizedDescriptionKey: message]
+        ))
     }
 
     override func stopLoading() {}
