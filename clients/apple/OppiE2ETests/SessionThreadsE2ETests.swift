@@ -451,7 +451,9 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(reveal(childRow, in: inbox), "Flat List should list the child session as its own row")
 
         // Relaunch on the saved choice: a launch argument would override it.
-        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"] + ChatTopBarTestLayout.panelButtons
+        if let index = app.launchArguments.firstIndex(of: "-\(Self.sessionThreadsDefaultsKey)") {
+            app.launchArguments.removeSubrange(index...(index + 1))
+        }
         app.terminate()
         app.launch()
         XCTAssertTrue(inbox.waitForExistence(timeout: 30), "Inbox did not return after relaunch")

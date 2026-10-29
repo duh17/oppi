@@ -2,7 +2,7 @@ import UIKit
 
 /// Tracks which app build the user has seen the What's New screen for.
 enum WhatsNewManager {
-    private static let lastSeenVersionKey = "\(AppIdentifiers.subsystem).whatsNew.lastSeenVersion"
+    static let lastSeenVersionKey = "\(AppIdentifiers.subsystem).whatsNew.lastSeenVersion"
 
     /// Current marketing version plus build number from the bundle.
     static var currentVersion: String {
@@ -47,8 +47,8 @@ enum WhatsNewManager {
     }
 
     /// Mark the current app build as seen.
-    static func markSeen() {
-        UserDefaults.standard.set(currentVersion, forKey: lastSeenVersionKey)
+    static func markSeen(in defaults: UserDefaults = .standard) {
+        defaults.set(currentVersion, forKey: lastSeenVersionKey)
     }
 
     static func caption(marketingVersion: String?) -> String {

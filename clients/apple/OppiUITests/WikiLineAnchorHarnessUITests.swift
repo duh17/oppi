@@ -100,12 +100,8 @@ final class WikiLineAnchorHarnessUITests: XCTestCase {
     }
 
     private func launchHarness() {
-        app = XCUIApplication()
-        app.launchArguments = [
-            "--wiki-line-anchor-harness",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ]
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments += ["--wiki-line-anchor-harness"]
         app.launchEnvironment["PI_WIKI_LINE_ANCHOR_HARNESS"] = "1"
         app.launch()
 

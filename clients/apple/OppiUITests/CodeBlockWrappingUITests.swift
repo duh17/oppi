@@ -12,12 +12,8 @@ final class CodeBlockWrappingUITests: XCTestCase {
     }
 
     func testWrapToggleKeepsCodeBlockHeaderCompactInExpandedParent() throws {
-        app = XCUIApplication()
-        app.launchArguments.append(contentsOf: [
-            "--code-block-wrapping-harness",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ])
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments.append("--code-block-wrapping-harness")
         app.launchEnvironment["PI_CODE_BLOCK_WRAPPING_HARNESS"] = "1"
         app.launch()
 

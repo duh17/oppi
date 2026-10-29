@@ -508,8 +508,8 @@ final class RouterModalSitesUITests: XCTestCase {
     }
 
     private func launch(screen: String, environment: [String: String] = [:]) {
-        app = XCUIApplication()
-        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES"]
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments += ["--screenshot-preview"]
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = "dark"
         for (key, value) in environment {

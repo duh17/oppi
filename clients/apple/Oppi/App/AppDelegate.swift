@@ -17,6 +17,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+#if DEBUG
+        // Before anything reads preferences or drafts: a UI/E2E launch starts
+        // from the state its launch arguments ask for.
+        TestLaunchContract.applyAtLaunch()
+#endif
         // Force-capture process start timestamp before any SwiftUI views load.
         // Static lets are lazy — this ensures it runs at app delegate init, not first view appear.
         ChatSessionTelemetry.warmProcessStartTime()

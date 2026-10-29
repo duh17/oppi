@@ -115,7 +115,7 @@ final class AskCardIntentUITests: XCTestCase {
     }
 
     func testTallAskCardScrollsInsideCappedSlot() {
-        app = XCUIApplication()
+        app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "ask-card-tall-scroll"
         app.launch()
@@ -234,7 +234,7 @@ final class AskCardIntentUITests: XCTestCase {
     }
 
     private func launchIntentPreview() {
-        app = XCUIApplication()
+        app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "ask-card-intent-regression"
         app.launch()

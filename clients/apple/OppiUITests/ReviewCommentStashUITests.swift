@@ -9,12 +9,8 @@ final class ReviewCommentStashUITests: XCTestCase {
         throw XCTSkip("Review comment stash UI test is simulator-only")
 #endif
         continueAfterFailure = false
-        app = XCUIApplication()
-        app.launchArguments.append(contentsOf: [
-            "--review-comment-stash-harness",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ])
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments.append("--review-comment-stash-harness")
         app.launchEnvironment["PI_REVIEW_COMMENT_STASH_HARNESS"] = "1"
         app.launch()
     }

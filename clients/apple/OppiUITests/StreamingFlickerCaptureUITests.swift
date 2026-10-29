@@ -17,7 +17,7 @@ final class StreamingFlickerCaptureUITests: XCTestCase {
     }
 
     func testCaptureStreamingMarkdownFlicker() throws {
-        app = XCUIApplication()
+        app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "streaming-flicker"
         app.launch()

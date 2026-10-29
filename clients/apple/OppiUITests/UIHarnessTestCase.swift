@@ -30,12 +30,8 @@ class UIHarnessTestCase: XCTestCase {
         assistantOverlapFixture: Bool = false,
         realBusyLane: Bool = false
     ) {
-        app = XCUIApplication()
-        app.launchArguments.append(contentsOf: [
-            "--ui-hang-harness",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ])
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments.append("--ui-hang-harness")
         app.launchEnvironment["PI_UI_HANG_HARNESS"] = "1"
         app.launchEnvironment["PI_UI_HANG_UI_TEST_MODE"] = "1"
         app.launchEnvironment["PI_UI_HANG_MIXED_CONTENT"] = mixedContent ? "1" : "0"

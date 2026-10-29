@@ -25,7 +25,7 @@ final class UIValidateTests: XCTestCase {
         // dump records.
         let landscape = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_ORIENTATION"] == "landscape"
         XCUIDevice.shared.orientation = landscape ? .landscapeLeft : .portrait
-        let app = XCUIApplication()
+        let app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = resolvedScreen
         for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("SCREENSHOT_") {

@@ -103,8 +103,8 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
     }
 
     private func launchPreview(screen: String, p0Case: String? = nil, forceTips: Bool = false) {
-        app = XCUIApplication()
-        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "--screenshot-preview"]
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments += ["--screenshot-preview"]
         if forceTips {
             app.launchArguments.append("--reset-feature-tips")
             app.launchArguments.append("--show-feature-tips-for-testing")

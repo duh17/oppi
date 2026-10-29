@@ -138,12 +138,8 @@ final class FileBrowserMotionUITests: XCTestCase {
     }
 
     private func launchPreview(screen: String) {
-        app = XCUIApplication()
-        app.launchArguments.append(contentsOf: [
-            "--screenshot-preview",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ])
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         app.launchEnvironment["OPPI_FILE_MOTION_MARKER"] = "1"
         app.launch()

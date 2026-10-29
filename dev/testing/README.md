@@ -53,6 +53,17 @@ Each sim-pool run writes its log and a `*.summary.json` under `clients/apple/.bu
 
 Full server and Apple unit coverage run on the local workstation. Pre-push keeps compile, static-analysis, architecture, and affected-test failures on the push path. Use `cd server && npm run test:gate:ci-coverage` and `clients/apple/scripts/check-coverage.sh` for threshold-enforced coverage, or the tracked release commands in [`scripts/release/README.md`](../../scripts/release/README.md) for a release cut. `.github/workflows/hygiene.yml` still runs secret, file-size, and tracked-private-path checks for every push and pull request. `.gitignore` does not protect a path after `git add -f`; the private-path check rejects that.
 
+### UI and E2E launch state
+
+Every UI/E2E launch builds its `XCUIApplication` through `OppiTestLaunch.makeApp(...)` (`clients/apple/QAVerificationSupport/OppiTestLaunch.swift`, compiled into both test targets). Do not call `XCUIApplication()` for the Oppi app. The helper adds the existing common arguments (`-ApplePersistenceIgnoreState YES`) and a reset token (`-dev.chenda.Oppi.test.resetToken <token>`). The app, not the harness, owns the reset: `TestLaunchContract` (`Oppi/App/TestLaunchContract.swift`, Debug builds only) runs first in `didFinishLaunching`, before any scene or store exists. When the token differs from the last one the app applied, it clears its own persistent defaults (app and app-group domains) and the Composer-draft (Quick Session included) and workspace-file-draft directories, then pins What's New as seen for the bundle's own version. The same token on a later launch keeps all state. A site that needs more passes its own arguments and environment through the helper.
+
+- UI tests get one token per test (every `makeApp` inside a test shares it), so each test starts clean and a relaunch inside a test keeps what the test wrote.
+- E2E uses one token per test process (`OppiTestLaunch.processToken`), so the first launch resets and relaunches keep the pairing and drafts that the relaunch cases prove.
+- `-dev.chenda.Oppi.test.animations NO` turns UIKit animations off for the launch. `makeApp(animations:)` defaults to on, and `E2ETestCase` passes off; a case that proves a transition opts back in.
+- The reset leaves the Keychain alone. Clearing the app's server index means a launch no longer sees servers an earlier run left paired; the per-slot uninstall and keychain reset belong to the pool.
+
+When the first launch of an E2E class fails its pairing check, `E2ETestCase` records the reason once and fails the rest of that class at `setUp` with it, instead of relaunching and timing out each test.
+
 ## Detail map
 
 This page keeps the rules that always apply. Read only the detail page for the area you are changing.

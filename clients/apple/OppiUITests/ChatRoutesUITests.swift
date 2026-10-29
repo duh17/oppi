@@ -1286,8 +1286,8 @@ final class ChatRoutesUITests: XCTestCase {
     }
 
     private func launchScreen(_ screen: String, environment: [String: String] = [:], arguments: [String] = []) {
-        app = XCUIApplication()
-        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES"] + arguments
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments += ["--screenshot-preview"] + arguments
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         for (key, value) in environment {
             app.launchEnvironment[key] = value

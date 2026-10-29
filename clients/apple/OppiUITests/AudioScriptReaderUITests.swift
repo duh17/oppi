@@ -11,7 +11,7 @@ final class AudioScriptReaderUITests: XCTestCase {
     }
 
     func testDragStopsFollowingCurrentLineResumesAndTapSeeks() {
-        app = XCUIApplication()
+        app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "audio-script-reader"
         app.launch()
@@ -42,7 +42,7 @@ final class AudioScriptReaderUITests: XCTestCase {
     }
 
     func testSpeedAndSleepTimerControls() {
-        app = XCUIApplication()
+        app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "audio-script-reader"
         app.launch()

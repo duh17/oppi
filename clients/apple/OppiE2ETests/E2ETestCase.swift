@@ -11,6 +11,12 @@ enum ChatTopBarTestLayout {
     ]
 }
 
+/// A class's launch precondition failed (`requireLaunchStep`).
+struct E2ELaunchFailure: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
+}
+
 struct E2ELifecycleDiagnosticSnapshot: Equatable {
     let sequence: Int
     let phase: String
@@ -34,6 +40,9 @@ class E2ETestCase: XCTestCase {
     /// nonisolated(unsafe) is required for Swift 6 strict concurrency — XCTest
     /// runs these UI tests serially in the harness.
     nonisolated(unsafe) private static var _app: XCUIApplication?
+
+    /// The first launch-check failure per test class, by class name.
+    nonisolated(unsafe) private static var launchFailures: [String: String] = [:]
 
     var app: XCUIApplication {
         Self._app!
@@ -118,6 +127,9 @@ class E2ETestCase: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         continueAfterFailure = false
+        if let reason = Self.launchFailures[String(describing: type(of: self))] {
+            throw E2ELaunchFailure(message: "Skipped relaunch: an earlier test in this class failed to launch. First failure: \(reason)")
+        }
         resetDeviceOrientation()
         try seedE2EFixtures()
         // The app (and its launch environment) is shared across classes, so a
@@ -194,12 +206,14 @@ class E2ETestCase: XCTestCase {
         }
         let inviteURL = invite.url
 
-        let application = XCUIApplication()
+        // One reset token per test process: the first launch starts from clean
+        // app state, and relaunches keep the pairing and drafts. Real transitions
+        // are off so taps do not race animation; a case that proves a transition
+        // handoff turns them back on in `configureE2ELaunch`.
+        let application = OppiTestLaunch.makeApp(resetToken: OppiTestLaunch.processToken, animations: false)
         // A stale preference from an earlier run must not decide which browser
         // a link opens; the web-link case asserts the in-app one.
-        application.launchArguments = [
-            "-ApplePersistenceIgnoreState",
-            "YES",
+        application.launchArguments += [
             "-dev.chenda.Oppi.browser.linkOpeningMode",
             "inApp",
         ] + ChatTopBarTestLayout.panelButtons
@@ -240,25 +254,24 @@ class E2ETestCase: XCTestCase {
         // as the first paired surface appears.
         let paired = waitForPairedAppSurface(in: application, timeout: 15)
         if e2eLaunchesWorkspaceHomeOnly {
-            XCTAssertTrue(
+            try requireLaunchStep(
                 waitForWorkspaceList(in: application, timeout: 5),
                 "Workspace list did not appear after pairing"
             )
             return
         }
         if e2eLaunchesSessionsInboxOnly {
-            XCTAssertTrue(
+            try requireLaunchStep(
                 waitForSessionsInbox(in: application, timeout: 5),
                 "Sessions inbox did not appear after pairing"
             )
             return
         }
-        XCTAssertTrue(
+        try requireLaunchStep(
             paired,
             pairingFailureToast(in: application).map { "Workspace surface did not appear after pairing. \($0)" }
                 ?? "Workspace surface did not appear after pairing"
         )
-        guard paired else { return }
         if e2eSkipsLaunchNavigation {
             return
         }
@@ -301,7 +314,7 @@ class E2ETestCase: XCTestCase {
             }
             workspaceList.swipeDown()
         }
-        XCTAssertTrue(
+        try requireLaunchStep(
             waitForElementToExist(openWorkspaceButton, timeout: 10),
             "Workspace 'e2e-workspace' open button did not appear in list"
         )
@@ -317,10 +330,21 @@ class E2ETestCase: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
             openedWorkspaceSurface = workspaceDetailSurfaceExists(in: application) || chatSessionSurfaceExists(in: application)
         }
-        XCTAssertTrue(
+        try requireLaunchStep(
             openedWorkspaceSurface,
             "Workspace detail or auto-created chat did not load after tapping e2e-workspace"
         )
+    }
+
+    /// A launch check that fails means the app never reached the surface every
+    /// test in this class starts from. The first reason is kept and the rest of
+    /// the class fails at `setUp` with it, instead of relaunching and waiting out
+    /// the same ceiling once per test.
+    private func requireLaunchStep(_ passed: Bool, _ message: String) throws {
+        guard !passed else { return }
+        Self.launchFailures[String(describing: type(of: self))] = message
+        terminateSharedApp()
+        throw E2ELaunchFailure(message: message)
     }
 
     private func dismissInitialExtensionSheet(in application: XCUIApplication) {

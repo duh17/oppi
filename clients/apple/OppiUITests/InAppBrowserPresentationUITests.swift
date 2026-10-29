@@ -12,12 +12,8 @@ final class InAppBrowserPresentationUITests: XCTestCase {
     }
 
     func testInAppBrowserFillsRegularWidthIPad() throws {
-        app = XCUIApplication()
-        app.launchArguments.append(contentsOf: [
-            "-ApplePersistenceIgnoreState",
-            "YES",
-            "--e2e-open-in-app-browser=https://github.com/",
-        ])
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments.append("--e2e-open-in-app-browser=https://github.com/")
         app.launchEnvironment["OPPI_E2E_OPEN_IN_APP_BROWSER_URL"] = "https://github.com/"
         app.launch()
 

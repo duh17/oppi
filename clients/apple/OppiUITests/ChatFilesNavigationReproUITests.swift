@@ -9,10 +9,8 @@ import XCTest
 final class ChatFilesNavigationReproUITests: XCTestCase {
     @MainActor
     func testTopFilesControlOpensPanelWithoutRevealingWorkspaceList() {
-        let app = XCUIApplication()
-        app.launchArguments = [
-            "-ApplePersistenceIgnoreState",
-            "YES",
+        let app = OppiTestLaunch.makeApp()
+        app.launchArguments += [
             "--nav-chrome-profile",
             "--nav-chrome-chat-files-repro",
         ]
@@ -106,10 +104,8 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
         extraArguments: [String] = [],
         extraEnvironment: [String: String] = [:]
     ) -> XCUIApplication {
-        let app = XCUIApplication()
-        app.launchArguments = [
-            "-ApplePersistenceIgnoreState",
-            "YES",
+        let app = OppiTestLaunch.makeApp()
+        app.launchArguments += [
             "--nav-chrome-profile",
             "--nav-chrome-chat-files-repro",
             "--nav-chrome-chat-files-real-chat",

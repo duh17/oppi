@@ -22,7 +22,7 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
     override var e2eAutoOpenWorkspaceName: String { workspaceName }
 
     /// This class launches the app with real UIKit animations
-    /// (`OPPI_E2E_ANIMATIONS`). The app instance is shared across E2E classes,
+    /// (`OppiTestLaunch.setAnimations`). The app instance is shared across E2E classes,
     /// so stop it here; a later class must not inherit animations the harness
     /// otherwise disables for every case.
     override func tearDownWithError() throws {
@@ -35,7 +35,7 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
         application.launchEnvironment["OPPI_E2E_DIAGNOSTICS"] = "1"
         // The fullscreen handoff is a UIKit transition; E2E normally turns
         // animations off, which hides the ordering this class proves.
-        application.launchEnvironment["OPPI_E2E_ANIMATIONS"] = "1"
+        OppiTestLaunch.setAnimations(true, on: application)
     }
 
     override func seedE2EFixtures() throws {

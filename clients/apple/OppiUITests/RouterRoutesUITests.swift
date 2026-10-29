@@ -536,11 +536,11 @@ final class RouterRoutesUITests: XCTestCase {
         if UIDevice.current.userInterfaceIdiom == .pad {
             XCUIDevice.shared.orientation = .landscapeLeft
         }
-        app = XCUIApplication()
+        app = OppiTestLaunch.makeApp()
         // Appearance lists one Theme row in Manual and two in Match System; a
         // simulator that an earlier run left on Match System must not change
         // which rows the page walk finds.
-        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES", "-dev.chenda.Oppi.theme.mode", "manual"]
+        app.launchArguments += ["--screenshot-preview", "-dev.chenda.Oppi.theme.mode", "manual"]
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "workspace-shell"
         app.launch()
         XCTAssertTrue(
@@ -566,8 +566,8 @@ final class RouterRoutesUITests: XCTestCase {
     }
 
     private func launch(colorScheme: String) {
-        app = XCUIApplication()
-        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES"]
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments += ["--screenshot-preview"]
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "router-routes"
         app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = colorScheme
         app.launch()

@@ -125,12 +125,8 @@ final class ChatOutlineColdStateUITests: XCTestCase {
 
     @MainActor
     private func launchHarness() -> XCUIApplication {
-        let app = XCUIApplication()
-        app.launchArguments = [
-            "-ApplePersistenceIgnoreState",
-            "YES",
-            "--chat-outline-cold-harness",
-        ] + ChatTopBarTestLayout.panelButtons
+        let app = OppiTestLaunch.makeApp()
+        app.launchArguments += ["--chat-outline-cold-harness"] + ChatTopBarTestLayout.panelButtons
         app.launchEnvironment["PI_CHAT_OUTLINE_COLD_HARNESS"] = "1"
         app.launch()
         return app

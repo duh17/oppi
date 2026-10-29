@@ -190,12 +190,8 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         diffWrapping: Bool = false,
         embedded: Bool = false
     ) {
-        app = XCUIApplication()
-        app.launchArguments.append(contentsOf: [
-            "--fullscreen-review-comment-harness",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ])
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments.append("--fullscreen-review-comment-harness")
         app.launchEnvironment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS"] = "1"
         if diffWrapping {
             app.launchArguments.append("--fullscreen-diff-wrapping-harness")

@@ -43,7 +43,7 @@ final class ServerResourcesScreenshotUITests: XCTestCase {
     }
 
     private func launchPreview(screen: String) {
-        app = XCUIApplication()
+        app = OppiTestLaunch.makeApp()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = screen
         app.launch()

@@ -16,12 +16,8 @@ final class CodeGutterAlignmentUITests: XCTestCase {
     }
 
     func testWrappedCodeGutterAlignsWithLogicalLines() throws {
-        app = XCUIApplication()
-        app.launchArguments.append(contentsOf: [
-            "--code-gutter-alignment-harness",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ])
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments.append("--code-gutter-alignment-harness")
         app.launchEnvironment["PI_CODE_GUTTER_ALIGNMENT_HARNESS"] = "1"
         app.launch()
 

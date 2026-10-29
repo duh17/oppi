@@ -11,8 +11,8 @@ final class HTMLDOMAnnotationE2ETests: XCTestCase {
         throw XCTSkip("HTML DOM annotation harness is simulator-only")
 #endif
         continueAfterFailure = false
-        app = XCUIApplication()
-        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "--html-dom-annotation-harness"]
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments += ["--html-dom-annotation-harness"]
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.descendants(matching: .any)["diag.html.ready"].waitForExistence(timeout: 10))

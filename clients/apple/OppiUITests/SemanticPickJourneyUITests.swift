@@ -12,12 +12,8 @@ final class SemanticPickJourneyUITests: XCTestCase {
     }
 
     func testPickCommentStashProducesReadablePrompt() throws {
-        app = XCUIApplication()
-        app.launchArguments.append(contentsOf: [
-            "--semantic-pick-harness",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ])
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments.append("--semantic-pick-harness")
         app.launchEnvironment["PI_SEMANTIC_PICK_HARNESS"] = "1"
         app.launch()
 
@@ -51,12 +47,8 @@ final class SemanticPickJourneyUITests: XCTestCase {
     }
 
     func testTwentyChoiceAmbiguityPickerReachesFirstAndLastWithoutDiagramActivation() throws {
-        app = XCUIApplication()
-        app.launchArguments.append(contentsOf: [
-            "--semantic-pick-harness",
-            "-ApplePersistenceIgnoreState",
-            "YES",
-        ])
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments.append("--semantic-pick-harness")
         app.launchEnvironment["PI_SEMANTIC_PICK_HARNESS"] = "1"
         app.launch()
         defer { app.terminate() }

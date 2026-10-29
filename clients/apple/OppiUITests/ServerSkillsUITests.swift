@@ -98,8 +98,8 @@ final class ServerSkillsUITests: XCTestCase {
 
     private func launch(page: String) {
         app?.terminate()
-        app = XCUIApplication()
-        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES"]
+        app = OppiTestLaunch.makeApp()
+        app.launchArguments += ["--screenshot-preview"]
         app.launchEnvironment["SCREENSHOT_SCREEN"] = "settings-sweep"
         app.launchEnvironment["SCREENSHOT_SWEEP_PAGE"] = page
         app.launchEnvironment["SCREENSHOT_SWEEP_SHOWS_WRITES"] = "1"
