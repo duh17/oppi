@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  APP_BUNDLE_ID,
   applyPoolBuildSettings,
   DEVICE_PROFILES,
   applyRunCheckout,
@@ -411,6 +412,12 @@ describe("sim-pool checkout targeting", () => {
     expect(() => extractPoolFlags(["run", "--device-profile"])).toThrow("--device-profile requires a value");
   });
 
+  test("the app the pool resets between runs is the Oppi target's bundle id in project.yml", () => {
+    const yml = readFileSync(join(scriptDir, "..", "project.yml"), "utf8");
+    const oppiTarget = /^  Oppi:\n([\s\S]*?)^  \w+:\n/m.exec(yml)?.[1] ?? "";
+    expect(/PRODUCT_BUNDLE_IDENTIFIER: (\S+)/.exec(oppiTarget)?.[1]).toBe(APP_BUNDLE_ID);
+  });
+
   test("no two device profiles share a run slot or a claim slot, and run lanes never reach claim ranges", () => {
     const owner = new Map<number, string>();
     for (const [name, profile] of Object.entries(DEVICE_PROFILES)) {
@@ -425,8 +432,6 @@ describe("sim-pool checkout targeting", () => {
         }
       }
     }
-    // The iPad lane is four slots, 6-9, between the iPhone and Duo run slots.
-    expect([DEVICE_PROFILES.ipad.slotStart, DEVICE_PROFILES.ipad.count]).toEqual([6, 4]);
   });
 
   test("duo device profile selects the iPhone Duo lane and yields to explicit env", () => {

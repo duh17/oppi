@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -964,6 +965,49 @@ exit 0
     expect(calls).toMatch(/simctl uninstall \S+ dev\.chenda\.Oppi\n(.*\n)*simctl keychain \S+ reset\n/);
     const state = readSlotState(join(root, "locks"), 0);
     expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
+  });
+
+  test("a failed app-state reset fails the run before xcodebuild starts", () => {
+    const root = tempDir("reset-fails");
+    const fake = join(root, "fake");
+    const bin = join(root, "bin");
+    mkdirSync(fake, { recursive: true });
+    mkdirSync(join(root, "home"), { recursive: true });
+    initCheckout(root);
+    writeFileSync(join(fake, "devices.json"), devicesJson());
+    writeFileSync(join(fake, "runtimes.json"), runtimesJson());
+    writeFakeXcrun(bin, fake);
+    // The real fake handles everything except the keychain reset, which fails like a broken simulator would.
+    renameSync(join(bin, "xcrun"), join(bin, "xcrun.real"));
+    writeFileSync(
+      join(bin, "xcrun"),
+      `#!/usr/bin/env bash
+if [[ "\${2:-}" == "keychain" ]]; then echo "simctl keychain: unable to reset" >&2; exit 1; fi
+exec "${bin}/xcrun.real" "$@"
+`,
+      { mode: 0o755 },
+    );
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
+      HOME: join(root, "home"),
+      OPPI_ROOT: root,
+      OPPI_SIM_POOL_LOCK_DIR: join(root, "locks"),
+      OPPI_SIM_POOL_COUNT: "1",
+      OPPI_SIM_POOL_WAIT: "0",
+      OPPI_SIM_SLIM: "0",
+      OPPI_SIM_POOL_BOOT_TIMEOUT: "1",
+      OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
+    };
+    delete env.PIOS_ROOT;
+    const result = spawnSync(
+      "bun",
+      [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "test-without-building"],
+      { cwd: join(root, "clients", "apple"), env, encoding: "utf8" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("simctl keychain reset failed");
+    expect(existsSync(join(fake, "xcodebuild.calls"))).toBe(false);
   });
 
   function runPoolWithFakeSimulator(
