@@ -641,7 +641,9 @@ struct WorkspaceDetailsAndListTests {
         try await waitUntil { window.rootViewController?.presentedViewController != nil }
         let sheet = try #require(window.rootViewController?.presentedViewController as? UIAlertController)
         #expect(sheet.preferredStyle == .actionSheet)
-        #expect(sheet.popoverPresentationController?.sourceView != nil, "a popover with no source has nowhere to point on iPad")
+        let source = try #require(sheet.popoverPresentationController?.sourceView, "a popover with no source has nowhere to point on iPad")
+        #expect(source.window != nil, "the fallback source is a view on screen, not the scrolled-away row")
+        #expect(sheet.popoverPresentationController?.permittedArrowDirections.isEmpty == true, "with no row to point at, no arrow")
 
     }
 }

@@ -117,7 +117,7 @@ Example:
 ### Fixed
 
 - **Server:** The server no longer leaves an `oppi-provider-catalog-*` and an `oppi-mcp-*` folder in the temp folder on every start; it removes both when it stops.
-- **Client:** An error on the Agent, Schedule, Pi, Workspaces, and Badge Icon pages is no longer lost: a second error while an alert is up replaces its message, an error that arrives while the page is covered shows when you come back to it, and tapping OK no longer clears an error you have not read yet.
+- **Client:** Error alerts no longer lose errors, on every screen that shows one: a second error while an alert is up replaces its message, an error that arrives while the screen is covered (by a pushed page or a sheet that is not its own) shows when you come back to it, and tapping OK no longer clears an error you have not read yet.
 - **Client:** On iPad, the **Delete Workspace?** sheet (and the other action sheets that point at a row) points at its row, or at the middle of the screen when the row has scrolled out of view, instead of opening with no anchor.
 - **Client:** **Approve New Device?** no longer sends an approval for a request that expires while you are authenticating (the sheet says it expired) or that another device denied in the meantime, and tapping Approve twice asks you to authenticate only once.
 - **Server:** Refreshing Git status (after an agent's edit, write, or shell command, and for the workspace list) no longer rewrites the repository's index, so it can no longer collide with the agent's own `git add` or `git commit` on `index.lock`.

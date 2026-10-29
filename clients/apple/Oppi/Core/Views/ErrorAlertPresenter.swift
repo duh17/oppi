@@ -7,10 +7,16 @@ import UIKit
 /// - A newer error replaces the message of the alert on screen. The older
 ///   message is gone, never stacked and never queued behind it: the person
 ///   reads the latest failure, and one tap closes the alert.
-/// - An error that arrives while the screen is not in a window (covered by a
-///   pushed page, not mounted yet, in a hidden column) is held, one deep, and
-///   shown once the screen is back in a window and nothing is mid-transition
-///   over it. A newer held error replaces an older one.
+/// - An error shows only while its screen is what the person is looking at:
+///   in a window, with nothing presented over the controller that holds it
+///   except a search controller, an alert, or a popover. Otherwise it is held,
+///   one deep (a newer held error replaces an older one), and shown when that
+///   changes: a page pushed over the screen pops, the screen mounts, an
+///   unrelated sheet over it (a viewer, the expanded composer, a page sheet)
+///   closes. An error that a sheet raises through its own screen shows over
+///   that sheet, because the sheet is then the front. A held error does not
+///   expire: it waits as long as the screen is covered, and a screen that goes
+///   away takes it with it. A transition in flight delays it a moment.
 /// - Two ways to raise one. `show` is for an event ("Delete failed") and is
 ///   done once the person dismisses it. `sync` is for a screen whose error is
 ///   state: call it from `updateProperties()` with the screen's current error.
@@ -64,7 +70,7 @@ final class ErrorAlertPresenter {
     func sync(title: String, message: String?, clear: @escaping (_ shown: String) -> Void) {
         guard let message else {
             if held?.isStateDriven == true { held = nil }
-            if shownEntry?.isStateDriven == true { shown?.dismiss(animated: true) }
+            if shownEntry?.isStateDriven == true { closeShown() }
             return
         }
         raise(Entry(
@@ -85,12 +91,25 @@ final class ErrorAlertPresenter {
             return message?.hasPrefix(prefix) == true
         }
         if matches(held?.message) { held = nil }
-        if let shown, isActive(shown), matches(shown.message) { shown.dismiss(animated: true) }
+        if let shown, isActive(shown), matches(shown.message) { closeShown() }
+    }
+
+    /// Closes our alert, and only it: `dismiss` on a controller also closes what
+    /// is stacked above it, so an alert with something over it stays.
+    private func closeShown() {
+        guard let shown, shown.presentingViewController != nil, shown.presentedViewController == nil else { return }
+        shown.dismiss(animated: true)
     }
 
     // MARK: - Raising and presenting
 
     private func raise(_ entry: Entry) {
+        retries = 0
+        // The alert for this very error is on its way out: re-presenting it would flash it back.
+        if let shown, shown.isBeingDismissed, entry.isStateDriven, shownEntry?.isStateDriven == true,
+           shown.message == entry.message {
+            return
+        }
         if let shown, isActive(shown) {
             if shown.message != entry.message { shown.message = entry.message }
             if shown.title != entry.title { shown.title = entry.title }
@@ -111,7 +130,7 @@ final class ErrorAlertPresenter {
         guard let entry = held, let screen else { return }
         screen.loadViewIfNeeded()
         guard screen.view.window != nil else {
-            watchWindow(of: screen)
+            watch(screen.view, for: .attach)
             return
         }
         // A page that is still appearing (or going away) cannot present.
@@ -119,10 +138,30 @@ final class ErrorAlertPresenter {
             retry(after: coordinator)
             return
         }
-        let top = Router.topPresenter(from: screen)
-        // `topPresenter` skips a controller that is being dismissed, which still blocks presenting.
-        if top.isBeingPresented || top.presentedViewController != nil {
+        // What is presented over the controller that holds the screen. A dismissal
+        // in flight still blocks presenting; an unrelated sheet means the screen
+        // is under it, not in front.
+        var top = screen
+        while let parent = top.parent { top = parent }
+        if top.isBeingPresented {
             retry(after: top.transitionCoordinator)
+            return
+        }
+        var covering: UIViewController?
+        while let presented = top.presentedViewController {
+            if presented.isBeingPresented || presented.isBeingDismissed {
+                retry(after: presented.transitionCoordinator)
+                return
+            }
+            if covering == nil, !(presented is UISearchController || presented is UIAlertController
+                || presented.modalPresentationStyle == .popover) {
+                covering = presented
+            }
+            top = presented
+        }
+        if let covering {
+            // Shown when it closes: its view leaves the window.
+            watch(covering.view, for: .detach)
             return
         }
         held = nil
@@ -145,8 +184,8 @@ final class ErrorAlertPresenter {
 
     /// Tries again when `coordinator`'s transition ends, or shortly, bounded.
     private func retry(after coordinator: UIViewControllerTransitionCoordinator?) {
-        if let coordinator {
-            coordinator.animate(alongsideTransition: nil) { [weak self] _ in self?.flush() }
+        // `animate` returns false when the transition has nothing to wait on.
+        if let coordinator, coordinator.animate(alongsideTransition: nil, completion: { [weak self] _ in self?.flush() }) {
             return
         }
         guard retries < 30 else { return }
@@ -157,24 +196,30 @@ final class ErrorAlertPresenter {
         }
     }
 
-    private func watchWindow(of screen: UIViewController) {
-        guard watcher == nil else { return }
-        let watcher = WindowWatcher { [weak self] in
-            // The window arrives at the start of a transition; flush waits it out.
+    /// Calls `flush` when `view` reaches a window (`.attach`) or leaves it (`.detach`).
+    private func watch(_ view: UIView, for event: WindowWatcher.Event) {
+        watcher?.removeFromSuperview()
+        let watcher = WindowWatcher(event: event) { [weak self] in
+            // The change comes at the start of a transition; flush waits it out.
             self?.flush()
         }
-        screen.view.addSubview(watcher)
+        view.addSubview(watcher)
         self.watcher = watcher
     }
 }
 
-/// An invisible view that reports when its screen reaches a window, so a held
-/// error needs no help from the screen. It removes itself when it has fired.
+/// An invisible view that reports when the view it sits in reaches or leaves a
+/// window, so a held error needs no help from its screen. It removes itself
+/// when it has fired.
 private final class WindowWatcher: UIView {
-    private let onWindow: @MainActor () -> Void
+    enum Event { case attach, detach }
 
-    init(onWindow: @escaping @MainActor () -> Void) {
-        self.onWindow = onWindow
+    private let event: Event
+    private let onChange: @MainActor () -> Void
+
+    init(event: Event, onChange: @escaping @MainActor () -> Void) {
+        self.event = event
+        self.onChange = onChange
         super.init(frame: .zero)
         isHidden = true
         isUserInteractionEnabled = false
@@ -186,9 +231,9 @@ private final class WindowWatcher: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        guard window != nil else { return }
+        guard (window != nil) == (event == .attach) else { return }
         removeFromSuperview()
-        onWindow()
+        onChange()
     }
 }
 

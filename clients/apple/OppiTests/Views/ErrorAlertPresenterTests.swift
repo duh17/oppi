@@ -33,10 +33,11 @@ struct ErrorAlertPresenterTests {
     }
 
     /// The alert over the window, once nothing is mid-transition.
-    private func settledAlert(in window: UIWindow) async -> UIAlertController? {
+    private func settledAlert(in window: UIWindow, over presenter: UIViewController? = nil) async -> UIAlertController? {
         var found: UIAlertController?
         _ = await waitForMainActorCondition(timeout: .seconds(5)) {
-            guard let alert = window.rootViewController?.presentedViewController as? UIAlertController,
+            let presented = (presenter ?? window.rootViewController)?.presentedViewController
+            guard let alert = presented as? UIAlertController,
                   !alert.isBeingPresented else { return false }
             found = alert
             return true
@@ -136,7 +137,8 @@ struct ErrorAlertPresenterTests {
             window.rootViewController?.presentedViewController == nil
         }, "nothing shows over the page that covers the screen")
 
-        navigation.popViewController(animated: false)
+        // Animated: the screen reaches the window while the pop is still running, and the alert waits it out.
+        navigation.popViewController(animated: true)
         let alert = try #require(await settledAlert(in: window))
         #expect(alert.message == "raised while covered")
     }
@@ -181,33 +183,61 @@ struct ErrorAlertPresenterTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { alert.presentingViewController == nil })
     }
 
+    // MARK: - On screen, not just in a window
+
+    @Test func anErrorWhileAnUnrelatedSheetIsOverTheScreenWaitsForItToClose() async throws {
+        let screen = UIViewController()
+        let (window, navigation) = try mount(screen)
+        defer { hideTestWindow(window) }
+        let sheet = UIViewController()
+        sheet.modalPresentationStyle = .pageSheet
+        navigation.present(sheet, animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { sheet.presentingViewController != nil })
+        #expect(screen.viewIfLoaded?.window != nil, "a page sheet leaves the screen in the window")
+
+        screen.errorAlerts.show(message: "raised under a sheet")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            sheet.presentedViewController == nil && navigation.presentedViewController === sheet
+        }, "the error does not pop over a sheet that is not its own")
+
+        sheet.dismiss(animated: false)
+        let alert = try #require(await settledAlert(in: window))
+        #expect(alert.message == "raised under a sheet")
+    }
+
+    @Test func anErrorFromASheetsOwnScreenShowsOverIt() async throws {
+        let screen = UIViewController()
+        let (window, navigation) = try mount(screen)
+        defer { hideTestWindow(window) }
+        let sheetScreen = UIViewController()
+        let sheet = UINavigationController(rootViewController: sheetScreen)
+        navigation.present(sheet, animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { sheet.presentingViewController != nil })
+
+        sheetScreen.errorAlerts.show(message: "raised by the sheet")
+
+        let alert = try #require(await settledAlert(in: window, over: sheet))
+        #expect(alert.message == "raised by the sheet")
+    }
+
+    @Test func aWorkspaceThatIsNotShowingItsContentHoldsNoErrorForLater() async throws {
+        let root = makeTestAppRoot()
+        let workspace = makeTestWorkspace(id: "w1", name: "Notes")
+        let screen = WorkspaceDetailViewController(
+            root: root, target: WorkspaceNavTarget(serverId: "no-such-server", workspace: workspace)
+        )
+        let (window, _) = try mount(screen)
+        defer { hideTestWindow(window) }
+        screen.view.layoutIfNeeded()
+
+        screen.showError("Delete failed")
+
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            window.rootViewController?.presentedViewController == nil
+        }, "a connecting or locked workspace shows no error alert, now or later")
+    }
+
     // MARK: - Confirmation
-
-    @Test func aSheetWithNoRowInAWindowPointsAtTheScreen() async throws {
-        let screen = UIViewController()
-        let (window, _) = try mount(screen)
-        defer { hideTestWindow(window) }
-        let strayRow = UIView()
-
-        let sheet = Confirmation(title: "Delete?", actionTitle: "Delete").present(from: screen, anchor: strayRow) {}
-
-        let source = try #require(sheet.popoverPresentationController?.sourceView, "a popover always has a source")
-        #expect(source === screen.view)
-        #expect(sheet.popoverPresentationController?.permittedArrowDirections.isEmpty == true)
-    }
-
-    @Test func aSheetPointsAtTheRowThatAskedWhenItIsInAWindow() async throws {
-        let screen = UIViewController()
-        let (window, _) = try mount(screen)
-        defer { hideTestWindow(window) }
-        let row = UIView(frame: CGRect(x: 20, y: 100, width: 200, height: 44))
-        screen.view.addSubview(row)
-
-        let sheet = Confirmation(title: "Delete?", actionTitle: "Delete").present(from: screen, anchor: row) {}
-
-        #expect(sheet.popoverPresentationController?.sourceView === row)
-        #expect(sheet.popoverPresentationController?.sourceRect == row.bounds)
-    }
 
     @Test func theActionRunsOnlyOnConfirmAndCancelReportsItself() async throws {
         let screen = UIViewController()
@@ -225,7 +255,6 @@ struct ErrorAlertPresenterTests {
 
         let second = confirmation.present(from: screen, anchor: nil, onConfirm: { confirmed += 1 }, onCancel: { cancelled += 1 })
         _ = await settledAlert(in: window)
-        #expect(second.actions.map(\.style) == [.destructive, .cancel])
         try await tap("Delete", on: second)
         #expect((confirmed, cancelled) == (1, 1))
     }

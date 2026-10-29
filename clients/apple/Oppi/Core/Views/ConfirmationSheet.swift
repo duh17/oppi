@@ -7,7 +7,7 @@ import UIKit
 enum AlertAnchor {
     /// Points the popover at `anchor` when it is in a window (the row that
     /// asked). Otherwise (the row scrolled away, a menu action with no row, a
-    /// row that was never built) it is centered on `screen` without an arrow,
+    /// row that was never built) it is centered on the front-most view without an arrow,
     /// so the sheet always has a source. An alert, or a sheet on iPhone, has
     /// no popover and is left alone.
     static func apply(to alert: UIAlertController, screen: UIViewController, anchor: UIView?) {
@@ -16,7 +16,7 @@ enum AlertAnchor {
             popover.sourceView = anchor
             popover.sourceRect = anchor.bounds
         } else {
-            let host: UIView = screen.view
+            let host: UIView = Router.topPresenter(from: screen).view
             popover.sourceView = host
             popover.sourceRect = CGRect(x: host.bounds.midX, y: host.bounds.midY, width: 1, height: 1)
             popover.permittedArrowDirections = []

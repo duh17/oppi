@@ -629,6 +629,9 @@ final class WorkspaceDetailViewController: UIViewController {
     // MARK: Errors
 
     func showError(_ message: String) {
+        // Connecting or locked, the screen shows no content to fail: an error from a
+        // task that outlived it is dropped, never held to pop over the lock cover.
+        guard phase == .content else { return }
         errorAlerts.show(message: message)
     }
 
