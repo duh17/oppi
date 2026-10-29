@@ -649,6 +649,7 @@
 		46E5CE5AB9E563E5F81B80A6 /* ServerConnectionLANTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D4ED5F6D7342021B60F0C49 /* ServerConnectionLANTransportTests.swift */; };
 		46E8C2E728BDF9AC2C2D838F /* PendingImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8288347A9E172BD200A1B17 /* PendingImage.swift */; };
 		46FCB4025C0883E592D5411E /* NotebookCellPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5FDAF51A5A8D7D8600313E5 /* NotebookCellPlan.swift */; };
+		471CF8D974E71CC0C54FAA3D /* SSHTerminalThroughputBench.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F51852D0CB91AE43D75F1CC /* SSHTerminalThroughputBench.swift */; };
 		4731A0061383F16C62308944 /* ComposerActionRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296249A90B9BE31D24870A76 /* ComposerActionRow.swift */; };
 		474A4DDC809ECE7DE4406CC9 /* ExpandedRenderOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 215A2085CF481FF99A7DEE2E /* ExpandedRenderOutput.swift */; };
 		4752869006B86D05A3775E19 /* ServerConnectionForegroundRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07D6D176BA726AD604D6BB90 /* ServerConnectionForegroundRecoveryTests.swift */; };
@@ -3320,6 +3321,7 @@
 		6F1EEF61493D0E53B9BB03E3 /* GeoJSONDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeoJSONDocument.swift; sourceTree = "<group>"; };
 		6F260118C6CD9BCF77A2AD0A /* AgentSelectionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSelectionModels.swift; sourceTree = "<group>"; };
 		6F39F71544939CACEB47798D /* GitStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitStatus.swift; sourceTree = "<group>"; };
+		6F51852D0CB91AE43D75F1CC /* SSHTerminalThroughputBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalThroughputBench.swift; sourceTree = "<group>"; };
 		6FAC6584DA592860CDBC370D /* ComposerDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerDraft.swift; sourceTree = "<group>"; };
 		6FD1C5EDA1AF52B46E9EE82A /* MacScheduleRunTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScheduleRunTests.swift; sourceTree = "<group>"; };
 		6FD1CF3728EE3BDA7FE53944 /* ToolFileFactsFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolFileFactsFixture.swift; sourceTree = "<group>"; };
@@ -6688,6 +6690,7 @@
 				9A7033568128A1F940C6DBCD /* ScrollStabilityBench.swift */,
 				ABC2199EAE0D4B77383AC97C /* SessionListPerfBench.swift */,
 				8BAD4632CF00DBD5C268E365 /* SSHTerminalGridPerfBench.swift */,
+				6F51852D0CB91AE43D75F1CC /* SSHTerminalThroughputBench.swift */,
 				DF0CEFBB1251B28049C48C05 /* StreamingApplyPerfBench.swift */,
 				7D8F336DED736B89A4A87A40 /* StreamingMarkdownPerfTests.swift */,
 				97E643568DD27FF71E2F8C04 /* SyntaxHighlightPerfBench.swift */,
@@ -8371,6 +8374,7 @@
 				9576B70D1C48E76C35BBCF14 /* RenderStrategyPerfTests.swift in Sources */,
 				342BD7E153CFAEB961E28238 /* RendererTestSupport.swift in Sources */,
 				408829F453671158DB3E88E6 /* SSHTerminalGridPerfBench.swift in Sources */,
+				471CF8D974E71CC0C54FAA3D /* SSHTerminalThroughputBench.swift in Sources */,
 				50839680BD914C7E451571DB /* ScrollStabilityBench.swift in Sources */,
 				A2C835693140067BA6C12318 /* SessionListPerfBench.swift in Sources */,
 				3E856A7B4B5512AC67DF8AF3 /* StreamingApplyPerfBench.swift in Sources */,
