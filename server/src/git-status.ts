@@ -15,6 +15,16 @@ import { resolveHomePath } from "./git-utils.js";
 import type { GitCommitSummary, GitFileStatus, GitStatus, WorkspaceGitSummary } from "./types.js";
 
 const FILE_CAP = 500;
+
+/**
+ * These reads never write the repository's index. Porcelain `git status` and
+ * `git diff` refresh stat data and rewrite the index when a file's mtime moved,
+ * which races an agent's own `git add`/`git commit` on `index.lock`.
+ * `--no-optional-locks` turns that off for `status` (not for `diff`), and
+ * plumbing `diff-index` never refreshes: a file whose stat changed but whose
+ * content did not gets no numstat line.
+ */
+const STATUS_ARGS = ["--no-optional-locks", "status", "--porcelain"];
 const GIT_TIMEOUT_MS = 5000;
 const SUMMARY_GIT_TIMEOUT_MS = 1500;
 
@@ -50,7 +60,7 @@ export async function getWorkspaceGitSummary(
   }
 
   const [statusOut, upstreamOut] = await Promise.all([
-    git(trust, resolved, ["status", "--porcelain"], SUMMARY_GIT_TIMEOUT_MS),
+    git(trust, resolved, STATUS_ARGS, SUMMARY_GIT_TIMEOUT_MS),
     git(
       trust,
       resolved,
@@ -119,11 +129,11 @@ export async function getGitStatus(dir: string, trust: GitTrust): Promise<GitSta
     await Promise.all([
       git(trust, resolved, ["branch", "--show-current"]),
       git(trust, resolved, ["rev-parse", "--short", "HEAD"]),
-      git(trust, resolved, ["status", "--porcelain"]),
+      git(trust, resolved, STATUS_ARGS),
       git(trust, resolved, ["stash", "list"]),
       git(trust, resolved, ["log", "-1", "--format=%s%n%aI"]),
       git(trust, resolved, ["rev-list", "--left-right", "--count", "@{u}...HEAD"]),
-      git(trust, resolved, ["diff", "HEAD", "--numstat"]),
+      git(trust, resolved, ["diff-index", "--numstat", "HEAD", "--"]),
       git(trust, resolved, [
         "log",
         `--max-count=${RECENT_COMMITS_CAP}`,
@@ -172,7 +182,7 @@ export async function getGitStatus(dir: string, trust: GitTrust): Promise<GitSta
     }
   }
 
-  // Parse git diff HEAD --numstat for per-file +/- lines
+  // Parse git diff-index --numstat HEAD for per-file +/- lines
   // Format: "added\tremoved\tpath" (binary files show "-\t-\tpath")
   const numstatMap = new Map<string, { added: number; removed: number }>();
   let totalAdded = 0;
@@ -206,7 +216,7 @@ export async function getGitStatus(dir: string, trust: GitTrust): Promise<GitSta
   }
 
   // Count lines for untracked files.
-  // git diff HEAD --numstat only covers tracked files, so untracked ("??")
+  // git diff-index --numstat HEAD only covers tracked files, so untracked ("??")
   // files show addedLines=null in the file list and their lines are missing
   // from the totals. This makes the workspace bar say "+38 -2" when there's
   // also a brand-new 565-line file. Count them so the totals are accurate.

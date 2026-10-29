@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { HOST_GIT_TRUST } from "../src/git-safe.js";
@@ -273,6 +273,24 @@ describe("getGitStatus", () => {
       rmSync(join(repoDir, "a-staged.txt"));
       gitIn(repoDir, "checkout -- file1.txt");
       rmSync(join(repoDir, "z-untracked.txt"));
+    }
+  });
+
+  it("never writes the index, and a file whose stat changed but content did not is no change", async () => {
+    const index = join(repoDir, ".git", "index");
+    const before = statSync(index).mtimeMs;
+    // Same bytes, newer mtime: porcelain status/diff would refresh and rewrite the index.
+    utimesSync(join(repoDir, "file1.txt"), new Date(), new Date(Date.now() + 5_000));
+    try {
+      const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
+      const summary = await getWorkspaceGitSummary(repoDir, HOST_GIT_TRUST);
+
+      expect(statSync(index).mtimeMs).toBe(before);
+      expect(status.files).toEqual([]);
+      expect(status).toMatchObject({ dirtyCount: 0, addedLines: 0, removedLines: 0 });
+      expect(summary?.changedCount).toBe(0);
+    } finally {
+      gitIn(repoDir, "update-index --refresh");
     }
   });
 });

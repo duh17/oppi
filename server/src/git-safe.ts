@@ -165,6 +165,7 @@ const SANDBOX_READ_SUBCOMMANDS = new Set([
   "log",
   "rev-list",
   "diff",
+  "diff-index",
   "diff-tree",
   "show",
 ]);

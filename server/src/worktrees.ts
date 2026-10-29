@@ -762,7 +762,12 @@ export async function worktreeProgress(
   path: string,
   base: string | undefined,
 ): Promise<{ ahead: number; dirty: boolean }> {
-  const status = await runGitAsync(path, ["status", "--porcelain=v1"], 60_000);
+  // A read: --no-optional-locks keeps status from refreshing and rewriting the index.
+  const status = await runGitAsync(
+    path,
+    ["--no-optional-locks", "status", "--porcelain=v1"],
+    60_000,
+  );
   const ahead = base ? await countCommits(path, `${base}..HEAD`) : 0;
   return { ahead, dirty: status.status !== 0 || status.stdout.trim().length > 0 };
 }
@@ -946,7 +951,11 @@ export async function removeWorkspaceWorktree(
   pendingWorktreeRemovals.add(worktree.path);
   try {
     if (options.force !== true) {
-      const status = await runGitAsync(worktree.path, ["status", "--porcelain=v1"], 60_000);
+      const status = await runGitAsync(
+        worktree.path,
+        ["--no-optional-locks", "status", "--porcelain=v1"],
+        60_000,
+      );
       if (status.status !== 0 || status.stdout.trim().length > 0) {
         throw new WorkspaceWorktreeError(409, "Worktree has uncommitted or untracked changes");
       }
