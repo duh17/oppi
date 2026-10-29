@@ -373,17 +373,14 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
     }
 
     private func showDefaultError(_ message: String?) {
-        guard view.window != nil else { return }
-        let alert = UIAlertController(
+        // The shared presenter presents from the front-most controller: with a
+        // search active the picker is already presenting the search controller,
+        // which would drop an alert presented from the picker itself.
+        errorAlerts.show(
             title: "Couldn't Set Default Model",
             message: message ?? "Please try again.",
-            preferredStyle: .alert
+            tint: UIColor(palette.blue)
         )
-        alert.addAction(UIAlertAction(title: "OK", style: .cancel))
-        alert.view.tintColor = UIColor(palette.blue)
-        // Not `present(_:)` on self: with a search active the picker is
-        // already presenting the search controller, which drops the alert.
-        Router.topPresenter(from: self).present(alert, animated: true)
     }
 
     // MARK: - Loading

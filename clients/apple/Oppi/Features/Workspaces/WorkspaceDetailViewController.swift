@@ -101,7 +101,6 @@ final class WorkspaceDetailViewController: UIViewController {
         }
     }
     var searchStore = SessionSearchStore()
-    private var pendingError: String?
     var columnWidth: CGFloat = 0 {
         didSet { if columnWidth != oldValue { setNeedsUpdateProperties() } }
     }
@@ -243,7 +242,6 @@ final class WorkspaceDetailViewController: UIViewController {
         if phase == .content {
             search.setPresented(searchNavigation.isSearchPresented)
         }
-        presentPendingError()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -390,10 +388,7 @@ final class WorkspaceDetailViewController: UIViewController {
         state = ContentState()
         searchStore = SessionSearchStore()
         observed = nil
-        pendingError = nil
-        if let alert = presentedViewController as? SessionListErrorAlert {
-            alert.dismiss(animated: false)
-        }
+        errorAlerts.dismiss()
         if let gitPanel {
             Router.finish(gitPanel)
         }
@@ -634,28 +629,13 @@ final class WorkspaceDetailViewController: UIViewController {
     // MARK: Errors
 
     func showError(_ message: String) {
-        pendingError = message
-        presentPendingError()
+        errorAlerts.show(message: message)
     }
 
-    /// The hosted screen's `error = nil`: the pending error goes and a shown
-    /// alert closes. With a prefix, only an error that starts with it.
+    /// The hosted screen's `error = nil`: a held error goes and a shown alert
+    /// closes. With a prefix, only an error that starts with it.
     func clearError(onlyWithPrefix prefix: String? = nil) {
-        func matches(_ message: String?) -> Bool {
-            guard let prefix else { return true }
-            return message?.hasPrefix(prefix) == true
-        }
-        if matches(pendingError) {
-            pendingError = nil
-        }
-        if let alert = presentedViewController as? SessionListErrorAlert, matches(alert.message) {
-            alert.dismiss(animated: true)
-        }
-    }
-
-    private func presentPendingError() {
-        guard isOnScreen, phase == .content else { return }
-        SessionListAlerts.presentPendingError(&pendingError, from: self)
+        errorAlerts.dismiss(onlyWithPrefix: prefix)
     }
 }
 

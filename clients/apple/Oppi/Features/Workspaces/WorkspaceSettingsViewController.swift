@@ -721,23 +721,11 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
 
     private func confirmDelete() {
         guard canDelete, deleteAlert == nil else { return }
-        let sheet = UIAlertController(
-            title: String(localized: "Delete Workspace?"),
-            message: WorkspaceDeleteConfirmationPolicy.deleteMessage(for: current),
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: String(localized: "Delete Workspace"), style: .destructive) { [weak self] _ in
+        let row = dataSource?.indexPath(for: .delete).flatMap(collectionView.cellForItem(at:))
+        deleteAlert = Confirmation.deleteWorkspace(current).present(from: self, anchor: row) { [weak self] in
             guard let self else { return }
             Task { await self.deleteWorkspace() }
-        })
-        sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-        if let popover = sheet.popoverPresentationController,
-           let row = dataSource?.indexPath(for: .delete).flatMap(collectionView.cellForItem(at:)) {
-            popover.sourceView = row
-            popover.sourceRect = row.bounds
         }
-        deleteAlert = sheet
-        Router.topPresenter(from: self).present(sheet, animated: true)
     }
 
     /// Checked again after the authorization prompt: a lock may engage while

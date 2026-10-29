@@ -211,13 +211,8 @@ final class AppRootViewController: UIViewController {
         alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel) { [weak opener = app.root.opener] _ in
             opener?.cancelResourceReferenceRequest()
         })
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
-            popover.permittedArrowDirections = []
-        }
         resourceChoiceAlert = alert
-        Router.topPresenter(from: self).present(alert, animated: true)
+        AlertAnchor.present(alert, from: self, anchor: nil)
     }
 }
 

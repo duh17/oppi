@@ -1133,13 +1133,7 @@ final class FileViewerViewController: UIViewController {
     }
 
     private func presentShareFailure() {
-        let alert = UIAlertController(
-            title: String(localized: "Unable to Share File"),
-            message: String(localized: "The file could not be downloaded. Please try again."),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
-        present(alert, animated: true)
+        errorAlerts.showShareFailure()
     }
 
     /// Shareable content of the loaded phase.
@@ -1357,18 +1351,13 @@ final class FileViewerViewController: UIViewController {
     }
 
     private func confirmUseDiskVersion() {
-        let alert = UIAlertController(
+        Confirmation(
             title: String(localized: "Use Disk Version?"),
             message: String(localized: "Your unsaved edits to this file will be discarded."),
-            preferredStyle: .alert
-        )
-        let discard = UIAlertAction(title: String(localized: "Discard My Edits"), style: .destructive) { [weak self] _ in
-            self?.useDiskVersion()
-        }
-        discard.accessibilityIdentifier = "workspace-file-editor.use-disk.confirm"
-        alert.addAction(discard)
-        alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-        present(alert, animated: true)
+            actionTitle: String(localized: "Discard My Edits"),
+            style: .alert,
+            actionIdentifier: "workspace-file-editor.use-disk.confirm"
+        ).present(from: self, anchor: nil) { [weak self] in self?.useDiskVersion() }
     }
 
     private func presentConflictReview() {

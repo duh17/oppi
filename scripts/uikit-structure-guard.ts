@@ -49,6 +49,17 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    a call into a new wrapper lowers a page's count without moving the setting
  *    onto the store. Review a new wrapper as a write.
  *
+ *  - `UIAlertController(` is a ratchet of the same kind (same baseline): an
+ *    error alert or a confirmation goes through `ErrorAlertPresenter` or
+ *    `Confirmation` (`errorAlerts.show`, `Confirmation(...).present(from:anchor:)`),
+ *    which own the replace-and-hold rules and the iPad popover anchor. Those
+ *    two files are exempt. What the baseline keeps is not an error alert or a
+ *    confirmation: the two text-field alerts (rename session, go to line), the
+ *    three choice sheets (tree navigation, resource choice, where to sign in),
+ *    which anchor through `AlertAnchor.present`, and the push/Live Activity
+ *    disclosure, whose third button (Privacy Policy) a `Confirmation` has no
+ *    room for. A new file has baseline 0; the count only goes down.
+ *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
  *
@@ -76,6 +87,7 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const scanRoots = ["clients/apple/Oppi", "clients/apple/OppiDebugHarness"].map((dir) => join(repoRoot, dir));
 const baselinePath = join(repoRoot, "scripts/uikit-structure-baseline.json");
 const guide = "dev/architecture-client.md, section \"UIKit and SwiftUI ownership\"";
+const alertsGuide = "dev/architecture-client.md, section \"Alerts and confirmations\"";
 const settingsGuide = "dev/architecture-client.md, section \"Settings pages\"";
 const settingsBase = "clients/apple/Oppi/Features/Settings/SettingsListViewController.swift";
 const settingsStyle = "clients/apple/Oppi/Features/Settings/SettingsListStyle.swift";
@@ -159,6 +171,16 @@ const constructs: Construct[] = [
   // A subclass or stored type reaches a hosting controller without the call form.
   { name: "UIHostingController<", pattern: /\bUIHostingController\s*</g, disallowed: true },
   { name: "import SwiftUI", pattern: /^[ \t]*(?:@\w+[ \t]+)*import[ \t]+SwiftUI\b/gm, disallowed: false },
+  // Alerts outside the shared presenters: see "Alerts" in the guide.
+  {
+    name: "UIAlertController(",
+    pattern: /\bUIAlertController\s*\(/g,
+    disallowed: false,
+    exemptFiles: [
+      "clients/apple/Oppi/Core/Views/ErrorAlertPresenter.swift",
+      "clients/apple/Oppi/Core/Views/ConfirmationSheet.swift",
+    ],
+  },
   // Settings-list theming outside the kit's base: see "Settings pages" in the guide.
   {
     name: "SettingsListStyle.pin(",
@@ -350,6 +372,12 @@ settings base mean a settings list is theming or laying itself out. Subclass
 SettingsListViewController instead (or, for a list that cannot, use
 SettingsListStyle.layoutConfiguration); see ${settingsGuide}. A screen that
 will never be a settings page goes in settingsThemingExceptions with a reason.
+
+UIAlertController( outside ErrorAlertPresenter.swift and ConfirmationSheet.swift
+means a screen builds its own error alert or confirmation. Tell the person an
+error with \`errorAlerts.show(...)\` (or \`errorAlerts.sync(...)\` for an error held
+in state), and ask with \`Confirmation(...).present(from:anchor:)\`; a choice
+sheet anchors through \`AlertAnchor.present\`. See ${alertsGuide}.
 
 AppPreferences.*.set, UserDefaults.standard.set(, FontPreferences.set, an APIClient
 call that writes a setting, and toggleRow( or .settingsToggle( in Features are settings written outside

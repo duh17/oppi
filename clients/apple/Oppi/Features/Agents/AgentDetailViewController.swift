@@ -31,7 +31,6 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     private let collectionView = ControlScreenList.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private let refreshControl = UIRefreshControl()
-    private let errorAlert = ControlErrorAlert()
     private let editItem = UIBarButtonItem()
     private let actionsItem = UIBarButtonItem()
 
@@ -172,7 +171,10 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         updateComposer()
         applySnapshot()
         updateModals()
-        errorAlert.show(title: "Agent", message: error, from: self) { [weak self] in self?.error = nil }
+        // OK clears only the error the person read, never a newer one.
+        errorAlerts.sync(title: "Agent", message: error) { [weak self] shown in
+            if self?.error == shown { self?.error = nil }
+        }
     }
 
     /// Only an active Agent can be revised, as its menu item was only offered then.

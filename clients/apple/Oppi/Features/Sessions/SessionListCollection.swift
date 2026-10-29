@@ -763,67 +763,6 @@ final class SessionListLeadingDragGuard: NSObject, UIGestureRecognizerDelegate {
     }
 }
 
-// MARK: - Alerts
-
-@MainActor
-enum SessionListAlerts {
-    /// "Delete Session?" with the deletion's full reach as its message. The
-    /// sheet anchors to `sourceView` (the row) where it is a popover.
-    static func confirmDelete(
-        _ session: Session,
-        from presenter: UIViewController,
-        sourceView: UIView?,
-        onDelete: @escaping () -> Void
-    ) {
-        let sheet = UIAlertController(
-            title: String(localized: "Delete Session?"),
-            message: SessionDeleteConfirmationPolicy.deleteMessage(for: session),
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: String(localized: "Delete Session"), style: .destructive) { _ in
-            onDelete()
-        })
-        sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            if let sourceView, sourceView.window != nil {
-                popover.sourceView = sourceView
-                popover.sourceRect = sourceView.bounds
-            } else {
-                popover.sourceView = presenter.view
-                popover.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 1, height: 1)
-                popover.permittedArrowDirections = []
-            }
-        }
-        presenter.present(sheet, animated: true)
-    }
-
-    /// "Error" with OK. A second error while one shows replaces its message.
-    static func presentError(_ message: String, from presenter: UIViewController) {
-        if let shown = presenter.presentedViewController as? SessionListErrorAlert {
-            shown.message = message
-            return
-        }
-        guard presenter.presentedViewController == nil else { return }
-        let alert = SessionListErrorAlert(title: String(localized: "Error"), message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
-        presenter.present(alert, animated: true)
-    }
-
-    /// Shows a held error once the list is in a window and nothing else is
-    /// presented over it; until then it stays held.
-    static func presentPendingError(_ pending: inout String?, from presenter: UIViewController) {
-        guard presenter.viewIfLoaded?.window != nil, let message = pending else { return }
-        guard presenter.presentedViewController == nil || presenter.presentedViewController is SessionListErrorAlert else {
-            return
-        }
-        pending = nil
-        presentError(message, from: presenter)
-    }
-}
-
-/// Marks the list's error alert, so a later error updates it instead of stacking.
-final class SessionListErrorAlert: UIAlertController {}
-
 // MARK: - Section headers
 
 /// A session-list section header: a plain title ("Your Turn"), or an

@@ -414,13 +414,12 @@ extension ChatViewController {
         calls: LiveVoiceCallCenter,
         serverId: String
     ) {
-        let alert = UIAlertController(
+        Confirmation(
             title: Self.endCallTitle(otherSessionTitle: otherCallSessionTitle(other)),
-            message: nil,
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        let endAndCall = UIAlertAction(title: "End & Call", style: .destructive) { [weak self] _ in
+            actionTitle: "End & Call",
+            style: .alert,
+            prefersAction: true
+        ).present(from: self, anchor: nil) { [weak self] in
             guard let self else { return }
             let sessionId = sessionId
             let connection = connection
@@ -443,9 +442,6 @@ extension ChatViewController {
                 self.setDraftAsideForCall()
             }
         }
-        alert.addAction(endAndCall)
-        alert.preferredAction = endAndCall
-        Router.topPresenter(from: self).present(alert, animated: true)
     }
 
     static func endCallTitle(otherSessionTitle: String?) -> String {

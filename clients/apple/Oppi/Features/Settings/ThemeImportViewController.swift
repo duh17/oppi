@@ -253,17 +253,14 @@ final class ThemeImportViewController: SettingsListViewController<ThemeImportVie
     // MARK: - Actions
 
     private func confirmRemoval(_ summary: RemoteThemeSummary) {
-        let sheet = UIAlertController(
+        Confirmation(
             title: "Delete \(summary.name) from this device?",
             message: "The imported copy is removed. You can import it again from the server.",
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: "Delete Theme", style: .destructive) { [weak self] _ in
+            actionTitle: "Delete Theme"
+        ).present(from: self, anchor: nil) { [weak self] in
             self?.root.themeStore.removeImportedTheme(named: summary.name)
             self?.setNeedsUpdateProperties()
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        ControlScreenList.presentActionSheet(sheet, from: self)
+        }
     }
 
     private func refresh() {

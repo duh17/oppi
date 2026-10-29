@@ -140,7 +140,7 @@ extension WorkspaceDetailViewController {
     func confirmDelete(_ session: Session) {
         let id = session.id
         let sourceView = list.cell(forFirstOf: [.session(id), .stoppedSession(id), .archiveSession(id)])
-        SessionListAlerts.confirmDelete(session, from: self, sourceView: sourceView) { [weak self] in
+        Confirmation.deleteSession(session).present(from: self, anchor: sourceView) { [weak self] in
             Task { await self?.deleteSession(session) }
         }
     }

@@ -640,12 +640,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
         options.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
             self?.pendingTreeNavigationTargetId = nil
         })
-        if let popover = options.popoverPresentationController {
-            let anchor = sourceView ?? view
-            popover.sourceView = anchor
-            popover.sourceRect = anchor?.bounds ?? .zero
-        }
-        present(options, animated: true)
+        AlertAnchor.present(options, from: self, anchor: sourceView)
     }
 
     private func presentSummaryInstructions() {

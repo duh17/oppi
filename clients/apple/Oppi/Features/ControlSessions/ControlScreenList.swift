@@ -178,30 +178,4 @@ enum ControlScreenList {
         config.secondaryTextProperties.color = UIColor(palette.comment)
         return config
     }
-
-    /// Presents an action sheet over `screen`, centered when it pops over.
-    static func presentActionSheet(_ sheet: UIAlertController, from screen: UIViewController) {
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = screen.view
-            popover.sourceRect = CGRect(x: screen.view.bounds.midX, y: screen.view.bounds.midY, width: 1, height: 1)
-            popover.permittedArrowDirections = []
-        }
-        Router.topPresenter(from: screen).present(sheet, animated: true)
-    }
-}
-
-/// A screen's error as an alert with OK (SwiftUI `.alert(title, isPresented:)`
-/// over an optional error): shown once while the message stays set; OK runs
-/// `clear`, which unsets it.
-@MainActor
-final class ControlErrorAlert {
-    private weak var alert: UIAlertController?
-
-    func show(title: String, message: String?, from screen: UIViewController, clear: @escaping () -> Void) {
-        guard let message, alert == nil, screen.viewIfLoaded?.window != nil else { return }
-        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .cancel) { _ in clear() })
-        self.alert = alert
-        Router.topPresenter(from: screen).present(alert, animated: true)
-    }
 }

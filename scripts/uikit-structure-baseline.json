@@ -7,6 +7,9 @@
     "clients/apple/Oppi/App/AppRootLayer.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/App/AppRootViewController.swift": {
+      "UIAlertController(": 1
+    },
     "clients/apple/Oppi/App/HostFactory.swift": {
       "import SwiftUI": 1
     },
@@ -70,6 +73,9 @@
     "clients/apple/Oppi/Features/Chat/ChatViewController+Actions.swift": {
       "AppPreferences.*.set": 1
     },
+    "clients/apple/Oppi/Features/Chat/ChatViewController+Bars.swift": {
+      "UIAlertController(": 1
+    },
     "clients/apple/Oppi/Features/Chat/Selection/ReviewCommentSelection.swift": {
       "import SwiftUI": 1
     },
@@ -82,6 +88,9 @@
     "clients/apple/Oppi/Features/Chat/Support/ModelPickerViewController.swift": {
       "APIClient settings write": 1
     },
+    "clients/apple/Oppi/Features/Chat/Support/SessionOutlineViewController.swift": {
+      "UIAlertController(": 1
+    },
     "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
       "AppPreferences.*.set": 1
     },
@@ -90,6 +99,9 @@
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerView.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {
+      "UIAlertController(": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpAddServerViewController.swift": {
       "SettingsListStyle.pin(": 1
@@ -124,6 +136,12 @@
     },
     "clients/apple/Oppi/Features/Server/UsageCharts.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/ModelProvidersViewController.swift": {
+      "UIAlertController(": 1
+    },
+    "clients/apple/Oppi/Features/Servers/ServerNotificationsConsentAlert.swift": {
+      "UIAlertController(": 1
     },
     "clients/apple/Oppi/Features/Servers/ServerSettingsViewController.swift": {
       "toggleRow(": 1

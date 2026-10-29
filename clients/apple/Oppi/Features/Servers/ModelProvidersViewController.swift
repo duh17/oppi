@@ -561,16 +561,8 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
     }
 
     /// The row's cell, to anchor a sheet that pops over on iPad.
-    private func anchor(for provider: ProviderAuthProviderStatus) -> UIView {
-        dataSource?.indexPath(for: .provider(provider.id)).flatMap(collectionView.cellForItem(at:)) ?? view
-    }
-
-    private func presentActionSheet(_ sheet: UIAlertController, anchor: UIView) {
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = anchor
-            popover.sourceRect = anchor.bounds
-        }
-        Router.topPresenter(from: self).present(sheet, animated: true)
+    private func anchor(for provider: ProviderAuthProviderStatus) -> UIView? {
+        dataSource?.indexPath(for: .provider(provider.id)).flatMap(collectionView.cellForItem(at:))
     }
 
     /// Where the sign-in page opens, asked before any flow starts.
@@ -590,20 +582,17 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
         })
         sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         sheet.preferredAction = phone
-        presentActionSheet(sheet, anchor: anchor(for: provider))
+        AlertAnchor.present(sheet, from: self, anchor: anchor(for: provider))
     }
 
     private func confirmSignOut(_ provider: ProviderAuthProviderStatus) {
-        let sheet = UIAlertController(
+        Confirmation(
             title: "Sign out of \(provider.name)?",
             message: "This removes the server's saved key or sign-in for \(provider.name). You will need to sign in again to use it.",
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: "Sign Out", style: .destructive) { [weak self] _ in
+            actionTitle: "Sign Out"
+        ).present(from: self, anchor: anchor(for: provider)) { [weak self] in
             self?.signOut(provider)
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        presentActionSheet(sheet, anchor: anchor(for: provider))
+        }
     }
 
     private func presentAPIKeyEditor(for provider: ProviderAuthProviderStatus) {

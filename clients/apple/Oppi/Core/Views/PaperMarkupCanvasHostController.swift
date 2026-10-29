@@ -551,22 +551,15 @@ final class PaperMarkupCanvasHostController: UIViewController {
         case .dismiss:
             dismissCanvas()
         case .confirmDiscard:
-            let alert = UIAlertController(
+            Confirmation(
                 title: PaperMarkupCanvasSession.DiscardPrompt.title,
                 message: PaperMarkupCanvasSession.DiscardPrompt.message,
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(
-                title: PaperMarkupCanvasSession.DiscardPrompt.keepAction,
-                style: .cancel
-            ))
-            alert.addAction(UIAlertAction(
-                title: PaperMarkupCanvasSession.DiscardPrompt.discardAction,
-                style: .destructive
-            ) { [weak self] _ in
+                actionTitle: PaperMarkupCanvasSession.DiscardPrompt.discardAction,
+                style: .alert,
+                cancelTitle: PaperMarkupCanvasSession.DiscardPrompt.keepAction
+            ).present(from: self, anchor: nil) { [weak self] in
                 self?.dismissCanvas()
-            })
-            present(alert, animated: true)
+            }
         }
     }
 
@@ -684,18 +677,11 @@ final class PaperMarkupCanvasHostController: UIViewController {
 
     private func presentAddToChatFailure(_ message: String) {
         lastFailureMessageForTesting = message
-        let alert = UIAlertController(
+        errorAlerts.show(
             title: PaperMarkupCanvasSession.AddToChatFailure.title,
             message: message,
-            preferredStyle: .alert
+            buttonTitle: PaperMarkupCanvasSession.AddToChatFailure.keepAction
         )
-        alert.addAction(UIAlertAction(
-            title: PaperMarkupCanvasSession.AddToChatFailure.keepAction,
-            style: .cancel
-        ))
-        if presentedViewController == nil {
-            present(alert, animated: true)
-        }
     }
 
     @objc private func presentMarkupTools(_ sender: UIBarButtonItem) {

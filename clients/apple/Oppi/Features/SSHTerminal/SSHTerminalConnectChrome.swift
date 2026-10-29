@@ -203,18 +203,16 @@ final class SSHTerminalConnectChrome {
     }
 
     private func presentForgetConfirmation(from host: UIViewController) {
-        let alert = UIAlertController(
+        Confirmation(
             title: "Forget the trusted host key?",
             message: "Only do this after independently verifying why the host key changed.",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "Forget Trusted Key", style: .destructive) { [weak self] _ in
+            actionTitle: "Forget Trusted Key",
+            style: .alert
+        ).present(from: host, anchor: nil) { [weak self] in
             self?.session.forgetTrustedKey()
             self?.presentedTrustFailure = nil
             self?.dismissTrust()
-        })
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        (host.presentedViewController ?? host).present(alert, animated: true)
+        }
     }
 
     private func pushTerminal(from host: UIViewController) {

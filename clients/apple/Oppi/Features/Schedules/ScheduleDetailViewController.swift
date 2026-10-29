@@ -59,7 +59,6 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         didSet { setNeedsUpdateProperties() }
     }
     private var loadTask: Task<Void, Never>?
-    private let errorAlert = ControlErrorAlert()
 
     init(root: AppRootEnvironment, scheduleId: String, onChanged: @escaping (AgentScheduleSummary) -> Void) {
         self.root = root
@@ -152,7 +151,10 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         updateComposer()
         applySnapshot()
         updateModals()
-        errorAlert.show(title: "Schedule", message: error, from: self) { [weak self] in self?.error = nil }
+        // OK clears only the error the person read, never a newer one.
+        errorAlerts.sync(title: "Schedule", message: error) { [weak self] shown in
+            if self?.error == shown { self?.error = nil }
+        }
     }
 
     /// Any loaded schedule can be revised, archived or not, until a change to
@@ -539,14 +541,12 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
     }
 
     private func confirmArchive() {
-        let alert = UIAlertController(
+        Confirmation(
             title: "Archive this schedule?",
             message: "It stops running and moves to Archived. You can restore it later.",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "Archive", style: .destructive) { [weak self] _ in self?.mutate(.archive) })
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        present(alert, animated: true)
+            actionTitle: "Archive",
+            style: .alert
+        ).present(from: self, anchor: nil) { [weak self] in self?.mutate(.archive) }
     }
 
     // MARK: - Data

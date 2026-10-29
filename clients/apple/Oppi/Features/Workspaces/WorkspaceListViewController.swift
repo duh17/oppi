@@ -3,10 +3,15 @@ import UIKit
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "WorkspaceList")
 
-/// What Delete asks before it removes a workspace's record.
-enum WorkspaceDeleteConfirmationPolicy {
-    static func deleteMessage(for workspace: Workspace) -> String {
-        "This removes the Oppi workspace record for \"\(workspace.name)\". Files on disk stay. Sessions in this workspace may become unreachable."
+extension Confirmation {
+    /// What Delete asks before it removes a workspace's record. The list and
+    /// the workspace's settings both ask it.
+    static func deleteWorkspace(_ workspace: Workspace) -> Confirmation {
+        Confirmation(
+            title: String(localized: "Delete Workspace?"),
+            message: "This removes the Oppi workspace record for \"\(workspace.name)\". Files on disk stay. Sessions in this workspace may become unreachable.",
+            actionTitle: String(localized: "Delete Workspace")
+        )
     }
 }
 
@@ -31,7 +36,6 @@ final class WorkspaceListViewController: SettingsListViewController<
         didSet { setNeedsUpdateProperties() }
     }
     private weak var deleteSheet: UIAlertController?
-    private let errorAlert = ControlErrorAlert()
 
     private lazy var createItem: UIBarButtonItem = {
         let item = UIBarButtonItem(
@@ -223,22 +227,10 @@ final class WorkspaceListViewController: SettingsListViewController<
     @discardableResult
     private func confirmDelete(_ workspace: Workspace) -> Bool {
         guard !isDeleting, deleteSheet == nil else { return false }
-        let sheet = UIAlertController(
-            title: String(localized: "Delete Workspace?"),
-            message: WorkspaceDeleteConfirmationPolicy.deleteMessage(for: workspace),
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: String(localized: "Delete Workspace"), style: .destructive) { [weak self] _ in
+        let row = dataSource?.indexPath(for: .workspace(workspace.id)).flatMap(collectionView.cellForItem(at:))
+        deleteSheet = Confirmation.deleteWorkspace(workspace).present(from: self, anchor: row) { [weak self] in
             self?.startDelete(workspace)
-        })
-        sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-        if let popover = sheet.popoverPresentationController,
-           let row = dataSource?.indexPath(for: .workspace(workspace.id)).flatMap(collectionView.cellForItem(at:)) {
-            popover.sourceView = row
-            popover.sourceRect = row.bounds
         }
-        deleteSheet = sheet
-        Router.topPresenter(from: self).present(sheet, animated: true)
         return true
     }
 
@@ -280,6 +272,6 @@ final class WorkspaceListViewController: SettingsListViewController<
     }
 
     private func show(error message: String) {
-        errorAlert.show(title: String(localized: "Error"), message: message, from: self) {}
+        errorAlerts.show(message: message)
     }
 }

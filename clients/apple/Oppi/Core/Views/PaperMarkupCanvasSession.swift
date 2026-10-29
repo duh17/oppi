@@ -494,13 +494,7 @@ extension UIViewController {
                 ? PaperMarkupCanvasSession.AddToChatFailure.snapshotMessage
                 : description
         }
-        let alert = UIAlertController(
-            title: PaperMarkupCanvasSession.AddToChatFailure.snapshotTitle,
-            message: message,
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "OK", style: .cancel))
-        present(alert, animated: true)
+        errorAlerts.show(title: PaperMarkupCanvasSession.AddToChatFailure.snapshotTitle, message: message)
     }
 
     private enum ComposerCanvasDestinationAssociation {

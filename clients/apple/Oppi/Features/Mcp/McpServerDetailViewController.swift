@@ -395,44 +395,33 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
     private func confirmRemove() {
         guard !locked else { return }
         let name = entry.name
-        let sheet = UIAlertController(
+        Confirmation(
             title: "Remove \(name) from \(scope.title)?",
             message: "The configuration entry will be removed. Stored OAuth credentials are not deleted; sign out first if needed.",
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: "Remove Server", style: .destructive) { [weak self] _ in
+            actionTitle: "Remove Server"
+        ).present(from: self, anchor: row(for: .remove)) { [weak self] in
             self?.remove()
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        present(sheet, from: .remove)
+        }
     }
 
     private func confirmLogout() {
         let name = entry.name
         let client = client
         let scopeId = scope.id
-        let sheet = UIAlertController(
+        Confirmation(
             title: "Sign out of \(name)?",
             message: "This removes stored OAuth credentials on the host. You will need to sign in again to use this server.",
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: "Sign Out", style: .destructive) { [weak self] _ in
+            actionTitle: "Sign Out"
+        ).present(from: self, anchor: row(for: .signOut)) { [weak self] in
             self?.perform {
                 try await client.logoutMcpServer(scopeId: scopeId, name: name)
             }
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        present(sheet, from: .signOut)
+        }
     }
 
-    /// An action sheet, anchored to the row that asked when it pops over.
-    private func present(_ sheet: UIAlertController, from item: Item) {
-        if let popover = sheet.popoverPresentationController {
-            let anchor = dataSource?.indexPath(for: item).flatMap(collectionView.cellForItem(at:)) ?? view
-            popover.sourceView = anchor
-            popover.sourceRect = anchor?.bounds ?? .zero
-        }
-        Router.topPresenter(from: self).present(sheet, animated: true)
+    /// The cell of the row that asked, where an action sheet points on iPad.
+    private func row(for item: Item) -> UIView? {
+        dataSource?.indexPath(for: item).flatMap(collectionView.cellForItem(at:))
     }
 
     private func remove() {

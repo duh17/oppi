@@ -36,26 +36,16 @@ enum PushEnableFlow {
             relay: relay,
             withCounts: LiveActivitySettings.isEnabled(serverId: serverId)
         )
-        let alert = UIAlertController(
-            title: consent.title,
-            message: ServerNotificationsSection.message(for: consent),
-            preferredStyle: .alert
+        consent.present(
+            from: presenter,
+            identifier: "push.enable.disclosure",
+            onTurnOn: { [weak connection] in
+                guard let connection else { return }
+                turnOn(connection: connection, serverId: serverId, relay: relay, progress: progress)
+            },
+            onCancel: { progress(.cancelled) },
+            onPrivacyPolicy: openPrivacyPolicy
         )
-        alert.view.accessibilityIdentifier = "push.enable.disclosure"
-        alert.addAction(UIAlertAction(title: String(localized: "Turn On"), style: .default) { [weak connection] _ in
-            guard let connection else { return }
-            turnOn(connection: connection, serverId: serverId, relay: relay, progress: progress)
-        })
-        alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel) { _ in
-            progress(.cancelled)
-        })
-        // An alert cannot hold a link. This button closes it without turning anything on;
-        // the person reads the policy, then turns push on again.
-        alert.addAction(UIAlertAction(title: String(localized: "Privacy Policy"), style: .default) { _ in
-            progress(.cancelled)
-            openPrivacyPolicy()
-        })
-        Router.topPresenter(from: presenter).present(alert, animated: true)
     }
 
     private static func turnOn(

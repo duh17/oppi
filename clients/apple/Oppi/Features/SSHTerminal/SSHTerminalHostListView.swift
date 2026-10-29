@@ -325,22 +325,10 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     }
 
     private func confirmDelete(_ profile: SSHTerminalProfile) {
-        let sheet = UIAlertController(
+        Confirmation(
             title: "Delete this host and its saved passwords?",
-            message: nil,
-            preferredStyle: .actionSheet
-        )
-        let action = UIAlertAction(title: "Delete Host", style: .destructive) { [weak self] _ in
-            self?.delete(profile)
-        }
-        sheet.addAction(action)
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
-            popover.permittedArrowDirections = []
-        }
-        present(sheet, animated: true)
+            actionTitle: "Delete Host"
+        ).present(from: self, anchor: nil) { [weak self] in self?.delete(profile) }
     }
 
     private func delete(_ profile: SSHTerminalProfile) {
@@ -357,22 +345,14 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     /// Corrupt metadata cannot name per-profile password accounts, so this
     /// drops only the unreadable defaults value. It does not scan the Keychain.
     private func confirmReset() {
-        let sheet = UIAlertController(
+        Confirmation(
             title: "Reset the host list?",
             message: "The saved host data cannot be read. This removes it so you can add your hosts again.",
-            preferredStyle: .actionSheet
-        )
-        sheet.addAction(UIAlertAction(title: "Reset Host List", style: .destructive) { [weak self] _ in
+            actionTitle: "Reset Host List"
+        ).present(from: self, anchor: nil) { [weak self] in
             SSHTerminalProfileStore().discardCorruptMetadata()
             self?.reload()
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = view
-            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
-            popover.permittedArrowDirections = []
         }
-        present(sheet, animated: true)
     }
 
     private func reload() {

@@ -15,10 +15,14 @@ struct SessionListRowActions {
     let lockTarget: (Session) -> ScopedLockTarget?
 }
 
-/// What deleting a session asks.
-enum SessionDeleteConfirmationPolicy {
-    static func deleteMessage(for session: Session) -> String {
-        "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), generated media attachments served by Oppi, this device's cached timeline copy, and its local message draft."
+extension Confirmation {
+    /// "Delete Session?" with the deletion's full reach as its message.
+    static func deleteSession(_ session: Session) -> Confirmation {
+        Confirmation(
+            title: String(localized: "Delete Session?"),
+            message: "This permanently deletes SQLite session metadata, local pi JSONL trace files for this session, chat attachment copies under .pi/attachments/\(session.id), generated media attachments served by Oppi, this device's cached timeline copy, and its local message draft.",
+            actionTitle: String(localized: "Delete Session")
+        )
     }
 }
 

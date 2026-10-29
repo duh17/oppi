@@ -1869,21 +1869,20 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         }
         if SSHTerminalEngine.pasteNeedsConfirmation(text) {
             pendingPaste = text
-            let alert = UIAlertController(
+            Confirmation(
                 title: "Paste \(pasteLineCount) \(pasteLineCount == 1 ? "line" : "lines")?",
                 message: "This text contains a newline or terminal control sequence and may run commands. Paste only text you trust.",
-                preferredStyle: .alert
-            )
-            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
-                self?.pendingPaste = nil
-            })
-            alert.addAction(UIAlertAction(title: "Paste", style: .default) { [weak self] _ in
+                actionTitle: "Paste",
+                style: .alert,
+                isDestructive: false
+            ).present(from: self, anchor: nil) { [weak self] in
                 guard let self, let text = self.pendingPaste else { return }
                 self.pendingPaste = nil
                 do { try self.channel.paste(text, confirmed: true) }
                 catch { self.presentPasteFailure("Paste was not sent. \(error.localizedDescription)") }
-            })
-            present(alert, animated: true)
+            } onCancel: { [weak self] in
+                self?.pendingPaste = nil
+            }
         } else {
             do { try channel.paste(text) }
             catch { presentPasteFailure("Paste was not sent. \(error.localizedDescription)") }
@@ -1908,9 +1907,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func presentPasteFailure(_ message: String) {
-        let alert = UIAlertController(title: "Paste Not Sent", message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "OK", style: .cancel))
-        present(alert, animated: true)
+        errorAlerts.show(title: "Paste Not Sent", message: message)
     }
 
     private func showPasteNotice(_ text: String) {

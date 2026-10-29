@@ -155,31 +155,21 @@ final class ServerPairedDevicesViewController: SettingsListViewController<Server
         return configuration
     }
 
-    /// The sheet that asks before a device loses access. `confirm` runs only from
-    /// its Revoke button.
-    static func revocationAlert(for row: PairedDeviceRoster.Row, confirm: @escaping () -> Void) -> UIAlertController {
-        let title = row.title.isEmpty ? String(localized: "Revoke this device?") : String(localized: "Revoke \(row.title)?")
-        let alert = UIAlertController(
-            title: title,
+    /// What asks before a device loses access.
+    static func revocation(for row: PairedDeviceRoster.Row) -> Confirmation {
+        Confirmation(
+            title: row.title.isEmpty ? String(localized: "Revoke this device?") : String(localized: "Revoke \(row.title)?"),
             message: String(localized: "\(row.title.isEmpty ? String(localized: "That device") : row.title) will lose access immediately. Pair it again to restore access."),
-            preferredStyle: .actionSheet
+            actionTitle: String(localized: "Revoke")
         )
-        alert.addAction(UIAlertAction(title: String(localized: "Revoke"), style: .destructive) { _ in confirm() })
-        alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
-        return alert
     }
 
     /// Asks before revoking `row`, as a popover from `source` on iPad.
     func confirmRevoke(_ row: PairedDeviceRoster.Row, from source: UIView?) {
         guard row.canRevoke, !model.isRevokingDevice else { return }
-        let alert = Self.revocationAlert(for: row) { [weak self] in
+        Self.revocation(for: row).present(from: self, anchor: source) { [weak self] in
             Task { await self?.revoke(row) }
         }
-        if let popover = alert.popoverPresentationController {
-            popover.sourceView = source ?? view
-            popover.sourceRect = (source ?? view).bounds
-        }
-        Router.topPresenter(from: self).present(alert, animated: true)
     }
 
     /// Revokes the device the person confirmed, after App Lock, on this page's server.

@@ -611,24 +611,15 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
         notifications.redraw()
     }
 
-    /// The same disclosure `PushEnableFlow` shows for push, for Live Activities: Turn On,
-    /// Cancel, and Privacy Policy, which closes it without turning anything on.
+    /// The same disclosure `PushEnableFlow` shows for push, for Live Activities.
     private func presentConsent(_ consent: ServerNotificationsSection.Consent, turnOn: @escaping () -> Void) {
-        let alert = UIAlertController(
-            title: consent.title,
-            message: ServerNotificationsSection.message(for: consent),
-            preferredStyle: .alert
+        consent.present(
+            from: self,
+            identifier: "liveActivity.enable.disclosure",
+            onTurnOn: turnOn,
+            onCancel: { [weak self] in self?.notifications.redraw() },
+            onPrivacyPolicy: { [weak self] in self?.root.opener.open(.webLink(AppSupportLinks.privacyPolicyURL)) }
         )
-        alert.view.accessibilityIdentifier = "liveActivity.enable.disclosure"
-        alert.addAction(UIAlertAction(title: String(localized: "Turn On"), style: .default) { _ in turnOn() })
-        alert.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel) { [weak self] _ in
-            self?.notifications.redraw()
-        })
-        alert.addAction(UIAlertAction(title: String(localized: "Privacy Policy"), style: .default) { [weak self] _ in
-            self?.notifications.redraw()
-            self?.root.opener.open(.webLink(AppSupportLinks.privacyPolicyURL))
-        })
-        Router.topPresenter(from: self).present(alert, animated: true)
     }
 
     // MARK: - Remove Server

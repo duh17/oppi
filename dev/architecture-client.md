@@ -142,6 +142,13 @@ UIKit owns every iOS view and all app structure (decided 2026-10-15). The target
 - `ServerCatalogServerRowCell`, `ServerCatalogServerMenu`: a server-global catalog list's selected-server row (passive, or one button that opens the server menu), the one menu builder (every paired server with the shown one checked, then Usage; a choice asks for the server's lock, then `switchToServerReady`, then runs the screen's own `onSwitched`). Extensions and MCP Servers use them; their loading, empty, and failed states are `SettingsStateRowCell`.
 - `McpSignInPresenter`: presents the MCP sign-in sheet for `McpSignInOwner`'s attempt from whichever MCP screen is in the window (the list, or a server's detail that covers it), so one sheet is up and it closes with the owner.
 
+### Alerts and confirmations
+
+Two shared pieces in `Oppi/Core/Views` own every error alert and confirmation; `scripts/uikit-structure-guard.ts` counts `UIAlertController(` outside them as a ratchet (what the baseline keeps: the two text-field alerts, the three choice sheets, and the push/Live Activity disclosure with its third button).
+
+- `ErrorAlertPresenter` (`UIViewController.errorAlerts`, one per screen): `errorAlerts.show(title:message:)` for an event that failed, `errorAlerts.sync(title:message:clear:)` from `updateProperties()` for an error held in state, `dismiss(onlyWithPrefix:)` to take one back. A newer error replaces the message of the alert on screen (never stacked, never queued; the older message is gone). An error that arrives while the screen is not in a window, or while it or the controller over it is mid-transition, is held (one deep, the newest) and shown when the screen can present, with no help from the screen. `sync`'s `clear` receives the message the person read, so an owner clears its error only when it still equals that message.
+- `Confirmation` (`ConfirmationSheet.swift`): title, message, confirming button, alert or action sheet, destructive or default. `present(from:anchor:onConfirm:onCancel:)` presents from `Router.topPresenter`, and its `anchor` is required: the row that asked, or nil. An anchor that is not in a window (a row scrolled away, a menu action) centers the popover on the screen without an arrow, so an iPad sheet always has a source. `SettingsActionRowCell` takes the same type. A choice sheet (several answers, not a confirmation) anchors through `AlertAnchor.present`.
+
 ### Remaining SwiftUI
 
 - **Untouched for now:** Settings and admin screens (workspace settings' Dictionary page), the thread detail, the full-screen reader's content router, debug and screenshot previews, and the session lists' Message capsule (`SessionInboxCompactComposeBar`, shared with the thread detail).

@@ -16,7 +16,6 @@ final class ServerBadgeViewController: SettingsListViewController<ServerBadgeVie
 
     let server: PairedServer
     private let root: AppRootEnvironment
-    private let errorAlert = ControlErrorAlert()
 
     init(server: PairedServer, root: AppRootEnvironment) {
         self.server = server
@@ -96,11 +95,10 @@ final class ServerBadgeViewController: SettingsListViewController<ServerBadgeVie
         do {
             try coordinator.serverStore.setBadgeIcon(id: server.id, to: icon)
         } catch {
-            errorAlert.show(
+            errorAlerts.show(
                 title: String(localized: "Couldn't Save Badge Icon"),
-                message: String(localized: "The previous icon stays. \(error.localizedDescription)"),
-                from: self
-            ) {}
+                message: String(localized: "The previous icon stays. \(error.localizedDescription)")
+            )
         }
         setNeedsUpdateProperties()
     }

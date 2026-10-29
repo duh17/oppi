@@ -100,7 +100,8 @@ struct ServerPairedDevicesPageTests {
         defer { hide(h) }
         let other = try row("dev-1", in: h)
 
-        let alert = ServerPairedDevicesViewController.revocationAlert(for: other) {}
+        let confirmation = ServerPairedDevicesViewController.revocation(for: other)
+        let alert = confirmation.present(from: h.page, anchor: nil) {}
 
         #expect(alert.title == "Revoke Chen's iPad?")
         #expect(alert.message == "Chen's iPad will lose access immediately. Pair it again to restore access.")

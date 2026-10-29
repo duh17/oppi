@@ -1087,14 +1087,7 @@ enum WorkspaceQuickActionMenu {
     }
 
     static func presentLaunchError(_ message: String, from presenter: UIViewController?) {
-        guard let presenter else { return }
-        let alert = UIAlertController(
-            title: String(localized: "Unable to start action"),
-            message: message,
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
-        presenter.present(alert, animated: true)
+        presenter?.errorAlerts.show(title: String(localized: "Unable to start action"), message: message)
     }
 }
 

@@ -320,8 +320,6 @@ enum SSHTerminalFolderEntry {
         failure: SSHTerminalFolderFailure,
         from presenter: UIViewController
     ) {
-        let alert = UIAlertController(title: String(localized: "Cannot Open Terminal"), message: failure.message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
-        Router.topPresenter(from: presenter).present(alert, animated: true)
+        presenter.errorAlerts.show(title: String(localized: "Cannot Open Terminal"), message: failure.message)
     }
 }

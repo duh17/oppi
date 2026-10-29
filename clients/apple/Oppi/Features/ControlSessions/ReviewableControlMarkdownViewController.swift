@@ -456,12 +456,6 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     }
 
     private func presentError(_ message: String) {
-        let alert = UIAlertController(
-            title: String(localized: "Unable to Edit"),
-            message: message,
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
-        present(alert, animated: true)
+        errorAlerts.show(title: String(localized: "Unable to Edit"), message: message)
     }
 }

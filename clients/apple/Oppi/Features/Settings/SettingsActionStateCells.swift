@@ -7,7 +7,7 @@ import UIKit
 /// and the button above them is its one accessible element, so VoiceOver
 /// activates the button itself.
 ///
-/// A row that can't be undone passes a `Confirmation`: an alert, or an action
+/// A row that can't be undone passes a `Confirmation` (`ConfirmationSheet.swift`): an alert, or an action
 /// sheet that anchors to the row as a popover on iPad. The action runs only
 /// after the person confirms.
 ///
@@ -19,17 +19,6 @@ final class SettingsActionRowCell: UICollectionViewListCell {
         case accent
         /// Deletes, disconnects, or removes.
         case destructive
-    }
-
-    /// What the person is asked before a row runs.
-    struct Confirmation {
-        enum Style { case alert, actionSheet }
-
-        var title: String
-        var message: String?
-        /// The confirming button. It reads as destructive on a destructive row.
-        var actionTitle: String
-        var style: Style = .actionSheet
     }
 
     private let button = SettingsRowButton(type: .system)
@@ -128,27 +117,15 @@ final class SettingsActionRowCell: UICollectionViewListCell {
 
     private func activate() {
         guard let action else { return }
-        guard let confirmation else {
+        guard var question = confirmation else {
             action()
             return
         }
         guard let owner = owningViewController else { return }
-        let sheet = UIAlertController(
-            title: confirmation.title,
-            message: confirmation.message,
-            preferredStyle: confirmation.style == .alert ? .alert : .actionSheet
-        )
-        sheet.addAction(UIAlertAction(
-            title: confirmation.actionTitle,
-            style: tint == .destructive ? .destructive : .default
-        ) { _ in action() })
-        sheet.addAction(UIAlertAction(title: String(localized: "Cancel"), style: .cancel))
+        // The confirming button reads as destructive on a destructive row.
+        question.isDestructive = tint == .destructive
         // An action sheet is a popover on iPad, from the row that asked.
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = self
-            popover.sourceRect = bounds
-        }
-        Router.topPresenter(from: owner).present(sheet, animated: true)
+        question.present(from: owner, anchor: self, onConfirm: action)
     }
 
     override func prepareForReuse() {

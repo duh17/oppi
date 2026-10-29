@@ -13,7 +13,6 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private let refreshControl = UIRefreshControl()
     private let tools = PiToolsEditor()
-    private let errorAlert = ControlErrorAlert()
 
     private let fileReview = RouterModalPresenter()
     private let defaultPromptViewer = RouterModalPresenter()
@@ -118,7 +117,9 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
         applySnapshot()
         updateModals()
         // A failed save of the tools, which the Tools page made.
-        errorAlert.show(title: "Pi", message: tools.error, from: self) { [tools] in tools.error = nil }
+        errorAlerts.sync(title: "Pi", message: tools.error) { [tools] shown in
+            if tools.error == shown { tools.error = nil }
+        }
     }
 
     // MARK: - List

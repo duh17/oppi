@@ -435,13 +435,7 @@ final class AudioLyricsPlayerViewController: UIViewController {
     }
 
     private func presentShareFailure() {
-        let alert = UIAlertController(
-            title: String(localized: "Unable to Share File"),
-            message: String(localized: "The file could not be downloaded. Please try again."),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: String(localized: "OK"), style: .cancel))
-        present(alert, animated: true)
+        errorAlerts.showShareFailure()
     }
 
     // MARK: - Body

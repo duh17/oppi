@@ -501,7 +501,10 @@ struct WorkspaceDetailsAndListTests {
 
     // MARK: - List
 
-    private func mountList(_ workspaces: [Workspace]) throws -> (WorkspaceListViewController, ServerConnection, UIWindow) {
+    private func mountList(
+        _ workspaces: [Workspace],
+        size: CGSize = CGSize(width: 390, height: 1200)
+    ) throws -> (WorkspaceListViewController, ServerConnection, UIWindow) {
         let connection = makeConnection(workspaces)
         let root = makeTestAppRoot()
         let credentials = ServerCredentials(
@@ -515,7 +518,7 @@ struct WorkspaceDetailsAndListTests {
         let list = WorkspaceListViewController(server: server, root: root)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 1200)
+        window.frame = CGRect(origin: .zero, size: size)
         window.traitOverrides.appRootEnvironment = root
         window.rootViewController = RouterNavigationController(rootViewController: list)
         window.makeKeyAndVisible()
@@ -579,5 +582,66 @@ struct WorkspaceDetailsAndListTests {
         TestURLProtocol.handler = { _ in try self.response(json: "{}") }
         await list.deleteWorkspace(keep)
         #expect(connection.workspaceStore.workspacesByServer[serverId]?.isEmpty == true)
+    }
+
+    @Test func aSecondFailureWhileTheAlertIsUpReplacesItsMessage() async throws {
+        defer { TestURLProtocol.handler = nil }
+        let keep = makeTestWorkspace(id: "w1", name: "Notes")
+        let (list, _, window) = try mountList([keep])
+        defer { window.isHidden = true; window.rootViewController = nil }
+
+        TestURLProtocol.handler = { _ in try self.response(status: 500, json: "{\"error\":\"disk full\"}") }
+        await list.deleteWorkspace(keep)
+        try await waitUntil { window.rootViewController?.presentedViewController != nil }
+        TestURLProtocol.handler = { _ in try self.response(status: 500, json: "{\"error\":\"quota exceeded\"}") }
+        await list.deleteWorkspace(keep)
+
+        let alert = try #require(window.rootViewController?.presentedViewController as? UIAlertController)
+        #expect(alert.message == "quota exceeded", "the newer failure is the one the person reads")
+    }
+
+    @Test func aFailureWhileTheListIsCoveredShowsWhenTheListIsBack() async throws {
+        defer { TestURLProtocol.handler = nil }
+        let keep = makeTestWorkspace(id: "w1", name: "Notes")
+        let (list, _, window) = try mountList([keep])
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let navigation = try #require(list.navigationController)
+        navigation.pushViewController(UIViewController(), animated: false)
+        try await waitUntil { list.view.window == nil }
+
+        TestURLProtocol.handler = { _ in try self.response(status: 500, json: "{\"error\":\"disk full\"}") }
+        await list.deleteWorkspace(keep)
+        navigation.popViewController(animated: false)
+
+        try await waitUntil { window.rootViewController?.presentedViewController != nil }
+        let alert = try #require(window.rootViewController?.presentedViewController as? UIAlertController)
+        #expect(alert.message == "disk full", "an error that landed off screen is held, not dropped")
+    }
+
+    /// A swipe or VoiceOver action can outlive its row's cell: the row scrolled
+    /// away, so the sheet has no row to point at. On iPad (iOS 27.1) a sheet
+    /// with no popover source still presents, but with an infinite source rect
+    /// and nothing to point at; it must fall back to the screen.
+    @Test func theDeleteSheetOfAnOffscreenRowStillHasAPopoverSource() async throws {
+        let workspaces = (0..<40).map { makeTestWorkspace(id: "w\($0)", name: "Workspace \($0)") }
+        let (list, _, window) = try mountList(workspaces, size: CGSize(width: 1024, height: 700))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await waitUntil { window.layoutIfNeeded(); return self.find("server.workspace.w0", in: list.view) != nil }
+        let swipe = try #require(list.trailingSwipeActions(for: .workspace("w0")))
+        list.collectionView.setContentOffset(
+            CGPoint(x: 0, y: list.collectionView.contentSize.height - list.collectionView.bounds.height),
+            animated: false
+        )
+        window.layoutIfNeeded()
+        let row = try #require(list.dataSource?.indexPath(for: .workspace("w0")))
+        try #require(list.collectionView.cellForItem(at: row) == nil, "the first row is offscreen")
+
+        try #require(swipe.actions.first).handler(try #require(swipe.actions.first), list.view) { _ in }
+
+        try await waitUntil { window.rootViewController?.presentedViewController != nil }
+        let sheet = try #require(window.rootViewController?.presentedViewController as? UIAlertController)
+        #expect(sheet.preferredStyle == .actionSheet)
+        #expect(sheet.popoverPresentationController?.sourceView != nil, "a popover with no source has nowhere to point on iPad")
+
     }
 }

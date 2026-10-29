@@ -290,13 +290,10 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
             )
         } catch is CancellationError {
         } catch {
-            let alert = UIAlertController(
+            errorAlerts.show(
                 title: "Couldn't Start Dictation",
-                message: error.localizedDescription.isEmpty ? "Please try again." : error.localizedDescription,
-                preferredStyle: .alert
+                message: error.localizedDescription.isEmpty ? "Please try again." : error.localizedDescription
             )
-            alert.addAction(UIAlertAction(title: "OK", style: .cancel))
-            Router.topPresenter(from: self).present(alert, animated: true)
         }
     }
 

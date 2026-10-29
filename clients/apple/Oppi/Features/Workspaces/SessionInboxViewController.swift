@@ -58,7 +58,6 @@ final class SessionInboxViewController: UIViewController {
     }
     private var hasAutoOpenedE2EWorkspace = false
     private var hasAutoOpenedE2ESession = false
-    private var pendingError: String?
     private var columnWidth: CGFloat = 0 {
         didSet { if columnWidth != oldValue { setNeedsUpdateProperties() } }
     }
@@ -201,7 +200,6 @@ final class SessionInboxViewController: UIViewController {
         search.hostDidAppear(self)
         // A search asked for while covered starts on return.
         search.setPresented(navigation.inboxSessionSearch.isSearchPresented)
-        presentPendingError()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -837,7 +835,7 @@ final class SessionInboxViewController: UIViewController {
     private func confirmDelete(_ pending: PendingDelete) {
         let id = pending.session.id
         let sourceView = list.cell(forFirstOf: [.session(id), .stoppedSession(id)])
-        SessionListAlerts.confirmDelete(pending.session, from: self, sourceView: sourceView) { [weak self] in
+        Confirmation.deleteSession(pending.session).present(from: self, anchor: sourceView) { [weak self] in
             Task { await self?.delete(pending) }
         }
     }
@@ -854,20 +852,11 @@ final class SessionInboxViewController: UIViewController {
     }
 
     private func showError(_ message: String) {
-        pendingError = message
-        presentPendingError()
-    }
-
-    private func presentPendingError() {
-        guard isOnScreen else { return }
-        SessionListAlerts.presentPendingError(&pendingError, from: self)
+        errorAlerts.show(message: message)
     }
 
     private func switchVisibleServer() {
-        pendingError = nil
-        if let alert = presentedViewController as? SessionListErrorAlert {
-            alert.dismiss(animated: true)
-        }
+        errorAlerts.dismiss()
         navigation.showAllWorkspaceSessions()
     }
 
