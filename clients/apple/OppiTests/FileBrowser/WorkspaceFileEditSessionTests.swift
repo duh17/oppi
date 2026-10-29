@@ -1098,13 +1098,46 @@ struct WorkspaceFileEditEntryTests {
         }
         #expect(editing, "Edit did not open the editor; items: \(Self.titles(in: content))")
         let items = try #require(content.editBarItems)
-        #expect(items.wrapKind() == .code, "main.swift is code")
+        let name = "editor-options-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let preferences = CodeEditorPreferences(defaults: defaults)
+        #expect(preferences.wrapsText && !preferences.wrapsCode, "the defaults: Markdown wraps, code does not")
+
+        // Wrap Lines in the menu, as it opens now, flips the open file's kind.
+        func toggleWrapLines() throws {
+            func actions(_ elements: [UIMenuElement]) -> [UIAction] {
+                elements.flatMap { element -> [UIAction] in
+                    if let menu = element as? UIMenu { return actions(menu.children) }
+                    return (element as? UIAction).map { [$0] } ?? []
+                }
+            }
+            let wrap = try #require(actions(items.optionsElements(preferences: preferences)).first { $0.title == "Wrap Lines" })
+            #expect(Self.activate(UIBarButtonItem(primaryAction: wrap)))
+        }
+        try toggleWrapLines()
+        #expect(preferences.wrapsCode && preferences.wrapsText, "main.swift is code: the code setting turned on")
+        try toggleWrapLines()
+        #expect(!preferences.wrapsCode, "and back off")
 
         #expect(Self.activate(try #require(done)))
         content.show(FileBrowserSelection(path: "notes.md", name: "notes.md", size: nil), navigationContext: nil)
-        host.view.layoutIfNeeded()
-        #expect(content.editBarItems === items, "the viewer reuses its editing bar items across files")
-        #expect(items.wrapKind() == .text, "notes.md is Markdown: Wrap Lines must change the text setting")
+        // Edit again, as a person would, then open the menu.
+        var editAgain: UIBarButtonItem?
+        let reader = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.layoutIfNeeded()
+            editAgain = Self.barButtonItem(titled: "Edit", in: content)
+            return editAgain != nil
+        }
+        #expect(reader, "no Edit after Done; items: \(Self.titles(in: content))")
+        #expect(Self.activate(try #require(editAgain)))
+        let editingAgain = await waitForMainActorCondition(timeout: .seconds(5)) {
+            host.view.layoutIfNeeded()
+            return Self.barButtonItems(in: content).contains { $0.accessibilityIdentifier == "workspace-file-editor.done" }
+        }
+        #expect(editingAgain, "Edit did not reopen the editor; items: \(Self.titles(in: content))")
+        try toggleWrapLines()
+        #expect(!preferences.wrapsText && !preferences.wrapsCode, "notes.md is Markdown: the text setting turned off and the code setting is untouched")
     }
 
     /// The Files screen shows the open file's Edit in its own bar. Locking

@@ -467,7 +467,13 @@ final class WorkspaceFileEditBarItems {
 
     /// The open file's wrap kind, read when the options menu opens: the viewer
     /// keeps one of these across file switches, so it cannot capture the kind.
-    let wrapKind: @MainActor () -> CodeEditorWrapKind
+    private let wrapKind: @MainActor () -> CodeEditorWrapKind
+
+    /// The options menu's rows as they would open now. `preferences` lets a
+    /// test use its own.
+    func optionsElements(preferences: CodeEditorPreferences = .shared) -> [UIMenuElement] {
+        WorkspaceFileEditorOptions.elements(preferences, wrapKind: wrapKind())
+    }
 
     init(wrapKind: @escaping @MainActor () -> CodeEditorWrapKind, onTogglePreview: @escaping @MainActor () -> Void, onDone: @escaping @MainActor () -> Void) {
         self.wrapKind = wrapKind
@@ -514,7 +520,7 @@ enum WorkspaceFileEditorOptions {
         ])
     }
 
-    private static func elements(_ preferences: CodeEditorPreferences, wrapKind: CodeEditorWrapKind) -> [UIMenuElement] {
+    static func elements(_ preferences: CodeEditorPreferences, wrapKind: CodeEditorWrapKind) -> [UIMenuElement] {
         let keybindings = UIMenu(
             title: String(localized: "Keybindings"),
             options: [.displayInline, .singleSelection],

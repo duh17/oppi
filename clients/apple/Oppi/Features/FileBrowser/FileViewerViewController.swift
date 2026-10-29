@@ -1032,7 +1032,9 @@ final class FileViewerViewController: UIViewController {
             let editItems = editBarItems ?? WorkspaceFileEditBarItems(
                 wrapKind: { [weak self] in
                     // The open file's, not the file these items were made for.
-                    CodeEditorWrapKind(grammar: CodeEditorHighlightEngine.grammar(forPath: self?.currentFilePath ?? ""))
+                    CodeEditorWrapKind(grammar: CodeEditorHighlightEngine.grammar(
+                        forPath: self?.editSession?.identity.path ?? self?.currentFilePath ?? ""
+                    ))
                 },
                 onTogglePreview: { [weak self] in self?.isShowingEditPreview.toggle() },
                 onDone: { [weak self] in self?.endEditing() }
