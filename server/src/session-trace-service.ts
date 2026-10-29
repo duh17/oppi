@@ -13,6 +13,7 @@ import { type MobileRendererRegistry, resolveToolDisplay } from "./mobile-render
 import type { SessionRuntimes } from "./runtime-router.js";
 import {
   isWorktreeSession,
+  keepsStoredChanges,
   readStoredWorktreeDiff,
   readWorktreeBaseline,
   readWorktreeChanges,
@@ -450,12 +451,15 @@ export class SessionTraceService {
   /** The session's touched list: the This session scope, and the Files panel's Changed tab. */
   listSessionChanges(session: Session): SessionChangesResult {
     const changeStats = session.changeStats;
-    const files = (changeStats?.changedFiles ?? []).filter((path) => !hasUrlScheme(path));
+    const recorded = changeStats?.changedFiles ?? [];
+    // Rows recorded before tool paths rejected URL schemes counted them as files.
+    const files = recorded.filter((path) => !hasUrlScheme(path.trim()));
+    const urlPaths = recorded.length - files.length;
     return {
       workspaceId: session.workspaceId ?? "",
       sessionId: session.id,
       files: files.map((path) => ({ path })),
-      changedFileCount: Math.max(changeStats?.filesChanged ?? 0, files.length),
+      changedFileCount: Math.max((changeStats?.filesChanged ?? 0) - urlPaths, files.length),
       changedFilesOverflow: changeStats?.changedFilesOverflow ?? 0,
     };
   }
@@ -463,8 +467,10 @@ export class SessionTraceService {
   /**
    * A worktree session's worktree vs its base, per file with status and +/-.
    * Reuses the snapshot the last turn end (or a recent read) cached, so a read
-   * right after a turn runs no git. A removed worktree answers the list stored
-   * at its last turn end (`live: false`, no per-file status or counts).
+   * right after a turn runs no git. A removed worktree, or a landed one that has
+   * since synced with main (its live read is empty), answers the list stored at
+   * its last turn end (`live: false`, no per-file status or counts), the same
+   * count the session row shows.
    */
   async getSessionWorktreeChanges(session: Session): Promise<SessionWorktreeChangesResult> {
     if (!isWorktreeSession(session)) return { kind: "not-worktree-session" };
@@ -475,13 +481,17 @@ export class SessionTraceService {
       session,
       workspace,
       dataDir: this.deps.storage.getDataDir?.(),
+      stored: session.changeStats?.worktree,
     });
     const base = {
       workspaceId: session.workspaceId ?? "",
       sessionId: session.id,
       worktreeId: session.worktreeId?.trim() ?? "",
     };
-    if (result.kind === "ok") {
+    if (
+      result.kind === "ok" &&
+      !keepsStoredChanges(result.snapshot, session.changeStats?.worktree)
+    ) {
       const { snapshot } = result;
       const touched = sessionTouchedPaths(session, snapshot.root);
       return {
@@ -510,7 +520,7 @@ export class SessionTraceService {
     const stored = session.changeStats?.worktree;
     if (!stored) return { kind: "unavailable" };
     const touched = sessionTouchedPaths(session, undefined);
-    const paths = stored.changedFiles;
+    const paths = stored.changedFiles ?? [];
     return {
       kind: "ok",
       changes: {
@@ -542,13 +552,25 @@ export class SessionTraceService {
     const workspace = session.workspaceId
       ? this.deps.storage.getWorkspace(session.workspaceId)
       : undefined;
-    const context = { session, workspace, dataDir: this.deps.storage.getDataDir?.() };
+    const context = {
+      session,
+      workspace,
+      dataDir: this.deps.storage.getDataDir?.(),
+      stored: session.changeStats?.worktree,
+    };
     const tooLarge: SessionOverallDiffResult = {
       kind: "current-file-too-large",
       maxSizeMegabytes: Math.round(MAX_SESSION_FILE_BYTES / (1024 * 1024)),
     };
 
-    const baseline = await readWorktreeBaseline(context, path);
+    // A landed worktree synced with main since reads empty; its landed changes
+    // are the stored base and HEAD, as the list answers.
+    const live = await readWorktreeChanges(context);
+    const keepsStored =
+      live.kind === "ok" && keepsStoredChanges(live.snapshot, session.changeStats?.worktree);
+    const baseline = keepsStored
+      ? ({ kind: "unavailable" } as const)
+      : await readWorktreeBaseline(context, path);
     if (baseline.kind === "too-large") return tooLarge;
     if (baseline.kind === "ok") {
       const current = await this.readCurrentFileText(session, path, baseline.root);

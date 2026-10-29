@@ -76,7 +76,11 @@ export interface SessionWorktreeChangesResponse {
   workspaceId: string;
   sessionId: string;
   worktreeId: string;
-  /** False: the worktree is gone (landed and removed); the list stored at the last turn end. */
+  /**
+   * False: the list stored at the last turn end, because the worktree is gone
+   * (landed and removed) or landed and has since synced with main (its live read
+   * is empty). No per-file status or counts then.
+   */
   live: boolean;
   baseSha: string;
   headSha: string;

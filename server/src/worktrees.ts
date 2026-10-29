@@ -855,6 +855,18 @@ function pendingRemovalKey(workspaceId: string, worktreeId: string): string {
   return `${workspaceId}\0${worktreeId}`;
 }
 
+/** A removal of this worktree (by path or id) is under way; callers treat it as gone. */
+export function isWorktreeRemovalPending(
+  workspaceId: string,
+  worktreeId: string,
+  path: string,
+): boolean {
+  return (
+    pendingWorktreeRemovals.has(path) ||
+    pendingWorktreeRemovalKeys.has(pendingRemovalKey(workspaceId, worktreeId))
+  );
+}
+
 /** Hold a workspace create until the handler releases this key. Not a worktree id. */
 export function claimInFlightWorkspaceCreate(workspaceId: string): string {
   const key = `${workspaceId}\0in-flight-create\0${nextWorkspaceCreateKey++}`;

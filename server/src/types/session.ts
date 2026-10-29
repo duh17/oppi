@@ -35,8 +35,11 @@ export interface SessionChangeStats {
 export interface SessionWorktreeChangeStats {
   /** Files that differ from the base, untracked files included. */
   filesChanged: number;
-  /** Repo-relative paths, sorted (bounded sample of 100). */
-  changedFiles: string[];
+  /**
+   * Repo-relative paths, sorted (bounded sample of 100). Kept on the session for
+   * the removed-worktree fallback; omitted from session summaries.
+   */
+  changedFiles?: string[];
   changedFilesOverflow?: number;
   addedLines: number;
   removedLines: number;

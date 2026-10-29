@@ -2,7 +2,12 @@ import { isAbsolute } from "node:path";
 
 import { isServerDurableSession } from "./session-runtime-capabilities.js";
 import { hasUrlScheme } from "./tool-mutations.js";
-import type { Session, SessionChangeStats, SessionSummary } from "./types.js";
+import type {
+  Session,
+  SessionChangeStats,
+  SessionSummary,
+  SessionWorktreeChangeStats,
+} from "./types.js";
 
 /**
  * Build the mobile/session-list projection for a Session.
@@ -59,10 +64,14 @@ function buildSessionSummaryChangeStats(
     return undefined;
   }
 
+  // Rows recorded before tool paths rejected URL schemes (agent://, local://, ...)
+  // counted them as files; they are not files, so they leave the count too.
+  const urlPaths = stats.changedFiles.filter((file) => hasUrlScheme(file.trim())).length;
+  const filesChanged = Math.max(0, stats.filesChanged - urlPaths);
   const changedFiles = stats.changedFiles.filter(isSummarySafeChangedFile);
   const changedFilesOverflow = Math.max(
     stats.changedFilesOverflow ?? 0,
-    stats.filesChanged - changedFiles.length,
+    filesChanged - changedFiles.length,
     0,
   );
 
@@ -71,22 +80,24 @@ function buildSessionSummaryChangeStats(
     ...(stats.compactionCount && stats.compactionCount > 0
       ? { compactionCount: stats.compactionCount }
       : {}),
-    filesChanged: stats.filesChanged,
+    filesChanged,
     changedFiles,
     ...(changedFilesOverflow > 0 ? { changedFilesOverflow } : {}),
-    // Stored at turn end (bounded to 100 paths), so list rows need no git.
-    ...(stats.worktree ? { worktree: stats.worktree } : {}),
+    // Counts only: list rows need no git and no paths; the paths stay on the
+    // session for the removed-worktree fallback of the worktree-changes route.
+    ...(stats.worktree ? { worktree: withoutPaths(stats.worktree) } : {}),
   };
+}
+
+function withoutPaths(worktree: SessionWorktreeChangeStats): SessionWorktreeChangeStats {
+  const { changedFiles: _paths, changedFilesOverflow: _overflow, ...counts } = worktree;
+  return counts;
 }
 
 function isSummarySafeChangedFile(file: string): boolean {
   const trimmed = file.trim();
   return (
-    trimmed.length > 0 &&
-    !isAbsolute(trimmed) &&
-    !trimmed.startsWith("~") &&
-    // Rows recorded before tool paths rejected URL schemes (agent://, local://, ...).
-    !hasUrlScheme(trimmed)
+    trimmed.length > 0 && !isAbsolute(trimmed) && !trimmed.startsWith("~") && !hasUrlScheme(trimmed)
   );
 }
 

@@ -187,11 +187,6 @@
           "changedFilesOverflow": 4,
           "worktree": {
             "filesChanged": 3,
-            "changedFiles": [
-              "README.md",
-              "scripts/build.sh",
-              "src/main.ts"
-            ],
             "addedLines": 42,
             "removedLines": 7,
             "baseSha": "0123456789abcdef0123456789abcdef01234567",
@@ -318,11 +313,6 @@
           "changedFilesOverflow": 4,
           "worktree": {
             "filesChanged": 3,
-            "changedFiles": [
-              "README.md",
-              "scripts/build.sh",
-              "src/main.ts"
-            ],
             "addedLines": 42,
             "removedLines": 7,
             "baseSha": "0123456789abcdef0123456789abcdef01234567",
@@ -452,11 +442,6 @@
           "changedFilesOverflow": 4,
           "worktree": {
             "filesChanged": 3,
-            "changedFiles": [
-              "README.md",
-              "scripts/build.sh",
-              "src/main.ts"
-            ],
             "addedLines": 42,
             "removedLines": 7,
             "baseSha": "0123456789abcdef0123456789abcdef01234567",
@@ -576,11 +561,6 @@
           "changedFilesOverflow": 4,
           "worktree": {
             "filesChanged": 3,
-            "changedFiles": [
-              "README.md",
-              "scripts/build.sh",
-              "src/main.ts"
-            ],
             "addedLines": 42,
             "removedLines": 7,
             "baseSha": "0123456789abcdef0123456789abcdef01234567",
@@ -913,11 +893,6 @@
           "changedFilesOverflow": 4,
           "worktree": {
             "filesChanged": 3,
-            "changedFiles": [
-              "README.md",
-              "scripts/build.sh",
-              "src/main.ts"
-            ],
             "addedLines": 42,
             "removedLines": 7,
             "baseSha": "0123456789abcdef0123456789abcdef01234567",

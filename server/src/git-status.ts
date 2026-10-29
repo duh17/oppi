@@ -285,6 +285,15 @@ export async function getGitStatus(dir: string, trust: GitTrust): Promise<GitSta
 
 // ─── Untracked file line counting ───
 
+/**
+ * Lines as git counts them: a final line without a newline still counts, a
+ * trailing newline does not start another.
+ */
+export function gitLineCount(content: string): number {
+  const newlines = content.split("\n").length - 1;
+  return content.endsWith("\n") ? newlines : newlines + 1;
+}
+
 /** Max file size to read for line counting (256 KB). Skip larger files. */
 const UNTRACKED_LINE_COUNT_MAX_BYTES = 256 * 1024;
 
@@ -295,7 +304,7 @@ const UNTRACKED_LINE_COUNT_MAX_BYTES = 256 * 1024;
  * Returns a map from relative path to line count. Binary or oversized files
  * are silently skipped (they'll keep addedLines=null in the response).
  */
-export function countUntrackedFileLines(
+function countUntrackedFileLines(
   repoRoot: string,
   relativePaths: string[],
   trust: GitTrust,
@@ -318,10 +327,7 @@ export function countUntrackedFileLines(
         continue;
       }
 
-      // Lines as git counts them: a final line without a newline still counts,
-      // a trailing newline does not start another.
-      const newlines = content.split("\n").length - 1;
-      result.set(relPath, content.endsWith("\n") ? newlines : newlines + 1);
+      result.set(relPath, gitLineCount(content));
     } catch {
       // File vanished or unreadable — skip silently
     }

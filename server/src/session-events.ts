@@ -16,6 +16,7 @@ import {
 import { resolveWorkspaceWorktree } from "./worktrees.js";
 import {
   isWorktreeSession,
+  keepsStoredChanges,
   noteWorktreeActivity,
   readWorktreeChanges,
   storedWorktreeChangeStats,
@@ -190,6 +191,8 @@ export interface EventProcessorSessionState extends ExtensionUIState {
   turnToolCallCount?: number;
   /** In-flight tool starts keyed by toolCallId so concurrent calls pair correctly. */
   inflightToolStarts?: Map<string, { startedAt: number; toolName?: string }>;
+  /** A tool ended since the last turn-end worktree read (worktree sessions read only then). */
+  worktreeToolRan?: boolean;
   /** Timestamp (ms) when auto-compaction started (for duration tracking). */
   compactionStartedAt?: number;
   /** Authoritative context usage at the start of the active turn/estimate window. */
@@ -326,7 +329,7 @@ export class SessionEventProcessor {
         shouldFlushNow = true;
         // Settled, not agent_end: Pi emits agent_end before an automatic retry, and
         // the worktree is read once per finished run.
-        this.refreshWorktreeChanges(key, session);
+        this.refreshWorktreeChanges(key, active);
         break;
 
       case "session_info_changed": {
@@ -397,8 +400,10 @@ export class SessionEventProcessor {
 
       case "tool_execution_end": {
         this.maybeEmitGitStatus(key, session, event.toolName);
-        // In-memory generation bump; the cached worktree change set is stale after any tool.
+        // In-memory only: the cached worktree change set is stale after any tool,
+        // and this turn's settle reads the worktree.
         noteWorktreeActivity(session);
+        active.worktreeToolRan = true;
         this.addEstimatedContextChars(key, active, estimateToolResultChars(event.result));
         if (metrics) {
           const toolCallId =
@@ -656,14 +661,18 @@ export class SessionEventProcessor {
   }
 
   /**
-   * Turn end in a worktree session: read the worktree's changes from git once and
-   * store them on `changeStats.worktree`, so session lists show the count without
-   * running git. A settle that lands while a read runs queues one more read. A
-   * worktree that is gone (landed and removed) keeps the last stored value.
+   * Turn end in a worktree session where a tool ran: read the worktree's changes
+   * from git once and store them on `changeStats.worktree`, so session lists show
+   * the count without running git. A settle that lands while a read runs queues
+   * one more read; sessions sharing the worktree share the read itself. A
+   * worktree that is gone (removed after landing) keeps the last stored value,
+   * and so does an empty read of a worktree that really landed.
    */
-  private refreshWorktreeChanges(key: string, session: Session): void {
+  private refreshWorktreeChanges(key: string, active: EventProcessorSessionState): void {
+    const session = active.session;
     const workspaceId = session.workspaceId;
-    if (!workspaceId || !isWorktreeSession(session)) return;
+    if (!workspaceId || !isWorktreeSession(session) || !active.worktreeToolRan) return;
+    active.worktreeToolRan = false;
     const inFlight = this.worktreeChangeReads.get(key);
     if (inFlight) {
       inFlight.again = true;
@@ -678,12 +687,23 @@ export class SessionEventProcessor {
           state.again = false;
           const workspace = this.deps.storage.getWorkspace(workspaceId);
           if (!workspace) return;
+          const stored = session.changeStats?.worktree;
           const result = await readWorktreeChanges(
-            { session, workspace, dataDir: this.deps.storage.getDataDir() },
+            {
+              session,
+              workspace,
+              dataDir: this.deps.storage.getDataDir(),
+              stored,
+            },
             { fresh: true },
           );
           if (result.kind !== "ok") continue;
-          setSessionWorktreeChangeStats(session, storedWorktreeChangeStats(result.snapshot));
+          const { snapshot } = result;
+          // A real landing whose HEAD moved since (a commit and a landing in one
+          // turn, a sync after landing) reads empty; keep the landed count. A reset
+          // or a sync with no commits of its own is not landed and stores the zero.
+          if (keepsStoredChanges(snapshot, stored)) continue;
+          setSessionWorktreeChangeStats(session, storedWorktreeChangeStats(snapshot));
           this.deps.markSessionDirty(key);
           this.deps.broadcast(key, {
             type: "session_summary",

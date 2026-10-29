@@ -449,11 +449,12 @@ struct SessionChangeStats: Codable, Sendable, Equatable {
     var worktree: SessionWorktreeChangeStats? = nil
 }
 
-/// Mirrors `SessionWorktreeChangeStats`: stored at turn end, carried by summaries.
+/// Mirrors `SessionWorktreeChangeStats`: stored at turn end. Summaries carry the
+/// counts only; the file list comes from `getSessionWorktreeChanges`.
 struct SessionWorktreeChangeStats: Codable, Sendable, Equatable {
     var filesChanged: Int
-    /// Repo-relative, sorted; at most 100 (`changedFilesOverflow` counts the rest).
-    var changedFiles: [String]
+    /// Full session snapshots only: repo-relative, sorted, at most 100.
+    var changedFiles: [String]? = nil
     var changedFilesOverflow: Int? = nil
     var addedLines: Int
     var removedLines: Int

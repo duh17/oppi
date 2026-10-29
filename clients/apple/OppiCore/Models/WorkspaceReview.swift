@@ -54,8 +54,9 @@ struct SessionWorktreeChangesResponse: Codable, Sendable, Equatable {
     let workspaceId: String
     let sessionId: String
     let worktreeId: String
-    /// False: the worktree is gone (landed and removed); the list stored at
-    /// the last turn end, without per-file status or counts.
+    /// False: the list stored at the last turn end, without per-file status
+    /// or counts, because the worktree is gone (landed and removed) or landed
+    /// and has since synced with main.
     let live: Bool
     let baseSha: String
     let headSha: String

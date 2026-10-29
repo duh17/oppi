@@ -82,7 +82,11 @@ const TEST_SESSION_SUMMARY: SessionSummary = {
   messageCount: TEST_SESSION.messageCount,
   tokens: TEST_SESSION.tokens,
   cost: TEST_SESSION.cost,
-  changeStats: TEST_SESSION.changeStats,
+  // Summaries carry the worktree's counts, not its paths.
+  changeStats: {
+    ...TEST_SESSION.changeStats!,
+    worktree: { ...TEST_SESSION.changeStats!.worktree!, changedFiles: undefined },
+  },
   contextTokens: TEST_SESSION.contextTokens,
   contextWindow: TEST_SESSION.contextWindow,
   firstMessage: TEST_SESSION.firstMessage,
