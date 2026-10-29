@@ -36,56 +36,99 @@ struct SessionListLifecycleDeleteTests {
         )
     }
 
-    private func delete(_ session: Session, on connection: ServerConnection) async -> [String] {
+    /// What the device keeps for a session: its draft and its cached timeline.
+    private struct Seeded {
+        let session: Session
+        let draftKey: ComposerDraftKey
+        let drafts: ComposerDraftStore
+    }
+
+    private func seed(_ connection: ServerConnection, sessionId: String) async -> Seeded {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "session-delete-\(UUID().uuidString).json", directoryHint: .notDirectory)
         let drafts = ComposerDraftStore(fileURL: url, saveDelay: .seconds(60))
         await drafts.load()
+        let session = makeTestSession(id: sessionId, workspaceId: workspaceId)
+        connection.sessionStore.upsert(session)
+        let key = ComposerDraftKey(
+            serverID: serverId,
+            workspaceID: SessionRouteScope.workspace(workspaceId).composerDraftScopeID,
+            sessionID: sessionId
+        )!
+        drafts.setDraft(ComposerDraftPayload(text: "unsent words", repoPointers: []), for: key)
+        await TimelineCache.shared.saveTrace(sessionId, serverId: serverId, events: [
+            TraceEvent(
+                id: "cached-1", type: .assistant, timestamp: "2026-02-11T00:00:00Z", text: "cached", tool: nil,
+                args: nil, output: nil, toolCallId: nil, toolName: nil, isError: nil, thinking: nil
+            ),
+        ])
+        return Seeded(session: session, draftKey: key, drafts: drafts)
+    }
+
+    private func delete(_ seeded: Seeded, on connection: ServerConnection) async -> (deleted: Bool, errors: [String]) {
         var errors: [String] = []
-        await SessionListLifecycle.delete(
-            session,
+        let deleted = await SessionListLifecycle.delete(
+            seeded.session,
             scope: .workspace(workspaceId),
             serverId: serverId,
             connection: connection,
-            drafts: drafts,
+            drafts: seeded.drafts,
             onError: { errors.append($0) }
         )
-        return errors
+        return (deleted, errors)
     }
 
-    @Test func aRefusedDeleteKeepsTheSessionAndSaysSo() async {
+    private func keepsEverything(_ seeded: Seeded, _ connection: ServerConnection) async -> Bool {
+        let cached = await TimelineCache.shared.loadTrace(seeded.session.id, serverId: serverId)
+        return connection.sessionStore.sessions.map(\.id) == [seeded.session.id]
+            && seeded.drafts.record(for: seeded.draftKey)?.payload.text == "unsent words"
+            && cached != nil
+    }
+
+    private func keepsNothing(_ seeded: Seeded, _ connection: ServerConnection) async -> Bool {
+        let cached = await TimelineCache.shared.loadTrace(seeded.session.id, serverId: serverId)
+        return connection.sessionStore.sessions.isEmpty
+            && seeded.drafts.record(for: seeded.draftKey) == nil
+            && cached == nil
+    }
+
+    @Test func aRefusedDeleteKeepsTheSessionItsDraftAndItsCachedTimeline() async {
         defer { TestURLProtocol.handler = nil }
-        let session = makeTestSession(id: "s1", workspaceId: workspaceId)
-        let connection = makeConnection(sessions: [session])
+        let connection = makeConnection(sessions: [])
+        let seeded = await seed(connection, sessionId: "refused-\(UUID().uuidString)")
+        defer { Task { await TimelineCache.shared.removeTrace(seeded.session.id, serverId: serverId) } }
         TestURLProtocol.handler = { _ in self.response(status: 500, json: "{\"error\":\"disk full\"}") }
 
-        let errors = await delete(session, on: connection)
+        let result = await delete(seeded, on: connection)
 
-        #expect(connection.sessionStore.sessions.map(\.id) == ["s1"])
-        #expect(errors == ["Delete failed: disk full"])
+        #expect(!result.deleted)
+        #expect(result.errors == ["Delete failed: disk full"])
+        #expect(await keepsEverything(seeded, connection))
     }
 
-    @Test func aDeleteTheServerAcceptsDropsTheSession() async {
+    @Test func aDeleteTheServerAcceptsDropsTheSessionItsDraftAndItsCachedTimeline() async {
         defer { TestURLProtocol.handler = nil }
-        let session = makeTestSession(id: "s1", workspaceId: workspaceId)
-        let connection = makeConnection(sessions: [session])
+        let connection = makeConnection(sessions: [])
+        let seeded = await seed(connection, sessionId: "deleted-\(UUID().uuidString)")
         TestURLProtocol.handler = { _ in self.response(status: 200, json: "{}") }
 
-        let errors = await delete(session, on: connection)
+        let result = await delete(seeded, on: connection)
 
-        #expect(connection.sessionStore.sessions.isEmpty)
-        #expect(errors.isEmpty)
+        #expect(result.deleted)
+        #expect(result.errors.isEmpty)
+        #expect(await keepsNothing(seeded, connection))
     }
 
-    @Test func aSessionTheServerAlreadyLostIsDropped() async {
+    @Test func aSessionTheServerAlreadyLostIsDroppedWithItsDraftAndItsCachedTimeline() async {
         defer { TestURLProtocol.handler = nil }
-        let session = makeTestSession(id: "s1", workspaceId: workspaceId)
-        let connection = makeConnection(sessions: [session])
+        let connection = makeConnection(sessions: [])
+        let seeded = await seed(connection, sessionId: "gone-\(UUID().uuidString)")
         TestURLProtocol.handler = { _ in self.response(status: 404, json: "{\"error\":\"not found\"}") }
 
-        let errors = await delete(session, on: connection)
+        let result = await delete(seeded, on: connection)
 
-        #expect(connection.sessionStore.sessions.isEmpty)
-        #expect(errors.isEmpty)
+        #expect(result.deleted)
+        #expect(result.errors.isEmpty)
+        #expect(await keepsNothing(seeded, connection))
     }
 }

@@ -62,7 +62,6 @@ struct ComposerImageBatchTests {
         )
         // Send or Clear lands while the encode is still running.
         accepting = false
-        draft.attachments = []
 
         let decided = await waitForMainActorCondition(timeout: .seconds(10)) { draft.gateChecks > 0 }
         #expect(decided, "the batch asks before it lands")
@@ -97,7 +96,7 @@ struct ComposerImageBatchTests {
             shouldAccept: { true }
         )
 
-        _ = await waitForMainActorCondition(timeout: .seconds(20)) { draft.attachments.count == 2 }
+        #expect(await waitForMainActorCondition(timeout: .seconds(20)) { draft.attachments.count == 2 })
         #expect(draft.attachments.compactMap(width(of:)) == [8, 64])
     }
 }

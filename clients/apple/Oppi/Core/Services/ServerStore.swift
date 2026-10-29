@@ -116,7 +116,7 @@ final class ServerStore {
             toSave = newServer
         }
 
-        try save(toSave, replacingStoredDeviceCredential: replacingStoredDeviceCredential)
+        try saveServer(toSave, replacingStoredDeviceCredential)
         // Adopt Keychain's merged credential so a stale writer cannot restore
         // older auth in memory. An explicit re-pair may replace the stored identity.
         let persisted = try KeychainService.loadServer(id: toSave.id) ?? toSave
@@ -163,7 +163,7 @@ final class ServerStore {
         guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
         var updated = servers[idx]
         updated.badgeIcon = icon
-        try save(updated)
+        try saveServer(updated, false)
         servers[idx] = updated
     }
 
@@ -221,13 +221,6 @@ final class ServerStore {
     /// durable index with a partial one and hide the other servers.
     private func requireLoaded() throws {
         guard loadState == .loaded else { throw StoreError.notLoaded }
-    }
-
-    private func save(
-        _ server: PairedServer,
-        replacingStoredDeviceCredential: Bool = false
-    ) throws {
-        try saveServer(server, replacingStoredDeviceCredential)
     }
 
     /// Persist the ordered list of server IDs to both shared and standard UserDefaults.

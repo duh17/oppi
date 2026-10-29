@@ -25,6 +25,13 @@ struct ServerBadgePageTests {
     }
 
 
+    /// An alert cannot present over a page that is still appearing.
+    private func settled(_ page: UIViewController) async {
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.window != nil && page.transitionCoordinator == nil
+        })
+    }
+
     private func loadedStore(_ server: PairedServer) -> ServerStore {
         let store = ServerStore(loadServers: { .init(records: [server], unreadableIds: []) })
         store.load()
@@ -64,8 +71,7 @@ struct ServerBadgePageTests {
         let page = ServerBadgeViewController(server: server, root: root)
         let window = try present(page)
         defer { window.isHidden = true; window.rootViewController = nil }
-        // Let the page finish appearing; an alert cannot present over a transition.
-        try? await Task.sleep(for: .milliseconds(100))
+        await settled(page)
 
         page.choose(.cloud)
         page.view.layoutIfNeeded()
@@ -88,11 +94,14 @@ struct ServerBadgePageTests {
         let window = try present(page)
         defer { window.isHidden = true; window.rootViewController = nil }
 
+        await settled(page)
+
         page.choose(.cloud)
         page.view.layoutIfNeeded()
-        try? await Task.sleep(for: .milliseconds(100))
-        page.view.layoutIfNeeded()
 
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { window.rootViewController?.presentedViewController != nil })
+        let alert = try #require(window.rootViewController?.presentedViewController as? UIAlertController)
+        #expect(alert.message?.contains(ServerStore.StoreError.notLoaded.localizedDescription) == true)
         #expect(store.server(for: server.id)?.resolvedBadgeIcon == .defaultValue)
         #expect(Self.selectedIcons(in: page.view) == [ServerBadgeIcon.defaultValue.rawValue])
     }
