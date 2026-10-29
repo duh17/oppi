@@ -388,7 +388,7 @@ Terminal fallback is part of the contract:
 ## Presentation guardrails
 
 - **Modality:** use modal UI only for a narrow user-facing task, and never stack extension sheets: queue or replace them. Blocking prompts have a clear Cancel or Ignore. Confirm before closing a modal that would lose typed text. Long inline content promotes to a sheet or full screen instead of nested same-axis scrolling above the composer.
-- **Accessibility:** support Dynamic Type, VoiceOver, Full Keyboard Access, Switch Control, and reduced motion. Visible controls are at least 44×44 pt. Pair color with text, icons, or shape. Avoid flashing, blinking spinners, and layout-jumping progress rows. Keep streaming updates height-stable.
+- **Accessibility:** use native controls and system text styles, and honor reduced motion. Visible controls are at least 44×44 pt. Pair color with text, icons, or shape. Avoid flashing, blinking spinners, and layout-jumping progress rows. Keep streaming updates height-stable.
 - **Trust:** label surfaces with their source (extension, workspace, or session) when a prompt could surprise. Make it clear when a response goes to the running session. Do not echo sensitive fields, persist them in chat history, or log them. Extension text and links are untrusted.
 - **No downloaded code:** surfaces are data rendered by the app. Clients never download or execute extension code, and surfaces cannot call native platform APIs.
 - **Generic rendering:** keep widgets in the generic strips and drawers, with no extension-specific panels. A widget snapshot never gets unbounded inline height.

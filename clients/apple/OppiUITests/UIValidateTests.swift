@@ -1,7 +1,7 @@
 import XCTest
 
 /// Generic post-run UI dump. Launch a named screenshot-preview screen and write
-/// Apple's accessibility tree, audit, and one PNG. Do not add a new method per screen.
+/// Apple's accessibility tree and one PNG, plus the opt-in audit (`OPPI_UI_VALIDATE_AUDIT=1`). Do not add a new method per screen.
 @MainActor
 final class UIValidateTests: XCTestCase {
     func testDumpNamedPreview() throws {
@@ -115,7 +115,10 @@ final class UIValidateTests: XCTestCase {
 
         let snapshot = try app.snapshot()
         let tree = UIValidateDump.renderTree(snapshot)
-        let audit = UIValidateDump.renderAudit(UIValidateDump.collectAuditIssues(from: app))
+        // Apple's audit is opt-in: it adds a minute of simulator time per dump.
+        let audit = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_AUDIT"] == "1"
+            ? UIValidateDump.renderAudit(UIValidateDump.collectAuditIssues(from: app))
+            : nil
         try UIValidateDump.write(
             directory: outputDir,
             screen: resolvedScreen,

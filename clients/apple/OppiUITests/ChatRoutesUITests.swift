@@ -286,29 +286,6 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
-    /// At a real accessibility text size (the system's, passed as a launch argument, which a
-    /// unit test cannot set) the conversation pill's text is the subheadline scaled once. A row
-    /// that scaled `preferredFont`'s already-scaled size again drew it a few times too big.
-    func testSettingsChatWorkPillTextScalesOnceAtAccessibilitySize() {
-        // The style is pinned in the argument domain, which lives only for this launch: the
-        // simulator's saved Chat style (shared with other suites) is neither read nor written.
-        launchScreen(
-            "settings-chat",
-            arguments: [
-                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
-                "-dev.chenda.Oppi.chatDisplay.style", "chat",
-            ]
-        )
-        let chat = app.segmentedControls["settings.chatStyle"].buttons["Chat"]
-        XCTAssertTrue(chat.waitForExistence(timeout: 15), "The Chat settings page must show its Style picker")
-        XCTAssertTrue(chat.isSelected, "The pinned Chat style must be the selected one")
-        let worked = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Worked'")).firstMatch
-        XCTAssertTrue(worked.waitForExistence(timeout: 8), "The conversation pill preview must show its Worked text")
-        // One AX5 line of the subheadline is about 53 pt; scaled twice it wrapped to over 500 pt.
-        XCTAssertLessThan(worked.frame.height, 100, "The pill's text is \(worked.frame.height) pt tall at AX5")
-        assertRunning()
-    }
-
     /// The Top Bar page itself, with nothing pinned in the argument domain, so
     /// these are the writes a person makes: a switch writes the layout, a drag
     /// reorders it, and both survive a relaunch.

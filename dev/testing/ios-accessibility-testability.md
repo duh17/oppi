@@ -42,6 +42,6 @@ Query inside the relevant container and require one match before activation. Re-
 
 The QA driver already refuses `firstMatch`, index matches, and coordinate taps. See [qa-verification.md](qa-verification.md). Do not copy that refusal list into another driver.
 
-In-process `accessibilityActivate` tests prove forwarding, reuse, and frame separation. They do not prove VoiceOver reading order. VoiceOver and device checks stay human-only.
+In-process `accessibilityActivate` tests prove forwarding, reuse, and frame separation. They do not prove VoiceOver reading order, which is not an Oppi target (see `AGENTS.md`). Device checks stay human-only.
 
 `UIValidateDump` prints a role, nonempty identifiers and labels, a string value only when it differs from the label, `disabled`, and `selected`. It does not print visibility, hittability, hints, or custom actions. This page does not add a runner. Paired-server journey commands stay in [Apple: iOS E2E tests](apple.md#ios-e2e-tests).

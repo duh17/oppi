@@ -8,9 +8,8 @@ import UIKit
 /// The editors of an Agent's system prompt and description, of a schedule's
 /// prompt, and of the MCP add-server form. With `singleLine` it is a name
 /// field: Return ends editing and a pasted line break becomes a space, and a
-/// long name wraps at large text sizes instead of scrolling out of a field.
-/// (A `UITextField` cannot wrap, and the accessibility audit reports it as
-/// text that may be clipped at larger Dynamic Type sizes.)
+/// long name wraps at large text sizes instead of scrolling out of a field
+/// (a `UITextField` cannot wrap).
 final class SettingsTextViewRowCell: UICollectionViewListCell, UITextViewDelegate {
     static let verticalInsets: CGFloat = 22
 

@@ -1,7 +1,8 @@
 import Foundation
 import XCTest
 
-/// Prints an XCUI accessibility snapshot and audit as markdown for agent review.
+/// Prints an XCUI accessibility snapshot as markdown for agent review, and optionally Apple's
+/// automation-relevant accessibility audit (`OPPI_UI_VALIDATE_AUDIT=1`).
 ///
 /// This is a printer, not a golden. Frames and empty `Other` leaves are omitted.
 @MainActor
@@ -11,8 +12,6 @@ enum UIValidateDump {
         let compact: String
         let detailed: String
         let element: String
-        /// Why this issue is a known audit false positive; nil for a real finding.
-        var waivedReason: String? = nil
     }
 
     static func renderTree(_ snapshot: XCUIElementSnapshot) -> String {
@@ -27,25 +26,11 @@ enum UIValidateDump {
 
     static func renderAudit(_ issues: [AuditIssue]) -> String {
         var lines = ["# accessibility audit", ""]
-        let findings = issues.filter { $0.waivedReason == nil }
-        let waived = issues.filter { $0.waivedReason != nil }
-        if findings.isEmpty {
+        if issues.isEmpty {
             lines.append("No accessibility audit issues.")
         }
-        for issue in findings {
+        for issue in issues {
             lines.append(contentsOf: renderIssue(issue))
-        }
-        // Waived issues stay visible so a reviewer can still judge them.
-        if !waived.isEmpty {
-            lines.append("")
-            lines.append("## Waived (known audit false positives)")
-            lines.append("")
-            for issue in waived {
-                lines.append(contentsOf: renderIssue(issue))
-                if let reason = issue.waivedReason {
-                    lines.append("  Waived: \(reason)")
-                }
-            }
         }
         lines.append("")
         return lines.joined(separator: "\n")
@@ -66,76 +51,56 @@ enum UIValidateDump {
         return lines
     }
 
+    /// Writes `tree.md`, `screen.png`, `manifest.json`, and `audit.md` when `audit` is non-nil.
     static func write(
         directory: URL,
         screen: String,
         tree: String,
-        audit: String,
+        audit: String?,
         screenshot: XCUIScreenshot
     ) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let auditURL = directory.appendingPathComponent("audit.md")
         try writeUTF8(tree, to: directory.appendingPathComponent("tree.md"))
-        try writeUTF8(audit, to: directory.appendingPathComponent("audit.md"))
+        if let audit {
+            try writeUTF8(audit, to: auditURL)
+        } else {
+            // A directory reused from an audited run must not keep a stale audit.md.
+            try? FileManager.default.removeItem(at: auditURL)
+        }
         try screenshot.pngRepresentation.write(to: directory.appendingPathComponent("screen.png"))
 
+        let files = (["tree.md"] + (audit == nil ? [] : ["audit.md"]) + ["screen.png"])
+            .map(jsonString).joined(separator: ", ")
         let manifest = """
         {
           "screen": \(jsonString(screen)),
           "writtenAt": \(jsonString(ISO8601DateFormatter().string(from: Date()))),
-          "files": ["tree.md", "audit.md", "screen.png"]
+          "files": [\(files)]
         }
         """
         try writeUTF8(manifest, to: directory.appendingPathComponent("manifest.json"))
     }
 
+    /// The audit types that bear on automation. `dynamicType`, `textClipped`, and `contrast` are
+    /// visual accessibility, which is not an Oppi validation target (AGENTS.md).
+    private static let auditTypes: XCUIAccessibilityAuditType = [
+        .elementDetection, .hitRegion, .sufficientElementDescription, .trait,
+    ]
+
     static func collectAuditIssues(from app: XCUIApplication) -> [AuditIssue] {
         final class IssueBox: @unchecked Sendable {
             var issues: [AuditIssue] = []
-            /// `<preview>|<type>` of each element-less issue already waived: only the first of
-            /// a kind is, so a second one is a finding.
-            var elementlessWaived: Set<String> = []
         }
         let box = IssueBox()
-        let previewFrames = ["sessionRows.preview", "sessionRows.preview.label"].compactMap { identifier -> CGRect? in
-            let element = app.descendants(matching: .any)[identifier]
-            return element.exists ? element.frame : nil
-        }
-        let sampledPreviews = SampledPreview.all.compactMap { preview -> (identifier: String, frame: CGRect, reason: String)? in
-            let element = app.descendants(matching: .any)[preview.identifier]
-            return element.exists ? (preview.identifier, element.frame, preview.reason) : nil
-        }
-        // The Usage charts: Swift Charts' own accessibility nodes live inside these frames.
-        // Only the part of each slot the person can see: below the navigation bar, inside the scroll
-        // view. A bar scrolled under the bar is not the chart's to excuse.
-        let scroll = app.descendants(matching: .any)["server.usage.scroll"]
-        var visible = scroll.exists ? scroll.frame : CGRect.null
-        let navigationBar = app.navigationBars.firstMatch
-        if !visible.isNull, navigationBar.exists, navigationBar.frame.maxY > visible.minY {
-            visible = CGRect(x: visible.minX, y: navigationBar.frame.maxY, width: visible.width, height: max(0, visible.maxY - navigationBar.frame.maxY))
-        }
-        let chartFrames = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "server.usage.chart."))
-            .allElementsBoundByIndex
-            .filter { $0.exists }
-            .map { $0.frame.intersection(visible) }
-            .filter { !$0.isNull && !$0.isEmpty }
-        // The Extensions rows: each cell's label reads "<name>, <detail>".
-        let extensionRows = app.collectionViews["workspace.edit.extensions.list"].cells.allElementsBoundByIndex
-            .filter { $0.exists && $0.identifier.isEmpty }
-            .map { (label: $0.label, frame: $0.frame) }
         do {
-            try app.performAccessibilityAudit(for: .all) { issue in
+            try app.performAccessibilityAudit(for: auditTypes) { issue in
                 box.issues.append(
                     AuditIssue(
                         type: auditTypeName(issue.auditType),
                         compact: issue.compactDescription,
                         detailed: issue.detailedDescription,
-                        element: describeElement(issue.element),
-                        waivedReason: waivedReason(
-                            for: issue, previewFrames: previewFrames, sampledPreviews: sampledPreviews,
-                            extensionRows: extensionRows, chartFrames: chartFrames,
-                            elementlessWaived: &box.elementlessWaived
-                        )
+                        element: describeElement(issue.element)
                     )
                 )
                 return true
@@ -247,128 +212,12 @@ enum UIValidateDump {
         return parts.joined(separator: " ")
     }
 
-    /// The audit reports `textClipped` on the system `UISearchTextField` placeholder
-    /// on every `ScreenSearchController` screen, at the default text size too, while
-    /// the screenshots draw it in full at every size. The field is UIKit's own.
-    ///
-    /// The Session Rows editor's preview draws `SessionRowView` over sample data. The audit
-    /// reports known debt there: the dimmed labels' `contrast`, fixed-size `dynamicType` labels,
-    /// `hitRegion` of non-interactive subviews, the cost label's `sufficientElementDescription`,
-    /// and `textClipped` of the row and the "PREVIEW · SAMPLE DATA" label at accessibility sizes.
-    /// Only issues whose element sits inside the preview's frames are waived; the editor and
-    /// `SessionRowView` are unchanged since 7665a92f0.
-    ///
-    /// The Workspace Extensions rows draw their detail line (where the extension lives) in the
-    /// monospaced design through `UIFont.scaledMonospaced`, which scales through
-    /// `UIFontMetrics(forTextStyle:)` like every other label; the audit reports `dynamicType` on it
-    /// anyway. Only a static text inside a row of that list whose label is the row's detail is waived.
-    ///
-    /// Two settings previews draw real app text the audit misreads (`SampledPreview`): Voice's
-    /// mic mark, which scales but stops at half its disc (the audit calls any capped font
-    /// "partially unsupported"), and Text's code sample, which is fixed-size on purpose.
-    /// The audit finds their text by looking at the screen, so it often reports `dynamicType`
-    /// or `elementDetection` without an element. Those two types are waived on a page
-    /// only while its preview is on screen. An issue that names an element is waived
-    /// only when the element sits inside the preview's frame; an element-less one is
-    /// waived once per type per preview per dump, and a second is a finding. The reason
-    /// is in the waiver text; the rest of the page is audited as everywhere else.
-    private static func waivedReason(
-        for issue: XCUIAccessibilityAuditIssue,
-        previewFrames: [CGRect],
-        sampledPreviews: [(identifier: String, frame: CGRect, reason: String)],
-        extensionRows: [(label: String, frame: CGRect)],
-        chartFrames: [CGRect],
-        elementlessWaived: inout Set<String>
-    ) -> String? {
-        if let reason = chartWaiver(for: issue, chartFrames: chartFrames) { return reason }
-        if issue.auditType == .textClipped, issue.element?.elementType == .searchField {
-            return "textClipped on the system search field, which draws its text in full"
-        }
-        if issue.auditType == .dynamicType,
-           let element = issue.element, element.elementType == .staticText,
-           extensionRows.contains(where: {
-               $0.label.hasSuffix(", \(element.label)") && $0.frame.insetBy(dx: -1, dy: -1).contains(element.frame)
-           }) {
-            return "UIFontMetrics-scaled monospaced detail; audit misreads the monospaced design"
-        }
-        if issue.auditType == .dynamicType || issue.auditType == .elementDetection {
-            for preview in sampledPreviews {
-                if let element = issue.element {
-                    if preview.frame.insetBy(dx: -1, dy: -1).contains(element.frame) {
-                        return "\(auditTypeName(issue.auditType)) on a preview: \(preview.reason)"
-                    }
-                } else if elementlessWaived.insert("\(preview.identifier)|\(auditTypeName(issue.auditType))").inserted {
-                    return "\(auditTypeName(issue.auditType)) on a preview: \(preview.reason)"
-                }
-            }
-        }
-        if [.dynamicType, .textClipped, .hitRegion, .sufficientElementDescription, .contrast].contains(issue.auditType),
-           let frame = issue.element?.frame,
-           previewFrames.contains(where: { $0.insetBy(dx: -1, dy: -1).contains(frame) }) {
-            return "\(auditTypeName(issue.auditType)) in the Session Rows preview: known debt in SessionRowView "
-                + "(dimmed-label contrast, fixed-size labels) and the \"PREVIEW · SAMPLE DATA\" label clipping, "
-                + "not a sample-data artifact; the editor is unchanged since 7665a92f0"
-        }
-        return nil
-    }
-
-    /// Usage's bar charts (daily and hourly; the donut hides its nodes) are Swift Charts leaves (`UsageCharts.swift`, framework-required
-    /// SwiftUI; the daily one is `StatsDailyChart`, shared with the Mac). The framework makes
-    /// each bar and axis label its own accessibility node, too small to hit and with no
-    /// description, and draws the axis text without exposing it as an element, so the audit
-    /// reports `hitRegion`, `sufficientElementDescription`, `dynamicType`, `textClipped`,
-    /// `contrast`, and `elementDetection` on them. Waived: an issue whose element's middle sits
-    /// inside the visible part of a chart slot (below the navigation bar, inside the scroll
-    /// view), and an `elementDetection` with no element while a chart is on screen; everything
-    /// else on the page, the UIKit views around the charts, is audited as everywhere else. The same findings were on the SwiftUI Usage screen before it moved
-    /// (the audit of main's Usage, same sizes, is under `server-d3/main-before`).
-    private static func chartWaiver(for issue: XCUIAccessibilityAuditIssue, chartFrames: [CGRect]) -> String? {
-        guard !chartFrames.isEmpty else { return nil }
-        let types: [XCUIAccessibilityAuditType] = [
-            .hitRegion, .sufficientElementDescription, .dynamicType, .textClipped, .contrast, .elementDetection,
-        ]
-        guard types.contains(issue.auditType) else { return nil }
-        let reason = "\(auditTypeName(issue.auditType)) on a Swift Charts node in the daily or hourly bar chart: "
-            + "the framework's own bar and axis accessibility; main's SwiftUI Usage shows the same chart findings "
-            + "(server-d3/main-before)"
-        if let frame = issue.element?.frame {
-            // The node's middle inside the visible part of the slot, not its whole frame: a node with
-            // no size still counts, one whose middle is scrolled under the bar does not.
-            let middle = CGPoint(x: frame.midX, y: frame.midY)
-            return chartFrames.contains { $0.insetBy(dx: -1, dy: -1).contains(middle) } ? reason : nil
-        }
-        return issue.auditType == .elementDetection ? reason : nil
-    }
-
-    /// A settings preview whose text is fixed-size by design.
-    private struct SampledPreview {
-        let identifier: String
-        let reason: String
-
-        static let all = [
-            SampledPreview(
-                identifier: "settings.voice.micPreview",
-                reason: "the mic's \"EN\" grows with Dynamic Type but stops at half the 44 pt disc, so it stays inside it "
-                    + "(MicButtonChromeView.languageMarkFont); the audit reports a capped font as partially unsupported. "
-                    + "Without the cap it reports textClipped instead; the row's label names the preview"
-            ),
-            SampledPreview(
-                identifier: "settings.text.preview.code",
-                reason: "the code sample deliberately follows Code Text Size, not Dynamic Type, as code does in chat"
-            ),
-        ]
-    }
-
     private static func auditTypeName(_ type: XCUIAccessibilityAuditType) -> String {
         switch type {
-        case .contrast: return "contrast"
-        case .dynamicType: return "dynamicType"
         case .elementDetection: return "elementDetection"
         case .hitRegion: return "hitRegion"
         case .sufficientElementDescription: return "sufficientElementDescription"
-        case .textClipped: return "textClipped"
         case .trait: return "trait"
-        case .all: return "all"
         default: return "audit(\(type.rawValue))"
         }
     }

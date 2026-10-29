@@ -76,8 +76,7 @@ struct UsageDailyChartLeaf: View {
     }
 }
 
-/// The identifiers of the slots that hold the chart leaves (semantic groups in the UIKit
-/// page), which the accessibility audit's waiver finds them by (`UIValidateDump`).
+/// The identifiers of the slots that hold the chart leaves (semantic groups in the UIKit page).
 enum UsageChartIdentifier {
     static let prefix = "server.usage.chart."
     static let daily = prefix + "daily"

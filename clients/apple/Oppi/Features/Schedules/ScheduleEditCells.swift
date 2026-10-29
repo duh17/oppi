@@ -102,8 +102,7 @@ final class ScheduleCronRowCell: UICollectionViewListCell {
             onChange?(field.text ?? "")
         }, for: .editingChanged)
         field.addAction(UIAction { [weak self] _ in self?.field.resignFirstResponder() }, for: .editingDidEndOnExit)
-        // Caption 1, like the message under it: the accessibility audit reports the
-        // smaller Caption 2 as partly unsupported Dynamic Type.
+        // Caption 1, like the message under it.
         fieldNames.font = .preferredFont(forTextStyle: .caption1)
         messageLabel.font = .preferredFont(forTextStyle: .caption1)
         messageIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption1)
