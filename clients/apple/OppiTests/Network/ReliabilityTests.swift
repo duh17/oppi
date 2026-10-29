@@ -157,10 +157,12 @@ struct ReliabilityTests {
     }
 
     @Test func waitForConnectionResolvesOnDisconnect() async {
+        // The wait's own timeout is far longer than any load-induced delay of a
+        // 50 ms sleep; only the disconnect can end the send inside half of it.
         let client = WebSocketClient(
             credentials: makeTestCredentials(),
-            waitForConnectionTimeout: .seconds(5),
-            sendTimeout: .seconds(5)
+            waitForConnectionTimeout: .seconds(60),
+            sendTimeout: .seconds(60)
         )
         client._setStatusForTesting(.reconnecting(attempt: 1))
 
@@ -175,12 +177,11 @@ struct ReliabilityTests {
             try await client.send(.getState())
             Issue.record("Expected send failure on disconnect")
         } catch {
-            // Expected
+            #expect(error as? WebSocketError == .notConnected)
         }
         let elapsed = ContinuousClock.now - start
 
-        // Should resolve in ~50ms, not 5s
-        #expect(elapsed < .milliseconds(500), "Should resolve on disconnect, not timeout (\(elapsed))")
+        #expect(elapsed < .seconds(30), "Should resolve on disconnect, not at the 60 s timeout (\(elapsed))")
     }
 
     // MARK: - Fix 2: Extension Dialog Persistence

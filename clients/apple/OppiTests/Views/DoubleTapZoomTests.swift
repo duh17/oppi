@@ -132,9 +132,12 @@ struct DoubleTapZoomTests {
             body.frame.size.width = CGFloat(width)
             body.layoutIfNeeded()
         }
-        try await Task.sleep(for: MermaidWidthSettle.delay * 3)
-        body.layoutIfNeeded()
-        #expect(body.debugMermaidLayoutCountForTesting == 1)
+        // No layout may follow, so hold the count past three settle delays; the
+        // wait ends at the first layout that does.
+        #expect(await waitForMainActorConditionToStayTrue(for: MermaidWidthSettle.delay * 3) {
+            body.layoutIfNeeded()
+            return body.debugMermaidLayoutCountForTesting == 1
+        })
         #expect(abs(diagram.debugZoomScaleForTesting - zoomed) < 0.02, "same layout, so the zoom stays")
 
         for width in stride(from: 1_000, through: 380, by: -20) {
@@ -142,9 +145,14 @@ struct DoubleTapZoomTests {
             body.layoutIfNeeded()
             #expect(body.debugMermaidLayoutCountForTesting == 1, "no layout while the width is changing")
         }
-        try await Task.sleep(for: MermaidWidthSettle.delay * 3)
-        body.layoutIfNeeded()
-        #expect(body.debugMermaidLayoutCountForTesting == 2, "one layout once the width settles")
+        _ = await waitForMainActorCondition(timeout: .seconds(10)) {
+            body.layoutIfNeeded()
+            return body.debugMermaidLayoutCountForTesting >= 2
+        }
+        #expect(await waitForMainActorConditionToStayTrue(for: MermaidWidthSettle.delay) {
+            body.layoutIfNeeded()
+            return body.debugMermaidLayoutCountForTesting == 2
+        }, "one layout once the width settles")
         #expect(diagram.debugNaturalSizeForTesting.width <= 380, "laid out for the settled width")
     }
 

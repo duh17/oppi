@@ -1900,8 +1900,10 @@ struct SSHTerminalTests {
         )
         #expect(terminal.view.hitTest(moreSpot, with: nil)?.isDescendant(of: grid) == true)
         #expect(try hiddenFromVoiceOver("sshTerminal.back"))
-        try await Task.sleep(for: .milliseconds(100))
-        nav.view.layoutIfNeeded()
+        _ = await waitForMainActorCondition {
+            nav.view.layoutIfNeeded()
+            return grid.bounds.height == gridBefore.height + SSHTerminalBottomBar.reserve
+        }
         #expect(
             grid.bounds.height == gridBefore.height + SSHTerminalBottomBar.reserve,
             "the bar's rows go to the grid while the keyboard is up, in the same resize"
@@ -1909,9 +1911,14 @@ struct SSHTerminalTests {
 
         keyboard(top: window.bounds.maxY)
         #expect(try !hiddenFromVoiceOver("sshTerminal.back"), "Back is back with the keyboard down")
-        // Settle past the transition's hold.
-        try await Task.sleep(for: .milliseconds(500))
-        nav.view.layoutIfNeeded()
+        // The grid takes the rows back once the transition's hold ends, and the remote
+        // terminal is resized to the grid after that.
+        _ = await waitForMainActorCondition(timeout: .seconds(10)) {
+            nav.view.layoutIfNeeded()
+            return grid.bounds.size == gridBefore
+                && resizes.sizes.count > 0
+                && channel.engine.geometry.rows == Int(grid.bounds.height / grid.cellSize.height)
+        }
         #expect(grid.bounds.size == gridBefore)
         /// The glass pill around a button: stack, effect content, effect view,
         /// glass, then the pill the bar holds.
@@ -1939,9 +1946,10 @@ struct SSHTerminalTests {
         )
         let settledResizes = resizes.sizes.count
         #expect(settledResizes > 0, "the first layout sized the remote terminal")
-        try await Task.sleep(for: .milliseconds(300))
-        nav.view.layoutIfNeeded()
-        #expect(resizes.sizes.count == settledResizes, "settled: the bar adds no resize of its own")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            nav.view.layoutIfNeeded()
+            return resizes.sizes.count == settledResizes
+        }, "settled: the bar adds no resize of its own")
         #expect(nav.isNavigationBarHidden)
 
         // Back's dot means a blocked program (or Herdr) wants you; a notification does not.
@@ -1960,8 +1968,10 @@ struct SSHTerminalTests {
         // A broken connection keeps Back and Reconnect in reach with the keyboard up.
         keyboard(top: window.bounds.maxY - 336)
         #expect(try hiddenFromVoiceOver("sshTerminal.back"), "the bar is gone with the keyboard up")
-        try await Task.sleep(for: .milliseconds(200))
-        nav.view.layoutIfNeeded()
+        _ = await waitForMainActorCondition {
+            nav.view.layoutIfNeeded()
+            return grid.bounds.height == gridBefore.height + SSHTerminalBottomBar.reserve
+        }
         let keyboardUpSize = grid.bounds.size
         channel.event(.closed)
         #expect(await waitForMainActorCondition {
@@ -1984,8 +1994,10 @@ struct SSHTerminalTests {
         nav.popViewController(animated: false)
         // The keyboard goes down on the way out.
         keyboard(top: window.bounds.maxY)
-        try await Task.sleep(for: .milliseconds(100))
-        nav.view.layoutIfNeeded()
+        _ = await waitForMainActorCondition {
+            nav.view.layoutIfNeeded()
+            return nav.topViewController === root
+        }
         #expect(nav.topViewController === root)
         #expect(!nav.isNavigationBarHidden, "the screen below needs its Back and title")
     }

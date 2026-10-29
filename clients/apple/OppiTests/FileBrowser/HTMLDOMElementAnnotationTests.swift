@@ -407,34 +407,35 @@ struct HTMLDOMElementAnnotationTests {
 
         let beforeScroll = try await cssRect(id: "marker", in: fixture.view)
         fixture.view.webViewForTesting.scrollView.setContentOffset(CGPoint(x: 0, y: 36), animated: false)
-        try await Task.sleep(for: .milliseconds(80))
+        try await waitForViewport(in: fixture.view) { ($0["scrollY"] ?? 0) > 4 }
         let scrolled = try await cssRect(id: "marker", in: fixture.view)
         #expect(scrolled.origin.y < beforeScroll.origin.y - 4, "scroll did not move the marker. before \(beforeScroll) after \(scrolled)")
         try await assertPickHitsMarker(in: fixture, controller: controller)
 
-        try await resetViewport(fixture.view.webViewForTesting)
+        let unzoomed = try await resetViewport(in: fixture.view)
         fixture.view.webViewForTesting.pageZoom = 2
-        try await Task.sleep(for: .milliseconds(120))
+        // Page zoom resizes the page's layout viewport in CSS pixels.
+        try await waitForViewport(in: fixture.view) { $0["width"] != unzoomed["width"] }
         let zoomedCSS = try await cssRect(id: "marker", in: fixture.view)
         let zoomedView = try await viewPoint(for: zoomedCSS, in: fixture.view)
         #expect(fixture.view.webViewForTesting.pageZoom == 2)
         #expect(zoomedView.x.isFinite && zoomedView.y.isFinite)
         try await assertPickHitsMarker(in: fixture, controller: controller)
 
-        try await resetViewport(fixture.view.webViewForTesting)
+        try await resetViewport(in: fixture.view)
         let webView = fixture.view.webViewForTesting
         webView.scrollView.minimumZoomScale = 0.5
         webView.scrollView.maximumZoomScale = 3
         webView.scrollView.setZoomScale(2, animated: false)
-        try await Task.sleep(for: .milliseconds(120))
+        try await waitForViewport(in: fixture.view)
         webView.scrollView.setContentOffset(.zero, animated: false)
         _ = try await pageString(
             "window.scrollTo(0, 0); document.getElementById('marker').scrollIntoView({block:'center', inline:'center'}); 'ok'",
             in: fixture.view
         )
-        try await Task.sleep(for: .milliseconds(80))
+        try await waitForViewport(in: fixture.view)
         webView.scrollView.setContentOffset(.zero, animated: false)
-        try await Task.sleep(for: .milliseconds(80))
+        try await waitForViewport(in: fixture.view)
         let zoomScale = webView.scrollView.zoomScale
         let visualScale = try await pageNumber("window.visualViewport ? window.visualViewport.scale : 1", in: fixture.view)
         #expect(abs(zoomScale - 1) > 0.05 || abs(visualScale - 1) > 0.05, "WKWebView did not enter a non-1 pinch scale. zoomScale=\(zoomScale) visualScale=\(visualScale)")
@@ -1395,8 +1396,18 @@ struct HTMLDOMElementAnnotationTests {
         in fixture: HostedHTML,
         controller: HTMLDOMPickController
     ) async throws {
-        let css = try await cssRect(id: "marker", in: fixture.view)
-        let metrics = try await metrics(in: fixture.view)
+        // Tap where the marker rests: its rect and the viewport metrics must agree
+        // across two reads, so a scroll or zoom still being applied is not mapped.
+        var css = try await cssRect(id: "marker", in: fixture.view)
+        var metrics = try await metrics(in: fixture.view)
+        for _ in 0..<40 {
+            let nextCSS = try await cssRect(id: "marker", in: fixture.view)
+            let nextMetrics = try await self.metrics(in: fixture.view)
+            let stable = nextCSS == css && nextMetrics == metrics
+            css = nextCSS
+            metrics = nextMetrics
+            if stable { break }
+        }
         let mapped = HTMLDOMViewportMapping.viewRect(fromCSSViewportRect: css, metrics: metrics)
         let point = CGPoint(x: mapped.midX, y: mapped.midY)
         let bounds = fixture.view.bounds
@@ -1416,13 +1427,38 @@ struct HTMLDOMElementAnnotationTests {
         #expect(abs(highlight.width - css.width * scale) < 4, "highlight \(highlight) css \(css) scale \(scale)")
     }
 
-    private func resetViewport(_ webView: WKWebView) async {
+    @discardableResult
+    private func resetViewport(in view: HTMLRenderView) async throws -> [String: Double] {
+        let webView = view.webViewForTesting
         webView.pageZoom = 1
         webView.scrollView.minimumZoomScale = 1
         webView.scrollView.maximumZoomScale = 1
         webView.scrollView.setZoomScale(1, animated: false)
         webView.scrollView.setContentOffset(.zero, animated: false)
-        try? await Task.sleep(for: .milliseconds(80))
+        return try await waitForViewport(in: view)
+    }
+
+    /// Re-reads the page's viewport until two consecutive reads agree and
+    /// `condition` holds, so a test that moved scroll or zoom measures the page
+    /// after WebKit applied it. Gives up silently after about 3 s; the caller's
+    /// expectations then report what the page still shows.
+    @discardableResult
+    private func waitForViewport(
+        in view: HTMLRenderView,
+        until condition: ([String: Double]) -> Bool = { _ in true }
+    ) async throws -> [String: Double] {
+        var previous: [String: Double] = [:]
+        for _ in 0..<100 {
+            let json = try await pageString(
+                "JSON.stringify({width: innerWidth, scale: visualViewport ? visualViewport.scale : 1, left: visualViewport ? visualViewport.offsetLeft : 0, top: visualViewport ? visualViewport.offsetTop : 0, scrollX: scrollX, scrollY: scrollY})",
+                in: view
+            )
+            let current = (try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Double]) ?? [:]
+            if current == previous, condition(current) { return current }
+            previous = current
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return previous
     }
 
     private func makeFixture(html: String, router: ReviewCommentSelectionRouter? = nil) async throws -> HostedHTML {
@@ -1598,7 +1634,8 @@ struct HTMLDOMElementAnnotationTests {
             }
             try? await Task.sleep(for: .milliseconds(50))
         }
-        return controller.snapshotForTesting?.element
+        // No lookup completed: the snapshot still held is an earlier pick's, not an answer.
+        return nil
     }
 
     private func waitForElement(
