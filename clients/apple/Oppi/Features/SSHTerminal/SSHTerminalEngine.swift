@@ -142,8 +142,11 @@ private final class SSHTerminalCellReads {
             GHOSTTY_CELL_DATA_WIDE, GHOSTTY_CELL_DATA_HAS_STYLING,
         ], count: Self.cellKeyCount)
         let fields: [PartialKeyPath<Decoded>] = [\.codepoint, \.tag, \.wide, \.styled]
-        cellValues.initialize(from: fields.map {
-            base + MemoryLayout<Decoded>.offset(of: $0)!
+        cellValues.initialize(from: fields.map { field in
+            guard let offset = MemoryLayout<Decoded>.offset(of: field) else {
+                preconditionFailure("Decoded.\(field) has no stored offset")
+            }
+            return base + offset
         }, count: Self.cellKeyCount)
         styleKeys.initialize(from: [
             GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
