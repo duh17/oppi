@@ -309,6 +309,51 @@ struct VoiceInputManagerTests {
         print("Activation evidence: paths=\(paths) locale_resolutions=\(resolutions) model_preparations=\(modelPreparations) current_route_activations=\(access.activateAudioSessionCallCount)")
     }
 
+    @Test(arguments: [true, false])
+    func audioStartSplitIsEmittedOnlyWhenProviderMeasuresIt(measured: Bool) async throws {
+        resetVoicePreferences()
+        defer { resetVoicePreferences() }
+        let session = MockVoiceSession()
+        session.startTimings = VoiceSessionStartTimings(
+            analyzerStartMs: 11, audioStartMs: 22,
+            engineStartMs: measured ? 7 : nil, firstAudioWaitMs: measured ? 15 : nil
+        )
+        // The mock reports fixed phase values; the sleep makes the real total
+        // longer than the audio start it contains.
+        session.startHandler = { try? await Task.sleep(for: .milliseconds(40)) }
+        let provider = MockVoiceProvider(id: .appleModernSpeech, engine: .modernSpeech)
+        provider.makeSessionHandler = { _, _ in session }
+        let manager = VoiceInputManager(
+            providerRegistry: VoiceProviderRegistry(providers: [provider]),
+            routeResolver: VoiceInputRouteResolver(isAvailable: { _, _ in true }),
+            systemAccess: MockVoiceInputSystemAccess()
+        )
+        let capture = TelemetryCapture()
+        try await capture.run {
+            try await manager.startRecording(keyboardLanguage: "en-US", source: "test")
+            await manager.cancelRecording()
+        }
+
+        // One setup event per take; existing phases keep their values.
+        let setups = capture.events(named: "app.dictation_setup")
+        #expect(setups.count == 1)
+        let fields = try #require(setups.first?.fields)
+        #expect(fields["analyzer_start_ms"] == 11)
+        #expect(fields["audio_start_ms"] == 22)
+        let total = try #require(fields["total_ms"])
+        #expect(total >= 40)
+        if measured {
+            let engine = try #require(fields["engine_start_ms"])
+            let wait = try #require(fields["first_audio_wait_ms"])
+            #expect(engine == 7 && wait == 15)
+            #expect(engine <= total && wait <= total)
+            #expect(engine + wait == fields["audio_start_ms"])
+        } else {
+            #expect(fields["engine_start_ms"] == nil)
+            #expect(fields["first_audio_wait_ms"] == nil)
+        }
+    }
+
     @Test func routeTransitionAnalyzerBackpressureRecoversWithoutDiscardingTake() async throws {
         resetVoicePreferences()
         defer { resetVoicePreferences() }

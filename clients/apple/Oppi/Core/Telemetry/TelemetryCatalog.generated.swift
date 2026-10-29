@@ -2198,6 +2198,8 @@ struct AppDictationSetup: TelemetryEvent {
     let analyzerStartMs: Double?
     let audioSessionMs: Double?
     let audioStartMs: Double?
+    let engineStartMs: Double?
+    let firstAudioWaitMs: Double?
     let audioSampleRate: Int?
     let voiceEngine: TelemetryTag.VoiceEngine
     let locale: String?
@@ -2222,6 +2224,8 @@ struct AppDictationSetup: TelemetryEvent {
         analyzerStartMs: Double? = nil,
         audioSessionMs: Double? = nil,
         audioStartMs: Double? = nil,
+        engineStartMs: Double? = nil,
+        firstAudioWaitMs: Double? = nil,
         audioSampleRate: Int? = nil,
         voiceEngine: TelemetryTag.VoiceEngine,
         locale: String? = nil,
@@ -2245,6 +2249,8 @@ struct AppDictationSetup: TelemetryEvent {
         self.analyzerStartMs = analyzerStartMs
         self.audioSessionMs = audioSessionMs
         self.audioStartMs = audioStartMs
+        self.engineStartMs = engineStartMs
+        self.firstAudioWaitMs = firstAudioWaitMs
         self.audioSampleRate = audioSampleRate
         self.voiceEngine = voiceEngine
         self.locale = locale
@@ -2271,6 +2277,8 @@ struct AppDictationSetup: TelemetryEvent {
         if let analyzerStartMs { values["analyzer_start_ms"] = analyzerStartMs }
         if let audioSessionMs { values["audio_session_ms"] = audioSessionMs }
         if let audioStartMs { values["audio_start_ms"] = audioStartMs }
+        if let engineStartMs { values["engine_start_ms"] = engineStartMs }
+        if let firstAudioWaitMs { values["first_audio_wait_ms"] = firstAudioWaitMs }
         if let audioSampleRate { values["audio_sample_rate"] = Double(audioSampleRate) }
         return values
     }

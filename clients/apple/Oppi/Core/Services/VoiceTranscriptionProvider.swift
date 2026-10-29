@@ -60,6 +60,23 @@ struct VoiceProviderPreparation {
 struct VoiceSessionStartTimings: Sendable {
     let analyzerStartMs: Int
     let audioStartMs: Int
+    /// Split of `audioStartMs`: begin of audio start until the engine's last
+    /// `start()` returned. Nil when the provider does not measure the split.
+    let engineStartMs: Int?
+    /// Split of `audioStartMs`: engine started until first real buffer accepted.
+    let firstAudioWaitMs: Int?
+
+    init(
+        analyzerStartMs: Int,
+        audioStartMs: Int,
+        engineStartMs: Int? = nil,
+        firstAudioWaitMs: Int? = nil
+    ) {
+        self.analyzerStartMs = analyzerStartMs
+        self.audioStartMs = audioStartMs
+        self.engineStartMs = engineStartMs
+        self.firstAudioWaitMs = firstAudioWaitMs
+    }
 }
 
 /// Provider-agnostic session events streamed back to the manager.

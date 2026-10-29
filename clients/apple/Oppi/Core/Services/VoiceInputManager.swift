@@ -1434,6 +1434,8 @@ final class VoiceInputManager {
 
         timings.phases.analyzerStartMs = sessionTimings.analyzerStartMs
         timings.phases.audioStartMs = sessionTimings.audioStartMs
+        timings.phases.engineStartMs = sessionTimings.engineStartMs
+        timings.phases.firstAudioWaitMs = sessionTimings.firstAudioWaitMs
         timings.phases.totalMs = startTime.elapsedMs()
         recordingStart = ContinuousClock.now
         lastCaptureAudioAt = recordingStart

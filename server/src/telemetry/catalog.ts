@@ -1156,6 +1156,10 @@ const EVENTS = {
       analyzer_start_ms: OPT_MS,
       audio_session_ms: OPT_MS,
       audio_start_ms: OPT_MS,
+      // Split of audio_start_ms for providers that measure it (server dictation):
+      // engine_start_ms + first_audio_wait_ms = audio_start_ms.
+      engine_start_ms: OPT_MS,
+      first_audio_wait_ms: OPT_MS,
       audio_sample_rate: OPT_COUNT,
     },
     tags: {

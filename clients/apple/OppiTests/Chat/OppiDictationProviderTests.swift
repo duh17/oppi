@@ -1203,6 +1203,26 @@ struct DictationCaptureStartupTests {
         #expect(waits > 0)
     }
 
+    @Test func engineStartedIsSignalledAfterEachSuccessfulStartAndBeforeAudioWait() async throws {
+        var log: [String] = []
+        var starts = 0
+        try await DictationAudioEngineHelper.startWithFirstAudio(
+            start: {
+                starts += 1
+                log.append("start\(starts)")
+                if starts == 1 { throw VoiceInputError.audioCaptureUnavailable }
+            },
+            didStartEngine: { log.append("started\(starts)") },
+            hasAudio: { log.contains("poll") },
+            isRunning: { true },
+            stop: { log.append("stop") },
+            isCancelled: { false },
+            sleep: { log.append($0 == .milliseconds(250) ? "backoff" : "poll") }
+        )
+        // A throwing start() is not a started engine; the signal precedes polling.
+        #expect(log == ["start1", "stop", "backoff", "start2", "started2", "poll"])
+    }
+
     @Test func alreadyLatchedPCMDoesNotPoll() async throws {
         try await DictationAudioEngineHelper.startWithFirstAudio(
             start: {}, hasAudio: { true }, isRunning: { true },

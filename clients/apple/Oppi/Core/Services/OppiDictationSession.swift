@@ -99,16 +99,22 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         let analyzerStartMs = analyzerStart.elapsedMs()
 
         // Start audio engine with conversion to 16kHz mono
+        // audio_start splits into engine_start (to the last engine start()
+        // returning) and first_audio_wait (the rest), so they sum to audio_start.
         let audioStart = ContinuousClock.now
-        try await startAudioCapture()
+        var engineStarted = audioStart
+        try await startAudioCapture(onEngineStarted: { engineStarted = ContinuousClock.now })
         let audioStartMs = audioStart.elapsedMs()
+        let engineStartMs = audioStart.elapsedMs(until: engineStarted)
 
         // Consume tap audio immediately; readiness gates sending, not capture.
         startAudioDrainTask()
 
         return VoiceSessionStartTimings(
             analyzerStartMs: analyzerStartMs,
-            audioStartMs: audioStartMs
+            audioStartMs: audioStartMs,
+            engineStartMs: engineStartMs,
+            firstAudioWaitMs: max(0, audioStartMs - engineStartMs)
         )
     }
 
@@ -190,9 +196,13 @@ final class OppiDictationSession: VoiceTranscriptionSession {
     /// PCM chunks are yielded into `pendingAudioStream` via `audioContinuation`.
     /// `AsyncStream.Continuation.yield()` is thread-safe and safe to call
     /// directly from the RT audio thread without dispatch indirection.
-    private func startAudioCapture(replacingStream: Bool = true) async throws {
+    private func startAudioCapture(
+        replacingStream: Bool = true,
+        onEngineStarted: () -> Void = {}
+    ) async throws {
         try await DictationAudioEngineHelper.startWithFirstAudio(
             start: { try self.startCaptureAttempt(replacingStream: replacingStream) },
+            didStartEngine: onEngineStarted,
             hasAudio: { self.hasCapturedAudio },
             isRunning: { self.audioEngine?.isRunning == true },
             stop: {
@@ -569,6 +579,7 @@ enum DictationAudioEngineHelper {
     @MainActor
     static func startWithFirstAudio(
         start: () throws -> Void,
+        didStartEngine: () -> Void = {},
         hasAudio: () -> Bool,
         isRunning: () -> Bool,
         stop: () -> Void,
@@ -584,6 +595,7 @@ enum DictationAudioEngineHelper {
             guard !isCancelled() else { throw CancellationError() }
             do {
                 try start()
+                didStartEngine()
                 // engine.start() blocks MainActor; the RT tap can queue first
                 // PCM before the level latch runs. Yield so already-delivered
                 // audio can complete without a poll bucket.

@@ -53,6 +53,9 @@ struct VoiceSetupTimings: Sendable, Equatable {
     var analyzerStartMs = 0
     var audioSessionMs = 0
     var audioStartMs = 0
+    /// Split of `audioStartMs`; nil when the provider does not measure it.
+    var engineStartMs: Int?
+    var firstAudioWaitMs: Int?
     var totalMs = 0
 }
 
@@ -105,6 +108,8 @@ struct VoiceTakeTelemetry: Sendable, Equatable {
             analyzerStartMs: includesPhases ? Double(max(0, timings.analyzerStartMs)) : nil,
             audioSessionMs: includesPhases ? Double(max(0, timings.audioSessionMs)) : nil,
             audioStartMs: includesPhases ? Double(max(0, timings.audioStartMs)) : nil,
+            engineStartMs: includesPhases ? timings.engineStartMs.map { Double(max(0, $0)) } : nil,
+            firstAudioWaitMs: includesPhases ? timings.firstAudioWaitMs.map { Double(max(0, $0)) } : nil,
             audioSampleRate: route.sampleRate,
             voiceEngine: voiceEngine,
             locale: locale,
