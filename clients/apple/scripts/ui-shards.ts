@@ -12,6 +12,9 @@
 //    test; a test with no record counts the median of the recorded ones, so an unrecorded
 //    selection balances by count). A class is one unit; a class heavier than half a shard's
 //    share is split into its test methods, so one big class cannot be the whole critical path.
+//    One shard of a split class runs the class minus the methods the others run, so a test the
+//    source scan missed still runs (like unit-shards' last shard), and each shard's executed
+//    test ids are checked against its plan.
 // 3. Run every shard in its own pool slot of the profile with `test-without-building -xctestrun`
 //    at once. Shard count: enough that each shard has MIN_SHARD_SECONDS of tests (a shard costs
 //    about 30 s of install and runner start), at most OPPI_UI_SHARDS (default per profile:
@@ -94,15 +97,19 @@ export function scanUIClasses(sources: string[]): Map<string, UIClass> {
   return classes;
 }
 
-/** Every test method of `name`, inherited ones included; undefined when the scan cannot vouch for the list. */
+/**
+ * Every test method of `name`, inherited ones included; undefined when the scan cannot vouch for the
+ * list: a body it could not close, or a superclass that is neither XCTestCase nor a scanned class
+ * (its helpers' tests would be invisible).
+ */
 export function testsOf(name: string, classes: Map<string, UIClass>, seen = new Set<string>()): string[] | undefined {
   const entry = classes.get(name);
   if (!entry || !entry.complete || seen.has(name)) return undefined;
   seen.add(name);
   const tests = new Set(entry.tests);
   // XCTestCase itself is not declared here; a declared superclass contributes its tests.
-  if (entry.superclass && classes.has(entry.superclass)) {
-    const inherited = testsOf(entry.superclass, classes, seen);
+  if (entry.superclass !== "XCTestCase") {
+    const inherited = entry.superclass && classes.has(entry.superclass) ? testsOf(entry.superclass, classes, seen) : undefined;
     if (!inherited) return undefined;
     for (const test of inherited) tests.add(test);
   }
@@ -126,6 +133,16 @@ export function recordUIWeights(logTexts: string[]): Record<string, number> {
   return weights;
 }
 
+/** Drop recorded tests the sources no longer declare (renamed, deleted, or in a deleted class); a class the scan cannot list keeps its tests. */
+export function pruneStale(weights: Record<string, number>, classes: Map<string, UIClass>): Record<string, number> {
+  return Object.fromEntries(Object.entries(weights).filter(([id]) => {
+    const [cls, test] = id.split("/");
+    if (!classes.has(cls)) return false;
+    const tests = testsOf(cls, classes);
+    return tests === undefined || tests.includes(test);
+  }));
+}
+
 /** What one shard runs, with the classes and tests it was planned from. */
 export type Unit = {
   label: string;
@@ -133,17 +150,27 @@ export type Unit = {
   seconds: number;
   /** Tests this unit runs, or undefined when the scan cannot say (a filter the scan does not know). */
   tests: number | undefined;
+  /** `Class/test` ids this unit is planned to run; empty for a filter the scan cannot list. */
+  ids: string[];
+  /** Set on a method unit that came from splitting this class. */
+  splitOf?: string;
+  /** Runs the whole class except the methods of it that other shards run (see addCatchAlls). */
+  catchAll?: boolean;
 };
-export type ShardPlan = { units: Unit[]; seconds: number; tests: number | undefined };
+export type ShardPlan = { units: Unit[]; seconds: number; tests: number | undefined; ids: string[] };
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted.length > 0 ? sorted[Math.floor((sorted.length - 1) / 2)] : FALLBACK_TEST_SECONDS;
 }
 
-/** Filters with duplicates and covered ones removed: `OppiUITests/C` covers `OppiUITests/C/testX`. */
+/**
+ * Filters with duplicates and covered ones removed: `OppiUITests/C` covers `OppiUITests/C/testX`.
+ * A trailing `()` (Swift Testing's spelling) is dropped first: XCTest names have none, so
+ * `C/testX()` and `C/testX` are one test.
+ */
 export function normalizeFilters(filters: string[]): string[] {
-  const unique = [...new Set(filters)];
+  const unique = [...new Set(filters.map((filter) => filter.replace(/\(\)$/, "")))];
   const classes = new Set(unique.filter((filter) => filter.split("/").length === 2));
   return unique.filter((filter) => {
     const [target, cls, ...rest] = filter.split("/");
@@ -156,13 +183,18 @@ export function shardCount(seconds: number, cap: number, tests: number): number 
   return Math.max(1, Math.min(cap, tests, Math.floor(seconds / MIN_SHARD_SECONDS)));
 }
 
-/** Most shards a profile runs: OPPI_UI_SHARDS or the profile default, never more than its slots. */
-export function shardCap(profile: string, env: NodeJS.ProcessEnv = process.env): number {
+/** Run slots of a device profile. */
+export function profileSlots(profile: string): number {
   const config = DEVICE_PROFILES[profile];
   if (!config) throw new Error(`unknown --profile '${profile}' (${Object.keys(DEVICE_PROFILES).join(", ")})`);
+  return config.count;
+}
+
+/** Most shards a profile runs: OPPI_UI_SHARDS or the profile default, never more than its slots. */
+export function shardCap(profile: string, env: NodeJS.ProcessEnv = process.env): number {
   const asked = env.OPPI_UI_SHARDS === undefined ? DEFAULT_SHARDS[profile] ?? 1 : Number(env.OPPI_UI_SHARDS);
   if (!Number.isInteger(asked) || asked < 1) throw new Error(`invalid OPPI_UI_SHARDS ${env.OPPI_UI_SHARDS}`);
-  return Math.min(asked, config.count);
+  return Math.min(asked, profileSlots(profile));
 }
 
 /**
@@ -183,6 +215,7 @@ export function planShards(
     flags: [`-only-testing:${target}/${cls}`],
     seconds: tests.reduce((sum, test) => sum + secondsOf(cls, test), 0),
     tests: tests.length,
+    ids: tests.map((test) => `${cls}/${test}`),
   });
   let units: Unit[] = normalizeFilters(filters).map((filter) => {
     const [target, cls, test, ...rest] = filter.split("/");
@@ -191,10 +224,10 @@ export function planShards(
       if (tests && tests.length > 0) return classUnit(target, cls, tests);
       // A class the scan cannot list: xcodebuild decides what it holds; weigh it by what was recorded.
       const recorded = Object.entries(weights).filter(([id]) => id.startsWith(`${cls}/`));
-      return { label: cls, flags: [`-only-testing:${filter}`], seconds: recorded.length > 0 ? recorded.reduce((sum, [, s]) => sum + s, 0) : fallback, tests: undefined };
+      return { label: cls, flags: [`-only-testing:${filter}`], seconds: recorded.length > 0 ? recorded.reduce((sum, [, s]) => sum + s, 0) : fallback, tests: undefined, ids: [] };
     }
     // A named test, or a nested type the scan does not model: one unit as named.
-    return { label: filter.slice(target.length + 1), flags: [`-only-testing:${filter}`], seconds: rest.length === 0 ? secondsOf(cls, test) : fallback, tests: rest.length === 0 ? 1 : undefined };
+    return { label: filter.slice(target.length + 1), flags: [`-only-testing:${filter}`], seconds: rest.length === 0 ? secondsOf(cls, test) : fallback, tests: rest.length === 0 ? 1 : undefined, ids: rest.length === 0 ? [`${cls}/${test}`] : [] };
   });
   const total = units.reduce((sum, unit) => sum + unit.seconds, 0);
   const count = shards === undefined ? shardCount(total, cap, units.reduce((sum, unit) => sum + (unit.tests ?? 1), 0)) : Math.max(1, Math.min(shards, cap));
@@ -205,17 +238,46 @@ export function planShards(
       const cls = unit.flags.length === 1 && unit.tests !== undefined && unit.tests > 1 ? unit.label : undefined;
       const tests = cls ? testsOf(cls, classes) : undefined;
       if (!cls || !tests || unit.seconds <= share / 2) return [unit];
-      return tests.map((test) => ({ label: `${cls}/${test}`, flags: [`-only-testing:${BUNDLE}/${cls}/${test}`], seconds: secondsOf(cls, test), tests: 1 }));
+      return tests.map((test) => ({ label: `${cls}/${test}`, flags: [`-only-testing:${BUNDLE}/${cls}/${test}`], seconds: secondsOf(cls, test), tests: 1, ids: [`${cls}/${test}`], splitOf: cls }));
     });
   }
-  const bins: ShardPlan[] = Array.from({ length: Math.min(count, units.length) }, () => ({ units: [], seconds: 0, tests: 0 }));
+  const bins: ShardPlan[] = Array.from({ length: Math.min(count, units.length) }, () => ({ units: [], seconds: 0, tests: 0, ids: [] }));
   for (const unit of [...units].sort((a, b) => b.seconds - a.seconds || a.label.localeCompare(b.label))) {
     const bin = bins.reduce((lightest, next) => (next.seconds < lightest.seconds ? next : lightest));
     bin.units.push(unit);
     bin.seconds += unit.seconds;
     bin.tests = bin.tests === undefined || unit.tests === undefined ? undefined : bin.tests + unit.tests;
   }
+  addCatchAlls(bins);
+  for (const bin of bins) bin.ids = bin.units.flatMap((unit) => unit.ids);
   return bins;
+}
+
+/**
+ * A split class must not lose a test the source scan missed (a macro-made or `#if`'d method, one
+ * a helper type declares). Like unit-shards' last shard, one shard that already runs methods of the
+ * class takes a catch-all: the whole class, skipping the methods other shards run. Every method the
+ * scan did find still runs exactly once, and an unlisted one runs in the catch-all shard.
+ */
+function addCatchAlls(bins: ShardPlan[]): void {
+  const classes = new Set(bins.flatMap((bin) => bin.units.flatMap((unit) => (unit.splitOf ? [unit.splitOf] : []))));
+  for (const cls of classes) {
+    const holders = bins.filter((bin) => bin.units.some((unit) => unit.splitOf === cls));
+    const keeper = holders.reduce((lightest, next) => (next.seconds < lightest.seconds ? next : lightest));
+    const mine = keeper.units.filter((unit) => unit.splitOf === cls);
+    const elsewhere = holders.filter((bin) => bin !== keeper).flatMap((bin) => bin.units.filter((unit) => unit.splitOf === cls));
+    keeper.units = [
+      ...keeper.units.filter((unit) => unit.splitOf !== cls),
+      {
+        label: cls,
+        flags: [`-only-testing:${BUNDLE}/${cls}`, ...elsewhere.flatMap((unit) => unit.ids.map((id) => `-skip-testing:${BUNDLE}/${id}`))],
+        seconds: mine.reduce((sum, unit) => sum + unit.seconds, 0),
+        tests: mine.length,
+        ids: mine.flatMap((unit) => unit.ids),
+        catchAll: true,
+      },
+    ];
+  }
 }
 
 /** xcodebuild filter flags of one shard. */
@@ -227,18 +289,36 @@ export function describeShard(plan: ShardPlan): string {
   const single: string[] = [];
   for (const unit of plan.units) {
     const cls = unit.label.split("/")[0];
-    if (unit.label.includes("/") && unit.tests === 1) byClass.set(cls, (byClass.get(cls) ?? 0) + 1);
+    if (unit.catchAll) single.push(`${cls} (${unit.tests} test${unit.tests === 1 ? "" : "s"} + any the scan missed)`);
+    else if (unit.label.includes("/") && unit.tests === 1) byClass.set(cls, (byClass.get(cls) ?? 0) + 1);
     else single.push(unit.label);
   }
   return [...single, ...[...byClass].map(([cls, n]) => `${cls} (${n} test${n === 1 ? "" : "s"})`)].join(", ");
 }
 
+/** `Class/test` ids of the test cases a finished run executed, from the log its sim-pool summary names. */
+export function ranTestIds(summary: string | undefined): Set<string> {
+  const ran = new Set<string>();
+  if (!summary || !existsSync(summary)) return ran;
+  const log = JSON.parse(readFileSync(summary, "utf8")).log_path as string | undefined;
+  if (!log || !existsSync(log)) return ran;
+  for (const match of readFileSync(log, "utf8").matchAll(/^Test Case '-\[OppiUITests\.(\w+) (test\w*)\]' (?:passed|failed|skipped) \(/gm)) ran.add(`${match[1]}/${match[2]}`);
+  return ran;
+}
+
 /**
- * Why a finished shard fails although xcodebuild passed: it ran fewer tests than the plan named,
- * so a test method the plan counted never ran (a `#if`'d method, say). Undefined when it is fine.
+ * Planned tests a shard did not run although xcodebuild passed: the shard's own list, compared
+ * as ids, so one missing test cannot hide behind an extra one.
  */
-export function countMismatch(plan: ShardPlan, ran: number): string | undefined {
-  return plan.tests !== undefined && ran < plan.tests ? `the plan named ${plan.tests} tests but the shard ran ${ran}` : undefined;
+export function missingTests(plan: ShardPlan, ran: Set<string>): string[] {
+  return plan.ids.filter((id) => !ran.has(id));
+}
+
+/** Tests a shard ran that no shard planned, in a class the plan split: tests the source scan missed. */
+export function unplannedTests(plans: ShardPlan[], index: number, ran: Set<string>): string[] {
+  const planned = new Set(plans.flatMap((plan) => plan.ids));
+  const caught = new Set(plans[index].units.filter((unit) => unit.catchAll).map((unit) => unit.label));
+  return [...ran].filter((id) => caught.has(id.split("/")[0]) && !planned.has(id)).sort();
 }
 
 function swiftSources(dir: string): string[] {
@@ -273,7 +353,7 @@ async function main(argv: string[]): Promise<number> {
     const logs = argv.slice(record + 1);
     if (logs.length === 0) throw new Error("--record needs at least one sim-pool log");
     // New medians replace old ones; tests the logs do not mention keep their record.
-    const weights = { ...loadWeights(), ...recordUIWeights(logs.map((path) => readFileSync(path, "utf8"))) };
+    const weights = pruneStale({ ...loadWeights(), ...recordUIWeights(logs.map((path) => readFileSync(path, "utf8"))) }, loadClasses());
     writeFileSync(weightsPath, `${JSON.stringify(Object.fromEntries(Object.entries(weights).sort(([a], [b]) => a.localeCompare(b))), null, 1)}\n`);
     console.log(`[ui-shards] recorded ${Object.keys(weights).length} test timings in ${weightsPath}`);
     return 0;
@@ -288,8 +368,9 @@ async function main(argv: string[]): Promise<number> {
     console.error(`[ui-shards] usage: ui-shards.ts [--profile p] [--shards N] [--plan] -- OppiUITests/<Class>[/<test>]...${bad.length > 0 ? ` (not a UI filter: ${bad.join(", ")})` : ""}`);
     return 2;
   }
-  const cap = shardCap(profile);
   if (forced !== undefined && (!Number.isInteger(Number(forced)) || Number(forced) < 1)) throw new Error(`invalid shard count ${forced}`);
+  // --shards N forces the count past OPPI_UI_SHARDS and the time rule; only the profile's slots and the test count limit it.
+  const cap = forced === undefined ? shardCap(profile) : profileSlots(profile);
   const plans = planShards(filters, loadClasses(), loadWeights(), cap, forced === undefined ? undefined : Number(forced));
   const estimate = Math.round(plans.reduce((sum, plan) => sum + plan.seconds, 0));
   console.log(`[ui-shards] ${profile}: ${plans.length} shard${plans.length === 1 ? "" : "s"} (cap ${cap}), ${estimate}s of recorded tests`);
@@ -324,10 +405,14 @@ async function main(argv: string[]): Promise<number> {
   for (const result of results) {
     const output = readFileSync(result.output, "utf8");
     const infra = infrastructureFailure(result, output);
-    const mismatch = result.code === 0 && !infra ? countMismatch(plans[result.index], result.tests) : undefined;
+    const ran = ranTestIds(result.summary);
+    const missing = result.code === 0 && !infra ? missingTests(plans[result.index], ran) : [];
+    const mismatch = missing.length > 0 ? `planned tests that did not run: ${missing.join(", ")}` : undefined;
+    const unplanned = unplannedTests(plans, result.index, ran);
     const ok = result.code === 0 && !infra && !mismatch;
     const xcresult = xcresultOf(result.summary);
     console.log(`[ui-shards] shard ${result.index + 1}/${plans.length}: ${ok ? "PASS" : infra ? "INFRASTRUCTURE FAIL" : "FAIL"} exit=${result.code} tests=${result.tests} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}${xcresult ? ` xcresult=${xcresult}` : ""}`);
+    if (unplanned.length > 0) console.log(`[ui-shards] ${result.label}: ran ${unplanned.length} test(s) the source scan did not list (the class's catch-all): ${unplanned.join(", ")}`);
     if (!ok) {
       // sim-pool's own summary (failures, log path) ends the shard output.
       process.stdout.write(`${output.trimEnd().split("\n").slice(-40).join("\n")}\n`);
@@ -336,6 +421,8 @@ async function main(argv: string[]): Promise<number> {
       (infra ? infraFailures : testFailures).push(result.label);
     }
   }
+  // sim-pool stops xcodebuild once the test run completes, which can leave an xcresult unreadable.
+  console.log("[ui-shards] xcresult paths are best effort: sim-pool stops xcodebuild when the tests finish, so a bundle may be unreadable; the shard output and the sim-pool log are the record");
   const total = results.reduce((sum, result) => sum + result.tests, 0);
   const wall = Math.round((Date.now() - started) / 1000);
   console.log(`[ui-shards] ${verdict(testFailures, infraFailures)}: ${total} tests in ${plans.length} shards, longest ${Math.max(...results.map((r) => r.seconds))}s, ${wall}s wall after the build`);

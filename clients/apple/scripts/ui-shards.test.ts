@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
 import { executedTests, infrastructureFailure } from "./unit-shards";
-import { countMismatch, normalizeFilters, planShards, recordUIWeights, scanUIClasses, shardCap, shardFlags, testsOf } from "./ui-shards";
+import { missingTests, normalizeFilters, planShards, profileSlots, pruneStale, recordUIWeights, scanUIClasses, shardCap, shardFlags, testsOf, unplannedTests } from "./ui-shards";
 
 setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
@@ -46,6 +46,17 @@ describe("ui test scan", () => {
     expect(testsOf("BrokenUITests", classes)).toBeUndefined();
     expect(testsOf("NoSuchUITests", classes)).toBeUndefined();
   });
+
+  test("a class that inherits from a type the scan did not read is never listed: its tests would be invisible", () => {
+    const other = scanUIClasses([
+      "final class OwnerUITests: SharedBaseTestCase { func testOwn() {} }\n",
+      "final class LoneUITests { func testLone() {} }\n",
+      "class HelperBase: XCTestCase { func testFromBase() {} }\nfinal class ViaHelperUITests: HelperBase { func testOwn() {} }\n",
+    ]);
+    expect(testsOf("OwnerUITests", other)).toBeUndefined();
+    expect(testsOf("LoneUITests", other)).toBeUndefined();
+    expect(testsOf("ViaHelperUITests", other)).toEqual(["testFromBase", "testOwn"]);
+  });
 });
 
 // AUITests has two tests, the others one each.
@@ -66,15 +77,16 @@ describe("ui shard plan", () => {
       3,
     );
     // AUITests (200s) is over half of a shard's share (350/3), so it runs as two tests.
-    expect(names(plan)).toEqual([["AUITests/testA", "DUITests"], ["AUITests/testB"], ["BUITests", "CUITests"]]);
+    expect(names(plan)).toEqual([["AUITests/testA", "DUITests"], ["AUITests"], ["BUITests", "CUITests"]]);
     expect(plan.map((shard) => shard.seconds)).toEqual([140, 100, 110]);
-    expect(plan.flatMap(shardFlags).sort()).toEqual([
-      "-only-testing:OppiUITests/AUITests/testA",
-      "-only-testing:OppiUITests/AUITests/testB",
-      "-only-testing:OppiUITests/BUITests",
-      "-only-testing:OppiUITests/CUITests",
-      "-only-testing:OppiUITests/DUITests",
+    // The lightest shard that runs a method of the split class takes the catch-all: the class minus
+    // the methods other shards run, so a test the scan missed still runs, once.
+    expect(plan.map(shardFlags)).toEqual([
+      ["-only-testing:OppiUITests/AUITests/testA", "-only-testing:OppiUITests/DUITests"],
+      ["-only-testing:OppiUITests/AUITests", "-skip-testing:OppiUITests/AUITests/testA"],
+      ["-only-testing:OppiUITests/BUITests", "-only-testing:OppiUITests/CUITests"],
     ]);
+    expect(plan.flatMap((shard) => shard.ids).sort()).toEqual(["AUITests/testA", "AUITests/testB", "BUITests/testA", "CUITests/testA", "DUITests/testA"]);
     expect(plan.reduce((sum, shard) => sum + shard.tests!, 0)).toBe(5);
   });
 
@@ -95,7 +107,7 @@ describe("ui shard plan", () => {
     expect(planShards(filters, small, { "BUITests/testA": 500, "CUITests/testA": 500, "DUITests/testA": 500 }, 2)).toHaveLength(2);
     expect(planShards(["OppiUITests/BUITests"], small, { "BUITests/testA": 5000 }, 6)).toHaveLength(1);
     // One class is as many units as it has tests: a single heavy class still spreads over the cap.
-    expect(names(planShards(["OppiUITests/AUITests"], small, { "AUITests/testA": 200, "AUITests/testB": 200 }, 3))).toEqual([["AUITests/testA"], ["AUITests/testB"]]);
+    expect(names(planShards(["OppiUITests/AUITests"], small, { "AUITests/testA": 200, "AUITests/testB": 200 }, 3))).toEqual([["AUITests"], ["AUITests/testB"]]);
     expect(planShards(filters, small, {}, 6, 6)).toHaveLength(3);
   });
 
@@ -104,17 +116,49 @@ describe("ui shard plan", () => {
     const ghost = plan.flatMap((shard) => shard.units).find((unit) => unit.label === "GhostUITests")!;
     expect(ghost).toMatchObject({ flags: ["-only-testing:OppiUITests/GhostUITests"], seconds: 100, tests: undefined });
     expect(plan.some((shard) => shard.tests === undefined)).toBe(true);
-    expect(countMismatch(plan.find((shard) => shard.tests === undefined)!, 1)).toBeUndefined();
+    expect(ghost.ids).toEqual([]);
   });
 
   test("a named test is not run twice when its class is also named", () => {
     expect(normalizeFilters(["OppiUITests/A/testX", "OppiUITests/A", "OppiUITests/B/testY", "OppiUITests/B/testY"])).toEqual(["OppiUITests/A", "OppiUITests/B/testY"]);
   });
 
-  test("a shard that ran fewer tests than the plan named fails even when xcodebuild passed", () => {
-    const [shard] = planShards(["OppiUITests/AUITests"], small, smallWeights, 1);
-    expect(countMismatch(shard, 2)).toBeUndefined();
-    expect(countMismatch(shard, 1)).toBe("the plan named 2 tests but the shard ran 1");
+  test("Class/test and Class/test() are one test", () => {
+    expect(normalizeFilters(["OppiUITests/A/testX()", "OppiUITests/A/testX", "OppiUITests/B/testY()"])).toEqual(["OppiUITests/A/testX", "OppiUITests/B/testY"]);
+  });
+
+  test("a planned test that did not run is named even when an unlisted one ran in its place", () => {
+    const plans = planShards(["OppiUITests/AUITests"], small, { "AUITests/testA": 200, "AUITests/testB": 200 }, 3);
+    const keeper = plans.findIndex((plan) => plan.units.some((unit) => unit.catchAll));
+    const [other] = plans.filter((_, index) => index !== keeper);
+    // Same count as planned, wrong test: a count check would pass this.
+    expect(missingTests(plans[keeper], new Set(["AUITests/testHidden"]))).toEqual(plans[keeper].ids);
+    expect(missingTests(other, new Set(other.ids))).toEqual([]);
+  });
+
+  test("a test the scan missed runs in the split class's catch-all shard and is reported as unlisted", () => {
+    // The catch-all runs the class minus what other shards run, so a hidden method lands there.
+    const plans = planShards(["OppiUITests/AUITests"], small, { "AUITests/testA": 200, "AUITests/testB": 200 }, 3);
+    const keeper = plans.findIndex((plan) => plan.units.some((unit) => unit.catchAll));
+    const flags = shardFlags(plans[keeper]);
+    expect(flags[0]).toBe("-only-testing:OppiUITests/AUITests");
+    expect(flags.slice(1).every((flag) => flag.startsWith("-skip-testing:OppiUITests/AUITests/test"))).toBe(true);
+    const ran = new Set([...plans[keeper].ids, "AUITests/testHidden"]);
+    expect(unplannedTests(plans, keeper, ran)).toEqual(["AUITests/testHidden"]);
+    expect(unplannedTests(plans, keeper, new Set(plans[keeper].ids))).toEqual([]);
+  });
+
+  test("a class that is not split gets no catch-all", () => {
+    const plans = planShards(["OppiUITests/BUITests", "OppiUITests/CUITests"], small, smallWeights, 3, 2);
+    expect(plans.flatMap((plan) => plan.units).some((unit) => unit.catchAll || unit.flags.some((flag) => flag.startsWith("-skip-testing")))).toBe(false);
+  });
+
+  test("recorded tests the sources no longer declare are pruned; an unlistable class keeps its record", () => {
+    const pruned = pruneStale({ "AUITests/testA": 1, "AUITests/testGone": 2, "GoneUITests/testA": 3, "OwnerUITests/testOwn": 4 }, scanUIClasses([
+      "final class AUITests: XCTestCase { func testA() {} }\n",
+      "final class OwnerUITests: SharedBaseTestCase { func testOwn() {} }\n",
+    ]));
+    expect(pruned).toEqual({ "AUITests/testA": 1, "OwnerUITests/testOwn": 4 });
   });
 
   test("the cap follows the profile's slots; OPPI_UI_SHARDS may lower or raise it up to them", () => {
@@ -124,6 +168,8 @@ describe("ui shard plan", () => {
     expect(shardCap("ipad", { OPPI_UI_SHARDS: "50" })).toBe(4);
     expect(() => shardCap("iphone", { OPPI_UI_SHARDS: "0" })).toThrow("invalid OPPI_UI_SHARDS");
     expect(() => shardCap("watch", {})).toThrow("unknown --profile");
+    // --shards N is bounded only by the slots.
+    expect([profileSlots("iphone"), profileSlots("ipad"), profileSlots("duo")]).toEqual([6, 4, 1]);
   });
 });
 
