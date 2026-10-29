@@ -101,6 +101,7 @@ run_self_test() {
     run_apple_gate() { false; echo apple-continued >> "$lane_fixture/trace"; }
     run_mac_gate() { echo mac-ran >> "$lane_fixture/trace"; }
     run_ios_unit_gate() { echo unit-ran >> "$lane_fixture/trace"; }
+    run_ios_release_gate() { true; }
     apple_then_mac & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
@@ -120,6 +121,7 @@ run_self_test() {
     run_apple_gate() { true; }
     run_mac_gate() { sleep 1; echo mac-ran >> "$lane_fixture/trace"; }
     run_ios_unit_gate() { false; echo unit-continued >> "$lane_fixture/trace"; }
+    run_ios_release_gate() { true; }
     apple_then_mac & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
@@ -143,6 +145,7 @@ MAC_CHANGED=1
 run_apple_gate() { true; }
 run_mac_gate() { sleep 1; echo mac-ran >> "$LANE_FIXTURE/trace"; }
 run_ios_unit_gate() { return 7; }
+run_ios_release_gate() { true; }
 PIDS=()
 apple_then_mac & PIDS+=("$!")
 st=0
@@ -170,12 +173,35 @@ HOOK_SHAPE
     run_apple_gate() { true; }
     run_mac_gate() { false; echo mac-continued >> "$lane_fixture/trace"; }
     run_ios_unit_gate() { true; }
+    run_ios_release_gate() { true; }
     apple_then_mac & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
   set -e
   [[ "$lane_status" -ne 0 && ! -e "$lane_fixture/trace" && ! -e "$lane_fixture/mac.pass" ]] || {
     echo "pre-push self-test: a failing Mac compile must fail apple_then_mac" >&2
+    exit 1
+  }
+  rm -f "$lane_fixture"/*
+  # The Release device-SDK compile fails while unit tests and the Mac compile pass: the lane
+  # fails after both ended, and only the lanes that passed record a marker.
+  set +e
+  (
+    set -euo pipefail
+    eval "$lane_src"
+    ensure_lane_clean() { return 0; }
+    cache_path() { echo "$lane_fixture/$1.pass"; }
+    MAC_CHANGED=1
+    run_apple_gate() { true; }
+    run_mac_gate() { sleep 1; echo mac-ran >> "$lane_fixture/trace"; }
+    run_ios_unit_gate() { true; }
+    run_ios_release_gate() { return 9; }
+    apple_then_mac & wait "$!"
+  ) >/dev/null 2>&1
+  lane_status=$?
+  set -e
+  [[ "$lane_status" -eq 9 && "$(cat "$lane_fixture/trace")" == "mac-ran" && ! -e "$lane_fixture/ios-release.pass" && -e "$lane_fixture/ios-unit.pass" ]] || {
+    echo "pre-push self-test: a failing Release compile must fail apple_then_mac with its status after the other lanes ended" >&2
     exit 1
   }
   rm -f "$lane_fixture"/*
@@ -189,12 +215,13 @@ HOOK_SHAPE
     run_apple_gate() { true; }
     run_mac_gate() { echo mac-ran >> "$lane_fixture/trace"; }
     run_ios_unit_gate() { true; }
+    run_ios_release_gate() { true; }
     apple_then_mac & wait "$!"
   ) >/dev/null 2>&1
   lane_status=$?
   set -e
-  [[ "$lane_status" -eq 0 && "$(cat "$lane_fixture/trace")" == "mac-ran" && -e "$lane_fixture/mac.pass" && -e "$lane_fixture/ios-unit.pass" ]] || {
-    echo "pre-push self-test: a passing Apple lane must run Mac and the unit tests and record every marker" >&2
+  [[ "$lane_status" -eq 0 && "$(cat "$lane_fixture/trace")" == "mac-ran" && -e "$lane_fixture/mac.pass" && -e "$lane_fixture/ios-unit.pass" && -e "$lane_fixture/ios-release.pass" ]] || {
+    echo "pre-push self-test: a passing Apple lane must run Mac, the Release compile, and the unit tests and record every marker" >&2
     exit 1
   }
   rm -rf "$lane_fixture"
@@ -389,7 +416,7 @@ lane_has_dirty_paths() {
     apple) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
     mac) [[ "$dirty_mac" -eq 1 ]] && overlaps=0 ;;
     harness) [[ "$dirty_harness" -eq 1 ]] && overlaps=0 ;;
-    ios-unit) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
+    ios-unit|ios-release) [[ "$dirty_apple" != "none" ]] && overlaps=0 ;;
   esac
 
   if [[ "$overlaps" -eq 0 ]]; then
@@ -416,6 +443,8 @@ cache_path() {
   case "$lane" in
     server) lane_mode="$SERVER_MODE" ;;
     apple|ios-unit) lane_mode="$APPLE_MODE" ;;
+    # The Release compile runs under the pinned Xcode, not the default `xcodebuild` that TOOLCHAIN_KEY names.
+    ios-release) lane_mode="$APPLE_MODE $(DEVELOPER_DIR="$(pinned_developer_dir)" xcodebuild -version 2>/dev/null | tr '\n' ' ')" ;;
     mac) lane_mode="$MAC_CHANGED" ;;
     harness) lane_mode="$HARNESS_CHANGED" ;;
   esac
@@ -514,6 +543,44 @@ run_ios_unit_gate() {
   (cd "$REPO_ROOT/clients/apple" && bun scripts/unit-shards.ts)
 }
 
+# Xcode named in clients/apple/scripts/xcode-toolchain.txt (an explicit DEVELOPER_DIR wins), the one
+# every Oppi build lane uses. Never touches xcode-select.
+pinned_developer_dir() {
+  (
+    source "$REPO_ROOT/clients/apple/scripts/xcode-toolchain.sh"
+    oppi_use_xcode_toolchain
+    printf '%s' "$DEVELOPER_DIR"
+  )
+}
+
+# Device-SDK Release compile of the app. The Debug build above never sees code behind
+# `#if DEBUG`, so a Release-only break (a DEBUG-only member used from shared code) would
+# pass every lane and fail the first archive. DerivedData is private to this lane and
+# incremental, so a push that changed little recompiles little.
+run_ios_release_gate() {
+  local developer_dir log_dir build_log status=0
+  developer_dir="$(pinned_developer_dir)"
+  log_dir="$(git rev-parse --absolute-git-dir)/oppi/pre-push-logs"
+  mkdir -p "$log_dir"
+  build_log="$log_dir/ios-release-$(date +%Y%m%d-%H%M%S).log"
+  echo "[ios-release] build log: $build_log"
+  set +e
+  (cd "$REPO_ROOT/clients/apple" && DEVELOPER_DIR="$developer_dir" \
+    "$HEAVY" xcode-build -- xcodebuild \
+    -project Oppi.xcodeproj -scheme Oppi -configuration Release \
+    -sdk iphoneos -destination 'generic/platform=iOS' \
+    -derivedDataPath .build/pre-push-release \
+    CODE_SIGNING_ALLOWED=NO build) >"$build_log" 2>&1
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    echo "[ios-release] Release device-SDK build failed (exit $status); inspect $build_log" >&2
+    grep -E 'error:' "$build_log" | sort -u | head -20 >&2 || true
+    return "$status"
+  fi
+  grep -E '\*\* BUILD' "$build_log" || true
+}
+
 run_mac_gate() {
   (cd "$REPO_ROOT/server" && bun scripts/check-architecture-boundaries.ts --scope mac)
   (cd "$REPO_ROOT/clients/apple" && "$HEAVY" xcode-build -- xcodebuild \
@@ -545,36 +612,38 @@ if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 || "$APPLE_MODE" != "
   fi
 fi
 
-# After the iOS build, the Mac compile (~50 s) and the sharded iOS unit tests (~2 min) run
-# together, overlapping the server lane. A failed iOS build skips both.
+# After the iOS build, the Mac compile (~50 s), the Release device-SDK compile, and the sharded iOS
+# unit tests (~2 min) run together, overlapping the server lane. A failed iOS build skips all three.
 # Keep run_cached out of || / && / if-tests here: they disable set -e inside its nested
 # shell (see run_cached). The background subshell inherits set -e, so a failed Apple build
-# ends this function with that status before Mac or the unit tests start. The unit lane runs
-# in the background so run_cached keeps set -e for its own marker write; a failed unit lane is
-# captured at `wait` (set +e / status=$?), then waits for the Mac compile and returns the unit
-# status. An EXIT trap cannot do that wait: it runs after the function frame is gone, so a
-# `local` PID is already unbound under set -u. A failed Mac compile after passing unit tests
-# fails `wait`.
+# ends this function with that status before the other lanes start. Those lanes run in the
+# background so run_cached keeps set -e for its own marker write; their statuses are captured
+# at `wait` (set +e / status=$?) and the function returns only after all of them ended, so a
+# failed lane never leaves another running. An EXIT trap cannot do that wait: it runs after
+# the function frame is gone, so a `local` PID is already unbound under set -u.
 apple_then_mac() {
   run_cached apple run_apple_gate
-  local mac_pid="" unit_pid unit_status=0
+  local mac_pid="" unit_pid release_pid unit_status=0 release_status=0 mac_status=0
   if [[ "$MAC_CHANGED" -eq 1 ]]; then
     run_cached mac run_mac_gate & mac_pid="$!"
   fi
+  run_cached ios-release run_ios_release_gate & release_pid="$!"
   run_cached ios-unit run_ios_unit_gate & unit_pid="$!"
   set +e
   wait "$unit_pid"
   unit_status=$?
-  set -e
-  if [[ "$unit_status" -ne 0 ]]; then
-    # The unit failure is the lane's status; Mac's own result is reported by its log.
-    [[ -z "$mac_pid" ]] || wait "$mac_pid" || true
-    return "$unit_status"
-  fi
-  # An if-body, not an || list: set -e must see a failed wait.
+  wait "$release_pid"
+  release_status=$?
   if [[ -n "$mac_pid" ]]; then
     wait "$mac_pid"
+    mac_status=$?
   fi
+  set -e
+  # Every lane has ended. The first failure in this order is the lane's status; the
+  # others report themselves in their logs.
+  [[ "$unit_status" -eq 0 ]] || return "$unit_status"
+  [[ "$release_status" -eq 0 ]] || return "$release_status"
+  return "$mac_status"
 }
 
 PIDS=()
