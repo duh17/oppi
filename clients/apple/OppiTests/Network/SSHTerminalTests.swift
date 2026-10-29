@@ -1391,33 +1391,26 @@ struct SSHTerminalTests {
         #expect(channel.title.isEmpty)
     }
 
-    @Test func directKeyboardTapClicksWhenTheAppWantsThemAndOtherwiseToggles() {
+    @Test func aTapClicksForAMouseAppAndOtherwiseOnlySendsInputAway() {
+        // A tap never starts typing; the bar's buttons do.
         #expect(SSHTerminalTapAction.resolve(
-            terminalTyping: true, keyboardUp: false, otherInputFocused: false, appWantsClicks: true
-        ) == .typeInTerminal)
+            keyboardUp: false, otherInputFocused: false, appWantsClicks: false
+        ) == .nothing)
+        // Herdr's switch is a click, and with the keyboard up it stays; its
+        // bar hides it.
         #expect(SSHTerminalTapAction.resolve(
-            terminalTyping: true, keyboardUp: false, otherInputFocused: true, appWantsClicks: true
-        ) == .typeInTerminal)
-        // Herdr's switch, while the direct keyboard is up, is a click. The
-        // keyboard stays; its bar hides it.
-        #expect(SSHTerminalTapAction.resolve(
-            terminalTyping: true, keyboardUp: true, otherInputFocused: false, appWantsClicks: true
+            keyboardUp: true, otherInputFocused: false, appWantsClicks: true
         ) == .mouseClick)
         #expect(SSHTerminalTapAction.resolve(
-            terminalTyping: false, keyboardUp: true, otherInputFocused: false, appWantsClicks: true
+            keyboardUp: false, otherInputFocused: false, appWantsClicks: true
         ) == .mouseClick)
         #expect(SSHTerminalTapAction.resolve(
-            terminalTyping: true, keyboardUp: true, otherInputFocused: false, appWantsClicks: false
+            keyboardUp: true, otherInputFocused: false, appWantsClicks: false
         ) == .hideKeyboard)
+        // The chat bar focused (a hardware keyboard) gives way before a click.
         #expect(SSHTerminalTapAction.resolve(
-            terminalTyping: false, keyboardUp: false, otherInputFocused: false, appWantsClicks: true
-        ) == .mouseClick)
-        #expect(SSHTerminalTapAction.resolve(
-            terminalTyping: false, keyboardUp: false, otherInputFocused: true, appWantsClicks: true
+            keyboardUp: false, otherInputFocused: true, appWantsClicks: true
         ) == .dismissOtherInput)
-        #expect(SSHTerminalTapAction.resolve(
-            terminalTyping: false, keyboardUp: false, otherInputFocused: false, appWantsClicks: false
-        ) == .focusChatBar)
     }
 
     @Test func touchesBecomeMouseReportsOnlyWhileTheAppAsksForThem() throws {
@@ -2078,7 +2071,8 @@ struct SSHTerminalTests {
 
     /// The bar's 4 pt inset strip must land on the button under the finger,
     /// not on the pill's first control: with Herdr shown, a touch in front of
-    /// … is …, and one in front of the grid button is Herdr.
+    /// … is …, one in front of the grid button is Herdr, and the middle pill's
+    /// Type in Terminal and Chat Bar answer for themselves.
     @Test func theStripAboveTheBarReachesTheButtonUnderTheFinger() async throws {
         let fixture = TerminalConnectionFixture()
         let herdr = #"{"id":"cli:api:snapshot","result":{"snapshot":{"agents":[],"tabs":[],"workspaces":[]},"type":"session_snapshot"}}"#
@@ -2108,6 +2102,8 @@ struct SSHTerminalTests {
             ("sshTerminal.more", "sshTerminal.more"),
             ("sshTerminal.herdr", "sshTerminal.herdr"),
             ("sshTerminal.back", "sshTerminal.back"),
+            ("sshTerminal.bar.keyboard", "sshTerminal.bar.keyboard"),
+            ("sshTerminal.bar.chatBar", "sshTerminal.bar.chatBar"),
         ] {
             let hit = terminal.view.hitTest(try stripPoint(id), with: nil)
             #expect(
@@ -2117,11 +2113,13 @@ struct SSHTerminalTests {
         }
         // Between the pills the strip belongs to no control: the touch falls
         // through to the grid, never to a bar button.
-        let gapPoint = CGPoint(x: terminal.view.bounds.midX, y: try stripPoint("sshTerminal.more").y)
+        let back = try control("sshTerminal.back")
+        let keyboard = try control("sshTerminal.bar.keyboard")
+        let backEdge = back.convert(CGPoint(x: back.bounds.maxX, y: 0), to: terminal.view).x
+        let middleEdge = keyboard.convert(CGPoint(x: keyboard.bounds.minX, y: 0), to: terminal.view).x
+        #expect(middleEdge - backEdge > 2 * SSHTerminalGlassPill.touchOutset, "room between Back and the middle pill")
+        let gapPoint = CGPoint(x: (backEdge + middleEdge) / 2, y: try stripPoint("sshTerminal.more").y)
         let gapHit = terminal.view.hitTest(gapPoint, with: nil)
-        #expect(gapHit !== (try control("sshTerminal.back")))
-        #expect(gapHit !== (try control("sshTerminal.more")))
-        #expect(gapHit !== (try control("sshTerminal.herdr")))
         #expect(gapHit?.accessibilityIdentifier == nil, "the gap is not a bar control")
     }
 

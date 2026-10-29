@@ -38,6 +38,16 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private let backToLive = SSHTerminalBackToLiveButton()
     private let statusGlyph = SSHTerminalStatusGlyphButton()
     private lazy var morePill = SSHTerminalMorePill(status: statusGlyph)
+    /// The customizable middle of the bottom bar (Settings > SSH Terminal >
+    /// Bottom Bar), between Back and the trailing pill.
+    private let middlePill = SSHTerminalBarMiddlePill()
+    private var barLayout = AppPreferences.SSHTerminalBar.layout
+    /// What the bar drew on the last pass. The … menu offers its `menu`,
+    /// so the menu opened now matches the bar on screen.
+    private var barPlacement = SSHTerminalBarPlacement(middle: [], trailing: [], menu: [])
+    private var barLayoutObserver: NSObjectProtocol?
+    /// The width the middle pill's capacity was last worked out for.
+    private var barWidth: CGFloat = 0
     private var menuTitle: String?
     private var composerBar: ComposerBarController?
     private var composerSession: SSHTerminalComposerHost?
@@ -172,6 +182,16 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         super.viewDidLoad()
         shownIdentity = terminalIdentity
         buildLayout()
+        barLayoutObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferences.SSHTerminalBar.preference.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.barLayout = AppPreferences.SSHTerminalBar.layout
+                self?.setNeedsUpdateProperties()
+            }
+        }
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
@@ -235,6 +255,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         super.viewDidLayoutSubviews()
         updateComposerHeight()
         updateCursorShift()
+        // A rotation or a resized iPad window changes how many middle
+        // buttons fit.
+        if abs(view.bounds.width - barWidth) > 0.5 { setNeedsUpdateProperties() }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -299,6 +322,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         if let keyboardObserver {
             NotificationCenter.default.removeObserver(keyboardObserver)
             self.keyboardObserver = nil
+        }
+        if let barLayoutObserver {
+            NotificationCenter.default.removeObserver(barLayoutObserver)
+            self.barLayoutObserver = nil
         }
     }
 
@@ -404,7 +431,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         updateComposer()
         updatePasswordFill(connected: connected)
         if let gridView {
-            gridView.tapTypesInTerminal = inputMode == .terminal
             gridView.setKeyActions(keymap.actions)
             gridView.showModifiers()
             gridView.applyTheme(chromeID, colors: terminalColors)
@@ -430,6 +456,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
         backPill.button.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .touchUpInside)
         morePill.herdr.addAction(UIAction { [weak self] _ in self?.showHerdr() }, for: .touchUpInside)
+        middlePill.perform = { [weak self] action in self?.perform(action) }
         connectionBanner.onReconnect = { [weak self] in self?.reconnect() }
         noticeCard.onDismiss = { [weak self] key in
             self?.attention.dismiss(key)
@@ -485,14 +512,30 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
         bottomBar.translatesAutoresizingMaskIntoConstraints = false
         bottomBar.addSubview(backPill)
+        bottomBar.addSubview(middlePill)
         bottomBar.addSubview(morePill)
+        middlePill.isHidden = true
+        // The middle pill centers in the room between Back and the trailing
+        // pill, and never comes closer than 8 pt to either.
+        let middleRoom = UILayoutGuide()
+        bottomBar.addLayoutGuide(middleRoom)
+        let middleCentered = middlePill.centerXAnchor.constraint(equalTo: middleRoom.centerXAnchor)
+        middleCentered.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            middleRoom.leadingAnchor.constraint(equalTo: backPill.trailingAnchor, constant: SSHTerminalBottomBar.pillGap),
+            middleRoom.trailingAnchor.constraint(equalTo: morePill.leadingAnchor, constant: -SSHTerminalBottomBar.pillGap),
+            middleCentered,
+            middlePill.leadingAnchor.constraint(greaterThanOrEqualTo: middleRoom.leadingAnchor),
+            middlePill.trailingAnchor.constraint(lessThanOrEqualTo: middleRoom.trailingAnchor),
+            middlePill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
+        ])
 
         gridClip.translatesAutoresizingMaskIntoConstraints = false
         gridClip.clipsToBounds = true
         view.addSubview(gridClip)
         view.addSubview(overlay)
         view.addSubview(bottomBar)
-        let controlsInset: CGFloat = 12
+        let controlsInset = SSHTerminalBottomBar.sideInset
         let barHeight = bottomBar.heightAnchor.constraint(equalToConstant: SSHTerminalBottomBar.shownHeight)
         bottomBarHeight = barHeight
         NSLayoutConstraint.activate([
@@ -520,6 +563,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// moves above the grid's top.
     private func installGrid(_ grid: SSHTerminalGridView) {
         gridView = grid
+        middlePill.pasteTarget = grid
         gridClip.addSubview(grid)
         let bottom = grid.bottomAnchor.constraint(
             equalTo: view.keyboardLayoutGuide.topAnchor,
@@ -560,12 +604,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
                 self.focusComposerAfterRaw = false
                 if self.inputMode == .chat { self.composerFocusRequest += 1 }
             }
-            self.setNeedsUpdateProperties()
-        }
-        grid.focusComposer = { [weak self] in
-            guard let self else { return }
-            self.manualInputChoice()
-            self.composerFocusRequest += 1
             self.setNeedsUpdateProperties()
         }
         grid.useChatBar = { [weak self] in self?.showChatBar() }
@@ -697,7 +735,13 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// open then, with the one on screen checked. Installed once.
     private func installSwitcherMenu() {
         guard morePill.switcher.menu == nil else { return }
-        morePill.switcher.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+        morePill.switcher.menu = UIMenu(children: [switcherElements()])
+    }
+
+    /// The open terminals, resolved when the menu opens. The switcher button and
+    /// the … menu's Switch Terminal (when that button is hidden) both show it.
+    private func switcherElements() -> UIMenuElement {
+        UIDeferredMenuElement.uncached { [weak self] completion in
             guard let self, let session = self.session else { return completion([]) }
             let terminals = session.openTerminals()
             let items = SSHTerminalSwitcher.items(terminals: terminals, current: self.channel)
@@ -708,30 +752,17 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
                 guard terminals.indices.contains(index) else { return }
                 self?.session?.show(terminals[index])
             })
-        }])
+        }
     }
 
+    /// The … menu: the bar's actions that have no button now (turned off, or
+    /// no room), in the layout's order, then the host's commands, then
+    /// Customize Bar. Inline groups draw the separators.
     private func overflowElements() -> [UIMenuElement] {
+        var groups: [UIMenuElement] = []
+        let hidden = barPlacement.menu.map(menuElement(for:))
+        if !hidden.isEmpty { groups.append(UIMenu(options: .displayInline, children: hidden)) }
         var items: [UIMenuElement] = []
-        if inputMode == .chat {
-            items.append(UIAction(title: "Type in Terminal", image: UIImage(systemName: "keyboard")) { [weak self] _ in
-                self?.showTerminalKeyboard()
-            })
-        } else {
-            items.append(UIAction(title: "Use Chat Bar", image: UIImage(systemName: "text.bubble")) { [weak self] _ in
-                self?.showChatBar()
-            })
-        }
-        // The Files browser over this terminal's folder, when the host reports
-        // one and is also a paired Oppi server.
-        if !channel.workingDirectory.isEmpty, pairedServer != nil {
-            items.append(UIAction(
-                title: "Browse Files Here",
-                image: UIImage(systemName: "folder")
-            ) { [weak self] _ in
-                self?.browseFilesHere()
-            })
-        }
         items.append(UIAction(title: "Edit Host", image: UIImage(systemName: "pencil")) { [weak self] _ in
             self?.editHost()
         })
@@ -748,7 +779,71 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
                 self?.reconnect()
             })
         }
-        return items
+        groups.append(UIMenu(options: .displayInline, children: items))
+        let customize = UIAction(
+            title: String(localized: "Customize Bar…"),
+            image: UIImage(systemName: "slider.horizontal.3")
+        ) { [weak self] _ in self?.customizeBar() }
+        customize.accessibilityIdentifier = "sshTerminal.menu.customize"
+        groups.append(customize)
+        return groups
+    }
+
+    private func menuElement(for action: SSHTerminalBarAction) -> UIMenuElement {
+        let image = UIImage(systemName: action.symbol())
+        if action == .switcher {
+            let menu = UIMenu(title: action.menuTitle, image: image, children: [switcherElements()])
+            menu.accessibilityIdentifier = action.menuIdentifier
+            return menu
+        }
+        let item = UIAction(
+            title: action.menuTitle,
+            image: image,
+            attributes: action.isKey && !canSendKeys ? .disabled : []
+        ) { [weak self] _ in self?.perform(action) }
+        item.accessibilityIdentifier = action.menuIdentifier
+        return item
+    }
+
+    /// The actions this terminal can offer now. One that could only fail is
+    /// neither drawn nor in the menu.
+    private var availableBarActions: Set<SSHTerminalBarAction> {
+        var available = Set(SSHTerminalBarAction.allCases)
+        if !herdr.available { available.remove(.herdr) }
+        if (session?.openTerminals().count ?? 0) < 2 { available.remove(.switcher) }
+        // The Files browser over this terminal's folder needs the host to
+        // report one and to be a paired Oppi server.
+        if channel.workingDirectory.isEmpty || pairedServer == nil { available.remove(.browseFiles) }
+        return available
+    }
+
+    private var canSendKeys: Bool { channel.connected && !channel.inputClosed }
+
+    /// Where typing goes now: the terminal's keyboard or the chat bar.
+    private var selectedInput: SSHTerminalBarAction {
+        inputMode == .chat && !rawKeyboard ? .chatBar : .keyboard
+    }
+
+    /// One owner for a bar action, whether it came from its button, VoiceOver,
+    /// or the … menu.
+    private func perform(_ action: SSHTerminalBarAction) {
+        switch action {
+        case .keyboard: showTerminalKeyboard()
+        case .chatBar: focusChatBar()
+        case .escape, .interrupt, .tab, .up, .down, .enter:
+            guard canSendKeys else { return }
+            channel.keys(action.strokes)
+        case .paste: break // The system paste control delivers to the grid itself.
+        case .browseFiles: browseFilesHere()
+        case .herdr: showHerdr()
+        case .switcher: break // A menu, not an action.
+        }
+    }
+
+    /// Settings > SSH Terminal > Bottom Bar, pushed over the terminal so the
+    /// bar being customized is one Back away.
+    private func customizeBar() {
+        Router.push(SSHTerminalBarSettingsViewController(), from: self)
     }
 
     private func updateFloatingControls(themeID: ThemeID) {
@@ -767,15 +862,33 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             )
             attention.glyphFrame.rect = statusGlyph.glyphFrame.rect
         }
+        let foreground = lastTerminalColors?.foreground.map(UIColor.init)
+        let available = availableBarActions
+        let trailing = barLayout.bar(available: available).filter { $0.group == .trailing }
         morePill.apply(
             themeID: themeID,
-            herdrAvailable: herdr.available,
+            trailing: trailing,
             herdrWaiting: herdr.available ? herdr.needsAttention : nil,
             showsStatus: showsStatus,
             openTerminals: session?.openTerminals().count ?? 0,
-            foreground: lastTerminalColors?.foreground.map(UIColor.init)
+            foreground: foreground
         )
         installSwitcherMenu()
+        // The trailing pill's width is settled now; the middle gets the rest.
+        barWidth = view.bounds.width
+        let trailingWidth = morePill.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+        barPlacement = barLayout.placement(
+            available: available,
+            middleCapacity: SSHTerminalBottomBar.middleCapacity(
+                width: view.bounds.width, safeInsets: view.safeAreaInsets, trailingWidth: trailingWidth
+            )
+        )
+        middlePill.show(barPlacement.middle)
+        middlePill.apply(
+            tint: foreground ?? UIColor(themeID.palette.fg),
+            selected: selectedInput,
+            keysEnabled: canSendKeys
+        )
         backPill.apply(themeID: themeID, attentionPending: attentionPending(), foreground: lastTerminalColors?.foreground.map(UIColor.init))
         installMenu(
             title: SSHTerminalMenuHeader.name(
@@ -797,12 +910,13 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         applyBottomBarGeometry(visible: visible)
         guard visible != controlsVisible || animation == nil else { return }
         controlsVisible = visible
-        for pill in [backPill, morePill] as [UIView] {
+        for pill in [backPill, middlePill, morePill] as [UIView] {
             pill.isUserInteractionEnabled = visible
             pill.accessibilityElementsHidden = !visible
         }
         let apply = {
             self.backPill.alpha = visible ? 1 : 0
+            self.middlePill.alpha = visible ? 1 : 0
             self.morePill.alpha = visible ? 1 : 0
         }
         if let animation, isOnScreen, view.window != nil {
@@ -1360,6 +1474,16 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         DispatchQueue.main.async { [weak self] in
             _ = self?.gridView?.becomeFirstResponder()
         }
+        setNeedsUpdateProperties()
+    }
+
+    /// The Chat Bar button: the chat bar, with its keyboard up. From the
+    /// terminal's keyboard the bar focuses once that keyboard has gone.
+    private func focusChatBar() {
+        guard !rawKeyboard else { return showChatBar() }
+        manualInputChoice()
+        modeOverride = detectedMode == .chat ? nil : .chat
+        composerFocusRequest += 1
         setNeedsUpdateProperties()
     }
 

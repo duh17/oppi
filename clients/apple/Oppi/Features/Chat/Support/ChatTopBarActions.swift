@@ -119,78 +119,14 @@ enum GitLogoImage {
     }
 }
 
-/// Which top bar buttons a chat shows, and in what order.
-///
-/// Every action is in `order`; the ones in `shown` are drawn in the bar in that
-/// order, and the rest are offered in the … menu, also in that order. Showing
-/// fewer than all of them, or none, is a valid choice: the … menu always stays.
-/// The preference holds both lists, so a hidden action keeps its place for when
-/// it comes back.
-struct ChatTopBarLayout: Hashable {
-    /// Every action in the user's order.
-    private(set) var order: [ChatTopBarAction]
-    /// The actions the bar draws. The rest are in the … menu.
-    private(set) var shown: Set<ChatTopBarAction>
+/// Which top bar buttons a chat shows, and in what order (`BarLayout`).
+typealias ChatTopBarLayout = BarLayout<ChatTopBarAction>
 
+extension ChatTopBarAction: BarLayoutAction {
     /// The bar without a saved choice: Context (the ring) alone, with Files,
     /// Git, Outline, and Terminal in the menu (Terminal where the workspace has
     /// a folder a shell can start in). The order is still every action, so a
-    /// button someone pins lands in a sensible place. A saved layout is used
-    /// exactly as saved; an action added after it was saved (Git) is appended
-    /// to its order and, not being in its `shown`, offered in the menu.
+    /// button someone pins lands in a sensible place. An action added after a
+    /// layout was saved (Git) is appended to its order and offered in the menu.
     static let defaultShown: Set<ChatTopBarAction> = [.context]
-    static let defaultValue = ChatTopBarLayout(order: ChatTopBarAction.allCases, shown: defaultShown)
-
-    /// The bar someone gets without choosing one, so the one-time "Chat tools
-    /// are in the menu" hint is for them and not for a bar they built.
-    var isDefault: Bool { self == Self.defaultValue }
-
-    /// A stored order missing an action, or naming one twice, still covers every
-    /// action exactly once: the rest follow in `ChatTopBarAction` order.
-    init(order: [ChatTopBarAction], shown: Set<ChatTopBarAction>) {
-        var seen = Set<ChatTopBarAction>()
-        var normalized: [ChatTopBarAction] = []
-        for action in order where seen.insert(action).inserted {
-            normalized.append(action)
-        }
-        for action in ChatTopBarAction.allCases where seen.insert(action).inserted {
-            normalized.append(action)
-        }
-        self.order = normalized
-        self.shown = shown
-    }
-
-    /// The encoded form, so the preference holds raw values and an unknown one
-    /// decodes as missing instead of failing.
-    init(storedOrder: [String], storedShown: [String]) {
-        self.init(
-            order: storedOrder.compactMap(ChatTopBarAction.init(rawValue:)),
-            shown: Set(storedShown.compactMap(ChatTopBarAction.init(rawValue:)))
-        )
-    }
-
-    var storedOrder: [String] { order.map(\.rawValue) }
-    var storedShown: [String] { order.filter(shown.contains).map(\.rawValue) }
-
-    func isShown(_ action: ChatTopBarAction) -> Bool { shown.contains(action) }
-
-    /// Shows or hides one action. The order does not change, so a hidden action
-    /// returns to the place it left.
-    func setting(_ action: ChatTopBarAction, shown isShown: Bool) -> ChatTopBarLayout {
-        var next = shown
-        if isShown { next.insert(action) } else { next.remove(action) }
-        return ChatTopBarLayout(order: order, shown: next)
-    }
-
-    /// What the bar draws, in order: the shown actions this screen can offer.
-    /// An action it cannot offer is not drawn and not offered in the menu
-    /// either, because a button that could only fail is worse than no button.
-    func bar(available: Set<ChatTopBarAction>) -> [ChatTopBarAction] {
-        order.filter { shown.contains($0) && available.contains($0) }
-    }
-
-    /// What the … menu offers, in order: the actions the bar does not draw.
-    func menu(available: Set<ChatTopBarAction>) -> [ChatTopBarAction] {
-        order.filter { !shown.contains($0) && available.contains($0) }
-    }
 }

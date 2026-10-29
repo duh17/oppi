@@ -48,6 +48,19 @@ enum SSHTerminalBottomBar {
     static let shownHeight = pillHeight + topInset + bottomInset
     /// Rows the grid leaves free while the bar shows.
     static let reserve = shownHeight + gridGap
+    /// Back and the trailing pill sit this far inside the safe area.
+    static let sideInset: CGFloat = 12
+    /// The least room between two pills.
+    static let pillGap: CGFloat = 8
+
+    /// How many buttons the middle pill has room for between Back and the
+    /// trailing pill, in a bar `width` wide inside `safeInsets`. Whatever is
+    /// left over goes to the … menu.
+    static func middleCapacity(width: CGFloat, safeInsets: UIEdgeInsets, trailingWidth: CGFloat) -> Int {
+        let room = width - safeInsets.left - safeInsets.right - 2 * sideInset
+            - SSHTerminalGlassPill.height - trailingWidth - 2 * pillGap
+        return max(0, Int((room / SSHTerminalGlassPill.itemWidth).rounded(.down)))
+    }
 }
 
 /// The chat bar grows over the grid instead of shrinking it: the grid keeps

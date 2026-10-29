@@ -479,34 +479,44 @@ enum AppPreferences {
         static let shownKey = "\(AppIdentifiers.subsystem).chatDisplay.topBarShown"
         static let didChangeNotification = Notification.Name("oppi.chatTopBar.didChange")
 
-        /// The stored order and visibility. Both keys missing (a fresh install,
-        /// or one that never changed the setting) falls back to the default bar:
-        /// the context ring alone, the rest in the menu. Only `setLayout` writes
-        /// the keys, and only the Top Bar page's switches and drags call it, so a
-        /// stored layout is always a choice someone made.
-        ///
-        /// A saved layout is used as saved, even one saved when the default
-        /// showed more. An action added after it was saved (Git) is appended to
-        /// its order and not shown, so it is offered in the … menu.
-        /// A hidden-everything choice stores an empty list, not nothing.
-        static var layout: ChatTopBarLayout { layout(in: .standard) }
+        static let preference = BarLayoutPreference<ChatTopBarAction>(
+            orderKey: orderKey, shownKey: shownKey, didChangeNotification: didChangeNotification
+        )
+
+        /// The stored order and visibility, or the default bar (the context ring
+        /// alone, the rest in the menu). Only the Top Bar page's switches and
+        /// drags write it (`BarLayoutPreference`).
+        static var layout: ChatTopBarLayout { preference.layout(in: .standard) }
 
         static func layout(in defaults: UserDefaults) -> ChatTopBarLayout {
-            guard let order = defaults.stringArray(forKey: orderKey),
-                  let shown = defaults.stringArray(forKey: shownKey)
-            else { return .defaultValue }
-            return ChatTopBarLayout(storedOrder: order, storedShown: shown)
+            preference.layout(in: defaults)
         }
 
         static func setLayout(_ layout: ChatTopBarLayout) {
-            setLayout(layout, in: .standard)
+            preference.save(layout, in: .standard)
         }
 
         static func setLayout(_ layout: ChatTopBarLayout, in defaults: UserDefaults) {
-            guard layout != Self.layout(in: defaults) else { return }
-            defaults.set(layout.storedOrder, forKey: orderKey)
-            defaults.set(layout.storedShown, forKey: shownKey)
-            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+            preference.save(layout, in: defaults)
+        }
+    }
+
+    // MARK: - SSH Terminal Bar
+
+    /// Which buttons the SSH terminal's bottom bar shows and in what order
+    /// (`SSHTerminalBarAction`). Hidden buttons live in the bar's … menu.
+    /// Device-local and the same for every host.
+    enum SSHTerminalBar {
+        static let preference = BarLayoutPreference<SSHTerminalBarAction>(
+            orderKey: "\(AppIdentifiers.subsystem).sshTerminal.barOrder",
+            shownKey: "\(AppIdentifiers.subsystem).sshTerminal.barShown",
+            didChangeNotification: Notification.Name("oppi.sshTerminalBar.didChange")
+        )
+
+        static var layout: SSHTerminalBarLayout { preference.layout(in: .standard) }
+
+        static func setLayout(_ layout: SSHTerminalBarLayout) {
+            preference.save(layout, in: .standard)
         }
     }
 

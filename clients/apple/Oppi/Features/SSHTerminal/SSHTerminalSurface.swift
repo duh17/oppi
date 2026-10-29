@@ -3,28 +3,26 @@ import QuartzCore
 import UIKit
 import UniformTypeIdentifiers
 
-/// What a tap on the terminal grid does. Direct typing owns a tap while the
-/// keyboard is down, so it can come back after leaving the chat bar. While
-/// that keyboard is up, a mouse-reporting app keeps the tap as a click
-/// (Herdr's switch, a tmux pane) and the keyboard stays; its bar hides it.
+/// What a tap on the terminal grid does. A tap never starts typing: the bottom
+/// bar's Type in Terminal and Chat Bar buttons do, so reading never raises a
+/// keyboard by accident. A mouse-reporting app keeps the tap as a click
+/// (Herdr's switch, a tmux pane), and with the keyboard up it stays; its bar
+/// hides it. Otherwise a tap sends a keyboard or another input's focus away.
 enum SSHTerminalTapAction: Equatable {
     case hideKeyboard
-    case typeInTerminal
     case dismissOtherInput
     case mouseClick
-    case focusChatBar
+    case nothing
 
     static func resolve(
-        terminalTyping: Bool,
         keyboardUp: Bool,
         otherInputFocused: Bool,
         appWantsClicks: Bool
     ) -> Self {
         if keyboardUp { return appWantsClicks ? .mouseClick : .hideKeyboard }
-        if terminalTyping { return .typeInTerminal }
         if otherInputFocused { return .dismissOtherInput }
         if appWantsClicks { return .mouseClick }
-        return .focusChatBar
+        return .nothing
     }
 }
 
@@ -64,7 +62,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var needsPaint = true
     var keyboardRequest = 0
     var resignRequest = 0
-    var tapTypesInTerminal = false
     var rawKeyboardChanged: (Bool) -> Void = { _ in }
     /// A password prompt appeared (true) or ended (false) on the live screen.
     var secureInputChanged: (Bool) -> Void = { _ in }
@@ -73,7 +70,6 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// The user sent the keyboard away with its hide key or a tap: a manual
     /// choice, so an automatic switch back after a password prompt stands down.
     var keyboardDismissed: () -> Void = {}
-    var focusComposer: () -> Void = {}
     var useChatBar: () -> Void = {}
     /// Runs on every display-link tick, after that tick's frame is encoded:
     /// output, resize, and scroll are applied, and a move of the grid made
@@ -240,7 +236,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         // Allow Paste alert and blocks the main thread until it is answered.
         pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.plainText.identifier, UTType.image.identifier])
         accessibilityIdentifier = "sshTerminal.grid"
-        accessibilityLabel = "SSH terminal. Tap to type or hide the keyboard. Double-tap a word to copy it. Drag to scroll. Touch and hold for Open, Copy, and Paste, or hold then drag to select."
+        accessibilityLabel = "SSH terminal. Tap to hide the keyboard. Double-tap a word to copy it. Drag to scroll. Touch and hold for Open, Copy, and Paste, or hold then drag to select."
         addInteraction(editMenu)
         installGestures()
         bar = makeAccessoryBar()
@@ -703,18 +699,14 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private func performSingleTap(at point: CGPoint) {
         let otherFocused = window.map { Self.hasFirstResponder(in: $0) } ?? false
         switch SSHTerminalTapAction.resolve(
-            terminalTyping: tapTypesInTerminal,
             keyboardUp: isFirstResponder,
             otherInputFocused: otherFocused,
             appWantsClicks: channel.connected && channel.engine.mouseTracking
         ) {
         case .hideKeyboard:
-            // Delay hide so a second tap can still land. Focus and mouse
-            // clicks stay immediate.
+            // Delay hide so a second tap can still land. Mouse clicks stay
+            // immediate.
             scheduleHideKeyboard()
-        case .typeInTerminal:
-            cancelHideKeyboard()
-            _ = becomeFirstResponder()
         case .dismissOtherInput:
             cancelHideKeyboard()
             window?.endEditing(true)
@@ -723,9 +715,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             resetTextInput()
             let cell = self.cell(at: point)
             channel.mouse(.click, column: cell.column, row: cell.row)
-        case .focusChatBar:
+        case .nothing:
             cancelHideKeyboard()
-            focusComposer()
         }
     }
 

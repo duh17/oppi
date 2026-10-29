@@ -238,41 +238,39 @@ struct SSHTerminalTouchTests {
         #expect(sequence.recognize(location: CGPoint(x: 40, y: 8), time: 2, snapshot: later) == .firstTap)
     }
 
-    @Test func secondTapDoesNotToggleKeyboardAndCopiesTheTap1Word() throws {
+    /// Typing starts from the bottom bar's buttons, never from a tap: a tap
+    /// while reading leaves the keyboard down, and a double-tap still copies.
+    @Test func aTapLeavesTheKeyboardDownAndADoubleTapCopiesTheWord() throws {
         let channel = try SSHTerminalChannel()
         UIPasteboard.general.string = ""
         let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
-        grid.tapTypesInTerminal = true
         let mounted = try MountedTouchGrid(grid)
         defer { mounted.dismiss(); channel.close(reason: "done") }
         channel.engine.receive(Data("see /usr/local/bin/thing now".utf8))
-        let word = try #require(channel.engine.selectWord(column: 10, row: 0))
-        #expect(word.text == "/usr/local/bin/thing")
         let point = try mounted.point(column: 10, row: 0)
-        #expect(!grid.isFirstResponder)
         grid.handleTap(at: point, now: 10)
-        #expect(grid.isFirstResponder, "tap 1 raises the keyboard")
+        #expect(!grid.isFirstResponder, "a tap does not raise the keyboard")
         grid.handleTap(at: point, now: 10.1)
-        #expect(grid.isFirstResponder, "tap 2 must not hide the keyboard")
+        #expect(!grid.isFirstResponder)
         #expect(UIPasteboard.general.string == "/usr/local/bin/thing")
     }
 
-    @Test func secondTapSkipsMouseClickAndKeyboardToggleActions() {
-        #expect(
-            SSHTerminalTapAction.resolve(
-                terminalTyping: true, keyboardUp: true, otherInputFocused: false, appWantsClicks: true
-            ) == .mouseClick
-        )
-        #expect(
-            SSHTerminalTapAction.resolve(
-                terminalTyping: true, keyboardUp: false, otherInputFocused: false, appWantsClicks: false
-            ) == .typeInTerminal
-        )
-        var sequence = SSHTerminalTapSequence()
-        let word = SSHTerminalSelectionSnapshot(text: "WORD", spans: [])
-        #expect(sequence.recognize(location: .zero, time: 1, snapshot: word) == .firstTap)
-        #expect(sequence.recognize(location: .zero, time: 1.1, snapshot: word) == .secondTap)
-        #expect(sequence.takePendingSnapshot()?.text == "WORD")
+    /// With the keyboard up, tap 1 hides it only after the double-tap window,
+    /// so a double-tap copies the tap-1 word and the keyboard stays.
+    @Test func aDoubleTapWithTheKeyboardUpKeepsItAndCopiesTheTap1Word() async throws {
+        let channel = try SSHTerminalChannel()
+        UIPasteboard.general.string = ""
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        channel.engine.receive(Data("see /usr/local/bin/thing now".utf8))
+        let point = try mounted.point(column: 10, row: 0)
+        #expect(grid.becomeFirstResponder())
+        grid.handleTap(at: point, now: 10)
+        grid.handleTap(at: point, now: 10.1)
+        try await Task.sleep(for: .seconds(SSHTerminalTapSequence.doubleTapTimeout + 0.15))
+        #expect(grid.isFirstResponder, "tap 2 must not let tap 1 hide the keyboard")
+        #expect(UIPasteboard.general.string == "/usr/local/bin/thing")
     }
 
     @Test func followChromeHidesTheButtonWithoutWritingFollowOutsideHistory() {

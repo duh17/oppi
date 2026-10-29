@@ -106,6 +106,10 @@
     "clients/apple/Oppi/Features/Onboarding/WhatsNewView.swift": {
       "UserDefaults.standard.set(": 1
     },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": {
+      "AppPreferences.*.set": 1,
+      ".settingsToggle(": 1
+    },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalColorPickerViewController.swift": {
       "SettingsListStyle.pin(": 1,
       "SettingsListStyle.applyTheme(": 1

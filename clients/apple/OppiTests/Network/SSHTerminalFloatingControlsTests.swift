@@ -120,7 +120,7 @@ struct SSHTerminalFloatingPillTests {
     @Test func eachPillButtonAnswersA44By44PointTouch() throws {
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), herdrAvailable: true, herdrWaiting: 0, showsStatus: true)
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], herdrWaiting: 0, showsStatus: true)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -163,7 +163,7 @@ struct SSHTerminalFloatingPillTests {
             expect44PointTouch(button, id)
         }
 
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), herdrAvailable: false, herdrWaiting: nil, showsStatus: false)
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [], herdrWaiting: nil, showsStatus: false)
         host.layoutIfNeeded()
         #expect(
             pill.bounds.width == SSHTerminalGlassPill.itemWidth,
@@ -190,7 +190,7 @@ struct SSHTerminalFloatingPillTests {
         let host = root.view!
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), herdrAvailable: true, herdrWaiting: 0, showsStatus: true)
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], herdrWaiting: 0, showsStatus: true)
         host.addSubview(back)
         host.addSubview(pill)
         NSLayoutConstraint.activate([
@@ -235,7 +235,7 @@ struct SSHTerminalFloatingPillTests {
         bar.translatesAutoresizingMaskIntoConstraints = false
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), herdrAvailable: true, herdrWaiting: 0, showsStatus: true)
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], herdrWaiting: 0, showsStatus: true)
         bar.addSubview(back)
         bar.addSubview(pill)
         // A grid above the bar, ending its own rows short of it.
@@ -281,5 +281,52 @@ struct SSHTerminalFloatingPillTests {
         }
         // The grid keeps every row above the bar: a touch just above it is the grid.
         #expect(host.hitTest(CGPoint(x: 195, y: grid.frame.maxY - 1), with: nil) === grid)
+    }
+}
+
+@Suite("SSH terminal bottom bar layout")
+struct SSHTerminalBarPlacementTests {
+    private let everything = Set(SSHTerminalBarAction.allCases)
+
+    @Test func theDefaultBarIsTodaysPlusTypeInTerminalAndChatBar() {
+        let placement = SSHTerminalBarLayout.defaultValue.placement(available: everything, middleCapacity: 4)
+        #expect(placement.middle == [.keyboard, .chatBar])
+        #expect(placement.trailing == [.herdr, .switcher])
+        // Turned-off keys and Paste stay out of the menu; Browse Files Here,
+        // which the menu always had, stays in it.
+        #expect(placement.menu == [.browseFiles])
+    }
+
+    @Test func buttonsThatDoNotFitMoveIntoTheMenuInOrderButPasteNever() {
+        let layout = SSHTerminalBarLayout(
+            order: [.escape, .paste, .keyboard, .interrupt, .chatBar],
+            shown: [.escape, .paste, .keyboard, .interrupt, .chatBar, .switcher]
+        )
+        let placement = layout.placement(available: everything, middleCapacity: 2)
+        #expect(placement.middle == [.escape, .paste])
+        // A shown key with no room is offered; a hidden one is not.
+        #expect(placement.menu == [.keyboard, .interrupt, .chatBar, .browseFiles, .herdr])
+        #expect(placement.trailing == [.switcher])
+
+        let none = layout.placement(available: everything, middleCapacity: 0)
+        #expect(none.middle.isEmpty)
+        #expect(!none.menu.contains(.paste))
+    }
+
+    @Test func anActionTheTerminalCannotOfferIsNeitherDrawnNorInTheMenu() {
+        let available = everything.subtracting([.herdr, .switcher, .browseFiles])
+        let placement = SSHTerminalBarLayout.defaultValue.placement(available: available, middleCapacity: 4)
+        #expect(placement.trailing.isEmpty)
+        #expect(placement.menu.isEmpty)
+    }
+
+    @MainActor
+    @Test func theMiddleGetsWhatIsLeftBetweenBackAndTheTrailingPill() {
+        // iPhone portrait: 393 pt, Back, and a 4-item trailing pill leave room for 3.
+        #expect(SSHTerminalBottomBar.middleCapacity(width: 393, safeInsets: .zero, trailingWidth: 176) == 3)
+        // Landscape safe-area insets take their share.
+        let landscape = UIEdgeInsets(top: 0, left: 59, bottom: 21, right: 59)
+        #expect(SSHTerminalBottomBar.middleCapacity(width: 852, safeInsets: landscape, trailingWidth: 88) == 12)
+        #expect(SSHTerminalBottomBar.middleCapacity(width: 100, safeInsets: .zero, trailingWidth: 88) == 0)
     }
 }

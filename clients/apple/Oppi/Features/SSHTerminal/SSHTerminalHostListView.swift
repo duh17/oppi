@@ -19,7 +19,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var lastThemeID: ThemeID?
 
-    private enum Section: Hashable { case status, hosts, empty, reset }
+    private enum Section: Hashable { case status, hosts, empty, terminal, reset }
     private enum Item: Hashable {
         case corrupt
         case connecting
@@ -28,6 +28,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         case trustMismatch
         case addHost
         case host(UUID)
+        /// Settings > SSH Terminal > Bottom Bar.
+        case bottomBar
         case reset
     }
 
@@ -139,10 +141,24 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 onEdit: { [weak self] in self?.openEditor(profileID: profile.id) }
             )
         }
+        let indexCell = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
+            let layout = AppPreferences.SSHTerminalBar.layout
+            cell.configure(
+                title: String(localized: "Bottom Bar"),
+                systemImage: nil,
+                value: layout.order.filter { layout.isShown($0) }.map(\.label).joined(separator: ", "),
+                identifier: "settings.sshTerminal.bar"
+            ) { [weak self] in
+                guard let self else { return }
+                Router.push(SSHTerminalBarSettingsViewController(), from: self)
+            }
+        }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { collectionView, indexPath, item in
             switch item {
             case .host:
                 collectionView.dequeueConfiguredReusableCell(using: hostCell, for: indexPath, item: item)
+            case .bottomBar:
+                collectionView.dequeueConfiguredReusableCell(using: indexCell, for: indexPath, item: item)
             default:
                 collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
             }
@@ -185,7 +201,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             content.secondaryText = "No saved hosts yet. Enter a host, port, and user, then connect."
             content.secondaryTextProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.host.add"
-        case .host:
+        case .host, .bottomBar:
             break
         case .reset:
             content.text = "Reset Host List"
@@ -236,6 +252,10 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         } else if !profiles.isEmpty {
             snapshot.appendSections([.hosts])
             snapshot.appendItems(profiles.map { .host($0.id) }, toSection: .hosts)
+        }
+        if !metadataIsCorrupt {
+            snapshot.appendSections([.terminal])
+            snapshot.appendItems([.bottomBar], toSection: .terminal)
         }
         if metadataIsCorrupt {
             snapshot.appendSections([.reset])
