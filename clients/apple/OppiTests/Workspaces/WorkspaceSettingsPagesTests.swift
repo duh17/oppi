@@ -548,6 +548,13 @@ struct WorkspaceDetailsAndListTests {
         #expect(list.contentUnavailableConfiguration != nil, "an empty server says so")
     }
 
+    /// Closes the error alert; the list shows one at a time.
+    private func dismissAlert(in window: UIWindow) async throws {
+        let alert = try #require(window.rootViewController?.presentedViewController as? UIAlertController)
+        alert.dismiss(animated: false)
+        try await waitUntil { window.rootViewController?.presentedViewController == nil }
+    }
+
     @Test func deletingAWorkspaceRemovesItsRecordAndARefusedDeleteKeepsIt() async throws {
         defer { TestURLProtocol.handler = nil }
         let keep = makeTestWorkspace(id: "w1", name: "Notes")
@@ -555,11 +562,19 @@ struct WorkspaceDetailsAndListTests {
         defer { window.isHidden = true; window.rootViewController = nil }
         let serverId = try #require(connection.workspaceStore.activeServerId)
 
-        // A request that cannot reach the server (`APIClient.deleteWorkspace` does not
-        // check the status of an answer).
+        // A request that cannot reach the server.
         TestURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
         await list.deleteWorkspace(keep)
-        #expect(connection.workspaceStore.workspacesByServer[serverId]?.map(\.id) == ["w1"], "a refused delete keeps the workspace")
+        #expect(connection.workspaceStore.workspacesByServer[serverId]?.map(\.id) == ["w1"], "an unreachable server keeps the workspace")
+        try await dismissAlert(in: window)
+
+        // A server that answers 500: the answer is a refusal, not a delete.
+        TestURLProtocol.handler = { _ in try self.response(status: 500, json: "{\"error\":\"disk full\"}") }
+        await list.deleteWorkspace(keep)
+        #expect(connection.workspaceStore.workspacesByServer[serverId]?.map(\.id) == ["w1"], "a 500 keeps the workspace")
+        let alert = try #require(window.rootViewController?.presentedViewController as? UIAlertController)
+        #expect(alert.message == "disk full", "the refusal is shown")
+        try await dismissAlert(in: window)
 
         TestURLProtocol.handler = { _ in try self.response(json: "{}") }
         await list.deleteWorkspace(keep)

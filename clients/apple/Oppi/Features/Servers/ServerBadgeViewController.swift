@@ -15,6 +15,7 @@ final class ServerBadgeViewController: SettingsListViewController<ServerBadgeVie
 
     let server: PairedServer
     private let root: AppRootEnvironment
+    private let errorAlert = ControlErrorAlert()
 
     init(server: PairedServer, root: AppRootEnvironment) {
         self.server = server
@@ -88,9 +89,18 @@ final class ServerBadgeViewController: SettingsListViewController<ServerBadgeVie
         cell.accessibilityIdentifier = "server.badge.preview"
     }
 
-    /// Saves `icon` as this server's badge. The grid redraws from the store.
+    /// Saves `icon` as this server's badge. The grid redraws from the store,
+    /// so a save that fails leaves the old icon marked and says why.
     func choose(_ icon: ServerBadgeIcon) {
-        coordinator.serverStore.setBadgeIcon(id: server.id, to: icon)
+        do {
+            try coordinator.serverStore.setBadgeIcon(id: server.id, to: icon)
+        } catch {
+            errorAlert.show(
+                title: String(localized: "Couldn't Save Badge Icon"),
+                message: String(localized: "The previous icon stays. \(error.localizedDescription)"),
+                from: self
+            ) {}
+        }
         setNeedsUpdateProperties()
     }
 }

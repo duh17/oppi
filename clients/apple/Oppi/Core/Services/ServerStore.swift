@@ -37,9 +37,16 @@ final class ServerStore {
     /// cannot unpair them.
     @ObservationIgnored private var unreadableServerIds: [String] = []
     @ObservationIgnored private let loadServers: () throws -> PairedServerKeychain.Read<PairedServer>
+    @ObservationIgnored private let saveServer: (PairedServer, _ replacingStoredDeviceCredential: Bool) throws -> Void
 
-    init(loadServers: @escaping () throws -> PairedServerKeychain.Read<PairedServer> = KeychainService.loadServers) {
+    init(
+        loadServers: @escaping () throws -> PairedServerKeychain.Read<PairedServer> = KeychainService.loadServers,
+        saveServer: @escaping (PairedServer, _ replacingStoredDeviceCredential: Bool) throws -> Void = {
+            try KeychainService.saveServer($0, replacingStoredDeviceCredential: $1)
+        }
+    ) {
         self.loadServers = loadServers
+        self.saveServer = saveServer
     }
 
     #if DEBUG
@@ -148,16 +155,16 @@ final class ServerStore {
         logger.warning("Removed server \(id.prefix(16), privacy: .public)")
     }
 
-    /// Update the badge icon for a server.
-    func setBadgeIcon(id: String, to icon: ServerBadgeIcon) {
-        guard loadState == .loaded,
-              let idx = servers.firstIndex(where: { $0.id == id }) else { return }
-        servers[idx].badgeIcon = icon
-        do {
-            try save(servers[idx])
-        } catch {
-            logger.error("Failed to save badge icon for \(id.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
-        }
+    /// Update the badge icon for a server. Like `persistServer`, the Keychain
+    /// write comes first: when it throws, `servers` still holds the old icon,
+    /// the one a relaunch loads.
+    func setBadgeIcon(id: String, to icon: ServerBadgeIcon) throws {
+        try requireLoaded()
+        guard let idx = servers.firstIndex(where: { $0.id == id }) else { return }
+        var updated = servers[idx]
+        updated.badgeIcon = icon
+        try save(updated)
+        servers[idx] = updated
     }
 
     /// Persist a device-credential refresh, merging against the latest stored
@@ -220,10 +227,7 @@ final class ServerStore {
         _ server: PairedServer,
         replacingStoredDeviceCredential: Bool = false
     ) throws {
-        try KeychainService.saveServer(
-            server,
-            replacingStoredDeviceCredential: replacingStoredDeviceCredential
-        )
+        try saveServer(server, replacingStoredDeviceCredential)
     }
 
     /// Persist the ordered list of server IDs to both shared and standard UserDefaults.

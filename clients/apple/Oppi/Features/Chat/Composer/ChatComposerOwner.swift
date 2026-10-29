@@ -487,11 +487,20 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         )
     }
 
-    func handlePastedImages(_ images: [UIImage]) {
+    func handlePastedImages(
+        _ images: [UIImage],
+        capturedGate: UInt64,
+        capturedLocal: UInt64,
+        currentLocal: @escaping () -> UInt64
+    ) {
+        let gate = source?.composerMediaImportGate
         ComposerShared.handlePastedImages(
             images,
             getAttachments: attachmentsAccess.get,
-            setAttachments: attachmentsAccess.set
+            setAttachments: attachmentsAccess.set,
+            shouldAccept: {
+                (gate?.isCurrent(capturedGate) ?? true) && capturedLocal == currentLocal()
+            }
         )
     }
 
@@ -545,11 +554,20 @@ final class ChatComposerOwner: UIViewController, ComposerBarHosting {
         )
     }
 
-    func addCapturedImage(_ image: UIImage) {
+    func addCapturedImage(
+        _ image: UIImage,
+        capturedGate: UInt64,
+        capturedLocal: UInt64,
+        currentLocal: @escaping () -> UInt64
+    ) {
+        let gate = source?.composerMediaImportGate
         ComposerShared.addCapturedImage(
             image,
             getAttachments: attachmentsAccess.get,
-            setAttachments: attachmentsAccess.set
+            setAttachments: attachmentsAccess.set,
+            shouldAccept: {
+                (gate?.isCurrent(capturedGate) ?? true) && capturedLocal == currentLocal()
+            }
         )
     }
 

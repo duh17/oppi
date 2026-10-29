@@ -248,10 +248,16 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
         textView.setAllowKeyboardRestoreOnTap(true)
         textView.onPasteImages = { [weak self] images in
             guard let self, self.configuration.showsAttachmentControls else { return }
+            let capturedLocal = self.localMediaImportEpoch
+            let gate = self.configuration.mediaImportGate?.epoch ?? 0
             ComposerShared.handlePastedImages(
                 images,
                 getAttachments: { self.live.pendingAttachments },
-                setAttachments: { self.setAttachments($0) }
+                setAttachments: { self.setAttachments($0) },
+                shouldAccept: { [weak self] in
+                    (self?.configuration.mediaImportGate?.isCurrent(gate) ?? true)
+                        && capturedLocal == (self?.localMediaImportEpoch ?? 0)
+                }
             )
         }
         textView.onCommandEnter = { [weak self] in self?.handleSend() }
@@ -884,10 +890,16 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
     ) {
         picker.dismiss(animated: true)
         guard let image = info[.originalImage] as? UIImage else { return }
+        let capturedLocal = localMediaImportEpoch
+        let gate = configuration.mediaImportGate?.epoch ?? 0
         ComposerShared.addCapturedImage(
             image,
             getAttachments: { [weak self] in self?.live.pendingAttachments ?? [] },
-            setAttachments: { [weak self] value in self?.setAttachments(value) }
+            setAttachments: { [weak self] value in self?.setAttachments(value) },
+            shouldAccept: { [weak self] in
+                (self?.configuration.mediaImportGate?.isCurrent(gate) ?? true)
+                    && capturedLocal == (self?.localMediaImportEpoch ?? 0)
+            }
         )
     }
 

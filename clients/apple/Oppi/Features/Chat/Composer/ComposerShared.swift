@@ -290,20 +290,31 @@ enum ComposerShared {
     static func addCapturedImage(
         _ image: UIImage,
         getAttachments: @escaping () -> [PendingAttachment],
-        setAttachments: @escaping ([PendingAttachment]) -> Void
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
+        shouldAccept: @escaping @MainActor () -> Bool
     ) {
-        appendEncodedImage(image, getAttachments: getAttachments, setAttachments: setAttachments)
+        appendEncodedImages(
+            [image],
+            getAttachments: getAttachments,
+            setAttachments: setAttachments,
+            shouldAccept: shouldAccept
+        )
     }
 
-    /// Encodes `image` off the main actor, then appends it to the draft.
-    private static func appendEncodedImage(
-        _ image: UIImage,
+    /// Encodes the batch off the main actor in one task, so it keeps its
+    /// order, then appends it to the draft once. `shouldAccept` is asked after
+    /// the encode: a draft that was sent or cleared meanwhile gets nothing.
+    private static func appendEncodedImages(
+        _ images: [UIImage],
         getAttachments: @escaping () -> [PendingAttachment],
-        setAttachments: @escaping ([PendingAttachment]) -> Void
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
+        shouldAccept: @escaping @MainActor () -> Bool
     ) {
+        guard !images.isEmpty else { return }
         Task { @MainActor in
-            let pending = await Task.detached(priority: .userInitiated) { PendingImage.from(image) }.value
-            setAttachments(getAttachments() + [pending.pendingAttachment])
+            let pending = await Task.detached(priority: .userInitiated) { images.map(PendingImage.from) }.value
+            guard shouldAccept() else { return }
+            setAttachments(getAttachments() + pending.map(\.pendingAttachment))
         }
     }
 
@@ -320,11 +331,15 @@ enum ComposerShared {
     static func handlePastedImages(
         _ images: [UIImage],
         getAttachments: @escaping () -> [PendingAttachment],
-        setAttachments: @escaping ([PendingAttachment]) -> Void
+        setAttachments: @escaping ([PendingAttachment]) -> Void,
+        shouldAccept: @escaping @MainActor () -> Bool
     ) {
-        for image in images {
-            appendEncodedImage(image, getAttachments: getAttachments, setAttachments: setAttachments)
-        }
+        appendEncodedImages(
+            images,
+            getAttachments: getAttachments,
+            setAttachments: setAttachments,
+            shouldAccept: shouldAccept
+        )
     }
 
     static func loadSelectedFiles(

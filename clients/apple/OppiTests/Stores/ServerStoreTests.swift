@@ -236,6 +236,32 @@ struct ServerStoreTests {
         #expect(store.servers.map(\.id) == [server.id])
     }
 
+    /// The Keychain write comes first. When it fails the store still shows the
+    /// icon the Keychain has, so what the Badge page marks is what a relaunch loads.
+    @Test func aFailedBadgeSaveKeepsTheOldIconInMemoryAndPersisted() throws {
+        var server = try #require(PairedServer(from: makeTestCredentials(
+            host: "test-host", name: "test-host", fingerprint: "sha256:badge-write"
+        )))
+        server.badgeIcon = .cloud
+        let keychain = FakeServerKeychain(records: [server])
+        let store = ServerStore(loadServers: keychain.load, saveServer: keychain.save)
+        store.load()
+
+        keychain.failsWrites = true
+        #expect(throws: FakeServerKeychain.WriteFailed.self) {
+            try store.setBadgeIcon(id: server.id, to: .laptop)
+        }
+
+        #expect(store.server(for: server.id)?.badgeIcon == .cloud)
+        #expect(keychain.records[server.id]?.badgeIcon == .cloud)
+
+        keychain.failsWrites = false
+        try store.setBadgeIcon(id: server.id, to: .laptop)
+
+        #expect(store.server(for: server.id)?.badgeIcon == .laptop)
+        #expect(keychain.records[server.id]?.badgeIcon == .laptop)
+    }
+
     /// A server whose record could not be read is still paired. Writes for
     /// the readable servers keep it in the index, at its place, so it loads
     /// again (in the same order) once its record reads.
@@ -296,5 +322,27 @@ struct ServerStoreTests {
             KeychainService.deleteServer(id: server.id)
         }
         UserDefaults.standard.removeObject(forKey: "pairedServerIds")
+    }
+}
+
+/// A Keychain stand-in whose writes can be made to fail.
+@MainActor
+private final class FakeServerKeychain {
+    struct WriteFailed: Error {}
+
+    private(set) var records: [String: PairedServer]
+    var failsWrites = false
+
+    init(records: [PairedServer]) {
+        self.records = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+    }
+
+    func load() -> PairedServerKeychain.Read<PairedServer> {
+        .init(records: Array(records.values), unreadableIds: [])
+    }
+
+    func save(_ server: PairedServer, replacingStoredDeviceCredential: Bool) throws {
+        if failsWrites { throw WriteFailed() }
+        records[server.id] = server
     }
 }

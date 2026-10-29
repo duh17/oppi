@@ -316,11 +316,17 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         )
     }
 
-    func handlePastedImages(_ images: [UIImage]) {
+    func handlePastedImages(
+        _ images: [UIImage],
+        capturedGate: UInt64,
+        capturedLocal: UInt64,
+        currentLocal: @escaping () -> UInt64
+    ) {
         ComposerShared.handlePastedImages(
             images,
             getAttachments: { [weak self] in self?.pendingAttachments ?? [] },
-            setAttachments: { [weak self] in self?.setPendingAttachments($0) }
+            setAttachments: { [weak self] in self?.setPendingAttachments($0) },
+            shouldAccept: { capturedLocal == currentLocal() }
         )
     }
 
@@ -385,11 +391,17 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         )
     }
 
-    func addCapturedImage(_ image: UIImage) {
+    func addCapturedImage(
+        _ image: UIImage,
+        capturedGate: UInt64,
+        capturedLocal: UInt64,
+        currentLocal: @escaping () -> UInt64
+    ) {
         ComposerShared.addCapturedImage(
             image,
             getAttachments: { [weak self] in self?.pendingAttachments ?? [] },
-            setAttachments: { [weak self] in self?.setPendingAttachments($0) }
+            setAttachments: { [weak self] in self?.setPendingAttachments($0) },
+            shouldAccept: { capturedLocal == currentLocal() }
         )
     }
 

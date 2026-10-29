@@ -253,6 +253,24 @@ struct WorkspaceSettingsModelTests {
         #expect(!model.isWritingSandboxConfig)
     }
 
+    @Test func aRefusedDeleteKeepsTheWorkspaceAndShowsTheError() async {
+        defer { TestURLProtocol.handler = nil }
+        let workspace = makeTestWorkspace(id: "w1")
+        let connection = makeConnection(workspaces: [workspace])
+        let model = WorkspaceSettingsModel(seed: workspace)
+        model.attach(connection: connection, workspace: workspace)
+        TestURLProtocol.handler = { _ in
+            try self.response(status: 500, json: "{\"error\":\"disk full\"}")
+        }
+
+        let deleted = await model.deleteWorkspace()
+
+        #expect(deleted == nil, "no route is left for a workspace the server still has")
+        #expect(connection.workspaceStore.workspacesByServer[serverId]?.map(\.id) == ["w1"])
+        #expect(model.error == "disk full")
+        #expect(!model.isDeleting)
+    }
+
     @Test func writesAfterDeleteNeverBringTheWorkspaceBack() async {
         defer { TestURLProtocol.handler = nil }
         let workspace = makeTestWorkspace(id: "w1", gitStatusEnabled: true)

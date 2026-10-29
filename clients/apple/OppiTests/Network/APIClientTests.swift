@@ -1132,6 +1132,23 @@ struct APIClientTests {
         try await client.deleteWorkspaceSession(workspaceId: "w1", sessionId: "s1")
     }
 
+    @Test func deleteSessionRefusedByTheServerThrows() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { _ in
+            self.mockResponse(status: 500, json: "{\"error\":\"disk full\"}")
+        }
+
+        do {
+            try await client.deleteWorkspaceSession(workspaceId: "w1", sessionId: "s1")
+            Issue.record("A 500 must not read as a deleted session")
+        } catch APIError.server(let status, let message) {
+            #expect(status == 500)
+            #expect(message == "disk full")
+        }
+    }
+
     // getSessionTrace removed — merged into getSession.
 
     // MARK: - Models
@@ -1272,6 +1289,23 @@ struct APIClientTests {
         }
 
         try await client.deleteWorkspace(id: "w1")
+    }
+
+    @Test func deleteWorkspaceRefusedByTheServerThrows() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { _ in
+            self.mockResponse(status: 409, json: "{\"error\":\"sessions still running\"}")
+        }
+
+        do {
+            try await client.deleteWorkspace(id: "w1")
+            Issue.record("A 409 must not read as a deleted workspace")
+        } catch APIError.server(let status, let message) {
+            #expect(status == 409)
+            #expect(message == "sessions still running")
+        }
     }
 
     // MARK: - Skills

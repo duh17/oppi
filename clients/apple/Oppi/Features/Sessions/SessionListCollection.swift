@@ -562,10 +562,11 @@ enum SessionListLifecycle {
         }
     }
 
-    /// Drops the session from the list and this device's cached timeline,
-    /// then deletes it on the server. Its lock and draft go only once the
-    /// server no longer has it (deleted, or already gone: 404); a failed
-    /// delete brings it back on the next sync, still locked.
+    /// Deletes the session on the server. The list, this device's cached
+    /// timeline, its lock, and its draft go only once the server no longer
+    /// has it (deleted, or already gone: 404); a refused delete keeps all of
+    /// them and reports the failure. True when the server no longer has it.
+    @discardableResult
     static func delete(
         _ session: Session,
         scope: SessionRouteScope,
@@ -573,23 +574,24 @@ enum SessionListLifecycle {
         connection: ServerConnection,
         drafts: ComposerDraftStore,
         onError: (String) -> Void
-    ) async {
-        guard let api = connection.apiClient else { return }
-        connection.sessionStore.remove(id: session.id)
-        await TimelineCache.shared.removeTrace(session.id, serverId: serverId)
+    ) async -> Bool {
+        guard let api = connection.apiClient else { return false }
         do {
             try await api.deleteSession(scope: scope, sessionId: session.id)
         } catch let apiError as APIError {
             guard case .server(let status, _) = apiError, status == 404 else {
                 onError("Delete failed: \(apiError.localizedDescription)")
-                return
+                return false
             }
         } catch {
             onError("Delete failed: \(error.localizedDescription)")
-            return
+            return false
         }
+        connection.sessionStore.remove(id: session.id)
+        await TimelineCache.shared.removeTrace(session.id, serverId: serverId)
         ScopedLockService.shared.forgetSession(serverId: serverId, sessionId: session.id)
         drafts.clearDraft(serverID: serverId, workspaceID: scope.composerDraftScopeID, sessionID: session.id)
+        return true
     }
 }
 

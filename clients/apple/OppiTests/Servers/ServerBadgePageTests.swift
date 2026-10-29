@@ -51,6 +51,32 @@ struct ServerBadgePageTests {
         })
     }
 
+    @Test("A Keychain write that fails leaves the old icon marked and tells the user")
+    func failedKeychainWriteKeepsTheOldMarkAndShowsTheError() async throws {
+        struct WriteFailed: LocalizedError { var errorDescription: String? { "Keychain is locked" } }
+        let server = try makeServer()
+        let store = ServerStore(
+            loadServers: { .init(records: [server], unreadableIds: []) },
+            saveServer: { _, _ in throw WriteFailed() }
+        )
+        store.load()
+        let root = makeTestAppRoot(coordinator: ConnectionCoordinator(serverStore: store))
+        let page = ServerBadgeViewController(server: server, root: root)
+        let window = try present(page)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        // Let the page finish appearing; an alert cannot present over a transition.
+        try? await Task.sleep(for: .milliseconds(100))
+
+        page.choose(.cloud)
+        page.view.layoutIfNeeded()
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { window.rootViewController?.presentedViewController != nil })
+        let alert = try #require(window.rootViewController?.presentedViewController as? UIAlertController)
+        #expect(alert.message?.contains("Keychain is locked") == true)
+        #expect(store.server(for: server.id)?.resolvedBadgeIcon == .defaultValue)
+        #expect(Self.selectedIcons(in: page.view) == [ServerBadgeIcon.defaultValue.rawValue])
+    }
+
     @Test("A save the store refuses leaves the old icon marked")
     func refusedSaveKeepsTheOldMark() async throws {
         let server = try makeServer()

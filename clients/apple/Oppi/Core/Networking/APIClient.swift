@@ -747,7 +747,8 @@ actor APIClient: ClientLogUploading {
     }
 
     func deleteSession(scope: SessionRouteScope, sessionId: String) async throws {
-        _ = try await request("DELETE", path: focusedSessionPath(scope: scope, sessionId: sessionId))
+        let (data, response) = try await request("DELETE", path: focusedSessionPath(scope: scope, sessionId: sessionId))
+        try checkStatus(response, data: data)
     }
 
     /// Send a session command over HTTP when no focused session WebSocket is available.
@@ -968,7 +969,8 @@ actor APIClient: ClientLogUploading {
 
     /// Delete a workspace.
     func deleteWorkspace(id: String) async throws {
-        _ = try await request("DELETE", path: "/workspaces/\(id)")
+        let (data, response) = try await request("DELETE", path: "/workspaces/\(id)")
+        try checkStatus(response, data: data)
     }
 
     // MARK: - Git Commits

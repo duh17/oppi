@@ -86,7 +86,12 @@ extension ComposerBarController {
     ) {
         picker.dismiss(animated: true)
         if let image = info[.originalImage] as? UIImage {
-            host?.addCapturedImage(image)
+            host?.addCapturedImage(
+                image,
+                capturedGate: host?.content.mediaImportEpoch ?? 0,
+                capturedLocal: localMediaImportEpoch,
+                currentLocal: { [weak self] in self?.localMediaImportEpoch ?? 0 }
+            )
             applyChrome()
         }
     }

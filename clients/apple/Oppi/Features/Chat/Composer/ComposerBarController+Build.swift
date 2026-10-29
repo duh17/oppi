@@ -236,7 +236,13 @@ extension ComposerBarController {
         _ = textView.layoutManager
         textView.installKeyboardRestoreGesture()
         textView.onPasteImages = { [weak self] images in
-            self?.host?.handlePastedImages(images)
+            guard let self else { return }
+            host?.handlePastedImages(
+                images,
+                capturedGate: host?.content.mediaImportEpoch ?? 0,
+                capturedLocal: localMediaImportEpoch,
+                currentLocal: { [weak self] in self?.localMediaImportEpoch ?? 0 }
+            )
         }
         textView.onCommandEnter = { [weak self] in self?.handleSend() }
         textView.onAlternateEnter = { [weak self] in self?.handleAlternateSend() }

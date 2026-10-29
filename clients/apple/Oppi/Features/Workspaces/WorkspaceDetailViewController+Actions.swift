@@ -147,14 +147,14 @@ extension WorkspaceDetailViewController {
 
     private func deleteSession(_ session: Session) async {
         guard let connection, connection.apiClient != nil else { return }
-        removeArchiveSession(session.id)
-        await SessionListLifecycle.delete(
+        let deleted = await SessionListLifecycle.delete(
             session,
             scope: .workspace(workspaceId),
             serverId: serverId,
             connection: connection,
             drafts: root.composerDraftStore
         ) { showError($0) }
+        if deleted { removeArchiveSession(session.id) }
     }
 
     func openSession(_ session: Session) {

@@ -2134,7 +2134,12 @@ private final class ComposerBarTestHost: ComposerBarHosting {
     func stopVoice() async {}
     func cancelVoice() async {}
     func finishVoiceBeforeSubmit() async {}
-    func handlePastedImages(_ images: [UIImage]) {}
+    func handlePastedImages(
+        _ images: [UIImage],
+        capturedGate: UInt64,
+        capturedLocal: UInt64,
+        currentLocal: @escaping () -> UInt64
+    ) {}
     func insertSlashCommand(_ command: SlashCommand) {}
     func insertFileSuggestion(_ suggestion: FileSuggestion) {}
     func removeAttachment(id: String) {}
@@ -2146,7 +2151,12 @@ private final class ComposerBarTestHost: ComposerBarHosting {
         currentLocal: @escaping () -> UInt64,
         onFailure: @escaping (String) -> Void
     ) {}
-    func addCapturedImage(_ image: UIImage) {}
+    func addCapturedImage(
+        _ image: UIImage,
+        capturedGate: UInt64,
+        capturedLocal: UInt64,
+        currentLocal: @escaping () -> UInt64
+    ) {}
     func applyCanvas(
         attachment: PendingAttachment,
         recognizedText: String,
