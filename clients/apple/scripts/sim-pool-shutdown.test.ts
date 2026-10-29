@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   existsSync,
@@ -16,6 +16,10 @@ import {
   releaseUncertain,
   tryAcquireSlot,
 } from "./sim-pool-lock";
+import { SPAWN_WAIT_MS, SUBPROCESS_TEST_TIMEOUT_MS, waitForFile } from "./sim-pool-test-support";
+
+// Every test runs the pool CLI; see sim-pool-test-support.ts for the sizing.
+setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const cli = join(import.meta.dir, "sim-pool.ts");
 const temps: string[] = [];
@@ -50,27 +54,6 @@ function killGroup(pgid: number): void {
   } catch {
     // already gone
   }
-}
-
-function waitForFile(path: string, timeoutMs = 4000): Promise<string> {
-  const start = Date.now();
-  return new Promise((resolve, reject) => {
-    const tick = () => {
-      if (existsSync(path)) {
-        const text = readFileSync(path, "utf8");
-        if (text.trim().length > 0) {
-          resolve(text);
-          return;
-        }
-      }
-      if (Date.now() - start > timeoutMs) {
-        reject(new Error(`timeout waiting for ${path}`));
-        return;
-      }
-      setTimeout(tick, 20);
-    };
-    tick();
-  });
 }
 
 function tempDir(label: string): string {
@@ -591,7 +574,7 @@ esac
     const descText = await waitForFile(descPath);
     let overlap = false;
     let descendantPid = Number(descText.trim());
-    const deadline = Date.now() + 7000;
+    const deadline = Date.now() + SPAWN_WAIT_MS;
     while (Date.now() < deadline && child.exitCode == null) {
       if (existsSync(statePath) && existsSync(descPath)) {
         let state: { status?: string } | null = null;
@@ -624,7 +607,7 @@ esac
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
         resolve(null);
-      }, 9000);
+      }, SPAWN_WAIT_MS);
       child.once("exit", (code) => {
         clearTimeout(timer);
         resolve(code);
@@ -868,7 +851,7 @@ esac
     child.kill("SIGTERM");
     let overlap = false;
     const statePath = join(lockDir, "slot-0.state.json");
-    const deadline = Date.now() + 7000;
+    const deadline = Date.now() + SPAWN_WAIT_MS;
     while (Date.now() < deadline && child.exitCode == null && child.signalCode == null) {
       if (existsSync(statePath) && alive(descendantPid)) {
         let state: { status?: string } | null = null;

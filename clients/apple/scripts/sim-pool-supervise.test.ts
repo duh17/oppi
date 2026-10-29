@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +15,10 @@ import {
   waitExitStatus,
   waitOwned,
 } from "./sim-pool-supervise";
+import { SPAWN_WAIT_MS, SUBPROCESS_TEST_TIMEOUT_MS, waitForFile } from "./sim-pool-test-support";
+
+// Every test spawns processes; see sim-pool-test-support.ts for the sizing.
+setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const temps: string[] = [];
 
@@ -31,24 +35,6 @@ function alive(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-function waitForFile(path: string, timeoutMs = 3000): Promise<string> {
-  const start = Date.now();
-  return new Promise((resolve, reject) => {
-    const tick = () => {
-      if (existsSync(path)) {
-        resolve(readFileSync(path, "utf8"));
-        return;
-      }
-      if (Date.now() - start > timeoutMs) {
-        reject(new Error(`timeout waiting for ${path}`));
-        return;
-      }
-      setTimeout(tick, 20);
-    };
-    tick();
-  });
 }
 
 afterEach(() => {
@@ -520,23 +506,27 @@ wait || true
       throw new Error(spawned.reason);
     }
     const owned = spawned.owned;
-    const readyDeadline = Date.now() + 2000;
+    const readyDeadline = Date.now() + SPAWN_WAIT_MS;
     while (!owned.stdout.includes("ready") && Date.now() < readyDeadline) {
       await Bun.sleep(10);
     }
     expect(owned.stdout.includes("ready")).toBe(true);
     const completion = session.complete(owned);
+    // The leader ignores TERM, so completion settles after the default 2 s TERM and 1 s KILL grace.
+    // The bound only has to tell that from waiting out the one-hour default timeout, so it leaves
+    // room for a loaded host stretching those timers.
+    const settleLimitMs = 15_000;
     const started = Date.now();
     session.cancel("TERM");
     const result = await Promise.race([
       completion.then((value) => ({ settled: true as const, stop: value.stop, timedOut: value.timedOut })),
-      Bun.sleep(4500).then(() => ({ settled: false as const })),
+      Bun.sleep(settleLimitMs).then(() => ({ settled: false as const })),
     ]);
     const elapsedMs = Date.now() - started;
     try {
       expect(result.settled).toBe(true);
       if (result.settled) {
-        expect(elapsedMs).toBeLessThan(4500);
+        expect(elapsedMs).toBeLessThan(settleLimitMs);
         const group = queryProcessGroup(owned.pgid);
         expect(group.ok).toBe(true);
         if (group.ok) {
@@ -551,7 +541,7 @@ wait || true
       }
       await session.dispose();
     }
-  }, 10000);
+  });
 
   test("operational timeout with proven cleanup stays timedOut and quiescent", async () => {
     const spawned = await spawnOwned("/bin/sleep", ["30"], { stdio: "ignore" });

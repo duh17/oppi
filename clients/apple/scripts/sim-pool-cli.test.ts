@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
@@ -15,8 +15,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INTERRUPTED_NOTE, needsCleanBoot, readSlotState, releaseReusable, tryAcquireSlot } from "./sim-pool-lock";
+import { SPAWN_WAIT_MS, SUBPROCESS_TEST_TIMEOUT_MS, waitUntil } from "./sim-pool-test-support";
+
+// Every test runs the pool CLI against fake tools; see sim-pool-test-support.ts for the sizing.
+setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const cli = join(import.meta.dir, "sim-pool.ts");
+
+/** Eight sequential pool runs plus git commits: 38 s measured at background QoS under 16 CPU burners. */
+const SLOW_CLI_TEST_TIMEOUT_MS = 180_000;
 const temps: string[] = [];
 const procs: ChildProcess[] = [];
 
@@ -210,7 +217,7 @@ function runCompletionFixture(text: string, options: {
    * of a loaded host decides whether the detector sees it; this curve cannot be starved.
    */
   busyCpu?: boolean;
-  /** Limit for the whole pool run; the default suits runs that finish in a couple of seconds. */
+  /** Limit for the whole pool run; the default suits runs that finish in a few seconds when the host is idle. */
   timeoutMs?: number;
 } = {}) {
   const root = tempDir("completion");
@@ -247,7 +254,7 @@ exec /usr/bin/pgrep "$@"
   const run = spawnSync("bun", [cli, "run", "--", "xcodebuild", ...args, ...(options.extraArgs ?? [])], {
     cwd: root,
     encoding: "utf8",
-    timeout: options.timeoutMs ?? 15_000,
+    timeout: options.timeoutMs ?? SPAWN_WAIT_MS,
     env: {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -432,7 +439,7 @@ describe("sim-pool CLI", () => {
     expect(fx.calls()).toHaveLength(5);
     expect(build()).toContain("Build skipped");
     expect(fx.calls()).toHaveLength(5);
-  }, 60_000);
+  }, SLOW_CLI_TEST_TIMEOUT_MS);
 
   test("a build with no test action runs in the checkout DerivedData without a simulator slot", () => {
     const fx = slotlessFixture("build-only");
@@ -501,9 +508,12 @@ describe("sim-pool CLI", () => {
   test("the build waits for a free machine-wide xcode-build slot", async () => {
     const fx = slotlessFixture("heavy-busy");
     mkdirSync(join(fx.root, "heavy"), { recursive: true });
-    const holder = spawn("/usr/bin/lockf", ["-k", join(fx.root, "heavy", "xcode-build.0"), "/bin/sleep", "30"]);
+    // The holder says "held" once it owns the lock, so the build below cannot get there first.
+    const holder = spawn("/usr/bin/lockf", ["-k", join(fx.root, "heavy", "xcode-build.0"), "/bin/sh", "-c", "echo held; exec /bin/sleep 30"]);
     procs.push(holder);
-    await Bun.sleep(300);
+    let held = "";
+    holder.stdout!.on("data", (chunk) => { held += chunk; });
+    await waitUntil(() => held.includes("held"), "the lock holder to own xcode-build.0");
     const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-scheme", "OppiUnitTests", "build-for-testing"], {
       cwd: fx.apple, env: fx.env,
     });
@@ -511,9 +521,12 @@ describe("sim-pool CLI", () => {
     let stderr = "";
     child.stderr!.on("data", (chunk) => { stderr += chunk; });
     const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
-    await Bun.sleep(1500);
+    // The build has seen the busy slot (it says so) and keeps polling at OPPI_HEAVY_POLL (0.1 s);
+    // it must not run xcodebuild through a few more polls. Slowness can only make this check pass
+    // late, never fail it.
+    await waitUntil(() => stderr.includes("xcode-build slots busy"), "the build to report busy xcode-build slots");
+    await Bun.sleep(500);
     expect(fx.calls()).toHaveLength(0);
-    expect(stderr).toContain("xcode-build slots busy");
     holder.kill("SIGKILL");
     expect(await exited).toBe(0);
     expect(fx.calls()).toHaveLength(1);
@@ -781,11 +794,7 @@ sleep 30
       stdio: "ignore",
     });
     procs.push(child);
-    const start = Date.now();
-    while (!existsSync(join(fake, "xcodebuild.started")) && Date.now() - start < 8000) {
-      await Bun.sleep(20);
-    }
-    expect(existsSync(join(fake, "xcodebuild.started"))).toBe(true);
+    await waitUntil(() => existsSync(join(fake, "xcodebuild.started")), "the fake xcodebuild to start");
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve) => child.once("exit", (value) => resolve(value)));
     expect(code).toBe(143);
@@ -808,7 +817,7 @@ sleep 30
     expect(readFileSync(join(fake, "simctl.log"), "utf8")).toMatch(/shutdown UDID-POOL-0[\s\S]*boot UDID-POOL-0/);
     const state = readSlotState(join(root, "locks"), 0);
     expect(state !== "unreadable" && state?.note).toBeFalsy();
-  }, 30_000);
+  });
 
   }
 
@@ -1233,7 +1242,7 @@ sleep 30
     expect(simctl).not.toContain("erase");
     const state = readSlotState(join(root, "locks"), 0);
     expect(state === "unreadable" ? undefined : state?.status).toBe("reusable");
-  }, 15000);
+  });
 
   for (const [text, code, outcome, issues] of [
     [swiftPassed, 0, "passed", 0],
@@ -1255,7 +1264,7 @@ sleep 30
       expect(result.run.stdout).toContain(text.split("\n")[0]);
       expect(result.run.stdout).toContain("Result bundle/coverage may be incomplete");
       expect(result.state === "unreadable" ? undefined : result.state?.status).toBe("reusable");
-    }, 15_000);
+    });
   }
 
   for (const [failures, code, outcome, skipped] of [[0, 0, "passed", false], [1, 65, "failed", false], [0, 0, "passed", true]] as const) {
@@ -1269,7 +1278,7 @@ sleep 30
         exit_code: code, completion_hang_detected: true,
         test_completion: { outcome, tests: 1, suites: 1, issues: failures },
       });
-    }, 15_000);
+    });
   }
 
   test("silent build that keeps the CPU busy is progress, not a hang", () => {
@@ -1287,7 +1296,7 @@ sleep 30
     expect(result.attempts).toHaveLength(1);
     expect(result.summary.hang_detected).toBe(false);
     expect(result.run.stderr).not.toContain("hang detected");
-  }, 40_000);
+  });
 
   test("CPU alone cannot keep a silent run alive past five silence windows", () => {
     const result = runCompletionFixture("", {
@@ -1308,7 +1317,7 @@ sleep 30
     // (~6s expected; 6, 6, 7, 7, 6 measured at 4x load). More than eight means the cap grew.
     expect(result.summary.elapsed_seconds).toBeGreaterThanOrEqual(4);
     expect(result.summary.elapsed_seconds).toBeLessThan(9);
-  }, 40_000);
+  });
 
   test("silent hang is retried after a simulator erase", () => {
     const result = runCompletionFixture("Resolve Package Graph\nTest session started\n", { eraseSleep: "1" });
@@ -1323,7 +1332,7 @@ sleep 30
       simulator_prepare_end: number;
     };
     expect(timing.simulator_prepare).toBe(epochs.simulator_prepare_end - epochs.simulator_prepare_start);
-  }, 20_000);
+  });
 
   test("hang before Resolve Package Graph is diagnosed once and not erased", () => {
     const result = runCompletionFixture(
@@ -1343,7 +1352,7 @@ sleep 30
     expect(result.attempt?.stalled_before_project_open).toBe(true);
     expect(result.summary.sample_output).toBe(result.attempt?.sample_output);
     expect(result.summary.stalled_before_project_open).toBe(true);
-  }, 15_000);
+  });
 
   test("hang after a Swift runtime crash is not retried or erased and the summary shows the crash", () => {
     const crash = "/Users/x/Oppi/App/OppiApp.swift:430: Fatal error: No Observable object of type ConnectionCoordinator found";
@@ -1354,7 +1363,7 @@ sleep 30
     expect(result.run.stderr).toContain("Skipping simulator retry: the test host crashed");
     expect(result.run.stdout).toContain(`Test host crashed; skipped simulator retry:\n${crash}`);
     expect(result.summary).toMatchObject({ hang_detected: true, attempt_count: 1, host_crash_line: crash });
-  }, 20_000);
+  });
 
   test("crash line relayed behind an os_log prefix, or without a location, also skips the retry", () => {
     const relayed = "2026-10-15 07:50:15.632817-0700 Oppi[56780:74827238] Oppi/OppiApp.swift:469: Fatal error: boom";
@@ -1364,7 +1373,7 @@ sleep 30
     const bare = runCompletionFixture("Fatal error: boom\n");
     expect(bare.attempts).toHaveLength(1);
     expect(bare.summary.host_crash_line).toBe("Fatal error: boom");
-  }, 30_000);
+  });
 
   test("app log and test names that mention a crash do not suppress the hang retry", () => {
     const result = runCompletionFixture([
@@ -1378,7 +1387,7 @@ sleep 30
     expect(result.attempts).toHaveLength(2);
     expect(result.calls).toContain("simctl erase");
     expect(result.summary.host_crash_line).toBeUndefined();
-  }, 20_000);
+  });
 
   test("completion deadline is not postponed by continuing app log output", () => {
     const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
@@ -1388,7 +1397,7 @@ sleep 30
     expect(result.summary.completion_hang_detected).toBe(true);
     expect(result.run.stderr).toContain("completion hang:");
     expect(result.attempts).toHaveLength(1);
-  }, 15_000);
+  });
 
   const completionGuards = [
     { name: "pre-test launch stall", text: "Build succeeded; launching test host...\n" },
@@ -1418,7 +1427,7 @@ sleep 30
       expect(result.summary.completion_hang_detected).toBeUndefined();
       expect(result.summary.test_completion).toBeUndefined();
       expect(result.calls).toContain("simctl erase");
-    }, 15_000);
+    });
   }
 
   test("real nonzero xcodebuild exit after a passed test summary is not masked", () => {
@@ -1435,7 +1444,7 @@ sleep 30
     expect(result.run.status).toBe(65);
     expect(result.summary.xcodebuild_exit_code).toBe(65);
     expect(result.attempts).toHaveLength(1);
-  }, 15_000);
+  });
 
   test("finished tests with uncertain process-group cleanup cannot pass or retry", () => {
     const result = runCompletionFixture(swiftTestPrelude + swiftPassed, { failQuery: true });
@@ -1444,7 +1453,7 @@ sleep 30
     expect(result.summary.incomplete).toBe(true);
     expect(result.summary.test_completion).toBeUndefined();
     expect(result.state === "unreadable" ? undefined : result.state?.status).toBe("uncertain");
-  }, 15_000);
+  });
 
   test("full-path xcodebuild keeps argv after the executable", () => {
     const root = tempDir("fullpath");

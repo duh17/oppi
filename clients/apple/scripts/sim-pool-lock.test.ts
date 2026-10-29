@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn } from "node:child_process";
 import {
   closeSync,
@@ -27,6 +27,10 @@ import {
   statePath,
   tryAcquireSlot,
 } from "./sim-pool-lock";
+import { SUBPROCESS_TEST_TIMEOUT_MS, waitForFile } from "./sim-pool-test-support";
+
+// Several tests start a Bun fixture and wait for it; see sim-pool-test-support.ts for the sizing.
+setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const fixture = join(import.meta.dir, "sim-pool-lock.fixture.ts");
 const temps: string[] = [];
@@ -35,24 +39,6 @@ function tempDir(label: string): string {
   const dir = mkdtempSync(join(tmpdir(), `oppi-sim-pool-${label}-`));
   temps.push(dir);
   return dir;
-}
-
-function waitForFile(path: string, timeoutMs = 3000): Promise<string> {
-  const start = Date.now();
-  return new Promise((resolve, reject) => {
-    const tick = () => {
-      if (existsSync(path)) {
-        resolve(readFileSync(path, "utf8"));
-        return;
-      }
-      if (Date.now() - start > timeoutMs) {
-        reject(new Error(`timeout waiting for ${path}`));
-        return;
-      }
-      setTimeout(tick, 20);
-    };
-    tick();
-  });
 }
 
 function spawnFixture(args: string[]): ReturnType<typeof spawn> {

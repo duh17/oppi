@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireHeavySlot } from "./sim-pool-build";
@@ -14,6 +14,10 @@ import {
   type SlotClaim,
 } from "./sim-pool-lock";
 import { runShard } from "./unit-shards";
+import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
+
+// Every test runs the pool CLI against fake tools; see sim-pool-test-support.ts for the sizing.
+setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const cli = join(import.meta.dir, "sim-pool.ts");
 const temps: string[] = [];
@@ -33,8 +37,8 @@ type FakeDevice = { name: string; state: "Booted" | "Shutdown"; type?: string };
 type FakeSession = { status: string; ageMinutes: number; later?: { status: string; ageMinutes: number } };
 
 /**
- * A stateful CoreSimulator stand-in: create/boot/shutdown/delete change the
- * device list that the next `simctl list` prints, and every call is logged.
+ * A stateful CoreSimulator stand-in (shell scripts, see sim-pool-lifecycle.fake-*.sh): create/boot/
+ * shutdown change the device list that the next `simctl list` prints, and every call is logged.
  * The fake `oppi` answers its first call with each session's state and every
  * later call with `later` when given (a session that resumes mid-pass).
  */
@@ -44,17 +48,15 @@ function fakeSimulators(devices: FakeDevice[], sessions: Record<string, FakeSess
   const bin = join(root, "bin");
   const lockDir = join(root, "locks");
   mkdirSync(bin, { recursive: true });
-  const list: Record<string, unknown[]> = {};
-  for (const device of devices) {
-    (list[IOS_27_1] ??= []).push({
-      udid: `UDID-${device.name}`,
-      name: device.name,
-      state: device.state,
-      isAvailable: true,
-      deviceTypeIdentifier: device.type ?? DUO,
-    });
-  }
-  writeFileSync(join(root, "devices.json"), JSON.stringify({ devices: list }));
+  // One tab-separated row per device: udid, name, state, device type, runtime.
+  const rows = devices.map((d) => [`UDID-${d.name}`, d.name, d.state, d.type ?? DUO, IOS_27_1].join("\t"));
+  writeFileSync(join(root, "devices.tsv"), rows.map((row) => `${row}\n`).join(""));
+  // One row per session: id, status, idle minutes, then the status and idle minutes of later calls.
+  const sessionRows = Object.entries(sessions).map(([id, session]) => {
+    const later = session.later ?? session;
+    return [id, session.status, session.ageMinutes, later.status, later.ageMinutes].join("\t");
+  });
+  writeFileSync(join(root, "sessions.tsv"), sessionRows.map((row) => `${row}\n`).join(""));
   writeFileSync(
     join(root, "runtimes.json"),
     JSON.stringify({
@@ -72,64 +74,10 @@ function fakeSimulators(devices: FakeDevice[], sessions: Record<string, FakeSess
       ],
     }),
   );
-  writeFileSync(
-    join(bin, "xcrun"),
-    `#!/usr/bin/env bun
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-const dir = ${JSON.stringify(root)};
-const [tool, sub, ...rest] = process.argv.slice(2);
-appendFileSync(dir + "/calls.log", [sub, ...rest].join(" ") + "\\n");
-if (tool !== "simctl") process.exit(127);
-const path = dir + "/devices.json";
-const data = JSON.parse(readFileSync(path, "utf8"));
-const all = () => Object.values(data.devices).flat();
-const save = () => writeFileSync(path, JSON.stringify(data));
-const setState = (udid, state) => { for (const d of all()) if (d.udid === udid) d.state = state; save(); };
-switch (sub) {
-  case "list":
-    process.stdout.write(rest[0] === "runtimes" ? readFileSync(dir + "/runtimes.json", "utf8") : JSON.stringify(data));
-    break;
-  case "create": {
-    const [name, type, runtime] = rest;
-    (data.devices[runtime] ??= []).push({ udid: "UDID-" + name, name, state: "Shutdown", isAvailable: true, deviceTypeIdentifier: type });
-    save();
-    console.log("UDID-" + name);
-    break;
+  for (const tool of ["xcrun", "oppi"]) {
+    copyFileSync(join(import.meta.dir, `sim-pool-lifecycle.fake-${tool}.sh`), join(bin, tool));
+    chmodSync(join(bin, tool), 0o755);
   }
-  case "boot": setState(rest[0], "Booted"); break;
-  case "shutdown": setState(rest[0], "Shutdown"); break;
-  case "bootstatus": case "spawn": case "uninstall": case "keychain": case "privacy": break;
-  default: process.exit(127);
-}
-`,
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    join(bin, "oppi"),
-    `#!/usr/bin/env bun
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-const counter = ${JSON.stringify(join(root, "oppi.calls"))};
-const call = (existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0) + 1;
-writeFileSync(counter, String(call));
-const spec = ${JSON.stringify(sessions)};
-const sessions = Object.fromEntries(
-  Object.entries(spec).map(([id, s]) => {
-    const now = call > 1 && s.later ? s.later : s;
-    return [id, { id, status: now.status, last_activity: Date.now() - now.ageMinutes * ${MINUTE} }];
-  }),
-);
-const [, verb, id] = process.argv.slice(2);
-if (verb === "list") {
-  console.log(JSON.stringify({ ok: true, data: { sessions: Object.values(sessions) } }));
-} else if (sessions[id]) {
-  const s = sessions[id];
-  console.log(JSON.stringify({ ok: true, data: { session: { id, status: s.status, lastActivity: s.last_activity } } }));
-} else {
-  console.log(JSON.stringify({ ok: false, error: { code: "session_not_found", status: 404 } }));
-}
-`,
-    { mode: 0o755 },
-  );
   writeFileSync(
     join(bin, "xcodebuild"),
     `#!/usr/bin/env bash
@@ -160,10 +108,10 @@ echo "** BUILD SUCCEEDED **"
       return spawnSync("bun", [cli, ...args], { cwd: root, env: { ...env, ...extraEnv }, encoding: "utf8" });
     },
     state(name: string): string | undefined {
-      const data = JSON.parse(readFileSync(join(root, "devices.json"), "utf8"));
-      return Object.values(data.devices as Record<string, Array<{ name: string; state: string }>>)
-        .flat()
-        .find((device) => device.name === name)?.state;
+      return readFileSync(join(root, "devices.tsv"), "utf8")
+        .split("\n")
+        .map((row) => row.split("\t"))
+        .find((columns) => columns[1] === name)?.[2];
     },
     shutdowns(): string[] {
       const path = join(root, "calls.log");
@@ -218,9 +166,6 @@ function backdate(lockDir: string, slot: number, ageMinutes: number): void {
 function expectOk(result: { status: number | null; stderr: string }): void {
   expect({ status: result.status, stderr: result.stderr }).toMatchObject({ status: 0 });
 }
-
-/** Each CLI call spawns bun plus fake simctl processes. */
-const CLI_TIMEOUT = 60_000;
 
 function slotStatus(lockDir: string, slot: number): string | undefined {
   const state = readSlotState(lockDir, slot);
@@ -306,7 +251,7 @@ describe("sim-pool claim and release", () => {
     expect(sim.state("Oppi-Pool-30")).toBe("Shutdown");
     expect(slotStatus(sim.lockDir, 30)).toBe("reusable");
     expect(slotStatus(sim.lockDir, 31)).toBe("claimed");
-  }, CLI_TIMEOUT);
+  });
 
   test("claim frees a stopped owner's slot when every claim slot is taken", () => {
     const sim = fakeSimulators([], { "worker-live": { status: "busy", ageMinutes: 0 } });
@@ -318,7 +263,7 @@ describe("sim-pool claim and release", () => {
     expect(result.stdout.trim()).toBe("UDID-Oppi-Pool-33");
     expect(readSlotState(sim.lockDir, 33)).toMatchObject({ claim: { owner: "worker-new" } });
     expect(readSlotState(sim.lockDir, 34)).toMatchObject({ claim: { owner: "worker-live" } });
-  }, CLI_TIMEOUT);
+  });
 
   test("claiming again while a reaper holds the session's slot waits for that slot", async () => {
     const sim = fakeSimulators([{ name: "Oppi-Pool-30", state: "Booted" }]);
@@ -347,7 +292,7 @@ describe("sim-pool claim and release", () => {
     expect(stdout.trim()).toBe("UDID-Oppi-Pool-30");
     expect(readSlotState(sim.lockDir, 31)).toBeNull();
     expect(sim.state("Oppi-Pool-31")).toBeUndefined();
-  }, CLI_TIMEOUT);
+  });
 });
 
 describe("sim-pool reap", () => {
@@ -389,7 +334,7 @@ describe("sim-pool reap", () => {
     expect(slotStatus(sim.lockDir, 30)).toBe("reusable");
     expect(readSlotState(sim.lockDir, 32)).toMatchObject({ status: "claimed", claim: { owner: "lead-idle" } });
     expect(readSlotState(sim.lockDir, 33)).toMatchObject({ status: "claimed", claim: { owner: "lead-resumes" } });
-  }, CLI_TIMEOUT);
+  });
 
   test("finishes slots a failed shutdown left uncertain, and release frees its owner's", () => {
     const sim = fakeSimulators(
@@ -415,7 +360,7 @@ describe("sim-pool reap", () => {
     expectOk(released);
     expect(sim.state("Oppi-Pool-35")).toBe("Shutdown");
     expect(slotStatus(sim.lockDir, 35)).toBe("reusable");
-  }, CLI_TIMEOUT);
+  });
 });
 
 function writeCheckout(root: string): void {
@@ -444,7 +389,7 @@ describe("sim-pool reap after a run", () => {
     expect(sim.shutdowns().filter((name) => name !== "Oppi-Pool-0")).toEqual(["Oppi-Pool-5"]);
     expect(sim.state("Oppi-Pool-0")).toBe("Booted");
     expect(slotStatus(sim.lockDir, 5)).toBe("reusable");
-  }, CLI_TIMEOUT);
+  });
 });
 
 describe("sim-pool booted ceiling", () => {
@@ -473,7 +418,7 @@ describe("sim-pool booted ceiling", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("1 simulators booted (limit 1) and none is idle in the pool");
     expect(sim.state("Oppi-Pool-0")).toBe("Shutdown");
-  }, CLI_TIMEOUT);
+  });
 
   test("a run waits for capacity instead of booting past the ceiling, and boots once one frees up", async () => {
     const sim = fakeSimulators([
@@ -512,7 +457,7 @@ describe("sim-pool booted ceiling", () => {
     spawnSync("xcrun", ["simctl", "shutdown", "UDID-Chen iPhone"], { env: sim.env });
     expect(await exited).toBe(0);
     expect(sim.state("Oppi-Pool-0")).toBe("Booted");
-  }, CLI_TIMEOUT);
+  });
 });
 
 describe("sim-pool first boot of a new simulator", () => {
@@ -546,7 +491,7 @@ describe("sim-pool first boot of a new simulator", () => {
     held!.lock!.release();
     expect(await exited).toBe(0);
     expect(sim.state("Oppi-Pool-0")).toBe("Booted");
-  }, CLI_TIMEOUT);
+  });
 
   test("a run gives up on the first-boot slot after OPPI_SIM_POOL_WAIT and never boots", async () => {
     const sim = fakeSimulators([]);
@@ -565,7 +510,7 @@ describe("sim-pool first boot of a new simulator", () => {
     } finally {
       held!.lock!.release();
     }
-  }, CLI_TIMEOUT);
+  });
 
   test("the first-boot slot is not held while the run waits for booted-simulator capacity", async () => {
     const sim = fakeSimulators([{ name: "Chen iPhone", state: "Booted", type: IPHONE }]);
@@ -597,7 +542,7 @@ describe("sim-pool first boot of a new simulator", () => {
     spawnSync("xcrun", ["simctl", "shutdown", "UDID-Chen iPhone"], { env: sim.env });
     expect(await exited).toBe(0);
     expect(sim.state("Oppi-Pool-0")).toBe("Booted");
-  }, CLI_TIMEOUT);
+  });
 
   test("a simulator that already exists boots without the first-boot slot", async () => {
     const sim = fakeSimulators([{ name: "Oppi-Pool-0", state: "Shutdown", type: IPHONE }]);
@@ -615,7 +560,7 @@ describe("sim-pool first boot of a new simulator", () => {
     } finally {
       held!.lock!.release();
     }
-  }, CLI_TIMEOUT);
+  });
 });
 
 describe("sim-pool slot wait", () => {
@@ -672,7 +617,7 @@ describe("sim-pool slot wait", () => {
     pool.release();
     expect(await pool.exited).toBe(0);
     expect(pool.sim.state("Oppi-Pool-0")).toBe("Booted");
-  }, CLI_TIMEOUT);
+  });
 
   test("a gate run that never gets a slot fails at its deadline and says so", async () => {
     const pool = busyPool({ OPPI_SIM_POOL_GATE: "1", OPPI_SIM_POOL_WAIT: "4" });
@@ -681,12 +626,12 @@ describe("sim-pool slot wait", () => {
     pool.release();
     expect(pool.output()).toContain("error: all 1 simulator slots (slots 0) are busy or quarantined (waited 4s)");
     expect(pool.sim.state("Oppi-Pool-0")).toBe("Shutdown");
-  }, CLI_TIMEOUT);
+  });
 
   test("a developer's own run keeps the 60 s default", async () => {
     const pool = busyPool({ OPPI_SIM_POOL_GATE: undefined, OPPI_SIM_POOL_WAIT: undefined });
     expect(await pool.announced("busy, waiting up to 60s")).toBe(true);
     pool.release();
     expect(await pool.exited).toBe(0);
-  }, CLI_TIMEOUT);
+  });
 });

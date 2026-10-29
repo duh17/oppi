@@ -54,6 +54,9 @@ clients/apple/scripts/*
 !clients/apple/scripts/sim-pool-ffi.d.ts
 !clients/apple/scripts/sim-pool-lock.ts
 !clients/apple/scripts/sim-pool-lock.fixture.ts
+!clients/apple/scripts/sim-pool-test-support.ts
+!clients/apple/scripts/sim-pool-lifecycle.fake-xcrun.sh
+!clients/apple/scripts/sim-pool-lifecycle.fake-oppi.sh
 !clients/apple/scripts/sim-pool-lock.test.ts
 !clients/apple/scripts/sim-pool-supervise.ts
 !clients/apple/scripts/sim-pool-supervise.test.ts

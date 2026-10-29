@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -12,6 +12,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { releaseReusable, tryAcquireSlot } from "./sim-pool-lock";
+import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
+
+// Every test runs the pool CLI; see sim-pool-test-support.ts for the sizing.
+setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const cli = join(import.meta.dir, "sim-pool.ts");
 const temps: string[] = [];

@@ -1,5 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { failedTestIds, infrastructureFailure, partition, readFailures, recordWeights, scanTestTypes, shardFlags, splitQuarantine, verdict, type TestType } from "./unit-shards";
+import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
+
+// Some tests spawn a Bun or shell child; see sim-pool-test-support.ts for the sizing.
+setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const source = `import Testing
 
@@ -85,13 +89,13 @@ describe("unit shards", () => {
   });
 
   test("an unreadable xcresulttool result is a reason that names what went wrong", () => {
-    const failed = readFailures(process.execPath, ["-e", "console.error('bad bundle'); process.exit(3)"]);
+    const failed = readFailures("/bin/sh", ["-c", "echo 'bad bundle' >&2; exit 3"]);
     expect(failed).not.toHaveProperty("ids");
     expect(failed).toHaveProperty("reason");
     const reason = (failed as { reason: string }).reason;
     expect(reason).toContain("3");
     expect(reason).toContain("bad bundle");
-    const garbled = readFailures(process.execPath, ["-e", "process.stdout.write('Error: incomplete')"]);
+    const garbled = readFailures("/bin/sh", ["-c", "printf 'Error: incomplete'"]);
     expect(garbled).not.toHaveProperty("ids");
     expect(garbled).toHaveProperty("reason");
   });

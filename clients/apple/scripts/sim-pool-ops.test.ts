@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +27,10 @@ import {
   validateCommandGuardrails,
 } from "./sim-pool-ops";
 import { CommandSession } from "./sim-pool-supervise";
+import { SUBPROCESS_TEST_TIMEOUT_MS } from "./sim-pool-test-support";
+
+// Every test spawns git, the pool CLI or fake tools; see sim-pool-test-support.ts for the sizing.
+setDefaultTimeout(SUBPROCESS_TEST_TIMEOUT_MS);
 
 const scriptDir = import.meta.dir;
 
