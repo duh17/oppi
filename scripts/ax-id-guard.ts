@@ -170,8 +170,8 @@ function literals(file: string, source: string): Literal[] {
   return found;
 }
 
-/** `lowerCamelRoot.segment…`, at least two segments. Flat kebab ids and plain text have no dot. */
-const idShape = /^[a-z][A-Za-z0-9]*(\.[A-Za-z0-9_\u{E000}-]+)+$/u;
+/** `root.segment…`, at least two segments; a kebab root (`fullscreen-code.back`) counts. Flat kebab ids and plain text have no dot. */
+const idShape = /^[a-z][A-Za-z0-9-]*(\.[A-Za-z0-9_\u{E000}-]+)+$/u;
 /** Not identifiers: reverse-DNS names, file names, version strings. */
 const notIdRoots = new Set(["com", "dev", "org", "io", "net", "public", "www", "localhost", "e", "i"]);
 const hostSuffixes = new Set(["com", "org", "net", "io", "dev", "edu", "gov"]);
@@ -179,7 +179,7 @@ const fileExtensions = new Set([
   "swift", "md", "json", "txt", "png", "jpg", "jpeg", "gif", "webp", "heic", "pdf", "html", "css", "js", "ts", "tsx",
   "sh", "py", "yml", "yaml", "csv", "log", "mp3", "mp4", "m4a", "wav", "mov", "plist", "xcresult", "app", "zip",
   "usdz", "ttf", "otf", "sql", "toml", "lock", "env", "svg", "xml", "tsv", "gz", "tar", "patch", "diff", "rs", "go",
-  "rb", "kt", "java", "c", "h", "cpp", "mjs", "cjs",
+  "rb", "kt", "java", "c", "h", "cpp", "mjs", "cjs", "srt", "vtt",
 ]);
 
 function isTestId(text: string): boolean {

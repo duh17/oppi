@@ -136,6 +136,12 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
       continue;
     }
 
+    // The guard reads app and test sources and runs in the Apple lane (see run_apple_gate).
+    if (path === "scripts/ax-id-guard.ts" || path === "scripts/ax-id-baseline.json") {
+      apple = strongerApple(apple, "unit");
+      continue;
+    }
+
     const pathServerMode = serverMode(path);
     if (pathServerMode !== "none") {
       server = strongerServer(server, pathServerMode);

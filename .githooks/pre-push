@@ -562,6 +562,10 @@ run_server_gate() {
 }
 
 run_apple_gate() {
+  # A stale or misnamed accessibility id in the app or a UI/E2E test: a source scan, about
+  # 0.6 s, so it runs here for every Apple-lane push (the build phase's architecture check
+  # only re-runs when its watched app sources change, not when a test does).
+  (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/ax-id-guard.ts) || return $?
   local scheme="OppiUnitTests"
   if [[ "$APPLE_MODE" == "all" ]]; then
     scheme="Oppi"

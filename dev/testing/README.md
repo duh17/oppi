@@ -16,7 +16,7 @@ Use these canonical test commands for the Oppi monorepo.
 
 Never pipe `sim-pool.sh` output through `grep`, `tail`, or `head`; read its summary and log paths. Long runs go through `background_job`.
 
-Semantic iOS controls follow [iOS accessibility and agent testability](ios-accessibility-testability.md), which also holds the identifier naming rule. `scripts/ax-id-guard.ts` (part of the iOS architecture check) fails when a UI or E2E test references an identifier the app does not define. The QA driver already refuses `firstMatch` and coordinate fallbacks; see [qa-verification.md](qa-verification.md).
+Semantic iOS controls follow [iOS accessibility and agent testability](ios-accessibility-testability.md), which also holds the identifier naming rule. `scripts/ax-id-guard.ts` (the iOS architecture check, and the first step of the pre-push Apple lane) fails when a UI or E2E test references an identifier the app does not define. The QA driver already refuses `firstMatch` and coordinate fallbacks; see [qa-verification.md](qa-verification.md).
 
 ## Policy as code
 
