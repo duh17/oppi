@@ -61,6 +61,15 @@ final class UIValidateTests: XCTestCase {
         )
         _ = app.images.firstMatch.waitForExistence(timeout: 8)
 
+        // OPPI_UI_VALIDATE_ROTATE_AFTER_READY=landscape|portrait turns the device once the screen is
+        // up, so the dump records a screen that was laid out for the other orientation first (a
+        // launch already in that orientation never changes width).
+        if let rotation = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_ROTATE_AFTER_READY"],
+           ["landscape", "portrait"].contains(rotation) {
+            XCUIDevice.shared.orientation = rotation == "landscape" ? .landscapeLeft : .portrait
+            Thread.sleep(forTimeInterval: 2)
+        }
+
         // Optional user-path drive for a named preview; keep one generic dump
         // harness rather than adding a screenshot-only test for every surface.
         let taps = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_TAPS"]?

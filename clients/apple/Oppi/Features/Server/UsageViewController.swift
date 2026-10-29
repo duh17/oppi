@@ -22,8 +22,6 @@ final class UsageViewController: UIViewController {
     private var renderedChart: AnyHashable?
     private var renderedDonut: AnyHashable?
     private var renderedHourly: AnyHashable?
-    /// How many times the hourly chart's content was replaced (a test reads it).
-    private(set) var hourlyChartBuilds = 0
 
     private let providerCard = ProviderSetupPromptView()
     private let rangeControl = UISegmentedControl(items: UsageRange.allCases.map(\.label))
@@ -287,18 +285,17 @@ final class UsageViewController: UIViewController {
         let hourly = detail.hourlyCostValues
         detailView.configure(detail, hasHourlyChart: !hourly.isEmpty, colors: colors)
         guard !hourly.isEmpty else { return }
-        let key = Self.hourlyChartKey(detail, themeKey: chartColors.themeKey)
+        let key = Self.hourlyChartKey(detail, hourly: hourly, themeKey: chartColors.themeKey)
         if renderedHourly != key {
             renderedHourly = key
-            hourlyChartBuilds += 1
             hourlyHost.show(UsageHourlyChartLeaf(entries: hourly, colors: chartColors), in: detailView.chartSlot, parent: self, root: root)
         }
     }
 
     /// What the hourly chart is drawn from: the day, each bar (hour, model, cost), the day's
     /// totals, and the theme, so a reload that changes spend in an hour already shown redraws it.
-    static func hourlyChartKey(_ detail: DailyDetail, themeKey: String) -> AnyHashable {
-        let bars = detail.hourlyCostValues.map { "\($0.hour)|\($0.model)|\($0.cost)" }
+    static func hourlyChartKey(_ detail: DailyDetail, hourly: [StatsHourlyCost], themeKey: String) -> AnyHashable {
+        let bars = hourly.map { "\($0.hour)|\($0.model)|\($0.cost)" }
         return AnyHashable([
             AnyHashable(detail.date), AnyHashable(bars), AnyHashable(detail.totals.cost),
             AnyHashable(detail.totals.sessions), AnyHashable(themeKey),

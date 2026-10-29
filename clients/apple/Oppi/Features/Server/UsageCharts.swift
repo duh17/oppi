@@ -9,7 +9,7 @@ import SwiftUI
 // This is the framework-required Swift Charts file. It is the old `ModelBreakdownSection.swift`
 // (its import-SwiftUI baseline entry moved here) now holding only the chart leaves that came
 // out of the SwiftUI Usage views deleted with it (`ServerView`, `DailyDetailView`,
-// `DailyCostChartView`, and the rest): six SwiftUI files became this one.
+// `DailyCostChartView`, and the rest): six SwiftUI files became this one, a net drop of five.
 
 /// The colors a chart leaf draws with, resolved from the theme's palette by the screen.
 struct UsageChartColors: Equatable {

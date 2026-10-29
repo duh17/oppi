@@ -304,7 +304,7 @@ struct SettingsSweepScreenshotPreview: View {
             .ignoresSafeArea()
         case "server-inbox-provider-setup":
             RouterPreviewControllerStack(root: root) { [root] in
-                SessionInboxViewController(root: root)
+                PreviewWidthChange.wrapping(SessionInboxViewController(root: root))
             }
             .ignoresSafeArea()
         case "usage", "usage-setup", "usage-detail":
@@ -319,7 +319,7 @@ struct SettingsSweepScreenshotPreview: View {
                         model.selectDay(UsageFixtureClient.detailDate)
                     }
                 }
-                return screen
+                return PreviewWidthChange.wrapping(screen)
             }
             .ignoresSafeArea()
         case "onboarding-add-server", "onboarding-tailscale":
@@ -790,7 +790,6 @@ struct SettingsSweepScreenshotPreview: View {
                 ModelInfo(id: "gpt-5-mini", name: "GPT-5 mini", provider: "openai", contextWindow: 400_000),
             ])),
             "/server/metrics/settings": Data(#"{"enabled":true,"revision":3}"#.utf8),
-            "/provider-auth/status": Data(#"{"providers":[{"id":"anthropic","name":"Anthropic","supportsApiKey":true,"authenticated":false}]}"#.utf8),
             "/server/mobile-output-guide": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/dictation/dictionary/global": Data(#"{"revision":3,"phrases":["Oppi","Tailscale","Herdr","Kypu","SwiftUI","Nerd Font Symbols Mono Extended Family Name That Is Long Enough To Wrap Past The Row"],"provider":"xai"}"#.utf8),
             "/dictation/dictionary/workspaces/preview-ws": Data(#"{"revision":1,"phrases":["oppi-dev","WorkspaceStore"],"provider":null}"#.utf8),
@@ -844,6 +843,11 @@ struct SettingsSweepScreenshotPreview: View {
             "/mcp/auth/flows/mcp-flow": json(McpFlowBody(flow: mcpFlow)),
             "/mcp/auth/flows/mcp-flow/cancel": Data(#"{"flow":{"flowId":"mcp-flow","scopeId":"global","serverName":"github","launchMode":"phone_browser","status":"cancelled","createdAt":1,"updatedAt":2,"expiresAt":9999999999999}}"#.utf8),
         ]
+        // Only All Sessions' setup card reads the provider status; no other sweep page does.
+        if page == "server-inbox-provider-setup" {
+            SettingsSweepFixtureURLProtocol.routes["/provider-auth/status"] =
+                Data(#"{"providers":[{"id":"anthropic","name":"Anthropic","supportsApiKey":true,"authenticated":false}]}"#.utf8)
+        }
         // The catalog request answers 404, so a sync fails.
         if page == "extensions-offline" || page == "extensions-unavailable" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/extensions"] = nil
@@ -1086,6 +1090,63 @@ struct UsageFixtureClient: UsageStatsClient {
             id: "anthropic", name: "Anthropic", supportsApiKey: true, oauth: nil, authenticated: authenticated,
             credentialType: nil, expiresAt: nil, maskedKey: nil
         )]
+    }
+}
+
+/// `SCREENSHOT_SWEEP_NARROW=<0-1 fraction>` narrows the previewed screen to that share of its
+/// width half a second after it appears, as an iPad split resize does (a simulation: the
+/// container's width, not a system Split View, which a UI test cannot drive). The screen's own
+/// bar items stay with the screen, so they are not drawn.
+@MainActor
+enum PreviewWidthChange {
+    static func wrapping(_ screen: UIViewController) -> UIViewController {
+        guard let value = ProcessInfo.processInfo.environment["SCREENSHOT_SWEEP_NARROW"],
+              let fraction = Double(value), fraction > 0, fraction < 1 else { return screen }
+        return NarrowingController(child: screen, fraction: CGFloat(fraction))
+    }
+
+    private final class NarrowingController: UIViewController {
+        private let child: UIViewController
+        private let fraction: CGFloat
+        private var width: NSLayoutConstraint?
+
+        init(child: UIViewController, fraction: CGFloat) {
+            self.child = child
+            self.fraction = fraction
+            super.init(nibName: nil, bundle: nil)
+            title = child.title
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            addChild(child)
+            child.view.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(child.view)
+            let width = child.view.widthAnchor.constraint(equalTo: view.widthAnchor)
+            self.width = width
+            NSLayoutConstraint.activate([
+                child.view.topAnchor.constraint(equalTo: view.topAnchor),
+                child.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                child.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                width,
+            ])
+            child.didMove(toParent: self)
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, let old = width else { return }
+                old.isActive = false
+                let narrow = child.view.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: fraction)
+                narrow.isActive = true
+                width = narrow
+                UIView.animate(withDuration: 0.25) { self.view.layoutIfNeeded() }
+            }
+        }
     }
 }
 

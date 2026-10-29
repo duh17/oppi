@@ -332,8 +332,8 @@ enum UIValidateDump {
             + "the framework's own bar and axis accessibility; main's SwiftUI Usage shows the same chart findings "
             + "(server-d3/main-before)"
         if let frame = issue.element?.frame {
-            // The node's middle, not its whole frame: a bar scrolled half under the bar, or a node with
-            // no size, is the chart's all the same.
+            // The node's middle inside the visible part of the slot, not its whole frame: a node with
+            // no size still counts, one whose middle is scrolled under the bar does not.
             let middle = CGPoint(x: frame.midX, y: frame.midY)
             return chartFrames.contains { $0.insetBy(dx: -1, dy: -1).contains(middle) } ? reason : nil
         }
