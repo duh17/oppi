@@ -209,4 +209,40 @@ struct CodeEditorFenceIndexTests {
         var fresh = CodeEditorFenceIndex()
         #expect(insideLines(undone.text, index: &index) == insideLines(undone.text, index: &fresh))
     }
+
+    @Test func aReplaceWalkDownTheBufferNeverReportsStaleAndStillMatchesAFreshScan() {
+        // Find > Replace steps down a file one replacement at a time. Nothing
+        // changes any line's answer, so no step may report stale lines.
+        let group = "intro\n```\ncode item\n```\n- item here\nout\n"
+        var text = String(repeating: group, count: 40)
+        var index = CodeEditorFenceIndex()
+        _ = insideLines(text, index: &index)
+        let end = text.utf16.count
+        var searchFrom = 0
+        for step in 0..<20 {
+            let match = (text as NSString).range(of: "item", range: NSRange(location: searchFrom, length: text.utf16.count - searchFrom))
+            let result = apply(&index, to: text, replacing: match, with: "entries")
+            #expect(result.stale == nil, "replace \(step) reported stale lines \(String(describing: result.stale))")
+            text = result.text
+            searchFrom = match.location + 7
+        }
+        #expect(index.scannedThrough == text.utf16.count, "the replacements did not cut the scan back (\(index.scannedThrough) of \(text.utf16.count), was \(end))")
+        var fresh = CodeEditorFenceIndex()
+        #expect(insideLines(text, index: &index) == insideLines(text, index: &fresh))
+    }
+
+    @Test func aFenceChangeAfterAnEditThatChangedNothingStillReportsEveryAskedLine() {
+        let group = "intro\n```\ncode\n```\n- item\n"
+        let text = String(repeating: group, count: 30)
+        var index = CodeEditorFenceIndex()
+        _ = insideLines(text, index: &index)
+        let unrelated = apply(&index, to: text, replacing: NSRange(location: 2, length: 0), with: "x")
+        #expect(unrelated.stale == nil)
+        // Delete a closing fence far below: every line after it flips.
+        let target = (unrelated.text as NSString).range(of: "```\n- item", range: NSRange(location: 400, length: 200))
+        let broken = apply(&index, to: unrelated.text, replacing: NSRange(location: target.location, length: 3), with: "")
+        #expect(broken.stale != nil && NSMaxRange(broken.stale!) >= broken.text.utf16.count - 12, "stale \(String(describing: broken.stale))")
+        var fresh = CodeEditorFenceIndex()
+        #expect(insideLines(broken.text, index: &index) == insideLines(broken.text, index: &fresh))
+    }
 }

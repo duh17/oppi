@@ -6,49 +6,53 @@ import Foundation
 /// line, up to and including the closing line: such a line is code, whatever
 /// it looks like. The opening line itself is entered from outside.
 ///
-/// Scanned lazily: a question about an offset scans the text only up to that
-/// offset, hopping between fence markers with native searches, and keeps what
-/// it found. An edit discards only what lies at or after the edited line.
+/// The index is the list of lines that open or close a fence, read lazily: a
+/// question about an offset reads the text only up to that offset, hopping
+/// between fence markers with native searches, and keeps what it found. An
+/// edit replaces only the markers of the lines it touched. When the state
+/// entering the line after them is unchanged, the markers after them are still
+/// right and move along with the text, so typing and Replace do not make the
+/// index read the rest of the buffer again.
 struct CodeEditorFenceIndex {
-    /// Whether a position is in a fence, and which kind (a closing line must
-    /// match the opening line's character and be at least as long).
+    /// Whether a line is entered inside a fence, and which kind (a closing
+    /// line must match the opening line's character and be at least as long).
     enum State: Equatable {
         case outside
         case inside(character: unichar, length: Int)
     }
 
-    private struct Fence {
-        /// From the opening line's start to the end of the closing line.
-        var range: NSRange
-        /// End of the opening line, line break included.
-        var openerEnd: Int
+    /// A line that opens or closes a fence.
+    private struct Marker {
+        var line: NSRange
+        var opens: Bool
+        /// The fence's character and length (the one being opened or closed).
         var character: unichar
         var length: Int
+
+        /// The state after this line.
+        var stateAfter: State { opens ? .inside(character: character, length: length) : .outside }
+
+        func shifted(by delta: Int) -> Marker {
+            var copy = self
+            copy.line.location += delta
+            return copy
+        }
     }
 
-    private struct OpenFence {
-        var start: Int
-        var openerEnd: Int
-        var character: unichar
-        var length: Int
-    }
-
-    /// Closed fences, sorted, all before `scannedThrough`.
-    private var fences: [Fence] = []
-    /// A fence that opened before `scannedThrough` and has not closed yet.
-    private var open: OpenFence?
+    /// Sorted by line; covers the text before `scannedThrough`.
+    private var markers: [Marker] = []
     /// Every line that starts before this offset has been read.
     private(set) var scannedThrough = 0
-    /// The start of the farthest line anything asked about. Unlike
-    /// `scannedThrough` it is never cut back when an edit discards what was
-    /// read, so every paragraph built from an answer can still be reported.
+    /// The start of the farthest line anything asked about. It is shifted by
+    /// edits, and never cut back when an edit discards what was read, so every
+    /// paragraph built from an answer can still be reported.
     private(set) var askedThrough = 0
-    /// The next place each marker may be: a real hit, or the end of the window
-    /// searched without finding one (searching is bounded, so a keystroke does
-    /// not scan the rest of a large buffer for a marker that never occurs).
     private var tick = Candidate()
     private var tilde = Candidate()
 
+    /// The next place each marker may be: a real hit, or the end of the window
+    /// searched without finding one (searching is bounded, so a keystroke does
+    /// not scan the rest of a large buffer for a marker that never occurs).
     private struct Candidate {
         var position = -1
         var isMarker = false
@@ -74,32 +78,47 @@ struct CodeEditorFenceIndex {
 
     /// Forgets everything read, keeping what was asked about.
     mutating func reset() {
-        fences = []
-        open = nil
+        markers = []
         scannedThrough = 0
         tick = Candidate()
         tilde = Candidate()
     }
 
     /// The state entering the line that starts at `offset`, which the scan has
-    /// already passed.
+    /// already passed: the state after the last marker line that ends by then.
     private func knownState(at offset: Int) -> State {
-        if let open, offset >= open.openerEnd { return .inside(character: open.character, length: open.length) }
         var low = 0
-        var high = fences.count
+        var high = markers.count
         while low < high {
             let mid = (low + high) / 2
-            let fence = fences[mid]
-            if offset < fence.range.location {
-                high = mid
-            } else if offset >= NSMaxRange(fence.range) {
-                low = mid + 1
-            } else {
-                return offset >= fence.openerEnd ? .inside(character: fence.character, length: fence.length) : .outside
-            }
+            if NSMaxRange(markers[mid].line) <= offset { low = mid + 1 } else { high = mid }
         }
-        return .outside
+        return low == 0 ? .outside : markers[low - 1].stateAfter
     }
+
+    /// First marker whose line ends after `offset`.
+    private func firstMarker(endingAfter offset: Int) -> Int {
+        var low = 0
+        var high = markers.count
+        while low < high {
+            let mid = (low + high) / 2
+            if NSMaxRange(markers[mid].line) <= offset { low = mid + 1 } else { high = mid }
+        }
+        return low
+    }
+
+    /// First marker whose line starts at or after `offset`.
+    private func firstMarker(startingAtOrAfter offset: Int) -> Int {
+        var low = 0
+        var high = markers.count
+        while low < high {
+            let mid = (low + high) / 2
+            if markers[mid].line.location < offset { low = mid + 1 } else { high = mid }
+        }
+        return low
+    }
+
+    // MARK: - Edits
 
     /// Brings the index up to date after text was replaced: `edited` is the
     /// new text's range, the text is `changeInLength` characters longer than
@@ -118,46 +137,76 @@ struct CodeEditorFenceIndex {
         let oldEditEnd = NSMaxRange(edited) - delta
         let oldBlockEnd = blockEnd - delta
         let oldScanned = scannedThrough
-
-        // Where the farthest asked line is now.
-        if askedThrough >= oldEditEnd {
-            askedThrough += delta
-        } else if askedThrough >= location {
-            askedThrough = editEnd
-        }
         tick = Candidate()
         tilde = Candidate()
 
-        // The state entering the line after the edited block, before the edit.
-        // Known when the scan had passed that line, or had read the whole old text.
-        let before: State? = oldBlockEnd < oldScanned || oldScanned >= length - delta ? knownState(at: oldBlockEnd) : nil
-
-        // Forget everything from the edited line on; a fence that spans it is open again.
-        if lineStart < oldScanned {
-            var reopened: OpenFence?
-            while let last = fences.last, NSMaxRange(last.range) > lineStart {
-                fences.removeLast()
-                if last.range.location < lineStart {
-                    reopened = OpenFence(start: last.range.location, openerEnd: last.openerEnd, character: last.character, length: last.length)
-                }
-            }
-            if let current = open, current.start >= lineStart { open = nil }
-            if let reopened { open = reopened }
-            scannedThrough = lineStart
+        // Where the farthest asked line is now. One inside the replaced text is
+        // gone; what is built there next asks again.
+        if askedThrough >= oldEditEnd {
+            askedThrough += delta
+        } else if askedThrough >= location {
+            askedThrough = lineStart
         }
 
-        // Nothing asked about at or after the edited line: nothing there can be stale.
+        // Read up to the edited line if the scan had not got there: the text before it is unchanged.
+        if oldScanned < lineStart { advance(past: lineStart - 1, in: text) }
+
+        // The old state entering the line after the block, from the old markers.
+        let oldTextRead = oldScanned >= length - delta
+        let tailKnown = oldBlockEnd < oldScanned || oldTextRead
+        let before: State? = tailKnown ? knownState(at: oldBlockEnd) : nil
+
+        // The markers before the edited line stay; those on the block's lines are replaced.
+        let headEnd = firstMarker(endingAfter: lineStart)
+        let tailStart = tailKnown ? firstMarker(startingAtOrAfter: oldBlockEnd) : markers.count
+        let head = Array(markers[..<min(headEnd, markers.count)])
+        let tail = tailStart < markers.count ? Array(markers[tailStart...]) : []
+        let entering = head.last?.stateAfter ?? .outside
+        let block = Self.scan(text, from: lineStart, to: blockEnd, entering: entering)
+
+        if let before, before == block.state {
+            // The state entering the line after the block is unchanged, so the
+            // markers after it are still right: they only move with the text.
+            markers = head + block.markers + tail.map { $0.shifted(by: delta) }
+            scannedThrough = max(blockEnd, oldScanned + delta)
+            return nil
+        }
+        // Everything after the block was read under a different state, or never read.
+        markers = head + block.markers
+        scannedThrough = blockEnd
         guard askedThrough > lineStart else { return nil }
-        let after = resolve(at: blockEnd, in: text)
-        // Equal states entering the line after the block: everything after it is as it was.
-        if let before, before == after { return nil }
-        // Otherwise, or when the old state was already forgotten, every line up
-        // to the farthest one anything asked about may be stale.
         let askedLineEnd = NSMaxRange(text.lineRange(for: NSRange(location: min(askedThrough, length), length: 0)))
         return NSRange(location: lineStart, length: min(length, max(blockEnd, askedLineEnd)) - lineStart)
     }
 
     // MARK: - Scanning
+
+    /// The fence marker lines in `from..<to`, entering with `state`, and the
+    /// state after them.
+    private static func scan(_ text: NSString, from start: Int, to end: Int, entering state: State) -> (markers: [Marker], state: State) {
+        var found: [Marker] = []
+        var state = state
+        var cursor = start
+        var tickHit = -1
+        var tildeHit = -1
+        func search(_ marker: String, from position: Int) -> Int {
+            let range = text.range(of: marker, options: .literal, range: NSRange(location: position, length: end - position))
+            return range.location == NSNotFound ? Int.max : range.location
+        }
+        while cursor < end {
+            if tickHit < cursor { tickHit = search("```", from: cursor) }
+            if tildeHit < cursor { tildeHit = search("~~~", from: cursor) }
+            let hit = min(tickHit, tildeHit)
+            if hit == Int.max { break }
+            let line = text.lineRange(for: NSRange(location: hit, length: 0))
+            if let marker = marker(for: line, in: text, entering: state) {
+                found.append(marker)
+                state = marker.stateAfter
+            }
+            cursor = max(NSMaxRange(line), hit + 1)
+        }
+        return (found, state)
+    }
 
     /// Reads fence lines until the scan has passed `target`.
     private mutating func advance(past target: Int, in text: NSString) {
@@ -179,7 +228,9 @@ struct CodeEditorFenceIndex {
                 scannedThrough = line.location
                 return
             }
-            read(line, in: text)
+            if let marker = Self.marker(for: line, in: text, entering: markers.last?.stateAfter ?? .outside) {
+                markers.append(marker)
+            }
             scannedThrough = NSMaxRange(line)
         }
     }
@@ -214,20 +265,17 @@ struct CodeEditorFenceIndex {
         }
     }
 
-    private mutating func read(_ line: NSRange, in text: NSString) {
-        guard let fence = Self.parseFenceLine(text, line: line) else { return }
-        if let current = open {
-            if fence.character == current.character, fence.length >= current.length, fence.restIsBlank {
-                fences.append(Fence(
-                    range: NSRange(location: current.start, length: NSMaxRange(line) - current.start),
-                    openerEnd: current.openerEnd,
-                    character: current.character,
-                    length: current.length
-                ))
-                open = nil
-            }
-        } else if fence.canOpen {
-            open = OpenFence(start: line.location, openerEnd: NSMaxRange(line), character: fence.character, length: fence.length)
+    /// The marker a line is, given the state entering it: it opens a fence
+    /// when outside one, closes the fence it is inside when it matches.
+    private static func marker(for line: NSRange, in text: NSString, entering state: State) -> Marker? {
+        guard let fence = parseFenceLine(text, line: line) else { return nil }
+        switch state {
+        case .inside(let character, let length):
+            guard fence.character == character, fence.length >= length, fence.restIsBlank else { return nil }
+            return Marker(line: line, opens: false, character: character, length: length)
+        case .outside:
+            guard fence.canOpen else { return nil }
+            return Marker(line: line, opens: true, character: fence.character, length: fence.length)
         }
     }
 
