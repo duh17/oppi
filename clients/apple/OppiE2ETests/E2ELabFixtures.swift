@@ -35,11 +35,16 @@ struct E2ELabGitWorktreeFixture {
 }
 
 extension E2ETestCase {
-    /// Swipes `list` up until `element` can be tapped. A collection view only builds the rows near
-    /// the viewport, and a page's height depends on what it loaded (an offline server's page is
-    /// taller, with error rows), so one swipe cannot be assumed to reach a row at the bottom.
+    /// Swipes `list` up until `element` is on screen inside it. A collection view only builds the rows
+    /// near the viewport, and a page's height depends on what it loaded (an offline server's page is
+    /// taller, with error rows), so one swipe cannot be assumed to reach a row at the bottom. An
+    /// element can report itself hittable while the viewport edge still hides it, so its frame must
+    /// lie within the list's.
     func scrollUntilHittable(_ element: XCUIElement, in list: XCUIElement, maxSwipes: Int = 8) {
-        for _ in 0..<maxSwipes where !(element.exists && element.isHittable) {
+        func isOnScreen() -> Bool {
+            element.exists && element.isHittable && list.frame.contains(element.frame)
+        }
+        for _ in 0..<maxSwipes where !isOnScreen() {
             list.swipeUp()
         }
     }
