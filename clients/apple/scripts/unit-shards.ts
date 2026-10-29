@@ -12,7 +12,10 @@
 //    run `-only-testing` lists; the last shard runs `-skip-testing` of everything the
 //    others run, so a test type the scan misses still runs.
 // 4. Run every shard in its own pool slot with `test-without-building -xctestrun` at once.
-// Fails when any shard fails or runs zero tests. Default N: OPPI_UNIT_SHARDS or 3.
+// Fails when any shard fails or runs zero tests; a shard that ran none is reported as an
+// infrastructure failure, apart from test failures. Default N: OPPI_UNIT_SHARDS or 3.
+// A shard whose pool slots are all busy waits for one: the gate (pre-push) sets OPPI_SIM_POOL_GATE=1,
+// which gives sim-pool its gate wait (see GATE_POOL_WAIT_SECONDS in sim-pool-ops.ts).
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, closeSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -129,9 +132,16 @@ export function failedTestIds(xcresultTestsJson: string): string[] | undefined {
 
 const RERUN_LIMIT = 20;
 
-type ShardResult = { index: number; label: string; code: number; tests: number; seconds: number; output: string; summary?: string };
+export type ShardResult = { index: number; label: string; code: number; tests: number; seconds: number; output: string; summary?: string };
 
-async function runShard(index: number, xctestrun: string, flags: string[], outDir: string, label = `shard-${index + 1}`): Promise<ShardResult> {
+export async function runShard(
+  index: number,
+  xctestrun: string,
+  flags: string[],
+  outDir: string,
+  label = `shard-${index + 1}`,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ShardResult> {
   const output = join(outDir, `${label}.out`);
   const fd = openSync(output, "w");
   const started = Date.now();
@@ -142,11 +152,35 @@ async function runShard(index: number, xctestrun: string, flags: string[], outDi
   ], {
     cwd: appleDir,
     stdio: ["ignore", fd, fd],
+    env,
   });
   closeSync(fd);
   const code = await new Promise<number>((resolve) => child.on("exit", (status, signal) => resolve(status ?? (signal ? 128 : 1))));
   const summary = /^Artifact: (.+)$/m.exec(readFileSync(output, "utf8"))?.[1];
   return { index, label, code, tests: executedTests(summary), seconds: Math.round((Date.now() - started) / 1000), output, summary };
+}
+
+/**
+ * Why a shard failed without testing anything (the pool had no slot, the build or simulator
+ * broke, xcodebuild died before the first test), or undefined when it ran tests. A shard that
+ * ran nothing has no failed test to rerun or fix; the failure is the machine's, and the gate
+ * summary must say so instead of reporting a red test suite.
+ */
+export function infrastructureFailure(result: Pick<ShardResult, "code" | "tests">, output: string): string | undefined {
+  if (result.tests > 0) return undefined;
+  // sim-pool's own failure line (`error: all 6 simulator slots ... (waited 60s)`) says what stopped it.
+  const cause = [...output.matchAll(/^error: (.+)$/gm)].at(-1)?.[1];
+  const ran = result.code === 0 ? "the shard exited 0 but ran no tests" : `the shard ran no tests (exit ${result.code})`;
+  return cause ? `${ran}: ${cause}` : ran;
+}
+
+/** The outcome line of a gate run: test failures and infrastructure failures are never conflated. */
+export function verdict(testFailures: string[], infraFailures: string[]): string {
+  const parts = [
+    testFailures.length > 0 ? `test failures in ${testFailures.join(", ")}` : "",
+    infraFailures.length > 0 ? `INFRASTRUCTURE failure, no tests ran in ${infraFailures.join(", ")}` : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? `FAILED (${parts.join("; ")})` : "PASSED";
 }
 
 /** Failed test ids, or why they cannot be read. */
@@ -250,16 +284,23 @@ async function main(argv: string[]): Promise<number> {
   mkdirSync(outDir, { recursive: true });
   console.log(`[unit-shards] ${shards} shards from ${relative(appleDir, xctestrun)}; outputs in ${outDir}`);
   const results = await Promise.all(parts.map((_, index) => runShard(index, xctestrun, [...shardFlags(parts, index), ...skipQuarantined], outDir)));
-  let failed = false;
+  const testFailures: string[] = [];
+  const infraFailures: string[] = [];
   for (const result of results) {
-    let ok = result.code === 0 && result.tests > 0;
-    console.log(`[unit-shards] shard ${result.index + 1}/${shards}: ${ok ? "PASS" : "FAIL"} exit=${result.code} tests=${result.tests} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}`);
+    const output = readFileSync(result.output, "utf8");
+    const infra = infrastructureFailure(result, output);
+    let ok = result.code === 0 && !infra;
+    console.log(`[unit-shards] shard ${result.index + 1}/${shards}: ${ok ? "PASS" : infra ? "INFRASTRUCTURE FAIL" : "FAIL"} exit=${result.code} tests=${result.tests} ${result.seconds}s output=${result.output}${result.summary ? ` summary=${result.summary}` : ""}`);
     if (!ok) {
       // sim-pool's own summary (failures, log path) ends the shard output.
-      process.stdout.write(`${readFileSync(result.output, "utf8").trimEnd().split("\n").slice(-40).join("\n")}\n`);
-      if (!strict) ok = await rerunFailures(result, xctestrun, outDir);
+      process.stdout.write(`${output.trimEnd().split("\n").slice(-40).join("\n")}\n`);
+      if (infra) {
+        console.log(`[unit-shards] ${result.label}: ${infra}; no test failed, so there is nothing to rerun`);
+      } else if (!strict) {
+        ok = await rerunFailures(result, xctestrun, outDir);
+      }
     }
-    failed ||= !ok;
+    if (!ok) (infra ? infraFailures : testFailures).push(result.label);
   }
   if (quarantine.active.length > 0) {
     // Quarantined tests still run, on the same products, but never block.
@@ -267,17 +308,17 @@ async function main(argv: string[]): Promise<number> {
     console.log(`[unit-shards] quarantined (non-blocking): ${watch.code === 0 ? "passed" : "failed"} ${quarantine.active.map((entry) => entry.id).join(", ")} output=${watch.output}`);
   }
   const total = results.reduce((sum, result) => sum + result.tests, 0);
-  console.log(`[unit-shards] ${failed ? "FAILED" : "PASSED"}: ${total} tests in ${shards} shards, longest ${Math.max(...results.map((r) => r.seconds))}s`);
-  return failed ? 1 : 0;
+  console.log(`[unit-shards] ${verdict(testFailures, infraFailures)}: ${total} tests in ${shards} shards, longest ${Math.max(...results.map((r) => r.seconds))}s`);
+  return testFailures.length + infraFailures.length > 0 ? 1 : 0;
 }
 
 /**
  * Rerun a failed shard's failing tests once on the same products. A test that passes on the
  * rerun is a flake: it does not block, and the flake log counts the gates it flaked in. Crashes,
- * unreadable results, zero tests, or more than RERUN_LIMIT failures stay red.
+ * unreadable results, or more than RERUN_LIMIT failures stay red.
  */
 async function rerunFailures(result: ShardResult, xctestrun: string, outDir: string): Promise<boolean> {
-  const failures: Failures = result.tests > 0 ? runFailures(result.summary) : { reason: "shard ran no tests" };
+  const failures = runFailures(result.summary);
   if ("reason" in failures) {
     console.log(`[unit-shards] ${result.label}: no rerun (failures unreadable: ${failures.reason})`);
     return false;

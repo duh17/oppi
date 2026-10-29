@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { failedTestIds, partition, readFailures, recordWeights, scanTestTypes, shardFlags, splitQuarantine, type TestType } from "./unit-shards";
+import { failedTestIds, infrastructureFailure, partition, readFailures, recordWeights, scanTestTypes, shardFlags, splitQuarantine, verdict, type TestType } from "./unit-shards";
 
 const source = `import Testing
 
@@ -108,5 +108,23 @@ describe("unit shards", () => {
       `✔ Suite "Inner nested" passed after 9.000 seconds.`,
     ].join("\n");
     expect(recordWeights(log, types)).toEqual({ MicTests: 0.09 });
+  });
+
+  test("a shard that ran no tests is an infrastructure failure naming sim-pool's own error, not a test failure", () => {
+    const busy = "[sim-pool] All 6 slots (slots 0-5) busy, waiting up to 60s...\nerror: all 6 simulator slots (slots 0-5) are busy or quarantined (waited 60s)\n";
+    expect(infrastructureFailure({ code: 1, tests: 0 }, busy)).toBe(
+      "the shard ran no tests (exit 1): all 6 simulator slots (slots 0-5) are busy or quarantined (waited 60s)",
+    );
+    expect(infrastructureFailure({ code: 1, tests: 0 }, "xcodebuild died\n")).toBe("the shard ran no tests (exit 1)");
+    expect(infrastructureFailure({ code: 0, tests: 0 }, "")).toBe("the shard exited 0 but ran no tests");
+    // A shard that ran tests and failed is a test failure, even with an `error:` line in its output.
+    expect(infrastructureFailure({ code: 1, tests: 40 }, "error: something\n")).toBeUndefined();
+  });
+
+  test("the gate verdict keeps test failures and infrastructure failures apart", () => {
+    expect(verdict([], [])).toBe("PASSED");
+    expect(verdict(["shard-2"], [])).toBe("FAILED (test failures in shard-2)");
+    expect(verdict([], ["shard-1"])).toBe("FAILED (INFRASTRUCTURE failure, no tests ran in shard-1)");
+    expect(verdict(["shard-3"], ["shard-1"])).toBe("FAILED (test failures in shard-3; INFRASTRUCTURE failure, no tests ran in shard-1)");
   });
 });

@@ -279,6 +279,10 @@ fi
 
 # Queued heavy.sh jobs give up when this hook is gone (e.g. killed by a timeout).
 export OPPI_HEAVY_PARENT_PID="$$"
+# Every sim-pool call below (Apple build, unit shards) queues for a simulator slot for the gate wait
+# (sim-pool-ops.ts GATE_POOL_WAIT_SECONDS) instead of failing after a developer run's 60 s; an
+# explicit OPPI_SIM_POOL_WAIT still wins. batch-gate.ts sets the same marker for its lanes.
+export OPPI_SIM_POOL_GATE=1
 REMOTE_NAME="${1:-origin}"
 PATHS_FILE="$(mktemp -t oppi-pre-push-paths.XXXXXX)"
 trap 'rm -f "$PATHS_FILE"' EXIT

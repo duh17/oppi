@@ -28,14 +28,6 @@ const sources: Record<string, string[]> = {
 const types = (target: string) => declarations(sources[target] ?? []);
 
 describe("batch gate plan", () => {
-  test("every simulator lane queues for a free slot instead of failing after sim-pool's default wait", () => {
-    const plan = planGate("/wt", ["OppiTests/FooTests", "OppiUITests/ChatRoutesUITests", "OppiE2ETests/ChatE2ETests/testSend"], ["iphone", "ipad"], types);
-    expect(plan.errors).toEqual([]);
-    const steps = plan.lanes.flatMap((lane) => lane.steps);
-    expect(steps).toHaveLength(4);
-    for (const step of steps) expect(Number(step.env?.OPPI_SIM_POOL_WAIT)).toBeGreaterThanOrEqual(1800);
-  });
-
   test("named suites become one lane per kind, UI tests one lane per profile", () => {
     const plan = planGate("/wt", [
       "OppiTests/FooTests",
@@ -171,6 +163,26 @@ describe("batch gate plan", () => {
   });
 });
 
+/** A checkout whose stand-in sim-pool records its cwd, OPPI_ROOT, and OPPI_SIM_POOL_GATE in `<real>/seen`. */
+function fakeCheckout(real: string): string {
+  const checkout = join(real, "checkout");
+  const scripts = join(checkout, "clients", "apple", "scripts");
+  mkdirSync(scripts, { recursive: true });
+  mkdirSync(join(checkout, "clients", "apple", "OppiTests"), { recursive: true });
+  mkdirSync(join(checkout, "server", "scripts"), { recursive: true });
+  writeFileSync(join(checkout, "clients", "apple", "OppiTests", "FooTests.swift"), "struct FooTests { @Test func a() {} }\n");
+  writeFileSync(join(checkout, "server", "scripts", "ensure-installed-deps.mjs"), "");
+  // A stand-in sim-pool: records where it ran and prints a one-test artifact.
+  writeFileSync(join(scripts, "sim-pool.sh"), `#!/bin/sh
+echo "$PWD $OPPI_ROOT $OPPI_SIM_POOL_GATE" > "${real}/seen"
+echo "✔ Test run with 1 test in 1 suite passed after 0.1 seconds." > "${real}/run.log"
+echo '{"log_path":"${real}/run.log"}' > "${real}/summary.json"
+echo "Artifact: ${real}/summary.json"
+`);
+  chmodSync(join(scripts, "sim-pool.sh"), 0o755);
+  return checkout;
+}
+
 describe("batch gate worktree path", () => {
   // A merge queue passes a symlinked temp path (/var/... -> /private/var/...). The pre-push hook
   // builds from the canonical path, and Xcode recompiles everything for a different DerivedData
@@ -179,26 +191,31 @@ describe("batch gate worktree path", () => {
     const dir = mkdtempSync(join(tmpdir(), "batch-gate-link-"));
     try {
       const real = realpathSync.native(dir);
-      const checkout = join(real, "checkout");
-      const scripts = join(checkout, "clients", "apple", "scripts");
-      mkdirSync(scripts, { recursive: true });
-      mkdirSync(join(checkout, "clients", "apple", "OppiTests"), { recursive: true });
-      mkdirSync(join(checkout, "server", "scripts"), { recursive: true });
-      writeFileSync(join(checkout, "clients", "apple", "OppiTests", "FooTests.swift"), "struct FooTests { @Test func a() {} }\n");
-      writeFileSync(join(checkout, "server", "scripts", "ensure-installed-deps.mjs"), "");
-      // A stand-in sim-pool: records where it ran and prints a one-test artifact.
-      writeFileSync(join(scripts, "sim-pool.sh"), `#!/bin/sh
-echo "$PWD $OPPI_ROOT" > "${real}/seen"
-echo "✔ Test run with 1 test in 1 suite passed after 0.1 seconds." > "${real}/run.log"
-echo '{"log_path":"${real}/run.log"}' > "${real}/summary.json"
-echo "Artifact: ${real}/summary.json"
-`);
-      chmodSync(join(scripts, "sim-pool.sh"), 0o755);
+      const checkout = fakeCheckout(real);
       const link = join(real, "link");
       symlinkSync(checkout, link);
       const run = Bun.spawnSync(["bun", join(import.meta.dir, "batch-gate.ts"), "--worktree", link, "--test", "OppiTests/FooTests"], { stdout: "pipe", stderr: "pipe" });
       expect(run.exitCode).toBe(0);
-      expect(readFileSync(join(real, "seen"), "utf8").trim()).toBe(`${join(checkout, "clients", "apple")} ${checkout}`);
+      expect(readFileSync(join(real, "seen"), "utf8").trim().split(" ").slice(0, 2)).toEqual([join(checkout, "clients", "apple"), checkout]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Gate lanes queue for a simulator slot (sim-pool's gate wait) instead of failing after a developer
+  // run's 60 s; every step the gate starts carries the marker, so no lane needs its own wait.
+  test("every step runs as a gate run, whatever the caller's own environment says", () => {
+    const dir = mkdtempSync(join(tmpdir(), "batch-gate-marker-"));
+    try {
+      const real = realpathSync.native(dir);
+      const checkout = fakeCheckout(real);
+      const run = Bun.spawnSync(["bun", join(import.meta.dir, "batch-gate.ts"), "--worktree", checkout, "--test", "OppiTests/FooTests"], {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, OPPI_SIM_POOL_GATE: "0" },
+      });
+      expect(run.exitCode).toBe(0);
+      expect(readFileSync(join(real, "seen"), "utf8").trim().split(" ").at(-1)).toBe("1");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

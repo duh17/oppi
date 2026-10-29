@@ -13,6 +13,7 @@ import {
   tryAcquireSlot,
   type SlotClaim,
 } from "./sim-pool-lock";
+import { runShard } from "./unit-shards";
 
 const cli = join(import.meta.dir, "sim-pool.ts");
 const temps: string[] = [];
@@ -614,5 +615,78 @@ describe("sim-pool first boot of a new simulator", () => {
     } finally {
       held!.lock!.release();
     }
+  }, CLI_TIMEOUT);
+});
+
+describe("sim-pool slot wait", () => {
+  // A one-slot pool whose only slot another run holds. `env` replaces the suite's OPPI_SIM_POOL_WAIT=0
+  // (undefined removes a variable). `shard` runs the unit-shards shard command instead of the CLI directly.
+  function busyPool(env: NodeJS.ProcessEnv, shard = false) {
+    const sim = fakeSimulators([{ name: "Oppi-Pool-0", state: "Shutdown", type: IPHONE }]);
+    writeCheckout(sim.root);
+    const held = tryAcquireSlot({ lockDir: sim.lockDir, slot: 0, argv: ["run"] });
+    expect(held.ok).toBe(true);
+    if (!held.ok) throw new Error("could not hold the slot");
+    const runEnv: NodeJS.ProcessEnv = { ...sim.env, OPPI_ROOT: sim.root, OPPI_SIM_POOL_COUNT: "1", OPPI_SIM_DEVICE_TYPE: IPHONE, ...env };
+    for (const [name, value] of Object.entries(env)) {
+      if (value === undefined) delete runEnv[name];
+    }
+    let stderr = "";
+    let exited: Promise<number | null>;
+    let output = () => stderr;
+    if (shard) {
+      const xctestrun = join(sim.root, "OppiUnitTests.xctestrun");
+      writeFileSync(xctestrun, "");
+      const done = runShard(0, xctestrun, ["-only-testing:OppiTests"], sim.root, "shard-1", runEnv);
+      exited = done.then((result) => result.code);
+      output = () => (existsSync(join(sim.root, "shard-1.out")) ? readFileSync(join(sim.root, "shard-1.out"), "utf8") : "");
+    } else {
+      const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "OppiUnitTests", "test-without-building"], {
+        cwd: sim.root,
+        env: runEnv,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      child.stderr!.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+    }
+    return {
+      sim,
+      output,
+      exited,
+      release: () => releaseReusable(held.owned),
+      async announced(text: string) {
+        const deadline = Date.now() + 30_000;
+        while (!output().includes(text) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+        return output().includes(text);
+      },
+    };
+  }
+
+  test("a gate unit shard with every slot busy waits for the gate wait, then runs when a slot frees", async () => {
+    const pool = busyPool({ OPPI_SIM_POOL_GATE: "1", OPPI_SIM_POOL_WAIT: undefined }, true);
+    expect(await pool.announced("busy, waiting up to 1800s")).toBe(true);
+    // Still waiting: nothing booted while the slot is held.
+    expect(pool.sim.state("Oppi-Pool-0")).toBe("Shutdown");
+    pool.release();
+    expect(await pool.exited).toBe(0);
+    expect(pool.sim.state("Oppi-Pool-0")).toBe("Booted");
+  }, CLI_TIMEOUT);
+
+  test("a gate run that never gets a slot fails at its deadline and says so", async () => {
+    const pool = busyPool({ OPPI_SIM_POOL_GATE: "1", OPPI_SIM_POOL_WAIT: "4" });
+    expect(await pool.announced("busy, waiting up to 4s")).toBe(true);
+    expect(await pool.exited).not.toBe(0);
+    pool.release();
+    expect(pool.output()).toContain("error: all 1 simulator slots (slots 0) are busy or quarantined (waited 4s)");
+    expect(pool.sim.state("Oppi-Pool-0")).toBe("Shutdown");
+  }, CLI_TIMEOUT);
+
+  test("a developer's own run keeps the 60 s default", async () => {
+    const pool = busyPool({ OPPI_SIM_POOL_GATE: undefined, OPPI_SIM_POOL_WAIT: undefined });
+    expect(await pool.announced("busy, waiting up to 60s")).toBe(true);
+    pool.release();
+    expect(await pool.exited).toBe(0);
   }, CLI_TIMEOUT);
 });

@@ -410,6 +410,20 @@ export function dropBuildDescriptionsMissingVendor(appleDir: string, derivedData
   }
 }
 
+/**
+ * Seconds a run waits for a slot, a first-boot slot, or booted-simulator capacity when
+ * OPPI_SIM_POOL_WAIT is unset. A developer's own run gives up after a minute; a gate run
+ * (OPPI_SIM_POOL_GATE=1, which the pre-push hook and batch-gate.ts set for everything they
+ * start) has no caller to retry it and a busy pool is not a test failure, so it queues.
+ * This is the one place the gate wait is defined.
+ */
+export const GATE_POOL_WAIT_SECONDS = 1800;
+const PLAIN_POOL_WAIT_SECONDS = 60;
+
+function defaultWaitSeconds(env: NodeJS.ProcessEnv): string {
+  return String(env.OPPI_SIM_POOL_GATE === "1" ? GATE_POOL_WAIT_SECONDS : PLAIN_POOL_WAIT_SECONDS);
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: string): PoolConfig {
   let oppiRootFromEnv = false;
   let oppiRoot = env.OPPI_ROOT ?? "";
@@ -440,7 +454,7 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
     deviceType: env.OPPI_SIM_DEVICE_TYPE ?? profile?.deviceType ?? DEFAULT_DEVICE_TYPE,
     runtime: env.OPPI_SIM_RUNTIME ?? profile?.runtime ?? "",
     runtimePolicy: normalizeRuntimePolicy(env.OPPI_SIM_RUNTIME_POLICY ?? ""),
-    waitSeconds: parsePositiveInt(env.OPPI_SIM_POOL_WAIT ?? "60", "OPPI_SIM_POOL_WAIT", 0),
+    waitSeconds: parsePositiveInt(env.OPPI_SIM_POOL_WAIT ?? defaultWaitSeconds(env), "OPPI_SIM_POOL_WAIT", 0),
     bootTimeout: parsePositiveInt(env.OPPI_SIM_POOL_BOOT_TIMEOUT ?? "120", "OPPI_SIM_POOL_BOOT_TIMEOUT", 1),
     bootRetries: parsePositiveInt(env.OPPI_SIM_POOL_BOOT_RETRIES ?? "1", "OPPI_SIM_POOL_BOOT_RETRIES", 0),
     silenceTimeout: parsePositiveInt(
