@@ -147,6 +147,7 @@ Example:
 - **Server:** On a day the clocks change, a workspace's older history section covers the whole local day. On a 25-hour day such as Sunday, November 1, sessions from its last hour now open in that day's section; before, they were counted there but never shown. On a 23-hour day the section no longer pulls in the first hour of the next day.
 - **Client:** Switching servers from a scrolled **All Sessions** list no longer leaves a blurred band over the new server's first sessions until you open a chat and come back. The new server's list now appears at once instead of animating out of the old one.
 - **Client:** A workspace's recent sessions start at midnight two days before today, as in All Sessions, so each day shows once. Before, the recent list reached back exactly 72 hours, and the day that line fell on showed both as a recent group and as an older **Stopped** section that repeated its rows and counted only part of the day.
+- **Client:** In the file editor, wrapped rows start where their line's text starts: a plain paragraph wraps flush left, code under its own indentation, and a Markdown list, task, or quote item under its text, from the first moment the file opens and with Syntax Highlighting off. Before, every wrapped row hung two columns in.
 
 ### Removed
 

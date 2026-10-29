@@ -7,6 +7,11 @@ import UIKit
 /// for an older generation are dropped. Scrolling past the painted window
 /// paints the new rows. Attribute edits never touch characters, selection, or
 /// undo, and wait while marked (IME) text is open.
+///
+/// It also owns paragraph styles (where a wrapped row starts, see
+/// `CodeEditorWrapIndent`). Those do not depend on Syntax Highlighting: they
+/// are set for the whole buffer when it is restyled, then kept current around
+/// the viewport after edits, whether or not colors are painted.
 @MainActor
 final class CodeEditorHighlighter {
     struct Style {
@@ -26,16 +31,16 @@ final class CodeEditorHighlighter {
         var columnWidth: CGFloat
 
         var base: [NSAttributedString.Key: Any] {
-            [.font: font, .foregroundColor: foreground, .paragraphStyle: paragraphStyle(indentColumns: 0)]
+            [.font: font, .foregroundColor: foreground, .paragraphStyle: paragraphStyle(wrapColumns: 0)]
         }
 
-        /// Tab stops every `tabWidth` columns; a wrapped row hangs two columns
-        /// past its line's own indentation, so it never reads as a new line.
-        func paragraphStyle(indentColumns: Int) -> NSParagraphStyle {
+        /// Tab stops every `tabWidth` columns; wrapped rows start `wrapColumns`
+        /// columns in, where the line's text starts.
+        func paragraphStyle(wrapColumns: Int) -> NSParagraphStyle {
             let style = NSMutableParagraphStyle()
             style.defaultTabInterval = CGFloat(tabWidth) * columnWidth
             style.tabStops = []
-            style.headIndent = CGFloat(indentColumns + 2) * columnWidth
+            style.headIndent = CGFloat(wrapColumns) * columnWidth
             return style
         }
 
@@ -83,6 +88,7 @@ final class CodeEditorHighlighter {
     }
 
     let engine: CodeEditorHighlightEngine
+    private let isMarkdown: Bool
     private weak var textView: CodeEditorTextView?
     private var style: Style
     private var generation = 0
@@ -103,6 +109,7 @@ final class CodeEditorHighlighter {
     init(textView: CodeEditorTextView, grammar: CodeEditorHighlightEngine.Grammar, style: Style, isEnabled: Bool) {
         self.textView = textView
         self.engine = CodeEditorHighlightEngine(grammar: grammar)
+        self.isMarkdown = grammar == .markdown
         self.style = style
         self.isEnabled = isEnabled
     }
@@ -121,7 +128,9 @@ final class CodeEditorHighlighter {
         guard let textView else { return }
         let storage = textView.textStorage
         storage.beginEditing()
-        storage.setAttributes(style.base, range: NSRange(location: 0, length: storage.length))
+        let everything = NSRange(location: 0, length: storage.length)
+        storage.setAttributes(style.base, range: everything)
+        applyParagraphStyles(in: everything, storage: storage)
         storage.endEditing()
         textView.typingAttributes = style.base
         paintedGeneration = -1
@@ -151,7 +160,16 @@ final class CodeEditorHighlighter {
 
     private func pass() async {
         scheduled = nil
-        guard isEnabled, let textView else { return }
+        guard let textView else { return }
+        guard isEnabled else {
+            // No colors, but a line edited since the last pass may need a new wrap indent.
+            if textView.markedTextRange != nil {
+                schedule(after: .milliseconds(200))
+            } else if let window = currentWindow() {
+                applyParagraphStyles(in: window, storage: textView.textStorage)
+            }
+            return
+        }
         if running {
             rerun = true
             return
@@ -188,7 +206,7 @@ final class CodeEditorHighlighter {
         guard window.length > 0 else { return }
         storage.beginEditing()
         storage.setAttributes(style.base, range: window)
-        applyHangingIndents(in: window, storage: storage)
+        applyParagraphStyles(in: window, storage: storage)
         for span in spans {
             let range = NSIntersectionRange(span.range, window)
             guard range.length > 0 else { continue }
@@ -200,34 +218,30 @@ final class CodeEditorHighlighter {
 
     private var paragraphStyles: [Int: NSParagraphStyle] = [:]
 
-    private func applyHangingIndents(in window: NSRange, storage: NSTextStorage) {
+    /// Gives every line in `range` the paragraph style for its wrap indent,
+    /// touching only lines whose style differs.
+    private func applyParagraphStyles(in range: NSRange, storage: NSTextStorage) {
         let text = storage.mutableString
-        var location = window.location
-        while location < NSMaxRange(window) {
+        let end = NSMaxRange(range)
+        var location = range.location
+        storage.beginEditing()
+        while location < end {
             var next = 0
             var contentsEnd = 0
             text.getLineStart(nil, end: &next, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
-            var columns = 0
-            var index = location
-            while index < contentsEnd {
-                let unit = text.character(at: index)
-                if unit == CodeText.space {
-                    columns += 1
-                } else if unit == CodeText.tab {
-                    columns += style.tabWidth - columns % max(1, style.tabWidth)
-                } else {
-                    break
-                }
-                index += 1
-            }
-            if columns > 0 {
-                let paragraph = paragraphStyles[columns] ?? style.paragraphStyle(indentColumns: columns)
-                paragraphStyles[columns] = paragraph
-                storage.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: location, length: next - location))
+            let columns = CodeEditorWrapIndent.columns(
+                in: text, lineStart: location, contentsEnd: contentsEnd, tabWidth: style.tabWidth, markdown: isMarkdown
+            )
+            let wanted = paragraphStyles[columns] ?? style.paragraphStyle(wrapColumns: columns)
+            paragraphStyles[columns] = wanted
+            let current = storage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle
+            if current?.isEqual(wanted) != true {
+                storage.addAttribute(.paragraphStyle, value: wanted, range: NSRange(location: location, length: next - location))
             }
             guard next > location else { break }
             location = next
         }
+        storage.endEditing()
     }
 
     /// Lines around the viewport: a screen of rows above and below it.

@@ -138,6 +138,7 @@
 		101D616AAEB69B4638217DFD /* FreshnessState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9076AE2969F386F75A21C0E8 /* FreshnessState.swift */; };
 		103003F4A8E82A61D09F16E7 /* AppBuildIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D37324FEC45C4C9120B1D4 /* AppBuildIdentity.swift */; };
 		1031406D3334B500752F41FC /* AgentManagementPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B360CC45173A42BF529EC49 /* AgentManagementPresentationTests.swift */; };
+		104117D065CC9D4B40F3A599 /* CodeEditorWrapIndent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C5BA0AB2E98F8916E911E88 /* CodeEditorWrapIndent.swift */; };
 		1060BEFE92E9178A99A4C0BF /* UserFacingErrorText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AE40E89C8600D4F9F9F4082 /* UserFacingErrorText.swift */; };
 		1060C7746ED8018095876373 /* ModelPickerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECE2653B3F241C8B42D6A28C /* ModelPickerViews.swift */; };
 		1083A90B05B115D5BA6F25A7 /* MacCatalogPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 739B94067C52ED759F8D4B63 /* MacCatalogPresentation.swift */; };
@@ -2975,6 +2976,7 @@
 		3B61252888A1F5C917EAC6A0 /* SettingsListViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsListViewController.swift; sourceTree = "<group>"; };
 		3B678D2C7494B1364BEEEC6F /* LiveActivityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityPresentation.swift; sourceTree = "<group>"; };
 		3C15F3473693771B15665D3C /* OrbMetalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbMetalTests.swift; sourceTree = "<group>"; };
+		3C5BA0AB2E98F8916E911E88 /* CodeEditorWrapIndent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorWrapIndent.swift; sourceTree = "<group>"; };
 		3C6B1F28B12C100C592E8B19 /* ANSIParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ANSIParser.swift; sourceTree = "<group>"; };
 		3C70D77F07E2BCC2E53C2B05 /* WriteToolAutoFollowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WriteToolAutoFollowTests.swift; sourceTree = "<group>"; };
 		3C96A4D660582ACAED973BA6 /* TimelineTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineTestSupport.swift; sourceTree = "<group>"; };
@@ -6992,6 +6994,7 @@
 				8A40A5691F3385B8E61EFFD7 /* CodeEditorPreferences.swift */,
 				0A42980E42B86B7A74DC2F09 /* CodeEditorStatusBar.swift */,
 				F9AB4C43F23F298A6638EF30 /* CodeEditorTextView.swift */,
+				3C5BA0AB2E98F8916E911E88 /* CodeEditorWrapIndent.swift */,
 				BD06D367BA2BF53E3832D5EC /* WorkspaceFileDraftStore.swift */,
 				1172D97003D1D8F973A7B60E /* WorkspaceFileEditChrome.swift */,
 				76E5B571EB4BA2F672469DCC /* WorkspaceFileEditorViewController.swift */,
@@ -9919,6 +9922,7 @@
 				7FC82586344951DA8D190CC2 /* CodeEditorPreferences.swift in Sources */,
 				66493634E80E17C822281190 /* CodeEditorStatusBar.swift in Sources */,
 				E245DC8CC8E5F4AABAD40ABB /* CodeEditorTextView.swift in Sources */,
+				104117D065CC9D4B40F3A599 /* CodeEditorWrapIndent.swift in Sources */,
 				7A8D9E2D46ABF67AEDBA2498 /* CodeGutterAlignmentHarnessView.swift in Sources */,
 				FC908EF1357C08436395A1F8 /* CodeTextEditing.swift in Sources */,
 				08B71B833159309A2D9E5F20 /* CollapsedToolTimelineRowContent.swift in Sources */,
