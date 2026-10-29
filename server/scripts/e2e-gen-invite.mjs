@@ -23,8 +23,11 @@ const storage = new Storage(dataDir);
 // The wrapper writes the invite before sim-pool leases a simulator, so the
 // token must outlive the slot wait plus a cold build on a busy shared pool;
 // 10 minutes expired there ("Invite link expired or was already used").
+// A gate lane now queues for a slot for up to OPPI_SIM_POOL_WAIT=1800 s
+// (scripts/batch-gate.ts), then waits for an xcode-build slot, builds, and may
+// first-boot a new simulator: 30 min of slot wait plus a 60 min build budget.
 const invite = generateInvite(storage, () => inviteHost, () => "e2e-server", {
-  pairingTokenTtlMs: 45 * 60_000,
+  pairingTokenTtlMs: 90 * 60_000,
 });
 
 console.log(JSON.stringify({ inviteURL: invite.inviteURL, inviteHost }));

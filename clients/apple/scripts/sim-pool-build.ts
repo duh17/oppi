@@ -17,7 +17,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { flockFd, LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN } from "./sim-pool-lock";
 
@@ -221,13 +221,23 @@ export function checkoutDerivedData(buildBase: string): string {
  *
  * The checkout's one DerivedData (`.build/dd`) carries one stamp: the key of the last build that
  * succeeded there, and a fingerprint of the products it left. A build may be skipped only when
- * the key of the build about to run equals the stamp and the products still match it. The key
- * covers what the build reads: this checkout's HEAD commit, its tracked diff against HEAD (staged
- * and unstaged), the content of every untracked non-ignored file, the ignored `Vendor/*\/BUILD_ID`
- * pins, the Xcode that builds, and the whole xcodebuild invocation (command, flags, build
- * settings, compilation-cache arguments). It spans the whole repository, not just `clients/apple`:
- * build phases and `project.yml` reach `protocol/`, `install.sh`, and the architecture checks.
- * Wrong skips are the failure to avoid, so everything that is unsure rebuilds:
+ * the key of the build about to run equals the stamp and the products still match it.
+ *
+ * The key covers exactly this, nothing implied:
+ *   - the checkout's HEAD commit, its diff against HEAD (staged and unstaged), and the content of
+ *     every untracked non-ignored file, over the whole repository: build phases and `project.yml`
+ *     reach `protocol/`, `install.sh`, and the architecture checks;
+ *   - the gitignored inputs the build reads: every `.xcconfig` reachable from the checkout's
+ *     `clients/apple/*.xcconfig` through `#include`/`#include?` (present or absent, so creating
+ *     `Local.xcconfig` counts), and the `Vendor/*\/BUILD_ID` pins;
+ *   - the toolchain: `DEVELOPER_DIR`, its Xcode `version.plist`, and the allowlisted environment
+ *     variables in BUILD_ENV (the ones xcodebuild, the build phases, and stamp-git-commit.sh read);
+ *   - the whole xcodebuild invocation (command, flags, build settings, compilation-cache arguments).
+ * Not covered: any other environment variable, tools the build phases call (bun, node) and their
+ * versions, and files outside the checkout that are not listed above. An untracked nested git
+ * repository cannot be hashed from git, so a checkout holding one is never keyed.
+ *
+ * Everything that is unsure rebuilds:
  *   - One stamp per DerivedData, not one per invocation: a build of another scheme rewrites the
  *     shared products, so an older stamp would vouch for products it no longer describes.
  *   - The stamp is deleted before any build starts and written only after a build succeeded
@@ -240,9 +250,58 @@ const BUILD_STAMP = "oppi-build-stamp.json";
 
 type BuildStamp = { key: string; products: string };
 
+/** Repository-location variables git reads; stamp-git-commit.sh scrubs the same set (pre-push exports GIT_DIR). */
+const GIT_LOCATION_ENV = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_COMMON_DIR",
+  "GIT_PREFIX",
+  "GIT_NAMESPACE",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
 function gitOutput(root: string, args: string[]): Buffer | undefined {
-  const result = spawnSync("git", ["-C", root, ...args], { maxBuffer: 1 << 30 });
+  const env = { ...process.env };
+  for (const name of GIT_LOCATION_ENV) delete env[name];
+  const result = spawnSync("git", ["-C", root, ...args], { maxBuffer: 1 << 30, env });
   return result.status === 0 ? result.stdout : undefined;
+}
+
+/** Environment variables the build reads: xcodebuild's toolchain selection and stamp-git-commit.sh's checkout root. */
+const BUILD_ENV = ["DEVELOPER_DIR", "TOOLCHAINS", "SDKROOT", "OPPI_REPO_ROOT", "OPPI_TELEMETRY_MODE"];
+
+/**
+ * Every `.xcconfig` the build can read, as `path\0content-or-absent` lines: the ones in `appleDir` plus
+ * whatever they `#include` or `#include?` (relative to the including file), so a missing optional include
+ * such as `Local.xcconfig` is part of the key as "absent".
+ */
+function xcconfigInputs(appleDir: string): string[] {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  const visit = (path: string): void => {
+    if (seen.has(path) || seen.size > 64) return;
+    seen.add(path);
+    let text: string | undefined;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      text = undefined;
+    }
+    lines.push(`${path}\0${text ?? "absent"}`);
+    for (const match of text?.matchAll(/^\s*#include\??\s+"([^"]+)"/gm) ?? []) {
+      visit(resolve(dirname(path), match[1]));
+    }
+  };
+  let roots: string[] = [];
+  try {
+    roots = readdirSync(appleDir).filter((name) => name.endsWith(".xcconfig")).sort();
+  } catch {
+    // No checkout directory: nothing to include.
+  }
+  for (const name of roots) visit(join(appleDir, name));
+  return lines.sort();
 }
 
 /** Hash of the checkout's source state (see above), or undefined when it cannot be determined. */
@@ -257,6 +316,8 @@ export function checkoutSourceState(root: string): string | undefined {
     for (const name of untracked.toString("utf8").split("\0").filter(Boolean).sort()) {
       const path = join(root, name);
       const stat = lstatSync(path);
+      // An untracked nested git repository is listed as a directory; its files are invisible to git here.
+      if (stat.isDirectory()) return undefined;
       hash.update(name).update("\0");
       hash.update(stat.isSymbolicLink() ? `link:${readlinkSync(path)}` : stat.isFile() ? readFileSync(path) : "nonfile");
       hash.update("\0");
@@ -283,7 +344,8 @@ export function buildKey(input: BuildKeyInput): string | undefined {
   const hash = createHash("sha256");
   hash.update(source).update("\0").update(JSON.stringify([input.command, input.argv]));
   const developerDir = input.env.DEVELOPER_DIR ?? "";
-  hash.update("\0").update(developerDir);
+  hash.update("\0").update(JSON.stringify(BUILD_ENV.map((name) => [name, input.env[name] ?? null])));
+  hash.update("\0").update(xcconfigInputs(input.appleDir).join("\n"));
   try {
     // <Xcode>.app/Contents/Developer -> <Xcode>.app/Contents/version.plist
     hash.update(readFileSync(join(developerDir, "..", "version.plist")));

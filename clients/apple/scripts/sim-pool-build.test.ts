@@ -146,6 +146,74 @@ describe("build stamp", () => {
     expect(current(fx)).toBe(false);
   });
 
+  test("a gitignored xcconfig the build includes counts, present or absent", () => {
+    const fx = checkout();
+    writeFileSync(join(fx.root, ".gitignore"), "clients/apple/.build/\nclients/apple/Vendor/\nclients/apple/Local.xcconfig\n");
+    writeFileSync(join(fx.apple, "Base.xcconfig"), '#include? "Local.xcconfig"\n');
+    git(fx.root, "add", ".");
+    git(fx.root, "commit", "-q", "-m", "xcconfig");
+    build(fx);
+    expect(current(fx)).toBe(true);
+    const local = join(fx.apple, "Local.xcconfig");
+    // Creating the optional include changes the build, though git sees nothing.
+    writeFileSync(local, "OPPI_TELEMETRY_MODE = public\n");
+    expect(current(fx)).toBe(false);
+    build(fx);
+    expect(current(fx)).toBe(true);
+    writeFileSync(local, "OPPI_TELEMETRY_MODE = internal\n");
+    expect(current(fx)).toBe(false);
+    build(fx);
+    // A file the include chain reaches counts too, and so does deleting the override again.
+    writeFileSync(join(fx.apple, "Extra.xcconfig"), "FOO = 1\n");
+    writeFileSync(local, '#include "Extra.xcconfig"\n');
+    build(fx);
+    expect(current(fx)).toBe(true);
+    writeFileSync(join(fx.apple, "Extra.xcconfig"), "FOO = 2\n");
+    expect(current(fx)).toBe(false);
+    build(fx);
+    rmSync(local);
+    expect(current(fx)).toBe(false);
+  });
+
+  test("only the environment the build reads is keyed", () => {
+    const fx = checkout();
+    const env = (extra: NodeJS.ProcessEnv) => ({ ...input(fx), env: { DEVELOPER_DIR: "/nonexistent/Xcode.app/Contents/Developer", ...extra } });
+    const base = buildKey(env({}));
+    expect(buildKey(env({ HOME: "/somewhere/else", OPPI_SIM_POOL_WAIT: "5" }))).toBe(base);
+    for (const name of ["TOOLCHAINS", "OPPI_REPO_ROOT", "SDKROOT"]) {
+      expect(buildKey(env({ [name]: "x" }))).not.toBe(base);
+    }
+  });
+
+  test("inherited GIT_* location variables (the pre-push hook exports GIT_DIR) do not redirect the key", () => {
+    const fx = checkout();
+    const other = checkout();
+    writeFileSync(join(other.apple, "Oppi", "A.swift"), "let a = 'other'\n");
+    const expected = buildKey(input(fx));
+    const saved = { dir: process.env.GIT_DIR, tree: process.env.GIT_WORK_TREE, index: process.env.GIT_INDEX_FILE };
+    process.env.GIT_DIR = join(other.root, ".git");
+    process.env.GIT_WORK_TREE = other.root;
+    process.env.GIT_INDEX_FILE = join(other.root, ".git", "index");
+    try {
+      expect(buildKey(input(fx))).toBe(expected);
+    } finally {
+      for (const [name, value] of [["GIT_DIR", saved.dir], ["GIT_WORK_TREE", saved.tree], ["GIT_INDEX_FILE", saved.index]] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
+  test("a checkout holding an untracked nested git repository is never keyed", () => {
+    const fx = checkout();
+    expect(buildKey(input(fx))).toBeDefined();
+    const nested = join(fx.root, "scratch");
+    mkdirSync(nested);
+    git(nested, "init", "-q");
+    git(nested, "commit", "-q", "--allow-empty", "-m", "nested");
+    expect(buildKey(input(fx))).toBeUndefined();
+  });
+
   test("a failed or interrupted build leaves no stamp, and sources edited during the build are not vouched for", () => {
     const fx = checkout();
     build(fx);
