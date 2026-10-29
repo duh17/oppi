@@ -604,6 +604,13 @@ final class OppiApp {
             ? lifecycleSignposter.beginInterval("scene.background")
             : nil
         let shouldReconnect = foregroundReconnectGate.shouldReconnect(for: phase)
+        // Setup retries wait only while the scene is active; going inactive
+        // (Control Center, a sheet) is not a boundary the gate above reconnects on.
+        if phase == .active {
+            coordinator.sceneDidBecomeActive()
+        } else {
+            coordinator.sceneDidResignActive()
+        }
         recordLifecycleStep(phase, "begin", flush: phase == .background)
 
         switch phase {

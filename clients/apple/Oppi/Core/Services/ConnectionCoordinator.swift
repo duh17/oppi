@@ -140,6 +140,9 @@ final class ConnectionCoordinator {
     #endif
 
     private let lanDiscovery: LANDiscovery
+    /// Waits between automatic retries of a first setup that failed retryably.
+    /// Tests replace it to run the backoff on their own clock.
+    var initialSetupRetrySleep: (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     var networkPathType: () -> String = { NetworkPathTelemetry.pathType }
     var initialLANDiscoveryDeadline: ServerConnectionBootstrapDeadlineFactory = { .after(.milliseconds(500)) }
     private var initialLANWaitCompleted: Set<String> = []
@@ -404,6 +407,7 @@ final class ConnectionCoordinator {
                 #if DEBUG
                 _onConnectionPreparedForTesting?(serverId, existing)
                 #endif
+                endInitialSetupRetry(serverId)
                 return existing
             }
             if forceReconfigure || !sameRoute || !existing.hasViableConfiguredTransport {
@@ -424,6 +428,7 @@ final class ConnectionCoordinator {
                     preparationID: preparationID
                 ) else {
                     logger.error("Failed to prepare paired server transport")
+                    noteInitialSetupFailure(existing, serverId: serverId, preparationID: preparationID)
                     return nil
                 }
                 guard isCurrentPreparation(preparationID, serverId: serverId),
@@ -443,6 +448,7 @@ final class ConnectionCoordinator {
             #if DEBUG
             _onConnectionPreparedForTesting?(serverId, existing)
             #endif
+            endInitialSetupRetry(serverId)
             return existing
         }
 
@@ -455,6 +461,7 @@ final class ConnectionCoordinator {
             preparationID: preparationID
         ) else {
             logger.error("Failed to configure connection for \(server.name, privacy: .public)")
+            noteInitialSetupFailure(connection, serverId: serverId, preparationID: preparationID)
             return nil
         }
         guard isCurrentPreparation(preparationID, serverId: serverId) else { return nil }
@@ -471,6 +478,7 @@ final class ConnectionCoordinator {
         _onConnectionPreparedForTesting?(serverId, connection)
         #endif
         connections[serverId] = connection
+        endInitialSetupRetry(serverId)
         logger.warning("Created ready connection for \(server.name, privacy: .public) (\(serverId.prefix(16), privacy: .public))")
         return connection
     }
@@ -721,8 +729,14 @@ final class ConnectionCoordinator {
     /// Transports read `TailnetTransportRoute` only when they build their
     /// URLSession, so rebuild every paired `*.ts.net` server that is not on LAN.
     func handleTailnetRouteChange() async {
-        let serverIds = serverStore.servers
+        let tailnetServers = serverStore.servers
             .filter { ServerTLSTrustPolicy.isTailscaleHostname($0.host) }
+        // A server mid-setup read the old route (or none). Its pass may fail
+        // for that reason, so ask for one more pass after it ends.
+        for server in tailnetServers where preparingServerIds.contains(server.id) {
+            await recoverUnconfiguredServerAfterBoundary(server.id)
+        }
+        let serverIds = tailnetServers
             .filter { !preparingServerIds.contains($0.id) }
             .filter { connections[$0.id]?.needsTailnetRouteRebuild ?? true }
             .map(\.id)
@@ -1137,6 +1151,7 @@ final class ConnectionCoordinator {
         connectionPreparationTasks.removeValue(forKey: id)?.task.cancel()
         preparingServerIds.remove(id)
         retryPreparationAfterBoundaryServerIds.remove(id)
+        endInitialSetupRetry(id)
         // Remove identity before suspension so a re-pair cannot observe or reuse it.
         let removedConnection = connections.removeValue(forKey: id)
         // The call holds the microphone on its own socket; with the server gone there is no
@@ -1221,6 +1236,87 @@ final class ConnectionCoordinator {
             return
         }
         await refreshServer(serverId, force: true)
+    }
+
+    // MARK: - First-setup retry
+
+    /// One server whose first setup failed retryably and has no transport yet.
+    /// `attempt` counts the timer-driven retries already run; `task` is the
+    /// pending wait, nil while the scene is inactive or while a retry runs.
+    private struct InitialSetupRetry {
+        var attempt = 0
+        var task: Task<Void, Never>?
+    }
+
+    private var initialSetupRetries: [String: InitialSetupRetry] = [:]
+    /// Retries run only while the app's scene is active. Starts false; `OppiApp`
+    /// reports each scene phase change.
+    private var sceneIsActive = false
+
+    /// 1, 2, 4, 8, 16 s, then 30 s.
+    nonisolated static func initialSetupRetryDelay(attempt: Int) -> Duration {
+        .seconds(min(30, 1 << min(attempt, 5)))
+    }
+
+    /// The scene is active: resume the waits that going inactive stopped.
+    func sceneDidBecomeActive() {
+        sceneIsActive = true
+        for serverId in initialSetupRetries.keys { armInitialSetupRetry(serverId) }
+    }
+
+    /// The scene is inactive or in the background: stop waiting. The retry keeps
+    /// its place in the backoff and resumes when the scene is active again.
+    func sceneDidResignActive() {
+        sceneIsActive = false
+        for serverId in initialSetupRetries.keys {
+            initialSetupRetries[serverId]?.task?.cancel()
+            initialSetupRetries[serverId]?.task = nil
+        }
+    }
+
+    /// A setup pass for a shell with no transport ended without one. A retryable
+    /// failure (not auth, integrity, or version rejection) arms the backoff.
+    private func noteInitialSetupFailure(
+        _ connection: ServerConnection,
+        serverId: String,
+        preparationID: UUID
+    ) {
+        // A superseded pass says nothing about the server; an established
+        // connection's failed reconfigure is the stream recovery's business.
+        guard isCurrentPreparation(preparationID, serverId: serverId),
+              connection.credentials == nil else { return }
+        guard connection.canAutomaticallyRetryInitialTransport else {
+            endInitialSetupRetry(serverId)
+            return
+        }
+        if initialSetupRetries[serverId] == nil { initialSetupRetries[serverId] = InitialSetupRetry() }
+        armInitialSetupRetry(serverId)
+    }
+
+    private func armInitialSetupRetry(_ serverId: String) {
+        guard sceneIsActive, let retry = initialSetupRetries[serverId], retry.task == nil else { return }
+        let delay = Self.initialSetupRetryDelay(attempt: retry.attempt)
+        initialSetupRetries[serverId]?.task = Task { @MainActor [weak self] in
+            do { try await self?.initialSetupRetrySleep(delay) } catch { return }
+            await self?.runInitialSetupRetry(serverId)
+        }
+    }
+
+    private func runInitialSetupRetry(_ serverId: String) async {
+        guard sceneIsActive, initialSetupRetries[serverId] != nil else { return }
+        guard serverStore.server(for: serverId) != nil,
+              connections[serverId]?.credentials == nil else {
+            endInitialSetupRetry(serverId)
+            return
+        }
+        initialSetupRetries[serverId]?.attempt += 1
+        initialSetupRetries[serverId]?.task = nil
+        // A failed pass arms the next wait from `ensureConnectionReady`.
+        await refreshServer(serverId, force: true)
+    }
+
+    private func endInitialSetupRetry(_ serverId: String) {
+        initialSetupRetries.removeValue(forKey: serverId)?.task?.cancel()
     }
 
     /// User-requested retry may re-attempt a terminal setup failure. Configured

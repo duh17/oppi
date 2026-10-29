@@ -42,6 +42,7 @@ Example:
 
 ### Fixed
 
+- **Client:** A server reached through the in-app Tailscale proxy no longer stays on "Connecting…" after a launch where its first connection attempt failed while the proxy was still starting. The app retries on its own, after 1, 2, 4, 8 seconds and then every 30 seconds while it is open, and stops once connected or when the server rejects the connection.
 - **Server:** `oppi doctor` on Linux no longer aborts with `Command failed: launchctl print …`; it skips the macOS LaunchAgent check. `oppi server` commands on Linux say to run `oppi serve` under systemd or Docker instead of crashing.
 - **Client:** Tapping a notification while another chat is open shows the tapped session instead of an empty timeline.
 
