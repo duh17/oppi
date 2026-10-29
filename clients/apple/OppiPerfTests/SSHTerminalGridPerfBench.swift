@@ -113,6 +113,35 @@ struct SSHTerminalGridPerfBench {
         #expect(!idle.running)
     }
 
+    /// Snapshot cost alone on an iPad / landscape sized grid. 48x40 understates
+    /// what `frame()` costs per cell once the screen is wide: every alternate
+    /// screen rewrites every cell, so each sample rebuilds all rows.
+    @Test func largeGridStyledFrame() throws {
+        let columns = 120
+        let rows = 80
+        let engine = try SSHTerminalEngine(
+            geometry: .init(columns: columns, rows: rows, cellWidth: 8, cellHeight: 17)
+        ) { _ in }
+        let screens = [0, 1].map { Data(Self.styledScreen(seed: $0, columns: columns, rows: rows).utf8) }
+        var frames: [UInt64] = []
+        var rebuilt = Int.max
+        for i in 0..<(2 + 7) {
+            engine.receive(screens[i % 2])
+            let start = DispatchTime.now().uptimeNanoseconds
+            let frame = engine.frame()
+            let elapsed = DispatchTime.now().uptimeNanoseconds &- start
+            if i >= 2 {
+                frames.append(elapsed)
+                rebuilt = min(rebuilt, frame.rebuiltRows.count)
+            }
+        }
+        let median = Self.percentiles(frames).median
+        print("SSH_TERMINAL_AFTER method=frame_only_\(columns)x\(rows) warmup=2 iterations=7 alternate_two_screens configuration=Debug")
+        print("SSH_TERMINAL_AFTER styled_frame_120x80_ms=\(Self.ms(median)) styled_frame_120x80_p95_ms=\(Self.ms(Self.percentiles(frames).p95))")
+        print("METRIC ssh_terminal_styled_frame_120x80_us=\(String(format: "%.1f", Double(median) / 1_000))")
+        #expect(rebuilt == rows, "every sample rebuilds every row")
+    }
+
     /// Kitty graphics on screen: the steady state (no new pixels, same grid),
     /// a history scroll with the images pinned to their rows, and a sub-row
     /// shift. Uploads are counted so a frame that re-copies image pixels would
@@ -491,7 +520,7 @@ struct SSHTerminalGridPerfBench {
         return "\u{1b}[2J\u{1b}[H" + (0..<rows).map { _ in line }.joined(separator: "\r\n")
     }
 
-    private static func styledScreen(seed: Int) -> String {
+    private static func styledScreen(seed: Int, columns: Int = Self.columns, rows: Int = Self.rows) -> String {
         var screen = "\u{1b}[2J\u{1b}[H"
         screen.reserveCapacity(columns * rows * 48)
         for y in 0..<rows {
