@@ -119,12 +119,17 @@ async function listConfiguredHostSkills(
     includeDefaults: false,
   });
 
-  return result.skills.map((skill) =>
-    sdkSkillToInfo(
-      skill,
-      resolved.skills.find((resource) => skillMatchesResource(skill, resource)),
-    ),
-  );
+  // Pi resolves project-scoped entries first, and a toggle writes one, so its
+  // order moves a toggled skill. Precedence is already applied; sort by name
+  // so the list a client shows stays put.
+  return result.skills
+    .map((skill) =>
+      sdkSkillToInfo(
+        skill,
+        resolved.skills.find((resource) => skillMatchesResource(skill, resource)),
+      ),
+    )
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function isWithinDirectory(path: string, baseDir: string): boolean {

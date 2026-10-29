@@ -778,6 +778,72 @@ describe("skills module", () => {
     }
   });
 
+  it("keeps the skill list order when a toggle moves a skill into project settings", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-resource-route-order-"));
+    const cwd = join(root, "workspace");
+    const agentDir = join(root, "agent");
+    mkdirSync(cwd, { recursive: true });
+    for (const name of ["alpha-skill", "bravo-skill", "charlie-skill"]) {
+      const dir = join(agentDir, "skills", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "SKILL.md"),
+        ["---", `name: ${name}`, `description: ${name} description.`, "---", "Body."].join("\n"),
+      );
+    }
+
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    try {
+      const dispatch = createSkillRoutes(
+        { skillRegistry: { list: vi.fn(() => []) } } as unknown as RouteContext,
+        createRouteHelpers(),
+      );
+      const listNames = async (): Promise<string[]> => {
+        const res = makeResponse();
+        await dispatch({
+          method: "GET",
+          path: "/skills",
+          url: new URL(`http://localhost/skills?cwd=${encodeURIComponent(cwd)}`),
+          req: {} as never,
+          res: res as never,
+        });
+        return (JSON.parse(res.body) as { skills: Array<{ name: string }> }).skills.map(
+          (skill) => skill.name,
+        );
+      };
+
+      const before = await listNames();
+      expect(before).toEqual(["alpha-skill", "bravo-skill", "charlie-skill"]);
+
+      for (const enabled of [false, true]) {
+        const toggleRes = makeResponse();
+        await dispatch({
+          method: "POST",
+          path: "/pi/resources/enabled",
+          url: new URL("http://localhost/pi/resources/enabled"),
+          req: makeRequest({
+            cwd,
+            type: "skills",
+            path: join(agentDir, "skills", "charlie-skill"),
+            enabled,
+          }) as never,
+          res: toggleRes as never,
+        });
+        expect(toggleRes.statusCode).toBe(200);
+        expect(await listNames()).toEqual(before);
+      }
+    } finally {
+      if (previousAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses workspace scope when toggling and reloading empty-folder sandbox skills", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-resource-route-sandbox-scope-"));
     const cwd = join(root, "sandbox", "sandbox-workspace");
