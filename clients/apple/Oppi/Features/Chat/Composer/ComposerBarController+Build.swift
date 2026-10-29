@@ -40,6 +40,7 @@ extension ComposerBarController {
         let textContainer = UIView()
         placeholderLabel.numberOfLines = 0
         placeholderLabel.font = UIFont.preferredFont(forTextStyle: .body)
+        placeholderLabel.adjustsFontForContentSizeCategory = true
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         textView.translatesAutoresizingMaskIntoConstraints = false
         textContainer.addSubview(placeholderLabel)

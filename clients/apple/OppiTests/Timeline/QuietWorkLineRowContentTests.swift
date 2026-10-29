@@ -320,6 +320,46 @@ struct QuietWorkLineRowContentTests {
         }
     }
 
+    /// Stacked, a chip with no detail line ends under its summary, with no gap for the hidden label.
+    @Test func stackedChipWithoutDetailEndsUnderItsSummary() async throws {
+        let workLine = makeWorkLine(buckets: [.init(kind: .tooling, count: 2)])
+        #expect(workLine.durationString(now: Date()) == nil)
+        let view = QuietWorkLineTimelineRowContentView(
+            configuration: QuietWorkLineTimelineRowConfiguration(workLine: workLine, chromeStyle: .standard)
+        )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 900)
+        let host = UIViewController()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        host.view.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: host.view.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: host.view.trailingAnchor),
+            view.topAnchor.constraint(equalTo: host.view.topAnchor),
+        ])
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            host.traitOverrides.remove(UITraitPreferredContentSizeCategory.self)
+            hideTestWindow(window)
+            window.rootViewController = nil
+        }
+        host.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        let summary = try #require(summaryLabel(in: view))
+        let detail = try #require(durationLabel(in: view))
+        for _ in 0..<150 {
+            view.layoutIfNeeded()
+            if summary.numberOfLines == 0 { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        view.layoutIfNeeded()
+        #expect(detail.isHidden)
+        let chip = try #require(chipView(in: view)).frame
+        // The summary's frame ends one stacked padding (10 pt) above the chip's bottom edge.
+        #expect(abs(chip.maxY - summary.frame.maxY - 10) < 1, "gap under the summary: \(chip.maxY - summary.frame.maxY)")
+    }
+
     /// A timeline cell sizes itself from this view. At an accessibility size its
     /// text must make the chip taller, not spill out of a 44 pt one.
     @Test func chipGrowsAroundItsTextAtAccessibilitySizes() async throws {

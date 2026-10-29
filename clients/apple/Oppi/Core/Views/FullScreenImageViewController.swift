@@ -278,7 +278,7 @@ final class FullScreenImageViewController: UIViewController {
         // Remove existing feedback if any.
         savedFeedbackLabel?.removeFromSuperview()
 
-        let label = UILabel()
+        let label = InsetFeedbackLabel()
         label.text = "Saved"
         label.font = AppFont.systemFeedbackMedium
         label.adjustsFontForContentSizeCategory = true
@@ -303,7 +303,7 @@ final class FullScreenImageViewController: UIViewController {
                     + FullScreenFloatingControlChrome.controlSize
                     + 8)
             ),
-            // 80 x 32 at the standard text size; the label grows with its text.
+            // 80 x 32 at the standard text size; the label grows with its text and insets.
             label.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
             label.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
             label.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -32),
@@ -500,5 +500,27 @@ extension FullScreenImageViewController {
             presenter = presented
         }
         present(image: image, from: presenter)
+    }
+}
+
+/// A label that pads its text, so a pill drawn from it keeps room around the text at any size.
+private final class InsetFeedbackLabel: UILabel {
+    private let insets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
+
+    override func drawText(in rect: CGRect) {
+        super.drawText(in: rect.inset(by: insets))
+    }
+
+    override func textRect(forBounds bounds: CGRect, limitedToNumberOfLines numberOfLines: Int) -> CGRect {
+        let inner = super.textRect(forBounds: bounds.inset(by: insets), limitedToNumberOfLines: numberOfLines)
+        return CGRect(
+            x: inner.minX - insets.left, y: inner.minY - insets.top,
+            width: inner.width + insets.left + insets.right, height: inner.height + insets.top + insets.bottom
+        )
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        return CGSize(width: size.width + insets.left + insets.right, height: size.height + insets.top + insets.bottom)
     }
 }

@@ -246,9 +246,9 @@ enum UIValidateDump {
     /// anyway. Only a static text inside a row of that list whose label is the row's detail is waived.
     ///
     /// Two settings previews draw real app text the audit misreads (`SampledPreview`): Voice's
-    /// mic mark, which scales with a cap inside its disc, and Text's code sample, which is
-    /// fixed-size on purpose. The audit
-    /// finds their text by looking at the screen, so it often reports `dynamicType`
+    /// mic mark, which scales but stops at half its disc (the audit calls any capped font
+    /// "partially unsupported"), and Text's code sample, which is fixed-size on purpose.
+    /// The audit finds their text by looking at the screen, so it often reports `dynamicType`
     /// or `elementDetection` without an element. Those two types are waived on a page
     /// only while its preview is on screen. An issue that names an element is waived
     /// only when the element sits inside the preview's frame; an element-less one is
@@ -300,10 +300,9 @@ enum UIValidateDump {
         static let all = [
             SampledPreview(
                 identifier: "settings.voice.micPreview",
-                reason: "the mic's \"EN\" grows with Dynamic Type up to half the 44 pt disc "
-                    + "(MicButtonChromeView.languageMarkFont: a scaled system font with a cap, exact at the standard "
-                    + "size). The audit flags it at the standard size only and finds nothing at AX5; the row's label "
-                    + "names the preview"
+                reason: "the mic's \"EN\" grows with Dynamic Type but stops at half the 44 pt disc, so it stays inside it "
+                    + "(MicButtonChromeView.languageMarkFont); the audit reports a capped font as partially unsupported. "
+                    + "Without the cap it reports textClipped instead; the row's label names the preview"
             ),
             SampledPreview(
                 identifier: "settings.text.preview.code",

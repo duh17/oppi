@@ -38,7 +38,7 @@ struct SettingsKitTests {
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
         window.rootViewController = page
         window.makeKeyAndVisible()
-        defer { window.isHidden = true; window.rootViewController = nil }
+        defer { hideTestWindow(window); window.rootViewController = nil }
 
         var footers: [String] = []
         for _ in 0..<100 {
@@ -177,7 +177,12 @@ extension SettingsKitTests {
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 3600)
         window.rootViewController = page
         window.makeKeyAndVisible()
-        defer { window.isHidden = true; window.rootViewController = nil }
+        // The AX5 override must not outlive the test: a later test's page measures at it.
+        defer {
+            page.traitOverrides.remove(UITraitPreferredContentSizeCategory.self)
+            hideTestWindow(window)
+            window.rootViewController = nil
+        }
         page.traitOverrides.preferredContentSizeCategory = .large
 
         let rows = KitRowsPage.Row.allCases

@@ -59,6 +59,10 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     private var conversationConstraints: [NSLayoutConstraint] = []
     private var standardStackedConstraints: [NSLayoutConstraint] = []
     private var conversationStackedConstraints: [NSLayoutConstraint] = []
+    private var stackedBottomWithDetail: NSLayoutConstraint?
+    private var stackedBottomWithoutDetail: NSLayoutConstraint?
+    /// The constraint set in force; `applyChromeLayout` swaps sets only when this changes.
+    private var appliedLayout: ChromeLayout?
     private var currentConfiguration: QuietWorkLineTimelineRowConfiguration
     nonisolated(unsafe) private var durationTimer: Timer?
     private var durationStartedAt: Date?
@@ -107,10 +111,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         summaryLabel.adjustsFontForContentSizeCategory = true
         summaryLabel.adjustsFontSizeToFitWidth = true
         summaryLabel.minimumScaleFactor = 0.75
-        let baseSize = UIFont.preferredFont(forTextStyle: .subheadline).pointSize
-        summaryLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
-            for: .monospacedDigitSystemFont(ofSize: baseSize, weight: .semibold)
-        )
+        summaryLabel.font = Self.font(weight: .semibold, compatibleWith: nil)
         summaryLabel.lineBreakMode = .byTruncatingTail
         durationLabel.isUserInteractionEnabled = false
         durationLabel.numberOfLines = 1
@@ -200,8 +201,11 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
             summaryLabel.topAnchor.constraint(equalTo: chipView.topAnchor, constant: Self.stackedVerticalPadding),
             durationLabel.leadingAnchor.constraint(equalTo: summaryLabel.leadingAnchor),
             durationLabel.topAnchor.constraint(equalTo: summaryLabel.bottomAnchor, constant: 2),
-            durationLabel.bottomAnchor.constraint(equalTo: chipView.bottomAnchor, constant: -Self.stackedVerticalPadding),
         ]
+        // The chip ends under the detail line when there is one, else under the summary:
+        // a hidden detail label leaves no gap. `syncStackedBottom` picks.
+        stackedBottomWithDetail = durationLabel.bottomAnchor.constraint(equalTo: chipView.bottomAnchor, constant: -Self.stackedVerticalPadding)
+        stackedBottomWithoutDetail = summaryLabel.bottomAnchor.constraint(equalTo: chipView.bottomAnchor, constant: -Self.stackedVerticalPadding)
         standardStackedConstraints = stripEdges + stackedText + [
             summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: chipView.trailingAnchor, constant: -stackedPadding),
             durationLabel.trailingAnchor.constraint(lessThanOrEqualTo: chipView.trailingAnchor, constant: -stackedPadding),
@@ -226,18 +230,45 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         traitCollection.preferredContentSizeCategory.isAccessibilityCategory
     }
 
+    private struct ChromeLayout: Equatable {
+        let isConversation: Bool
+        let isStacked: Bool
+
+        func constraints(in view: QuietWorkLineTimelineRowContentView) -> [NSLayoutConstraint] {
+            switch (isConversation, isStacked) {
+            case (false, false): view.standardConstraints
+            case (true, false): view.conversationConstraints
+            case (false, true): view.standardStackedConstraints
+            case (true, true): view.conversationStackedConstraints
+            }
+        }
+    }
+
+    /// The row's text font: the subheadline's standard-size base, scaled once.
+    /// `preferredFont(...).pointSize` is already scaled at an accessibility size,
+    /// so the base comes from the standard size instead.
+    private static func font(weight: UIFont.Weight, compatibleWith traits: UITraitCollection?) -> UIFont {
+        let base = UIFont.preferredFont(
+            forTextStyle: .subheadline,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: .large)
+        ).pointSize
+        return UIFontMetrics(forTextStyle: .subheadline).scaledFont(
+            for: .monospacedDigitSystemFont(ofSize: base, weight: weight),
+            compatibleWith: traits
+        )
+    }
+
     private func applyChromeLayout(_ chromeStyle: ChatTimelineChromeStyle) {
         let isConversation = chromeStyle == .conversation
-        NSLayoutConstraint.deactivate(
-            standardConstraints + conversationConstraints + standardStackedConstraints + conversationStackedConstraints
-        )
-        let active = switch (isConversation, isStacked) {
-        case (false, false): standardConstraints
-        case (true, false): conversationConstraints
-        case (false, true): standardStackedConstraints
-        case (true, true): conversationStackedConstraints
+        // A highlight or stream update reapplies the same layout: touching constraints
+        // there would force the timeline cell to size itself again.
+        let layout = ChromeLayout(isConversation: isConversation, isStacked: isStacked)
+        if layout != appliedLayout {
+            if let appliedLayout { NSLayoutConstraint.deactivate(appliedLayout.constraints(in: self)) }
+            NSLayoutConstraint.activate(layout.constraints(in: self))
+            appliedLayout = layout
         }
-        NSLayoutConstraint.activate(active)
+        syncStackedBottom()
         chevronView.isHidden = !isConversation
         // Standard strips truncate a long bucket summary; the pill's text is
         // short and must stay whole. At accessibility sizes both wrap instead.
@@ -245,14 +276,19 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         summaryLabel.numberOfLines = isStacked ? 0 : 1
         durationLabel.numberOfLines = isStacked ? 0 : 1
         durationLabel.textAlignment = isConversation || isStacked ? .left : .right
-        let baseSize = UIFont.preferredFont(forTextStyle: .subheadline).pointSize
-        let font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
-            for: .monospacedDigitSystemFont(ofSize: baseSize, weight: isConversation ? .regular : .semibold)
-        )
+        let font = Self.font(weight: isConversation ? .regular : .semibold, compatibleWith: traitCollection)
         if summaryLabel.font != font {
             summaryLabel.font = font
             lastSummaryIdentity = nil
         }
+    }
+
+    /// Stacked, the chip's bottom edge follows the detail line while it shows.
+    private func syncStackedBottom() {
+        let stacked = appliedLayout?.isStacked == true
+        let showsDetail = !durationLabel.isHidden
+        stackedBottomWithDetail?.isActive = stacked && showsDetail
+        stackedBottomWithoutDetail?.isActive = stacked && !showsDetail
     }
 
     private func apply(configuration: QuietWorkLineTimelineRowConfiguration) {
@@ -317,6 +353,7 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         case .conversation: durationLabel.text = workLine.conversationDetail(now: now)
         }
         durationLabel.isHidden = durationLabel.text == nil
+        syncStackedBottom()
         button.accessibilityLabel = Self.accessibilitySummary(
             for: workLine,
             chromeStyle: currentConfiguration.chromeStyle,

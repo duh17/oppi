@@ -1993,6 +1993,8 @@ private func showCopiedOverlay(on view: UIView) {
     NSLayoutConstraint.activate([
         pill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
         pill.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        // A one-line block is narrow: the pill stays inside it.
+        pill.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor),
     ])
     pill.alpha = 0
     pill.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
@@ -2024,7 +2026,8 @@ private final class CopiedPillView: UIView {
 
         let label = UILabel()
         label.text = "Copied"
-        label.font = AppFont.systemFeedback
+        // Capped: a short, transient pill over a block that may be one line tall.
+        label.font = AppFont.scaledSystem(13, .semibold, relativeTo: .footnote, maximumPointSize: 22)
         label.textColor = UIColor(palette.fg)
         label.translatesAutoresizingMaskIntoConstraints = false
 

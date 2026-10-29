@@ -29,8 +29,10 @@ struct ComposerBarTests {
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer { host.traitOverrides.remove(UITraitPreferredContentSizeCategory.self); hideTestWindow(window); window.rootViewController = nil }
-        let mark = try #require(Mirror(reflecting: chrome).children.first { $0.label == "textLabel" }?.value as? UILabel)
-        #expect(mark.text == "EN")
+        func labels(in view: UIView) -> [UILabel] {
+            (view as? UILabel).map { [$0] } ?? view.subviews.flatMap(labels)
+        }
+        let mark = try #require(labels(in: chrome).first { $0.text == "EN" })
 
         // A trait change reaches the view on the pass after it is set.
         func settle(_ category: UIContentSizeCategory, until done: () -> Bool) async {
@@ -41,13 +43,44 @@ struct ComposerBarTests {
                 try? await Task.sleep(for: .milliseconds(20))
             }
         }
-        await settle(.large) { abs(mark.font.pointSize - 44 * 0.4) < 0.01 }
+        await settle(.large) { abs(mark.font.pointSize - 44 * 0.4) < 0.5 }
         let standard = mark.font.pointSize
-        #expect(abs(standard - 44 * 0.4) < 0.01, "the mark changed at the standard size: \(standard)")
+        // UIKit rounds a scaled size to the nearest point: 17.6 reads 18.
+        #expect(abs(standard - 44 * 0.4) < 0.5, "the mark changed at the standard size: \(standard)")
 
         await settle(.accessibilityExtraExtraExtraLarge) { mark.font.pointSize > standard }
         #expect(mark.font.pointSize > standard, "the mark stayed \(mark.font.pointSize) pt at AX5")
         #expect(mark.font.pointSize <= 44 * 0.5 + 0.01, "the mark outgrew the disc: \(mark.font.pointSize)")
+    }
+
+    @Test("The composer's placeholder and Live Voice status follow the text size")
+    func placeholderFollowsTheTextSize() async throws {
+        let controller = ComposerBarController()
+        controller.host = ComposerBarTestHost()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer {
+            controller.traitOverrides.remove(UITraitPreferredContentSizeCategory.self)
+            hideTestWindow(window)
+            window.rootViewController = nil
+        }
+        controller.apply()
+        // A label takes a new text size on the pass after the trait changes.
+        func settle(_ category: UIContentSizeCategory, until done: () -> Bool) async {
+            controller.traitOverrides.preferredContentSizeCategory = category
+            for _ in 0..<150 {
+                controller.view.layoutIfNeeded()
+                if done() { return }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+        let label = controller.placeholderLabel
+        await settle(.large) { label.font.pointSize == 17 }
+        let standard = label.font.pointSize
+        #expect(standard == 17)
+        await settle(.accessibilityExtraExtraExtraLarge) { label.font.pointSize > standard * 2 }
+        #expect(label.font.pointSize > standard * 2, "the placeholder stayed \(label.font.pointSize) pt at AX5")
     }
 
     @Test("Live Voice entry ends a recording or preparing dictation take first")

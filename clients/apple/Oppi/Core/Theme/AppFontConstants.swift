@@ -90,14 +90,18 @@ enum AppFont {
     static var systemFeedbackMedium: UIFont { scaledSystem(14, .medium, relativeTo: .footnote) }
 
     /// The system font at `size` (its size at the standard text size), scaled along
-    /// `style`'s curve. Safe off the main actor.
+    /// `style`'s curve and held at `maximumPointSize` when given. Safe off the main actor.
     static func scaledSystem(
         _ size: CGFloat,
         _ weight: UIFont.Weight,
         relativeTo style: UIFont.TextStyle,
+        maximumPointSize: CGFloat? = nil,
         compatibleWith traits: UITraitCollection? = nil
     ) -> UIFont {
-        UIFontMetrics(forTextStyle: style).scaledFont(for: .systemFont(ofSize: size, weight: weight), compatibleWith: traits)
+        let base = UIFont.systemFont(ofSize: size, weight: weight)
+        let metrics = UIFontMetrics(forTextStyle: style)
+        guard let maximumPointSize else { return metrics.scaledFont(for: base, compatibleWith: traits) }
+        return metrics.scaledFont(for: base, maximumPointSize: maximumPointSize, compatibleWith: traits)
     }
 
     // MARK: - Rebuild
