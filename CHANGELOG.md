@@ -149,6 +149,7 @@ Example:
 - **Client:** A workspace's recent sessions start at midnight two days before today, as in All Sessions, so each day shows once. Before, the recent list reached back exactly 72 hours, and the day that line fell on showed both as a recent group and as an older **Stopped** section that repeated its rows and counted only part of the day.
 - **Client:** In the file editor, wrapped rows start where their line's text starts: a plain paragraph wraps flush left, code under its own indentation, and a Markdown list, task, or quote item under its text, from the first moment the file opens and with Syntax Highlighting off. Before, every wrapped row hung two columns in.
 - **Client:** In the file editor, line numbers sit on the first row of their line when lines wrap, including after a jump or a scroll, and a long wrapped paragraph keeps its number at the top of the screen instead of leaving the gutter empty.
+- **Client:** In the Markdown editor, lines inside a fenced code block (``` or ~~~) wrap as code, not as list or quote items, and a wrapped line's indent follows your typing at once, with or without Syntax Highlighting.
 
 ### Removed
 

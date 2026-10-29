@@ -448,6 +448,74 @@ struct CodeEditorWrapAndGutterTests {
         }
     }
 
+    // MARK: - Fenced code, and styles that are current at once
+
+    private static let fencedMarkdown = [
+        ("- Real bullet before the fence long enough to wrap onto a second row on a phone.", 2),
+        ("", 0),
+        ("```text", 0),
+        ("- Looks like a bullet inside a fence long enough to wrap onto a second row, yes.", 0),
+        ("1. Looks numbered inside a fence long enough to wrap onto a second row, surely.", 0),
+        ("> Looks like a quote inside a fence long enough to wrap onto a second row, ok.", 0),
+        ("```", 0),
+        ("", 0),
+        ("- Real bullet after the fence long enough to wrap onto a second row on a phone.", 2),
+        ("", 0),
+        ("~~~", 0),
+        ("- Tilde fenced bullet long enough to wrap onto a second row on a phone screen.", 0),
+        ("~~~", 0),
+    ]
+
+    @Test func linesInsideFencesWrapAsCodeAndOutsideTheyStillHangUnderTheirItem() throws {
+        let text = Self.fencedMarkdown.map(\.0).joined(separator: "\n")
+        let (controller, window) = try makeEditor(path: "notes.md", text: text)
+        defer { hideTestWindow(window) }
+        for (index, (line, prefix)) in Self.fencedMarkdown.enumerated() where line.count > 20 {
+            try expectWrappedRowStarts(
+                controller.textView, lineStart: offset(ofLine: index, in: text), textAfter: prefix, "fenced markdown line \(index + 1)"
+            )
+        }
+    }
+
+    /// Opening a fence turns the list items after it into code; deleting it
+    /// turns them back, with no pass to wait for.
+    @Test func openingAndClosingAFenceRestylesTheLinesBelowAtOnce() throws {
+        let item = "- Bullet long enough to wrap onto a second row on a phone screen, surely."
+        let text = [item, item, item].joined(separator: "\n")
+        let (controller, window) = try makeEditor(path: "notes.md", text: text)
+        defer { hideTestWindow(window) }
+        let textView = controller.textView
+        func expectItems(hang: Int, _ label: String) throws {
+            window.layoutIfNeeded()
+            for line in 0..<3 {
+                let start = textView.text.isEmpty ? 0 : lineStarts(of: textView.text)[line + (textView.text.hasPrefix("```") ? 1 : 0)]
+                try expectWrappedRowStarts(textView, lineStart: start, textAfter: hang, "\(label), item \(line + 1)")
+            }
+        }
+        try expectItems(hang: 2, "no fence")
+        let start = try #require(textView.position(from: textView.beginningOfDocument, offset: 0))
+        textView.replace(try #require(textView.textRange(from: start, to: start)), withText: "```\n")
+        try expectItems(hang: 0, "fence opened")
+        let end = try #require(textView.position(from: textView.beginningOfDocument, offset: 4))
+        textView.replace(try #require(textView.textRange(from: textView.beginningOfDocument, to: end)), withText: "")
+        try expectItems(hang: 2, "fence deleted")
+    }
+
+    /// With Syntax Highlighting on, an indent typed into a flush line wraps
+    /// under it as soon as the text lays out; the color pass is not involved.
+    @Test func anIndentTypedWithHighlightingOnWrapsAtOnce() throws {
+        let long = "let value = compute(argument, anotherArgument, yetAnotherArgument, finalArgument)"
+        let text = ["func run() {", long, "}"].joined(separator: "\n")
+        let (controller, window) = try makeEditor(path: "run.swift", text: text, highlightsSyntax: true)
+        defer { hideTestWindow(window) }
+        let textView = controller.textView
+        let start = offset(ofLine: 1, in: text)
+        let position = try #require(textView.position(from: textView.beginningOfDocument, offset: start))
+        textView.replace(try #require(textView.textRange(from: position, to: position)), withText: "    ")
+        window.layoutIfNeeded()
+        try expectWrappedRowStarts(textView, lineStart: start, textAfter: 4, "indented line, no pass yet")
+    }
+
     // MARK: - Indent changes away from the viewport, deep indents
 
     /// Replace All through the text input indents every line; the lines far

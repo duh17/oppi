@@ -8,11 +8,9 @@ import UIKit
 /// paints the new rows. Attribute edits never touch characters, selection, or
 /// undo, and wait while marked (IME) text is open.
 ///
-/// It also owns paragraph styles (where a wrapped row starts, see
-/// `CodeEditorWrapIndent`). Those do not depend on Syntax Highlighting: they
-/// are set for the whole buffer when it is restyled, then kept current around
-/// the viewport after edits and as the viewport moves, whether or not colors
-/// are painted.
+/// Where a wrapped row starts is not decided here: the storage holds one
+/// default paragraph style for the buffer, and `CodeEditorParagraphStyler`
+/// gives a paragraph that needs a hang its own as TextKit builds it.
 @MainActor
 final class CodeEditorHighlighter {
     struct Style {
@@ -32,17 +30,11 @@ final class CodeEditorHighlighter {
         var columnWidth: CGFloat
 
         var base: [NSAttributedString.Key: Any] {
-            [.font: font, .foregroundColor: foreground, .paragraphStyle: paragraphStyle(wrapColumns: 0)]
-        }
-
-        /// Tab stops every `tabWidth` columns; wrapped rows start `wrapColumns`
-        /// columns in, where the line's text starts.
-        func paragraphStyle(wrapColumns: Int) -> NSParagraphStyle {
-            let style = NSMutableParagraphStyle()
-            style.defaultTabInterval = CGFloat(tabWidth) * columnWidth
-            style.tabStops = []
-            style.headIndent = CGFloat(wrapColumns) * columnWidth
-            return style
+            [
+                .font: font,
+                .foregroundColor: foreground,
+                .paragraphStyle: CodeEditorParagraphStyler.paragraphStyle(columns: 0, tabWidth: tabWidth, columnWidth: columnWidth),
+            ]
         }
 
         @MainActor
@@ -89,56 +81,15 @@ final class CodeEditorHighlighter {
     }
 
     let engine: CodeEditorHighlightEngine
-    private let isMarkdown: Bool
     private weak var textView: CodeEditorTextView?
     private var style: Style
     private var generation = 0
     private var paintedGeneration = -1
     private var paintedWindow = NSRange(location: 0, length: 0)
-    /// With colors off: the generation and range whose paragraph styles are
-    /// known current. An edit outside the range (Replace All) leaves lines
-    /// there stale until the viewport reaches them.
-    private var styledGeneration = -1
-    private var styledWindow = NSRange(location: 0, length: 0)
     private var scheduled: Task<Void, Never>?
     private var running = false
     /// A pass was asked for while one was parsing; run again when it ends.
     private var rerun = false
-
-    /// Width of the wrapped text area in points; nil when lines do not wrap.
-    /// Wrapped rows never start deeper than half of it, so a deeply indented
-    /// line still has room for text.
-    var wrapWidth: CGFloat? {
-        didSet {
-            guard !awaitsWrapWidth, wrapCap(for: oldValue) != wrapCap(for: wrapWidth) else { return }
-            // A resize drag reports a width per frame: restyle once it settles.
-            capTask?.cancel()
-            capTask = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(150))
-                guard !Task.isCancelled, let self, let textView, textView.markedTextRange == nil else { return }
-                let storage = textView.textStorage
-                applyParagraphStyles(in: NSRange(location: 0, length: storage.length), storage: storage)
-            }
-        }
-    }
-
-    /// The first restyle waits for the wrap width, which is known at the first
-    /// layout, so opening a file styles its buffer once.
-    private var awaitsWrapWidth = true
-    private var capTask: Task<Void, Never>?
-
-    /// The wrap width is known: style the buffer for the first time.
-    func beginStyling(wrapWidth: CGFloat?) {
-        guard awaitsWrapWidth else { return }
-        self.wrapWidth = wrapWidth
-        awaitsWrapWidth = false
-        restyle(style)
-    }
-
-    private func wrapCap(for width: CGFloat?) -> Int {
-        guard let width, style.columnWidth > 0 else { return .max }
-        return max(2, Int(width / style.columnWidth) / 2)
-    }
 
     var isEnabled: Bool {
         didSet {
@@ -150,21 +101,17 @@ final class CodeEditorHighlighter {
     init(textView: CodeEditorTextView, grammar: CodeEditorHighlightEngine.Grammar, style: Style, isEnabled: Bool) {
         self.textView = textView
         self.engine = CodeEditorHighlightEngine(grammar: grammar)
-        self.isMarkdown = grammar == .markdown
         self.style = style
         self.isEnabled = isEnabled
     }
 
     deinit {
         scheduled?.cancel()
-        capTask?.cancel()
     }
 
     /// Theme or font changed: reset every run to the base style, then repaint.
     func restyle(_ style: Style) {
         self.style = style
-        paragraphStyles = [:]
-        guard !awaitsWrapWidth else { return }
         // New text (Use Disk Version) or new colors: a pass already parsing
         // must not paint its now-stale spans.
         generation += 1
@@ -173,10 +120,7 @@ final class CodeEditorHighlighter {
         storage.beginEditing()
         let everything = NSRange(location: 0, length: storage.length)
         storage.setAttributes(style.base, range: everything)
-        applyParagraphStyles(in: everything, storage: storage)
         storage.endEditing()
-        styledGeneration = generation
-        styledWindow = everything
         textView.typingAttributes = style.base
         paintedGeneration = -1
         schedule(after: .zero)
@@ -189,15 +133,7 @@ final class CodeEditorHighlighter {
     }
 
     func viewportDidChange() {
-        guard !awaitsWrapWidth, let visible = viewportRange() else { return }
-        guard isEnabled else {
-            // Not from inside the scroll callback: TextKit moves the offset
-            // while it lays out, and an attribute edit there restarts it.
-            let styled = styledGeneration == generation && NSIntersectionRange(visible, styledWindow) == visible
-            if !styled, scheduled == nil { schedule(after: .zero) }
-            return
-        }
-        guard let window = window(around: visible) else { return }
+        guard isEnabled, let visible = viewportRange(), let window = window(around: visible) else { return }
         if paintedGeneration == generation, NSIntersectionRange(window, paintedWindow) == window { return }
         if scheduled == nil { schedule(after: .zero) }
     }
@@ -213,16 +149,7 @@ final class CodeEditorHighlighter {
 
     private func pass() async {
         scheduled = nil
-        guard let textView, !awaitsWrapWidth else { return }
-        guard isEnabled else {
-            // No colors, but a line edited since the last pass may need a new wrap indent.
-            if textView.markedTextRange != nil {
-                schedule(after: .milliseconds(200))
-            } else if let window = currentWindow() {
-                styleParagraphs(in: window)
-            }
-            return
-        }
+        guard isEnabled, let textView else { return }
         if running {
             rerun = true
             return
@@ -259,49 +186,11 @@ final class CodeEditorHighlighter {
         guard window.length > 0 else { return }
         storage.beginEditing()
         storage.setAttributes(style.base, range: window)
-        applyParagraphStyles(in: window, storage: storage)
         for span in spans {
             let range = NSIntersectionRange(span.range, window)
             guard range.length > 0 else { continue }
             let attributes = style.attributes(for: span.style)
             if !attributes.isEmpty { storage.addAttributes(attributes, range: range) }
-        }
-        storage.endEditing()
-    }
-
-    private var paragraphStyles: [Int: NSParagraphStyle] = [:]
-
-    /// Colors off: brings the paragraph styles around the viewport up to date.
-    private func styleParagraphs(in window: NSRange) {
-        guard let textView, textView.markedTextRange == nil else { return }
-        applyParagraphStyles(in: window, storage: textView.textStorage)
-        styledGeneration = generation
-        styledWindow = window
-    }
-
-    /// Gives every line in `range` the paragraph style for its wrap indent,
-    /// touching only lines whose style differs.
-    private func applyParagraphStyles(in range: NSRange, storage: NSTextStorage) {
-        let text = storage.mutableString
-        let end = NSMaxRange(range)
-        let cap = wrapCap(for: wrapWidth)
-        var location = range.location
-        storage.beginEditing()
-        while location < end {
-            var next = 0
-            var contentsEnd = 0
-            text.getLineStart(nil, end: &next, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
-            let columns = min(cap, CodeEditorWrapIndent.columns(
-                in: text, lineStart: location, contentsEnd: contentsEnd, tabWidth: style.tabWidth, markdown: isMarkdown
-            ))
-            let wanted = paragraphStyles[columns] ?? style.paragraphStyle(wrapColumns: columns)
-            paragraphStyles[columns] = wanted
-            let current = storage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle
-            if current?.isEqual(wanted) != true {
-                storage.addAttribute(.paragraphStyle, value: wanted, range: NSRange(location: location, length: next - location))
-            }
-            guard next > location else { break }
-            location = next
         }
         storage.endEditing()
     }

@@ -143,6 +143,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     private let onDone: () -> Void
     private let makePreview: (String) -> UIViewController
     private var highlighter: CodeEditorHighlighter?
+    private var paragraphStyler: CodeEditorParagraphStyler?
     private var previewController: UIViewController?
     private var appliedThemeID: ThemeID
     private var detectedIndentation: CodeIndentation?
@@ -195,6 +196,13 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
 
     private var editorFont: UIFont {
         AppFont.monoEditor
+    }
+
+    /// Colors, fonts, and paragraph metrics for the current theme, font, and tab width.
+    private func restyleBuffer() {
+        let style = highlightStyle
+        paragraphStyler?.update(columnWidth: style.columnWidth, tabWidth: style.tabWidth)
+        highlighter?.restyle(style)
     }
 
     private var highlightStyle: CodeEditorHighlighter.Style {
@@ -253,7 +261,13 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
             style: highlightStyle,
             isEnabled: preferences.highlightsSyntax
         )
-        textView.onWrapWidthChange = { [weak self] width in self?.highlighter?.wrapWidth = width }
+        paragraphStyler = CodeEditorParagraphStyler(
+            textView: textView,
+            isMarkdown: isMarkdown,
+            columnWidth: highlightStyle.columnWidth,
+            tabWidth: highlightStyle.tabWidth
+        )
+        textView.onWrapWidthChange = { [weak self] width in self?.paragraphStyler?.wrapWidth = width }
         appliedTabWidth = indentation.width
         applyColors()
         session.attachEditor { [weak textView] in textView?.text ?? "" }
@@ -282,7 +296,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
         highlighter?.isEnabled = preferences.highlightsSyntax
         if indentation.width != appliedTabWidth {
             appliedTabWidth = indentation.width
-            highlighter?.restyle(highlightStyle)
+            restyleBuffer()
         }
 
         let keybindings = preferences.keybindings
@@ -308,7 +322,8 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // The first layout knows the wrap width; style the buffer once, here.
-        if textView.bounds.width > 0 { highlighter?.beginStyling(wrapWidth: textView.wrappedTextWidth) }
+        // Known before the first paragraph is built for layout, which follows this pass.
+        if textView.bounds.width > 0 { paragraphStyler?.wrapWidth = textView.wrappedTextWidth }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -742,7 +757,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
     func replaceText(_ text: String) {
         textView.text = text
         textView.undoManager?.removeAllActions()
-        highlighter?.restyle(highlightStyle)
+        restyleBuffer()
         if vimEnabled { vim.reset(to: .normal) }
         if isShowingPreview { installPreview() }
         refreshStatus()
@@ -778,7 +793,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
 
     @objc private func fontDidChange() {
         textView.font = editorFont
-        highlighter?.restyle(highlightStyle)
+        restyleBuffer()
     }
 
     /// Recolor in place. Text view identity, selection, and undo survive.
@@ -813,7 +828,7 @@ final class WorkspaceFileEditorViewController: UIViewController, UITextViewDeleg
             foreground: foreground,
             background: UIColor(palette.bg)
         )
-        highlighter?.restyle(highlightStyle)
+        restyleBuffer()
         vimStateDidChange(scrolls: false)
     }
 
