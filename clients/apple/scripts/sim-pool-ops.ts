@@ -2016,7 +2016,8 @@ export async function commandRun(
   mkdirSync(logDir, { recursive: true });
   pruneOldLogs(logDir);
   pruneRunDirectories(config.buildBase);
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const logStamp = () => new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const stamp = logStamp();
   let testArgv = split.argv;
   let completionArgv: string[] | undefined;
   try {
@@ -2111,11 +2112,15 @@ export async function commandRun(
     slotReset = nowEpoch() - resetStart;
     log(`[sim-pool] Reset app state on ${bootUdid} (${APP_BUNDLE_ID} uninstalled, keychain cleared, ${slotReset}s)`);
     prepEnd = nowEpoch();
-    const baseLog = join(logDir, `pool-${owned.slot}-${stamp}.log`);
+    // Stamped once the slot is held, not at run start: runs that start in the same second and take the
+    // same slot one after the other (shards queued behind busy slots) must not share, and so overwrite,
+    // one log and summary. A slot is held for more than a second, so its holders' stamps differ.
+    const slotStamp = logStamp();
+    const baseLog = join(logDir, `pool-${owned.slot}-${slotStamp}.log`);
     const baseArtifact = baseLog.replace(/\.log$/, ".json");
     finalArtifact = baseLog.replace(/\.log$/, ".summary.json");
     log(`[sim-pool] Log: ${baseLog}`);
-    videoSession = await startVideoRecording(session, config, owned.slot, simUdId, stamp);
+    videoSession = await startVideoRecording(session, config, owned.slot, simUdId, slotStamp);
     logFile = baseLog;
     xcodeStart = nowEpoch();
     let attempt = 0;

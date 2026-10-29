@@ -494,6 +494,22 @@ describe("sim-pool CLI", () => {
     expect(summary.simulator_slot).toBe(0);
   });
 
+  test("runs that start together and take the same slot one after the other each keep their own log and summary", async () => {
+    const fx = slotlessFixture("same-slot");
+    // The slot is held for a second and a half, so the second run is still queued when its stamp would be taken.
+    renameSync(join(fx.root, "bin", "xcodebuild"), join(fx.root, "bin", "xcodebuild.real"));
+    writeFileSync(join(fx.root, "bin", "xcodebuild"), `#!/bin/sh\ncase " $* " in *" test-without-building "*) sleep 1.5;; esac\nexec "${join(fx.root, "bin", "xcodebuild.real")}" "$@"\n`, { mode: 0o755 });
+    const env = { ...fx.env, OPPI_SIM_POOL_WAIT: "60" };
+    const start = () => {
+      const child = spawn("bun", [cli, "run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests/FooTests"], { cwd: fx.apple, env });
+      procs.push(child);
+      return new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+    };
+    expect(await Promise.all([start(), start()])).toEqual([0, 0]);
+    const summaries = readdirSync(join(fx.apple, ".build", "logs")).filter((name) => /^pool-0-.*\.summary\.json$/.test(name));
+    expect(summaries).toHaveLength(2);
+  });
+
   test("a failed build ends the run before it takes a simulator slot", () => {
     const fx = slotlessFixture("build-fails");
     writeFileSync(join(fx.root, "bin", "xcodebuild"), "#!/bin/sh\necho 'error: boom' \nexit 65\n", { mode: 0o755 });
