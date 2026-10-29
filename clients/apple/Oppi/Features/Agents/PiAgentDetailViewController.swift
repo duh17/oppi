@@ -341,7 +341,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             async let fetchedTools = apiClient.getPiDefaultTools()
             async let fetchedCatalog = apiClient.listServerExtensions()
             let (resolvedPrompt, resolvedTools, catalog) = try await (fetchedPrompt, fetchedTools, fetchedCatalog)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isCurrent(apiClient) else { return }
             prompt = resolvedPrompt
             tools.apiClient = apiClient
             tools.applyLoaded(
@@ -352,8 +352,14 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             loadError = nil
         } catch {
             // A load cancelled under the page (Back, a replaced connection) is not a failure to report.
-            guard !Task.isCancelled, !AgentManagementPresentation.isCancellation(error) else { return }
+            guard !Task.isCancelled, isCurrent(apiClient), !AgentManagementPresentation.isCancellation(error) else { return }
             loadError = error.localizedDescription
         }
+    }
+
+    /// Whether `apiClient` still serves the active server: an answer that
+    /// arrives after the connection was replaced is not this page's.
+    private func isCurrent(_ apiClient: APIClient) -> Bool {
+        root.coordinator.activeConnection.apiClient === apiClient
     }
 }

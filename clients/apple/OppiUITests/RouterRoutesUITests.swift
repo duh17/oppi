@@ -410,15 +410,15 @@ final class RouterRoutesUITests: XCTestCase {
         // depends on the host (refused, or a pinned-certificate cancel). Either way the list and
         // Pi report it in a row, never an alert, and a cancel never reads as a failure.
         XCTAssertTrue(app.buttons["agents.row.pi"].waitForExistence(timeout: 5), "Agents has no Pi row")
-        assertNoAlertOrCancelledRow()
+        assertFailedLoadRowIsNotACancel("agents.state")
         app.buttons["agents.row.pi"].tap()
         XCTAssertTrue(app.navigationBars["Pi"].waitForExistence(timeout: 5), "Agents did not push Pi")
-        assertNoAlertOrCancelledRow()
+        assertFailedLoadRowIsNotACancel("agents.pi.state")
         attachScreenshot("shell-agents-pi")
         assertRunning()
         app.buttons["BackButton"].firstMatch.tap()
         XCTAssertTrue(agents.waitForExistence(timeout: 5), "Back must return to Agents")
-        assertNoAlertOrCancelledRow()
+        assertFailedLoadRowIsNotACancel("agents.state")
         if !isSplit {
             app.buttons["BackButton"].tap()
             XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Agents")
@@ -637,14 +637,14 @@ final class RouterRoutesUITests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "Close"])).firstMatch
     }
 
-    /// Agents and Pi report a failed load in a row, never an alert, and a cancelled load shows nothing.
-    private func assertNoAlertOrCancelledRow(file: StaticString = #filePath, line: UInt = #line) {
+    /// Agents and Pi report a failed load in a row with Retry (a button), never an
+    /// alert, and a cancelled load never reads as the failure. The row is awaited:
+    /// the load answers a moment after the page appears.
+    private func assertFailedLoadRowIsNotACancel(_ identifier: String, file: StaticString = #filePath, line: UInt = #line) {
+        let row = app.buttons[identifier]
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "\(identifier) never showed its failure row", file: file, line: line)
+        XCTAssertNotEqual(row.label, "cancelled", "A cancelled load must not show as a failure", file: file, line: line)
         XCTAssertFalse(app.alerts.firstMatch.exists, "A failed load must not raise an alert", file: file, line: line)
-        for identifier in ["agents.state", "agents.pi.state"] {
-            XCTAssertNotEqual(app.buttons[identifier].exists ? app.buttons[identifier].label : "", "cancelled", file: file, line: line)
-            XCTAssertNotEqual(app.staticTexts[identifier].exists ? app.staticTexts[identifier].label : "", "cancelled", file: file, line: line)
-        }
-        XCTAssertFalse(app.staticTexts["cancelled"].exists, "A cancelled load must not show as a failure", file: file, line: line)
     }
 
     private func assertRunning(file: StaticString = #filePath, line: UInt = #line) {
