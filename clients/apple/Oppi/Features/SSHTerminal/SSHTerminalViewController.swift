@@ -114,9 +114,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var herdr = HerdrMonitor()
     private var rex = RexMonitor()
     private var keymap = SSHTerminalKeymapLoader()
-    /// What the person chose with Type in Terminal or Chat Bar. It lives as long
-    /// as the channel: a terminal switch, a Rex pane, or a reconnect starts over
-    /// at direct typing. A program's report never changes it.
+    /// What the person chose with Type in Terminal or Chat Bar. It lives with
+    /// this screen: leaving it (Back, then reopening the terminal builds a new
+    /// screen), a terminal switch, a Rex pane, or a reconnect starts over at
+    /// direct typing. A program's report never changes it.
     private var inputMode: SSHTerminalInputMode = .terminal
     private var focusComposerAfterRaw = false
     private var composerFocusRequest = 0
@@ -653,7 +654,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         cursorShiftHeld = false
         rawKeyboard = false
         automaticTerminalTyping = false
-        inputModeBeforeSecurePrompt = .terminal
         refocusAfterSecurePrompt = true
         sawClosedForBackground = false
         reconnectOnReturn = false
@@ -1506,7 +1506,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// meantime wins over the automatic switch back. **Type in Terminal** only
     /// brings the keyboard back, and a tap on the grid is never a choice.
     private var automaticTerminalTyping = false
-    private var inputModeBeforeSecurePrompt: SSHTerminalInputMode = .terminal
     /// Whether ending the automatic switch focuses the chat bar it puts back.
     /// Hiding the keyboard during the prompt keeps the bar, not the keyboard,
     /// until Type in Terminal brings it back.
@@ -1514,7 +1513,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     private func manualInputChoice() {
         automaticTerminalTyping = false
-        inputModeBeforeSecurePrompt = .terminal
     }
 
     /// The user sent the keyboard away. During an automatic switch for a
@@ -1538,7 +1536,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         if secure {
             guard !automaticTerminalTyping, inputMode == .chat, !rawKeyboard else { return }
             automaticTerminalTyping = true
-            inputModeBeforeSecurePrompt = inputMode
             refocusAfterSecurePrompt = true
             inputMode = .terminal
             DispatchQueue.main.async { [weak self] in
@@ -1547,8 +1544,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         } else {
             guard automaticTerminalTyping else { return }
             automaticTerminalTyping = false
-            inputMode = inputModeBeforeSecurePrompt
-            inputModeBeforeSecurePrompt = .terminal
+            // The prompt only starts from the chat bar, so that is what returns.
+            inputMode = .chat
             if refocusAfterSecurePrompt { focusComposerAfterRaw = true }
             // The bar comes back either way; a keyboard the user hid stays down.
             composerSession?.setSuppressKeyboard(!refocusAfterSecurePrompt)

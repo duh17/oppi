@@ -527,17 +527,22 @@ struct SSHTerminalSwitcherTests {
             try await Task.sleep(for: .milliseconds(200))
             terminal.view.layoutIfNeeded()
         }
-        func chatField() throws -> PastableUITextView {
+        func shownChatField() -> PastableUITextView? {
             func search(_ view: UIView) -> PastableUITextView? {
                 if let field = view as? PastableUITextView { return field }
                 for child in view.subviews { if let hit = search(child) { return hit } }
                 return nil
             }
-            return try #require(search(terminal.view))
+            return search(terminal.view)
         }
-        /// The explicit ask for the bar. A swap starts the next terminal over in
-        /// direct typing, so each terminal's bar is asked for again.
+        func chatField() throws -> PastableUITextView {
+            try #require(shownChatField())
+        }
+        /// The explicit ask for the bar. A report or a swap starts a terminal
+        /// in direct typing, so each terminal's bar is asked for, and absent
+        /// until it is.
         func askForChatBar() async throws {
+            #expect(shownChatField() == nil, "no chat bar until it is asked for")
             func search(_ view: UIView) -> UIButton? {
                 if let button = view as? UIButton, button.accessibilityIdentifier == "sshTerminal.bar.chatBar" { return button }
                 for child in view.subviews { if let hit = search(child) { return hit } }
