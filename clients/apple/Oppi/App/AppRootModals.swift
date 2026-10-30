@@ -96,6 +96,11 @@ final class AppRootModals {
         )
     }
 
+    /// The dialog slot, for an E2E's failure message when its sheet does not appear.
+    #if DEBUG
+    var dialogDebugSummary: String { dialog.debugSummary }
+    #endif
+
     // MARK: Notice
 
     static let noticePresentation = ModalPresentation.sheet

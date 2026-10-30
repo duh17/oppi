@@ -64,9 +64,17 @@ final class E2EDiagnosticsView: UIView {
             ("e2e.ws.focusedSession", connection.focusedSessionId ?? "none"),
             ("e2e.ws.desiredSubscriptions", desiredSubscriptions(connection)),
             ("e2e.ws.ackedSubscriptions", ackedSubscriptions(connection)),
+            ("e2e.extension.dialog", connection.activeExtensionDialog?.id ?? "none"),
+            ("e2e.extension.dialogs", connection.pendingExtensionDialogRequests.map(\.id).joined(separator: ",")),
+            ("e2e.root.modals", rootModalsSummary()),
             ("e2e.audio.liveTransportSession", connection.audioPlayer.activeLiveTransportSessionID ?? "none"),
             ("e2e.lifecycle", E2ELifecycleDiagnostics.shared.accessibilityValue),
         ]
+    }
+
+    /// The window root's dialog slot: what it holds and what UIKit presented.
+    private func rootModalsSummary() -> String {
+        (window?.rootViewController as? AppRootViewController)?.modalDiagnostics ?? "missing"
     }
 
     private func refresh() {

@@ -39,6 +39,11 @@ final class AppRootViewController: UIViewController {
         controller: .shared, root: root, anchor: self
     )
 
+#if DEBUG
+    /// What the app-wide dialog slot holds, for an E2E's failure message.
+    var modalDiagnostics: String { modals.dialogDebugSummary }
+#endif
+
     init(app: OppiApp) {
         self.app = app
         super.init(nibName: nil, bundle: nil)

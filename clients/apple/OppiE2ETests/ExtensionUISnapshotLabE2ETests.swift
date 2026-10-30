@@ -563,7 +563,10 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         ])
 
         let editor = app.textViews["extension.dialog.editor"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 10), "Editor sheet did not appear before session end")
+        XCTAssertTrue(
+            editor.waitForExistence(timeout: 10),
+            "Editor sheet did not appear before session end. \(extensionDialogDiagnostics())"
+        )
         assertExtensionSheetPresented(true, method: "editor")
 
         try sendHarnessMessage(sessionId: sessionId, [
@@ -1557,13 +1560,43 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
         try settleRequest(sessionId: sessionId, requestId: requestId)
     }
 
+    /// Injects one protocol message into a live session. The harness only
+    /// broadcasts to sockets the server has attached for that session, so a
+    /// message injected before the chat's stream attaches is dropped without an
+    /// error and the sheet it asked for never appears. Wait for the socket, then
+    /// fail here — not ten seconds later on the missing sheet — when the server
+    /// had nobody to deliver to.
     @discardableResult
     private func sendHarnessMessage(sessionId: String, _ message: [String: Any]) throws -> [String: Any] {
-        try e2eLabAPIJSON(
-            method: "POST",
-            path: "/e2e/ui/sessions/\(sessionId)/message",
-            body: message
+        let deadline = Date().addingTimeInterval(10)
+        var response: [String: Any] = [:]
+        while true {
+            response = try e2eLabAPIJSON(
+                method: "POST",
+                path: "/e2e/ui/sessions/\(sessionId)/message",
+                body: message
+            )
+            let subscribers = response["subscriberCount"] as? Int ?? 0
+            if subscribers > 0 || Date() >= deadline { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTAssertGreaterThan(
+            response["subscriberCount"] as? Int ?? 0,
+            0,
+            "The server had no subscribed socket for \(sessionId), so \(message["type"] ?? "the message") was dropped"
         )
+        return response
+    }
+
+    /// The app's own view of the extension dialog, for a failure message: the
+    /// request it would present, every queued one, and the session it watches.
+    private func extensionDialogDiagnostics() -> String {
+        ["e2e.extension.dialog", "e2e.extension.dialogs", "e2e.root.modals", "e2e.ws.focusedSession", "e2e.ws.ackedSubscriptions"]
+            .map { id in
+                let label = app.staticTexts[id]
+                return "\(id)=\(label.exists ? label.label : "missing")"
+            }
+            .joined(separator: " ")
     }
 
     private func workspaceId(forSessionId sessionId: String, timeout: TimeInterval = 10) throws -> String {

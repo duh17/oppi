@@ -98,6 +98,17 @@ final class RouterModalPresenter {
         dismiss()
     }
 
+    /// What the dialog slot holds and what UIKit has presented, for an E2E to
+    /// read when a sheet it expects does not appear.
+    #if DEBUG
+    var debugSummary: String {
+        let request = request.map { "\($0.id)" } ?? "nil"
+        let anchorWindow = anchor?.viewIfLoaded?.window != nil
+        let presented = anchor?.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil"
+        return "request=\(request) screen=\(screen.map { String(describing: type(of: $0)) } ?? "nil") anchorWindow=\(anchorWindow) presented=\(presented)"
+    }
+    #endif
+
     /// A UIKit screen's slot, set from its state in `updateProperties()`: a
     /// non-nil `id` presents `screen`, nil dismisses, and `clear` resets the
     /// screen's state after a swipe-down or the modal's own `finish()`.
