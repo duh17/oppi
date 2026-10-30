@@ -210,9 +210,8 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
 
 /// What the host's own Herdr says about the terminal's folder.
 enum HerdrLocalFolder: Equatable, Sendable {
-    /// No answer: Herdr is absent, stopped, or failed its last read.
-    case notReading
-    /// It answers, but names no usable folder for its focused pane.
+    /// No snapshot yet, a read that failed for good, a stopped poll, or a Herdr
+    /// that names no usable folder for its focused pane.
     case unknown
     case folder(String)
 }
@@ -386,7 +385,17 @@ final class HerdrMonitor {
     /// Agents waiting at an approval, question, or sign-in on any machine.
     var needsAttention: Int { machines.reduce(0) { $0 + $1.needsAttention } }
 
+    /// The poll is not running (switched away, reconnecting, disconnected): a
+    /// read still in flight must not set the terminal's folder after that.
+    private var stopped = false
+
+    /// A stopped poll takes its folder with it: nothing keeps it current.
     func run(on channel: SSHTerminalChannel) async {
+        stopped = false
+        defer {
+            stopped = true
+            channel.setHerdrFolder(.unknown)
+        }
         while !Task.isCancelled, channel.connected, !unavailable {
             await refresh(on: channel)
             try? await Task.sleep(for: watching ? .seconds(2) : .seconds(6))
@@ -450,11 +459,11 @@ final class HerdrMonitor {
     private func apply(_ result: Result<HerdrSnapshot, any Error>, to machine: String?, on channel: SSHTerminalChannel) {
         // Only Local's panes are on this terminal's host; a saved machine's are
         // other hosts' and never name the shell's folder.
-        if machine == nil {
+        if machine == nil, !stopped {
             switch result {
             case .success(let snapshot): channel.setHerdrFolder(snapshot.focusedPaneFolder)
             case .failure(is CancellationError): break
-            case .failure: channel.setHerdrFolder(.notReading)
+            case .failure: channel.herdrReadFailed()
             }
         }
         if machine == nil, case .failure(HerdrRemoteError.notInstalled) = result {

@@ -59,31 +59,30 @@ enum SSHTerminalWorkingDirectory {
 }
 
 /// The folder the terminal calls the shell's. OSC 7 is the shell's own report,
-/// but Herdr does not pass its panes' reports through: while Herdr is on screen
-/// the OSC 7 the outer shell made before `herdr` started is stale, and the
-/// host's Herdr knows the real folder (its focused pane's).
+/// but Herdr does not pass its panes' reports through: in a terminal Oppi
+/// started in Herdr, the host's Herdr knows the real folder (its focused pane's).
 enum SSHTerminalShellFolder {
     /// - `reported`: the engine's OSC 7 folder, empty when none.
-    /// - `reportedFromFullScreen`: that report arrived while the full-screen
-    ///   program was up, so it came from inside it.
-    /// - `fullScreenPointer`: the alternate screen with mouse reporting is
-    ///   showing (Herdr's sign).
-    /// - `herdr`: the host's own Herdr, once it has answered a snapshot.
+    /// - `reportedFromOtherHost`: the latest report named another machine (a
+    ///   nested ssh), so the folder is unknown.
+    /// - `herdrInFront`: Oppi started this terminal in Herdr and its alternate
+    ///   screen is up. Nothing else counts, so a `herdr` typed in a shell, tmux,
+    ///   or vim never takes the folder.
+    /// - `herdr`: what the host's Herdr last reported.
     ///
-    /// Herdr counts as in front only when both its sign shows and it answers, so
-    /// a full-screen program on a host without Herdr (vim) keeps the shell's
-    /// folder. In front, a report from inside wins; else the focused pane's
-    /// folder; else unknown, never the stale report from before it started.
+    /// In front, the shell's own report is never used: Herdr passes no panes'
+    /// reports through, and one made before it started is stale. A report from
+    /// another machine leaves the folder unknown rather than the host's Herdr's
+    /// folder; otherwise the focused pane's folder; otherwise unknown.
     static func resolve(
         reported: String,
-        reportedFromFullScreen: Bool,
-        fullScreenPointer: Bool,
+        reportedFromOtherHost: Bool,
+        herdrInFront: Bool,
         herdr: HerdrLocalFolder
     ) -> String {
-        guard fullScreenPointer, herdr != .notReading else { return reported }
-        if reportedFromFullScreen { return reported }
-        if case .folder(let folder) = herdr { return folder }
-        return ""
+        guard herdrInFront else { return reported }
+        guard !reportedFromOtherHost, case .folder(let folder) = herdr else { return "" }
+        return folder
     }
 }
 

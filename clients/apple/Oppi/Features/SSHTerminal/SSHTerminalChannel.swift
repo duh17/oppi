@@ -199,13 +199,18 @@ final class SSHTerminalChannel {
     private(set) var inputNotice = ""
     /// Display-only; published only when the remote sets a different title.
     private(set) var title = ""
-    /// The shell's working directory as a local path: its OSC 7 report, or the
-    /// focused pane of the host's Herdr while Herdr is on screen
+    /// The shell's working directory as a local path: its OSC 7 report, or, in
+    /// a terminal Oppi started in Herdr, the focused pane of the host's Herdr
     /// (`SSHTerminalShellFolder`). Empty when neither gives one we can use.
     private(set) var workingDirectory = ""
     /// What the host's own Herdr says its focused pane's folder is; the Herdr
-    /// poll sets it.
-    private(set) var herdrFolder = HerdrLocalFolder.notReading
+    /// poll sets it and clears it when it stops.
+    private(set) var herdrFolder = HerdrLocalFolder.unknown
+    /// How long a Herdr folder outlives the last successful snapshot while
+    /// reads fail. Two polls (6 s apart) plus the side command's 10 s timeout.
+    @ObservationIgnored var herdrFolderGrace = Duration.seconds(25)
+    @ObservationIgnored private var herdrFolderRead: ContinuousClock.Instant?
+    @ObservationIgnored private var herdrFolderExpiry: Task<Void, Never>?
     /// True while a network path change is being checked.
     private(set) var networkChanged = false
     /// Bumped each time a remote program put text on this device's clipboard.
@@ -423,17 +428,34 @@ final class SSHTerminalChannel {
         refreshWorkingDirectory()
     }
 
+    /// A snapshot answered (or, with `.unknown`, the poll stopped).
     func setHerdrFolder(_ folder: HerdrLocalFolder) {
+        herdrFolderExpiry?.cancel()
+        herdrFolderExpiry = nil
+        herdrFolderRead = folder == .unknown ? nil : .now
         guard folder != herdrFolder else { return }
         herdrFolder = folder
         refreshWorkingDirectory()
     }
 
+    /// A snapshot read failed. The last folder stands until `herdrFolderGrace`
+    /// after the last good read, so one slow answer does not hide it, and a
+    /// Herdr that stays silent does not keep a stale one.
+    func herdrReadFailed() {
+        guard herdrFolder != .unknown, herdrFolderExpiry == nil, let read = herdrFolderRead else { return }
+        herdrFolderExpiry = Task { [weak self, grace = herdrFolderGrace] in
+            try? await Task.sleep(until: read + grace, clock: .continuous)
+            guard !Task.isCancelled, let self else { return }
+            herdrFolderExpiry = nil
+            setHerdrFolder(.unknown)
+        }
+    }
+
     private func refreshWorkingDirectory() {
         let next = SSHTerminalShellFolder.resolve(
             reported: engine.workingDirectory,
-            reportedFromFullScreen: engine.workingDirectoryFromFullScreen,
-            fullScreenPointer: engine.fullScreenPointer,
+            reportedFromOtherHost: engine.workingDirectoryFromOtherHost,
+            herdrInFront: SSHTerminalMultiplexerKind.startsDefaultHerdr(command) && engine.alternateScreen,
             herdr: herdrFolder
         )
         if next != workingDirectory { workingDirectory = next }
@@ -567,6 +589,8 @@ final class SSHTerminalChannel {
         connected = false
         connecting = false
         self.reason = reason
+        herdrFolderExpiry?.cancel()
+        herdrFolderExpiry = nil
         pending.removeAll()
         queuedBytes = 0
         engine.close()

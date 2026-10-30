@@ -1584,75 +1584,157 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorCondition { monitor.machines[1].failure != nil }, "its timeout shows once it gives up")
     }
 
-    /// Herdr does not pass its panes' OSC 7 through, so while it is on screen the
-    /// shell's folder is its focused pane's: the stale folder the outer shell
-    /// reported before `herdr` started must not win, a report from inside wins,
-    /// the folder follows focus, and everything returns to OSC 7 when Herdr exits.
-    @Test func herdrFocusedPaneIsTheShellFolderWhileHerdrIsInFront() async throws {
-        func ok(_ json: String) -> SSHExecResult { .init(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0) }
-        func snapshot(focused: String, panes: String, agents: String = "[]") -> SSHExecResult {
-            ok(#"{"result":{"snapshot":{"workspaces":[],"tabs":[],"agents":\#(agents),"focused_pane_id":"\#(focused)","panes":\#(panes)}}}"#)
-        }
-        let twoPanes = #"""
-        [{"pane_id":"w1:p1","cwd":"/Users/duh/workspace/oppi","foreground_cwd":"/Users/duh/workspace/oppi/server","focused":false},
-         {"pane_id":"w1:p2","cwd":"/Users/duh/notes","focused":true}]
-        """#
+    // MARK: Herdr's focused pane as the shell's folder
+    //
+    // Herdr does not pass its panes' OSC 7 through. In a terminal Oppi started
+    // in Herdr (Run on Connect `herdr`), with Herdr's screen up, the shell's
+    // folder is Herdr's focused pane's, and nothing else is: not the report made
+    // before Herdr started, and not a guess for a `herdr`, tmux, or vim the
+    // person typed.
+
+    private static let enterHerdr = Data("\u{1b}[?1049h\u{1b}[?1000h\u{1b}[?1006h".utf8)
+    private static func osc7(_ path: String, host: String = "mac-studio") -> Data {
+        Data("\u{1b}]7;file://\(host)\(path)\u{1b}\\".utf8)
+    }
+    private static func herdrOK(_ json: String) -> SSHExecResult { .init(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0) }
+    private static func herdrSnapshot(focused: String, panes: String, agents: String = "[]") -> SSHExecResult {
+        herdrOK(#"{"result":{"snapshot":{"workspaces":[],"tabs":[],"agents":\#(agents),"focused_pane_id":"\#(focused)","panes":\#(panes)}}}"#)
+    }
+    private static let herdrTwoPanes = #"""
+    [{"pane_id":"w1:p1","cwd":"/Users/duh/workspace/oppi","foreground_cwd":"/Users/duh/workspace/oppi/server","focused":false},
+     {"pane_id":"w1:p2","cwd":"/Users/duh/notes","focused":true}]
+    """#
+    private static let herdrDown = SSHExecResult(output: Data(), errorOutput: Data("herdr: server not running".utf8), exitStatus: 1)
+
+    private func herdrFolderFixture(snapshot: SSHExecResult?, machines: String = "[]") async throws -> (TerminalConnectionFixture, SSHTerminalChannel) {
         let fixture = TerminalConnectionFixture()
-        await fixture.setRunResult(ok("[]"), for: HerdrRemote.machinesCommand)
-        await fixture.setRunResult(snapshot(focused: "w1:p1", panes: twoPanes), for: "herdr api snapshot")
+        await fixture.setRunResult(Self.herdrOK(machines), for: HerdrRemote.machinesCommand)
+        if let snapshot { await fixture.setRunResult(snapshot, for: "herdr api snapshot") }
         let channel = try SSHTerminalChannel()
-        channel.opened(fixture)
+        channel.opened(fixture, command: "herdr")
+        return (fixture, channel)
+    }
+
+    @Test func herdrStartedByOppiShowsItsFocusedPaneAndFollowsFocus() async throws {
+        let (fixture, channel) = try await herdrFolderFixture(snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes))
         defer { channel.close(reason: "done") }
         let monitor = HerdrMonitor()
-        let enterHerdr = Data("\u{1b}[?1049h\u{1b}[?1000h\u{1b}[?1006h".utf8)
-        let leaveHerdr = Data("\u{1b}[?1006l\u{1b}[?1000l\u{1b}[?1049l".utf8)
-        func osc7(_ path: String) -> Data { Data("\u{1b}]7;file://mac-studio\(path)\u{1b}\\".utf8) }
 
-        // Herdr runs on the host but is not on screen: the shell's own folder.
-        channel.event(.data(osc7("/Users/duh/outer")))
+        // Herdr's screen is up but no snapshot has answered: unknown.
+        channel.event(.data(Self.enterHerdr))
+        #expect(channel.workingDirectory.isEmpty)
+
         await monitor.refresh(on: channel)
-        #expect(channel.workingDirectory == "/Users/duh/outer")
+        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server", "foreground_cwd leads")
 
-        // fish reported /Users/duh/outer before `herdr` started; Herdr in front
-        // shows its focused pane's foreground folder instead.
-        channel.event(.data(enterHerdr))
+        await fixture.setRunResult(Self.herdrSnapshot(focused: "w1:p2", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
+        await monitor.refresh(on: channel)
+        #expect(channel.workingDirectory == "/Users/duh/notes", "cwd when there is no foreground folder; focus moved")
+
+        // A report made before or inside Herdr is not the focused pane's folder.
+        channel.event(.data(Self.osc7("/Users/duh/stale")))
+        #expect(channel.workingDirectory == "/Users/duh/notes")
+    }
+
+    @Test func herdrFolderNeedsTheAlternateScreenAndOppisOwnLaunch() async throws {
+        for command in [nil, "", "tmux", "herdr --session work", "herdr session attach work", "herdr --remote box", "/bin/sh -c herdr"] as [String?] {
+            let fixture = TerminalConnectionFixture()
+            await fixture.setRunResult(Self.herdrOK("[]"), for: HerdrRemote.machinesCommand)
+            await fixture.setRunResult(Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
+            let channel = try SSHTerminalChannel()
+            channel.opened(fixture, command: command)
+            defer { channel.close(reason: "done") }
+            channel.event(.data(Self.osc7("/Users/duh/outer")))
+            channel.event(.data(Self.enterHerdr))
+            await HerdrMonitor().refresh(on: channel)
+            #expect(channel.workingDirectory == "/Users/duh/outer", "\(command ?? "nil"): typed or other launches keep the shell's folder")
+        }
+        // Started by Oppi, but Herdr's screen is not up.
+        let (_, channel) = try await herdrFolderFixture(snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes))
+        defer { channel.close(reason: "done") }
+        channel.event(.data(Self.osc7("/Users/duh/outer")))
+        await HerdrMonitor().refresh(on: channel)
+        #expect(channel.workingDirectory == "/Users/duh/outer")
+        channel.event(.data(Self.enterHerdr))
+        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
+        channel.event(.data(Data("\u{1b}[?1006l\u{1b}[?1000l\u{1b}[?1049l".utf8)))
+        #expect(channel.workingDirectory == "/Users/duh/outer", "the shell's report is back when the screen goes")
+    }
+
+    @Test func aReportFromAnotherHostLeavesTheHerdrFolderUnknown() async throws {
+        let (_, channel) = try await herdrFolderFixture(snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes))
+        defer { channel.close(reason: "done") }
+        channel.event(.data(Self.enterHerdr))
+        channel.event(.data(Self.osc7("/home/duh", host: "mac-studio")))
+        await HerdrMonitor().refresh(on: channel)
+        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
+        // A pane that ssh'd elsewhere: the outer host's Herdr says nothing about it.
+        channel.event(.data(Self.osc7("/srv/app", host: "other-box")))
+        #expect(channel.workingDirectory.isEmpty)
+        channel.event(.data(Self.osc7("/home/duh", host: "mac-studio")))
+        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
+    }
+
+    @Test func aFailedReadKeepsTheHerdrFolderOnlyForTheGracePeriod() async throws {
+        let (fixture, channel) = try await herdrFolderFixture(snapshot: Self.herdrDown)
+        defer { channel.close(reason: "done") }
+        channel.herdrFolderGrace = .milliseconds(300)
+        let monitor = HerdrMonitor()
+        channel.event(.data(Self.enterHerdr))
+
+        await monitor.refresh(on: channel)
+        #expect(channel.workingDirectory.isEmpty, "no good snapshot yet")
+
+        await fixture.setRunResult(Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
+        await monitor.refresh(on: channel)
         #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
 
-        // Focus moves to a pane with only `cwd`.
-        await fixture.setRunResult(snapshot(focused: "w1:p2", panes: twoPanes), for: "herdr api snapshot")
+        await fixture.setRunResult(Self.herdrDown, for: "herdr api snapshot")
+        await monitor.refresh(on: channel)
+        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server", "one failed read keeps it")
+        #expect(await waitForMainActorCondition { channel.workingDirectory.isEmpty }, "then it is unknown")
+
+        // A good read within the grace period restarts it.
+        channel.herdrFolderGrace = .seconds(60)
+        await fixture.setRunResult(Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
+        await monitor.refresh(on: channel)
+        await fixture.setRunResult(Self.herdrDown, for: "herdr api snapshot")
+        await monitor.refresh(on: channel)
+        await fixture.setRunResult(Self.herdrSnapshot(focused: "w1:p2", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
         await monitor.refresh(on: channel)
         #expect(channel.workingDirectory == "/Users/duh/notes")
+    }
 
-        // A Herdr that passes OSC 7 through from inside wins over its snapshot.
-        channel.event(.data(osc7("/Users/duh/inside")))
-        #expect(channel.workingDirectory == "/Users/duh/inside")
+    @Test func stoppingThePollClearsTheHerdrFolder() async throws {
+        let (_, channel) = try await herdrFolderFixture(snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes))
+        defer { channel.close(reason: "done") }
+        channel.event(.data(Self.enterHerdr))
+        let monitor = HerdrMonitor()
+        let poll = Task { await monitor.run(on: channel) }
+        #expect(await waitForMainActorCondition { channel.workingDirectory == "/Users/duh/workspace/oppi/server" })
 
-        // Herdr exits: the outer shell's folder is back, and a prompt can refresh it.
-        channel.event(.data(leaveHerdr))
-        channel.event(.data(osc7("/Users/duh/outer")))
-        #expect(channel.workingDirectory == "/Users/duh/outer")
-        channel.event(.data(enterHerdr))
-        #expect(channel.workingDirectory == "/Users/duh/notes", "the pre-launch report is stale again")
-        channel.event(.data(leaveHerdr))
-        #expect(channel.workingDirectory == "/Users/duh/outer")
+        // Switched away, reconnecting, or disconnected: the poll's task ends.
+        poll.cancel()
+        await poll.value
+        #expect(channel.workingDirectory.isEmpty, "a folder nothing keeps current is not used")
+
+        // A read that was still out when the poll stopped does not bring it back.
+        await monitor.refresh(on: channel)
+        #expect(channel.workingDirectory.isEmpty)
+        let again = Task { await monitor.run(on: channel) }
+        #expect(await waitForMainActorCondition { channel.workingDirectory == "/Users/duh/workspace/oppi/server" }, "polling again sets it again")
+        again.cancel()
+        await again.value
     }
 
     @Test func herdrFolderTakesWhatTheSnapshotOffersAndNothingElse() async throws {
-        func ok(_ json: String) -> SSHExecResult { .init(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0) }
-        let enterHerdr = Data("\u{1b}[?1049h\u{1b}[?1000h\u{1b}[?1006h".utf8)
-        let outer = Data("\u{1b}]7;file://mac-studio/Users/duh/outer\u{1b}\\".utf8)
-        func folder(snapshot: String?, machines: String = "[]", machineSnapshot: String? = nil) async throws -> String {
-            let fixture = TerminalConnectionFixture()
-            await fixture.setRunResult(ok(machines), for: HerdrRemote.machinesCommand)
-            if let snapshot { await fixture.setRunResult(ok(snapshot), for: "herdr api snapshot") }
+        func folder(snapshot: String, machines: String = "[]", machineSnapshot: String? = nil) async throws -> String {
+            let (fixture, channel) = try await herdrFolderFixture(snapshot: Self.herdrOK(snapshot), machines: machines)
             if let machineSnapshot {
-                await fixture.setRunResult(ok(machineSnapshot), for: try #require(HerdrRemote.snapshotCommand(machine: "aa11")))
+                await fixture.setRunResult(Self.herdrOK(machineSnapshot), for: try #require(HerdrRemote.snapshotCommand(machine: "aa11")))
             }
-            let channel = try SSHTerminalChannel()
-            channel.opened(fixture)
             defer { channel.close(reason: "done") }
-            channel.event(.data(outer))
-            channel.event(.data(enterHerdr))
+            channel.event(.data(Self.enterHerdr))
             let monitor = HerdrMonitor()
             await monitor.refresh(on: channel)
             await monitor.refresh(on: channel)
@@ -1670,8 +1752,7 @@ struct SSHTerminalTests {
         """#) == "/srv/own")
 
         // A Herdr without these fields (older), a focused pane it does not list,
-        // and a folder that is not absolute leave the folder unknown: the outer
-        // shell's folder is not Herdr's.
+        // and a folder that is not absolute leave the folder unknown.
         #expect(try await folder(snapshot: head + #"""
         "agents":[],"panes":[{"pane_id":"w1:p1","workspace_id":"w1"}]}}}
         """#) == "")
@@ -1683,20 +1764,15 @@ struct SSHTerminalTests {
         """#) == "")
 
         // A saved machine's panes are another host's: never this terminal's folder.
-        let saved = #"[{"id":"aa11","label":"mac-mini","enabled":true}]"#
         #expect(try await folder(
             snapshot: head + #"""
             "agents":[],"panes":[]}}}
-            """#, machines: saved,
+            """#,
+            machines: #"[{"id":"aa11","label":"mac-mini","enabled":true}]"#,
             machineSnapshot: head + #"""
             "focused_pane_id":"w1:p1","agents":[],"panes":[{"pane_id":"w1:p1","cwd":"/Users/duh/elsewhere"}]}}}
             """#
         ) == "")
-
-        // No Herdr on the host (or it stopped answering): a full-screen program
-        // with mouse reporting, vim say, keeps the shell's reported folder.
-        let vim = try await folder(snapshot: nil)
-        #expect(vim == "/Users/duh/outer")
     }
 
     @Test func keymapSpecsInEachSyntaxEncodeAsTerminalKeys() async throws {

@@ -32,6 +32,17 @@ enum SSHTerminalMultiplexerKind: String, CaseIterable, Sendable {
     }
 }
 
+extension SSHTerminalMultiplexerKind {
+    /// `startupCommand` starts Herdr's default session: `herdr` or a path to
+    /// it, with no arguments. A command with arguments (`--session`, `attach`,
+    /// `--remote`, …) may be another session or another machine, which the
+    /// default session's snapshot does not describe.
+    static func startsDefaultHerdr(_ startupCommand: String?) -> Bool {
+        guard detected(in: startupCommand) == .herdr, let command = startupCommand else { return false }
+        return command.split(whereSeparator: \.isWhitespace).count == 1
+    }
+}
+
 /// Where one multiplexer puts the folder, and what has to happen for it to get
 /// there. One value per opening keeps every caller identical for every
 /// multiplexer: a folder in Herdr and a folder in tmux feel the same.
