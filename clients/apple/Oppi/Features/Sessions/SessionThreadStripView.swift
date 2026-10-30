@@ -147,11 +147,14 @@ final class SessionThreadStripView: UIControl {
             : nil
         if let cost { parts.append(cost) }
         summary = parts.joined(separator: " · ")
-        // The line draws the counts, then the cost, then the spacer, the Agents, and the chevron. The cost
-        // keeps its own room beside the counts, so the counts shorten beside it rather than pushing it out,
-        // and the cross-workspace note is what leaves first.
-        summaryLabel.setParts(
-            [statusSummary.text] + (rollup.workspaceCount > 1 ? ["\(rollup.workspaceCount) workspaces"] : [])
+        // The line draws the counts, then the cost, then the spacer, the Agents, and the chevron. The counts
+        // hold only what the dots do not already draw (the summary's quiet counts), so an active thread names
+        // its idle and stopped members here and leaves working, needs you, and error to the dots. The cost
+        // keeps its own room beside them, the cross-workspace note goes first, and only then does the tail
+        // truncate. VoiceOver (above) always hears every bucket.
+        summaryLabel.setCounts(
+            statusSummary.quietText,
+            note: rollup.workspaceCount > 1 ? "\(rollup.workspaceCount) workspaces" : nil
         )
         summaryLabel.textColor = colors.comment
         footer.cost.text = cost
@@ -234,16 +237,16 @@ final class SessionThreadStatusRow: UIStackView {
 
 // MARK: - Counts line
 
-/// The strip's counts line: the status counts, the thread's cost, the chevron, and, while the thread is
-/// settled, the Agents. The cost keeps its room and the Agents fold into what the counts leave, so the line
-/// never overflows and never loses the cost.
+/// The strip's counts line: the counts the dots leave out, the thread's cost, the chevron, and, while the
+/// thread is settled, the Agents. The cost keeps its room and the Agents fold into what the counts leave, so
+/// the line never overflows and never loses the cost.
 final class SessionThreadCountsLine: UIStackView {
     /// The least room kept between the counts and what follows, as the dot line keeps.
     private static let spacerMinWidth: CGFloat = 4
 
     let summary = SessionThreadSummaryLabel()
     /// The cost is its own label so the counts can truncate beside it: the line drops the cross-workspace
-    /// note, then shortens the counts, never the cost.
+    /// note, then truncates the counts, never the cost.
     let cost = UILabel()
     let chevron = UIImageView()
 
@@ -520,28 +523,44 @@ final class SessionThreadStatusDotsView: UIView {
 
 // MARK: - Summary line
 
-/// The strip's counts label: the status counts, then the cross-workspace note, each kept only while the whole
-/// of it fits. The counts are never dropped and the cost never joins them: past the width the note goes and
-/// the counts truncate at the tail, beside the cost's own room on the same line.
+/// The strip's counts label: the counts the dots leave out, then the cross-workspace note, each kept only
+/// while the whole of it fits. The note goes first and the counts truncate at the tail beside the cost's own
+/// room on the same line. Every step measures with the label's own font at the width the line gave it, so a
+/// width or text-size change refits the line instead of ellipsizing it.
 final class SessionThreadSummaryLabel: UILabel {
-    private var parts: [String] = []
+    /// The counts, which a thread of only active members draws as nothing at all, and the note past them.
+    private var counts = ""
+    private var note: String?
 
-    func setParts(_ parts: [String]) {
-        self.parts = parts
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // A text-size change rewrites the font, and so every candidate's width, with it.
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (label: Self, _) in
+            label.invalidateIntrinsicContentSize()
+            label.setNeedsLayout()
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func setCounts(_ counts: String, note: String?) {
+        self.counts = counts
+        self.note = note
         fit()
         invalidateIntrinsicContentSize()
     }
 
-    /// The full line, so the label asks for what it would like; layout decides what fits.
+    /// The whole line, so the label asks for what it would like; the width it is given decides what fits.
     override var intrinsicContentSize: CGSize {
-        let size = Self.width(of: parts.joined(separator: Self.separator), font: font)
+        let size = Self.width(of: fullLine, font: font)
         return CGSize(width: size, height: super.intrinsicContentSize.height)
     }
 
-    /// What the counts alone need. They are never dropped, so this is the room the counts keep when the
-    /// Agents share their line.
+    /// What the counts alone need. They are never dropped, so this is the room they keep when the Agents
+    /// share their line.
     var minimumWidth: CGFloat {
-        parts.first.map { Self.width(of: $0, font: font) } ?? 0
+        Self.width(of: counts, font: font)
     }
 
     override func layoutSubviews() {
@@ -555,21 +574,23 @@ final class SessionThreadSummaryLabel: UILabel {
         ceil((text as NSString).size(withAttributes: [.font: font]).width)
     }
 
+    private var fullLine: String {
+        note.map { counts + Self.separator + $0 } ?? counts
+    }
+
+    /// The fit order: the counts with the note, then the counts alone, and past those the tail truncates.
+    /// Before the line has a width, it asks for the whole of it.
     private func fit() {
-        guard let first = parts.first else {
+        guard !counts.isEmpty else {
             if text != nil { text = nil }
             return
         }
-        var shown = first
-        if bounds.width > 0 {
-            for part in parts.dropFirst() {
-                let candidate = shown + Self.separator + part
-                guard Self.width(of: candidate, font: font) <= bounds.width else { break }
-                shown = candidate
-            }
-        } else {
-            shown = parts.joined(separator: Self.separator)
+        guard bounds.width > 0 else {
+            if text != fullLine { text = fullLine }
+            return
         }
+        let showsNote = note != nil && Self.width(of: fullLine, font: font) <= bounds.width
+        let shown = showsNote ? fullLine : counts
         if text != shown { text = shown }
     }
 }

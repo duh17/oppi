@@ -96,6 +96,28 @@ struct SessionThreadStripSummaryTests {
         #expect(summary(children: [session("b", .done)]) == summary(children: [session("b", .idle)]))
     }
 
+    /// The drawn counts line repeats nothing the dots already draw: an active thread counts only its idle and
+    /// stopped members, in that order, and leaves working, needs you, and error to the dots. A settled thread
+    /// draws no dots and counts nothing else, so its line is the whole summary. The full summary, and so
+    /// VoiceOver, keeps every bucket.
+    @Test func theDrawnCountsLeaveWhatTheDotsDrawToTheDots() {
+        let result = summary(repeated(.stopped, 102) + [.idle] + repeated(.working, 15) + [.question, .error])
+
+        #expect(result.text == "15 working · 1 needs you · 1 error · 1 idle · 102 stopped")
+        #expect(result.quietText == "1 idle · 102 stopped")
+        #expect(result.isActive)
+
+        let settled = summary(repeated(.stopped, 4) + [.idle])
+        #expect(!settled.isActive)
+        #expect(settled.quietText == settled.text, "A settled thread's line is its whole summary")
+        #expect(settled.quietText == "1 idle · 4 stopped")
+    }
+
+    /// A thread whose members are all active has nothing the dots leave out: no words on the drawn line.
+    @Test func aThreadOfOnlyActiveMembersDrawsNoCountWords() {
+        #expect(summary([.working, .question, .error]).quietText.isEmpty)
+    }
+
     @Test func countsUseTheListsWordsInTheStripsOrderAndOmitZeros() {
         let result = summary(repeated(.stopped, 101) + repeated(.done, 23) + [.question] + repeated(.working, 3))
 

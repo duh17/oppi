@@ -113,4 +113,12 @@ struct SessionThreadStripSummary: Equatable, Sendable {
     var text: String {
         counts.map(\.text).joined(separator: " · ")
     }
+
+    /// The counts the dots do not already draw: idle and stopped, in bucket order ("1 idle · 102
+    /// stopped"). Working, needs you, and error are what the dots and their "+N" say, so the drawn line
+    /// leaves them to the dots instead of repeating them in words. A settled thread draws no dots and
+    /// counts nothing else, so this is its whole counts line.
+    var quietText: String {
+        counts.filter { !$0.bucket.showsDot }.map(\.text).joined(separator: " · ")
+    }
 }

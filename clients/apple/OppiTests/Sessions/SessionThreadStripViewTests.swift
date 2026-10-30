@@ -199,19 +199,17 @@ struct SessionThreadStripViewTests {
         #expect(crowd == blocked, "A crowd of active members changed a blocked strip's height")
     }
 
-    /// The strip says what the thread needs. The counts already name the working children, so the strip
-    /// does not list them again; a blocked child keeps a line of its own so the person knows where to
-    /// answer.
+    /// The strip says what the thread needs. The dots carry what the active children are, so the counts line
+    /// names only the children the dots leave out; a blocked child keeps a line of its own so the person knows
+    /// where to answer.
     @Test func theStripNamesTheBlockedChildAndNeverTheWorkingOnes() {
         // The Agents are a cluster of their own; this is about the strip's own lines.
         var withoutAgents = SessionRowDisplay.standard
         withoutAgents.showsThreadAgentSummary = false
 
         let (working, _) = strip([.working, .working, .stopped], display: withoutAgents)
-        #expect(
-            shownLabels(working) == ["2 working \u{00B7} 1 stopped"],
-            Comment(rawValue: shownLabels(working).description)
-        )
+        let workingLines = shownLabels(working)
+        #expect(workingLines == ["1 stopped"], Comment(rawValue: workingLines.description))
 
         let (blocked, _) = strip([.question, .working, .stopped], display: withoutAgents)
         let blockedLines = shownLabels(blocked)
@@ -220,10 +218,7 @@ struct SessionThreadStripViewTests {
             blockedLines.first?.contains("Question \u{00B7} child-0") == true,
             Comment(rawValue: blockedLines.description)
         )
-        #expect(
-            blockedLines.last == "1 working \u{00B7} 1 needs you \u{00B7} 1 stopped",
-            Comment(rawValue: blockedLines.description)
-        )
+        #expect(blockedLines.last == "1 stopped", Comment(rawValue: blockedLines.description))
     }
 
     /// A state with nothing to say draws no line at all: never a laid-out line with nothing in it.
@@ -246,31 +241,92 @@ struct SessionThreadStripViewTests {
         }
     }
 
-    /// The strip keeps the thread's cost when its counts are too wide for the line: the cost holds its own
-    /// room, the cross-workspace note leaves first, and the counts truncate at the tail instead.
-    @Test func theCostStaysWhenTheCountsDoNotFit() {
-        // The crowded thread of the capture: 15 working, one waiting, one idle, 102 stopped.
-        let children = Array(repeating: SessionStatusKind.working, count: 15) + [.question, .idle]
-            + Array(repeating: .stopped, count: 102)
-        let (view, _) = strip(
-            children,
-            agents: ["worker", "reviewer", "scout"],
-            width: 330,
-            cost: 0.1,
-            workspaces: ["ws", "kypu"]
-        )
-
-        let lines = shownLabels(view)
-        #expect(lines.filter { $0.hasPrefix("$") } == ["$11.90"], Comment(rawValue: lines.description))
-        #expect(!lines.contains { $0.contains("workspaces") }, "2 workspaces should go before the cost")
-        // The counts keep their place and truncate: the label asks for more room than it has.
+    /// The strip keeps the thread's cost, and an active thread's drawn counts repeat nothing the dots already
+    /// draw: the line names only the idle and stopped members, in that order, then the cost. Working, needs
+    /// you, and error stay with the dots. VoiceOver still hears every bucket.
+    @Test func theCrowdedStripLeavesTheActiveCountsToItsDots() {
+        let (view, _) = strip(crowded, agents: ["worker", "reviewer", "scout"], width: 330, cost: 0.1)
         let counts = descendants(of: view, SessionThreadSummaryLabel.self)[0]
+        let lines = shownLabels(view)
+
         #expect(
-            counts.frame.width < counts.intrinsicContentSize.width,
-            "frame \(counts.frame.width) intrinsic \(counts.intrinsicContentSize.width) text \(counts.text ?? "nil")"
+            counts.text == "1 idle · 102 stopped",
+            Comment(rawValue: "\(counts.text ?? "nil") in \(counts.frame.width)")
         )
-        // Only the drawing drops the note: VoiceOver still hears the thread's reach.
-        #expect(view.accessibilityLabel?.contains("2 workspaces") == true, Comment(rawValue: view.accessibilityLabel ?? "nil"))
+        #expect(drawnWidth(counts) <= counts.frame.width, "The line ellipsizes its tail")
+        #expect(lines.filter { $0.hasPrefix("$") } == ["$11.90"], Comment(rawValue: lines.description))
+        for word in ["working", "needs you", "error"] {
+            #expect(!lines.contains { $0.localizedCaseInsensitiveContains(word) }, "The line repeats \(word): \(lines)")
+        }
+        #expect(
+            view.accessibilityLabel?.contains("15 working · 1 needs you · 1 idle · 102 stopped") == true,
+            Comment(rawValue: view.accessibilityLabel ?? "nil")
+        )
+    }
+
+    /// A settled thread draws no dots, so nothing is left to them: its one line keeps every count and the cost.
+    @Test func aSettledStripKeepsItsWholeCountsAndItsCost() {
+        let (view, _) = strip(Array(repeating: .stopped, count: 3) + [.idle, .done], width: 330, cost: 0.1)
+        let counts = descendants(of: view, SessionThreadSummaryLabel.self)[0]
+
+        #expect(counts.text == "2 idle · 3 stopped", Comment(rawValue: counts.text ?? "nil"))
+        #expect(shownLabels(view).filter { $0.hasPrefix("$") } == ["$0.50"])
+        #expect(view.accessibilityLabel?.contains("2 idle · 3 stopped") == true, Comment(rawValue: view.accessibilityLabel ?? "nil"))
+    }
+
+    /// The crowded thread of the capture: 15 working, one waiting on a question, one idle, 102 stopped.
+    private var crowded: [SessionStatusKind] {
+        Array(repeating: .working, count: 15) + [.question, .idle] + Array(repeating: .stopped, count: 102)
+    }
+
+    /// The width the counts label's text needs, measured with the label's own font: what the line needs to
+    /// draw `text` whole rather than ellipsizing its tail.
+    private func drawnWidth(_ label: UILabel) -> CGFloat {
+        ceil(((label.text ?? "") as NSString).size(withAttributes: [.font: label.font]).width)
+    }
+
+    /// The fit order is simple: the cross-workspace note leaves first, then the counts truncate at the tail
+    /// beside the cost. VoiceOver keeps the note.
+    @Test func theNoteGoesFirstAndThenTheCountsTruncate() {
+        let (narrow, _) = strip(crowded, agents: ["worker"], width: 260, cost: 0.1, workspaces: ["ws", "kypu"])
+        let narrowCounts = descendants(of: narrow, SessionThreadSummaryLabel.self)[0]
+        #expect(narrowCounts.text == "1 idle · 102 stopped", Comment(rawValue: narrowCounts.text ?? "nil"))
+        #expect(drawnWidth(narrowCounts) <= narrowCounts.frame.width, "The counts should be whole once the note goes")
+        #expect(shownLabels(narrow).filter { $0.hasPrefix("$") } == ["$11.90"])
+        #expect(narrow.accessibilityLabel?.contains("2 workspaces") == true, Comment(rawValue: narrow.accessibilityLabel ?? "nil"))
+
+        let (tiny, _) = strip(crowded, agents: ["worker"], width: 190, cost: 0.1)
+        let tinyCounts = descendants(of: tiny, SessionThreadSummaryLabel.self)[0]
+        #expect(tinyCounts.text == "1 idle · 102 stopped", Comment(rawValue: tinyCounts.text ?? "nil"))
+        #expect(
+            drawnWidth(tinyCounts) > tinyCounts.frame.width,
+            "190 points had room for the counts: \(drawnWidth(tinyCounts)) in \(tinyCounts.frame.width)"
+        )
+    }
+
+    /// One reused strip refits as its width changes: the note comes and goes with the room.
+    @Test func theLineRefitsAsItsWidthChanges() {
+        let view = SessionThreadStripView()
+        view.apply(
+            SessionThreadStripView.Content(
+                rollup: members(crowded, agents: ["worker"], cost: 0.1, workspaces: ["ws", "kypu"])
+            ),
+            display: .standard, style: style, iconAssetCache: nil
+        )
+        func fit(width: CGFloat) -> String? {
+            let height = view.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+            view.frame = CGRect(x: 0, y: 0, width: width, height: height)
+            view.layoutIfNeeded()
+            return descendants(of: view, SessionThreadSummaryLabel.self)[0].text
+        }
+
+        #expect(fit(width: 330) == "1 idle · 102 stopped · 2 workspaces", Comment(rawValue: fit(width: 330) ?? "nil"))
+        #expect(fit(width: 260) == "1 idle · 102 stopped")
+        #expect(fit(width: 330) == "1 idle · 102 stopped · 2 workspaces")
     }
 
     /// The Agents sit on the dot line while a member is active, where they have the whole width, and join
