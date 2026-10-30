@@ -69,6 +69,8 @@ enum AgentEvent: Sendable {
     // Compaction
     case compactionStart(sessionId: String, reason: String)
     case compactionEnd(sessionId: String, aborted: Bool, willRetry: Bool, summary: String?, tokensBefore: Int?, errorMessage: String? = nil)
+    /// The Compact request failed before a compaction started; drop the row the tap showed.
+    case compactionAbandoned(sessionId: String)
 
     // Retry
     case retryStart(sessionId: String, attempt: Int, maxAttempts: Int, delayMs: Int, errorMessage: String)
@@ -98,6 +100,7 @@ enum AgentEvent: Sendable {
         case .toolEnd: "toolEnd"
         case .compactionStart: "compactionStart"
         case .compactionEnd: "compactionEnd"
+        case .compactionAbandoned: "compactionAbandoned"
         case .retryStart: "retryStart"
         case .retryEnd: "retryEnd"
         case .commandResult: "commandResult"

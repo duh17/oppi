@@ -557,6 +557,8 @@ final class ChatActionHandler {
                 try? await connection.requestState()
             } catch {
                 onAsyncFailure?()
+                // The row has no compaction to end, so drop it before the error.
+                reducer.process(.compactionAbandoned(sessionId: sessionId))
                 reducer.process(.error(sessionId: sessionId, message: "Compact failed: \(error.localizedDescription)"))
             }
         }

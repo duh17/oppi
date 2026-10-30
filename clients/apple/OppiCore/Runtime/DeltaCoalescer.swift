@@ -205,6 +205,7 @@ final class DeltaCoalescer {
              .error,
              .compactionStart,
              .compactionEnd,
+             .compactionAbandoned,
              .retryStart,
              .retryEnd,
              .commandResult:
@@ -637,6 +638,9 @@ final class DeltaCoalescer {
             return estimatedPayloadBytes(summary)
                 + (tokensBefore.map { String($0).utf8.count } ?? 0)
                 + estimatedPayloadBytes(errorMessage)
+
+        case .compactionAbandoned:
+            return 0
 
         case .retryStart(_, let attempt, let maxAttempts, let delayMs, let errorMessage):
             return String(attempt).utf8.count

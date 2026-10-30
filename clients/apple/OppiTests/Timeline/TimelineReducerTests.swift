@@ -362,4 +362,26 @@ struct TimelineReducerTests {
         reducer.applyLiveTail(TimelineLiveTail())
         #expect(compactionRows(reducer).map(\.message) == ["Context compacted: Summary"])
     }
+
+    @Test func durableSecondTapAfterACommittedFrameReusesTheInProgressRow() {
+        let reducer = TimelineReducer()
+        reducer.applyConversationCommitted([traceEvent("1", .user, "Hello"), traceEvent("2", .assistant, "Hi")])
+        reducer.applyLiveTail(TimelineLiveTail())
+
+        reducer.process(.compactionStart(sessionId: "s1", reason: "manual"))
+        let firstTapIDs = compactionRows(reducer).map(\.id)
+        #expect(firstTapIDs.count == 1)
+
+        // A frame lands between taps without a compaction entry, so the tap's row stays
+        // while the committed apply clears the tracked compaction id.
+        reducer.applyConversationCommitted([
+            traceEvent("1", .user, "Hello"), traceEvent("2", .assistant, "Hi"),
+            traceEvent("3", .user, "Again"),
+        ])
+        #expect(compactionRows(reducer).map(\.id) == firstTapIDs)
+
+        // The second tap must update that row, not add a second one beside it.
+        reducer.process(.compactionStart(sessionId: "s1", reason: "manual"))
+        #expect(compactionRows(reducer).map(\.id) == firstTapIDs)
+    }
 }

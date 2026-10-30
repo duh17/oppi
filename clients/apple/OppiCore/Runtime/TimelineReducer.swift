@@ -853,14 +853,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     }
 
     /// Take out the row the Compact action showed before the stream reported the compaction.
-    private func removeOptimisticCompactionRow() {
-        guard let id = optimisticCompactionRowID else { return }
+    @discardableResult
+    private func removeOptimisticCompactionRow() -> Bool {
+        guard let id = optimisticCompactionRowID else { return false }
         optimisticCompactionRowID = nil
         if currentCompactionItemID == id { currentCompactionItemID = nil }
-        guard indexForID(id) != nil else { return }
+        guard indexForID(id) != nil else { return false }
         items.removeAll { $0.id == id }
         rebuildIndex()
         bumpItemsMutationSeq()
+        return true
     }
 
     /// A durable run failure shows live as an error frame, then commits as a card with the
@@ -1976,6 +1978,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case .compactionStart(_, let reason):
             return handleCompactionStart(reason: reason)
 
+        case .compactionAbandoned:
+            return removeOptimisticCompactionRow()
+
         case .compactionEnd(_, let aborted, let willRetry, let summary, let tokensBefore, let errorMessage):
             return handleCompactionEnd(
                 aborted: aborted,
@@ -2197,7 +2202,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     private func handleCompactionStart(reason: String?) -> Bool {
         let label = reason == "overflow" ? String(localized: "Context overflow — compacting...") : String(localized: "Compacting context...")
-        let id = currentCompactionItemID ?? UUID().uuidString
+        let id = optimisticCompactionRowID ?? currentCompactionItemID ?? UUID().uuidString
         currentCompactionItemID = id
         optimisticCompactionRowID = id
         let item = ChatItem.systemEvent(id: id, message: label)

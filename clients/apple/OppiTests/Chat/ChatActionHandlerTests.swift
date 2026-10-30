@@ -150,6 +150,32 @@ struct ChatActionHandlerTests {
         #expect(!succeeded)
     }
 
+    @Test func compactFailureDropsTheCompactionRowAndShowsTheError() async {
+        enum ExpectedError: Error {
+            case failed
+        }
+
+        let handler = ChatActionHandler()
+        let reducer = TimelineReducer()
+        let connection = ServerConnection()
+        connection._sendMessageForTesting = { _ in throw ExpectedError.failed }
+        var failed = false
+
+        handler.compact(
+            connection: connection,
+            reducer: reducer,
+            sessionId: "s1",
+            onAsyncFailure: { failed = true }
+        )
+
+        #expect(await waitForTestCondition { await MainActor.run { failed } })
+        let compactionRows = reducer.items.filter {
+            if case .systemEvent(_, let message) = $0 { message.contains("Compacting") } else { false }
+        }
+        #expect(compactionRows.isEmpty, "A failed Compact must not leave its row behind")
+        #expect(reducer.items.contains { if case .error = $0 { true } else { false } })
+    }
+
     // MARK: - Send Prompt Logic
 
     @Test func sendPromptReturnsEmptyOnWhitespaceOnly() {
