@@ -161,13 +161,29 @@ struct SSHTerminalMetalTests {
             ("\u{2502}", "bold-italic light vertical", boldItalic),
             ("\u{2501}", "bold-italic heavy horizontal", boldItalic),
             ("\u{2588}", "bold-italic full block", boldItalic),
-            (powerline, "Nerd PUA", nerd),
         ] as [(String, String, UIFont)] {
             let product = try rasterize(glyph, font: glyphFont, metrics: metrics, columns: 1, scale: scale)
             let origin = originClippedRasterize(glyph, font: glyphFont, metrics: metrics, columns: 1, scale: scale)
             #expect(
                 product.bytes == origin.bytes,
                 "\(label) must keep origin-clipped cascade metrics"
+            )
+        }
+
+        // Symbols Nerd Font Mono draws 1 em wide, wider than a cell: icons
+        // shrink inside the cell, Powerline separators fill it edge to edge.
+        let icon = try rasterize("\u{E718}", font: nerd, metrics: metrics, columns: 1, scale: scale)
+        let iconInk = try #require(atlasInk(icon.bytes, width: icon.width, height: icon.height))
+        #expect(
+            iconInk.minX > 0 && iconInk.maxX < icon.width - 1 && iconInk.minY > 0 && iconInk.maxY < icon.height - 1,
+            "Nerd icon must sit whole inside the cell, not on a clip edge \(iconInk)"
+        )
+        for separator in [powerline, "\u{E0B2}"] {
+            let product = try rasterize(separator, font: nerd, metrics: metrics, columns: 1, scale: scale)
+            let ink = try #require(atlasInk(product.bytes, width: product.width, height: product.height))
+            #expect(
+                ink.minX == 0 && ink.maxX == product.width - 1 && ink.minY == 0 && ink.maxY == product.height - 1,
+                "Powerline \(separator.unicodeScalars.first!) must fill the cell \(ink)"
             )
         }
 

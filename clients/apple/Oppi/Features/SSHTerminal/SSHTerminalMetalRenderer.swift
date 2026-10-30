@@ -347,10 +347,10 @@ final class SSHTerminalGlyphAtlas {
             attributes[.foregroundColor] = UIColor.white
         }
         let image: UIImage
-        if plan.constrain {
+        if plan.fit != .none {
             image = rasterizeConstrained(
                 text: plan.text, attributes: attributes,
-                area: area, scale: scale, format: format
+                area: area, scale: scale, format: format, stretch: plan.fit == .stretch
             )
         } else {
             image = UIGraphicsImageRenderer(size: points, format: format).image { ctx in
@@ -362,6 +362,19 @@ final class SSHTerminalGlyphAtlas {
         return RasterizedGlyph(bytes: bytes, color: plan.color)
     }
 
+    /// How a planned draw maps its ink onto the cell.
+    private enum Fit {
+        /// Draw at the cell origin and clip.
+        case none
+        /// Keep the aspect ratio; shrink and center only if the ink overflows.
+        case shrink
+        /// Stretch the ink to fill the cell edge to edge.
+        case stretch
+    }
+
+    /// Nerd Font icons (private use) are drawn 1 em wide, wider than a
+    /// terminal cell, so they shrink to fit; Powerline separators stretch so
+    /// adjacent segments join without gaps.
     /// Width-1 clusters that ask for emoji (U+FE0F) stay on the color-emoji
     /// path and scale to fit the cell. Bare and U+FE0E clusters whose only
     /// remaining scalar is one base use text presentation so glyphs such as
@@ -370,23 +383,27 @@ final class SSHTerminalGlyphAtlas {
     /// blocks, and CJK never constrain.
     private static func planDraw(
         text: String, font: UIFont, columns: Int
-    ) -> (text: String, font: UIFont, constrain: Bool, color: Bool) {
+    ) -> (text: String, font: UIFont, fit: Fit, color: Bool) {
+        let bases = Array(text.unicodeScalars.filter { $0.value != 0xFE0E && $0.value != 0xFE0F })
+        if !bases.isEmpty, bases.allSatisfy(NerdFontSymbols.isPrivateUse) {
+            let powerline = bases.allSatisfy { (0xE0B0...0xE0D7).contains($0.value) }
+            return (text, font, powerline ? .stretch : .shrink, false)
+        }
         if sshTerminalFontCovers(font, text) {
-            return (text, font, false, false)
+            return (text, font, .none, false)
         }
         let emoji = resolvedFontLooksLikeColorEmoji(text: text, font: font)
-        guard emoji else { return (text, font, false, false) }
+        guard emoji else { return (text, font, .none, false) }
         let wantsEmoji = text.unicodeScalars.contains { $0.value == 0xFE0F }
-        let bases = Array(text.unicodeScalars.filter { $0.value != 0xFE0E && $0.value != 0xFE0F })
         if columns == 1, bases.count == 1, !wantsEmoji {
             let base = String(bases[0])
             if let symbols = UIFont(name: "AppleSymbols", size: font.pointSize),
                sshTerminalFontCovers(symbols, base) {
-                return (base, symbols, true, false)
+                return (base, symbols, .shrink, false)
             }
-            return (base + "\u{FE0E}", font, true, false)
+            return (base + "\u{FE0E}", font, .shrink, false)
         }
-        return (text, font, true, true)
+        return (text, font, .shrink, true)
     }
 
     private static func resolvedFontLooksLikeColorEmoji(text: String, font: UIFont) -> Bool {
@@ -413,7 +430,8 @@ final class SSHTerminalGlyphAtlas {
         attributes: [NSAttributedString.Key: Any],
         area: CGRect,
         scale: CGFloat,
-        format: UIGraphicsImageRendererFormat
+        format: UIGraphicsImageRendererFormat,
+        stretch: Bool
     ) -> UIImage {
         let canvas = CGSize(
             width: max(area.width * 3, area.width + 1),
@@ -425,6 +443,13 @@ final class SSHTerminalGlyphAtlas {
         return UIGraphicsImageRenderer(size: area.size, format: format).image { ctx in
             ctx.cgContext.clip(to: area)
             guard let ink = inkBounds(of: loose, scale: scale) else { return }
+            if stretch {
+                ctx.cgContext.scaleBy(
+                    x: area.width / max(ink.width, 0.001), y: area.height / max(ink.height, 0.001)
+                )
+                loose.draw(at: CGPoint(x: -ink.minX, y: -ink.minY))
+                return
+            }
             let fits = ink.minX >= -0.5 && ink.minY >= -0.5
                 && ink.maxX <= area.width + 0.5 && ink.maxY <= area.height + 0.5
             if fits {

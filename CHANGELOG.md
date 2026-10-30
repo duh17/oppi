@@ -122,6 +122,7 @@ Example:
 ### Fixed
 
 - **Server:** The Subagents pill counts every child (for example "111 subagents · 2 working · 1 needs you") instead of the newest eight. Its rows (up to eight) are the children that need you, then the working ones, then the newest finished ones (rows sort by state, then newest first, so they no longer keep spawn order), so an older child that is still working no longer drops out; a last row, "All 111 in thread", links to `oppi://thread/<session id>`.
+- **Client:** SSH Terminal: Nerd Font icons in prompts (Starship's Node.js and git branch icons, for example) draw whole inside their cell instead of cut off at half, and Powerline separators fill their cell so prompt segments join without gaps.
 - **Client:** SSH Terminal: in a terminal Oppi started in Herdr (Run on Connect `herdr`), **Browse Files Here**, relative-path **Open**, and the **…** menu's folder use the focused pane's folder and follow focus, instead of staying missing. Herdr does not pass its panes' folders through, so Oppi reads them from the host's own Herdr. A `herdr` you type yourself, tmux, and other programs keep using the shell's reported folder.
 - **Client:** The app could crash when audio or video playback was closed while a media request was still waiting for authorization, and a long file's follow-up request could be left pending forever; both now fail cleanly.
 - **Server:** The server no longer leaves an `oppi-provider-catalog-*` and an `oppi-mcp-*` folder in the temp folder on every start; it removes both when it stops.
