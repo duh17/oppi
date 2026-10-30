@@ -406,7 +406,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         for (name, element) in facts { XCTAssertTrue(waitForNonExistence(element, timeout: 5), "\(name) should be hidden") }
         XCTAssertTrue(previewFact("Done").exists, "Root status must stay")
         XCTAssertTrue(previewFact("shop-app").exists, "Workspace context must stay")
-        XCTAssertTrue(previewStrip.label.contains("Thread with 4 sessions"), previewStrip.label)
+        XCTAssertTrue(previewStrip.label.contains("Thread with 3 child sessions"), previewStrip.label)
         XCTAssertTrue(previewStrip.label.contains("Question from Review API diff"), "Child question hidden: \(previewStrip.label)")
         XCTAssertTrue(previewStrip.label.contains("working"), previewStrip.label)
         // With so little to show, Compact joins context and status on one line; Standard keeps two.
@@ -633,7 +633,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
     private var rowEditor: XCUIElement { app.navigationBars["Session Rows"] }
     private var previewBox: XCUIElement { app.descendants(matching: .any)["sessionRows.preview"] }
     private var previewStrip: XCUIElement {
-        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Thread with 4 sessions")).firstMatch
+        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Thread with 3 child sessions")).firstMatch
     }
 
     /// Every optional fact the sample root can show. The relative time drifts while the test runs.

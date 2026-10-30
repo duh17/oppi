@@ -117,7 +117,7 @@ final class SessionThreadListUITests: XCTestCase {
         launch()
         let small = app.buttons["thread.nav.thread-root"]
         XCTAssertTrue(small.waitForExistence(timeout: 15), "Thread strip missing")
-        XCTAssertTrue(small.label.contains("Thread with 5 sessions, 1 working \u{00B7} 1 idle \u{00B7} 2 stopped"), small.label)
+        XCTAssertTrue(small.label.contains("Thread with 4 child sessions, 1 working \u{00B7} 1 idle \u{00B7} 2 stopped"), small.label)
         XCTAssertFalse(small.label.contains("finished"), small.label)
         app.terminate()
 
@@ -129,7 +129,7 @@ final class SessionThreadListUITests: XCTestCase {
         let big = app.buttons["thread.nav.thread-root"]
         XCTAssertTrue(big.waitForExistence(timeout: 15), "Thread strip missing")
         XCTAssertTrue(
-            big.label.contains("Thread with 121 sessions, 15 working \u{00B7} 2 need you \u{00B7} 1 idle \u{00B7} 102 stopped"),
+            big.label.contains("Thread with 120 child sessions, 15 working \u{00B7} 2 need you \u{00B7} 1 idle \u{00B7} 102 stopped"),
             big.label
         )
         XCTAssertEqual(big.value as? String, "Collapsed")

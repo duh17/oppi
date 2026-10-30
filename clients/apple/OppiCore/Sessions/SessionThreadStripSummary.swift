@@ -5,8 +5,9 @@ import Foundation
 ///
 /// Counts and dots cover the members other than the root, as the strip's status
 /// counts always did: the root row above the strip already shows its own status.
-/// Words follow the session list's status words (`SessionStatusKind.label`,
-/// lowercased), except that every blocked kind reads "needs you".
+/// Words follow the session list's status words, shared with the SSH terminal's
+/// record-tree summary (`SessionStatusRollup.chipText`), except that every blocked
+/// kind reads "needs you".
 struct SessionThreadStripSummary: Equatable, Sendable {
     /// The most dots a strip draws; the rest are counted as "+N".
     static let maxDots = 12
@@ -38,7 +39,7 @@ struct SessionThreadStripSummary: Equatable, Sendable {
             }
         }
 
-        /// Members still going, or waiting on the person, get a dot. Settled ones are only counted.
+        /// Active members (working, needing the person, or in error) get a dot. Settled ones are only counted.
         var showsDot: Bool {
             switch self {
             case .working, .needsYou, .error: true
@@ -46,10 +47,12 @@ struct SessionThreadStripSummary: Equatable, Sendable {
             }
         }
 
+        /// The words every status summary shares (`SessionStatusRollup.chipText`), with the blocked
+        /// kinds folded into "needs you".
         func text(count: Int) -> String {
             switch self {
             case .needsYou: count == 1 ? "1 needs you" : "\(count) need you"
-            case .working, .error, .done, .idle, .stopped: "\(count) \(kind.label.lowercased())"
+            case .working, .error, .done, .idle, .stopped: SessionStatusRollup.chipText(kind, count: count)
             }
         }
     }

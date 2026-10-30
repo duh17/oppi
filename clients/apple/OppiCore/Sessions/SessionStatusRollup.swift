@@ -43,7 +43,7 @@ struct SessionStatusRollup: Equatable, Sendable {
     }
 
     /// One chip per non-empty state, in headline order: "1 needs approval · 2 working ·
-    /// 1 failed · 3 done · 4 finished".
+    /// 1 error · 3 done · 4 stopped".
     var chips: [Chip] {
         Self.precedence.compactMap { kind in
             let count = count(kind)
@@ -68,10 +68,10 @@ struct SessionStatusRollup: Equatable, Sendable {
         case .signIn: "\(count) \(one ? "needs" : "need") sign-in"
         case .question: "\(count) \(one ? "question" : "questions")"
         case .working: "\(count) working"
-        case .error: "\(count) failed"
+        case .error: "\(count) \(one ? "error" : "errors")"
         case .done: "\(count) done"
         case .idle: "\(count) idle"
-        case .stopped: "\(count) finished"
+        case .stopped: "\(count) stopped"
         }
     }
 }

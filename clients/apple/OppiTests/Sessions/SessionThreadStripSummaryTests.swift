@@ -58,6 +58,21 @@ struct SessionThreadStripSummaryTests {
         #expect(summary([.signIn]).text == "1 needs you")
     }
 
+    @Test func errorsAgreeInNumber() {
+        #expect(summary([.error]).text == "1 error")
+        #expect(summary([.error, .error]).text == "2 errors")
+    }
+
+    /// The SSH terminal's record-tree summary and the strip use one vocabulary for the states they share.
+    @Test(arguments: [SessionStatusKind.working, .error, .done, .idle, .stopped])
+    func theStripAndTheTerminalRollupSayTheSameThing(kind: SessionStatusKind) {
+        for count in [1, 2] {
+            #expect(
+                SessionThreadStripSummary.Bucket(kind).text(count: count) == SessionStatusRollup.chipText(kind, count: count)
+            )
+        }
+    }
+
     @Test func theRootIsInNeitherTheCountsNorTheDots() {
         let working = summary(root: .working, [.stopped, .done])
         #expect(working.text == "1 done · 1 stopped")

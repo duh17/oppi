@@ -3,19 +3,21 @@ import UIKit
 // MARK: - Inbox thread strip
 
 /// Thread control under a thread root row: who is working, a dot for each
-/// member still going, the Agent summary, and the status counts with the
-/// cost. The list makes it the tap target that folds the thread's child rows
-/// open or closed; the root row above it opens the root chat. The chevron
-/// turns down while the thread is open.
+/// active member, the Agent summary, and the status counts with the cost. The
+/// list makes it the tap target that folds the thread's child rows open or
+/// closed; the root row above it opens the root chat. The chevron turns down
+/// while the thread is open.
 ///
-/// The Agent summary and the VoiceOver member count include the root. The
-/// status counts, the dots, and the working line cover the children only: the
-/// root row above already shows its own status.
+/// The strip describes the children only: the working line, the dots, the
+/// status counts, the Agent summary, and the VoiceOver child count all cover
+/// the thread's other sessions, so they add up. The root row above already
+/// shows its own status.
 ///
 /// Display choices only hide the Agent summary and the cost total. The
 /// chevron, a blocked child, who is working, the dots, and the status counts
-/// always stay. The dot line keeps its height whether or not any member is
-/// active, so a member changing state never moves the rows below.
+/// always stay. The headline line and the dot line keep their height whether
+/// or not any member is active, so a member changing state never moves the
+/// rows below.
 final class SessionThreadStripView: UIControl {
     struct Content: Equatable {
         let rollup: SessionThreadRollup
@@ -43,13 +45,14 @@ final class SessionThreadStripView: UIControl {
 
     private let stack = UIStackView()
     private let headline = UILabel()
-    private let statusRow = UIStackView()
-    private let dots = SessionThreadStatusDotsView()
-    private let agents = SessionThreadAgentClusterView()
+    private let statusRow = SessionThreadStatusRow()
+    private var dots: SessionThreadStatusDotsView { statusRow.dots }
+    private var agents: SessionThreadAgentClusterView { statusRow.agents }
     private let footer = UIStackView()
     private let summaryLabel = SessionThreadSummaryLabel()
     private let chevron = UIImageView()
     private var verticalPadding: [NSLayoutConstraint] = []
+    private lazy var headlineHeight = headline.heightAnchor.constraint(equalToConstant: Self.headlineLineHeight())
     private var summary = ""
 
     override init(frame: CGRect) {
@@ -60,10 +63,7 @@ final class SessionThreadStripView: UIControl {
         layer.cornerCurve = .continuous
 
         headline.adjustsFontForContentSizeCategory = true
-        statusRow.axis = .horizontal
-        statusRow.alignment = .center
-        statusRow.spacing = 8
-        [dots, SessionRowSpacer(minWidth: 4), agents].forEach(statusRow.addArrangedSubview)
+        headline.translatesAutoresizingMaskIntoConstraints = false
 
         summaryLabel.font = UIFont.scaled(.caption1)
         summaryLabel.adjustsFontForContentSizeCategory = true
@@ -93,11 +93,30 @@ final class SessionThreadStripView: UIControl {
             statusRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headline.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
+            headlineHeight,
         ])
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, _) in
+            view.headlineHeight.constant = Self.headlineLineHeight()
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// The headline line's height. It is always laid out at this height, empty or not, whether it names a
+    /// blocked child (symbol and text) or the working ones (text), so a member changing state never moves
+    /// the rows below the strip.
+    private static func headlineLineHeight() -> CGFloat {
+        let blocked = SessionRowText.symbolAndText(
+            SessionStatusKind.question.badgeSymbol, "Ag", style: .footnote,
+            symbolWeight: .semibold, textWeight: .semibold, spacing: 5, color: .label
+        )
+        let working = NSAttributedString(string: "Ag", attributes: [.font: UIFont.scaled(.footnote, .medium)])
+        let unbounded = CGSize(width: 1_000, height: CGFloat.greatestFiniteMagnitude)
+        return [blocked, working]
+            .map { ceil($0.boundingRect(with: unbounded, options: .usesLineFragmentOrigin, context: nil).height) }
+            .max() ?? 0
+    }
 
     func apply(_ content: Content, display: SessionRowDisplay, style: SessionRowStyle, iconAssetCache: IconAssetCache?) {
         let colors = style.colors
@@ -109,21 +128,19 @@ final class SessionThreadStripView: UIControl {
         let working = rollup.descendants.filter(SessionThreadGrouping.isWorking)
         if let blocked = content.blockedMember {
             let status = content.status(blocked)
-            headline.setHiddenIfChanged(false)
             headline.attributedText = SessionRowText.symbolAndText(
                 status.badgeSymbol, "\(status.label) · \(blocked.displayTitle)", style: .footnote,
                 symbolWeight: .semibold, textWeight: .semibold, spacing: 5, color: style.tint(status)
             )
             headline.lineBreakMode = .byTruncatingTail
         } else if !working.isEmpty {
-            headline.setHiddenIfChanged(false)
             headline.attributedText = NSAttributedString(
                 string: working.map(\.displayTitle).joined(separator: " · ") + " working",
                 attributes: [.font: UIFont.scaled(.footnote, .medium), .foregroundColor: colors.blue]
             )
             headline.lineBreakMode = .byTruncatingTail
         } else {
-            headline.setHiddenIfChanged(true)
+            headline.attributedText = nil
         }
 
         let statusSummary = SessionThreadStripSummary(rollup: rollup, status: content.status)
@@ -134,7 +151,7 @@ final class SessionThreadStripView: UIControl {
         let showsAgents = display.showsThreadAgentSummary && !content.hidesDetails
         agents.setHiddenIfChanged(!showsAgents)
         if showsAgents {
-            agents.apply(SessionThreadAgentGroup.groups(rollup.members), maxGroups: 3, colors: colors, iconAssetCache: iconAssetCache)
+            agents.apply(SessionThreadAgentGroup.groups(Array(rollup.descendants)), maxGroups: 3, colors: colors, iconAssetCache: iconAssetCache)
         }
 
         let statusRollup = rollup.statusRollup(status: content.status)
@@ -158,7 +175,9 @@ final class SessionThreadStripView: UIControl {
 
         let blocked = content.blockedMember.map { "\(content.status($0).label) from \($0.displayTitle). " } ?? ""
         let headlineStatus = statusRollup.headline.map { "\($0.label). " } ?? ""
-        accessibilityLabel = blocked + headlineStatus + "Thread with \(rollup.members.count) sessions, \(summary)"
+        let children = rollup.descendants.count
+        accessibilityLabel = blocked + headlineStatus
+            + "Thread with \(children) child \(children == 1 ? "session" : "sessions"), \(summary)"
         accessibilityValue = content.isExpanded ? String(localized: "Expanded") : String(localized: "Collapsed")
         accessibilityHint = content.isExpanded
             ? String(localized: "Hides the thread's sessions")
@@ -166,13 +185,42 @@ final class SessionThreadStripView: UIControl {
     }
 }
 
+// MARK: - Status row
+
+/// The strip's dots on the left and Agents on the right. The dots keep their width; the Agents take what
+/// is left and drop trailing groups to fit, so the row never overflows.
+final class SessionThreadStatusRow: UIStackView {
+    let dots = SessionThreadStatusDotsView()
+    let agents = SessionThreadAgentClusterView()
+
+    init() {
+        super.init(frame: .zero)
+        axis = .horizontal
+        alignment = .center
+        spacing = 8
+        [dots, SessionRowSpacer(minWidth: 4), agents].forEach(addArrangedSubview)
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError("Not supported") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard !agents.isHidden else { return }
+        agents.fit(maxWidth: bounds.width - dots.intrinsicContentSize.width - spacing * 2 - SessionRowSpacer.minWidth)
+    }
+}
+
 // MARK: - Agent cluster
 
 /// Agents present in a group of sessions, largest first: 🛠️×15 🔬×12 +2.
-/// Item views are reused by position across reconfigures.
+/// Item views are reused by position across reconfigures. `fit` drops trailing
+/// groups, folding them into "+N", until the cluster fits the width it is given.
 final class SessionThreadAgentClusterView: UIStackView {
     private var items: [(stack: UIStackView, icon: SessionGridBadgeView, count: UILabel)] = []
     private let overflow = UILabel()
+    private var groupTotal = 0
+    private var appliedGroups = 0
 
     init() {
         super.init(frame: .zero)
@@ -195,6 +243,8 @@ final class SessionThreadAgentClusterView: UIStackView {
         iconAssetCache: IconAssetCache?
     ) {
         let shown = Array(groups.prefix(maxGroups))
+        groupTotal = groups.count
+        appliedGroups = shown.count
         while items.count < shown.count {
             let icon = SessionGridBadgeView()
             icon.translatesAutoresizingMaskIntoConstraints = false
@@ -229,6 +279,35 @@ final class SessionThreadAgentClusterView: UIStackView {
         overflow.textColor = colors.comment
     }
 
+    /// Shows as many of the applied groups as fit in `maxWidth`, then "+N" for the rest of the Agents.
+    /// With no room for even one group the cluster is empty.
+    func fit(maxWidth: CGFloat) {
+        guard maxWidth > 0, appliedGroups > 0 else { return }
+        let widths = items.prefix(appliedGroups).map {
+            $0.stack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+        }
+        func overflowWidth(_ hidden: Int) -> CGFloat {
+            overflow.text = "+\(hidden)"
+            return overflow.intrinsicContentSize.width
+        }
+        var shown = 0
+        var showsOverflow = false
+        for count in stride(from: appliedGroups, through: 1, by: -1) {
+            let hidden = groupTotal - count
+            let views = count + (hidden > 0 ? 1 : 0)
+            let width = widths.prefix(count).reduce(0, +) + (hidden > 0 ? overflowWidth(hidden) : 0)
+                + spacing * CGFloat(views - 1)
+            if width <= maxWidth {
+                shown = count
+                showsOverflow = hidden > 0
+                break
+            }
+        }
+        for (index, item) in items.enumerated() { item.stack.setHiddenIfChanged(index >= shown) }
+        overflow.text = "+\(groupTotal - shown)"
+        overflow.setHiddenIfChanged(!showsOverflow)
+    }
+
     private static func styleCount(_ label: UILabel) {
         label.font = .scaled(.caption2, monospacedDigits: true)
         label.adjustsFontForContentSizeCategory = true
@@ -239,9 +318,10 @@ final class SessionThreadAgentClusterView: UIStackView {
 // MARK: - Status dots
 
 /// One dot per active thread member (working, needs you, error) in its status
-/// tint, then "+N" for the members past the cap. Working dots pulse. The view
-/// is always `height` tall, with or without dots, so the strip never changes
-/// height as members start and stop. Dot layers are reused across `apply`s.
+/// tint, then "+N" for the members past the cap. Working dots pulse, until
+/// Reduce Motion is turned on. The view is always as tall as `height` or the
+/// "+N" line, with or without dots, so the strip never changes height as members
+/// start and stop. Dot layers are reused across `apply`s.
 final class SessionThreadStatusDotsView: UIView {
     static let dotSize: CGFloat = 7
     static let dotSpacing: CGFloat = 4
@@ -252,6 +332,7 @@ final class SessionThreadStatusDotsView: UIView {
     private var dotLayers: [CALayer] = []
     private var shownCount = 0
     private let overflow = UILabel()
+    private var applied: (buckets: [SessionThreadStripSummary.Bucket], hiddenCount: Int, style: SessionRowStyle)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -263,12 +344,27 @@ final class SessionThreadStatusDotsView: UIView {
         addSubview(overflow)
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
+        // A change of text size resizes "+N" and the line; Reduce Motion stops or starts the pulse.
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, _) in
+            view.invalidateIntrinsicContentSize()
+            view.setNeedsLayout()
+        }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(motionPreferenceChanged),
+            name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil
+        )
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    @objc private func motionPreferenceChanged() {
+        guard let applied else { return }
+        apply(applied.buckets, hiddenCount: applied.hiddenCount, style: applied.style)
+    }
+
     func apply(_ buckets: [SessionThreadStripSummary.Bucket], hiddenCount: Int, style: SessionRowStyle) {
+        applied = (buckets, hiddenCount, style)
         shownCount = buckets.count
         while dotLayers.count < buckets.count {
             let dot = CALayer()
@@ -317,7 +413,7 @@ final class SessionThreadStatusDotsView: UIView {
 
     override var intrinsicContentSize: CGSize {
         let overflowWidth = overflow.isHidden ? 0 : Self.overflowGap + overflow.intrinsicContentSize.width
-        return CGSize(width: dotsWidth + overflowWidth, height: Self.height)
+        return CGSize(width: dotsWidth + overflowWidth, height: max(Self.height, ceil(overflow.font.lineHeight)))
     }
 
     override func layoutSubviews() {

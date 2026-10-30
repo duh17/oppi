@@ -43,9 +43,9 @@ struct SessionStatusRollupTests {
         )
 
         #expect(rollup.chips.map(\.text) == [
-            "1 needs approval", "2 working", "1 failed", "3 done", "1 idle", "4 finished",
+            "1 needs approval", "2 working", "1 error", "3 done", "1 idle", "4 stopped",
         ])
-        #expect(rollup.summaryText == "1 needs approval · 2 working · 1 failed · 3 done · 1 idle · 4 finished")
+        #expect(rollup.summaryText == "1 needs approval · 2 working · 1 error · 3 done · 1 idle · 4 stopped")
     }
 
     @Test func rootGetsItsOwnChipAndIsNotCountedTwice() {
