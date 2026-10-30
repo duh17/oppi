@@ -305,15 +305,24 @@ struct SessionThreadsTests {
         #expect(rows.allSatisfy { $0.stoppedFold == nil })
     }
 
-    @Test func aThreadWithOnlyStoppedMembersShowsJustTheFoldClosedUntilOpened() {
+    /// A thread with nothing live has no second card to open: its strip's chevron is the only fold, so
+    /// opening it lists the stopped members directly. The N Stopped row stays for threads that list
+    /// live members above it.
+    @Test func aThreadWithOnlyStoppedMembersListsThemAsSoonAsItOpens() {
         let sessions = [
             session("root", status: .ready, created: 0),
             session("first", parent: "root", created: 10, last: 100),
             session("second", parent: "root", created: 11, last: 200),
         ]
 
-        #expect(expand(sessions).map(label) == ["root", "fold(2)"], "The fold is closed by default, even with nothing live")
-        #expect(expand(sessions, folds: ["root": true]).map(label) == ["root", "fold(2, open)", "second", "first"])
+        #expect(expand(sessions).map(label) == ["root", "second", "first"], "No fold row repeats the strip's count")
+        #expect(
+            expand(sessions, folds: ["root": true]).map(label) == ["root", "second", "first"],
+            "The thread's own open state lists them; a remembered fold changes nothing here"
+        )
+        #expect(expand(sessions, roots: []).map(label) == ["root"], "A closed thread still lists nothing")
+        #expect(expand(sessions).allSatisfy { $0.stoppedFold == nil })
+        #expect(expand(sessions).dropFirst().allSatisfy { $0.depth == 1 }, "Its members keep their first-level depth")
     }
 
     /// A working member's activity ticks as it streams; its row must not move for that, and a member
@@ -410,7 +419,8 @@ struct SessionThreadsTests {
         #expect(expanding(["root"]).map(\.id) == ["root", "child"])
     }
 
-    /// A thread is the whole launch tree: members running in another workspace are rows too.
+    /// A thread is the whole launch tree: members running in another workspace are rows too. Every
+    /// member here is stopped, so the open thread lists them directly and keeps no fold row.
     @Test func expandingAWorkspaceListThreadIncludesMembersFromOtherWorkspaces() {
         let root = session("root", workspace: "a", status: .ready, created: 10)
         let local = session("local", parent: "root", workspace: "a", created: 20)
@@ -422,10 +432,11 @@ struct SessionThreadsTests {
             entries, expandedRoots: ["root"], stoppedFolds: ["root": true], attention: { _ in .none }
         )
 
-        // All stopped, fold opened. The newest member's tree lists first, a parent before its child.
-        #expect(rows.map(label) == ["root", "fold(3, open)", "remote", "remote-child", "local"])
-        #expect(rows.map(\.depth) == [0, 1, 1, 2, 1])
-        #expect(rows.dropFirst(2).map(\.session.workspaceId) == ["b", "b", "a"])
+        // All stopped, so nothing live lists first and there is no fold to open. The newest member's
+        // tree lists first, a parent before its child.
+        #expect(rows.map(label) == ["root", "remote", "remote-child", "local"])
+        #expect(rows.map(\.depth) == [0, 1, 2, 1])
+        #expect(rows.dropFirst().map(\.session.workspaceId) == ["b", "b", "a"])
     }
 
     @Test func outlineListsEveryDescendantOnceEvenAroundAParentCycle() {

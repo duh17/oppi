@@ -57,13 +57,14 @@ struct SessionThreadStripViewTests {
     private func strip(
         _ children: [SessionStatusKind],
         agents: [String] = [],
-        width: CGFloat = 330
+        width: CGFloat = 330,
+        display: SessionRowDisplay = .standard
     ) -> (SessionThreadStripView, CGFloat) {
         let rollup = members(children, agents: agents)
         let view = SessionThreadStripView()
         view.apply(
             SessionThreadStripView.Content(rollup: rollup),
-            display: .standard, style: style, iconAssetCache: nil
+            display: display, style: style, iconAssetCache: nil
         )
         let height = view.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
@@ -114,6 +115,21 @@ struct SessionThreadStripViewTests {
         (view.layer.sublayers ?? []).filter { !$0.isHidden }
     }
 
+    /// The words on the strip's lines, top to bottom: a label counts while neither it nor a parent is
+    /// hidden. An empty entry is a line the strip laid out with nothing in it.
+    private func shownLabels(_ view: SessionThreadStripView) -> [String] {
+        descendants(of: view, UILabel.self)
+            .filter { label in
+                var node: UIView? = label
+                while let current = node, current !== view {
+                    if current.isHidden { return false }
+                    node = current.superview
+                }
+                return true
+            }
+            .map { $0.attributedText?.string ?? $0.text ?? "" }
+    }
+
     // MARK: Dots
 
     @Test func dotsTakeTheirStatusTintAndOnlyWorkingOnesPulse() {
@@ -153,20 +169,71 @@ struct SessionThreadStripViewTests {
 
     // MARK: Strip
 
-    /// Settling is the only state change that resizes the row: a settled thread draws one line, and every
-    /// thread with an active member keeps the taller headline + dots + counts, so a member changing state
-    /// inside an active thread never moves the rows below.
-    @Test func aSettledThreadIsOneLineAndEveryActiveThreadKeepsItsHeight() {
+    /// The strip changes height only when a child becomes blocked, or when the thread wakes or
+    /// settles: a member moving between working, idle, and stopped inside that moves nothing, so the
+    /// rows below it never jump for a state change that did not change what the strip says.
+    @Test func theStripChangesHeightOnlyWhenBlockedOrActiveChanges() {
         let (_, settled) = strip([.stopped, .stopped])
         let (_, settledDone) = strip([.done, .idle, .stopped])
-        let (_, working) = strip([.working, .stopped])
+        let (_, active) = strip([.working, .stopped])
+        let (_, moved) = strip([.working, .idle, .stopped, .stopped])
         let (_, blocked) = strip([.question, .stopped])
+        let (_, stillBlocked) = strip([.question, .working, .working])
         let (_, crowd) = strip(Array(repeating: .working, count: 40) + [.question, .stopped])
 
         #expect(settledDone == settled, "A thread with no active member draws the same one line")
-        #expect(working > settled, "An active thread keeps the headline and dot lines")
-        #expect(blocked == working, "A blocked member changed an active strip's height")
-        #expect(crowd == working, "A crowd of active members changed an active strip's height")
+        #expect(active > settled, "An active thread adds its dot line")
+        #expect(moved == active, "A member moving between working, idle, and stopped moved the strip")
+        #expect(blocked > active, "A blocked child adds its line")
+        #expect(stillBlocked == blocked, "Members moving inside a blocked thread moved the strip")
+        #expect(crowd == blocked, "A crowd of active members changed a blocked strip's height")
+    }
+
+    /// The strip says what the thread needs. The counts already name the working children, so the strip
+    /// does not list them again; a blocked child keeps a line of its own so the person knows where to
+    /// answer.
+    @Test func theStripNamesTheBlockedChildAndNeverTheWorkingOnes() {
+        // The Agents are a cluster of their own; this is about the strip's own lines.
+        var withoutAgents = SessionRowDisplay.standard
+        withoutAgents.showsThreadAgentSummary = false
+
+        let (working, _) = strip([.working, .working, .stopped], display: withoutAgents)
+        #expect(
+            shownLabels(working) == ["2 working \u{00B7} 1 stopped"],
+            Comment(rawValue: shownLabels(working).description)
+        )
+
+        let (blocked, _) = strip([.question, .working, .stopped], display: withoutAgents)
+        let blockedLines = shownLabels(blocked)
+        #expect(blockedLines.count == 2, Comment(rawValue: blockedLines.description))
+        #expect(
+            blockedLines.first?.contains("Question \u{00B7} child-0") == true,
+            Comment(rawValue: blockedLines.description)
+        )
+        #expect(
+            blockedLines.last == "1 working \u{00B7} 1 needs you \u{00B7} 1 stopped",
+            Comment(rawValue: blockedLines.description)
+        )
+    }
+
+    /// A state with nothing to say draws no line at all: never a laid-out line with nothing in it.
+    @Test func noStateDrawsAnEmptyLine() {
+        let states: [[SessionStatusKind]] = [
+            [.stopped, .stopped],
+            [.working, .stopped],
+            [.question, .stopped],
+            [.idle, .done, .stopped],
+            [.error, .working, .needsApproval, .idle],
+        ]
+        for state in states {
+            let (view, _) = strip(state)
+            let lines = shownLabels(view)
+            #expect(!lines.isEmpty, "\(state) drew no line at all")
+            #expect(
+                lines.allSatisfy { !$0.trimmingCharacters(in: .whitespaces).isEmpty },
+                Comment(rawValue: "\(state): \(lines)")
+            )
+        }
     }
 
     /// The Agents sit on the dot line while a member is active, where they have the whole width, and join

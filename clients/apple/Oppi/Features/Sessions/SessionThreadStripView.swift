@@ -2,29 +2,31 @@ import UIKit
 
 // MARK: - Inbox thread strip
 
-/// Thread control under a thread root row: who is working, a dot for each
+/// Thread control under a thread root row: a blocked child by name, a dot for each
 /// active member, the Agent summary, and the status counts with the cost. The
 /// list makes it the tap target that folds the thread's child rows open or
 /// closed; the root row above it opens the root chat. The chevron turns down
 /// while the thread is open.
 ///
-/// The strip describes the children only: the working line, the dots, the
-/// status counts, the Agent summary, and the VoiceOver child count all cover
-/// the thread's other sessions, so they add up. The root row above already
-/// shows its own status. Both the dots and the counts read the list's own
-/// classification of a member, without this device's seen state, so the stopped
-/// count is the count of the thread's stopped fold and opening a member never
-/// changes the strip.
+/// The strip describes the children only: the dots, the status counts, the Agent
+/// summary, and the VoiceOver child count all cover the thread's other sessions,
+/// so they add up. The root row above already shows its own status. Both the dots
+/// and the counts read the list's own classification of a member, without this
+/// device's seen state, so the stopped count is the count of the thread's stopped
+/// fold and opening a member never changes the strip.
 ///
-/// Display choices only hide the Agent summary and the cost total. The
-/// chevron, a blocked child, who is working, the dots, and the status counts
+/// The strip starts a line only for what the thread needs. It names a blocked
+/// child, so the person knows where to answer, and never lists the working ones,
+/// which the counts already name. Display choices only hide the Agent summary and
+/// the cost total. The chevron, a blocked child, the dots, and the status counts
 /// always stay.
 ///
-/// A settled thread, one with no member needing you, working, or in error,
-/// draws one line: the counts, the Agents, and the chevron. While a member is
-/// active the strip keeps its headline and dot lines at a fixed height, so a
-/// member changing state never moves the rows below; the row changes height
-/// only when the thread settles or wakes.
+/// A thread with nothing active, working, or in error draws one line: the counts,
+/// the Agents, and the chevron. While a member is active the strip adds its dot
+/// line, and a blocked child adds its line above it, so no state holds an empty
+/// line. The row changes height only when a child becomes blocked, or when the
+/// thread's first member wakes or its last one settles, never as a member moves
+/// between working, idle, and stopped otherwise.
 final class SessionThreadStripView: UIControl {
     struct Content: Equatable {
         let rollup: SessionThreadRollup
@@ -52,9 +54,6 @@ final class SessionThreadStripView: UIControl {
         }
     }
 
-    /// Leading inset that lines the strip up under the root row's identity icon.
-    static let rowInset: CGFloat = 18
-
     private let stack = UIStackView()
     private let headline = UILabel()
     private let statusRow = SessionThreadStatusRow()
@@ -64,7 +63,6 @@ final class SessionThreadStripView: UIControl {
     private var summaryLabel: SessionThreadSummaryLabel { footer.summary }
     private var chevron: UIImageView { footer.chevron }
     private var verticalPadding: [NSLayoutConstraint] = []
-    private lazy var headlineHeight = headline.heightAnchor.constraint(equalToConstant: Self.headlineLineHeight())
     /// The counts line holds the Agents while the thread is settled; the dot line holds them while active.
     private var agentsAreSettled: Bool?
     private var isSettled = false
@@ -97,30 +95,11 @@ final class SessionThreadStripView: UIControl {
             statusRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headline.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
-            headlineHeight,
         ])
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, _) in
-            view.headlineHeight.constant = view.isSettled ? 0 : Self.headlineLineHeight()
-        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    /// The headline line's height. It is always laid out at this height, empty or not, whether it names a
-    /// blocked child (symbol and text) or the working ones (text), so a member changing state never moves
-    /// the rows below the strip.
-    private static func headlineLineHeight() -> CGFloat {
-        let blocked = SessionRowText.symbolAndText(
-            SessionStatusKind.question.badgeSymbol, "Ag", style: .footnote,
-            symbolWeight: .semibold, textWeight: .semibold, spacing: 5, color: .label
-        )
-        let working = NSAttributedString(string: "Ag", attributes: [.font: UIFont.scaled(.footnote, .medium)])
-        let unbounded = CGSize(width: 1_000, height: CGFloat.greatestFiniteMagnitude)
-        return [blocked, working]
-            .map { ceil($0.boundingRect(with: unbounded, options: .usesLineFragmentOrigin, context: nil).height) }
-            .max() ?? 0
-    }
 
     func apply(_ content: Content, display: SessionRowDisplay, style: SessionRowStyle, iconAssetCache: IconAssetCache?) {
         let colors = style.colors
@@ -130,29 +109,22 @@ final class SessionThreadStripView: UIControl {
         for constraint in verticalPadding { constraint.constant = display.isCompact ? 4 : 6 }
 
         let statusSummary = SessionThreadStripSummary(rollup: rollup, classify: content.classification)
-        // A settled thread has nothing to headline and nothing to dot, so it draws the counts line only.
-        // While a member is active both lines stay, at a fixed height, so member changes move nothing.
+        // The strip draws a line only while that line has something to say: the blocked child's line, the
+        // dots of an active thread, and always the counts.
         isSettled = !statusSummary.isActive
         placeAgents(settled: isSettled)
-        headline.setHiddenIfChanged(isSettled)
-        headlineHeight.constant = isSettled ? 0 : Self.headlineLineHeight()
+        let blockedMember = content.blockedMember
+        headline.setHiddenIfChanged(blockedMember == nil)
         statusRow.setHiddenIfChanged(isSettled || content.hidesDetails)
 
-        let working = rollup.descendants.filter { content.classification($0).section == .working }
-        if let blocked = content.blockedMember {
+        if let blocked = blockedMember {
             let status = content.classification(blocked).status
             headline.attributedText = SessionRowText.symbolAndText(
                 status.badgeSymbol, "\(status.label) · \(blocked.displayTitle)", style: .footnote,
                 symbolWeight: .semibold, textWeight: .semibold, spacing: 5, color: style.tint(status)
             )
             headline.lineBreakMode = .byTruncatingTail
-        } else if !working.isEmpty {
-            headline.attributedText = NSAttributedString(
-                string: working.map(\.displayTitle).joined(separator: " · ") + " working",
-                attributes: [.font: UIFont.scaled(.footnote, .medium), .foregroundColor: colors.blue]
-            )
-            headline.lineBreakMode = .byTruncatingTail
-        } else {
+        } else if headline.attributedText != nil {
             headline.attributedText = nil
         }
 

@@ -181,6 +181,8 @@ final class SessionRowDisplayEditorViewController: UIViewController {
     private let previewBox = UIStackView()
     private let previewRow = SessionRowView(combinesAccessibility: false)
     private let previewStrip = SessionThreadStripView()
+    /// The strip's slot: the preview hides the slot, so a hidden strip takes its spacing with it.
+    private let previewSlot = UIView()
     private let previewNote = UILabel()
     private let previewData = UISegmentedControl(items: [String(localized: "Sample"), String(localized: "My session")])
     private let previewDivider = UIView()
@@ -265,7 +267,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
             iconAssetCache: root.coordinator.activeConnection.iconAssetCache
         )
         if let thread = subject.thread {
-            previewStrip.isHidden = false
+            previewSlot.isHidden = false
             previewStrip.apply(
                 SessionThreadStripView.Content(rollup: thread.rollup, askCounts: thread.askCounts),
                 display: draft,
@@ -273,7 +275,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
                 iconAssetCache: root.coordinator.activeConnection.iconAssetCache
             )
         } else {
-            previewStrip.isHidden = true
+            previewSlot.isHidden = true
         }
         if usesLoaded, subject.thread == nil {
             previewNote.text = String(localized: "This session has no child sessions, so thread options do not show here.")
@@ -303,13 +305,19 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         previewBox.spacing = 6
         previewBox.isUserInteractionEnabled = false
         previewBox.addArrangedSubview(previewRow)
-        previewBox.addArrangedSubview(previewStrip)
+        previewBox.addArrangedSubview(previewSlot)
+        // The strip sits on the row's own grid, as it does in a list row: it starts on the row's title
+        // column and ends on its trailing text column.
+        previewSlot.addSubview(previewStrip)
         previewStrip.translatesAutoresizingMaskIntoConstraints = false
-        previewRow.widthAnchor.constraint(equalTo: previewBox.widthAnchor).isActive = true
-        previewStrip.widthAnchor.constraint(
-            equalTo: previewBox.widthAnchor,
-            constant: -SessionThreadStripView.rowInset
-        ).isActive = true
+        NSLayoutConstraint.activate([
+            previewRow.widthAnchor.constraint(equalTo: previewBox.widthAnchor),
+            previewSlot.widthAnchor.constraint(equalTo: previewBox.widthAnchor),
+            previewStrip.topAnchor.constraint(equalTo: previewSlot.topAnchor),
+            previewSlot.bottomAnchor.constraint(equalTo: previewStrip.bottomAnchor),
+            previewStrip.leadingAnchor.constraint(equalTo: previewRow.textLeadingAnchor),
+            previewStrip.trailingAnchor.constraint(equalTo: previewRow.textTrailingAnchor),
+        ])
         previewBox.accessibilityContainerType = .semanticGroup
         previewBox.accessibilityIdentifier = "sessionRows.preview"
 

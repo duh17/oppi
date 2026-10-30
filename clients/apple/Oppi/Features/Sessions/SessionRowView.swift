@@ -31,6 +31,8 @@ final class SessionRowView: UIView {
     var onActivate: (() -> Void)?
     /// Where the title and details start, past the identity icon.
     var textLeadingAnchor: NSLayoutXAxisAnchor { column.leadingAnchor }
+    /// Where the row's text ends: the time in the title row, the status under the details.
+    var textTrailingAnchor: NSLayoutXAxisAnchor { column.trailingAnchor }
 
     private let combinesAccessibility: Bool
     private var content: Content?
@@ -496,6 +498,12 @@ final class SessionRowView: UIView {
     private static let iconSpacing: CGFloat = 8
     private static let trailingInset: CGFloat = 4
     private static let detailSpacing: CGFloat = 6
+
+    /// The row's two columns: its text starts `textInset` in from the row's leading edge, past the
+    /// identity icon, and ends `trailingTextInset` before its trailing edge. A thread's strip, its
+    /// stopped fold, and its child rows line up on these, so a thread draws as one block.
+    static let textInset: CGFloat = iconWidth + iconSpacing
+    static let trailingTextInset: CGFloat = trailingInset
 
     private func buildHierarchy() {
         iconContainer.translatesAutoresizingMaskIntoConstraints = false

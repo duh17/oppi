@@ -7,6 +7,10 @@ import UIKit
 /// A stopped member is history, so it stays behind this row until asked for;
 /// the live members list above it.
 ///
+/// The row sits on the thread's grid, not a card of its own: it starts on the
+/// root row's title column and ends on its trailing text column, one title
+/// column in for its depth, as an open thread's child rows do.
+///
 /// The whole row is one button. A touch and accessibility activation reach the
 /// same list action, `SessionListRowActions.toggleStoppedMembers`, and the
 /// list owner keeps the open or closed choice. The list never selects this row.
@@ -68,16 +72,19 @@ final class SessionThreadStoppedFoldContentView: UIView, UIContentView {
         let margins = layoutMarginsGuide
         let leading = control.leadingAnchor.constraint(equalTo: margins.leadingAnchor)
         leadingConstraint = leading
-        // A fixed gap above and below keeps the row apart from its neighbors.
+        // A fixed gap above and below keeps the row apart from its neighbors. The horizontal inset
+        // inside the card matches the strip's, so the two rows' words share a column.
         NSLayoutConstraint.activate([
             leading,
-            control.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+            control.trailingAnchor.constraint(
+                equalTo: margins.trailingAnchor, constant: -SessionRowView.trailingTextInset
+            ),
             control.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             bottomAnchor.constraint(equalTo: control.bottomAnchor, constant: 4),
             stack.topAnchor.constraint(equalTo: control.topAnchor, constant: 10),
             control.bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 10),
-            stack.leadingAnchor.constraint(equalTo: control.leadingAnchor, constant: 10),
-            control.trailingAnchor.constraint(greaterThanOrEqualTo: stack.trailingAnchor, constant: 10),
+            stack.leadingAnchor.constraint(equalTo: control.leadingAnchor, constant: 8),
+            control.trailingAnchor.constraint(greaterThanOrEqualTo: stack.trailingAnchor, constant: 8),
         ])
         apply(configuration)
     }

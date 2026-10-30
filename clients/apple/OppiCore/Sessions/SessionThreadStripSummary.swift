@@ -104,8 +104,9 @@ struct SessionThreadStripSummary: Equatable, Sendable {
         hiddenDotCount = active.count - dots.count
     }
 
-    /// Whether a member is working, needing the person, or in error: the strip draws its dots, headline,
-    /// and full height only then.
+    /// Whether a member is working, needing the person, or in error: the strip draws its dots, and keeps
+    /// the Agents beside them, only then. A blocked member is always active, so the blocked line and the
+    /// dot line appear and disappear together.
     var isActive: Bool { !dots.isEmpty }
 
     /// "3 working · 1 needs you · 137 stopped".

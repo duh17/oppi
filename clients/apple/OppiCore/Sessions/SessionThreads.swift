@@ -311,9 +311,11 @@ enum SessionListEntries {
     /// Other entries pass through.
     ///
     /// `stoppedFolds` holds what the person chose for a thread's fold (true: open), by root id.
-    /// Without a choice the fold is closed, always: a thread whose members are all stopped lists
-    /// its root and the fold row. `attention` supplies each member's pending asks, which make it
-    /// blocked.
+    /// Without a choice the fold is closed, always: a thread whose members are all stopped has no fold
+    /// row at all, so it lists its stopped members as soon as it opens. Its strip's chevron is the only
+    /// fold there is, and a second card would repeat what the strip already says. A thread that lists
+    /// live members above its stopped ones keeps the fold, so a big thread does not bury them.
+    /// `attention` supplies each member's pending asks, which make it blocked.
     /// A choice is kept per root until the owner clears it, so closing and reopening a thread
     /// finds its fold as it was left.
     ///
@@ -341,6 +343,10 @@ enum SessionListEntries {
                 SessionListEntry(session: listed.session, thread: nil, outsideRoot: nil, depth: listed.depth)
             }
             rows.append(contentsOf: listing.live.map(member))
+            guard !listing.live.isEmpty else {
+                rows.append(contentsOf: listing.stopped.map(member))
+                continue
+            }
             guard !listing.stopped.isEmpty else { continue }
             let isOpen = stoppedFolds[entry.session.id] ?? false
             rows.append(SessionListEntry(

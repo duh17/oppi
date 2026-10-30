@@ -56,9 +56,18 @@ struct SessionListEntryConfiguration: UIContentConfiguration {
 final class SessionListEntryContentView: UIView, UIContentView {
     private let stack = UIStackView()
     private let rowView = SessionRowView(combinesAccessibility: true)
-    /// Made on first use: most rows have neither.
-    private var stripView: SessionThreadStripView?
-    private var linkView: SessionThreadLinkView?
+    /// One Thread control and the slot that carries it. Made on first use: most rows have neither.
+    private struct ThreadControl<Control: UIControl> {
+        let control: Control
+        /// The full-width slot the control sits in. The list hides the slot, so a hidden control
+        /// takes the stack's spacing with it.
+        let slot: UIView
+
+        var isShown: Bool { !slot.isHidden }
+    }
+
+    private var strip: ThreadControl<SessionThreadStripView>?
+    private var link: ThreadControl<SessionThreadLinkView>?
     private var applied: SessionListEntryConfiguration
     /// Where the row starts: the list's margin plus the indent of a thread's child row.
     private var leadingConstraint: NSLayoutConstraint?
@@ -107,21 +116,35 @@ final class SessionListEntryContentView: UIView, UIContentView {
         apply(configuration)
     }
 
-    /// A Thread control under the row, inset to line up under its icon.
+    /// A Thread row under the row, on the row's grid: the control starts on the row's title column and
+    /// ends on its trailing text column, so the strip reads as part of the row rather than a card
+    /// beside it. The slot keeps the stack's spacing and hiding for it.
     private func addThreadControl<Control: UIControl>(
         _ control: Control,
         action: @escaping (SessionListEntryContentView) -> Void
-    ) -> Control {
+    ) -> ThreadControl<Control> {
         control.addAction(UIAction { [weak self] _ in self.map(action) }, for: .touchUpInside)
         control.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(control)
-        control.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -SessionThreadStripView.rowInset).isActive = true
-        return control
+        let slot = SessionThreadRowSlot()
+        slot.translatesAutoresizingMaskIntoConstraints = false
+        slot.addSubview(control)
+        stack.addArrangedSubview(slot)
+        NSLayoutConstraint.activate([
+            // The slot spans the row, so the stack can space and hide it; inside it the control sits on
+            // the grid, and a touch beside the control reaches the row as a touch outside the slot does.
+            slot.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            control.topAnchor.constraint(equalTo: slot.topAnchor),
+            slot.bottomAnchor.constraint(equalTo: control.bottomAnchor),
+            control.leadingAnchor.constraint(equalTo: rowView.textLeadingAnchor),
+            control.trailingAnchor.constraint(equalTo: rowView.textTrailingAnchor),
+        ])
+        return ThreadControl(control: control, slot: slot)
     }
 
     static let verticalInset: CGFloat = 15
-    /// Indent per thread level; deeper threads stop indenting at `maxIndentLevels` so rows keep their width.
-    static let indentPerLevel: CGFloat = 16
+    /// Indent per thread level: one title column, so a child row's icon sits where its parent's title
+    /// starts. Deeper threads stop indenting at `maxIndentLevels` so rows keep their width.
+    static let indentPerLevel: CGFloat = SessionRowView.textInset
     static let maxIndentLevels = 4
 
     /// The separator starts under the title, past the identity icon.
@@ -159,11 +182,11 @@ final class SessionListEntryContentView: UIView, UIContentView {
         rowView.accessibilityValue = status.isBlocked ? status.label : ""
 
         if let thread = entry.thread {
-            let stripView = stripView ?? addThreadControl(SessionThreadStripView()) { $0.toggleThread() }
-            self.stripView = stripView
-            stripView.setHiddenIfChanged(false)
-            stripView.accessibilityIdentifier = "thread.nav.\(thread.root.id)"
-            stripView.apply(
+            let strip = strip ?? addThreadControl(SessionThreadStripView()) { $0.toggleThread() }
+            self.strip = strip
+            strip.slot.setHiddenIfChanged(false)
+            strip.control.accessibilityIdentifier = "thread.nav.\(thread.root.id)"
+            strip.control.apply(
                 SessionThreadStripView.Content(
                     rollup: thread,
                     askCounts: row.askCounts,
@@ -176,25 +199,28 @@ final class SessionListEntryContentView: UIView, UIContentView {
                 iconAssetCache: configuration.iconAssetCache
             )
         } else {
-            stripView?.setHiddenIfChanged(true)
+            strip?.slot.setHiddenIfChanged(true)
         }
 
         if entry.thread == nil, let root = entry.outsideRoot {
-            let linkView = linkView ?? addThreadControl(SessionThreadLinkView()) { $0.openRoot() }
-            self.linkView = linkView
-            linkView.setHiddenIfChanged(false)
-            linkView.apply(
+            let link = link ?? addThreadControl(SessionThreadLinkView()) { $0.openRoot() }
+            self.link = link
+            link.slot.setHiddenIfChanged(false)
+            link.control.apply(
                 root: root,
                 workspaceName: row.foreignWorkspaceNames[root.id],
                 lockBadge: row.lockBadge(of: root),
                 display: configuration.display,
                 colors: style.colors
             )
-            linkView.accessibilityIdentifier = "thread.link.\(session.id)"
+            link.control.accessibilityIdentifier = "thread.link.\(session.id)"
         } else {
-            linkView?.setHiddenIfChanged(true)
+            link?.slot.setHiddenIfChanged(true)
         }
-        accessibilityElements = ([rowView, stripView, linkView] as [UIView?]).compactMap { $0 }.filter { !$0.isHidden }
+        var elements: [UIView] = [rowView]
+        if let strip, strip.isShown { elements.append(strip.control) }
+        if let link, link.isShown { elements.append(link.control) }
+        accessibilityElements = elements
     }
 
     private func toggleThread() {
@@ -226,6 +252,16 @@ final class SessionListEntryContentView: UIView, UIContentView {
             withHorizontalFittingPriority: horizontalFittingPriority,
             verticalFittingPriority: verticalFittingPriority
         )
+    }
+}
+
+/// The slot a Thread control sits in, as an arranged subview of the row's stack. It spans the row so
+/// the stack can space and hide it, and it lets a touch beside the control through to the cell, as a
+/// touch on the row's margin did before the control had a slot: the row, not the slot, takes it.
+final class SessionThreadRowSlot: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self ? nil : hit
     }
 }
 
