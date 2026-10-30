@@ -158,7 +158,7 @@ struct GitStatusStoreTests {
         #expect(store.gitStatus != nil)
 
         // Switch to ws-2 with git enabled — stale ws-1 status should be cleared immediately
-        store.loadInitial(workspaceId: "ws-2", apiClient: makeMockAPIClient(), gitStatusEnabled: true)
+        store.loadInitial(workspaceId: "ws-2", apiClient: StubGitStatusFetcher(status: makeGitStatus(branch: "main", dirtyCount: 0)), gitStatusEnabled: true)
         #expect(store.gitStatus == nil, "Stale status from previous workspace should be cleared on switch")
     }
 
@@ -169,7 +169,11 @@ struct GitStatusStoreTests {
         #expect(store.gitStatus?.dirtyCount == 5)
 
         // Reload same workspace — should keep existing status (avoid flash)
-        store.loadInitial(workspaceId: "ws-1", apiClient: makeMockAPIClient(), gitStatusEnabled: true)
+        store.loadInitial(
+            workspaceId: "ws-1",
+            apiClient: StubGitStatusFetcher(status: makeGitStatus(branch: "main", dirtyCount: 5)),
+            gitStatusEnabled: true
+        )
         #expect(store.gitStatus?.dirtyCount == 5, "Same workspace reload should preserve existing status")
     }
 
@@ -184,6 +188,15 @@ struct GitStatusStoreTests {
             token: "test-token",
             configuration: config
         )
+    }
+
+    /// Answers a git status without a URLSession. A test that loads with git enabled starts the store's own
+    /// fetch, which outlives the test: a real request would reach the double after its handler was cleared and
+    /// fail the whole run. These tests only check what a switch does to the status already shown.
+    private struct StubGitStatusFetcher: WorkspaceGitStatusFetching {
+        let status: GitStatus
+
+        func getGitStatus(workspaceId: String, worktreeId: String?) async throws -> GitStatus { status }
     }
 
     private func makeGitStatus(branch: String, dirtyCount: Int) -> GitStatus {

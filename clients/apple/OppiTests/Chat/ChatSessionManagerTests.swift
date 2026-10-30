@@ -2643,6 +2643,16 @@ struct ChatSessionManagerTests {
 
         let connection = ServerConnection()
         connection.setAPIClientForTesting(makeURLProtocolAPIClient())
+        // The connection's own connected-time refreshes (models, slash commands) are not what this test is
+        // about, and the double fails a request no test answers: answer them here, and wait for the model
+        // preload below before the handler goes away.
+        TestURLProtocol.handler = { request in
+            switch request.url?.path {
+            case "/models": return try mockAPIResponse(json: #"{"models":[]}"#)
+            default: return try mockAPIResponse(json: "{}")
+            }
+        }
+        defer { TestURLProtocol.handler = nil }
         let sessionStore = SessionStore()
         sessionStore.upsert(makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy))
 
@@ -2691,6 +2701,8 @@ struct ChatSessionManagerTests {
         streams.finish(index: 0)
         await connectTask.value
         manager.cleanup()
+        // The model preload is the connection's own, started by the connected message.
+        await connection.chatState.modelPrefetchTask?.value
     }
 
     @Test func historyJumpAppliesReducerWhilePresentationPaused() async throws {

@@ -1096,6 +1096,10 @@ struct StickyRefreshReconciliationTests {
         )))
         connection.setAPIClientForTesting(makeReconciliationAPIClient())
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        // A `.connected` app event refreshes pending pairing approvals. These tests answer no
+        // `GET /auth/pairing-approvals`, and the request outlived its test: it reached the double after the
+        // handler was cleared and failed the whole run. The seam answers it in memory instead.
+        connection._listPairingApprovalsForTesting = { [] }
         connection.workspaceStore.isLoaded = true
         connection.workspaceStore.markSyncSucceeded(at: Date())
         connection.sessionStore.markSyncSucceeded(at: Date())
