@@ -56,6 +56,9 @@ final class SSHTerminalConnectSession {
     /// terminal (Herdr), once that terminal is up. The terminal screen runs it,
     /// so a refusal shows over the terminal it leaves the person in.
     var multiplexerFolder: SSHTerminalFolderTarget?
+    /// The Rex pane this session's terminal shows instead of a shell, over the
+    /// same saved host. Part of the terminal's identity, like `folder`.
+    var rexPane: RexPaneTarget?
     var devicePasscodeChanged = false
     private var task: Task<Void, Never>?
     private var runID = UUID()
@@ -85,7 +88,7 @@ final class SSHTerminalConnectSession {
         // show it. No dial, no sign-in. A form that also changed which
         // passwords are saved, or typed one, saves them first (and the
         // registry updates the live terminal) rather than dialing a replacement.
-        if let live = registry.terminal(for: value.id, folder: folder), live.profile.sameConnection(as: value) {
+        if let live = registry.terminal(for: value.id, folder: folder, rexPane: rexPane), live.profile.sameConnection(as: value) {
             if live.profile == value && sudoPassword == nil {
                 show(live)
             } else if value.authentication == .password && value.savesPassword && suppliedPassword == nil
@@ -102,7 +105,7 @@ final class SSHTerminalConnectSession {
                     profile: value, suppliedPassword: suppliedPassword, sudoPassword: sudoPassword
                 ) { [weak self] saved in
                     onSaved?(saved)
-                    guard let self, let live = self.registry.terminal(for: saved.id, folder: self.folder) else { return }
+                    guard let self, let live = self.registry.terminal(for: saved.id, folder: self.folder, rexPane: self.rexPane) else { return }
                     self.show(live)
                 }
             }
@@ -130,25 +133,35 @@ final class SSHTerminalConnectSession {
                 onSaved?(value)
                 connectedProfile = value
                 let savedKey = try SSHKnownHosts().savedKey(host: value.host, port: value.port)
-                let owner = try SSHTerminalChannel()
+                let rexPane = self.rexPane
+                // A Rex pane's program got its query answers from Rex's own terminal.
+                let owner = try SSHTerminalChannel(answersTerminalQueries: rexPane == nil)
                 channel = owner
                 let queue = SSHTerminalEventQueue()
                 let session: SSHPTYSession
                 // A folder terminal runs the login shell in that folder, or the
                 // multiplexer's own attach command there: the host's Run on
-                // Connect command belongs to its own terminal.
+                // Connect command belongs to its own terminal. A Rex pane runs
+                // no shell: the connection's main channel is Rex's control
+                // connection, with no PTY, and the pane's output comes on a
+                // second channel (`RexPaneConnection`).
                 let folder = self.folder
                 let folderCommand = self.folderTerminalCommand
                 let command: String?
-                if let folder {
+                let control = RexControl()
+                if rexPane != nil {
+                    command = RexBridge.command
+                } else if let folder {
                     command = folderCommand ?? SSHTerminalFolderCommand.command(folder: folder)
                 } else {
                     command = value.startupCommand
                 }
                 do {
                     session = try await SSHPTYSession.connect(
-                        username: value.username, savedHostKey: savedKey, inboundFlow: queue.flow,
+                        username: value.username, savedHostKey: savedKey,
+                        inboundFlow: rexPane == nil ? queue.flow : nil,
                         command: command,
+                        requestsPTY: rexPane == nil,
                         prepareAuthentication: {
                             switch value.authentication {
                             case .password:
@@ -161,16 +174,33 @@ final class SSHTerminalConnectSession {
                             }
                         }, dial: {
                             try await SSHDial.socket(host: value.host, port: value.port, whenNodeStopped: .direct)
-                        }, sink: { queue.push($0) }
+                        }, sink: { event in
+                            guard rexPane != nil else { return queue.push(event) }
+                            // Typing travels on the control channel, so its
+                            // writability is what lets the input pump resume.
+                            if case .writabilityChanged = event { queue.push(event) }
+                            control.receive(event)
+                        }
                     )
                 } catch { queue.finish(); throw error }
                 guard !Task.isCancelled, runID == self.runID else { queue.finish(); await session.cancel(); return }
-                owner.opened(session, command: command)
+                if let rexPane {
+                    let pane: RexPaneConnection
+                    do {
+                        pane = try await RexPaneConnection.open(session: session, control: control, target: rexPane, queue: queue)
+                    } catch { queue.finish(); await session.cancel(); throw error }
+                    guard !Task.isCancelled, runID == self.runID else { queue.finish(); await pane.cancel(); return }
+                    owner.opened(pane)
+                } else {
+                    owner.opened(session, command: command)
+                }
                 // Sign-in's task (and its password capture) ends here. The
                 // registry's byte consumer owns no authentication material.
                 // It refuses (and closes `owner`) when Oppi is in the background
                 // with no grace left to close the session.
-                let adopted = registry.adopt(owner, profile: value, folder: folder, folderCommand: folderCommand, queue: queue)
+                let adopted = registry.adopt(
+                    owner, profile: value, folder: folder, folderCommand: folderCommand, rexPane: rexPane, queue: queue
+                )
                 task = nil
                 connecting = false
                 if adopted {
@@ -199,12 +229,15 @@ final class SSHTerminalConnectSession {
     /// session then stands for that terminal, so Reconnect and Edit Host act
     /// on it. Nothing happens when it has ended since the caller read it.
     func show(_ terminal: SSHTerminalRegistry.Terminal) {
-        guard registry.terminal(for: terminal.profile.id, folder: terminal.folder)?.channel === terminal.channel else { return }
+        guard registry.terminal(
+            for: terminal.profile.id, folder: terminal.folder, rexPane: terminal.rexPane
+        )?.channel === terminal.channel else { return }
         cancel()
         failure = nil
         hostFailure = nil
         folder = terminal.folder
         folderTerminalCommand = terminal.folderCommand
+        rexPane = terminal.rexPane
         // A folder still waiting to open inside the opening terminal's
         // multiplexer belongs to that terminal, not this one.
         multiplexerFolder = nil
@@ -251,6 +284,19 @@ final class SSHTerminalConnectSession {
             connecting = false
             savingHostOnly = false
         }
+    }
+
+    /// Shows a Rex pane on the host this session stands for, in a terminal of
+    /// its own beside the host's shell: the open one if it is still connected,
+    /// else a new connection with the same sign-in. The session then stands
+    /// for the pane, so Reconnect reopens it.
+    func openRexPane(_ pane: RexPaneTarget) {
+        guard let profile = currentProfile else { return }
+        folder = nil
+        folderTerminalCommand = nil
+        multiplexerFolder = nil
+        rexPane = pane
+        connect(profile: profile)
     }
 
     /// Opens the terminal this session stands for again: its host, folder, and

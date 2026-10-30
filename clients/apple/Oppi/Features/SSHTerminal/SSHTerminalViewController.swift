@@ -334,7 +334,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         super.updateProperties()
         if let session, let next = session.channel, next !== channel {
             if let profile = session.connectedProfile {
-                hostLabel = profile.terminalLabel(folder: session.folder)
+                hostLabel = profile.terminalLabel(folder: session.folder, rexPane: session.rexPane)
             }
             replaceChannel(next)
         }
@@ -1301,7 +1301,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     private var terminalIdentity: SSHTerminalIdentity? {
         guard let session, let profile = session.connectedProfile else { return nil }
-        return SSHTerminalIdentity(profileID: profile.id, folder: session.folder)
+        return SSHTerminalIdentity(profileID: profile.id, folder: session.folder, rexBlock: session.rexPane?.blockID)
     }
 
     /// Keeps the chat bar's text and attachments for the terminal being left.
@@ -1656,6 +1656,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         guard !presentingOverview, let source = overview(action) else { return }
         presentingOverview = true
         source.watching = true
+        // A Rex pane opens here, in a terminal of its own over the same host.
+        rex.openPane = { [weak self] pane in self?.session?.openRexPane(pane) }
         Router.present(
             SSHTerminalOverviewViewController(source: source, channel: channel),
             presentation: .sheet.detents([.medium(), .large()]).inNavigation(),

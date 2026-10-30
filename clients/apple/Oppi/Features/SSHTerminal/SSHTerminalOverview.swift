@@ -55,10 +55,9 @@ struct SSHTerminalPaneRecord: Decodable, Equatable, Hashable, Sendable {
     }
 }
 
-/// What a tap on an overview row asks its multiplexer to focus: a group (a
-/// Herdr workspace) or an item (a Herdr agent, a Rex pane) by the multiplexer's
-/// own ID, within `scope` (a Herdr machine, a Rex session), because those IDs
-/// are only unique there.
+/// What a tap on an overview row acts on: a group (a Herdr workspace) or an
+/// item (a Herdr agent, a Rex pane) by the multiplexer's own ID, within `scope`
+/// (a Herdr machine, a Rex session), because those IDs are only unique there.
 struct SSHTerminalOverviewFocus: Hashable, Sendable {
     let scope: String?
     let id: String
@@ -113,7 +112,7 @@ protocol SSHTerminalOverviewSource: AnyObject {
     /// Prefix of the sheet rows' accessibility identifiers, such as `sshTerminal.rex`.
     var identifierPrefix: String { get }
     var sections: [SSHTerminalOverviewSection] { get }
-    /// Why the last tap could not focus its row; the next tap, or closing the
+    /// Why the last tap could not act on its row; the next tap, or closing the
     /// sheet, clears it.
     var focusFailure: String? { get }
     /// The sheet is open: refresh faster.
@@ -126,7 +125,7 @@ protocol SSHTerminalOverviewSource: AnyObject {
     /// turns out not to have the multiplexer.
     func run(on channel: SSHTerminalChannel) async
     func refresh(on channel: SSHTerminalChannel) async
-    /// Focuses the row's target. False, with `focusFailure` set, when the
-    /// multiplexer refused.
-    func focus(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool
+    /// Acts on a tapped row: Herdr focuses it on the host, Rex opens the pane
+    /// on this device. True closes the sheet; false sets `focusFailure`.
+    func activate(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool
 }

@@ -1628,29 +1628,30 @@ struct SSHTerminalTests {
         }
     }
 
-    /// A tap focuses the pane through the same side command, and the list is
-    /// read again. IDs from the snapshot go into the Lua script only in Rex's
-    /// own form. A Rex that stops keeps its last list under the failure without
-    /// lighting the badge; a host without rex is asked once and never polled.
-    @Test func rexFocusesAPaneAndStopsPollingAHostWithoutRex() async throws {
+    /// A tapped pane opens on this device as the pane the list names, with
+    /// nothing sent to the host. A pane the list no longer has is refused. A
+    /// Rex that stops keeps its last list under the failure without lighting
+    /// the badge; a host without rex is asked once and never polled.
+    @Test func rexOpensATappedPaneAndStopsPollingAHostWithoutRex() async throws {
         let fixture = TerminalConnectionFixture()
         await fixture.setRunResult(.init(output: Data(Self.rexJSON.utf8), errorOutput: Data(), exitStatus: 0), for: RexRemote.command)
         let channel = try SSHTerminalChannel()
         channel.opened(fixture)
         defer { channel.close(reason: "done") }
         let monitor = RexMonitor()
+        var opened: [RexPaneTarget] = []
+        monitor.openPane = { opened.append($0) }
         await monitor.refresh(on: channel)
+        let reads = await fixture.runs.count
 
-        #expect(await monitor.focus(.init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false), on: channel))
-        let runs = await fixture.runs
-        let focus = String(decoding: try #require(runs.dropLast().last?.input), as: UTF8.self)
-        #expect(focus.contains(#"session.focus_block", { session_id = "\#(Self.rexSession)", block_id = "\#(Self.rexBlocked)" }"#))
-        #expect(runs.last.map { String(decoding: $0.input, as: UTF8.self) } == RexRemote.snapshotScript, "read again after the focus")
+        #expect(await monitor.activate(.init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false), on: channel))
+        #expect(opened == [RexPaneTarget(sessionID: Self.rexSession, blockID: Self.rexBlocked, label: "claude")])
+        #expect(await fixture.runs.count == reads, "opening a pane runs nothing on the host")
 
-        let hostile = #"block:x" }) os.execute("touch /tmp/pwned") --"#
-        #expect(!(await monitor.focus(.init(scope: Self.rexSession, id: hostile, isGroup: false), on: channel)))
-        #expect(monitor.focusFailure == RexRemoteError.unusableID.localizedDescription)
-        #expect(await fixture.runs.count == runs.count, "a refused ID never reaches the host")
+        #expect(!(await monitor.activate(.init(scope: Self.rexSession, id: "block:gone", isGroup: false), on: channel)))
+        #expect(!(await monitor.activate(.init(scope: nil, id: Self.rexSession, isGroup: true), on: channel)))
+        #expect(monitor.focusFailure == "This pane is no longer in Rex.")
+        #expect(opened.count == 1)
 
         await fixture.setRunResult(
             .init(output: Data(), errorOutput: Data("Error: no Rex server is running".utf8), exitStatus: RexRemote.notRunningStatus),

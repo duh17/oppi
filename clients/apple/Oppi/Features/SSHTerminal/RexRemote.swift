@@ -93,6 +93,10 @@ struct RexSnapshot: Decodable, Equatable, Sendable {
         sessions = try container.decode(LuaList<Session>.self, forKey: .sessions).items
     }
 
+    func pane(session sessionID: String, block blockID: String) -> Pane? {
+        sessions.first { $0.sessionID == sessionID }?.windows.lazy.flatMap(\.panes).first { $0.blockID == blockID }
+    }
+
     /// Panes waiting at an approval, question, or sign-in.
     var needsAttention: Int {
         sessions.reduce(0) { total, session in
@@ -134,8 +138,6 @@ enum RexRemoteError: Error, Equatable, LocalizedError {
     case notRunning
     case rejected(String)
     case unreadable
-    /// An ID Rex reported that Oppi will not send back to the host.
-    case unusableID
 
     var errorDescription: String? {
         switch self {
@@ -143,7 +145,6 @@ enum RexRemoteError: Error, Equatable, LocalizedError {
         case .notRunning: "Rex is not running on this host."
         case .rejected(let message): message
         case .unreadable: "Rex returned a response Oppi cannot read."
-        case .unusableID: "Rex returned an ID Oppi will not send back."
         }
     }
 }
@@ -203,25 +204,6 @@ enum RexRemote {
     return { sessions = sessions }
     """
 
-    /// Focuses a pane, which also makes its window the session's active one.
-    /// The IDs go into the script as Lua string literals, so only Rex's own ID
-    /// form (`session:` or `block:` and a UUID) is accepted; anything else
-    /// from a hostile snapshot is refused rather than quoted.
-    static func focusScript(session: String, block: String) -> String? {
-        guard isRexID(session, kind: "session"), isRexID(block, kind: "block") else { return nil }
-        return """
-        assert(rex.call("session.attach", { session_id = "\(session)" }))
-        assert(rex.call("session.focus_block", { session_id = "\(session)", block_id = "\(block)" }))
-        return {}
-        """
-    }
-
-    static func isRexID(_ id: String, kind: String) -> Bool {
-        let prefix = kind + ":"
-        guard id.hasPrefix(prefix), let uuid = UUID(uuidString: String(id.dropFirst(prefix.count))) else { return false }
-        return id == prefix + uuid.uuidString.lowercased()
-    }
-
     static func snapshot(from result: SSHExecResult) throws -> RexSnapshot {
         try check(result)
         guard let snapshot = try? JSONDecoder().decode(RexSnapshot.self, from: result.output) else {
@@ -247,9 +229,9 @@ enum RexRemote {
 }
 
 /// Polls the host's Rex server while a terminal is connected, so the bar can
-/// offer the session list and a needs-you count. A host without `rex` is
-/// detected once and not polled again for that connection; a Rex that is not
-/// running is asked again, since it may start.
+/// offer the session list and a needs-you count, and a tapped pane opens on
+/// this device. A host without `rex` is detected once and not polled again for
+/// that connection; a Rex that is not running is asked again, since it may start.
 @MainActor @Observable
 final class RexMonitor: SSHTerminalOverviewSource {
     let title = "Rex"
@@ -263,6 +245,9 @@ final class RexMonitor: SSHTerminalOverviewSource {
     var watching = false {
         didSet { if !watching { focusFailure = nil } }
     }
+    /// Opens a tapped pane on this device: the terminal screen shows it in a
+    /// terminal of its own (`SSHTerminalConnectSession.openRexPane`).
+    @ObservationIgnored var openPane: ((RexPaneTarget) -> Void)?
     /// The read in flight. A refresh while one runs waits for it instead of
     /// racing a second answer.
     private var reader: Task<Void, Never>?
@@ -314,23 +299,15 @@ final class RexMonitor: SSHTerminalOverviewSource {
         }
     }
 
-    /// A pane row focuses its pane in its session. Session rows offer nothing
-    /// to focus.
-    func focus(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool {
+    /// A pane row opens that pane on this device. Session rows offer nothing.
+    func activate(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool {
         focusFailure = nil
-        if let session = focus.scope, !focus.isGroup, let script = RexRemote.focusScript(session: session, block: focus.id) {
-            do {
-                try RexRemote.check(try await channel.run(RexRemote.command, input: Data(script.utf8)))
-            } catch {
-                focusFailure = error.localizedDescription
-            }
-        } else {
-            focusFailure = RexRemoteError.unusableID.localizedDescription
+        guard let sessionID = focus.scope, !focus.isGroup,
+              let pane = snapshot?.pane(session: sessionID, block: focus.id), let openPane else {
+            focusFailure = "This pane is no longer in Rex."
+            return false
         }
-        guard focusFailure == nil else { return false }
-        // A read already running started before the focus.
-        await reader?.value
-        await refresh(on: channel)
+        openPane(RexPaneTarget(sessionID: sessionID, blockID: pane.blockID, label: pane.displayName))
         return true
     }
 

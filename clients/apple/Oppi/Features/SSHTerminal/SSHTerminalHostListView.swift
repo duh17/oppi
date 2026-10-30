@@ -307,6 +307,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
 
     private func connect(_ profile: SSHTerminalProfile, password: String? = nil) {
         connectingProfile = profile.normalized()
+        // A row is the host's own terminal, whatever this session last showed.
+        SSHTerminalFolderEntry.prepare(session: session, profile: connectingProfile, target: nil)
         session.connect(
             profile: connectingProfile,
             suppliedPassword: password

@@ -4,7 +4,7 @@ import UIKit
 /// workspaces, and agents, or Rex's sessions and panes, each with its live
 /// program status. The source decides the rows (`SSHTerminalOverviewSource`);
 /// this sheet draws them the same way for every multiplexer. Selecting a row
-/// asks the multiplexer to focus it, and a client showing it follows.
+/// acts on it: Herdr focuses it on the host, Rex opens the pane on this device.
 final class SSHTerminalOverviewViewController: UIViewController, UICollectionViewDelegate {
     private let source: any SSHTerminalOverviewSource
     private let channel: SSHTerminalChannel
@@ -192,7 +192,7 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
         collectionView.deselectItem(at: indexPath, animated: true)
         guard let focus = dataSource?.itemIdentifier(for: indexPath)?.focus else { return }
         Task {
-            let focused = await source.focus(focus, on: channel)
+            let focused = await source.activate(focus, on: channel)
             if focused, isVisible { Router.finish(self) } else { applySnapshot() }
         }
     }

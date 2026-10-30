@@ -220,7 +220,7 @@ final class SSHTerminalConnectChrome {
         pushingTerminal = true
         let session = session
         let editHost = editHost
-        let hostLabel = profile().terminalLabel(folder: session.folder)
+        let hostLabel = profile().terminalLabel(folder: session.folder, rexPane: session.rexPane)
         DispatchQueue.main.async {
             guard session.showsTerminal, let channel = session.channel else { return }
             Router.push(SSHTerminalViewController(

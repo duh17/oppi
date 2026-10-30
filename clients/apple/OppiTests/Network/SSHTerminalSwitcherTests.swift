@@ -175,6 +175,34 @@ struct SSHTerminalSwitcherTests {
         #expect(registry.terminal(for: studio.id)?.channel === plain)
     }
 
+    /// A Rex pane is a terminal of its own beside the host's shell, listed by
+    /// its name. A screen's session that showed it must not carry it into the
+    /// next connect: a host row is the host's own terminal again.
+    @Test func aRexPaneIsItsOwnTerminalAndTheHostRowStillOpensTheShell() throws {
+        let registry = makeRegistry()
+        defer { closeEverything(registry) }
+        let session = SSHTerminalConnectSession(registry: registry)
+        let shell = try open(registry, studio)
+        let pane = RexPaneTarget(sessionID: "session:a", blockID: "block:b", label: "claude")
+        let paneChannel = try SSHTerminalChannel(answersTerminalQueries: false)
+        paneChannel.opened(QuietConnection())
+        registry.adopt(paneChannel, profile: studio, rexPane: pane, queue: SSHTerminalEventQueue())
+
+        #expect(registry.terminal(for: studio.id)?.channel === shell, "the pane did not replace the shell")
+        let items = SSHTerminalSwitcher.items(terminals: registry.openTerminals(), current: paneChannel)
+        #expect(items.map(\.subtitle) == ["Login shell", "Rex \u{00B7} claude"])
+
+        session.show(try #require(registry.terminal(for: studio.id, folder: nil, rexPane: pane)))
+        #expect(session.channel === paneChannel)
+        #expect(session.rexPane == pane)
+
+        // The host list's row: its own terminal, whatever the session showed last.
+        SSHTerminalFolderEntry.prepare(session: session, profile: studio, target: nil)
+        session.connect(profile: studio)
+        #expect(session.channel === shell)
+        #expect(session.rexPane == nil)
+    }
+
     @Test func aTerminalThatEndedMeanwhileIsNotShown() throws {
         let registry = makeRegistry()
         let session = SSHTerminalConnectSession(registry: registry)

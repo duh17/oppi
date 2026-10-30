@@ -32,17 +32,22 @@ import UIKit
 /// no grace running is discarded (`adopt`): a live SSH session must never be
 /// left for iOS to suspend.
 
-/// Which terminal a saved host holds: its plain one, or one that started in a
-/// folder ("Open Terminal here"). Nil `folder` is the host's own terminal.
+/// Which terminal a saved host holds: its plain one, one that started in a
+/// folder ("Open Terminal here"), or a Rex pane on that host. Nil `folder` and
+/// `rexBlock` is the host's own terminal.
 struct SSHTerminalIdentity: Hashable {
     let profileID: UUID
     let folder: String?
+    /// The Rex pane (its block ID) the terminal shows instead of a shell.
+    var rexBlock: String? = nil
 }
 
 extension SSHTerminalProfile {
     /// The terminal screen's name for the host: `user@host`, then the folder
-    /// of a folder terminal as stored (`~` is the host's home, not this one's).
-    func terminalLabel(folder: String?) -> String {
+    /// of a folder terminal as stored (`~` is the host's home, not this one's),
+    /// or the Rex pane's name.
+    func terminalLabel(folder: String?, rexPane: RexPaneTarget? = nil) -> String {
+        if let rexPane { return endpointLabel + " \u{00B7} Rex \u{00B7} " + rexPane.label }
         guard let folder else { return endpointLabel }
         return endpointLabel + " \u{00B7} " + folder
     }
@@ -64,6 +69,8 @@ final class SSHTerminalRegistry {
         /// (the tmux attach command), so a Reconnect from any screen showing
         /// this terminal starts the same thing. Nil for the plain shell.
         let folderCommand: String?
+        /// The Rex pane this terminal shows, nil for a shell.
+        let rexPane: RexPaneTarget?
         let channel: SSHTerminalChannel
         fileprivate let tasks: [Task<Void, Never>]
     }
@@ -113,10 +120,11 @@ final class SSHTerminalRegistry {
     /// The connected plain terminal for a saved host, if any.
     func terminal(for profileID: UUID) -> Terminal? { terminal(for: profileID, folder: nil) }
 
-    /// The connected terminal for a saved host in `folder` (nil: the host's own).
-    func terminal(for profileID: UUID, folder: String?) -> Terminal? {
-        guard let terminal = terminals[SSHTerminalIdentity(profileID: profileID, folder: folder)],
-              terminal.channel.connected else { return nil }
+    /// The connected terminal for a saved host in `folder` (nil: the host's
+    /// own), or showing `rexPane`.
+    func terminal(for profileID: UUID, folder: String?, rexPane: RexPaneTarget? = nil) -> Terminal? {
+        let identity = SSHTerminalIdentity(profileID: profileID, folder: folder, rexBlock: rexPane?.blockID)
+        guard let terminal = terminals[identity], terminal.channel.connected else { return nil }
         return terminal
     }
 
@@ -136,7 +144,8 @@ final class SSHTerminalRegistry {
     }
 
     /// Every connected terminal, for the switcher: hosts in label order, each
-    /// host's own terminal first, then its folders in folder order.
+    /// host's own terminal first, then its folders in folder order, then its
+    /// Rex panes by name.
     func openTerminals() -> [Terminal] {
         terminals.values
             .filter { $0.channel.connected }
@@ -144,6 +153,12 @@ final class SSHTerminalRegistry {
                 let left = lhs.profile.endpointLabel, right = rhs.profile.endpointLabel
                 if left != right { return left < right }
                 if lhs.profile.id != rhs.profile.id { return lhs.profile.id.uuidString < rhs.profile.id.uuidString }
+                switch (lhs.rexPane, rhs.rexPane) {
+                case (nil, .some): return true
+                case (.some, nil): return false
+                case let (a?, b?): return (a.label, a.blockID) < (b.label, b.blockID)
+                case (nil, nil): break
+                }
                 switch (lhs.folder, rhs.folder) {
                 case (nil, _): return rhs.folder != nil
                 case (_, nil): return false
@@ -171,6 +186,7 @@ final class SSHTerminalRegistry {
         profile: SSHTerminalProfile,
         folder: String? = nil,
         folderCommand: String? = nil,
+        rexPane: RexPaneTarget? = nil,
         queue: SSHTerminalEventQueue
     ) -> Bool {
         guard !inBackground || grace != nil else {
@@ -178,7 +194,7 @@ final class SSHTerminalRegistry {
             channel.closeForBackground()
             return false
         }
-        let identity = SSHTerminalIdentity(profileID: profile.id, folder: folder)
+        let identity = SSHTerminalIdentity(profileID: profile.id, folder: folder, rexBlock: rexPane?.blockID)
         close(identity, reason: "Replaced by a new connection.")
         let consumer = Task { [weak self] in
             await channel.consume(queue)
@@ -187,7 +203,8 @@ final class SSHTerminalRegistry {
         // The screen's network watch ends with the screen; this one lasts as long as the terminal.
         let watcher = Task { await channel.watchNetwork() }
         terminals[identity] = Terminal(
-            profile: profile, folder: folder, folderCommand: folderCommand, channel: channel, tasks: [consumer, watcher]
+            profile: profile, folder: folder, folderCommand: folderCommand, rexPane: rexPane,
+            channel: channel, tasks: [consumer, watcher]
         )
         return true
     }

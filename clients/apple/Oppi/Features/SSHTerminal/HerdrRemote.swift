@@ -476,7 +476,7 @@ final class HerdrMonitor: SSHTerminalOverviewSource {
 
     /// A workspace row focuses the workspace, an agent row its pane, on the
     /// machine that owns the ID.
-    func focus(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool {
+    func activate(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool {
         let machine = focus.scope
         let target: HerdrRemote.FocusTarget = focus.isGroup ? .workspace(focus.id) : .agent(focus.id)
         focusFailure = nil

@@ -43,6 +43,10 @@ final class SSHTerminalEventQueue: Sendable {
     enum Item: Sendable, Equatable {
         case event(SSHPTYEvent)
         case overflow
+        /// A Ghostty snapshot to restore before the output after it (a Rex pane).
+        case snapshot(Data)
+        /// The connection ended for a reason its transport names (a Rex pane).
+        case ended(String)
     }
 
     static let defaultLimit = 4 * 1024 * 1024
@@ -95,6 +99,29 @@ final class SSHTerminalEventQueue: Sendable {
         guard let ended else { return }
         continuation.yield()
         if ended { continuation.finish() }
+    }
+
+    /// Called from the NIO event loop, in order with `push`.
+    func pushSnapshot(_ snapshot: Data) {
+        let accepted = state.withLock { state in
+            guard !state.finished else { return false }
+            state.items.append(.snapshot(snapshot))
+            return true
+        }
+        if accepted { continuation.yield() }
+    }
+
+    /// Ends the queue with `reason` after everything queued before it.
+    func end(_ reason: String) {
+        let accepted = state.withLock { state in
+            guard !state.finished else { return false }
+            state.finished = true
+            state.items.append(.ended(reason))
+            return true
+        }
+        guard accepted else { return }
+        continuation.yield()
+        continuation.finish()
     }
 
     /// Stops accepting events, e.g. when the consumer was cancelled.
@@ -285,10 +312,16 @@ final class SSHTerminalChannel {
     private var requestedGeometry: SSHTerminalGeometry?
     static let maximumQueuedBytes = 128 * 1024
 
-    init(herdrFolderGrace: Duration = .seconds(25)) throws {
+    /// `answersTerminalQueries` false drops the engine's replies to queries
+    /// (device attributes, size reports, the OSC 7501 probe): a Rex pane's
+    /// program already got them from Rex's own terminal on the host, and a
+    /// second answer would reach it as typed input.
+    init(herdrFolderGrace: Duration = .seconds(25), answersTerminalQueries: Bool = true) throws {
         self.herdrFolderGrace = herdrFolderGrace
         weak var target: SSHTerminalChannel?
-        engine = try SSHTerminalEngine { reply in target?.send(reply) }
+        engine = try SSHTerminalEngine { reply in
+            if answersTerminalQueries { target?.send(reply) }
+        }
         engine.copied = { text in target?.copyToClipboard(text) }
         target = self
     }
@@ -394,6 +427,14 @@ final class SSHTerminalChannel {
                 interpret(run)
                 run.removeAll()
                 self.event(event)
+            case .snapshot(let snapshot):
+                interpret(run)
+                run.removeAll()
+                restore(snapshot)
+            case .ended(let reason):
+                interpret(run)
+                run.removeAll()
+                close(reason: reason)
             case .overflow:
                 interpret(run)
                 run.removeAll()
@@ -420,6 +461,22 @@ final class SSHTerminalChannel {
         let name = SSHTerminalUpload.fileName(extension: fileExtension)
         return try SSHTerminalUpload.path(from: try await run(SSHTerminalUpload.command(fileName: name), input: data),
                                           fileName: name)
+    }
+
+    /// Starts the grid from a pane's snapshot: its screen, modes, and history.
+    private func restore(_ snapshot: Data) {
+        guard connected else { return }
+        let after: Data
+        do {
+            after = try engine.restore(snapshot: snapshot)
+        } catch {
+            close(reason: "This pane's screen could not be read. Its Rex may be newer than this Oppi.")
+            return
+        }
+        if engine.title != title { title = engine.title }
+        refreshWorkingDirectory()
+        // Output that arrived with the snapshot, before Rex's first message.
+        interpret(after)
     }
 
     private func interpret(_ bytes: Data) {

@@ -67,6 +67,10 @@ struct SSHPTYConfiguration: Sendable {
     /// exec-with-TTY request as OpenSSH `RemoteCommand` + `RequestTTY yes`
     /// (`ssh -t host 'command'`). The session ends when the command exits.
     var command: String?
+    /// False runs `command` with no PTY (`ssh -T host 'command'`): its stdin
+    /// and stdout are a clean 8-bit pipe, with no line discipline, echo, or
+    /// CRLF translation, for a protocol rather than a person. Requires `command`.
+    var requestsPTY = true
     /// How long sign-in may take once the socket exists. Tests shorten it.
     var signInTimeout = SSHConnection.signInTimeout
 }
@@ -110,6 +114,7 @@ final class SSHPTYSession: @unchecked Sendable {
         savedHostKey: SSHHostKey?,
         inboundFlow: SSHPTYInboundFlow? = nil,
         command: String? = nil,
+        requestsPTY: Bool = true,
         signInTimeout: TimeAmount = SSHConnection.signInTimeout,
         prepareAuthentication: @Sendable () async throws -> SSHAuthentication,
         dial: @Sendable () async throws -> Int32,
@@ -125,6 +130,7 @@ final class SSHPTYSession: @unchecked Sendable {
             savedHostKey: savedHostKey, inboundFlow: inboundFlow
         )
         configuration.command = command
+        configuration.requestsPTY = requestsPTY
         configuration.signInTimeout = signInTimeout
         return try await connect(configuration: configuration, socket: socket, sink: sink)
     }
@@ -182,21 +188,26 @@ final class SSHPTYSession: @unchecked Sendable {
     }
 
     func send(_ bytes: Data) async throws {
+        try await Self.write(bytes, to: try terminalChannel())
+    }
+
+    /// Writes to one child channel. Backpressure is an error, never a buffer:
+    /// a channel that is not writable refuses with `notWritable`.
+    fileprivate static func write(_ bytes: Data, to channel: Channel) async throws {
         guard !bytes.isEmpty else { return }
-        let terminal = try terminalChannel()
-        let promise = terminal.eventLoop.makePromise(of: Void.self)
-        terminal.eventLoop.execute {
-            guard terminal.isActive else {
+        let promise = channel.eventLoop.makePromise(of: Void.self)
+        channel.eventLoop.execute {
+            guard channel.isActive else {
                 promise.fail(SSHConnectionError.connectionClosed)
                 return
             }
-            guard terminal.isWritable else {
+            guard channel.isWritable else {
                 promise.fail(SSHConnectionError.notWritable)
                 return
             }
-            var buffer = terminal.allocator.buffer(capacity: bytes.count)
+            var buffer = channel.allocator.buffer(capacity: bytes.count)
             buffer.writeBytes(bytes)
-            terminal.writeAndFlush(
+            channel.writeAndFlush(
                 SSHChannelData(type: .channel, data: .byteBuffer(buffer)),
                 promise: promise
             )
@@ -206,6 +217,37 @@ final class SSHPTYSession: @unchecked Sendable {
         } catch {
             throw SSHConnectionError(mapping: error)
         }
+    }
+
+    /// Opens another command beside the terminal on the same connection, with
+    /// no PTY, as a long-lived byte pipe in both directions (a bridge to a
+    /// socket on the host, say). Unlike `run`, its output streams to `sink` as
+    /// it arrives and nothing is collected. The stream ends with the command,
+    /// `close()`, or the connection. `inboundFlow` lets the consumer pause
+    /// reading, as the terminal's queue does for a PTY.
+    func openStream(
+        command: String,
+        inboundFlow: SSHPTYInboundFlow? = nil,
+        sink: @escaping SSHPTYByteSink
+    ) async throws -> SSHExecStream {
+        guard let parent = channels.withLock({ $0?.connection.channel }) else { throw SSHConnectionError.notConnected }
+        let ready = parent.eventLoop.makePromise(of: Void.self)
+        let options = SSHPTYChannelHandler.Options(
+            term: "", columns: 0, rows: 0, pixelWidth: 0, pixelHeight: 0,
+            inboundFlow: inboundFlow, command: command, requestsPTY: false
+        )
+        // One deadline covers the channel open and the command's reply: a peer
+        // that answers neither must not hang the caller.
+        let channel = try await Self.openChannel(
+            on: parent, options: options, ready: ready, sink: sink, timeout: Self.requestTimeout
+        )
+        do {
+            try await ready.futureResult.get()
+        } catch {
+            channel.close(promise: nil)
+            throw SSHConnectionError(mapping: error)
+        }
+        return SSHExecStream(channel: channel)
     }
 
     func resize(columns: Int, rows: Int, pixelWidth: Int = 0, pixelHeight: Int = 0) async throws {
@@ -338,14 +380,38 @@ final class SSHPTYSession: @unchecked Sendable {
         ready: EventLoopPromise<Void>,
         sink: @escaping SSHPTYByteSink
     ) async throws -> Channel {
+        try await openChannel(on: parent, options: .init(configuration), ready: ready, sink: sink)
+    }
+
+    /// `timeout` fails both the open and `ready` when it passes; completing an
+    /// already-completed promise is a no-op, so whichever comes first wins.
+    private static func openChannel(
+        on parent: Channel,
+        options: SSHPTYChannelHandler.Options,
+        ready: EventLoopPromise<Void>,
+        sink: @escaping SSHPTYByteSink,
+        timeout: TimeAmount? = nil
+    ) async throws -> Channel {
         let opened = parent.eventLoop.makePromise(of: Channel.self)
+        // The child as soon as it exists, so a deadline that passes first can
+        // close it: one the server confirms later would run with no owner.
+        let child = NIOLoopBoundBox<Channel?>.makeBoxSendingValue(nil, eventLoop: parent.eventLoop)
+        if let timeout {
+            let deadline = parent.eventLoop.scheduleTask(in: timeout) {
+                opened.fail(SSHConnectionError.requestTimedOut)
+                ready.fail(SSHConnectionError.requestTimedOut)
+                child.value?.close(promise: nil)
+            }
+            ready.futureResult.whenComplete { _ in deadline.cancel() }
+        }
         parent.eventLoop.execute {
             do {
                 let ssh = try parent.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
-                ssh.createChannel(opened, channelType: .session) { child, _ in
-                    child.eventLoop.makeCompletedFuture {
-                        try child.pipeline.syncOperations.addHandler(
-                            SSHPTYChannelHandler(configuration: configuration, ready: ready, sink: sink)
+                ssh.createChannel(opened, channelType: .session) { channel, _ in
+                    child.value = channel
+                    return channel.eventLoop.makeCompletedFuture {
+                        try channel.pipeline.syncOperations.addHandler(
+                            SSHPTYChannelHandler(options: options, ready: ready, sink: sink)
                         )
                     }
                 }
@@ -360,6 +426,31 @@ final class SSHPTYSession: @unchecked Sendable {
             throw error
         }
     }
+}
+
+extension SSHPTYChannelHandler.Options {
+    init(_ configuration: SSHPTYConfiguration) {
+        self.init(
+            term: configuration.term, columns: configuration.columns, rows: configuration.rows,
+            pixelWidth: configuration.pixelWidth, pixelHeight: configuration.pixelHeight,
+            inboundFlow: configuration.inboundFlow, command: configuration.command,
+            requestsPTY: configuration.requestsPTY
+        )
+    }
+}
+
+/// A command's stdin and stdout on an SSH connection, opened by
+/// `SSHPTYSession.openStream`. Its output and end arrive on the sink it was
+/// opened with.
+final class SSHExecStream: Sendable {
+    private let channel: Channel
+
+    fileprivate init(channel: Channel) { self.channel = channel }
+
+    func send(_ bytes: Data) async throws { try await SSHPTYSession.write(bytes, to: channel) }
+
+    /// Closes the channel without waiting. The sink then reports `.closed`.
+    func close() { channel.close(promise: nil) }
 }
 
 private final class SSHKeepaliveProbeHandler: ChannelInboundHandler {
@@ -385,7 +476,7 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
 
     /// Deliberately contains no authentication material. The child outlives
     /// sign-in and must not retain a password with its PTY geometry.
-    private struct TerminalConfiguration {
+    struct Options {
         let term: String
         let columns: Int
         let rows: Int
@@ -393,8 +484,10 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
         let pixelHeight: Int
         let inboundFlow: SSHPTYInboundFlow?
         let command: String?
+        let requestsPTY: Bool
     }
-    private let configuration: TerminalConfiguration
+    private let configuration: Options
+
     private let ready: EventLoopPromise<Void>
     private let sink: SSHPTYByteSink
     private var openingState = OpeningState.waitingForPTY
@@ -406,12 +499,8 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
     /// output that arrived before it but is not delivered yet.
     private var heldExitEvents = [SSHPTYEvent]()
 
-    init(configuration: SSHPTYConfiguration, ready: EventLoopPromise<Void>, sink: @escaping SSHPTYByteSink) {
-        self.configuration = TerminalConfiguration(
-            term: configuration.term, columns: configuration.columns, rows: configuration.rows,
-            pixelWidth: configuration.pixelWidth, pixelHeight: configuration.pixelHeight,
-            inboundFlow: configuration.inboundFlow, command: configuration.command
-        )
+    init(options: Options, ready: EventLoopPromise<Void>, sink: @escaping SSHPTYByteSink) {
+        self.configuration = options
         self.ready = ready
         self.sink = sink
     }
@@ -444,6 +533,24 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
     }
 
     func channelActive(context: ChannelHandlerContext) {
+        guard configuration.requestsPTY else {
+            // No PTY: the command goes first, and its reply makes the channel ready.
+            guard let command = configuration.command else {
+                ready.fail(SSHConnectionError.commandRequestRejected)
+                context.close(promise: nil)
+                return
+            }
+            openingState = .waitingForShell
+            let requestWrite = context.eventLoop.makePromise(of: Void.self)
+            requestWrite.futureResult.whenFailure { [ready] error in ready.fail(error) }
+            context.triggerUserOutboundEvent(
+                SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true),
+                promise: requestWrite
+            )
+            context.fireChannelActive()
+            requestRead(context: context)
+            return
+        }
         let request = SSHChannelRequestEvent.PseudoTerminalRequest(
             wantReply: true,
             term: configuration.term,
@@ -531,6 +638,10 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let message = unwrapInboundIn(data)
+        // A PTY merges stderr into its output, as a terminal shows it. Without
+        // one the stream is a protocol (`openStream`, a Rex bridge), and a login
+        // shell's or a command's warning on stderr would corrupt it.
+        if !configuration.requestsPTY, message.type == .stdErr { return }
         guard case .byteBuffer(let buffer) = message.data else { return }
         sink(.data(Data(Array(buffer.readableBytesView))))
     }

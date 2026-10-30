@@ -288,6 +288,11 @@ final class SSHTerminalEngine {
     private var kittyStoreScreenIsAlternate: Bool?
     /// Resize and scroll move every row; rebuild the whole grid.
     private var forceFullRebuild = true
+    /// The last `setColors`, applied again to a terminal `restore` brings in.
+    private var defaultColors: (
+        foreground: GhosttyColorRgb, background: GhosttyColorRgb, dark: Bool,
+        palette: [UInt8: GhosttyColorRgb], cursor: GhosttyColorRgb?
+    )?
 
     init(geometry: SSHTerminalGeometry = .init(), sink: @escaping (Data) -> Void) throws {
         self.geometry = geometry
@@ -304,6 +309,18 @@ final class SSHTerminalEngine {
               ghostty_selection_gesture_event_new(nil, &selectionRelease, GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE) == GHOSTTY_SUCCESS else {
             throw SSHTerminalError.engineUnavailable
         }
+        configureTerminal(restored: false)
+        // Two rows under the viewport cover a grid shifted up by up to one row
+        // plus the part-row strip under the last whole row. libghostty only
+        // captures rows that exist, so the live screen reads none.
+        var overscan = GhosttyRenderStateOverscan(above: 0, below: 2)
+        ghostty_render_state_set(render, GHOSTTY_RENDER_STATE_OPTION_OVERSCAN, &overscan)
+    }
+
+    /// Everything this engine sets on its libghostty terminal: callbacks, size,
+    /// history limit, modes, and image rules. A `restored` terminal keeps the
+    /// modes its snapshot carried; only the RIS defaults are set.
+    private func configureTerminal(restored: Bool) {
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, Unmanaged.passUnretained(self).toOpaque())
         installEffects()
         // Apply the cell pixel size now, not only on the first remote resize:
@@ -317,7 +334,7 @@ final class SSHTerminalEngine {
         // restore so less/man/git-log pagers keep alternate scroll.
         var altScroll = GhosttyTerminalModeConfig(mode: ghostty_mode_new(1007, false), value: true)
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE_DEFAULT, &altScroll)
-        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE, &altScroll)
+        if !restored { ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE, &altScroll) }
         // Kitty graphics: PNG decoding through ImageIO, a bounded image store,
         // and only the direct (t=d) medium. The file, temporary-file and
         // shared-memory mediums would let a remote host make this device read
@@ -330,11 +347,67 @@ final class SSHTerminalEngine {
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &localMediums)
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &localMediums)
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, nil)
-        // Two rows under the viewport cover a grid shifted up by up to one row
-        // plus the part-row strip under the last whole row. libghostty only
-        // captures rows that exist, so the live screen reads none.
-        var overscan = GhosttyRenderStateOverscan(above: 0, below: 2)
-        ghostty_render_state_set(render, GHOSTTY_RENDER_STATE_OPTION_OVERSCAN, &overscan)
+    }
+
+    /// Replaces the terminal with the one a Ghostty snapshot describes (a Rex
+    /// pane's screen, modes, and history), configured as this engine's own and
+    /// sized to this screen. The program's output that follows applies on top.
+    /// The terminal before it is dropped: nothing on it outlives the call.
+    /// Returns any bytes after the snapshot's end, which are output.
+    func restore(snapshot: Data) throws -> Data {
+        var restored: GhosttyTerminal?
+        var consumed = 0
+        let result: GhosttyResult = snapshot.withUnsafeBytes { raw in
+            var decoder: GhosttySnapshotDecoder?
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress,
+                  ghostty_snapshot_decoder_new_buf(nil, &decoder, base, raw.count) == GHOSTTY_SUCCESS else {
+                return GHOSTTY_INVALID_VALUE
+            }
+            // The decoder borrows `raw`; it is done with it once freed here.
+            defer { ghostty_snapshot_decoder_free(decoder) }
+            let result = ghostty_snapshot_decoder_decode(decoder, &restored)
+            // Without the offset, nothing after the snapshot is known to be
+            // output: none is drawn rather than snapshot bytes as text.
+            if ghostty_snapshot_decoder_get(decoder, GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET, &consumed) != GHOSTTY_SUCCESS {
+                consumed = raw.count
+            }
+            return result
+        }
+        guard result == GHOSTTY_SUCCESS, let restored else { throw SSHTerminalError.snapshotUnreadable }
+        // The selection gesture tracks places in the old terminal's pages. The
+        // render state copies what it reads on every update and is rebuilt in
+        // full below (`forceFullRebuild`), so it carries over.
+        var gesture: GhosttySelectionGesture?
+        guard ghostty_selection_gesture_new(nil, &gesture) == GHOSTTY_SUCCESS else {
+            ghostty_terminal_free(restored)
+            throw SSHTerminalError.engineUnavailable
+        }
+        ghostty_selection_gesture_free(selectionGesture, terminal)
+        ghostty_terminal_free(terminal)
+        terminal = restored
+        selectionGesture = gesture
+        configureTerminal(restored: true)
+        if let colors = defaultColors {
+            setColors(foreground: colors.foreground, background: colors.background, dark: colors.dark,
+                      palette: colors.palette, cursor: colors.cursor)
+        }
+        heldSince = nil
+        following = true
+        cachedRows = []
+        cachedCursor = nil
+        cachedRowsChangeCount = -1
+        kittySnapshot = nil
+        kittyStoreGeneration = .max
+        kittyStoreScreenIsAlternate = nil
+        primaryKittyImageIDs = []
+        alternateKittyImageIDs = []
+        forceFullRebuild = true
+        // The snapshot carries the title and folder; no callback announces them.
+        titleChanged = true
+        pwdChanged = true
+        readTitleAndFolder()
+        notePictureChange(output: true)
+        return consumed < snapshot.count ? Data(snapshot[(snapshot.startIndex + consumed)...]) : Data()
     }
 
     isolated deinit {
@@ -370,6 +443,18 @@ final class SSHTerminalEngine {
         bytes.withUnsafeBytes { buffer in
             ghostty_terminal_vt_write(terminal, buffer.bindMemory(to: UInt8.self).baseAddress, bytes.count)
         }
+        readTitleAndFolder()
+        // Callbacks copy only. No channel write, await, blocking or vt reentry
+        // occurs until the triggering vt_write has returned.
+        flushReplies()
+        if let text = pendingCopy {
+            pendingCopy = nil
+            if live { copied(text) }
+        }
+    }
+
+    /// Reads the title and OSC 7 folder the terminal's callbacks flagged as changed.
+    private func readTitleAndFolder() {
         if titleChanged {
             var value = GhosttyString()
             if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_TITLE, &value) == GHOSTTY_SUCCESS {
@@ -397,13 +482,6 @@ final class SSHTerminalEngine {
             }
             pwdChanged = false
         }
-        // Callbacks copy only. No channel write, await, blocking or vt reentry
-        // occurs until the triggering vt_write has returned.
-        flushReplies()
-        if let text = pendingCopy {
-            pendingCopy = nil
-            if live { copied(text) }
-        }
     }
 
     func resize(_ value: SSHTerminalGeometry) {
@@ -426,6 +504,7 @@ final class SSHTerminalEngine {
         cursor: GhosttyColorRgb? = nil
     ) {
         self.dark = dark
+        defaultColors = (foreground, background, dark, palette, cursor)
         defer {
             notePictureChange()
             forceFullRebuild = true
@@ -1583,4 +1662,6 @@ struct SSHTerminalModifierLatch {
 
 enum SSHTerminalError: Error {
     case engineUnavailable, disconnected, pasteTooLarge, unsafePaste
+    /// A Ghostty snapshot (a Rex pane's screen) this libghostty cannot decode.
+    case snapshotUnreadable
 }
