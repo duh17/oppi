@@ -190,6 +190,10 @@ final class SessionThreadStripView: UIControl {
 /// The strip's dots on the left and Agents on the right. The dots keep their width; the Agents take what
 /// is left and drop trailing groups to fit, so the row never overflows.
 final class SessionThreadStatusRow: UIStackView {
+    /// The least room the row keeps between the dots and the Agents. `layoutSubviews` fits the Agents in
+    /// what is left after it, so the spacer and the fit read the same number.
+    private static let spacerMinWidth: CGFloat = 4
+
     let dots = SessionThreadStatusDotsView()
     let agents = SessionThreadAgentClusterView()
 
@@ -198,16 +202,20 @@ final class SessionThreadStatusRow: UIStackView {
         axis = .horizontal
         alignment = .center
         spacing = 8
-        [dots, SessionRowSpacer(minWidth: 4), agents].forEach(addArrangedSubview)
+        [dots, SessionRowSpacer(minWidth: Self.spacerMinWidth), agents].forEach(addArrangedSubview)
     }
 
     @available(*, unavailable)
     required init(coder: NSCoder) { fatalError("Not supported") }
 
     override func layoutSubviews() {
+        // Fit before `super`: `apply` unhides the Agent groups, and the row is wider than the strip until the
+        // trailing groups fold into "+N". Fitting first hides them in this same pass, so the row never lays
+        // out over-wide against its required width.
+        if !agents.isHidden {
+            agents.fit(maxWidth: bounds.width - dots.intrinsicContentSize.width - spacing * 2 - Self.spacerMinWidth)
+        }
         super.layoutSubviews()
-        guard !agents.isHidden else { return }
-        agents.fit(maxWidth: bounds.width - dots.intrinsicContentSize.width - spacing * 2 - SessionRowSpacer.minWidth)
     }
 }
 
@@ -286,10 +294,6 @@ final class SessionThreadAgentClusterView: UIStackView {
         let widths = items.prefix(appliedGroups).map {
             $0.stack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
         }
-        func overflowWidth(_ hidden: Int) -> CGFloat {
-            overflow.text = "+\(hidden)"
-            return overflow.intrinsicContentSize.width
-        }
         var shown = 0
         var showsOverflow = false
         for count in stride(from: appliedGroups, through: 1, by: -1) {
@@ -304,12 +308,24 @@ final class SessionThreadAgentClusterView: UIStackView {
             }
         }
         for (index, item) in items.enumerated() { item.stack.setHiddenIfChanged(index >= shown) }
-        overflow.text = "+\(groupTotal - shown)"
+        let text = "+\(groupTotal - shown)"
+        if overflow.text != text { overflow.text = text }
         overflow.setHiddenIfChanged(!showsOverflow)
     }
 
+    /// The width "+N" takes for `hidden`, measured as text so sizing a candidate never changes what the
+    /// label shows.
+    private func overflowWidth(_ hidden: Int) -> CGFloat {
+        let font = overflow.font ?? Self.countFont()
+        return ceil(("+\(hidden)" as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    private static func countFont() -> UIFont {
+        .scaled(.caption2, monospacedDigits: true)
+    }
+
     private static func styleCount(_ label: UILabel) {
-        label.font = .scaled(.caption2, monospacedDigits: true)
+        label.font = countFont()
         label.adjustsFontForContentSizeCategory = true
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
     }

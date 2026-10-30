@@ -61,8 +61,7 @@ struct SessionThreadStripViewTests {
             verticalFittingPriority: .fittingSizeLevel
         ).height
         view.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        // Fitting the Agents hides groups mid-layout, which asks for one more pass.
-        view.layoutIfNeeded()
+        // The row fits its Agent groups before it lays out, so one pass settles what is hidden.
         view.layoutIfNeeded()
         return (view, height)
     }
