@@ -246,6 +246,14 @@ final class RexFakeSession: Sendable {
         host.respond(to: request, Self.ticketJSON)
     }
 
+    /// Answers the held `data.connect` for `block` with `not_found`: the pane closed meanwhile.
+    func refuse(dataConnectFor block: String) {
+        guard let host = host.withLock({ $0 }),
+              let request = host.requests.last(where: { $0.method == "data.connect" && $0.string("block_id") == block }) else { return }
+        state.withLock { _ = $0.held.remove(block) }
+        host.refuse(request, code: "not_found", message: "no such block")
+    }
+
     /// Every request the terminal made, in order.
     var requests: [RexFakeHost.Request] { host.withLock { $0 }?.requests ?? [] }
 

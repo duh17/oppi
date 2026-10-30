@@ -696,6 +696,24 @@ struct RexSessionTerminalTests {
         await rig.stop()
     }
 
+    /// A refusal that lands after a newer request must not undo it: the
+    /// request for C stands, and the terminal ends up on C, not back on A.
+    @Test func aRefusalDoesNotOverwriteANewerRequest() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (b, c) = (Self.block("b"), Self.block("c"))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 3 })
+        rig.fake.hold(dataConnectFor: [b])
+        rig.model.show(b)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("data.connect").contains { $0.string("block_id") == b }
+        })
+        rig.model.show(c)
+        rig.fake.refuse(dataConnectFor: b)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
+        #expect(rig.model.state.shown == c && rig.channel.connected)
+        await rig.stop()
+    }
+
     /// With every other pane gone, a refused neighbour ends the terminal with
     /// the reason, instead of leaving it on a dead pane.
     @Test func aRefusedNeighbourWithNoPaneLeftEndsTheTerminal() async throws {

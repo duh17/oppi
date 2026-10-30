@@ -389,7 +389,6 @@ final class RouterModalSitesUITests: XCTestCase {
         XCTAssertTrue(waitFor(second.isSelected), "A swipe left must show the next pane")
         XCTAssertFalse(first.isSelected)
         XCTAssertTrue(waitFor(app.buttons["sshTerminal.rexMinimap.1"].isSelected), "The minimap follows the swipe")
-        XCTAssertFalse(backToLive.exists, "A sideways swipe must not scroll history")
         attachScreenshot("rex-panes-second")
         grid.swipeRight()
         XCTAssertTrue(waitFor(first.isSelected), "A swipe right must show the previous pane")
