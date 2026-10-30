@@ -391,8 +391,15 @@ struct RexPaneEngineTests {
         let (channel, rows) = try await Self.restore(snapshot)
         #expect(channel.reason == "stream over", "the snapshot restored; it did not end the terminal: \(channel.reason)")
         #expect(rows.contains("rex kitty fixture") && rows.contains("after image"))
-        let kitty = try #require(channel.engine.frame().kitty, "the image came with the snapshot")
+        let frame = channel.engine.frame()
+        let kitty = try #require(frame.kitty, "the image came with the snapshot")
         #expect(kitty.placements.map(\.imageID) == [7])
+        // The pixels came too, not only a placement that would draw blank:
+        // one red pixel, stored as sent (`f=24`, RGB).
+        let image = try #require(kitty.imagesByID[7])
+        let graphics = try #require(frame.kittyGraphics)
+        let pixels = try #require(image.resolvePixels(graphics))
+        #expect(Array(UnsafeBufferPointer(start: pixels.pointer, count: pixels.byteCount)) == [0xFF, 0x00, 0x00])
     }
 
     /// A newer Rex may add kinds of snapshot records this Oppi does not know.
