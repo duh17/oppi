@@ -2,7 +2,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -22,6 +22,7 @@ const DEFAULT_STREAMING_INTERVAL = 0.2;
 const MAX_TEXT_CHARS = 5_000;
 const MAX_EMBED_AUDIO_BYTES = 12 * 1024 * 1024;
 const SERVER_START_TIMEOUT_MS = 30_000;
+const YUWP_TTS_AGENT = "com.yuwp.tts";
 
 function sanitizeSpokenVoiceText(text: string): string {
   // Voice is for listening, especially while driving. Raw URLs and full street
@@ -638,13 +639,62 @@ async function ensureYuwpTTSServer(): Promise<string> {
   const serverUrl = process.env.TTS_BASE_URL ?? DEFAULT_TTS_URL;
   assertLocalURL(serverUrl);
   if (await serverReady(serverUrl)) return serverUrl;
-  await startServer(serverUrl);
+  // launchd owns the canonical port on macOS. Kickstart it instead of spawning: an unsupervised
+  // copy outlives this process, holds the port the agent needs, and hides the fact that the agent
+  // is down (that is how a dead agent once looked healthy for a day).
+  const supervised = await kickstartSupervisedYuwpTTS(serverUrl);
+  if (!supervised) await startServer(serverUrl);
   const start = Date.now();
   while (Date.now() - start < SERVER_START_TIMEOUT_MS) {
     if (await serverReady(serverUrl)) return serverUrl;
     await sleep(250);
   }
-  throw new Error(`Yuwp TTS server did not become ready at ${serverUrl}`);
+  throw new Error(
+    supervised
+      ? `Yuwp TTS LaunchAgent ${YUWP_TTS_AGENT} did not serve ${serverUrl}. Check \`launchctl print gui/${currentUid()}/${YUWP_TTS_AGENT}\` and ~/Library/Logs/yuwp-tts.log`
+      : `Yuwp TTS server did not become ready at ${serverUrl}`,
+  );
+}
+
+function currentUid(): number {
+  return typeof process.getuid === "function" ? process.getuid() : 501;
+}
+
+function launchctl(args: string[]): number {
+  try {
+    return spawnSync("launchctl", args, { stdio: "ignore" }).status ?? 1;
+  } catch {
+    return 1;
+  }
+}
+
+/**
+ * Ask the installed LaunchAgent to serve this URL. Returns true when the agent was kickstarted,
+ * so the caller waits for it instead of spawning a rival server. A custom endpoint (anything but
+ * the supervised port) or a machine without the agent keeps the local-spawn fallback.
+ */
+async function kickstartSupervisedYuwpTTS(serverUrl: string): Promise<boolean> {
+  if (process.platform !== "darwin") return false;
+  const url = new URL(serverUrl);
+  if ((url.port || "7937") !== "7937") return false;
+  if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") return false;
+  const domain = `gui/${currentUid()}`;
+  const target = `${domain}/${YUWP_TTS_AGENT}`;
+  if (launchctl(["print", target]) !== 0) {
+    // Not loaded (bootout, a fresh login, or the plist was never bootstrapped). Restore it from
+    // the installed copy instead of starting a server launchd does not supervise. bootstrap
+    // reports EIO for a beat after bootout, so retry briefly rather than giving up on it.
+    const plist = path.join(os.homedir(), "Library/LaunchAgents", `${YUWP_TTS_AGENT}.plist`);
+    if (!existsSync(plist)) return false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      launchctl(["bootstrap", domain, plist]);
+      if (launchctl(["print", target]) === 0) break;
+      await sleep(1_500);
+    }
+    if (launchctl(["print", target]) !== 0) return false;
+  }
+  launchctl(["kickstart", target]);
+  return true;
 }
 
 function resolveVoiceId(voice: string | undefined, storage?: Storage): string {
