@@ -306,16 +306,26 @@ targets:
           fi
 
           if [ "$needs_lint" -eq 0 ]; then
-            echo "note: SwiftLint skipped (no source/config changes since last run)"
+            echo "note: SwiftLint skipped (no source/config changes since the last passing run)"
             exit 0
           fi
 
-          if command -v swiftlint >/dev/null 2>&1; then
-            swiftlint lint --config "$SRCROOT/.swiftlint.yml" --quiet
+          # The stamp records a passing run only: a lint error fails the build and
+          # leaves the stamp alone, so every later build lints again until fixed.
+          # Without swiftlint nothing was checked, so no stamp either.
+          if ! command -v swiftlint >/dev/null 2>&1; then
+            echo "note: SwiftLint not installed, lint not run (brew install swiftlint)"
+            exit 0
+          fi
+
+          echo "note: SwiftLint running"
+          if swiftlint lint --config "$SRCROOT/.swiftlint.yml" --quiet; then
             touch "$STAMP_FILE"
+            echo "note: SwiftLint passed"
           else
-            echo "note: SwiftLint not installed — skipping lint (brew install swiftlint)"
-            touch "$STAMP_FILE"
+            status=$?
+            echo "error: SwiftLint failed (exit $status); fix the violations above"
+            exit "$status"
           fi
         name: SwiftLint
         basedOnDependencyAnalysis: false
