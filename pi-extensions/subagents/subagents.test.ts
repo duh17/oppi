@@ -303,7 +303,15 @@ describe("subagents", () => {
 	test("a deleted session leaves the set, and the launcher's Oppi id is the thread", () => {
 		const gone = { ok: false, error: { code: "session_not_found", message: "Session not found: child-2" } };
 		expect(isMissingSession(gone)).toBe(true);
+		expect(
+			isMissingSession({ ok: false, error: { status: 404, message: "Session not found: child-2" } }),
+		).toBe(true);
 		expect(isMissingSession({ ok: false, error: { code: "unauthorized" } })).toBe(false);
+		// Another thing that is gone says nothing about the session.
+		expect(
+			isMissingSession({ ok: false, error: { status: 404, message: "Workspace not found: ws-1" } }),
+		).toBe(false);
+		expect(isMissingSession({ ok: false, error: { code: "workspace_not_found", message: "not found" } })).toBe(false);
 		expect(isMissingSession({ ok: true, data: { session: { id: "child-2" } } })).toBe(false);
 		const all = many(12);
 		expect(refreshLaunched(all, [gone], ["child-2"]).map((row) => row.id)).not.toContain("child-2");

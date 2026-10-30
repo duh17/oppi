@@ -7,6 +7,7 @@ import {
   defineTask,
   type ConversationId,
   type DocumentWatch,
+  type EntryId,
   type JsonObject,
   type LiveState,
   type TaskId,
@@ -67,9 +68,11 @@ import {
 // last pass commits a sleep that is already due, so the scheduler reserves the task again with the
 // current registry. The checkpoint carries what each child's rows were derived from (`Carried`:
 // whether it had run, its newest answer, its configured model, its pending wakers, and whether it
-// was busy), so the new phase scans no answers and reads no job lists for a child whose `pi.live`
-// still agrees on busy or idle with the checkpoint: it only watches the child's two documents. A
-// child whose busy state changed since, or that had not run yet, is read as at first sight. The
+// was busy, and the id of its newest entry when read), so the new phase scans no answers and reads
+// no job lists for a child whose `pi.live` still agrees on busy or idle with the checkpoint and
+// whose newest entry is still that one (one entry read per child; busy or idle cannot tell that a
+// child ran and ended in between): it only watches the child's two documents. A child that moved
+// on since, or that had not run yet, is read as at first sight. The
 // checkpoint is written when what it carries changes (a run ended and its answer was read), and
 // at every invocation end; it holds about a hundred bytes per child, so a pill of 500 children
 // writes some 50 kB when a run ends.
@@ -115,6 +118,12 @@ type Answer = {
  */
 type Carried = {
   busy: boolean;
+  /**
+   * The id of the child's newest entry when `answer` was read, null for a child with none. Busy
+   * or idle cannot version the answer (a child can run and end between two invocations), so the
+   * next invocation compares this with the child's newest entry before it trusts the rest.
+   */
+  head: EntryId | null;
   answer?: Answer;
   /** Configured model, for a child that has no answer. */
   model?: string;
@@ -134,6 +143,10 @@ function carryKey(children: Readonly<Record<string, Carried>>): string {
 type Watched = {
   /** Carried by the checkpoint until the child's `pi.live` is first seen and agrees on busy. */
   carried?: Carried;
+  /** The newest entry the carried (or, once read, the current) answer was read at. */
+  head?: EntryId | null;
+  /** The carried head, to compare with the child's newest entry in the first commit. */
+  headCheck?: { head: EntryId | null };
   /** The next time a missing document is looked for, and the delay after it, while idle. */
   retryAt: number;
   retryDelay: number;
@@ -200,8 +213,13 @@ function asking(ui: Readonly<UIState> | null): boolean {
   return Object.values(ui?.requests ?? {}).some((entry) => !entry.response);
 }
 
-async function newestAnswer(tx: Tx, id: ConversationId): Promise<Answer | undefined> {
+/** The child's newest answer, and the newest entry it was read at. */
+async function newestAnswer(
+  tx: Tx,
+  id: ConversationId,
+): Promise<{ answer?: Answer; head: EntryId | null }> {
   const page = await tx.scanEntries({ conversationId: id }, ANSWER_SCAN);
+  const head = page.items[0]?.id ?? null;
   for (const entry of page.items) {
     const message = entry.model?.[0];
     if (message?.role !== "assistant") continue;
@@ -210,13 +228,16 @@ async function newestAnswer(tx: Tx, id: ConversationId): Promise<Answer | undefi
       usage?.totalTokens ||
       (usage ? usage.input + usage.output + usage.cacheRead + usage.cacheWrite : 0);
     return {
-      provider,
-      model,
-      ...(total > 0 ? { contextTokens: total } : {}),
-      failed: stopReason === "error",
+      head,
+      answer: {
+        provider,
+        model,
+        ...(total > 0 ? { contextTokens: total } : {}),
+        failed: stopReason === "error",
+      },
     };
   }
-  return undefined;
+  return { head };
 }
 
 /** Idle, but background work of its own will wake it to answer again. */
@@ -475,6 +496,8 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
                 ...(carried
                   ? {
                       carried,
+                      head: carried.head,
+                      headCheck: { head: carried.head },
                       stale: false,
                       read: true,
                       ...(carried.answer ? { answer: carried.answer } : {}),
@@ -509,6 +532,7 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
 
           let shownIds = new Set<string>();
           let carry: Record<string, Carried> = {};
+          let rereadWakers = false;
           await runtime.commit(async (tx) => {
             const rows: Subagent[] = [];
             for (const { name, child, entry } of rowsOf) {
@@ -521,9 +545,24 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
                 entry.wakers = new Set(await liveTasks(tx, waking));
                 entry.jobs = undefined;
               }
+              // A carried answer holds only while the child has no newer entry than it was read at
+              // (a run may have come and gone between two invocations).
+              if (entry.headCheck) {
+                const newest = (await tx.scanEntries({ conversationId: child.conversationId }, 1))
+                  .items[0]?.id;
+                if ((newest ?? null) !== entry.headCheck.head) {
+                  entry.stale = true;
+                  // Its jobs are read outside the commit: the next pass.
+                  entry.wakersStale = true;
+                  rereadWakers = true;
+                }
+                entry.headCheck = undefined;
+              }
               // First sight reads the previous answer even while busy; then each run's end.
               if (entry.stale && (!entry.busy || !entry.read)) {
-                entry.answer = await newestAnswer(tx, child.conversationId);
+                const read = await newestAnswer(tx, child.conversationId);
+                entry.answer = read.answer;
+                entry.head = read.head;
                 entry.read = true;
                 entry.stale = false;
               }
@@ -556,9 +595,10 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
             shownIds = new Set(selectPillRows(rows).map((row) => row.id));
             carry = {};
             for (const { child, entry } of rowsOf)
-              if (entry.live && entry.read)
+              if (entry.live && entry.read && entry.head !== undefined)
                 carry[String(child.conversationId)] = {
                   busy: entry.busy,
+                  head: entry.head,
                   ...(entry.answer ? { answer: entry.answer } : {}),
                   ...(entry.model ? { model: entry.model } : {}),
                   wakers: [...entry.wakers],
@@ -587,6 +627,7 @@ export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
                 };
           }, context);
           writtenKey = carryKey(carry);
+          if (rereadWakers) mark();
           for (const { child, entry } of rowsOf) entry.visible = shownIds.has(child.sessionId);
           if (ending) return;
           // After the commit that read them live: one that ended since resolves at once.

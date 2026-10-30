@@ -775,6 +775,95 @@ describe("durable-native threads", () => {
     ).toEqual(Array(6).fill("faux"));
   });
 
+  it("reads a carried child's answer again when it ran and ended between two invocations", async () => {
+    const names = ["F0", "F1", "F2"];
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate many"))
+          return fauxAssistantMessage(
+            names.map((name) =>
+              fauxToolCall("subagent", { action: "spawn", name, task: `CHILD_TASK ${name}` }),
+            ),
+            { stopReason: "toolUse" },
+          );
+        return fauxAssistantMessage("CHILD_OK");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate many");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    type Row = { id: string; state: string; detail?: string };
+    const rows = async (open: Harness = harness) =>
+      (
+        (await open.snapshot(DurableUI, parentConversation, context))?.notifications[
+          "widget:subagents"
+        ]?.nativeSurface as { blocks: Array<{ rows: Row[] }> } | undefined
+      )?.blocks[0]?.rows;
+    await until(async () => (await rows())?.length === 3, "three rows");
+    await until(
+      async () => (await rows())?.every((row) => row.state === "success") === true,
+      "all done",
+    );
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    const child = f.storage.listSessions().find((session) => session.name === "F0")!;
+    const childConversation = conversationOf(f.storage, child);
+    const watcherOf = async (open: Harness = harness) =>
+      (await open.snapshot(Subagents, parentConversation, context))?.widget;
+    const widget = (await watcherOf())!;
+    const detail = (await rows())?.find((row) => row.id === child.id)?.detail;
+    // The checkpoint holds the child's answer and where it was read.
+    await until(async () => {
+      const state = (await harness.inspect(context)).tasks.find(
+        ({ record }) => record.id === widget,
+      )?.record.state as { checkpoint?: { children?: Record<string, unknown> } };
+      return Object.keys(state.checkpoint?.children ?? {}).length === 3;
+    }, "the carried children");
+
+    // A restart whose checkpoint is older than the child: it ran and ended in between (here the
+    // checkpoint says the answer used far more context, and was read before the child's entries).
+    recordLiveSessionsForRestart(f.storage, [f.manager.getActiveSession(f.parent.id)!]);
+    await f.manager.close();
+    managers.splice(managers.indexOf(f.manager), 1);
+    const storeId = f.storage.getSession(f.parent.id)!.serverDurable!.storeId!;
+    const db = new DatabaseSync(durableStoreSqlitePath(f.dir, storeId));
+    try {
+      db.prepare("UPDATE tasks SET record = json_set(record, ?, 1, ?, 987654) WHERE id = ?").run(
+        `$.state.checkpoint.children.${childConversation}.head`,
+        `$.state.checkpoint.children.${childConversation}.answer.contextTokens`,
+        widget,
+      );
+    } finally {
+      db.close();
+    }
+    const restarted = new SessionManager(new Storage(f.dir));
+    managers.push(restarted);
+    await restarted.resumeDurableSessions();
+
+    const reopened = await f.harness();
+    const carriedTokens = async () =>
+      (
+        (await reopened.inspect(context)).tasks.find(({ record }) => record.id === widget)?.record
+          .state as {
+          checkpoint?: { children?: Record<string, { answer?: { contextTokens?: number } }> };
+        }
+      ).checkpoint?.children?.[String(childConversation)]?.answer?.contextTokens;
+    const rowDetail = async () =>
+      (await rows(reopened))?.find((row) => row.id === child.id)?.detail;
+    // The watcher's first pass after the restart either keeps the carried answer (its row then
+    // shows the stale usage) or reads the child again and writes what it read to the checkpoint.
+    await until(
+      async () => (await rowDetail()) !== detail || (await carriedTokens()) !== 987654,
+      "the first pass after the restart",
+    );
+    expect(await rowDetail()).toBe(detail);
+    expect(await carriedTokens()).not.toBe(987654);
+    // The same watcher went on from its checkpoint.
+    expect(await watcherOf(reopened)).toBe(widget);
+  });
+
   it("does not look again at every pass for the documents of an idle child that has none", async () => {
     const f = await fixture(
       model(async ({ last, text }) => {

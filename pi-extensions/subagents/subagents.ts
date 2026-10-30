@@ -114,10 +114,18 @@ export function subagentFromCreate(command: string, text: string, parentId?: str
 	};
 }
 
-/** A get that failed because the session is gone (deleted), as `oppi session get` reports it. */
+/**
+ * A get that failed because the session is gone (deleted). The CLI's JSON error is
+ * `{ ok: false, error: { message, status?, code? } }`: its own prefix lookup says
+ * `session_not_found`; the server's route says 404 with `Session not found: <id>`. Another
+ * 404 (a workspace that is gone) says nothing about the session.
+ */
 export function isMissingSession(payload: unknown): boolean {
 	const record = asRecord(payload);
-	return record?.ok === false && /session_not_found|not found/i.test(JSON.stringify(record));
+	if (record?.ok !== false) return false;
+	const error = asRecord(record.error);
+	if (error?.code === "session_not_found") return true;
+	return error?.status === 404 && typeof error.message === "string" && error.message.startsWith("Session not found");
 }
 
 /** The Oppi session that launched the child a get describes: the thread its pill row opens. */
