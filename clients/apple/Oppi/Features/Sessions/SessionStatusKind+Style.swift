@@ -1,17 +1,17 @@
-import SwiftUI
+import UIKit
 
 /// Session-status palette for iOS session rows, pills, and thread graphs:
 /// working = blue, blocked (every kind) = orange, error and done = red and
 /// green while unseen, idle = neutral grey, stopped = tertiary grey.
 extension SessionStatusKind {
-    func tint(_ theme: AppTheme) -> Color {
+    func tint(_ theme: AppTheme) -> UIColor {
         switch self {
-        case .working: theme.accent.blue
-        case .needsApproval, .question, .signIn: theme.accent.orange
-        case .error: theme.accent.red
-        case .done: theme.accent.green
-        case .idle: theme.text.secondary
-        case .stopped: theme.text.tertiary
+        case .working: UIColor(theme.accent.blue)
+        case .needsApproval, .question, .signIn: UIColor(theme.accent.orange)
+        case .error: UIColor(theme.accent.red)
+        case .done: UIColor(theme.accent.green)
+        case .idle: UIColor(theme.text.secondary)
+        case .stopped: UIColor(theme.text.tertiary)
         }
     }
 
@@ -25,7 +25,7 @@ extension SessionStatusKind {
     }
 
     /// Toolbar and terminal glyph. No border: the bar already contains it.
-    /// Session rows keep `badgeSymbol` and `SessionStatusPill`.
+    /// Session rows keep `badgeSymbol`.
     var terminalSymbol: String {
         switch self {
         case .working: "progress.indicator"

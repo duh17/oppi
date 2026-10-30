@@ -185,8 +185,8 @@ final class SessionRowView: UIView {
             providerIcon.setHiddenIfChanged(model.provider.isEmpty)
             if !model.provider.isEmpty {
                 providerIcon.image = style.providerIcon(model.provider)
-                providerIcon.accessibilityLabel = ProviderIcon.logoAssetName(for: model.provider) == nil
-                    ? ProviderIcon.mark(for: model.provider)
+                providerIcon.accessibilityLabel = providerLogoAssetName(model.provider) == nil
+                    ? providerMonogram(model.provider)
                     : nil
             }
             modelLabel.text = model.label
@@ -481,7 +481,7 @@ final class SessionRowView: UIView {
     }
 
     /// The visible facts joined, as SwiftUI's combined row spoke them. A
-    /// provider without a logo speaks its monogram, as `ProviderIcon` did.
+    /// provider without a logo speaks its monogram.
     override var accessibilityLabel: String? {
         get {
             guard combinesAccessibility else { return super.accessibilityLabel }
@@ -779,12 +779,12 @@ final class SessionRowStyle {
 
     func tint(_ status: SessionStatusKind) -> UIColor {
         if let tint = tints[status] { return tint }
-        let tint = UIColor(status.tint(theme))
+        let tint = status.tint(theme)
         tints[status] = tint
         return tint
     }
 
-    /// The provider's 11 pt mark (`ProviderIcon`).
+    /// The provider's 11 pt mark.
     func providerIcon(_ provider: String) -> UIImage {
         if let icon = providerIcons[provider] { return icon }
         let icon = ComposerProviderIconRenderer.image(provider: provider, size: 11, colors: colors)
@@ -861,7 +861,7 @@ enum SessionRowText {
         return result
     }
 
-    /// `lock.fill` while locked, `lock.open.fill` while unlocked for now (`LockBadge`).
+    /// `lock.fill` while locked, `lock.open.fill` while unlocked for now.
     /// `key` is the id of what the badge belongs to (session, workspace, server): the same
     /// badge repeats in every row, so its identifier ends in that key.
     static func setLockBadge(_ state: ScopedLockState, on label: UILabel, color: UIColor, key: String) {

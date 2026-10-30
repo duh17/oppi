@@ -4,13 +4,13 @@ import Testing
 import UIKit
 @testable import Oppi
 
-@Suite("SessionStatusPill palette")
-struct SessionStatusPillTests {
+@Suite("SessionStatusKind style")
+struct SessionStatusKindStyleTests {
     /// Working blue; every blocked kind the same orange; Done green and Error red (both only
     /// while unseen); Idle and Stopped neutral greys that never read as green.
     @Test func statusPaletteSeparatesWorkingBlockedAndUnseenOutcomes() {
         let theme = ThemeID.dark.appTheme
-        func color(_ kind: SessionStatusKind) -> UIColor { UIColor(kind.tint(theme)) }
+        func color(_ kind: SessionStatusKind) -> UIColor { kind.tint(theme) }
 
         #expect(color(.working) == UIColor(theme.accent.blue))
         for blocked in [SessionStatusKind.needsApproval, .question, .signIn] {

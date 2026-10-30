@@ -25,34 +25,34 @@ struct ProviderColorTests {
     }
 
     @Test func resolvesDeepSeekProviderDisplayMetadata() {
-        #expect(ProviderIcon.displayName(for: "deepseek") == "DeepSeek")
-        #expect(ProviderIcon.mark(for: "deepseek") == "D")
-        #expect(ProviderIcon.logoAssetName(for: "deepseek") == "provider-deepseek")
+        #expect(providerDisplayLabel("deepseek") == "DeepSeek")
+        #expect(providerMonogram("deepseek") == "D")
+        #expect(providerLogoAssetName("deepseek") == "provider-deepseek")
     }
 
     @Test func resolvesDS4ProviderDisplayMetadata() {
-        #expect(ProviderIcon.displayName(for: "ds4") == "DS4 Dwarf Star")
-        #expect(ProviderIcon.mark(for: "ds4") == "D")
-        #expect(ProviderIcon.logoAssetName(for: "ds4") == "provider-ds4")
+        #expect(providerDisplayLabel("ds4") == "DS4 Dwarf Star")
+        #expect(providerMonogram("ds4") == "D")
+        #expect(providerLogoAssetName("ds4") == "provider-ds4")
     }
 
     @Test func resolvesMLXServeProviderDisplayMetadata() {
         expectColor("mlx-serve/Qwen3.8-Flash-Next", equals: palette.red)
-        #expect(ProviderIcon.displayName(for: "mlx-serve") == "MLX Serve")
-        #expect(ProviderIcon.logoAssetName(for: "mlx-serve") == "provider-mlx-serve")
+        #expect(providerDisplayLabel("mlx-serve") == "MLX Serve")
+        #expect(providerLogoAssetName("mlx-serve") == "provider-mlx-serve")
     }
 
     @Test func resolvesCursorProviderDisplayMetadata() {
         expectColor("cursor/composer-2.5", equals: palette.fg)
-        #expect(ProviderIcon.displayName(for: "cursor") == "Cursor")
-        #expect(ProviderIcon.logoAssetName(for: "cursor") == "provider-cursor")
+        #expect(providerDisplayLabel("cursor") == "Cursor")
+        #expect(providerLogoAssetName("cursor") == "provider-cursor")
     }
 
     @Test func resolvesOpenCodeProviderDisplayMetadata() {
         expectColor("opencode/kimi-k3", equals: palette.cyan)
         expectColor("opencode-go/glm-5.3", equals: palette.cyan)
-        #expect(ProviderIcon.displayName(for: "opencode-go") == "OpenCode Go")
-        #expect(ProviderIcon.logoAssetName(for: "opencode-go") == "provider-opencode")
+        #expect(providerDisplayLabel("opencode-go") == "OpenCode Go")
+        #expect(providerLogoAssetName("opencode-go") == "provider-opencode")
     }
 
     @Test func fallsBackToPurpleForMissingMalformedOrUnknownModel() {

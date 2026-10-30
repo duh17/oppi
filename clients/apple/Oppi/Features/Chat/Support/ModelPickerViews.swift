@@ -236,7 +236,7 @@ final class ModelPickerHeaderView: UICollectionReusableView {
         palette: ThemePalette,
         onToggle: @escaping () -> Void
     ) {
-        let name = ProviderIcon.displayName(for: provider)
+        let name = providerDisplayLabel(provider)
         configureText(name, palette: palette)
         iconView.isHidden = false
         iconView.image = ComposerProviderIconRenderer.image(

@@ -75,7 +75,7 @@ enum SSHTerminalSwitcher {
                     .withTintColor(UIColor(themeID.palette.green), renderingMode: .alwaysOriginal)
             case .blocked(let kind):
                 image = UIImage(systemName: kind.terminalSymbol)?
-                    .withTintColor(UIColor(kind.tint(themeID.appTheme)), renderingMode: .alwaysOriginal)
+                    .withTintColor(kind.tint(themeID.appTheme), renderingMode: .alwaysOriginal)
             }
             let action = UIAction(
                 title: item.title,

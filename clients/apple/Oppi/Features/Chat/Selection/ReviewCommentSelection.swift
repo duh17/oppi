@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import UIKit
 
 @MainActor
@@ -568,23 +567,5 @@ enum ReviewCommentSelectionEditMenuSupport {
         let clampedLower = min(max(lower, baseRange.lowerBound), baseRange.upperBound)
         let clampedUpper = min(max(upper, clampedLower), baseRange.upperBound)
         return clampedLower...clampedUpper
-    }
-}
-
-private struct ReviewCommentSelectionScopeEnvironmentKey: EnvironmentKey {
-    static let defaultValue: ReviewCommentSelectionScope? = nil
-}
-
-extension EnvironmentValues {
-    /// Routing scope for selected-text review comments.
-    /// Boundary views inject this explicitly; shared renderers only consume it.
-    var reviewCommentSelectionScope: ReviewCommentSelectionScope? {
-        get { self[ReviewCommentSelectionScopeEnvironmentKey.self] }
-        set { self[ReviewCommentSelectionScopeEnvironmentKey.self] = newValue }
-    }
-
-    /// Convenience read-only access to the scoped review comment router.
-    var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? {
-        reviewCommentSelectionScope?.router
     }
 }

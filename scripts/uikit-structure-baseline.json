@@ -19,15 +19,6 @@
     "clients/apple/Oppi/Core/Extensions/Color+Theme.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Networking/APIClientEnvironment.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Services/ComposerDraftEnvironment.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Services/IconAssetCache.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Theme/AppFontConstants.swift": {
       "import SwiftUI": 1
     },
@@ -44,12 +35,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Theme/ThemeStore.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/ProviderIcon.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/ScopedLockViews.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditDraft.swift": {
@@ -69,9 +54,6 @@
     },
     "clients/apple/Oppi/Features/Chat/ChatViewController+Bars.swift": {
       "UIAlertController(": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Selection/ReviewCommentSelection.swift": {
-      "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/ModelPickerViewController.swift": {
       "APIClient settings write": 1
@@ -130,9 +112,6 @@
     },
     "clients/apple/Oppi/Features/Sessions/SessionRowDisplayEditor.swift": {
       "AppPreferences.*.set": 1
-    },
-    "clients/apple/Oppi/Features/Sessions/SessionStatusPill.swift": {
-      "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/DictationDictionaryModel.swift": {
       "APIClient settings write": 3

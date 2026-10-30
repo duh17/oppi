@@ -149,7 +149,7 @@ final class SSHTerminalNoticeCardView: UIView {
         let remote: String
         switch notice {
         case .blocked(let blocked):
-            tint = UIColor(blocked.kind.tint(theme))
+            tint = blocked.kind.tint(theme)
             headline = blocked.kind.label
             remote = blocked.remoteText
             symbolView.isHidden = false

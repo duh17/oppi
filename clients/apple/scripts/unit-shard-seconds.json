@@ -541,7 +541,7 @@
  "SessionRowRelayoutTests": 0.8,
  "SessionScopedGitStatusTests": 0.01,
  "SessionSearchStoreTests": 1.19,
- "SessionStatusPillTests": 0,
+ "SessionStatusKindStyleTests": 0,
  "SessionStatusPresentationTests": 0.03,
  "SessionStatusRollupTests": 0.01,
  "SessionStorePartitioningTests": 0.01,

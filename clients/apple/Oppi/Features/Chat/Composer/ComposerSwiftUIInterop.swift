@@ -6,15 +6,17 @@ import UIKit
 @MainActor
 enum ComposerProviderIconRenderer {
     static func image(provider: String, size: CGFloat, colors: ComposerThemeColors) -> UIImage {
+        let palette = ThemeRuntimeState.currentPalette()
+        // `ProviderColor` owns the provider aliases (`openai-codex` reads as OpenAI).
         let tint = UIColor(providerIconTint(
-            ProviderIcon.brandColor(for: provider),
-            palette: ThemeRuntimeState.currentPalette()
+            .init(uiColor: ProviderColor.color(forProvider: provider, palette: palette)),
+            palette: palette
         ))
-        if let assetName = ProviderIcon.logoAssetName(for: provider),
+        if let assetName = providerLogoAssetName(provider),
            let asset = UIImage(named: assetName) {
             return asset.withTintColor(tint, renderingMode: .alwaysOriginal)
         }
-        let mark = ProviderIcon.mark(for: provider) as NSString
+        let mark = providerMonogram(provider) as NSString
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
         return renderer.image { _ in
             let attributes: [NSAttributedString.Key: Any] = [

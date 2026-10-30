@@ -82,15 +82,12 @@ struct ModelColorHelpersTests {
 
     @Test func providerLogoAssetNamesIncludeOmlx() {
         #expect(providerLogoAssetName("omlx") == "provider-omlx")
-        #expect(ProviderIcon.logoAssetName(for: "omlx") == "provider-omlx")
         #expect(providerDisplayLabel("omlx") == "OMLX")
     }
 
     @Test func mlxServeUsesMenuBarTrayMark() {
         #expect(providerDisplayLabel("mlx-serve") == "MLX Serve")
-        #expect(ProviderIcon.displayName(for: "mlx-serve") == "MLX Serve")
         #expect(providerLogoAssetName("mlx-serve") == "provider-mlx-serve")
-        #expect(ProviderIcon.logoAssetName(for: "mlx-serve") == "provider-mlx-serve")
         #expect(providerMonogram("mlx-serve") == "M")
     }
 
@@ -98,7 +95,6 @@ struct ModelColorHelpersTests {
         #expect(providerLogoAssetName("qwen") == "provider-qwen")
         #expect(providerLogoAssetName("qwen-token-plan") == "provider-qwen")
         #expect(providerLogoAssetName("qwen-token-plan-cn") == "provider-qwen")
-        #expect(ProviderIcon.logoAssetName(for: "qwen-token-plan") == "provider-qwen")
         #expect(providerDisplayLabel("qwen") == "Qwen")
         #expect(providerDisplayLabel("qwen-token-plan") == "Qwen Token Plan")
         #expect(providerDisplayLabel("qwen-token-plan-cn") == "Qwen Token Plan CN")
@@ -106,12 +102,10 @@ struct ModelColorHelpersTests {
 
     @Test func providerLogoAssetNamesIncludeCursorAndOpenCode() {
         #expect(providerLogoAssetName("cursor") == "provider-cursor")
-        #expect(ProviderIcon.logoAssetName(for: "cursor") == "provider-cursor")
         #expect(providerDisplayLabel("cursor") == "Cursor")
 
         #expect(providerLogoAssetName("opencode") == "provider-opencode")
         #expect(providerLogoAssetName("opencode-go") == "provider-opencode")
-        #expect(ProviderIcon.logoAssetName(for: "opencode-go") == "provider-opencode")
         #expect(providerDisplayLabel("opencode") == "OpenCode")
         #expect(providerDisplayLabel("opencode-go") == "OpenCode Go")
     }

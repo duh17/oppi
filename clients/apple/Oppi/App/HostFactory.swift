@@ -447,14 +447,11 @@ extension EnvironmentValues {
 
 extension View {
     /// The services of `connection` on this view's SwiftUI environment: its
-    /// stores, API client, and icon cache. The app root applies it for the
-    /// active server; a hosted screen that belongs to another server applies it
-    /// again to override the root's.
+    /// stores. The app root applies it for the active server; a hosted screen
+    /// that belongs to another server applies it again to override the root's.
     func withServerScopedEnvironment(_ connection: ServerConnection) -> some View {
         self
             .environment(connection)
-            .environment(\.apiClient, connection.apiClient)
-            .environment(\.iconAssetCache, connection.iconAssetCache)
             .environment(connection.chatState)
             .environment(connection.sessionStore)
             .environment(connection.workspaceStore)

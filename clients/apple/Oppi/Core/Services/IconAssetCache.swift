@@ -1,6 +1,5 @@
 import Foundation
 import ImageIO
-import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
@@ -261,16 +260,5 @@ final class IconAssetCache {
         }
         guard rendered else { return false }
         return stride(from: 3, to: pixels.count, by: 4).contains { pixels[$0] > 4 }
-    }
-}
-
-private struct IconAssetCacheEnvironmentKey: EnvironmentKey {
-    static let defaultValue: IconAssetCache? = nil
-}
-
-extension EnvironmentValues {
-    var iconAssetCache: IconAssetCache? {
-        get { self[IconAssetCacheEnvironmentKey.self] }
-        set { self[IconAssetCacheEnvironmentKey.self] = newValue }
     }
 }

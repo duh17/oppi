@@ -154,7 +154,7 @@ final class HerdrAgentsViewController: UIViewController, UICollectionViewDelegat
             cell.accessories = [
                 .customView(configuration: .init(customView: cell.mark, placement: .leading(), reservedLayoutWidth: .custom(20))),
                 .label(text: kind?.label ?? "Unknown", options: .init(
-                    tintColor: UIColor(kind?.tint(themeID.appTheme) ?? palette.comment),
+                    tintColor: kind?.tint(themeID.appTheme) ?? UIColor(palette.comment),
                     font: .preferredFont(forTextStyle: .caption1)
                 )),
             ]

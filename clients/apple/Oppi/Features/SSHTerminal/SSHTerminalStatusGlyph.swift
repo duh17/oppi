@@ -131,7 +131,7 @@ final class SSHTerminalStatusMarkView: UIView {
         if previous != next { noteEntry(of: next) }
 
         let drawsCheck = style == .toolbar && shown == .done && !reduceMotion
-        imageView.tintColor = UIColor(shown.tint(themeID.appTheme))
+        imageView.tintColor = shown.tint(themeID.appTheme)
         let scale: UIImage.SymbolScale = shown == .idle && style == .toolbar ? .small : .medium
         imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body, scale: scale)
         imageView.removeAllSymbolEffects()
@@ -349,9 +349,9 @@ final class SSHTerminalStatusDetailController: UIViewController, RouterModalCont
             content.text = row.title
             content.secondaryText = [row.message, row.status.label].filter { !$0.isEmpty }.joined(separator: "\n")
             content.textProperties.color = UIColor(self.themeID.palette.fg)
-            content.secondaryTextProperties.color = UIColor(row.status.tint(self.themeID.appTheme))
+            content.secondaryTextProperties.color = row.status.tint(self.themeID.appTheme)
             content.image = UIImage(systemName: row.status.terminalSymbol)
-            content.imageProperties.tintColor = UIColor(row.status.tint(self.themeID.appTheme))
+            content.imageProperties.tintColor = row.status.tint(self.themeID.appTheme)
             content.directionalLayoutMargins.leading = 16 + CGFloat(row.depth) * 16
             content.textProperties.numberOfLines = 1
             content.secondaryTextProperties.numberOfLines = 3

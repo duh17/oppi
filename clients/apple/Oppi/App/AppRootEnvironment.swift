@@ -88,7 +88,6 @@ private struct AppRootEnvironmentModifier: ViewModifier {
             .environment(root.coordinator.serverStore)
             .environment(root.themeStore)
             .environment(root.quickCommentTemplateStore)
-            .environment(\.composerDraftStore, root.composerDraftStore)
             .environment(\.theme, root.themeStore.appTheme)
             .environment(\.themeID, root.themeStore.activeThemeID)
             .environment(\.scenePhase, ScenePhase(AppScenePhase.shared.phase))

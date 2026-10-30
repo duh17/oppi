@@ -447,8 +447,8 @@ enum ModelPickerProviderOrdering {
                 return lhsBoost < rhsBoost
             }
 
-            let lhsName = ProviderIcon.displayName(for: lhs)
-            let rhsName = ProviderIcon.displayName(for: rhs)
+            let lhsName = providerDisplayLabel(lhs)
+            let rhsName = providerDisplayLabel(rhs)
             let nameOrder = lhsName.localizedCaseInsensitiveCompare(rhsName)
             if nameOrder != .orderedSame {
                 return nameOrder == .orderedAscending

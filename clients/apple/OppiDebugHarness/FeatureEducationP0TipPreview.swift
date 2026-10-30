@@ -71,7 +71,6 @@ struct FeatureEducationP0TipPreview: View {
             .navigationBarTitleDisplayMode(.inline)
             .environment(connection.sessionStore)
             .environment(connection.askRequestStore)
-            .environment(\.apiClient, connection.apiClient)
         }
         .ignoresSafeArea()
         .accessibilityIdentifier("screenshot.ready")
