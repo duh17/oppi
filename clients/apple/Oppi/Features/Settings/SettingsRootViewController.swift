@@ -306,34 +306,33 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
 
     /// A row's own push.
     private func open(_ item: Item) {
-        let navigator = ScreenNavigator.forUIKitScreen(self, root: root)
         switch item {
         case .addServer:
             presentAddServer()
         case .general:
-            navigator.push(SettingsGeneralViewController(root: root))
+            Router.push(SettingsGeneralViewController(root: root), from: self)
         case .appearance:
-            navigator.push(SettingsAppearanceViewController(root: root))
+            Router.push(SettingsAppearanceViewController(root: root), from: self)
         case .text:
-            navigator.push(SettingsTextViewController())
+            Router.push(SettingsTextViewController(), from: self)
         case .editor:
-            navigator.push(SettingsEditorViewController())
+            Router.push(SettingsEditorViewController(), from: self)
         case .chat:
-            navigator.push(SettingsChatViewController(root: root))
+            Router.push(SettingsChatViewController(root: root), from: self)
         case .sessions:
-            navigator.push(SessionRowDisplayEditorViewController(root: root))
+            Router.push(SessionRowDisplayEditorViewController(root: root), from: self)
         case .voice:
-            navigator.push(SettingsVoiceViewController(root: root))
+            Router.push(SettingsVoiceViewController(root: root), from: self)
         case .tailscale:
-            navigator.push(TailnetSettingsViewController(coordinator: coordinator))
+            Router.push(TailnetSettingsViewController(coordinator: coordinator), from: self)
         case .sshTerminal:
-            navigator.push(SSHTerminalHostListViewController())
+            Router.push(SSHTerminalHostListViewController(), from: self)
         case .privacy:
-            navigator.push(SettingsPrivacyViewController(root: root))
+            Router.push(SettingsPrivacyViewController(root: root), from: self)
         case .experiments:
-            navigator.push(SettingsExperimentsViewController())
+            Router.push(SettingsExperimentsViewController(), from: self)
         case .storage:
-            navigator.push(SettingsStorageViewController(root: root))
+            Router.push(SettingsStorageViewController(root: root), from: self)
         case .server:
             break
         }

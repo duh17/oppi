@@ -94,15 +94,11 @@ final class SettingsAppearanceViewController: SettingsListViewController<Setting
             : collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
     }
 
-    private func navigator() -> ScreenNavigator {
-        ScreenNavigator.forUIKitScreen(self, root: root)
-    }
-
     private func openGallery(_ slot: ThemeSlot) {
-        navigator().push(ThemeGalleryViewController(themeStore: themeStore, slot: slot))
+        Router.push(ThemeGalleryViewController(themeStore: themeStore, slot: slot), from: self)
     }
 
     private func openCustomThemes() {
-        navigator().push(ThemeImportViewController(root: root))
+        Router.push(ThemeImportViewController(root: root), from: self)
     }
 }

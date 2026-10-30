@@ -663,7 +663,6 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
     /// client, and navigation go on it explicitly.
     private func push(_ item: Item) {
         guard let connection else { return }
-        let navigator = ScreenNavigator.forUIKitScreen(self, root: root)
         let model = model
         let workspaceId = workspace.id
         let apiClient = connection.apiClient

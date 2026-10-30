@@ -38,7 +38,7 @@ struct ModalPresentation {
     var sheetCornerRadius: CGFloat?
     /// Non-nil wraps the screen in a `RouterNavigationController` with these
     /// bars for the root screen. The screen then gets a UIKit navigation bar
-    /// for its title and toolbar items and pushes with `ScreenNavigator.push`.
+    /// for its title and toolbar items and pushes with `Router.push`.
     var navigation: ScreenBars?
     var permittedArrowDirections: UIPopoverArrowDirection = .any
     /// UIKit turns a popover into a sheet in compact width, as SwiftUI does.
@@ -284,7 +284,15 @@ enum Router {
     /// Pushes `screen` onto the navigation controller that holds `host`. A
     /// push asked for while a pop is still animating (the SSH host list opens
     /// the host's form as the terminal above it closes) waits for it to end.
+    ///
+    /// A screen without the app root as a trait gets `host`'s, so it finds the
+    /// root before it is in a window that publishes one (the SSH host list and
+    /// the Tailnet page read it while they build).
     static func push(_ screen: UIViewController, from host: UIViewController) {
+        if screen.traitOverrides.appRootEnvironment == nil,
+           let root = AppRootEnvironment.near(host) {
+            screen.traitOverrides.appRootEnvironment = root
+        }
         guard let navigation = host.navigationController else {
             assertionFailure("Router.push from \(type(of: host)), which is not in a navigation controller")
             return

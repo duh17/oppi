@@ -89,8 +89,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private var services: FileBrowserServices? {
         didSet { setNeedsUpdateProperties() }
     }
-    private let embeddedNavigator: ScreenNavigator?
-    private lazy var navigator: ScreenNavigator = embeddedNavigator ?? .forUIKitScreen(self, root: root)
 
     // Gate (shell route).
     private var phase: Phase?
@@ -167,7 +165,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         isShellRoute = true
         restoredDirectory = target.columnDirectoryPath
         restoredSelection = target.columnSelectedFile
-        embeddedNavigator = nil
         self.showsSidebarToggle = showsSidebarToggle
         state = ContentState(treeDirectoryPath: target.columnDirectoryPath, selectedFile: target.columnSelectedFile)
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
@@ -180,11 +177,10 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     }
 
     /// The chat Files panel's All tab: one compact list on the panel's server
-    /// stores; files push onto the panel's stack through `navigator`.
+    /// stores; files push onto the stack of the controller that embeds it.
     init(
         root: AppRootEnvironment,
         services: FileBrowserServices,
-        navigator: ScreenNavigator,
         serverId: String?,
         scope: FileBrowserScope
     ) {
@@ -196,7 +192,6 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         isShellRoute = false
         restoredDirectory = nil
         restoredSelection = nil
-        embeddedNavigator = navigator
         showsSidebarToggle = false
         state = ContentState()
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
@@ -972,7 +967,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             return
         }
         guard let services else { return }
-        FileBrowserViewerFactory.pushReader(readerRequest(selection, context: context, services: services), navigator: navigator)
+        FileBrowserViewerFactory.pushReader(readerRequest(selection, context: context, services: services), from: self)
     }
 
     private func readerRequest(

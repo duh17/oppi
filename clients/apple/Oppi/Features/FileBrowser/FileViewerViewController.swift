@@ -1777,8 +1777,8 @@ enum FileBrowserViewerFactory {
 
     /// The viewer as its own screen above the browser: host files, and every
     /// file of the chat panel.
-    static func pushReader(_ request: Request, navigator: ScreenNavigator) {
-        navigator.push(viewer(request, chromeMode: .pushed))
+    static func pushReader(_ request: Request, from host: UIViewController) {
+        Router.push(viewer(request, chromeMode: .pushed), from: host)
     }
 
     /// The viewer's file, origin, and review scope (the chat's, in its file

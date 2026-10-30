@@ -20,6 +20,29 @@ struct RouterHostFactoryTests {
         }
     }
 
+    /// The SSH host list and the Tailnet page read the root by trait while they
+    /// build, before any window publishes one, so the push has to carry it.
+    @Test("Router.push gives a screen the host's app root, and keeps the root it has")
+    func pushCopiesTheHostRootOntoAScreenWithoutOne() {
+        let hostRoot = makeTestAppRoot()
+        let ownRoot = makeTestAppRoot()
+        #expect(hostRoot != ownRoot)
+        let host = UIViewController()
+        host.traitOverrides.appRootEnvironment = hostRoot
+        // Not in a window: nothing publishes a root above the host.
+        let navigation = UINavigationController(rootViewController: host)
+
+        let bare = UIViewController()
+        Router.push(bare, from: host)
+        #expect(bare.traitOverrides.appRootEnvironment == hostRoot)
+
+        let owning = UIViewController()
+        owning.traitOverrides.appRootEnvironment = ownRoot
+        Router.push(owning, from: host)
+        #expect(owning.traitOverrides.appRootEnvironment == ownRoot)
+        withExtendedLifetime(navigation) {}
+    }
+
     @Test("a screen pushed through the navigator gets the app services, and finish() pops it")
     func pushedScreenGetsAppServicesAndFinishPops() async throws {
         let root = makeTestAppRoot()

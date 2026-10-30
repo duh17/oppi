@@ -31,8 +31,8 @@ struct ChatFilePanelInputs {
 /// screen). What the session changed is the Git panel's to show; here a
 /// changed file carries Git's mark as it is browsed. Chat shows the panel at
 /// the root of a router navigation controller: its trailing column in
-/// regular width, a sheet in compact width. Files push above it through its
-/// navigator.
+/// regular width, a sheet in compact width. Files push above it: the browser
+/// is its child, so `Router.push` lands on that stack.
 ///
 /// The panel reads its chat's values in `updateProperties()`. The browser
 /// starts at the checkout's root and is built again when the session's
@@ -42,7 +42,6 @@ final class ChatFilePanelViewController: UIViewController {
     private let root: AppRootEnvironment
     private let readInputs: () -> ChatFilePanelInputs?
     private let onClose: () -> Void
-    private lazy var navigator = ScreenNavigator.forUIKitScreen(self, root: root)
 
     private let noWorkspace = UIContentUnavailableView(configuration: .empty())
     private let search = ScreenSearchController(prompt: String(localized: "Search files"))
@@ -192,7 +191,7 @@ final class ChatFilePanelViewController: UIViewController {
             return
         }
         noWorkspace.isHidden = true
-        let browser = Self.makeBrowser(root: root, inputs: inputs, workspaceId: workspaceId, navigator: navigator)
+        let browser = Self.makeBrowser(root: root, inputs: inputs, workspaceId: workspaceId)
         browser.onEmbeddedChromeChange = { [weak self] chrome in
             self?.chrome = chrome
             self?.setNeedsUpdateProperties()
@@ -215,13 +214,11 @@ final class ChatFilePanelViewController: UIViewController {
     static func makeBrowser(
         root: AppRootEnvironment,
         inputs: ChatFilePanelInputs,
-        workspaceId: String,
-        navigator: ScreenNavigator
+        workspaceId: String
     ) -> FileBrowserViewController {
         FileBrowserViewController(
             root: root,
             services: inputs.browserServices,
-            navigator: navigator,
             serverId: inputs.serverId,
             scope: .workspace(workspaceId: workspaceId, worktreeId: inputs.worktreeId)
         )
@@ -315,7 +312,7 @@ extension ChatFilePanelViewController {
         inputs: ChatFilePanelInputs,
         workspaceId: String
     ) -> FileBrowserViewController {
-        makeBrowser(root: root, inputs: inputs, workspaceId: workspaceId, navigator: .unattached)
+        makeBrowser(root: root, inputs: inputs, workspaceId: workspaceId)
     }
 }
 #endif

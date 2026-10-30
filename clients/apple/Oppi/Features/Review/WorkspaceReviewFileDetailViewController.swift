@@ -177,8 +177,6 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
     private let stashButton = ReviewCommentStashFloatingButton()
     private lazy var column = TrailingColumnController(screen: self)
     private weak var fileList: ReviewFileListViewController?
-    private lazy var navigator: ScreenNavigator? = AppRootEnvironment.near(self)
-        .map { ScreenNavigator.forUIKitScreen(self, root: $0) }
 
     // Bar items, kept while their inputs hold.
     private lazy var closeItem: UIBarButtonItem = {
@@ -772,11 +770,7 @@ final class WorkspaceReviewFileDetailViewController: UIViewController {
             isLaunching: { [weak self] in self?.launchActionInFlightTitle != nil },
             setProgress: { [weak self] in self?.launchActionInFlightTitle = $0 },
             push: { [weak self] chat in
-                if let navigator = self?.navigator {
-                    navigator.push(chat)
-                } else if let self {
-                    Router.push(chat, from: self)
-                }
+                if let self { Router.push(chat, from: self) }
             }
         )
     }
