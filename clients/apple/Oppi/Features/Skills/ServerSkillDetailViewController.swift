@@ -4,19 +4,20 @@ import UIKit
 /// server default switch, where it comes from, its validation with Retry, and
 /// the file list the browser opens.
 ///
-/// The route makes the Skill's server the active one on every appearance
-/// ("Connecting…" until it is ready). The catalog row shows at once; the
-/// detail request adds the file list, and a newer detail summary wins over a
-/// stale catalog row until a mutation settles (`resolvedServerSkillDetailSummary`).
+/// A `ServerResourceDetailScreenController`: the base owns the server switch,
+/// the detail load, the switch's save, and the whole-screen state. The catalog
+/// row shows at once; the detail request adds the file list, and a newer detail
+/// summary wins over a stale catalog row until a mutation settles
+/// (`resolvedServerSkillDetailSummary`).
 @MainActor
-final class ServerSkillDetailViewController: UIViewController, UICollectionViewDelegate {
-    let target: ServerResourceDetailNavTarget
-
-    private enum Section: Hashable {
-        case summary, serverDefault, source, validation, loading, contents
+final class ServerSkillDetailViewController: ServerResourceDetailScreenController<
+    ServerSkillSummary, ServerSkillDetail, ServerSkillDetailViewController.Section, ServerSkillDetailViewController.Item
+> {
+    enum Section: Hashable, Sendable {
+        case summary, serverDefault, source, validation, contents
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case title
         case enabled
         case mutationError
@@ -29,293 +30,114 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
         case browse
     }
 
-    private enum Shown: Equatable {
-        case connecting
-        case loading
-        case unavailable(String)
-        case list
-    }
-
-    /// Everything the rows read, taken in `updateProperties()` so observation
-    /// tracks it and a reconfigured row sees one consistent copy.
-    private struct ViewState {
-        var summary: ServerSkillSummary
-        var detail: ServerSkillDetail?
-        var loadError: String?
-        var isLoading: Bool
-        var isPending: Bool
-        var mutationError: String?
-        var mutationsAllowed: Bool
-        var serverName: String
-    }
-
-    private let root: AppRootEnvironment
-    /// The route makes the Skill's server the active one on every appearance.
-    private let switchesServer: Bool
-    private let loader: ServerResourceDetailLoader<ServerSkillDetail>
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-
-    /// The Skill's server once it is ready.
-    private var connection: ServerConnection? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var mutationVerb: String? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var state: ViewState?
-    private var changedRows = ChangedRows<Item>()
-    private var connectTask: Task<Void, Never>?
-
     /// `connection`: the Skill's server when the caller already has it ready;
     /// nil makes it the active server first.
     init(target: ServerResourceDetailNavTarget, root: AppRootEnvironment, connection: ServerConnection? = nil) {
-        self.target = target
-        self.root = root
-        self.connection = connection
-        switchesServer = connection == nil
-        loader = ServerResourceDetailLoader(target: target)
-        super.init(nibName: nil, bundle: nil)
-        traitOverrides.appRootEnvironment = root
-        navigationItem.largeTitleDisplayMode = .never
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    deinit {
-        connectTask?.cancel()
-    }
-
-    private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
-
-    private var serverName: String {
-        root.coordinator.serverStore.server(for: target.serverId)?.name ?? "this server"
-    }
-
-    private var mutationKey: ServerResourceMutationKey {
-        .skill(target.resourceId)
-    }
-
-    // MARK: - Lifecycle
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
-            animated: false
+        let resourceId = target.resourceId
+        let serverId = target.serverId
+        super.init(
+            target: target,
+            root: root,
+            connection: connection,
+            page: ServerResourceDetailPage(
+                title: String(localized: "Skill"),
+                listIdentifier: "skills.detail.list",
+                loadingCaption: String(localized: "Loading skill…"),
+                unavailableTitle: String(localized: "Skill Unavailable"),
+                showsConnecting: true,
+                expectedKind: .skill,
+                catalog: .skills,
+                mutationKey: .skill(resourceId),
+                fetch: { api, store in
+                    let detail = try await api.getServerSkill(id: resourceId)
+                    store.rememberSkillDetail(detail, serverId: serverId)
+                    return detail
+                },
+                sendEnabled: { enabled, api, store in
+                    await store.setSkillEnabled(id: resourceId, enabled: enabled, serverId: serverId, api: api)
+                }
+            )
         )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "skills.detail.list"
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        navigationController?.setToolbarHidden(true, animated: animated)
-    }
-
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        // The server switch and the detail load run on every appearance, as
-        // the hosted screen's tasks did.
-        if switchesServer {
-            connect()
-        } else {
-            startLoad()
-        }
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        connectTask?.cancel()
-        connectTask = nil
-        loader.cancel()
-    }
-
-    override func updateProperties() {
-        super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
-        let store = connection?.serverResourceStore
-        let summary = resolvedServerSkillDetailSummary(
-            catalogSummary: store?.skills(forServer: target.serverId).first { $0.id == target.resourceId },
+    override func summary(in store: ServerResourceStore) -> ServerSkillSummary? {
+        resolvedServerSkillDetailSummary(
+            catalogSummary: store.skills(forServer: target.serverId).first { $0.id == target.resourceId },
             freshDetail: loader.usesDetailSummary ? loader.detail : nil
         )
-        let loadError = loader.error
-        let isLoading = loader.isLoading
-        title = summary?.name ?? String(localized: "Skill")
-
-        guard let summary, let store else {
-            state = nil
-            if connection == nil {
-                show(.connecting)
-            } else if !isLoading, let loadError {
-                show(.unavailable(loadError))
-            } else {
-                // A load that never finished (cancelled as the screen left) is
-                // still loading when it returns.
-                show(.loading)
-            }
-            return
-        }
-        state = ViewState(
-            summary: summary,
-            detail: loader.detail,
-            loadError: loadError,
-            isLoading: isLoading,
-            isPending: store.isMutationPending(mutationKey, serverId: target.serverId),
-            mutationError: store.mutationError(for: mutationKey, serverId: target.serverId),
-            mutationsAllowed: store.mutationsAllowed(for: .skills, serverId: target.serverId),
-            serverName: serverName
-        )
-        show(.list)
-        applySnapshot()
-    }
-
-    // MARK: - Content
-
-    private func show(_ next: Shown) {
-        collectionView.isHidden = next != .list
-        // Rebuilt on every pass, so a theme change recolors these states.
-        let state: LoadState
-        switch next {
-        case .list:
-            contentUnavailableConfiguration = nil
-            return
-        case .connecting:
-            state = .connecting
-        case .loading:
-            state = .loading(String(localized: "Loading skill…"))
-        case .unavailable(let reason):
-            state = .failed(
-                title: String(localized: "Skill Unavailable"),
-                message: reason,
-                retry: RetryAction { [weak self] in self?.startLoad() }
-            )
-        }
-        contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(state, palette: palette, background: root.themeStore.backgroundColor)
     }
 
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource, let state else { return }
-        let summary = state.summary
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.summary, .serverDefault])
-        snapshot.appendItems([.title], toSection: .summary)
-        snapshot.appendItems(
-            state.mutationError == nil ? [.enabled] : [.enabled, .mutationError],
-            toSection: .serverDefault
-        )
-
-        snapshot.appendSections([.source])
-        var details = [Item]()
-        if summary.packageName != nil { details.append(.detail("Package")) }
-        details += [.detail("Provenance"), .detail("Scope"), .detail("Files")]
-        snapshot.appendItems(details, toSection: .source)
-
-        snapshot.appendSections([.validation])
-        let hasError = summary.state == .error || summary.state == .unknown
-        var validation: [Item] = [.status]
-        if summary.loadError ?? state.loadError != nil { validation.append(.loadError) }
-        // A diffable list traps on a repeated item; a repeated warning shows once.
-        validation += Self.unique(summary.warnings).map(Item.warning)
-        if hasError || state.loadError != nil { validation.append(.retry) }
-        snapshot.appendItems(validation, toSection: .validation)
-
+    override func sections() -> [ListSection<Section, Item>] {
+        guard let state else { return [] }
+        var sections: [ListSection<Section, Item>] = [
+            ListSection(.summary, items: [.title]),
+            ListSection(
+                .serverDefault,
+                header: "Server Default",
+                footer: "New sessions use this setting. Reload an active session to apply it now.",
+                items: state.mutationError == nil ? [.enabled] : [.enabled, .mutationError]
+            ),
+            ListSection(.source, header: "Source", items: sourceItems),
+            ListSection(.validation, header: "Validation", items: validationItems),
+        ]
         if state.isLoading && state.detail == nil {
-            snapshot.appendSections([.loading])
-            snapshot.appendItems([.loadingContents], toSection: .loading)
+            sections.append(ListSection(.contents, header: "Contents", items: [.loadingContents]))
+        } else if state.detail != nil {
+            sections.append(ListSection(.contents, header: "Contents", items: [.browse]))
         }
-        if state.detail != nil {
-            snapshot.appendSections([.contents])
-            snapshot.appendItems([.browse], toSection: .contents)
-        }
-        // Only the rows whose inputs changed: a replaced Enabled switch would
-        // drop a drag in progress, and a replaced text view its selection.
-        let current = dataSource.snapshot()
-        let themeID = root.themeStore.activeThemeID
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { rowInputs($0, state: state, themeID: themeID) }
-        snapshot.reconfigureItems(changed.filter { current.indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
+        return sections
     }
 
-    /// What a row draws from, besides its own identity.
-    private func rowInputs(_ item: Item, state: ViewState, themeID: ThemeID) -> AnyHashable {
+    private var sourceItems: [Item] {
+        var items = [Item]()
+        if state?.summary.packageName != nil { items.append(.detail("Package")) }
+        return items + [.detail("Provenance"), .detail("Scope"), .detail("Files")]
+    }
+
+    /// The load's state and what it found: the retry under either a row error
+    /// or a failed load, and each warning once (a diffable list traps on a
+    /// repeated row).
+    private var validationItems: [Item] {
+        guard let state else { return [] }
         let summary = state.summary
-        let inputs: [AnyHashable]
-        switch item {
-        case .title:
-            inputs = [summary.name, summary.description]
-        case .enabled:
-            // A refused change sets only the mutation error; redraw so the switch snaps back.
-            inputs = [summary.name, summary.state, state.isPending, state.mutationsAllowed, state.serverName, state.mutationError]
-        case .mutationError:
-            inputs = [summary.name, state.serverName, state.mutationError, mutationVerb]
-        case .detail:
-            inputs = [summary.packageName, summary.provenance.label, summary.editable]
-        case .status:
-            inputs = [summary.state]
-        case .loadError:
-            inputs = [summary.loadError ?? state.loadError]
-        case .browse:
-            inputs = [summary.name, state.detail?.files.count]
-        case .warning, .retry, .loadingContents:
-            inputs = []
-        }
-        return [AnyHashable(themeID), AnyHashable(inputs)]
+        var items: [Item] = [.status]
+        if summary.loadError ?? state.loadError != nil { items.append(.loadError) }
+        items += Self.unique(summary.warnings).map(Item.warning)
+        if summary.state == .error || state.loadError != nil { items.append(.retry) }
+        return items
     }
 
-    private static func unique(_ values: [String]) -> [String] {
-        var seen = Set<String>()
-        return values.filter { seen.insert($0).inserted }
+    /// The group headings are the ones this page wrote, so only the sections
+    /// with one show it.
+    override func showsHeader(for section: Section) -> Bool {
+        section != .summary
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = switch self?.dataSource?.sectionIdentifier(for: indexPath.section) {
-            case .serverDefault: "Server Default"
-            case .source: "Source"
-            case .validation: "Validation"
-            case .contents: "Contents"
-            default: nil
-            }
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section) == .serverDefault
-                ? "New sessions use this setting. Reload an active session to apply it now."
-                : nil
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+    /// What a row draws from, besides its own identity: a replaced switch would
+    /// drop a save in flight.
+    override func inputs(of item: Item) -> AnyHashable {
+        guard let state else { return AnyHashable(0) }
+        let summary = state.summary
+        return switch item {
+        case .title: resourceRowInputs(.title)
+        case .enabled: resourceRowInputs(.serverDefault)
+        case .mutationError: resourceRowInputs(.mutationError)
+        case .status: resourceRowInputs(.status)
+        case .loadError: resourceRowInputs(.loadError)
+        case .detail: AnyHashable([
+            AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.editable),
+        ])
+        case .browse: AnyHashable([AnyHashable(summary.name), AnyHashable(state.detail?.files.count)])
+        case .warning, .retry, .loadingContents: AnyHashable(0)
         }
     }
 
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        false
-    }
+    // MARK: - Rows
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
         guard let state else { return }
         let summary = state.summary
         switch item {
@@ -335,43 +157,11 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             }
             cell.contentConfiguration = content
         case .enabled:
-            ListScreen.staticRow(cell)
-            var content = UIListContentConfiguration.cell()
-            content.text = "Enabled"
-            content.textProperties.color = UIColor(palette.fg)
-            cell.contentConfiguration = content
-            let toggle = UISwitch()
-            toggle.isOn = summary.state == .enabled
-            toggle.isEnabled = !state.isPending
-                && state.mutationsAllowed
-                && summary.state != .error
-                && summary.state != .unknown
-            toggle.accessibilityIdentifier = "skills.detail.enabled"
-            toggle.accessibilityLabel = "Enable \(summary.name) on \(state.serverName)"
-            toggle.addAction(UIAction { [weak self, weak toggle] _ in
-                guard let self, let toggle else { return }
-                // Offline: nothing will redraw the row, so put the switch back now.
-                guard self.connection?.apiClient != nil else {
-                    toggle.setOn(!toggle.isOn, animated: true)
-                    return
-                }
-                self.setEnabled(toggle.isOn)
-            }, for: .valueChanged)
-            var accessories: [UICellAccessory] = []
-            if state.isPending {
-                let spinner = UIActivityIndicatorView(style: .medium)
-                spinner.startAnimating()
-                spinner.accessibilityLabel = "Saving"
-                spinner.accessibilityIdentifier = "skills.detail.saving"
-                accessories.append(.customView(configuration: .init(customView: spinner, placement: .trailing())))
-            }
-            accessories.append(.customView(configuration: .init(customView: toggle, placement: .trailing())))
-            cell.accessories = accessories
+            serverDefaultRow(cell, identifier: "skills.detail.enabled", savingIdentifier: "skills.detail.saving")
         case .mutationError:
             ListScreen.staticRow(cell, identifier: "skills.detail.mutationError")
-            let message = "Couldn’t \(mutationVerb ?? "update") \(summary.name) on \(state.serverName). \(state.mutationError ?? "")"
             cell.contentConfiguration = Self.noteContent(
-                message, systemImage: "exclamationmark.triangle.fill",
+                mutationFailureMessage, systemImage: "exclamationmark.triangle.fill",
                 color: UIColor(palette.orange), imageColor: UIColor(palette.orange)
             )
         case .detail(let title):
@@ -418,7 +208,7 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             )
         case .retry:
             ListScreen.buttonRow(cell, identifier: "skills.detail.retry", label: "Retry") { [weak self] in
-                self?.startLoad()
+                self?.reload()
             }
             var content = UIListContentConfiguration.cell()
             content.text = "Retry"
@@ -470,54 +260,7 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
         return content
     }
 
-    // MARK: - Data
-
-    private func connect() {
-        connectTask?.cancel()
-        let coordinator = root.coordinator
-        let serverId = target.serverId
-        let isSkill = target.kind == .skill
-        connectTask = Task { [weak self] in
-            guard isSkill,
-                  await coordinator.switchToServerReady(serverId), !Task.isCancelled, let self else { return }
-            connection = coordinator.connection(for: serverId)
-            startLoad()
-        }
-    }
-
-    private func startLoad() {
-        guard let connection else { return }
-        let apiClient = connection.apiClient
-        let serverName = serverName
-        let store = connection.serverResourceStore
-        let target = target
-        loader.load(target: target) {
-            guard let apiClient else {
-                throw ServerResourceDetailLoadError.notConnected(serverName)
-            }
-            let detail = try await apiClient.getServerSkill(id: target.resourceId)
-            store.rememberSkillDetail(detail, serverId: target.serverId)
-            return detail
-        }
-    }
-
-    private func setEnabled(_ enabled: Bool) {
-        guard let connection, let api = connection.apiClient else { return }
-        mutationVerb = enabled ? "enable" : "disable"
-        let store = connection.serverResourceStore
-        let target = target
-        Task { [weak self] in
-            await store.setSkillEnabled(
-                id: target.resourceId,
-                enabled: enabled,
-                serverId: target.serverId,
-                api: api
-            )
-            guard let self, store.mutationError(for: mutationKey, serverId: target.serverId) == nil else { return }
-            loader.invalidateSummaryAfterAuthoritativeMutation()
-            startLoad()
-        }
-    }
+    // MARK: - Actions
 
     private func openBrowser() {
         root.navigation.openServerSkillBrowser(ServerSkillBrowserNavTarget(

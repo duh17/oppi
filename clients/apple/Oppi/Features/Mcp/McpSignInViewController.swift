@@ -4,13 +4,17 @@ import UIKit
 /// link, the callback URL to paste, the host's errors, and Cancel Sign-In
 /// (Done once it settles). `McpSignInOwner` owns the attempt: closing the
 /// sheet never cancels it.
+///
+/// A `ListScreenController`: the base owns the list, the section headings, and
+/// the rows redrawn only when their inputs change, so typing keeps the callback
+/// field's selection.
 @MainActor
-final class McpSignInViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable {
+final class McpSignInViewController: ListScreenController<McpSignInViewController.Section, McpSignInViewController.Item> {
+    enum Section: Hashable, Sendable {
         case summary, finishing, signIn, preparing, notices, finish
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case host, status
         case finishing
         case openLink, callback, submit
@@ -22,9 +26,6 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
     let attempt: ProviderAuthFlowAttempt
     private let owner: McpSignInOwner
     private let root: AppRootEnvironment
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var changedRows = ChangedRows<Item>()
     /// Above the keyboard while the callback field has it.
     private lazy var keyboardBar: UIToolbar = {
         let bar = UIToolbar()
@@ -41,10 +42,8 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
         self.attempt = attempt
         self.owner = owner
         self.root = root
-        super.init(nibName: nil, bundle: nil)
+        super.init(title: "Sign In", listIdentifier: "mcp.auth.list", headers: true, footers: true, endsAtKeyboard: true)
         traitOverrides.appRootEnvironment = root
-        title = "Sign In"
-        navigationItem.largeTitleDisplayMode = .never
         let close = UIBarButtonItem(systemItem: .close, primaryAction: UIAction(title: "Close") { [weak owner] _ in
             owner?.showingSheet = false
         })
@@ -53,53 +52,37 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
         navigationItem.leftBarButtonItem = close
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "mcp.auth.list"
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
-    }
 
     override func updateProperties() {
         super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         // A cancel in flight must finish before the sheet can go.
         isModalInPresentation = attempt.isCancelling
         keyboardSubmit.isEnabled = owner.canSubmitCallback
-        applySnapshot()
     }
 
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
+    override func sections() -> [ListSection<Section, Item>] {
         let flow = attempt.flow
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.summary])
-        snapshot.appendItems([.host, .status], toSection: .summary)
+        var sections: [ListSection<Section, Item>] = [
+            ListSection(.summary, header: attempt.providerName, items: [.host, .status])
+        ]
         if !attempt.isSettled {
             if owner.callbackAccepted || attempt.isSubmitting {
-                snapshot.appendSections([.finishing])
-                snapshot.appendItems([.finishing], toSection: .finishing)
+                sections.append(ListSection(.finishing, items: [.finishing]))
             } else if let auth = flow.auth {
-                snapshot.appendSections([.signIn])
                 var items: [Item] = []
                 if ProviderAuthFlowPresentation.signInURL(auth.url) != nil { items.append(.openLink) }
                 items += [.callback, .submit]
-                snapshot.appendItems(items, toSection: .signIn)
+                sections.append(ListSection(
+                    .signIn,
+                    header: "Sign In",
+                    footer: "After approval, the browser may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host.",
+                    items: items
+                ))
             } else {
-                snapshot.appendSections([.preparing])
-                snapshot.appendItems([.preparing], toSection: .preparing)
+                sections.append(ListSection(.preparing, items: [.preparing]))
             }
         }
         var notices: [Item] = []
@@ -108,74 +91,53 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
         if attempt.refreshError != nil { notices.append(.refreshError) }
         if attempt.isGone { notices.append(.gone) }
         if !notices.isEmpty {
-            snapshot.appendSections([.notices])
-            snapshot.appendItems(notices, toSection: .notices)
+            sections.append(ListSection(.notices, items: notices))
         }
-        snapshot.appendSections([.finish])
-        snapshot.appendItems([.finish], toSection: .finish)
-
-        // Only the rows whose inputs changed: a reconfigured field would drop
-        // its selection, and typing changes only the Submit row.
-        let current = dataSource.snapshot()
-        let themeID = root.themeStore.activeThemeID
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) {
-            AnyHashable([AnyHashable(themeID)] + rowInputs($0))
-        }
-        snapshot.reconfigureItems(changed.filter { current.indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
+        sections.append(ListSection(.finish, items: [.finish]))
+        return sections
     }
 
-    private func rowInputs(_ item: Item) -> [AnyHashable] {
+    /// The provider's name and the sign-in group carry a heading; the rest do
+    /// not.
+    override func showsHeader(for section: Section) -> Bool {
+        section == .summary || section == .signIn
+    }
+
+    /// Only the Submit row changes while typing, so the field keeps its
+    /// selection and the keyboard.
+    override func inputs(of item: Item) -> AnyHashable {
         switch item {
-        case .host: [attempt.serverName]
-        case .status: [attempt.flow.status.rawValue]
-        case .openLink: [attempt.flow.auth?.url]
-        case .submit: [owner.canSubmitCallback]
-        case .flowError: [attempt.flow.error]
-        case .actionError: [attempt.actionError]
-        case .refreshError: [attempt.refreshError]
-        case .finish: [attempt.isSettled, attempt.isCancelling]
-        case .finishing, .callback, .preparing, .gone: []
+        case .host: AnyHashable([attempt.serverName])
+        case .status: AnyHashable([attempt.flow.status.rawValue])
+        case .openLink: AnyHashable([attempt.flow.auth?.url])
+        case .submit: AnyHashable([owner.canSubmitCallback])
+        case .flowError: AnyHashable([attempt.flow.error])
+        case .actionError: AnyHashable([attempt.actionError])
+        case .refreshError: AnyHashable([attempt.refreshError])
+        case .finish: AnyHashable([attempt.isSettled, attempt.isCancelling])
+        case .finishing, .callback, .preparing, .gone: AnyHashable(0)
         }
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
-            self?.configureCallback(cell)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = switch self?.dataSource?.sectionIdentifier(for: indexPath.section) {
-            case .summary: self?.attempt.providerName
-            case .signIn: "Sign In"
-            default: nil
-            }
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section) == .signIn
-                ? "After approval, the browser may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host."
-                : nil
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            item == .callback
-                ? collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-                : collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
+    // MARK: - Rows
+
+    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        self?.configure(cell, item: item)
+    }
+
+    private lazy var field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
+        self?.configureCallback(cell)
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = (row, field)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        item == .callback
+            ? collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
+            : collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
     }
 
     private func configureCallback(_ cell: SSHTerminalTextFieldCell) {
@@ -195,7 +157,7 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         switch item {
         case .host:
             ListScreen.staticRow(cell)

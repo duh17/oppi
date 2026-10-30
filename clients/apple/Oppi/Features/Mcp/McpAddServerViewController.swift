@@ -5,17 +5,21 @@ import UIKit
 /// transport takes. The global list and each workspace list add only to their
 /// own scope. Add closes the sheet once the host has the entry; a failure
 /// stays here.
+///
+/// A `ListScreenController`: the base owns the list, the section headings and
+/// footers, and the rows redrawn only when their inputs change, so typing
+/// never redraws a field and it keeps the keyboard and its selection.
 @MainActor
-final class McpAddServerViewController: UIViewController, UICollectionViewDelegate {
+final class McpAddServerViewController: ListScreenController<McpAddServerViewController.Section, McpAddServerViewController.Item> {
     private enum Mode: Int {
         case url, command
     }
 
-    private enum Section: Hashable {
+    enum Section: Hashable, Sendable {
         case configuration, http, oauth, stdio, error, saving
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case host, name, scope, transport, exposure
         case url, headers
         case clientId, clientSecret, callbackPort
@@ -29,9 +33,6 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
     private let serverName: String
     private let root: AppRootEnvironment
     private let onAdded: () -> Void
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var changedRows = ChangedRows<Item>()
     private let addItem = UIBarButtonItem()
     private let cancelItem = UIBarButtonItem(systemItem: .cancel)
 
@@ -78,14 +79,12 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
         self.serverName = serverName
         self.root = root
         self.onAdded = onAdded
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: "Add MCP Server", listIdentifier: "mcp.add.list",
+            headers: true, footers: true, endsAtKeyboard: true
+        )
         traitOverrides.appRootEnvironment = root
-        title = "Add MCP Server"
-        navigationItem.largeTitleDisplayMode = .never
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
 
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
 
@@ -97,15 +96,6 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "mcp.add.list"
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
-
         cancelItem.primaryAction = UIAction { [weak self] _ in
             guard let self else { return }
             Router.finish(self)
@@ -122,175 +112,147 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
 
     override func updateProperties() {
         super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         addItem.isEnabled = canAdd
         cancelItem.isEnabled = !saving
         // A save in flight keeps the sheet up, as a swipe-down would lose it.
         isModalInPresentation = saving
-        applySnapshot()
     }
 
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.configuration])
-        snapshot.appendItems([.host, .name, .scope, .transport, .exposure], toSection: .configuration)
+    override func sections() -> [ListSection<Section, Item>] {
+        var sections: [ListSection<Section, Item>] = [ListSection(
+            .configuration,
+            header: "Configuration",
+            footer: configurationFooter,
+            items: [.host, .name, .scope, .transport, .exposure]
+        )]
         switch mode {
         case .url:
-            snapshot.appendSections([.http, .oauth])
-            snapshot.appendItems([.url, .headers], toSection: .http)
-            snapshot.appendItems([.clientId, .clientSecret, .callbackPort], toSection: .oauth)
+            sections.append(ListSection(
+                .http, header: "Streamable HTTP", footer: Self.secretReferenceFooter, items: [.url, .headers]
+            ))
+            sections.append(ListSection(
+                .oauth, header: "Optional OAuth Client", items: [.clientId, .clientSecret, .callbackPort]
+            ))
         case .command:
-            snapshot.appendSections([.stdio])
-            snapshot.appendItems([.command, .arguments, .cwd, .environment], toSection: .stdio)
+            // The stdio footer needs a tone on its last sentence: see `decorate`.
+            sections.append(ListSection(.stdio, header: "Standard Input / Output", items: [.command, .arguments, .cwd, .environment]))
         }
         if error != nil {
-            snapshot.appendSections([.error])
-            snapshot.appendItems([.error], toSection: .error)
+            sections.append(ListSection(.error, items: [.error]))
         }
         if saving {
-            snapshot.appendSections([.saving])
-            snapshot.appendItems([.saving], toSection: .saving)
+            sections.append(ListSection(.saving, items: [.saving]))
         }
-
-        // Only the rows whose inputs changed: typing never redraws a field, so
-        // it keeps the keyboard and its selection.
-        let current = dataSource.snapshot()
-        let themeID = root.themeStore.activeThemeID
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) {
-            AnyHashable([AnyHashable(themeID)] + rowInputs($0))
-        }
-        snapshot.reconfigureItems(changed.filter { current.indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
-        refreshVisibleFooters()
+        return sections
     }
 
-    private func rowInputs(_ item: Item) -> [AnyHashable] {
+    /// The group headings are the ones this sheet wrote, so only the sections
+    /// with one show it.
+    override func showsHeader(for section: Section) -> Bool {
+        switch section {
+        case .configuration, .http, .oauth, .stdio: true
+        case .error, .saving: false
+        }
+    }
+
+    /// The exposure's explanation follows the picker.
+    private var configurationFooter: String {
+        var lines = [exposure.explanation]
+        if let trust = scope.projectTrust {
+            lines.append("Saved to this workspace\u{2019}s .pi/mcp.json. Project trust: \(trust.title.lowercased()).")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// A stdio server runs a command on the host, so that sentence warns.
+    override func decorate(footer content: inout UIListContentConfiguration, section: Section) {
+        guard section == .stdio else { return }
+        let warning = NSMutableAttributedString(string: Self.secretReferenceFooter + "\n")
+        warning.append(NSAttributedString(
+            string: "Adding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled.",
+            attributes: [.foregroundColor: UIColor(palette.orange)]
+        ))
+        content.attributedText = warning
+    }
+
+    /// Only the rows whose inputs changed: typing never redraws a field, so it
+    /// keeps the keyboard and its selection.
+    override func inputs(of item: Item) -> AnyHashable {
         switch item {
-        case .transport: [mode.rawValue]
-        case .exposure: [exposure.rawValue, saving]
-        case .error: [error]
-        case .host, .scope, .saving: []
-        case .name, .url, .headers, .clientId, .clientSecret, .callbackPort, .command, .arguments, .cwd, .environment:
-            [saving]
-        }
-    }
-
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
-            self?.configureField(cell, item: item)
-        }
-        let editor = UICollectionView.CellRegistration<SettingsTextViewRowCell, Item> { [weak self] cell, _, item in
-            self?.configureEditor(cell, item: item)
-        }
-        let menu = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            cell.configure(
-                title: "Exposure",
-                identifier: "mcp.add.exposure",
-                options: McpExposure.allCases.map { option in
-                    (title: option.title, selected: option == exposure, action: { [weak self] in
-                        guard let self, !saving else { return }
-                        exposure = option
-                    })
-                }
-            )
-        }
-        let segmented = UICollectionView.CellRegistration<AgentNativeEditSegmentedCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            cell.configure(
-                titles: ["HTTP", "stdio"],
-                selectedIndex: mode.rawValue,
-                identifier: "mcp.add.transport"
-            ) { [weak self] index in
-                self?.mode = Mode(rawValue: index) ?? .url
-            }
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = switch self?.dataSource?.sectionIdentifier(for: indexPath.section) {
-            case .configuration: "Configuration"
-            case .http: "Streamable HTTP"
-            case .oauth: "Optional OAuth Client"
-            case .stdio: "Standard Input / Output"
-            default: nil
-            }
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            self?.configureFooter(view, at: indexPath)
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            switch item {
-            case .name, .url, .clientId, .clientSecret, .callbackPort, .command, .cwd:
-                collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            case .headers, .arguments, .environment:
-                collectionView.dequeueConfiguredReusableCell(using: editor, for: indexPath, item: item)
-            case .transport:
-                collectionView.dequeueConfiguredReusableCell(using: segmented, for: indexPath, item: item)
-            case .exposure:
-                collectionView.dequeueConfiguredReusableCell(using: menu, for: indexPath, item: item)
-            default:
-                collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
-    }
-
-    private func configureFooter(_ view: UICollectionViewListCell, at indexPath: IndexPath) {
-        var content = UIListContentConfiguration.footer()
-        switch dataSource?.sectionIdentifier(for: indexPath.section) {
-        case .configuration:
-            var lines = [exposure.explanation]
-            if let trust = scope.projectTrust {
-                lines.append("Saved to this workspace\u{2019}s .pi/mcp.json. Project trust: \(trust.title.lowercased()).")
-            }
-            content.text = lines.joined(separator: "\n")
-        case .http:
-            content.text = Self.secretReferenceFooter
-        case .stdio:
-            let warning = NSMutableAttributedString(string: Self.secretReferenceFooter + "\n")
-            warning.append(NSAttributedString(
-                string: "Adding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled.",
-                attributes: [.foregroundColor: UIColor(palette.orange)]
-            ))
-            content.attributedText = warning
-        default:
-            break
-        }
-        content.textProperties.numberOfLines = 0
-        view.contentConfiguration = content
-    }
-
-    /// The exposure's explanation changes with the picker, and supplementary
-    /// views do not reconfigure.
-    private func refreshVisibleFooters() {
-        let kind = UICollectionView.elementKindSectionFooter
-        for indexPath in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind) {
-            guard let view = collectionView.supplementaryView(forElementKind: kind, at: indexPath)
-                as? UICollectionViewListCell else { continue }
-            configureFooter(view, at: indexPath)
+        case .transport: AnyHashable([mode.rawValue])
+        case .exposure: AnyHashable([AnyHashable(exposure.rawValue), AnyHashable(saving)])
+        case .error: AnyHashable([error])
+        case .host, .scope, .saving: AnyHashable(0)
+        case .name, .url, .headers, .clientId, .clientSecret, .callbackPort,
+             .command, .arguments, .cwd, .environment:
+            AnyHashable([saving])
         }
     }
 
     // MARK: - Rows
 
+    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        self?.configure(cell, item: item)
+    }
+
+    private lazy var field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
+        self?.configureField(cell, item: item)
+    }
+
+    private lazy var editor = UICollectionView.CellRegistration<SettingsTextViewRowCell, Item> { [weak self] cell, _, item in
+        self?.configureEditor(cell, item: item)
+    }
+
+    private lazy var menu = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        cell.configure(
+            title: "Exposure",
+            identifier: "mcp.add.exposure",
+            options: McpExposure.allCases.map { option in
+                (title: option.title, selected: option == exposure, action: { [weak self] in
+                    guard let self, !saving else { return }
+                    exposure = option
+                })
+            }
+        )
+    }
+
+    private lazy var segmented = UICollectionView.CellRegistration<AgentNativeEditSegmentedCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        cell.configure(
+            titles: ["HTTP", "stdio"],
+            selectedIndex: mode.rawValue,
+            identifier: "mcp.add.transport"
+        ) { [weak self] index in
+            self?.mode = Mode(rawValue: index) ?? .url
+        }
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = (row, field, editor, menu, segmented)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .name, .url, .clientId, .clientSecret, .callbackPort, .command, .cwd:
+            collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
+        case .headers, .arguments, .environment:
+            collectionView.dequeueConfiguredReusableCell(using: editor, for: indexPath, item: item)
+        case .transport:
+            collectionView.dequeueConfiguredReusableCell(using: segmented, for: indexPath, item: item)
+        case .exposure:
+            collectionView.dequeueConfiguredReusableCell(using: menu, for: indexPath, item: item)
+        default:
+            collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
+        }
+    }
+
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         switch item {
         case .host:
             ListScreen.staticRow(cell)

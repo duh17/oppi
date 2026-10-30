@@ -64,14 +64,8 @@
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {
       "UIAlertController(": 1
     },
-    "clients/apple/Oppi/Features/Mcp/McpAddServerViewController.swift": {
-      "SettingsListStyle.pin(": 1
-    },
     "clients/apple/Oppi/Features/Mcp/McpServerDetailViewController.swift": {
       ".settingsToggle(": 1
-    },
-    "clients/apple/Oppi/Features/Mcp/McpSignInViewController.swift": {
-      "SettingsListStyle.pin(": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": {
       "AppPreferences.*.set": 1,
@@ -139,9 +133,6 @@
       "AppPreferences.*.set": 3
     },
     "clients/apple/Oppi/Features/Skills/ServerSkillBrowserViewController.swift": {
-      "SettingsListStyle.pin(": 1
-    },
-    "clients/apple/Oppi/Features/Skills/ServerSkillDetailViewController.swift": {
       "SettingsListStyle.pin(": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateViewController.swift": {

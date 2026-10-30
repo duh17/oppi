@@ -88,6 +88,9 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 /// - `ListSection.state`: the list's own loading, empty, or failed state
 ///   (`LoadState`) where the section's rows would be; the base draws it, with
 ///   its identifier, so a page owns no state row, cell, or identifier map.
+/// - `wholeScreenState()`: the same state for a page with no rows at all
+///   (connecting, loading, or failed with one Retry), which the base draws over
+///   the whole screen instead of in a row.
 /// - `inputs(of:)`: the values a row is drawn from. Only rows whose inputs
 ///   changed are reconfigured, so a pass triggered by an open pop-up menu or by
 ///   another row leaves that menu alone. The theme is added for every row.
@@ -231,6 +234,13 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         refreshTask = Task { [weak self] in await self?.refresh() }
     }
 
+    /// The page's state while it has no rows to show at all: connecting,
+    /// loading, or failed. The base draws it with
+    /// `UIContentUnavailableConfiguration.loadState` over the empty list, so it
+    /// says and looks what every other screen's whole-screen state does. A page
+    /// with rows states itself in a section (`ListSection.state`).
+    func wholeScreenState() -> LoadState? { nil }
+
     /// Whether a snapshot change animates its rows. The default animates once
     /// the list has rows, so a page's first rows appear in place; a catalog
     /// list that swaps whole sections answers false, so a reload does not slide
@@ -373,7 +383,26 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
             appliedThemeID = themeID
             SettingsListStyle.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
-        applySnapshot(sections(), themeID: themeID)
+        let sections = sections()
+        applySnapshot(sections, themeID: themeID)
+        // A page with nothing to list is its state: no rows, one screen.
+        showWholeScreenState(hasRows(sections) ? nil : wholeScreenState(), themeID: themeID)
+    }
+
+    /// Whether `sections` show anything: a row, or a section's state row.
+    private func hasRows(_ sections: [ListSection<Section, Item>]) -> Bool {
+        sections.contains { !$0.items.isEmpty || $0.state != nil }
+    }
+
+    /// Rebuilt on every pass, so a theme change recolors it.
+    private func showWholeScreenState(_ state: LoadState?, themeID: ThemeID) {
+        guard let state else {
+            contentUnavailableConfiguration = nil
+            return
+        }
+        contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+            state, palette: themeID.palette, background: UIColor(themeID.palette.bg)
+        )
     }
 
     // MARK: - Snapshot

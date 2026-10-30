@@ -1262,6 +1262,7 @@
 		86A72170AE2F195904B6B01E /* AudioPlayerSkipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6F9DDEE95C822151949FE9 /* AudioPlayerSkipTests.swift */; };
 		86CB0CF6E4173C1CA0FDDBD5 /* FileType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A1274DDD1127FF0B0D38668 /* FileType.swift */; };
 		86EBEFF5F4A6C58EFD5230E8 /* NativeMutableFullScreenMarkdownBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F7545604EA7285133F8CD3 /* NativeMutableFullScreenMarkdownBody.swift */; };
+		875A9D61B29D0200AE992F5F /* ServerResourceDetailScreenController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01889CA5CED97A72C6430FF6 /* ServerResourceDetailScreenController.swift */; };
 		877E8C4C669C4202F5C84C92 /* TreeSitterRust in Frameworks */ = {isa = PBXBuildFile; productRef = 81229B6DDEAC6D64E13B14EB /* TreeSitterRust */; };
 		879AC952E65E152D44647FEF /* AuthDeviceAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B32F3B43376D45ED8E41E07 /* AuthDeviceAPIClientTests.swift */; };
 		87B238999B5D3994C699B3B5 /* FileViewerPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7D6B729D5116B4494E8AD96 /* FileViewerPlan.swift */; };
@@ -2554,6 +2555,7 @@
 		00E0745E77AFF2885EAC526F /* OppiTestLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiTestLaunch.swift; sourceTree = "<group>"; };
 		013F0DE25BDFA86D97A8093A /* MacMarkdownUSDZView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMarkdownUSDZView.swift; sourceTree = "<group>"; };
 		0166DA184499455DF983F2C1 /* InlineAudioDurationE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineAudioDurationE2ETests.swift; sourceTree = "<group>"; };
+		01889CA5CED97A72C6430FF6 /* ServerResourceDetailScreenController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerResourceDetailScreenController.swift; sourceTree = "<group>"; };
 		018F72CE9E2860A2A97D7DDC /* VoiceInputManager+LocaleSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "VoiceInputManager+LocaleSupport.swift"; sourceTree = "<group>"; };
 		01B694256F58FDBF89051A0C /* MacRemoteServerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRemoteServerStore.swift; sourceTree = "<group>"; };
 		01C39E685F5E3D1DD7F56392 /* node-fs-web-fetch.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "node-fs-web-fetch.md"; sourceTree = "<group>"; };
@@ -6109,6 +6111,7 @@
 			isa = PBXGroup;
 			children = (
 				C68739E3DF0F96110AB008AD /* ServerResourceDetailLoader.swift */,
+				01889CA5CED97A72C6430FF6 /* ServerResourceDetailScreenController.swift */,
 				5C3CF4C076077FF51CEA017E /* ServerSkillBrowserViewController.swift */,
 				E8EC4E9708FCCEC9B43283F9 /* ServerSkillDetailViewController.swift */,
 				91B23AB83CBF132755213BF1 /* ServerSkillFileTree.swift */,
@@ -10566,6 +10569,7 @@
 				C63185A79856C626BB887E64 /* ServerReleaseVersion.swift in Sources */,
 				437156C972D9D8C963697EF6 /* ServerResourceCatalog.swift in Sources */,
 				258036E4A7582CC3D6A1E5A9 /* ServerResourceDetailLoader.swift in Sources */,
+				875A9D61B29D0200AE992F5F /* ServerResourceDetailScreenController.swift in Sources */,
 				9F20D32B0C6024CF313DCE76 /* ServerResourceStore.swift in Sources */,
 				D9AF65AE2AC6569F27AE9E0A /* ServerSelection.swift in Sources */,
 				93F684D0405C5A88D5F37142 /* ServerSettingsModel.swift in Sources */,

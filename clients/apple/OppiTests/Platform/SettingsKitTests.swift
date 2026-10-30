@@ -231,6 +231,26 @@ struct SettingsKitTests {
         #expect(headers.compactMap { $0 } == ["With Heading"], "the section the page does not name has no header at all")
     }
 
+    @Test("A page with no rows at all is its whole-screen state; a row takes the screen back")
+    func wholeScreenStateWhenThereAreNoRows() async throws {
+        let page = WholeScreenStatePage()
+        let window = try show(page)
+        defer { hideTestWindow(window); window.rootViewController = nil }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return page.contentUnavailableConfiguration != nil
+        }, "a page with no rows shows its state over the whole screen")
+        #expect(page.shownItems.isEmpty)
+
+        page.hasRow = true
+        page.setNeedsUpdateProperties()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return page.contentUnavailableConfiguration == nil && page.shownItems == [1]
+        }, "a page with a row is its rows, whatever its state says")
+    }
+
     private static func headerTexts(in collectionView: UICollectionView) -> [String?] {
         let kind = UICollectionView.elementKindSectionHeader
         return collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind).compactMap { indexPath in
@@ -305,6 +325,26 @@ private final class StateRowsPage: ListScreenController<StateRowsPage.Section, I
 
     override func sections() -> [ListSection<Section, Int>] {
         [ListSection(.only, items: [], state: ListStateRow(state: state, identifier: "test.state"))]
+    }
+}
+
+/// A page that has only its own state: no rows, so the base paints it over the
+/// whole screen instead of in a row.
+private final class WholeScreenStatePage: ListScreenController<WholeScreenStatePage.Section, Int> {
+    enum Section: Hashable, Sendable { case only }
+
+    var hasRow = false
+
+    init() {
+        super.init(title: "Whole", listIdentifier: "test.whole.list")
+    }
+
+    override func sections() -> [ListSection<Section, Int>] {
+        hasRow ? [ListSection(.only, items: [1])] : []
+    }
+
+    override func wholeScreenState() -> LoadState? {
+        .loading("Loading the resource…")
     }
 }
 
