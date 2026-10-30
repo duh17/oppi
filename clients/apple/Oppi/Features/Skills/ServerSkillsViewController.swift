@@ -7,26 +7,24 @@ import UIKit
 /// tracked. `ServerSkillListPresentation` decides the search, the groups, and
 /// which state shows (`ServerSkillCatalogPresentationState`).
 ///
-/// The catalog reloads on every appearance, on pull to refresh, and when the
-/// active server changes; choosing another server in the row clears the search.
+/// A `ListScreenController`: the base owns the list, the state row, and the
+/// load. The catalog reloads on every appearance, on pull to refresh, and when
+/// the active server changes; choosing another server in the row clears the
+/// search.
 @MainActor
-final class ServerSkillsViewController: UIViewController, UICollectionViewDelegate {
+final class ServerSkillsViewController: ListScreenController<ServerSkillsViewController.Section, ServerSkillsViewController.Item> {
     var showsSidebarToggle: Bool {
         didSet { setNeedsUpdateProperties() }
     }
 
-    private enum Section: Hashable {
+    enum Section: Hashable, Sendable {
         case server, warning, status
         case kind(ServerSkillSectionKind)
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case server
         case cachedWarning
-        case loading
-        case unavailable
-        case empty
-        case noResults
         case skill(String)
     }
 
@@ -40,40 +38,24 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
         var serverStates: [String: ServerBadgeConnectionState]
         /// The symbol in a row's state line is sized when the row is made.
         var contentSize: UIContentSizeCategory
-        var themeID: ThemeID
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ListScreen.makeCollectionView()
-    private let refreshControl = UIRefreshControl()
     private let search = ScreenSearchController(prompt: String(localized: "Search skills"))
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var changedRows = ChangedRows<Item>()
     private var sidebarToggle: UIBarButtonItem?
     private var state: ViewState?
     private var query = "" {
         didSet { setNeedsUpdateProperties() }
     }
-    private var loadTask: Task<Void, Never>?
     /// The server the running or last load asked for, so a change of the
     /// active server loads once.
     private var requestedServerId: String?
-    private var isOnScreen = false
 
     init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
         self.root = root
         self.showsSidebarToggle = showsSidebarToggle
-        super.init(nibName: nil, bundle: nil)
+        super.init(title: String(localized: "Skills"), listIdentifier: "skills.list", headers: true)
         traitOverrides.appRootEnvironment = root
-        title = String(localized: "Skills")
-        navigationItem.largeTitleDisplayMode = .never
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    deinit {
-        loadTask?.cancel()
     }
 
     private var coordinator: ConnectionCoordinator { root.coordinator }
@@ -83,16 +65,6 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "skills.list"
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
         search.install(on: self, alwaysVisible: false)
         search.onTextChange = { [weak self] text in
             guard let self, text != query else { return }
@@ -108,33 +80,12 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        isOnScreen = true
-        // Like the SwiftUI `.task` it replaces, a load each time it shows.
-        if let activeServerId = coordinator.activeServerId {
-            load(serverId: activeServerId)
-        }
-    }
-
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         search.hostDidAppear(self)
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        isOnScreen = false
-        loadTask?.cancel()
-        loadTask = nil
-        requestedServerId = nil
-    }
-
     override func updateProperties() {
-        super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
-        ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
-
         let servers = coordinator.serverStore.servers
         let activeServerId = coordinator.activeServerId
         let server = ServerSelection.resolve(selectedId: activeServerId, from: servers)
@@ -165,14 +116,14 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
                 servers.map { ($0.id, HostSwitcherBadgeState.make(for: $0, coordinator: coordinator)) },
                 uniquingKeysWith: { first, _ in first }
             ),
-            contentSize: traitCollection.preferredContentSizeCategory,
-            themeID: root.themeStore.activeThemeID
+            contentSize: traitCollection.preferredContentSizeCategory
         )
-        applySnapshot()
+        super.updateProperties()
+        ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
 
         // The active server changed under the screen: load its catalog.
-        if isOnScreen, let activeServerId, activeServerId != requestedServerId {
-            load(serverId: activeServerId)
+        if isShowing, let activeServerId, activeServerId != requestedServerId {
+            setNeedsRefresh()
         }
     }
 
@@ -187,168 +138,157 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
 
     // MARK: - Data
 
-    private func load(serverId: String) {
-        loadTask?.cancel()
+    /// The active server's Skills catalog: on every appearance, on pull to
+    /// refresh, and when the active server changes.
+    override func refresh() async {
+        guard let serverId = coordinator.activeServerId else { return }
         requestedServerId = serverId
-        loadTask = Task { [weak self] in await self?.reload(serverId: serverId) }
-    }
-
-    private func reload(serverId: String) async {
         guard let connection = coordinator.connection(for: serverId),
               let api = connection.apiClient else { return }
         connection.serverResourceStore.switchServer(to: serverId)
         await connection.serverResourceStore.load(serverId: serverId, api: api)
     }
 
-    private func refresh() {
-        Task { [weak self] in
-            if let self, let activeServerId = coordinator.activeServerId {
-                await reload(serverId: activeServerId)
-            }
-            self?.refreshControl.endRefreshing()
-        }
-    }
-
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource, let state else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+    override func sections() -> [ListSection<Section, Item>] {
+        guard let state else { return [] }
+        var sections: [ListSection<Section, Item>] = []
         if state.server != nil {
-            snapshot.appendSections([.server])
-            snapshot.appendItems([.server], toSection: .server)
+            sections.append(ListSection(.server, items: [.server]))
         }
         if state.catalog == .cachedOffline, state.server != nil {
-            snapshot.appendSections([.warning])
-            snapshot.appendItems([.cachedWarning], toSection: .warning)
+            sections.append(ListSection(.warning, items: [.cachedWarning]))
+        }
+        if let row = stateRow(state) {
+            sections.append(ListSection(.status, items: [], state: row))
         }
         switch state.catalog {
-        case .firstLoad:
-            snapshot.appendSections([.status])
-            snapshot.appendItems([.loading], toSection: .status)
-        case .unavailable:
-            snapshot.appendSections([.status])
-            snapshot.appendItems([.unavailable], toSection: .status)
-        case .empty:
-            snapshot.appendSections([.status])
-            snapshot.appendItems([.empty], toSection: .status)
-        case .filteredNoResults:
-            snapshot.appendSections([.status])
-            snapshot.appendItems([.noResults], toSection: .status)
         case .cachedOffline, .content:
             for section in state.presentation.sections {
-                snapshot.appendSections([.kind(section.kind)])
                 // A diffable list traps on a repeated item; a repeated id shows once.
                 var shown = Set<String>()
-                snapshot.appendItems(
-                    section.skills.filter { shown.insert($0.id).inserted }.map { Item.skill($0.id) },
-                    toSection: .kind(section.kind)
-                )
+                sections.append(ListSection(
+                    .kind(section.kind),
+                    header: section.kind.rawValue,
+                    items: section.skills.filter { shown.insert($0.id).inserted }.map { Item.skill($0.id) }
+                ))
             }
+        case .firstLoad, .unavailable, .empty, .filteredNoResults:
+            break
         }
-        // Only the rows whose inputs changed: reconfiguring the server row
-        // closes its open menu.
-        let current = dataSource.snapshot()
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { rowInputs($0, state: state) }
-        snapshot.reconfigureItems(changed.filter { current.indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
+        return sections
     }
 
-    /// What a row draws from, besides its own identity.
-    private func rowInputs(_ item: Item, state: ViewState) -> AnyHashable {
-        let inputs: [AnyHashable]
+    /// The catalog's groups carry a heading; the server, warning, and state
+    /// rows do not.
+    override func showsHeader(for section: Section) -> Bool {
+        if case .kind = section { return true }
+        return false
+    }
+
+    /// The list's state, where its rows would be: loading, a catalog this server
+    /// never loaded, nothing resolved, or nothing matched the search.
+    private func stateRow(_ state: ViewState) -> ListStateRow? {
+        switch state.catalog {
+        case .firstLoad:
+            return ListStateRow(
+                state: .loading(String(localized: "Loading skills…")), identifier: "skills.loading"
+            )
+        case .unavailable:
+            return ListStateRow(
+                state: .failed(
+                    title: String(localized: "Skills are unavailable. The selected server has no cached Skills catalog."),
+                    message: nil,
+                    retry: RetryAction { [weak self] in self?.setNeedsRefresh() }
+                ),
+                identifier: "skills.retry"
+            )
+        case .empty:
+            return ListStateRow(
+                state: .empty(
+                    title: String(
+                        localized: "No skills found. Pi did not resolve any skills on \(state.server?.name ?? String(localized: "this server"))."
+                    ),
+                    systemImage: "sparkles.rectangle.stack"
+                ),
+                identifier: "skills.noSkills"
+            )
+        case .filteredNoResults:
+            return ListStateRow(
+                state: .empty(
+                    title: String(localized: "No skills match “\(state.presentation.query)”."),
+                    systemImage: "sparkles.rectangle.stack"
+                ),
+                identifier: "skills.noResults"
+            )
+        case .cachedOffline, .content:
+            return nil
+        }
+    }
+
+    override func inputs(of item: Item) -> AnyHashable {
+        guard let state else { return AnyHashable(0) }
         switch item {
         case .server:
-            inputs = [state.server, state.serverStates, coordinator.serverStore.servers.map(\.id)]
-        case .cachedWarning, .empty:
-            inputs = [state.server?.name]
-        case .noResults:
-            inputs = [state.presentation.query]
-        case .loading, .unavailable:
-            inputs = []
+            return AnyHashable([
+                AnyHashable(state.server), AnyHashable(state.serverStates),
+                AnyHashable(coordinator.serverStore.servers.map(\.id)),
+            ])
+        case .cachedWarning:
+            return AnyHashable([AnyHashable(state.server?.name), AnyHashable(state.contentSize)])
         case .skill(let id):
-            let skill = state.skills[id]
-            inputs = [
-                skill?.name, skill?.description, skill?.provenance.label, skill?.packageName,
-                skill?.state, state.contentSize,
-            ]
+            guard let skill = state.skills[id] else { return AnyHashable(0) }
+            return AnyHashable([
+                AnyHashable(skill.name), AnyHashable(skill.description), AnyHashable(skill.provenance.label),
+                AnyHashable(skill.packageName), AnyHashable(skill.state), AnyHashable(state.contentSize),
+            ])
         }
-        return [AnyHashable(state.themeID), AnyHashable(inputs)]
     }
 
-    private func installDataSource() {
-        let server = UICollectionView.CellRegistration<ServerCatalogServerRowCell, Item> { [weak self] cell, _, _ in
-            guard let self, let state, let server = state.server,
-                  let serverState = state.serverStates[server.id] else { return }
-            cell.configure(
-                server: server,
-                state: serverState,
-                palette: palette,
-                menu: state.serverStates.count > 1 ? serverMenu() : nil
-            )
-        }
-        let notice = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            var content = UIListContentConfiguration.cell()
-            content.text = "Showing cached settings for \(state?.server?.name ?? "this server"). Pull to retry."
-            content.image = UIImage(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-            content.textProperties.font = .preferredFont(forTextStyle: .subheadline)
-            content.textProperties.adjustsFontForContentSizeCategory = true
-            content.textProperties.color = UIColor(palette.orange)
-            content.imageProperties.tintColor = UIColor(palette.orange)
-            cell.contentConfiguration = content
-            cell.accessibilityIdentifier = "skills.cachedWarning"
-        }
-        let message = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
-            switch item {
-            case .loading:
-                cell.configure(.loading("Loading skills…"), identifier: "skills.loading")
-            case .unavailable:
-                cell.configure(
-                    .failure(
-                        "Skills are unavailable. The selected server has no cached Skills catalog.",
-                        retry: { [weak self] in self?.retry() }
-                    ),
-                    identifier: "skills.retry"
-                )
-            case .noResults:
-                cell.configure(
-                    .message("No skills match “\(self?.state?.presentation.query ?? "")”."),
-                    identifier: "skills.noResults"
-                )
-            default:
-                cell.configure(
-                    .message("No skills found. Pi did not resolve any skills on \(self?.state?.server?.name ?? "this server")."),
-                    identifier: "skills.noSkills"
-                )
-            }
-        }
-        let skill = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            if case .kind(let kind) = self?.dataSource?.sectionIdentifier(for: indexPath.section) {
-                content.text = kind.rawValue
-            }
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            switch item {
-            case .server:
-                collectionView.dequeueConfiguredReusableCell(using: server, for: indexPath, item: item)
-            case .cachedWarning:
-                collectionView.dequeueConfiguredReusableCell(using: notice, for: indexPath, item: item)
-            case .loading, .unavailable, .empty, .noResults:
-                collectionView.dequeueConfiguredReusableCell(using: message, for: indexPath, item: item)
-            case .skill:
-                collectionView.dequeueConfiguredReusableCell(using: skill, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
+    // MARK: - Rows
+
+    private lazy var serverRow = UICollectionView.CellRegistration<ServerCatalogServerRowCell, Item> { [weak self] cell, _, _ in
+        guard let self, let state, let server = state.server,
+              let serverState = state.serverStates[server.id] else { return }
+        cell.configure(
+            server: server,
+            state: serverState,
+            palette: palette,
+            menu: state.serverStates.count > 1 ? serverMenu() : nil
+        )
+    }
+
+    private lazy var cachedWarningRow = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        var content = UIListContentConfiguration.cell()
+        content.text = "Showing cached settings for \(state?.server?.name ?? "this server"). Pull to retry."
+        content.image = UIImage(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+        content.textProperties.font = .preferredFont(forTextStyle: .subheadline)
+        content.textProperties.adjustsFontForContentSizeCategory = true
+        content.textProperties.color = UIColor(palette.orange)
+        content.imageProperties.tintColor = UIColor(palette.orange)
+        cell.contentConfiguration = content
+        cell.accessibilityIdentifier = "skills.cachedWarning"
+    }
+
+    private lazy var skillRow = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        self?.configure(cell, item: item)
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = (serverRow, cachedWarningRow, skillRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .server:
+            collectionView.dequeueConfiguredReusableCell(using: serverRow, for: indexPath, item: item)
+        case .cachedWarning:
+            collectionView.dequeueConfiguredReusableCell(using: cachedWarningRow, for: indexPath, item: item)
+        case .skill:
+            collectionView.dequeueConfiguredReusableCell(using: skillRow, for: indexPath, item: item)
         }
     }
 
@@ -363,18 +303,10 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
                 guard let self else { return }
                 query = ""
                 search.setText("")
-                load(serverId: server.id)
+                requestedServerId = server.id
+                setNeedsRefresh()
             }
         )
-    }
-
-    private func retry() {
-        guard let activeServerId = coordinator.activeServerId else { return }
-        load(serverId: activeServerId)
-    }
-
-    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        false
     }
 
     private func configure(_ cell: SidebarListCell, item: Item) {

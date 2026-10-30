@@ -144,9 +144,6 @@
     "clients/apple/Oppi/Features/Skills/ServerSkillDetailViewController.swift": {
       "SettingsListStyle.pin(": 1
     },
-    "clients/apple/Oppi/Features/Skills/ServerSkillsViewController.swift": {
-      "SettingsListStyle.pin(": 1
-    },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateViewController.swift": {
       ".settingsToggle(": 2
     },

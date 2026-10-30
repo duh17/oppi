@@ -5,9 +5,11 @@ import UIKit
 /// pin, the theme, the bar's items, and rows whose one accessibility element is
 /// a button.
 ///
-/// The Agents, Schedules, MCP, Skills, Extensions, and detail screens, and the
-/// workspace forms, still build their own list with these; a page on the base
-/// takes its look from `SettingsListStyle` instead.
+/// The Agents, Schedules, and the detail screens, and the workspace forms,
+/// still build their own list with these; a page on the base takes its look
+/// from `SettingsListStyle` instead. The row builders (`buttonRow`,
+/// `staticRow`, `background`) are also what a page on the base draws its own
+/// cell classes with (`SidebarListCell`).
 ///
 /// A row that opens or acts is a `SidebarListCell`: its `SidebarRowElement`
 /// takes the tap and is the row's accessibility element, a button, because
