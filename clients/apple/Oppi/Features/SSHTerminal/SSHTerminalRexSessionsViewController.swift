@@ -177,25 +177,27 @@ final class SSHTerminalRexSessionsViewController: UIViewController {
         session.connect(profile: profile)
     }
 
+    /// A pull to refresh: signs the list in again if its connection is gone,
+    /// tries again on a host that had no `nc` or no Rex, and otherwise reads
+    /// Rex once more over the stream that is open.
     private func refresh() async {
         guard let connection = session.rexSessions, connection.channel.isActive else {
             session.closeRexSessions()
             return connectList()
         }
-        await monitor.refresh(using: Self.run(on: connection))
+        monitor.retry()
+        startReading()
+        await monitor.resync()
     }
 
-    /// Reads Rex every few seconds while this screen shows and its connection
-    /// is up. A connection that drops signs in again; a host without `rex`
-    /// is read again only by a pull to refresh.
+    /// Follows Rex while this screen shows and its connection is up: one
+    /// stream, whose events update the list as Rex changes. A connection that
+    /// drops signs in again; a host without `nc` or without Rex is tried
+    /// again only by a pull to refresh.
     private func startReading() {
-        guard reader == nil, !monitor.unavailable, let connection = session.rexSessions else { return }
+        guard reader == nil, !monitor.gaveUp, let connection = session.rexSessions else { return }
         reader = Task { [weak self, monitor] in
-            let run = Self.run(on: connection)
-            while !Task.isCancelled, connection.channel.isActive, !monitor.unavailable {
-                await monitor.refresh(using: run)
-                try? await Task.sleep(for: .seconds(2))
-            }
+            await monitor.run(over: connection)
             guard !Task.isCancelled, let self else { return }
             self.reader = nil
             guard !connection.channel.isActive, self.session.rexSessions?.channel === connection.channel else { return }
@@ -215,12 +217,6 @@ final class SSHTerminalRexSessionsViewController: UIViewController {
     private func enterBackground() {
         stopReading()
         session.closeRexSessions()
-    }
-
-    private static func run(on connection: SSHConnection) -> @MainActor (String, Data) async throws -> SSHExecResult {
-        { command, input in
-            try await connection.run(command, input: input, maximumOutputBytes: 2 * 1024 * 1024, timeout: .seconds(10))
-        }
     }
 
     private func editConnectedHost() {
@@ -261,7 +257,7 @@ final class SSHTerminalRexSessionsContent: SSHTerminalOverviewContent {
         let connection = rows.isEmpty ? [] : [SSHTerminalOverviewSection(id: "connection", rows: rows)]
         // Rex's rows once it has been read; before the first sign-in (or after
         // one that failed) there is nothing of Rex's to show.
-        guard session.rexSessions != nil || monitor.snapshot != nil || monitor.unavailable else {
+        guard session.rexSessions != nil || monitor.snapshot != nil || monitor.absence != nil else {
             guard connection.isEmpty else { return connection }
             let idle = SSHTerminalOverviewRow(id: "idle", title: "Not connected. Pull down to connect.", kind: .placeholder, focus: nil)
             return [.init(id: "idle", rows: [idle])]

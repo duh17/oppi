@@ -1,5 +1,6 @@
 import Foundation
 import GhosttyVt
+import Synchronization
 import Testing
 import UIKit
 import UniformTypeIdentifiers
@@ -1556,48 +1557,150 @@ struct SSHTerminalTests {
         #expect(listed == 1, "a Herdr without saved machines is asked once")
     }
 
-    /// Shaped like `rex do -` answers on a real host: Lua writes an empty list
-    /// as `{}`. One session has two windows (the second not active) with a
-    /// reporting pi, a plain shell, and a Claude whose tool waits on a
-    /// permission; another has no windows.
-    private static let rexSession = "session:01a18a26-6620-76be-b529-4d9ad2b36c63"
-    private static let rexBlocked = "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"
-    private static let rexJSON = #"""
-    {"sessions":[{"session_id":"session:01a18a26-6620-76be-b529-4d9ad2b36c63","label":"shy-cedar",
-      "active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","windows":[
-      {"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","label":"Window 1",
-       "focused_block_id":"block:01a18a26-6620-78ba-80d4-4e8caa018b37","blocks":[
-        {"block_id":"block:01a18a26-6620-78ba-80d4-4e8caa018b37","label":"shell","title":"\u03c0 - dotfiles",
-         "pwd":"file://Mac-Studio.local/Users/duh/.config/dotfiles",
-         "program_status":[{"app":"pi","effective_app":"pi","state":"idle","updated_at":"2026-10-29T18:48:48-07:00"}]},
-        {"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cb","label":"shell","title":"~/.c/dotfiles","program_status":{}}]},
-      {"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c830","label":"Window 2",
-       "focused_block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62ca","blocks":[
-        {"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62ca","label":"shell","title":"claude","program_status":[
-          {"app":"claude","effective_app":"claude","state":"working"},
-          {"id":"bash","effective_app":"claude","state":"blocked","kind":"permission","msg":"Run rm -rf build?"}]}]}]},
-     {"session_id":"session:01a18a26-6620-76be-b529-4d9ad2b36c64","label":"empty","windows":{}}]}
-    """#
+    // MARK: - Rex overview
+
+    nonisolated private static let rexSession = "session:01a18a26-6620-76be-b529-4d9ad2b36c63"
+    nonisolated private static let rexEmpty = "session:01a18a26-6620-76be-b529-4d9ad2b36c64"
+    nonisolated private static let rexWindow1 = "window:01a18a26-6645-713c-97f1-2f1058c8c82f"
+    nonisolated private static let rexWindow2 = "window:01a18a26-6645-713c-97f1-2f1058c8c830"
+    nonisolated private static let rexPi = "block:01a18a26-6620-78ba-80d4-4e8caa018b37"
+    nonisolated private static let rexPlain = "block:01a18a7e-911a-721b-a50b-14dfc0cc62cb"
+    nonisolated private static let rexBlocked = "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"
+    nonisolated private static let rexNew = "block:01a18a7e-911a-721b-a50b-14dfc0cc62cd"
+
+    /// What Rex answers, shaped like a real host: a session with two windows
+    /// (the second not active) holding a reporting pi, a plain shell, and a
+    /// Claude whose tool waits on a permission, beside a session with no
+    /// windows (Rex writes its `windows` as null). The tests change it between
+    /// requests, as a Rex that moves on.
+    private final class RexWorld: Sendable {
+        struct State {
+            var revision = 5
+            var label = "shy-cedar"
+            var extraBlock = false
+            /// The nth `session.view` of the main session gets no answer until the test gives it.
+            var holdViews: Set<Int> = []
+            var views = 0
+        }
+
+        let state = Mutex(State())
+
+        func view(revision: Int? = nil, label: String? = nil) -> String {
+            let state = state.withLock { $0 }
+            func block(_ id: String, creator: String = "com.superlogical.terminal") -> String {
+                #"{"block_id":"\#(id)","label":"shell","creator_name":"\#(creator)"}"#
+            }
+            let first = [block(SSHTerminalTests.rexPi), block(SSHTerminalTests.rexPlain)] + (state.extraBlock ? [block(SSHTerminalTests.rexNew)] : [])
+            return #"{"revision":\#(revision ?? state.revision),"session_id":"\#(SSHTerminalTests.rexSession)","label":"\#(label ?? state.label)","active_window_id":"\#(SSHTerminalTests.rexWindow1)","windows":[{"window_id":"\#(SSHTerminalTests.rexWindow1)","label":"Window 1","focused_block_id":"\#(SSHTerminalTests.rexPi)","layers":[{"blocks":[\#(first.joined(separator: ","))]}]},{"window_id":"\#(SSHTerminalTests.rexWindow2)","label":"Window 2","focused_block_id":"\#(SSHTerminalTests.rexBlocked)","layers":[{"blocks":[\#(block(SSHTerminalTests.rexBlocked))]}]}]}"#
+        }
+
+        func answer(_ request: RexFakeHost.Request) -> RexFakeHost.Answer {
+            let block = request.string("block_id") ?? ""
+            switch request.method {
+            case "session.attach_all":
+                return .result(#"{"sessions":[{"session_id":"\#(SSHTerminalTests.rexSession)","label":"\#(state.withLock { $0.label })"},{"session_id":"\#(SSHTerminalTests.rexEmpty)","label":"empty"}]}"#)
+            case "session.view":
+                if request.string("session_id") == SSHTerminalTests.rexEmpty {
+                    return .result(#"{"revision":1,"session_id":"\#(SSHTerminalTests.rexEmpty)","label":"empty","windows":null}"#)
+                }
+                guard request.string("session_id") == SSHTerminalTests.rexSession else {
+                    return .refuse(code: "session_not_found", message: "no such session")
+                }
+                let held = state.withLock { state -> Bool in
+                    state.views += 1
+                    return state.holdViews.contains(state.views)
+                }
+                return held ? .hold : .result(view())
+            case "com.superlogical.terminal.title":
+                let titles = [
+                    SSHTerminalTests.rexPi: "\u{03C0} - dotfiles", SSHTerminalTests.rexPlain: "~/.c/dotfiles",
+                    SSHTerminalTests.rexBlocked: "claude", SSHTerminalTests.rexNew: "htop",
+                ]
+                return titles[block].map { .result(#"{"title":"\#($0)"}"#) } ?? .refuse(code: "not_found", message: "no block")
+            case "com.superlogical.terminal.pwd":
+                return block == SSHTerminalTests.rexPi
+                    ? .result(#"{"pwd":"file://Mac-Studio.local/Users/duh/.config/dotfiles"}"#) : .result("{}")
+            case "com.superlogical.terminal.program_status":
+                switch block {
+                case SSHTerminalTests.rexPi:
+                    return .result(#"{"records":[{"app":"pi","effective_app":"pi","state":"idle","updated_at":"2026-10-29T18:48:48-07:00"}]}"#)
+                case SSHTerminalTests.rexBlocked:
+                    return .result(#"{"records":[{"app":"claude","effective_app":"claude","state":"working"},{"id":"bash","effective_app":"claude","state":"blocked","kind":"permission","msg":"Run rm -rf build?"}]}"#)
+                default:
+                    return .result(#"{"records":[]}"#)
+                }
+            default:
+                return .refuse(code: "bad_request", message: "unexpected \(request.method)")
+            }
+        }
+
+        func host() -> RexFakeHost { RexFakeHost { [self] in answer($0) } }
+    }
+
+    @MainActor private struct RexRig {
+        let channel: SSHTerminalChannel
+        let fixture: TerminalConnectionFixture
+        let monitor: RexMonitor
+        let task: Task<Void, Never>
+
+        func stop() async {
+            task.cancel()
+            await task.value
+            channel.close(reason: "done")
+        }
+    }
+
+    /// Runs a Rex monitor on a connection whose Rex streams are `hosts`, one
+    /// per subscription, and waits for the first one to be read.
+    private func startRex(
+        _ hosts: [RexFakeHost],
+        waitForFirstRead: Bool = true,
+        retryDelay: @escaping @MainActor (RexMonitor.Retry, Int) -> Duration = { _, _ in .milliseconds(10) }
+    ) async throws -> RexRig {
+        let fixture = TerminalConnectionFixture()
+        for host in hosts { await fixture.queue(host) }
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let monitor = RexMonitor(publishDelay: .milliseconds(20), retryDelay: retryDelay)
+        let task = Task { await monitor.run(on: channel) }
+        let rig = RexRig(channel: channel, fixture: fixture, monitor: monitor, task: task)
+        if waitForFirstRead {
+            guard await waitForMainActorCondition(timeout: .seconds(5), { monitor.available }) else {
+                await rig.stop()
+                Issue.record("the overview never read Rex")
+                throw CancellationError()
+            }
+        }
+        return rig
+    }
+
+    private func views(_ host: RexFakeHost) -> [RexFakeHost.Request] {
+        host.requests.filter { $0.method == "session.view" && $0.string("session_id") == Self.rexSession }
+    }
 
     /// The sheet shows each session with its panes in window order: the
     /// program that reported names a pane, a blocked child record wins over a
     /// working root (Rex passes OSC 7501 through, so the kind survives), a pane
     /// that never reported has no status, and only the active window's focused
-    /// pane reads as focused. Exit 127 is a host without rex, 4 a Rex that is
-    /// not running, and another program's JSON is not a Rex answer.
-    @Test func rexSnapshotListsSessionsAndPanesWithTheirStatus() async throws {
-        let fixture = TerminalConnectionFixture()
-        await fixture.setRunResult(.init(output: Data(Self.rexJSON.utf8), errorOutput: Data(), exitStatus: 0), for: RexRemote.command)
-        let channel = try SSHTerminalChannel()
-        channel.opened(fixture)
-        defer { channel.close(reason: "done") }
-        let monitor = RexMonitor()
-        await monitor.refresh(on: channel)
+    /// pane reads as focused. First paint reads the whole server once over one
+    /// stream: `session.attach_all` (never `session.attach`, which would put
+    /// this client in every session's client list), a view per session, and
+    /// three block calls per terminal. Cancelling the run closes the stream.
+    @Test func rexOverviewReadsTheServerOnceOverOneStream() async throws {
+        let host = RexWorld().host()
+        let rig = try await startRex([host])
+        let monitor = rig.monitor
 
-        #expect(monitor.available)
         #expect(monitor.needsAttention == 1)
-        let input = try #require(await fixture.runs.last?.input)
-        #expect(String(decoding: input, as: UTF8.self) == RexRemote.snapshotScript, "the script travels on stdin")
+        #expect(await rig.fixture.streamCommands == [RexBridge.command])
+        let requests = host.requests
+        #expect(requests.map(\.method).sorted() == (
+            ["session.attach_all"] + Array(repeating: "session.view", count: 2)
+                + Array(repeating: "com.superlogical.terminal.title", count: 3)
+                + Array(repeating: "com.superlogical.terminal.pwd", count: 3)
+                + Array(repeating: "com.superlogical.terminal.program_status", count: 3)
+        ).sorted())
+        #expect(requests.first?.string("event_scope") == "all")
 
         let sessions = monitor.sections
         #expect(sessions.map(\.rows.first?.title) == ["shy-cedar", "empty"])
@@ -1611,67 +1714,249 @@ struct SSHTerminalTests {
         ])
         #expect(sessions[0].rows.first?.focus == nil, "a session row has nothing to focus")
         #expect(sessions[0].rows.last?.focus == .init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false))
+        #expect(monitor.snapshot?.pane(session: Self.rexSession, block: Self.rexPi)?.pwd == "file://Mac-Studio.local/Users/duh/.config/dotfiles")
 
-        func failed(_ status: Int, _ error: String) -> SSHExecResult {
-            .init(output: Data(), errorOutput: Data(error.utf8), exitStatus: status)
-        }
-        #expect(throws: RexRemoteError.notInstalled) { try RexRemote.snapshot(from: failed(127, "")) }
-        #expect(throws: RexRemoteError.notRunning) {
-            try RexRemote.snapshot(from: failed(4, "Error: no Rex server is running at /tmp/rex.sock, and autostart is disabled"))
-        }
-        #expect(throws: RexRemoteError.rejected("stdin:3: attempt to index a nil value")) {
-            try RexRemote.snapshot(from: failed(1, "Error: stdin:3: attempt to index a nil value\n"))
-        }
-        let herdr = #"{"result":{"snapshot":{"workspaces":[],"tabs":[],"agents":[]}}}"#
-        #expect(throws: RexRemoteError.unreadable) {
-            try RexRemote.snapshot(from: .init(output: Data(herdr.utf8), errorOutput: Data(), exitStatus: 0))
-        }
+        await rig.stop()
+        #expect(host.isClosed)
     }
 
-    /// A tapped pane opens on this device as the pane the list names, with
-    /// nothing sent to the host. A pane the list no longer has is refused. A
-    /// Rex that stops keeps its last list under the failure without lighting
-    /// the badge; a host without rex is asked once and never polled.
-    @Test func rexOpensATappedPaneAndStopsPollingAHostWithoutRex() async throws {
-        let fixture = TerminalConnectionFixture()
-        await fixture.setRunResult(.init(output: Data(Self.rexJSON.utf8), errorOutput: Data(), exitStatus: 0), for: RexRemote.command)
-        let channel = try SSHTerminalChannel()
-        channel.opened(fixture)
-        defer { channel.close(reason: "done") }
-        let monitor = RexMonitor()
-        var opened: [RexPaneTarget] = []
-        monitor.openPane = { opened.append($0) }
-        await monitor.refresh(on: channel)
-        let reads = await fixture.runs.count
+    /// Events change the picture without another read: titles, folders, and
+    /// status records patch their pane (a burst lands as its last value), a
+    /// program that exits takes its status with it, a new block costs the
+    /// view and its own three calls, and a closed block, a destroyed session,
+    /// and a created one come and go. The only requests after first paint are
+    /// those the new block and the re-created session need.
+    @Test func rexEventsPatchTheOverviewInPlace() async throws {
+        let world = RexWorld()
+        let host = world.host()
+        let rig = try await startRex([host])
+        let monitor = rig.monitor
+        let painted = host.requests.count
+        func pane(_ block: String) -> RexSnapshot.Pane? { monitor.snapshot?.pane(session: Self.rexSession, block: block) }
 
-        #expect(await monitor.activate(.init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false), on: channel))
-        #expect(opened == [RexPaneTarget(sessionID: Self.rexSession, blockID: Self.rexBlocked, label: "claude")])
-        #expect(await fixture.runs.count == reads, "opening a pane runs nothing on the host")
+        for index in 0..<40 {
+            host.blockEvent(Self.rexSession, Self.rexPlain, "title_changed", #"{"title":"vim \#(index)"}"#)
+        }
+        host.blockEvent(Self.rexSession, Self.rexPlain, "pwd_changed", #"{"pwd":"file://h/tmp"}"#)
+        host.blockEvent(Self.rexSession, Self.rexPlain, "program_status_changed",
+                        #"{"id":"","record":{"state":"blocked","kind":"question","app":"vim"}}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.needsAttention == 2 })
+        #expect(pane(Self.rexPlain)?.title == "vim 39")
+        #expect(pane(Self.rexPlain)?.pwd == "file://h/tmp")
+        #expect(pane(Self.rexPlain)?.displayName == "vim")
 
-        #expect(!(await monitor.activate(.init(scope: Self.rexSession, id: "block:gone", isGroup: false), on: channel)))
-        #expect(!(await monitor.activate(.init(scope: nil, id: Self.rexSession, isGroup: true), on: channel)))
-        #expect(monitor.focusFailure == "This pane is no longer in Rex.")
-        #expect(opened.count == 1)
+        host.blockEvent(Self.rexSession, Self.rexPlain, "program_status_removed", #"{"ids":[""],"reason":"prompt"}"#)
+        host.blockEvent(Self.rexSession, Self.rexBlocked, "child_exited", #"{"exit_code":0}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.needsAttention == 0 })
+        #expect(pane(Self.rexBlocked)?.records.isEmpty == true)
+        #expect(host.requests.count == painted, "patching reads nothing")
 
-        await fixture.setRunResult(
-            .init(output: Data(), errorOutput: Data("Error: no Rex server is running".utf8), exitStatus: RexRemote.notRunningStatus),
-            for: RexRemote.command
-        )
-        await monitor.refresh(on: channel)
-        #expect(monitor.failure == "Rex is not running on this host.")
+        // A block appears: the event names only its id, so the view says what it is.
+        world.state.withLock { $0.extraBlock = true; $0.revision = 6 }
+        host.sessionEvent(Self.rexSession, "block_created", #"{"block_id":"\#(Self.rexNew)"}"#)
+        host.viewChanged(Self.rexSession, revision: 6)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { pane(Self.rexNew)?.title == "htop" })
+        #expect(host.requests.dropFirst(painted).map(\.method).sorted() == [
+            "com.superlogical.terminal.program_status", "com.superlogical.terminal.pwd",
+            "com.superlogical.terminal.title", "session.view",
+        ])
+
+        host.sessionEvent(Self.rexSession, "block_closed", #"{"block_id":"\#(Self.rexNew)"}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { pane(Self.rexNew) == nil })
+
+        host.emit("session_destroyed", #"{"session_id":"\#(Self.rexSession)"}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.snapshot?.sessions.map(\.sessionID) == [Self.rexEmpty] })
+
+        let beforeCreate = host.requests.count
+        world.state.withLock { $0.extraBlock = false }
+        host.emit("session_created", #"{"session":{"session_id":"\#(Self.rexSession)","label":"shy-cedar"}}"#)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { pane(Self.rexBlocked)?.title == "claude" })
+        #expect(monitor.snapshot?.sessions.map(\.sessionID) == [Self.rexEmpty, Self.rexSession])
+        #expect(host.requests.dropFirst(beforeCreate).count == 1 + 3 * 3)
+
+        await rig.stop()
+    }
+
+    /// Announcements of a newer view while one is being read cost one more
+    /// read, not one each (and none until the one in flight answers); a reply
+    /// older than the view already applied is dropped, and the read that
+    /// follows brings the current one.
+    @Test func rexReadsAtMostOneViewAtATimeAndDropsStaleOnes() async throws {
+        let world = RexWorld()
+        world.state.withLock { $0.holdViews = [2, 3, 4] }
+        let host = world.host()
+        let rig = try await startRex([host])
+        let monitor = rig.monitor
+        func label() -> String? { monitor.snapshot?.sessions.first?.label }
+
+        host.viewChanged(Self.rexSession, revision: 6)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { views(host).count == 2 })
+        host.viewChanged(Self.rexSession, revision: 7)
+        host.viewChanged(Self.rexSession, revision: 8)
+        host.viewChanged(Self.rexSession, revision: 5) // not newer than what is applied
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { host.requests.count == 12 + 1 })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) { views(host).count == 2 }, "one view in flight")
+
+        host.respond(to: views(host)[1], world.view(revision: 6, label: "six"))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { label() == "six" })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { views(host).count == 3 }, "dirtied again: read once more")
+
+        host.respond(to: views(host)[2], world.view(revision: 4, label: "stale"))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { views(host).count == 4 }, "still behind revision 8")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) { label() == "six" }, "a reply older than the applied view is dropped")
+
+        host.respond(to: views(host)[3], world.view(revision: 8, label: "eight"))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { label() == "eight" })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) { views(host).count == 4 })
+
+        await rig.stop()
+    }
+
+    /// Rex replays nothing, so a stream that drops is caught up by reading
+    /// everything again on a new one, after a short pause (the connection
+    /// closed: 1 s, doubling; Rex not running, exit 4: 15 s, doubling). The
+    /// last picture stays under the failure without lighting the badge. A host
+    /// without `nc` (exit 127) is asked once.
+    @Test func rexResyncsAfterADroppedStreamAndGivesUpOnAHostWithoutNc() async throws {
+        let first = RexWorld()
+        let second = RexWorld()
+        second.state.withLock { $0.label = "renamed" }
+        let firstHost = first.host(), secondHost = second.host()
+        var retries: [(RexMonitor.Retry, Int)] = []
+        let rig = try await startRex([firstHost, secondHost]) { retry, failures in
+            retries.append((retry, failures))
+            return retry == .notRunning ? .seconds(30) : .milliseconds(10)
+        }
+        let monitor = rig.monitor
+        #expect(monitor.needsAttention == 1)
+
+        firstHost.end(status: 255)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.snapshot?.sessions.first?.label == "renamed" && monitor.failure == nil })
+        #expect(retries.map(\.0) == [.dropped] && retries.map(\.1) == [1])
+        #expect(secondHost.requests.first?.method == "session.attach_all", "a new stream starts over")
+        #expect(monitor.needsAttention == 1)
+        #expect(await rig.fixture.streamCommands == [RexBridge.command, RexBridge.command])
+
+        // Rex stops: the failure shows, the last list stays, the badge goes dark.
+        secondHost.end(status: 4)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.failure == "Rex is not running on this host." })
         #expect(monitor.sections.first?.rows.first?.kind == .failure)
         #expect(monitor.sections.count == 3, "the last list stays under the failure")
         #expect(monitor.needsAttention == 0)
+        #expect(retries.last?.0 == .notRunning && retries.last?.1 == 1)
+        #expect(monitor.absence == .notRunning && !monitor.gaveUp)
+        await rig.stop()
+    }
 
-        let bare = TerminalConnectionFixture()
-        await bare.setRunResult(.init(output: Data(), errorOutput: Data("sh: rex: not found".utf8), exitStatus: 127), for: RexRemote.command)
-        let bareChannel = try SSHTerminalChannel()
-        bareChannel.opened(bare)
-        defer { bareChannel.close(reason: "done") }
-        let bareMonitor = RexMonitor()
-        await bareMonitor.run(on: bareChannel)
-        #expect(bareMonitor.unavailable && !bareMonitor.available)
-        #expect(await bare.runs.count == 1)
+    /// The sessions screen exists only to show Rex, so a host that cannot be
+    /// read says why, in the bridge's exit status: no `nc` (127) and no Rex
+    /// (5) are not asked again until `retry()` (a pull to refresh); a Rex
+    /// that is installed but not running (4) keeps being asked, with backoff.
+    @Test func rexTellsNoNcNoRexAndRexNotRunningApart() async throws {
+        let cases: [(status: Int, absence: RexAbsence, gaveUp: Bool)] = [
+            (127, .noNc, true), (5, .notInstalled, true), (4, .notRunning, false),
+        ]
+        for expected in cases {
+            let host = RexFakeHost { _ in .hold }
+            let rig = try await startRex([host], waitForFirstRead: false) { _, _ in .seconds(30) }
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { host.isOpen })
+            host.end(status: expected.status)
+            #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.monitor.absence == expected.absence })
+            #expect(rig.monitor.gaveUp == expected.gaveUp)
+            #expect(!rig.monitor.available)
+            #expect(rig.monitor.sections.first?.rows.first?.title == expected.absence.advice)
+            if expected.gaveUp {
+                await rig.task.value // `run` has returned: nothing is asked again
+                #expect(await rig.fixture.streamCommands.count == 1)
+                rig.monitor.retry()
+                #expect(rig.monitor.absence == nil && !rig.monitor.gaveUp)
+            } else {
+                #expect(rig.monitor.failure == "Rex is not running on this host.")
+                await rig.stop()
+                continue
+            }
+            rig.channel.close(reason: "done")
+        }
+        let advice = [RexAbsence.noNc, .notInstalled, .notRunning].map(\.advice)
+        #expect(Set(advice).count == 3, "each state has advice of its own")
+    }
+
+    /// The sessions screen follows Rex over its own `SSHConnection`, not a
+    /// terminal channel: anything that opens a stream will do, and the run
+    /// ends when that connection goes.
+    @Test func rexIsFollowedOverAnyStreamHost() async throws {
+        let host = RexWorld().host()
+        let stream = FakeStreamHost(host)
+        let monitor = RexMonitor(publishDelay: .milliseconds(20), retryDelay: { _, _ in .milliseconds(10) })
+        let task = Task { await monitor.run(over: stream) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.available })
+        #expect(monitor.needsAttention == 1)
+
+        stream.isConnected = false
+        host.end(status: 255)
+        await task.value
+        #expect(monitor.available, "the last list stays")
+    }
+
+    @MainActor private final class FakeStreamHost: RexStreamHost {
+        var isConnected = true
+        private let host: RexFakeHost
+        init(_ host: RexFakeHost) { self.host = host }
+        func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+            host.open(sink: sink)
+        }
+    }
+
+    @Test func rexRetriesBackOffFromOneSecondOrFifteenAndStopAtTheirCaps() {
+        #expect((1...8).map { RexMonitor.Retry.delay(.dropped, failures: $0) } == [1, 2, 4, 8, 16, 30, 30, 30].map { .seconds($0) })
+        #expect((1...5).map { RexMonitor.Retry.delay(.notRunning, failures: $0) } == [15, 30, 60, 60, 60].map { .seconds($0) })
+    }
+
+    /// Opening the sheet reads Rex once more over the open stream (a safety
+    /// net for what events missed), and so does a pull to refresh, which
+    /// waits for it. Setting the flag again changes nothing.
+    @Test func rexOpeningTheSheetReadsTheServerOnceMore() async throws {
+        let world = RexWorld()
+        let host = world.host()
+        let rig = try await startRex([host])
+        let monitor = rig.monitor
+        func attaches() -> Int { host.requests.filter { $0.method == "session.attach_all" }.count }
+        #expect(attaches() == 1)
+
+        world.state.withLock { $0.label = "missed"; $0.revision = 9 } // no event told us
+        monitor.watching = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.snapshot?.sessions.first?.label == "missed" })
+        #expect(attaches() == 2)
+        #expect(await rig.fixture.streamCommands.count == 1, "the same stream")
+
+        monitor.watching = true
+        world.state.withLock { $0.label = "pulled" }
+        await monitor.refresh(on: rig.channel)
+        #expect(monitor.snapshot?.sessions.first?.label == "pulled")
+        #expect(attaches() == 3)
+
+        await rig.stop()
+    }
+
+    /// A tapped pane opens on this device as the pane the list names, with
+    /// nothing sent to Rex. A pane the list no longer has is refused.
+    @Test func rexOpensATappedPane() async throws {
+        let host = RexWorld().host()
+        let rig = try await startRex([host])
+        let monitor = rig.monitor
+        var opened: [RexPaneTarget] = []
+        monitor.openPane = { opened.append($0) }
+        let reads = host.requests.count
+
+        #expect(await monitor.activate(.init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false), on: rig.channel))
+        #expect(opened == [RexPaneTarget(sessionID: Self.rexSession, blockID: Self.rexBlocked, label: "claude")])
+        #expect(host.requests.count == reads, "opening a pane asks Rex nothing")
+
+        #expect(!(await monitor.activate(.init(scope: Self.rexSession, id: "block:gone", isGroup: false), on: rig.channel)))
+        #expect(!(await monitor.activate(.init(scope: nil, id: Self.rexSession, isGroup: true), on: rig.channel)))
+        #expect(monitor.focusFailure == "This pane is no longer in Rex.")
+        #expect(opened.count == 1)
+        await rig.stop()
     }
 
     /// A saved machine that stops answering (a laptop asleep) must not slow
@@ -2984,7 +3269,15 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
         hung.forEach { $0.resume() }
         hung.removeAll()
     }
-    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream { throw SSHConnectionError.notConnected }
+    private var hosts: [RexFakeHost] = []
+    private(set) var streamCommands: [String] = []
+    /// The Rex server the next `openStream` reaches; none left, none reachable.
+    func queue(_ host: RexFakeHost) { hosts.append(host) }
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        streamCommands.append(command)
+        guard !hosts.isEmpty else { throw SSHConnectionError.notConnected }
+        return hosts.removeFirst().open(sink: sink)
+    }
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
         runs.append((command, input))
         if hanging.contains(command) {

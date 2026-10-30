@@ -247,6 +247,56 @@ struct RexControlTests {
     }
 }
 
+@Suite("Rex events")
+struct RexEventTests {
+    private func parse(_ frame: String) throws -> RexEvent? {
+        RexEvent(frame: try #require(JSONSerialization.jsonObject(with: Data(frame.utf8)) as? [String: Any]))
+    }
+
+    private static let session = "session:01a18bbf-6d93-7d00-9dc8-e80056462af2"
+    private static let block = "block:01a18bbf-6d94-7130-8ea8-ea4b83e3799a"
+
+    /// Frames a Rex server sent to a client that called `session.attach_all`
+    /// with `event_scope: all`, captured from one (`rex server run`) and cut
+    /// only for length. The events the overview follows parse into the
+    /// session and block they name; the rest of what Rex sends (clients,
+    /// owners, processes) is not parsed.
+    @Test func theEventsTheOverviewFollowsParseAndTheRestDoNot() throws {
+        let session = Self.session, block = Self.block
+        let nested = { (inner: String) in
+            #"{"type":"event","seq":9,"payload":{"type":"session_event","payload":{"session_id":"\#(session)","event":\#(inner)}}}"#
+        }
+        let terminal = { (name: String, payload: String) in
+            nested(#"{"type":"block_event","payload":{"block_id":"\#(block)","creator_name":"com.superlogical.terminal","name":"\#(name)","payload":\#(payload)}}"#)
+        }
+        #expect(try parse(#"{"type":"event","seq":2,"payload":{"type":"session_created","payload":{"session":{"session_id":"\#(session)","label":"probe"}}}}"#) == .sessionCreated(session: session))
+        #expect(try parse(#"{"type":"event","seq":30,"payload":{"type":"session_destroyed","payload":{"session_id":"\#(session)"}}}"#) == .sessionDestroyed(session: session))
+        #expect(try parse(nested(#"{"type":"session_view_changed","payload":{"revision":4}}"#)) == .viewChanged(session: session, revision: 4))
+        #expect(try parse(nested(#"{"type":"block_created","payload":{"block_id":"\#(block)"}}"#)) == .blockCreated(session: session, block: block))
+        #expect(try parse(nested(#"{"type":"block_closed","payload":{"block_id":"\#(block)"}}"#)) == .blockClosed(session: session, block: block))
+        #expect(try parse(terminal("title_changed", #"{"title":"mytitle","owner":{"pid":35837,"name":"bash"}}"#)) == .title(session: session, block: block, "mytitle"))
+        #expect(try parse(terminal("pwd_changed", #"{"pwd":"file://h/tmp","owner":{"pid":35837,"name":"bash"}}"#)) == .pwd(session: session, block: block, "file://h/tmp"))
+        #expect(try parse(terminal("child_exited", #"{"exit_code":3,"error":"exit status 3"}"#)) == .childExited(session: session, block: block))
+        #expect(try parse(terminal("program_status_removed", #"{"ids":["","bash"],"reason":"child_exited"}"#)) == .statusRemoved(session: session, block: block, ids: ["", "bash"]))
+
+        // The root record has no id of its own; a child's id is its record's.
+        let root = #"{"id":"","record":{"state":"blocked","kind":"permission","app":"pi","effective_app":"pi","updated_at":"2026-10-30T00:59:16.372948-07:00","owner":{"pid":86966,"name":"bash"}},"reason":"report"}"#
+        #expect(try parse(terminal("program_status_changed", root)) == .status(
+            session: session, block: block, .init(id: "", state: .blocked, kind: .permission, message: nil, app: "pi")
+        ))
+        let child = #"{"id":"bash","record":{"id":"bash","state":"working","app":"pi","effective_app":"pi"},"reason":"report"}"#
+        #expect(try parse(terminal("program_status_changed", child)) == .status(
+            session: session, block: block, .init(id: "bash", state: .working, kind: nil, message: nil, app: "pi")
+        ))
+
+        #expect(try parse(terminal("process_changed", #"{"generation":2,"foreground":null}"#)) == nil)
+        #expect(try parse(nested(#"{"type":"block_owner_changed","payload":{"block_id":"\#(block)","reason":"create"}}"#)) == nil)
+        #expect(try parse(#"{"type":"event","seq":1,"payload":{"type":"client_joined","payload":{"client":{"client_id":"client:1"}}}}"#) == nil)
+        // A block that is not a terminal reports nothing the overview reads.
+        #expect(try parse(nested(#"{"type":"block_event","payload":{"block_id":"\#(block)","creator_name":"com.superlogical.onboarding","name":"title_changed","payload":{"title":"x"}}}"#)) == nil)
+    }
+}
+
 @Suite("Rex pane data connection")
 struct RexDataStreamTests {
     /// The whole data handshake and stream: HELLO with the ticket the moment

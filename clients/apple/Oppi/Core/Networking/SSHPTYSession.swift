@@ -219,35 +219,14 @@ final class SSHPTYSession: @unchecked Sendable {
         }
     }
 
-    /// Opens another command beside the terminal on the same connection, with
-    /// no PTY, as a long-lived byte pipe in both directions (a bridge to a
-    /// socket on the host, say). Unlike `run`, its output streams to `sink` as
-    /// it arrives and nothing is collected. The stream ends with the command,
-    /// `close()`, or the connection. `inboundFlow` lets the consumer pause
-    /// reading, as the terminal's queue does for a PTY.
+    /// `SSHConnection.openStream` on this session's connection, beside the terminal.
     func openStream(
         command: String,
         inboundFlow: SSHPTYInboundFlow? = nil,
         sink: @escaping SSHPTYByteSink
     ) async throws -> SSHExecStream {
-        guard let parent = channels.withLock({ $0?.connection.channel }) else { throw SSHConnectionError.notConnected }
-        let ready = parent.eventLoop.makePromise(of: Void.self)
-        let options = SSHPTYChannelHandler.Options(
-            term: "", columns: 0, rows: 0, pixelWidth: 0, pixelHeight: 0,
-            inboundFlow: inboundFlow, command: command, requestsPTY: false
-        )
-        // One deadline covers the channel open and the command's reply: a peer
-        // that answers neither must not hang the caller.
-        let channel = try await Self.openChannel(
-            on: parent, options: options, ready: ready, sink: sink, timeout: Self.requestTimeout
-        )
-        do {
-            try await ready.futureResult.get()
-        } catch {
-            channel.close(promise: nil)
-            throw SSHConnectionError(mapping: error)
-        }
-        return SSHExecStream(channel: channel)
+        guard let connection = channels.withLock({ $0?.connection }) else { throw SSHConnectionError.notConnected }
+        return try await connection.openStream(command: command, inboundFlow: inboundFlow, sink: sink)
     }
 
     func resize(columns: Int, rows: Int, pixelWidth: Int = 0, pixelHeight: Int = 0) async throws {
@@ -385,7 +364,7 @@ final class SSHPTYSession: @unchecked Sendable {
 
     /// `timeout` fails both the open and `ready` when it passes; completing an
     /// already-completed promise is a no-op, so whichever comes first wins.
-    private static func openChannel(
+    fileprivate static func openChannel(
         on parent: Channel,
         options: SSHPTYChannelHandler.Options,
         ready: EventLoopPromise<Void>,
@@ -439,18 +418,64 @@ extension SSHPTYChannelHandler.Options {
     }
 }
 
+extension SSHConnection {
+    /// Opens a command on this connection with no PTY, as a long-lived byte
+    /// pipe in both directions (a bridge to a socket on the host, say). Unlike
+    /// `run`, its output streams to `sink` as it arrives and nothing is
+    /// collected. The stream ends with the command, `close()`, or the
+    /// connection. `inboundFlow` lets the consumer pause reading, as the
+    /// terminal's queue does for a PTY.
+    func openStream(
+        command: String,
+        inboundFlow: SSHPTYInboundFlow? = nil,
+        sink: @escaping SSHPTYByteSink
+    ) async throws -> SSHExecStream {
+        let parent = channel
+        let ready = parent.eventLoop.makePromise(of: Void.self)
+        let options = SSHPTYChannelHandler.Options(
+            term: "", columns: 0, rows: 0, pixelWidth: 0, pixelHeight: 0,
+            inboundFlow: inboundFlow, command: command, requestsPTY: false
+        )
+        // One deadline covers the channel open and the command's reply: a peer
+        // that answers neither must not hang the caller.
+        let opened = try await SSHPTYSession.openChannel(
+            on: parent, options: options, ready: ready, sink: sink, timeout: SSHPTYSession.requestTimeout
+        )
+        do {
+            try await ready.futureResult.get()
+        } catch {
+            opened.close(promise: nil)
+            throw SSHConnectionError(mapping: error)
+        }
+        return SSHExecStream(channel: opened)
+    }
+}
+
 /// A command's stdin and stdout on an SSH connection, opened by
-/// `SSHPTYSession.openStream`. Its output and end arrive on the sink it was
+/// `SSHConnection.openStream`. Its output and end arrive on the sink it was
 /// opened with.
 final class SSHExecStream: Sendable {
-    private let channel: Channel
+    private let write: @Sendable (Data) async throws -> Void
+    private let closeChannel: @Sendable () -> Void
 
-    fileprivate init(channel: Channel) { self.channel = channel }
+    fileprivate init(channel: Channel) {
+        write = { try await SSHPTYSession.write($0, to: channel) }
+        closeChannel = { channel.close(promise: nil) }
+    }
 
-    func send(_ bytes: Data) async throws { try await SSHPTYSession.write(bytes, to: channel) }
+    #if DEBUG
+    /// A stream with no SSH channel behind it, for previews and tests that
+    /// stand in for the host.
+    init(send: @escaping @Sendable (Data) async throws -> Void, close: @escaping @Sendable () -> Void) {
+        write = send
+        closeChannel = close
+    }
+    #endif
+
+    func send(_ bytes: Data) async throws { try await write(bytes) }
 
     /// Closes the channel without waiting. The sink then reports `.closed`.
-    func close() { channel.close(promise: nil) }
+    func close() { closeChannel() }
 }
 
 private final class SSHKeepaliveProbeHandler: ChannelInboundHandler {

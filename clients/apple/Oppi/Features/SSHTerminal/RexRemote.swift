@@ -1,14 +1,14 @@
 import Foundation
 import Observation
+import Synchronization
 
 /// Every session on the host's Rex server, its windows, and each terminal's
-/// title, folder, and OSC 7501 records: one read, shaped like Rex's own API
-/// objects (`session.list`, `session.view`, and the
-/// `com.superlogical.terminal.*` block methods), so a client that speaks that
-/// API directly can produce the same value. Rex owns the state; Oppi only
+/// title, folder, and OSC 7501 records, in the shape of Rex's own API objects
+/// (`session.view` and the `com.superlogical.terminal.*` block methods), which
+/// `RexMirror` assembles from the subscription. Rex owns the state; Oppi only
 /// reads it.
-struct RexSnapshot: Decodable, Equatable, Sendable {
-    struct Pane: Decodable, Equatable, Sendable {
+struct RexSnapshot: Equatable, Sendable {
+    struct Pane: Equatable, Sendable {
         let blockID: String
         let label: String?
         let title: String?
@@ -16,19 +16,6 @@ struct RexSnapshot: Decodable, Equatable, Sendable {
         /// `file://host/path` URL.
         let pwd: String?
         let records: [SSHTerminalPaneRecord]
-
-        enum CodingKeys: String, CodingKey {
-            case blockID = "block_id", label, title, pwd, records = "program_status"
-        }
-
-        init(from decoder: any Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            blockID = try container.decode(String.self, forKey: .blockID)
-            label = try container.decodeIfPresent(String.self, forKey: .label)
-            title = try container.decodeIfPresent(String.self, forKey: .title)
-            pwd = try container.decodeIfPresent(String.self, forKey: .pwd)
-            records = try container.decodeIfPresent(LuaList<SSHTerminalPaneRecord>.self, forKey: .records)?.items ?? []
-        }
 
         var status: SessionStatusKind? { SSHTerminalPaneRecord.headline(of: records) }
 
@@ -39,42 +26,18 @@ struct RexSnapshot: Decodable, Equatable, Sendable {
         }
     }
 
-    struct Window: Decodable, Equatable, Sendable {
+    struct Window: Equatable, Sendable {
         let windowID: String
         let label: String?
         let focusedBlockID: String?
         let panes: [Pane]
-
-        enum CodingKeys: String, CodingKey {
-            case windowID = "window_id", label, focusedBlockID = "focused_block_id", panes = "blocks"
-        }
-
-        init(from decoder: any Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            windowID = try container.decode(String.self, forKey: .windowID)
-            label = try container.decodeIfPresent(String.self, forKey: .label)
-            focusedBlockID = try container.decodeIfPresent(String.self, forKey: .focusedBlockID)
-            panes = try container.decode(LuaList<Pane>.self, forKey: .panes).items
-        }
     }
 
-    struct Session: Decodable, Equatable, Sendable {
+    struct Session: Equatable, Sendable {
         let sessionID: String
         let label: String?
         let activeWindowID: String?
         let windows: [Window]
-
-        enum CodingKeys: String, CodingKey {
-            case sessionID = "session_id", label, activeWindowID = "active_window_id", windows
-        }
-
-        init(from decoder: any Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            sessionID = try container.decode(String.self, forKey: .sessionID)
-            label = try container.decodeIfPresent(String.self, forKey: .label)
-            activeWindowID = try container.decodeIfPresent(String.self, forKey: .activeWindowID)
-            windows = try container.decode(LuaList<Window>.self, forKey: .windows).items
-        }
 
         /// The pane Rex sends typing to: the focused pane of the active window.
         func isFocused(_ pane: Pane, in window: Window) -> Bool {
@@ -83,15 +46,6 @@ struct RexSnapshot: Decodable, Equatable, Sendable {
     }
 
     let sessions: [Session]
-
-    enum CodingKeys: String, CodingKey { case sessions }
-
-    init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        // Required, as `windows` and `blocks` are: the script always returns
-        // them, so an answer without them is not this script's.
-        sessions = try container.decode(LuaList<Session>.self, forKey: .sessions).items
-    }
 
     func pane(session sessionID: String, block blockID: String) -> Pane? {
         sessions.first { $0.sessionID == sessionID }?.windows.lazy.flatMap(\.panes).first { $0.blockID == blockID }
@@ -105,205 +59,770 @@ struct RexSnapshot: Decodable, Equatable, Sendable {
     }
 }
 
-/// A list from Rex's Lua `return` value. Lua has one table type, so Rex
-/// encodes an empty list as `{}`: an empty object reads as no items, and
-/// anything else that is not an array is an error.
-private struct LuaList<Element: Decodable>: Decodable {
-    let items: [Element]
+/// A server event the overview follows, parsed on the SSH event loop from the
+/// frame Rex sent (`{"type":"event","seq":…,"payload":{"type":…,"payload":…}}`).
+/// Session events nest one level deeper (`session_event`), and a terminal's own
+/// events (`title_changed`, …) one more (`block_event`). Everything else Rex
+/// sends — clients joining, output sizes, bells, progress — is not parsed.
+enum RexEvent: Sendable, Equatable {
+    case sessionCreated(session: String)
+    case sessionDestroyed(session: String)
+    /// The session's view changed; Rex sends only the new revision.
+    case viewChanged(session: String, revision: Int)
+    case blockCreated(session: String, block: String)
+    case blockClosed(session: String, block: String)
+    case title(session: String, block: String, String)
+    case pwd(session: String, block: String, String)
+    case status(session: String, block: String, SSHTerminalPaneRecord)
+    case statusRemoved(session: String, block: String, ids: [String])
+    case childExited(session: String, block: String)
 
-    private struct NoKeys: CodingKey {
-        var stringValue: String
-        var intValue: Int? { nil }
-        init(stringValue: String) { self.stringValue = stringValue }
-        init?(intValue: Int) { nil }
+    static let terminalCreator = "com.superlogical.terminal"
+
+    init?(frame: [String: Any]) {
+        guard let event = frame["payload"] as? [String: Any], let type = event["type"] as? String,
+              let body = event["payload"] as? [String: Any] else { return nil }
+        switch type {
+        case "session_created":
+            guard let id = (body["session"] as? [String: Any])?["session_id"] as? String else { return nil }
+            self = .sessionCreated(session: id)
+        case "session_destroyed":
+            guard let id = body["session_id"] as? String else { return nil }
+            self = .sessionDestroyed(session: id)
+        case "session_event":
+            guard let session = body["session_id"] as? String, let inner = body["event"] as? [String: Any],
+                  let name = inner["type"] as? String, let payload = inner["payload"] as? [String: Any],
+                  let event = Self(session: session, name: name, payload: payload) else { return nil }
+            self = event
+        default:
+            return nil
+        }
     }
 
-    init(from decoder: any Decoder) throws {
-        if var array = try? decoder.unkeyedContainer() {
-            var items: [Element] = []
-            while !array.isAtEnd { items.append(try array.decode(Element.self)) }
-            self.items = items
-            return
+    private init?(session: String, name: String, payload: [String: Any]) {
+        switch name {
+        case "session_view_changed":
+            guard let revision = payload["revision"] as? Int else { return nil }
+            self = .viewChanged(session: session, revision: revision)
+        case "block_created":
+            guard let block = payload["block_id"] as? String else { return nil }
+            self = .blockCreated(session: session, block: block)
+        case "block_closed":
+            guard let block = payload["block_id"] as? String else { return nil }
+            self = .blockClosed(session: session, block: block)
+        case "block_event":
+            guard payload["creator_name"] as? String == Self.terminalCreator,
+                  let block = payload["block_id"] as? String, let kind = payload["name"] as? String,
+                  let body = payload["payload"] as? [String: Any] else { return nil }
+            switch kind {
+            case "title_changed":
+                guard let title = body["title"] as? String else { return nil }
+                self = .title(session: session, block: block, title)
+            case "pwd_changed":
+                guard let pwd = body["pwd"] as? String else { return nil }
+                self = .pwd(session: session, block: block, pwd)
+            case "program_status_changed":
+                guard let record = body["record"], JSONSerialization.isValidJSONObject(record),
+                      let data = try? JSONSerialization.data(withJSONObject: record),
+                      let record = try? JSONDecoder().decode(SSHTerminalPaneRecord.self, from: data) else { return nil }
+                self = .status(session: session, block: block, record)
+            case "program_status_removed":
+                guard let ids = body["ids"] as? [String] else { return nil }
+                self = .statusRemoved(session: session, block: block, ids: ids)
+            case "child_exited":
+                self = .childExited(session: session, block: block)
+            default:
+                return nil
+            }
+        default:
+            return nil
         }
-        let object = try decoder.container(keyedBy: NoKeys.self)
-        guard object.allKeys.isEmpty else {
-            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "expected a list"))
-        }
-        items = []
     }
 }
 
-enum RexRemoteError: Error, Equatable, LocalizedError {
+/// What the overview knows of Rex between two reads: the sessions, their
+/// views, and each terminal block's title, folder, and status. Pure state:
+/// the monitor feeds it the bootstrap, view and block replies, and events, and
+/// asks `needsWork` what is still to be read.
+struct RexMirror {
+    struct Block: Equatable {
+        let id: String
+        let label: String?
+        let isTerminal: Bool
+    }
+
+    struct Window: Equatable {
+        let id: String
+        let label: String?
+        let focusedBlockID: String?
+        let blocks: [Block]
+    }
+
+    /// The three block calls' answers for one terminal block, kept apart from
+    /// the view so a new view does not drop them.
+    struct Details: Equatable {
+        enum Field { case title, pwd, records }
+        var title: String?
+        var pwd: String?
+        var records: [SSHTerminalPaneRecord] = []
+        /// The three block calls have answered once, whatever they said.
+        var loaded = false
+        /// Fields an event set since the calls were sent; their answers are older.
+        var touched: Set<Field> = []
+    }
+
+    struct SessionState {
+        var label: String?
+        /// The newest view applied; nil until one has been.
+        var revision: Int?
+        var activeWindowID: String?
+        var windows: [Window] = []
+        var viewed = false
+        var details: [String: Details] = [:]
+        /// The highest revision a `session_view_changed` announced.
+        var wanted = -1
+        var needsView = true
+        /// A resync asked every terminal block to be read again.
+        var reloadDetails = false
+    }
+
+    private(set) var order: [String] = []
+    private(set) var sessions: [String: SessionState] = [:]
+
+    /// The bootstrap's session list. Views already read stay on screen, but
+    /// everything is read again: Rex has no event replay, and a restarted Rex
+    /// numbers its revisions from zero.
+    mutating func reset(listed: [(id: String, label: String?)]) {
+        var next: [String: SessionState] = [:]
+        for item in listed {
+            var session = sessions[item.id] ?? SessionState(label: item.label)
+            session.revision = nil
+            session.wanted = -1
+            session.needsView = true
+            session.reloadDetails = true
+            next[item.id] = session
+        }
+        order = listed.map(\.id)
+        sessions = next
+    }
+
+    mutating func apply(_ event: RexEvent) {
+        switch event {
+        case .sessionCreated(let id):
+            guard sessions[id] == nil else { return }
+            order.append(id)
+            sessions[id] = SessionState()
+        case .sessionDestroyed(let id):
+            remove(id)
+        case .viewChanged(let id, let revision):
+            if let wanted = sessions[id]?.wanted { sessions[id]?.wanted = max(wanted, revision) }
+        case .blockCreated(let id, _):
+            // The event does not say what the block is; the view does.
+            sessions[id]?.needsView = true
+        case .blockClosed(let id, let block):
+            guard var session = sessions[id] else { return }
+            session.details[block] = nil
+            session.windows = session.windows.map { window in
+                Window(id: window.id, label: window.label, focusedBlockID: window.focusedBlockID,
+                       blocks: window.blocks.filter { $0.id != block })
+            }
+            sessions[id] = session
+        case .title(let id, let block, let title):
+            update(id, block, .title) { $0.title = title }
+        case .pwd(let id, let block, let pwd):
+            update(id, block, .pwd) { $0.pwd = pwd }
+        case .status(let id, let block, let record):
+            update(id, block, .records) { details in
+                if let index = details.records.firstIndex(where: { $0.id == record.id }) {
+                    details.records[index] = record
+                } else {
+                    details.records.append(record)
+                }
+            }
+        case .statusRemoved(let id, let block, let ids):
+            update(id, block, .records) { $0.records.removeAll { ids.contains($0.id) } }
+        case .childExited(let id, let block):
+            // The program is gone; so is whatever it reported.
+            update(id, block, .records) { $0.records = [] }
+        }
+    }
+
+    private mutating func update(_ id: String, _ block: String, _ field: Details.Field, _ change: (inout Details) -> Void) {
+        guard sessions[id] != nil else { return }
+        var details = sessions[id]?.details[block] ?? Details()
+        change(&details)
+        details.touched.insert(field)
+        sessions[id]?.details[block] = details
+    }
+
+    mutating func remove(_ id: String) {
+        sessions[id] = nil
+        order.removeAll { $0 == id }
+    }
+
+    /// A view still to read: the first, one announced by an event, or one a
+    /// block's arrival asked for.
+    func needsView(_ id: String) -> Bool {
+        guard let session = sessions[id] else { return false }
+        return session.needsView || session.wanted > (session.revision ?? -1)
+    }
+
+    func needsWork(_ id: String) -> Bool {
+        needsView(id) || !blocksNeedingDetails(id).isEmpty
+    }
+
+    mutating func beginView(_ id: String) { sessions[id]?.needsView = false }
+
+    /// A view that could not be read; the next event or resync asks again.
+    mutating func retryView(_ id: String) { sessions[id]?.needsView = true }
+
+    /// Applies a view reply, unless a newer one already is: replies can
+    /// overtake each other, and a revision only goes up.
+    mutating func apply(view: RexView, to id: String) {
+        guard var session = sessions[id] else { return }
+        if let revision = view.revision, let applied = session.revision, revision < applied { return }
+        session.revision = view.revision ?? session.revision
+        session.label = view.label ?? session.label
+        session.activeWindowID = view.activeWindowID
+        session.windows = (view.windows ?? []).map { window in
+            Window(
+                id: window.windowID, label: window.label, focusedBlockID: window.focusedBlockID,
+                blocks: (window.layers ?? []).flatMap { $0.blocks ?? [] }.compactMap { block in
+                    block.blockID.map { Block(id: $0, label: block.label, isTerminal: block.creatorName == RexEvent.terminalCreator) }
+                }
+            )
+        }
+        let present = Set(session.windows.flatMap { $0.blocks.map(\.id) })
+        session.details = session.details.filter { present.contains($0.key) }
+        session.viewed = true
+        sessions[id] = session
+    }
+
+    /// Terminal blocks of the view whose three calls have not answered, or all
+    /// of them after a resync.
+    func blocksNeedingDetails(_ id: String) -> [String] {
+        guard let session = sessions[id], session.viewed else { return [] }
+        return session.windows.flatMap(\.blocks).filter { block in
+            block.isTerminal && (session.reloadDetails || session.details[block.id]?.loaded != true)
+        }.map(\.id)
+    }
+
+    /// The calls for these blocks are about to be sent: what an event sets
+    /// from here on is newer than their answers.
+    mutating func beginDetails(_ id: String, blocks: [String]) {
+        sessions[id]?.reloadDetails = false
+        for block in blocks { sessions[id]?.details[block, default: Details()].touched = [] }
+    }
+
+    mutating func apply(details reply: RexBlockDetails, block: String, in id: String) {
+        guard var details = sessions[id]?.details[block] else { return }
+        if !details.touched.contains(.title) { details.title = reply.title }
+        if !details.touched.contains(.pwd) { details.pwd = reply.pwd }
+        if !details.touched.contains(.records) { details.records = reply.records }
+        details.loaded = true
+        sessions[id]?.details[block] = details
+    }
+
+    func snapshot() -> RexSnapshot {
+        RexSnapshot(sessions: order.compactMap { id in
+            guard let session = sessions[id], session.viewed else { return nil }
+            return RexSnapshot.Session(
+                sessionID: id, label: session.label, activeWindowID: session.activeWindowID,
+                windows: session.windows.map { window in
+                    RexSnapshot.Window(
+                        windowID: window.id, label: window.label, focusedBlockID: window.focusedBlockID,
+                        panes: window.blocks.map { block in
+                            let details = session.details[block.id]
+                            return RexSnapshot.Pane(
+                                blockID: block.id, label: block.label, title: details?.title,
+                                pwd: details?.pwd, records: details?.records ?? []
+                            )
+                        }
+                    )
+                }
+            )
+        })
+    }
+}
+
+/// `session.view`'s answer, reduced to what the overview reads.
+struct RexView: Decodable, Sendable {
+    struct Block: Decodable, Sendable {
+        let blockID: String?
+        let label: String?
+        let creatorName: String?
+        enum CodingKeys: String, CodingKey { case blockID = "block_id", label, creatorName = "creator_name" }
+    }
+
+    struct Layer: Decodable, Sendable {
+        let blocks: [Block]?
+    }
+
+    struct Window: Decodable, Sendable {
+        let windowID: String
+        let label: String?
+        let focusedBlockID: String?
+        let layers: [Layer]?
+        enum CodingKeys: String, CodingKey {
+            case windowID = "window_id", label, focusedBlockID = "focused_block_id", layers
+        }
+    }
+
+    let revision: Int?
+    let label: String?
+    let activeWindowID: String?
+    let windows: [Window]?
+
+    enum CodingKeys: String, CodingKey {
+        case revision, label, activeWindowID = "active_window_id", windows
+    }
+}
+
+/// A terminal block's title, folder, and status records, as the three block
+/// calls answered; a call that failed leaves its field out.
+struct RexBlockDetails: Sendable {
+    var title: String?
+    var pwd: String?
+    var records: [SSHTerminalPaneRecord] = []
+}
+
+/// Where the SSH event loop leaves parsed events for the main actor: they pile
+/// up here and one wake-up drains them all, so a burst costs one hop, not one
+/// per event.
+private final class RexEventInbox: Sendable {
+    private struct State {
+        var events: [RexEvent] = []
+        var ended: (any Error)?
+    }
+
+    /// Signalled (coalesced) when events are waiting or the connection ended.
+    let wake: AsyncStream<Void>
+    private let continuation: AsyncStream<Void>.Continuation
+    private let state = Mutex(State())
+
+    init() {
+        (wake, continuation) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+    }
+
+    func push(_ event: RexEvent) {
+        state.withLock { $0.events.append(event) }
+        continuation.yield()
+    }
+
+    func end(_ error: any Error) {
+        state.withLock { if $0.ended == nil { $0.ended = error } }
+        continuation.yield()
+    }
+
+    func nudge() { continuation.yield() }
+
+    var ended: (any Error)? { state.withLock { $0.ended } }
+
+    func drain() -> [RexEvent] {
+        state.withLock { state in
+            defer { state.events = [] }
+            return state.events
+        }
+    }
+}
+
+/// A connection `RexMonitor` can follow Rex on: it opens the bridge to Rex's
+/// socket as a stream, and says whether it is still up. A terminal's channel
+/// and a Rex host's own sessions connection (`SSHConnection`) are both one.
+@MainActor
+protocol RexStreamHost {
+    var isConnected: Bool { get }
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream
+}
+
+extension SSHTerminalChannel: RexStreamHost {
+    var isConnected: Bool { connected }
+}
+
+extension SSHConnection: RexStreamHost {
+    var isConnected: Bool { channel.isActive }
+
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        try await openStream(command: command, inboundFlow: nil, sink: sink)
+    }
+}
+
+/// Why Rex cannot be read on a host, which a Rex host's sessions screen (it
+/// exists only to show Rex) answers with different advice. The bridge's own
+/// exit status says which (`RexBridge`), at no cost beyond the one exec.
+enum RexAbsence: Equatable, Sendable {
+    /// The host has no `nc` (exit 127).
+    case noNc
+    /// `rex` is not on the host (exit 5).
     case notInstalled
+    /// `rex` is installed and no Rex server is listening (exit 4).
     case notRunning
-    case rejected(String)
-    case unreadable
 
-    var errorDescription: String? {
+    /// Asking again cannot help until someone changes the host, so the monitor
+    /// stops until a pull to refresh. A Rex that is not running may be
+    /// started, so it is asked again with backoff.
+    var givesUp: Bool { self != .notRunning }
+
+    var advice: String {
         switch self {
-        case .notInstalled: "rex is not on this host."
-        case .notRunning: "Rex is not running on this host."
-        case .rejected(let message): message
-        case .unreadable: "Rex returned a response Oppi cannot read."
+        case .noNc:
+            "This host has no nc command, which Oppi uses to reach Rex. Install a netcat that supports Unix sockets (nc -U), then pull down to try again."
+        case .notInstalled:
+            "Rex is not installed on this host. Install it, then pull down to try again."
+        case .notRunning:
+            "Rex is not running on this host. Start it (rex server start) and this list fills in."
         }
     }
 }
 
-/// Builds and interprets Rex CLI calls. Each call is one side command on the
-/// terminal's SSH connection that pipes a Lua script into `rex do -`; the CLI
-/// talks to the user's Rex server through its local socket, so the phone needs
-/// no route to Rex itself.
-enum RexRemote {
-    /// macOS keeps the CLI inside the Rex app's server bundle, off the `PATH`
-    /// an SSH command sees; Linux and FreeBSD packages put `rex` on it. The
-    /// bundle comes first so another program named `rex` on the `PATH` is not
-    /// asked. `--autostart=false`: reading the list must never start a Rex
-    /// server on a host that is not running one. Exit 127 is the shell's
-    /// command-not-found status, as for a missing `herdr`.
-    static let command = SSHTerminalRemoteShell.word(
-        "r=\"$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex\"; "
-            + "[ -x \"$r\" ] || r=$(command -v rex) || exit 127; "
-            + "exec \"$r\" --autostart=false do -"
-    )
-
-    /// Rex's exit status for a server that is not running when autostart is off.
-    static let notRunningStatus = 4
-
-    /// The Lua script `command` reads on stdin for one snapshot. A session
-    /// destroyed between the list and its view is skipped, and a block method
-    /// that fails leaves its field out.
-    static let snapshotScript = """
-    assert(rex.call("session.attach_all", { event_scope = "session" }))
-    local sessions = {}
-    for _, s in ipairs(rex.call("session.list", {}).sessions or {}) do
-      local view = rex.call("session.view", { session_id = s.session_id })
-      if view then
-        local windows = {}
-        for _, w in ipairs(view.windows or {}) do
-          local blocks = {}
-          for _, layer in ipairs(w.layers or {}) do
-            for _, b in ipairs(layer.blocks or {}) do
-              local entry = { block_id = b.block_id, label = b.label }
-              if b.creator_name == "com.superlogical.terminal" then
-                local function call(name)
-                  return rex.call("com.superlogical.terminal." .. name, { session_id = s.session_id, block_id = b.block_id })
-                end
-                local title, pwd, status = call("title"), call("pwd"), call("program_status")
-                entry.title = title and title.title
-                entry.pwd = pwd and pwd.pwd
-                entry.program_status = status and status.records
-              end
-              table.insert(blocks, entry)
-            end
-          end
-          table.insert(windows, { window_id = w.window_id, label = w.label, focused_block_id = w.focused_block_id, blocks = blocks })
-        end
-        table.insert(sessions, { session_id = s.session_id, label = s.label, active_window_id = view.active_window_id, windows = windows })
-      end
-    end
-    return { sessions = sessions }
-    """
-
-    static func snapshot(from result: SSHExecResult) throws -> RexSnapshot {
-        try check(result)
-        guard let snapshot = try? JSONDecoder().decode(RexSnapshot.self, from: result.output) else {
-            throw RexRemoteError.unreadable
-        }
-        return snapshot
-    }
-
-    static func check(_ result: SSHExecResult) throws {
-        switch result.exitStatus {
-        case .some(0): return
-        case .some(127): throw RexRemoteError.notInstalled
-        case .some(notRunningStatus): throw RexRemoteError.notRunning
-        default: break
-        }
-        let text = String(decoding: result.errorOutput.isEmpty ? result.output : result.errorOutput, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let message = text.hasPrefix("Error: ") ? String(text.dropFirst("Error: ".count)) : text
-        throw RexRemoteError.rejected(message.isEmpty
-            ? "rex exited with status \(result.exitStatus.map(String.init) ?? "unknown")."
-            : String(message.prefix(300)))
-    }
-}
-
-/// Polls the host's Rex server while a terminal is connected, so the bar can
-/// offer the session list and a needs-you count, and a tapped pane opens on
-/// this device. A host without `rex` is detected once and not polled again for
-/// that connection; a Rex that is not running is asked again, since it may start.
+/// Follows a host's Rex server while a terminal is connected, or while a Rex
+/// host's sessions screen shows, so the bar can offer the session list and a
+/// needs-you count, and a tapped pane opens on this device.
+///
+/// It subscribes instead of polling: one `nc -U` stream (`RexBridge.command`)
+/// on the SSH connection speaks Rex's control protocol, reads the
+/// whole server once (`session.attach_all`, then `session.view` and the three
+/// block calls per terminal), and from then on patches that picture from Rex's
+/// events. `session.attach` is not used: the overview needs events and
+/// views, and attaching would put this client in every session's client list.
+///
+/// Rex replays no events, so whatever the stream missed is caught up by
+/// reading everything again: after a dropped stream, and when the sheet opens.
+/// Backgrounding needs nothing of its own: the connection closes (the terminal
+/// registry after its grace period, the sessions screen at once), the stream
+/// ends with it, and the screen restarts `run` when it is back.
+///
+/// A host without `nc` or without Rex is detected once and not asked again
+/// until a pull to refresh (`retry()`); a Rex that is not running, or a stream
+/// that drops, is retried with backoff, since Rex may start or the network
+/// return.
 @MainActor @Observable
 final class RexMonitor: SSHTerminalOverviewSource {
+    /// Why a subscription ended, for the delay before the next one.
+    enum Retry: Equatable {
+        /// Rex is not running (bridge exit 4); it may be started, so ask
+        /// again, but not as often as for a dropped stream.
+        case notRunning
+        case dropped
+
+        /// 15 s, doubling to 60 s, for a Rex that is not running; 1 s,
+        /// doubling to 30 s, otherwise. `failures` counts the consecutive
+        /// subscriptions that ended without reading Rex.
+        static func delay(_ retry: Retry, failures: Int) -> Duration {
+            let (first, cap) = retry == .notRunning ? (15, 60) : (1, 30)
+            return .seconds(min(cap, first << min(max(failures - 1, 0), 6)))
+        }
+    }
+
     let title = "Rex"
     let identifierPrefix = "sshTerminal.rex"
-    /// The last snapshot read. A failed read keeps it on screen, as what Rex
-    /// last reported, and reports `failure`.
+    /// The last snapshot read. A stream that fails keeps it on screen, as what
+    /// Rex last reported, and reports `failure`.
     private(set) var snapshot: RexSnapshot?
     private(set) var failure: String?
-    private(set) var unavailable = false
+    /// Why Rex could not be read, until it is read again.
+    private(set) var absence: RexAbsence?
     private(set) var focusFailure: String?
+    /// The sheet is open. Opening it reads Rex once more, as a safety net for
+    /// anything the stream missed; the stream itself stays as quick as it is.
     var watching = false {
-        didSet { if !watching { focusFailure = nil } }
+        didSet {
+            if !watching {
+                focusFailure = nil
+            } else if !oldValue {
+                requestResync()
+            }
+        }
     }
     /// Opens a tapped pane on this device: the terminal screen shows it in a
     /// terminal of its own (`SSHTerminalConnectSession.openRexPane`).
     @ObservationIgnored var openPane: ((RexPaneTarget) -> Void)?
-    /// The read in flight. A refresh while one runs waits for it instead of
-    /// racing a second answer.
-    private var reader: Task<Void, Never>?
+
+    /// How long a burst of changes waits before it reaches `snapshot`, so a
+    /// busy pane is one UI update, not one per event.
+    @ObservationIgnored private let publishDelay: Duration
+    @ObservationIgnored private let retryDelay: @MainActor (Retry, Int) -> Duration
+    @ObservationIgnored private var mirror = RexMirror()
+    /// One read in flight per session that needs one (`fetch`).
+    @ObservationIgnored private var fetchers: [String: Task<Void, Never>] = [:]
+    /// Which subscription the fetchers belong to: a cancelled one finishes
+    /// late and must not touch the next one's state.
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var inbox: RexEventInbox?
+    @ObservationIgnored private var publishTask: Task<Void, Never>?
+    /// False until the subscription's first full read: a half-read picture is
+    /// never published over the last complete one.
+    @ObservationIgnored private var publishing = false
+    @ObservationIgnored private var resyncRequested = false
+    @ObservationIgnored private var resyncWaiters: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored private var backoff: Task<Void, Never>?
 
     var available: Bool { snapshot != nil }
+    /// `run` has stopped for good (no `nc`, no Rex), until `retry()`.
+    var gaveUp: Bool { absence?.givesUp == true }
     /// Waiting panes that are still known to wait: a Rex that stopped answering
     /// does not keep the badge lit with its last report.
     var needsAttention: Int { failure == nil ? snapshot?.needsAttention ?? 0 : 0 }
 
+    init(
+        publishDelay: Duration = .milliseconds(150),
+        retryDelay: @escaping @MainActor (Retry, Int) -> Duration = { Retry.delay($0, failures: $1) }
+    ) {
+        self.publishDelay = publishDelay
+        self.retryDelay = retryDelay
+    }
+
+    /// The terminal's overview source: `run(over:)` on its channel.
     func run(on channel: SSHTerminalChannel) async {
-        while !Task.isCancelled, channel.connected {
-            await refresh(on: channel)
-            if unavailable { return }
-            try? await Task.sleep(for: watching ? .seconds(2) : .seconds(6))
-        }
+        await run(over: channel)
     }
 
-    func refresh(on channel: SSHTerminalChannel) async {
-        await refresh { try await channel.run($0, input: $1) }
-    }
-
-    /// One read through `run`, a side command on any connection to the host:
-    /// a terminal's, or the Rex sessions screen's own.
-    func refresh(using run: @escaping @MainActor (String, Data) async throws -> SSHExecResult) async {
-        if let reader { return await reader.value }
-        let reader = Task { [weak self] in
-            let result: Result<RexSnapshot, any Error>
+    /// Subscribes until the task is cancelled, the connection goes, or the
+    /// host turns out to have no `nc` or no Rex.
+    func run(over host: any RexStreamHost) async {
+        var failures = 0
+        while !Task.isCancelled, host.isConnected {
+            var synced = false
+            let retry: Retry
             do {
-                result = .success(try RexRemote.snapshot(
-                    from: try await run(RexRemote.command, Data(RexRemote.snapshotScript.utf8))
-                ))
+                try await subscribe(on: host, synced: &synced)
+                return
+            } catch is CancellationError {
+                return
             } catch {
-                result = .failure(error)
+                if Task.isCancelled { return }
+                switch error as? RexClientError {
+                case .bridgeMissing?: absence = .noNc
+                case .notInstalled?: absence = .notInstalled
+                case .notRunning?: absence = .notRunning
+                default: absence = nil
+                }
+                if let absence, absence.givesUp {
+                    snapshot = nil
+                    failure = nil
+                    return
+                }
+                retry = absence == .notRunning ? .notRunning : .dropped
+                failure = error.localizedDescription
             }
-            self?.reader = nil
-            self?.apply(result)
+            failures = synced ? 1 : failures + 1
+            await pause(retryDelay(retry, failures))
         }
-        self.reader = reader
-        await reader.value
     }
 
-    private func apply(_ result: Result<RexSnapshot, any Error>) {
-        switch result {
-        case .success(let snapshot):
-            self.snapshot = snapshot
-            failure = nil
-            // `rex` installed since a read found none.
-            unavailable = false
-        case .failure(is CancellationError):
-            break
-        case .failure(RexRemoteError.notInstalled):
-            unavailable = true
-            snapshot = nil
-            failure = nil
-        case .failure(let error):
-            failure = error.localizedDescription
+    /// Reads Rex once more; a pull-to-refresh waits for it. With no stream
+    /// open, it does not wait out the retry delay.
+    func refresh(on channel: SSHTerminalChannel) async {
+        await resync()
+    }
+
+    func resync() async {
+        guard inbox != nil else {
+            backoff?.cancel()
+            return
+        }
+        requestResync()
+        await withCheckedContinuation { resyncWaiters.append($0) }
+    }
+
+    /// Forgets that the host had no `nc` or no Rex, so `run` may be started
+    /// again (a pull to refresh, after the user fixed the host).
+    func retry() {
+        guard gaveUp else { return }
+        absence = nil
+    }
+
+    private func requestResync() {
+        guard let inbox else {
+            backoff?.cancel()
+            return
+        }
+        resyncRequested = true
+        inbox.nudge()
+    }
+
+    /// Sleeps out a retry delay; `refresh` and the sheet opening cut it short.
+    private func pause(_ delay: Duration) async {
+        let sleeper = Task<Void, Never> { _ = try? await Task.sleep(for: delay) }
+        backoff = sleeper
+        await withTaskCancellationHandler { await sleeper.value } onCancel: { sleeper.cancel() }
+        backoff = nil
+    }
+
+    /// One stream: open, read everything, then apply events until it ends.
+    /// Throws the reason it ended; returns only when the task is cancelled.
+    private func subscribe(on host: any RexStreamHost, synced: inout Bool) async throws {
+        let control = RexControl()
+        let inbox = RexEventInbox()
+        control.onEvent { frame in
+            if let event = RexEvent(frame: frame) { inbox.push(event) }
+        }
+        control.onEnd { inbox.end($0) }
+        let stream = try await host.openStream(command: RexBridge.command) { control.receive($0) }
+        control.attach { try await stream.send($0) }
+        generation += 1
+        let mine = generation
+        self.inbox = inbox
+        publishing = false
+        defer {
+            stream.close()
+            if generation == mine {
+                self.inbox = nil
+                publishing = false
+                publishTask?.cancel()
+                publishTask = nil
+                fetchers.values.forEach { $0.cancel() }
+                fetchers = [:]
+                finishResync()
+            }
+        }
+        try await withTaskCancellationHandler {
+            try await control.open()
+            try await bootstrap(control, inbox)
+            synced = true
+            for await _ in inbox.wake {
+                let events = inbox.drain()
+                for event in events { mirror.apply(event) }
+                startFetchers(control)
+                if !events.isEmpty { schedulePublish() }
+                if let ended = inbox.ended { throw ended }
+                if resyncRequested {
+                    try await bootstrap(control, inbox)
+                }
+            }
+        } onCancel: {
+            stream.close()
+        }
+    }
+
+    /// Reads the whole server: the session list (which also starts the events),
+    /// then every session's view and terminal blocks. Publishes the result at
+    /// once, since it is the first complete picture.
+    private func bootstrap(_ control: RexControl, _ inbox: RexEventInbox) async throws {
+        resyncRequested = false
+        // Only a refresh that asked before this read started is answered by it.
+        let serving = resyncWaiters
+        resyncWaiters = []
+        defer { for waiter in serving { waiter.resume() } }
+        let answer = try await control.call("session.attach_all", ["event_scope": "all"])
+        struct Listed: Decodable {
+            struct Item: Decodable {
+                let sessionID: String
+                let label: String?
+                enum CodingKeys: String, CodingKey { case sessionID = "session_id", label }
+            }
+            let sessions: [Item]?
+        }
+        guard let listed = try? JSONDecoder().decode(Listed.self, from: answer) else {
+            throw RexClientError.unreadable("the session list")
+        }
+        mirror.reset(listed: (listed.sessions ?? []).map { ($0.sessionID, $0.label) })
+        startFetchers(control)
+        while let fetcher = fetchers.values.first { await fetcher.value }
+        // A stream that ended while it was read leaves a picture with holes.
+        if let ended = inbox.ended { throw ended }
+        publishing = true
+        publish()
+    }
+
+    private func finishResync() {
+        let waiters = resyncWaiters
+        resyncWaiters = []
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func startFetchers(_ control: RexControl) {
+        let mine = generation
+        for id in mirror.order where fetchers[id] == nil && mirror.needsWork(id) {
+            fetchers[id] = Task { [weak self] in await self?.fetch(id, control, generation: mine) }
+        }
+    }
+
+    /// Reads one session until nothing is missing: at most one `session.view`
+    /// in flight, run again if an event announced a newer revision meanwhile,
+    /// and the three block calls for each terminal block the view shows that
+    /// has not been read.
+    private func fetch(_ id: String, _ control: RexControl, generation mine: Int) async {
+        defer {
+            if generation == mine {
+                fetchers[id] = nil
+                schedulePublish()
+            }
+        }
+        while generation == mine, !Task.isCancelled, mirror.needsWork(id) {
+            if mirror.needsView(id) {
+                mirror.beginView(id)
+                do {
+                    let answer = try await control.call("session.view", ["session_id": id])
+                    guard generation == mine else { return }
+                    guard let view = try? JSONDecoder().decode(RexView.self, from: answer) else {
+                        mirror.retryView(id)
+                        return
+                    }
+                    mirror.apply(view: view, to: id)
+                    schedulePublish()
+                } catch RexClientError.refused(let code, _) where code == "session_not_found" {
+                    guard generation == mine else { return }
+                    mirror.remove(id)
+                    return
+                } catch {
+                    guard generation == mine else { return }
+                    mirror.retryView(id)
+                    return
+                }
+            }
+            let blocks = mirror.blocksNeedingDetails(id)
+            guard !blocks.isEmpty else { continue }
+            mirror.beginDetails(id, blocks: blocks)
+            await withTaskGroup(of: (String, RexBlockDetails).self) { group in
+                for block in blocks {
+                    group.addTask { (block, await Self.details(of: block, in: id, control)) }
+                }
+                for await (block, details) in group where generation == mine {
+                    mirror.apply(details: details, block: block, in: id)
+                    schedulePublish()
+                }
+            }
+        }
+    }
+
+    /// A terminal block's title, folder, and status records. A call that
+    /// fails (the block closed, an older Rex) leaves its field out.
+    private nonisolated static func details(of block: String, in session: String, _ control: RexControl) async -> RexBlockDetails {
+        func call(_ method: String) async -> Data? {
+            try? await control.call("com.superlogical.terminal." + method, [
+                "session_id": session, "block_id": block, "args": [String: Any](),
+            ])
+        }
+        async let title = call("title"), pwd = call("pwd"), status = call("program_status")
+        struct Title: Decodable { let title: String? }
+        struct Pwd: Decodable { let pwd: String? }
+        struct Status: Decodable {
+            let records: [SSHTerminalPaneRecord]?
+        }
+        let decoder = JSONDecoder()
+        return RexBlockDetails(
+            title: await title.flatMap { try? decoder.decode(Title.self, from: $0).title },
+            pwd: await pwd.flatMap { try? decoder.decode(Pwd.self, from: $0).pwd },
+            records: await status.flatMap { try? decoder.decode(Status.self, from: $0).records } ?? []
+        )
+    }
+
+    private func publish() {
+        failure = nil
+        absence = nil
+        let next = mirror.snapshot()
+        if next != snapshot { snapshot = next }
+    }
+
+    /// Publishes after `publishDelay`, however many changes land meanwhile.
+    private func schedulePublish() {
+        guard publishing, publishTask == nil else { return }
+        publishTask = Task { [weak self, publishDelay] in
+            try? await Task.sleep(for: publishDelay)
+            guard !Task.isCancelled, let self else { return }
+            publishTask = nil
+            publish()
         }
     }
 
@@ -329,14 +848,11 @@ final class RexMonitor: SSHTerminalOverviewSource {
     /// session with several windows names each pane's window.
     var sections: [SSHTerminalOverviewSection] {
         var sections: [SSHTerminalOverviewSection] = []
-        // The terminal's bar never offers a host without `rex`; a Rex host's
-        // sessions screen says so.
-        if unavailable {
-            let reason = RexRemoteError.notInstalled.localizedDescription
-            return [.init(id: "failure", rows: [.init(id: "failure", title: reason, kind: .failure, focus: nil)])]
-        }
-        if let failure {
-            sections.append(.init(id: "failure", rows: [.init(id: "failure", title: failure, kind: .failure, focus: nil)]))
+        // Why Rex cannot be read, with what to do about it; any other failure
+        // shows as it came.
+        if let reason = absence?.advice ?? failure {
+            sections.append(.init(id: "failure", rows: [.init(id: "failure", title: reason, kind: .failure, focus: nil)]))
+            if gaveUp { return sections }
         }
         guard let snapshot else {
             if failure == nil {

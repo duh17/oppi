@@ -17,18 +17,25 @@ struct RexPaneTarget: Hashable, Sendable {
 /// sign-in or network access of its own (its Tailscale serving can stay off).
 enum RexBridge {
     /// Rex's socket: in the app's Application Support folder on macOS, in
-    /// `$XDG_RUNTIME_DIR/rex` or `~/.local/state/rex/run` elsewhere. Exit 4, as
-    /// the CLI does with autostart off, when no Rex server is listening; a host
-    /// without `nc` exits 127.
+    /// `$XDG_RUNTIME_DIR/rex` or `~/.local/state/rex/run` elsewhere.
+    ///
+    /// With no socket the command says why, in its exit status, from the same
+    /// one exec (nothing extra is asked while Rex runs): 5 when `rex` is not on
+    /// the host either (the CLI inside the macOS app bundle, else on the
+    /// `PATH`), 4 when it is installed but no Rex server is listening. A host without `nc` exits 127 when it gets as far
+    /// as running it.
     static let command = SSHTerminalRemoteShell.word(
         "for s in \"$HOME/Library/Application Support/rex/server.sock\" "
             + "\"${XDG_RUNTIME_DIR:-/nonexistent}/rex/server.sock\" \"$HOME/.local/state/rex/run/server.sock\"; do "
-            + "[ -S \"$s\" ] && exec nc -U \"$s\"; done; exit 4"
+            + "[ -S \"$s\" ] && exec nc -U \"$s\"; done; "
+            + "[ -x \"$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex\" ] "
+            + "|| command -v rex >/dev/null || exit 5; exit 4"
     )
 
     static func failure(exitStatus: Int?) -> RexClientError {
         switch exitStatus {
         case 4: .notRunning
+        case 5: .notInstalled
         case 127: .bridgeMissing
         default: .connectionClosed
         }
@@ -37,6 +44,7 @@ enum RexBridge {
 
 enum RexClientError: Error, Equatable, LocalizedError {
     case notRunning
+    case notInstalled
     case bridgeMissing
     case connectionClosed
     case timedOut
@@ -47,6 +55,7 @@ enum RexClientError: Error, Equatable, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notRunning: "Rex is not running on this host."
+        case .notInstalled: "Rex is not installed on this host."
         case .bridgeMissing: "The host has no nc command to reach Rex's socket."
         case .connectionClosed: "The connection to Rex closed."
         case .timedOut: "Rex did not answer in time."

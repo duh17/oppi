@@ -1,4 +1,5 @@
 #if DEBUG
+import Synchronization
 import SwiftUI
 import UIKit
 
@@ -160,7 +161,10 @@ private actor PreviewConnection: SSHTerminalConnection {
     nonisolated func close() {}
     func cancel() async {}
 
-    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream { throw SSHConnectionError.notConnected }
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
+        return RexFakeHost.preview().open(sink: sink)
+    }
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
         if command == "sh -s" { // a keybinding file read: none here, so defaults
             return SSHExecResult(output: Data(), errorOutput: Data("No such file".utf8), exitStatus: 1)
@@ -176,18 +180,258 @@ private actor PreviewConnection: SSHTerminalConnection {
         if command == HerdrRemote.snapshotCommand(machine: "bb22") {
             return SSHExecResult(output: Data(), errorOutput: Data("ssh: connect to host build port 22: Operation timed out".utf8), exitStatus: 255)
         }
-        if command == RexRemote.command {
-            // A focus answers `{}`; the snapshot script gets two sessions: a
-            // Claude waiting on a permission and a working pi in one, a shell
-            // that never reported in a second window.
-            guard String(decoding: input, as: UTF8.self) == RexRemote.snapshotScript else {
-                return SSHExecResult(output: Data("{}".utf8), errorOutput: Data(), exitStatus: 0)
-            }
-            let json = #"{"sessions":[{"session_id":"session:01a18a26-6620-76be-b529-4d9ad2b36c63","label":"oppi","active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","windows":[{"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","label":"agents","focused_block_id":"block:01a18a26-6620-78ba-80d4-4e8caa018b37","blocks":[{"block_id":"block:01a18a26-6620-78ba-80d4-4e8caa018b37","label":"shell","title":"Fixing the build","program_status":[{"effective_app":"claude","state":"working"},{"id":"bash","effective_app":"claude","state":"blocked","kind":"permission","msg":"Run rm -rf build?"}]},{"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62ca","label":"shell","title":"Adding skill frontmatter","program_status":[{"effective_app":"pi","state":"working"}]}]},{"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c830","label":"logs","focused_block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cb","blocks":[{"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cb","label":"shell","title":"tail -f server.log","program_status":{}}]}]},{"session_id":"session:01a18a26-6620-76be-b529-4d9ad2b36c64","label":"dotfiles","active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c831","windows":[{"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c831","label":"main","focused_block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cc","blocks":[{"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cc","label":"shell","title":"Ready","program_status":[{"effective_app":"codex","state":"idle"}]}]}]}]}"#
-            return SSHExecResult(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0)
-        }
         let json = #"{"result":{"snapshot":{"workspaces":[{"workspace_id":"w1","label":"dotfiles","focused":true},{"workspace_id":"w2","label":"oppi","focused":false}],"tabs":[{"tab_id":"w1:t1","workspace_id":"w1","label":"1"},{"tab_id":"w2:t1","workspace_id":"w2","label":"1"}],"agents":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"blocked","focused":true,"terminal_title_stripped":"Allow running rg?"},{"pane_id":"w2:p1","workspace_id":"w2","tab_id":"w2:t1","agent":"claude","agent_status":"working","focused":false,"terminal_title_stripped":"Fixing the build"},{"pane_id":"w2:p2","workspace_id":"w2","tab_id":"w2:t1","agent":"grok","agent_status":"done","focused":false,"terminal_title_stripped":"Summarized the diff"},{"pane_id":"w2:p3","workspace_id":"w2","tab_id":"w2:t1","agent":"codex","agent_status":"idle","focused":false,"terminal_title_stripped":"Ready"}]}}}"#
         return SSHExecResult(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0)
+    }
+}
+/// A stand-in for the host's Rex server, behind the byte pipe `RexBridge.command`
+/// opens: it upgrades the connection, welcomes the hello, answers each request
+/// from `responder`, and sends events the caller makes up (`emit…`), all as
+/// Rex frames them. Previews and the Rex overview's tests use it, so the
+/// client under test speaks the real wire protocol to something that only
+/// decides the answers.
+final class RexFakeHost: Sendable {
+    enum Answer: Sendable {
+        /// The result's JSON.
+        case result(String)
+        case refuse(code: String, message: String)
+        /// No answer until `respond` or `refuse` gives one.
+        case hold
+    }
+
+    struct Request: Sendable, Equatable {
+        let id: String
+        let method: String
+        /// The request's payload as JSON, keys sorted.
+        let payload: String
+
+        /// A string field of the payload, such as `block_id`.
+        func string(_ key: String) -> String? {
+            let object = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any]
+            return object?[key] as? String
+        }
+    }
+
+    private struct State {
+        var sink: SSHPTYByteSink?
+        var inbound = Data()
+        var upgraded = false
+        var requests: [Request] = []
+        var seq = 0
+        var closed = false
+    }
+
+    private let state = Mutex(State())
+    private let responder: @Sendable (Request) -> Answer
+
+    init(_ responder: @escaping @Sendable (Request) -> Answer) {
+        self.responder = responder
+    }
+
+    /// Every request received, in order.
+    var requests: [Request] { state.withLock { $0.requests } }
+    /// The client closed its end of the pipe.
+    var isClosed: Bool { state.withLock { $0.closed } }
+    /// A stream has been opened on this host.
+    var isOpen: Bool { state.withLock { $0.sink != nil } }
+
+    /// The client's end of the pipe. Its output reaches `sink`, as the SSH
+    /// channel's does; closing it reports `.closed` there.
+    func open(sink: @escaping SSHPTYByteSink) -> SSHExecStream {
+        state.withLock { $0.sink = sink }
+        return SSHExecStream(
+            send: { [self] in receive($0) },
+            close: { [self] in
+                let sink = state.withLock { state -> SSHPTYByteSink? in
+                    guard !state.closed else { return nil }
+                    state.closed = true
+                    return state.sink
+                }
+                sink?(.closed)
+            }
+        )
+    }
+
+    func respond(to request: Request, _ json: String) {
+        deliver([Self.text(#"{"type":"response","id":\#(Self.quoted(request.id)),"seq":0,"payload":\#(json)}"#)])
+    }
+
+    func refuse(_ request: Request, code: String, message: String) {
+        deliver([Self.text(Self.refusal(request.id, code, message))])
+    }
+
+    /// A server event: `type` with `payload` (JSON), framed with the next `seq`.
+    func emit(_ type: String, _ payload: String) {
+        let seq = state.withLock { state -> Int in
+            state.seq += 1
+            return state.seq
+        }
+        deliver([Self.text(#"{"type":"event","seq":\#(seq),"payload":{"type":\#(Self.quoted(type)),"payload":\#(payload)}}"#)])
+    }
+
+    func sessionEvent(_ session: String, _ type: String, _ payload: String) {
+        emit("session_event", #"{"session_id":\#(Self.quoted(session)),"event":{"type":\#(Self.quoted(type)),"payload":\#(payload)}}"#)
+    }
+
+    func blockEvent(_ session: String, _ block: String, _ name: String, _ payload: String) {
+        sessionEvent(session, "block_event", #"{"block_id":\#(Self.quoted(block)),"creator_name":"com.superlogical.terminal","name":\#(Self.quoted(name)),"payload":\#(payload)}"#)
+    }
+
+    func viewChanged(_ session: String, revision: Int) {
+        sessionEvent(session, "session_view_changed", #"{"revision":\#(revision)}"#)
+    }
+
+    /// The bridge command ended: its exit status, then the channel closing.
+    func end(status: Int) {
+        let sink = state.withLock { state -> SSHPTYByteSink? in
+            state.closed = true
+            return state.sink
+        }
+        sink?(.exitStatus(status))
+        sink?(.closed)
+    }
+
+    /// Bytes from the client: the upgrade request, then masked frames.
+    private func receive(_ bytes: Data) {
+        var answers: [Data] = []
+        var held: [Request] = []
+        state.withLock { state in
+            guard !state.closed else { return }
+            state.inbound.append(bytes)
+            while true {
+                if !state.upgraded {
+                    guard let end = state.inbound.range(of: Data("\r\n\r\n".utf8)) else { return }
+                    let head = String(decoding: state.inbound[..<end.lowerBound], as: UTF8.self)
+                    state.inbound.removeSubrange(..<end.upperBound)
+                    let key = head.split(separator: "\r\n")
+                        .first { $0.lowercased().hasPrefix("sec-websocket-key:") }
+                        .map { $0.dropFirst("sec-websocket-key:".count).trimmingCharacters(in: .whitespaces) } ?? ""
+                    answers.append(Data("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nSec-Websocket-Accept: \(RexWebSocketCodec.accept(for: key))\r\nSec-Websocket-Protocol: rex.control.v1\r\nUpgrade: websocket\r\n\r\n".utf8))
+                    state.upgraded = true
+                    continue
+                }
+                let bytes = [UInt8](state.inbound)
+                guard bytes.count >= 2 else { return }
+                var length = Int(bytes[1] & 0x7F)
+                var offset = 2
+                if length == 126 {
+                    guard bytes.count >= 4 else { return }
+                    length = Int(bytes[2]) << 8 | Int(bytes[3])
+                    offset = 4
+                } else if length == 127 {
+                    guard bytes.count >= 10 else { return }
+                    length = (2..<10).reduce(0) { $0 << 8 | Int(bytes[$1]) }
+                    offset = 10
+                }
+                guard bytes.count >= offset + 4 + length else { return }
+                let mask = bytes[offset..<(offset + 4)].map { $0 }
+                let payload = bytes[(offset + 4)..<(offset + 4 + length)].enumerated().map { $0.element ^ mask[$0.offset % 4] }
+                state.inbound.removeSubrange(..<(offset + 4 + length))
+                guard bytes[0] & 0x0F == RexWebSocketCodec.Opcode.text.rawValue,
+                      let object = try? JSONSerialization.jsonObject(with: Data(payload)) as? [String: Any] else { continue }
+                switch object["type"] as? String {
+                case "hello":
+                    answers.append(Self.text(#"{"type":"welcome","protocol":"rex.control.v1","limits":{"max_message_bytes":1048576},"api_revision":7,"api_server_revision":7}"#))
+                case "request":
+                    guard let id = object["id"] as? String, let method = object["method"] as? String else { continue }
+                    let body = (object["payload"] as? [String: Any]).flatMap {
+                        try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys])
+                    }
+                    let request = Request(id: id, method: method, payload: body.map { String(decoding: $0, as: UTF8.self) } ?? "{}")
+                    state.requests.append(request)
+                    held.append(request)
+                default:
+                    break
+                }
+            }
+        }
+        // The responder runs outside the lock, and in order.
+        for request in held {
+            switch responder(request) {
+            case .result(let json):
+                answers.append(Self.text(#"{"type":"response","id":\#(Self.quoted(request.id)),"seq":0,"payload":\#(json)}"#))
+            case .refuse(let code, let message):
+                answers.append(Self.text(Self.refusal(request.id, code, message)))
+            case .hold:
+                break
+            }
+        }
+        deliver(answers)
+    }
+
+    private func deliver(_ frames: [Data]) {
+        let sink = state.withLock { $0.closed ? nil : $0.sink }
+        for frame in frames { sink?(.data(frame)) }
+    }
+
+    private static func refusal(_ id: String, _ code: String, _ message: String) -> String {
+        #"{"type":"response","id":\#(quoted(id)),"seq":0,"error":{"code":\#(quoted(code)),"message":\#(quoted(message))}}"#
+    }
+
+    private static func quoted(_ text: String) -> String {
+        guard let data = try? JSONEncoder().encode(text) else { return "\"\"" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// An unmasked server text frame.
+    private static func text(_ json: String) -> Data {
+        let payload = Data(json.utf8)
+        var frame = Data([0x80 | RexWebSocketCodec.Opcode.text.rawValue])
+        if payload.count < 126 {
+            frame.append(UInt8(payload.count))
+        } else if payload.count <= 0xFFFF {
+            frame.append(126)
+            frame.append(contentsOf: [UInt8(payload.count >> 8), UInt8(payload.count & 0xFF)])
+        } else {
+            frame.append(127)
+            frame.append(contentsOf: (0..<8).reversed().map { UInt8((UInt64(payload.count) >> ($0 * 8)) & 0xFF) })
+        }
+        return frame + payload
+    }
+
+    /// Two sessions: Claude waiting on a permission and a working pi in one,
+    /// beside a shell in a second window that never reported; a codex pane
+    /// at idle in the other.
+    static func preview() -> RexFakeHost {
+        let oppi = "session:01a18a26-6620-76be-b529-4d9ad2b36c63"
+        let dotfiles = "session:01a18a26-6620-76be-b529-4d9ad2b36c64"
+        func block(_ id: String) -> String {
+            #"{"block_id":"\#(id)","label":"shell","creator_name":"com.superlogical.terminal"}"#
+        }
+        func window(_ id: String, _ label: String, focused: String, _ blocks: [String]) -> String {
+            #"{"window_id":"\#(id)","label":"\#(label)","focused_block_id":"\#(focused)","layers":[{"blocks":[\#(blocks.map(block).joined(separator: ","))]}]}"#
+        }
+        let claude = "block:01a18a26-6620-78ba-80d4-4e8caa018b37"
+        let pi = "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"
+        let logs = "block:01a18a7e-911a-721b-a50b-14dfc0cc62cb"
+        let codex = "block:01a18a7e-911a-721b-a50b-14dfc0cc62cc"
+        let views: [String: String] = [
+            oppi: #"{"revision":4,"session_id":"\#(oppi)","label":"oppi","active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","windows":[\#(window("window:01a18a26-6645-713c-97f1-2f1058c8c82f", "agents", focused: claude, [claude, pi])),\#(window("window:01a18a26-6645-713c-97f1-2f1058c8c830", "logs", focused: logs, [logs]))]}"#,
+            dotfiles: #"{"revision":2,"session_id":"\#(dotfiles)","label":"dotfiles","active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c831","windows":[\#(window("window:01a18a26-6645-713c-97f1-2f1058c8c831", "main", focused: codex, [codex]))]}"#,
+        ]
+        let titles = [claude: "Fixing the build", pi: "Adding skill frontmatter", logs: "tail -f server.log", codex: "Ready"]
+        let records = [
+            claude: #"[{"effective_app":"claude","state":"working"},{"id":"bash","effective_app":"claude","state":"blocked","kind":"permission","msg":"Run rm -rf build?"}]"#,
+            pi: #"[{"effective_app":"pi","state":"working"}]"#,
+            codex: #"[{"effective_app":"codex","state":"idle"}]"#,
+        ]
+        return RexFakeHost { request in
+            switch request.method {
+            case "session.attach_all":
+                return .result(#"{"sessions":[{"session_id":"\#(oppi)","label":"oppi"},{"session_id":"\#(dotfiles)","label":"dotfiles"}]}"#)
+            case "session.view":
+                guard let view = request.string("session_id").flatMap({ views[$0] }) else {
+                    return .refuse(code: "session_not_found", message: "no such session")
+                }
+                return .result(view)
+            case "com.superlogical.terminal.title":
+                return .result(#"{"title":"\#(request.string("block_id").flatMap { titles[$0] } ?? "")"}"#)
+            case "com.superlogical.terminal.program_status":
+                return .result(#"{"records":\#(request.string("block_id").flatMap { records[$0] } ?? "[]")}"#)
+            default:
+                return .result("{}")
+            }
+        }
     }
 }
 #endif
