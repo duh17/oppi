@@ -102,35 +102,28 @@ enum AgentManagementPresentation {
         case write([String]?)
     }
 
-    /// PUT body for Pi Tools. Back (isPresented true→false) and post-load
-    /// checkbox/mode changes both save the captured selection, not later view state.
+    /// PUT body for Pi Tools: the selection as it stands when a save is requested.
+    /// `PiToolsEditor` requests a save only for a user selection change or when
+    /// the Tools page closes, so no picker state is read here.
     static func piToolsSavePayload(
-        leaveHasLoadedTools: Bool,
-        leaveMode: AgentToolSelectionMode,
-        leaveSelectedNames: Set<String>,
-        leaveOptionalNames: Set<String>,
-        laterHasLoadedTools _: Bool,
-        laterMode _: AgentToolSelectionMode,
-        laterSelectedNames _: Set<String>,
+        hasLoadedTools: Bool,
+        mode: AgentToolSelectionMode,
+        selectedNames: Set<String>,
+        optionalNames: Set<String>,
         builtInTools: [ServerToolSummary],
         optionalTools: [ServerToolSummary],
-        pickerWasPresented: Bool,
-        pickerIsPresented: Bool,
-        selectionChangedAfterLoad: Bool,
         isApplyingLoadedTools: Bool = false,
         namesChanged: Bool = false
     ) -> PiToolsSavePayload {
-        guard leaveHasLoadedTools else { return .skip }
+        guard hasLoadedTools else { return .skip }
         // GET/revert binding writes are not a user selection change.
         guard !isApplyingLoadedTools else { return .skip }
         // inherit→exact sets names then mode; names onChange must not PUT null.
-        if namesChanged && leaveMode == .inherit { return .skip }
-        let dismissedPicker = pickerWasPresented && !pickerIsPresented
-        guard dismissedPicker || selectionChangedAfterLoad else { return .skip }
+        if namesChanged && mode == .inherit { return .skip }
         return .write(piDefaultTools(
-            mode: leaveMode,
-            selectedNames: leaveSelectedNames,
-            optionalNames: leaveOptionalNames,
+            mode: mode,
+            selectedNames: selectedNames,
+            optionalNames: optionalNames,
             builtInTools: builtInTools,
             optionalTools: optionalTools
         ))

@@ -41,7 +41,7 @@ final class PiToolsEditor {
     func pickerDidClose() {
         guard isPickerShown else { return }
         isPickerShown = false
-        save(pickerWasPresented: true, pickerIsPresented: false, selectionChangedAfterLoad: false)
+        save()
     }
 
     func applyLoaded(
@@ -90,33 +90,17 @@ final class PiToolsEditor {
                 optionalTools: optionalTools
             )
         }
-        save(
-            pickerWasPresented: isPickerShown,
-            pickerIsPresented: isPickerShown,
-            selectionChangedAfterLoad: true,
-            namesChanged: namesChanged
-        )
+        save(namesChanged: namesChanged)
     }
 
-    private func save(
-        pickerWasPresented: Bool,
-        pickerIsPresented: Bool,
-        selectionChangedAfterLoad: Bool,
-        namesChanged: Bool = false
-    ) {
+    private func save(namesChanged: Bool = false) {
         let action = AgentManagementPresentation.piToolsSavePayload(
-            leaveHasLoadedTools: hasLoadedTools,
-            leaveMode: mode,
-            leaveSelectedNames: selectedNames,
-            leaveOptionalNames: selectedOptionalNames,
-            laterHasLoadedTools: hasLoadedTools,
-            laterMode: mode,
-            laterSelectedNames: selectedNames,
+            hasLoadedTools: hasLoadedTools,
+            mode: mode,
+            selectedNames: selectedNames,
+            optionalNames: selectedOptionalNames,
             builtInTools: builtInTools,
             optionalTools: optionalTools,
-            pickerWasPresented: pickerWasPresented,
-            pickerIsPresented: pickerIsPresented,
-            selectionChangedAfterLoad: selectionChangedAfterLoad,
             isApplyingLoadedTools: isApplyingLoadedTools,
             namesChanged: namesChanged
         )

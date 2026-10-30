@@ -168,89 +168,36 @@ struct AgentManagementPresentationTests {
     @Test func piOptionalToolToggleOnPiDefaultsWritesAModifier() {
         #expect(
             AgentManagementPresentation.piToolsSavePayload(
-                leaveHasLoadedTools: true,
-                leaveMode: .inherit,
-                leaveSelectedNames: ["read", "bash", "edit", "write"],
-                leaveOptionalNames: ["codemode"],
-                laterHasLoadedTools: true,
-                laterMode: .inherit,
-                laterSelectedNames: ["read", "bash", "edit", "write"],
+                hasLoadedTools: true,
+                mode: .inherit,
+                selectedNames: ["read", "bash", "edit", "write"],
+                optionalNames: ["codemode"],
                 builtInTools: Self.standardBuiltIns,
-                optionalTools: Self.optionalTools,
-                pickerWasPresented: true,
-                pickerIsPresented: true,
-                selectionChangedAfterLoad: true
+                optionalTools: Self.optionalTools
             ) == .write(["+codemode"])
         )
     }
 
-    @Test func piToolsDismissProducesWriteEvenIfLaterStateResetsToInherit() {
+    @Test func piToolsExactSelectionWritesTheSelectedNames() {
         let builtIn = [
             ServerToolSummary(name: "read", defaultEnabled: true),
             ServerToolSummary(name: "bash", defaultEnabled: true),
             ServerToolSummary(name: "grep", defaultEnabled: false),
         ]
 
-        let payload = AgentManagementPresentation.piToolsSavePayload(
-            leaveHasLoadedTools: true,
-            leaveMode: .exact,
-            leaveSelectedNames: ["grep"],
-            leaveOptionalNames: [],
-            laterHasLoadedTools: false,
-            laterMode: .inherit,
-            laterSelectedNames: [],
-            builtInTools: builtIn,
-            optionalTools: [],
-            pickerWasPresented: true,
-            pickerIsPresented: false,
-            selectionChangedAfterLoad: false
-        )
-
-        #expect(payload == .write(["grep"]))
         #expect(
             AgentManagementPresentation.piToolsSavePayload(
-                leaveHasLoadedTools: true,
-                leaveMode: .inherit,
-                leaveSelectedNames: ["read", "bash"],
-                leaveOptionalNames: [],
-                laterHasLoadedTools: true,
-                laterMode: .exact,
-                laterSelectedNames: ["grep"],
+                hasLoadedTools: true,
+                mode: .exact,
+                selectedNames: ["grep"],
+                optionalNames: [],
                 builtInTools: builtIn,
-                optionalTools: [],
-                pickerWasPresented: true,
-                pickerIsPresented: false,
-                selectionChangedAfterLoad: false
-            ) == .write(nil)
+                optionalTools: []
+            ) == .write(["grep"])
         )
     }
 
-    @Test func piToolsSelectionChangeAfterLoadProducesWriteEvenIfLaterStateResetsToInherit() {
-        let builtIn = [
-            ServerToolSummary(name: "read", defaultEnabled: true),
-            ServerToolSummary(name: "bash", defaultEnabled: true),
-            ServerToolSummary(name: "grep", defaultEnabled: false),
-        ]
-
-        let payload = AgentManagementPresentation.piToolsSavePayload(
-            leaveHasLoadedTools: true,
-            leaveMode: .exact,
-            leaveSelectedNames: ["grep"],
-            leaveOptionalNames: [],
-            laterHasLoadedTools: true,
-            laterMode: .inherit,
-            laterSelectedNames: [],
-            builtInTools: builtIn,
-            optionalTools: [],
-            pickerWasPresented: true,
-            pickerIsPresented: true,
-            selectionChangedAfterLoad: true
-        )
-
-        #expect(payload == .write(["grep"]))
-    }
-
-    @Test func piToolsDoesNotWriteWithoutDismissOrSelectionChange() {
+    @Test func piToolsDoesNotWriteBeforeToolsLoad() {
         let builtIn = [
             ServerToolSummary(name: "read", defaultEnabled: true),
             ServerToolSummary(name: "grep", defaultEnabled: false),
@@ -258,18 +205,12 @@ struct AgentManagementPresentationTests {
 
         #expect(
             AgentManagementPresentation.piToolsSavePayload(
-                leaveHasLoadedTools: true,
-                leaveMode: .exact,
-                leaveSelectedNames: ["grep"],
-                leaveOptionalNames: [],
-                laterHasLoadedTools: true,
-                laterMode: .exact,
-                laterSelectedNames: ["grep"],
+                hasLoadedTools: false,
+                mode: .exact,
+                selectedNames: ["grep"],
+                optionalNames: [],
                 builtInTools: builtIn,
-                optionalTools: [],
-                pickerWasPresented: false,
-                pickerIsPresented: false,
-                selectionChangedAfterLoad: false
+                optionalTools: []
             ) == .skip
         )
     }
@@ -282,18 +223,12 @@ struct AgentManagementPresentationTests {
 
         #expect(
             AgentManagementPresentation.piToolsSavePayload(
-                leaveHasLoadedTools: true,
-                leaveMode: .exact,
-                leaveSelectedNames: ["read"],
-                leaveOptionalNames: [],
-                laterHasLoadedTools: true,
-                laterMode: .exact,
-                laterSelectedNames: ["read"],
+                hasLoadedTools: true,
+                mode: .exact,
+                selectedNames: ["read"],
+                optionalNames: [],
                 builtInTools: builtIn,
                 optionalTools: [],
-                pickerWasPresented: false,
-                pickerIsPresented: false,
-                selectionChangedAfterLoad: true,
                 isApplyingLoadedTools: true
             ) == .skip
         )
@@ -307,18 +242,12 @@ struct AgentManagementPresentationTests {
 
         #expect(
             AgentManagementPresentation.piToolsSavePayload(
-                leaveHasLoadedTools: true,
-                leaveMode: .inherit,
-                leaveSelectedNames: ["read", "bash"],
-                leaveOptionalNames: [],
-                laterHasLoadedTools: true,
-                laterMode: .inherit,
-                laterSelectedNames: ["read"],
+                hasLoadedTools: true,
+                mode: .inherit,
+                selectedNames: ["read", "bash"],
+                optionalNames: [],
                 builtInTools: builtIn,
                 optionalTools: [],
-                pickerWasPresented: true,
-                pickerIsPresented: true,
-                selectionChangedAfterLoad: true,
                 namesChanged: true
             ) == .skip
         )
@@ -332,18 +261,12 @@ struct AgentManagementPresentationTests {
 
         #expect(
             AgentManagementPresentation.piToolsSavePayload(
-                leaveHasLoadedTools: true,
-                leaveMode: .inherit,
-                leaveSelectedNames: ["read", "bash"],
-                leaveOptionalNames: [],
-                laterHasLoadedTools: true,
-                laterMode: .inherit,
-                laterSelectedNames: ["read", "bash"],
+                hasLoadedTools: true,
+                mode: .inherit,
+                selectedNames: ["read", "bash"],
+                optionalNames: [],
                 builtInTools: builtIn,
-                optionalTools: [],
-                pickerWasPresented: true,
-                pickerIsPresented: true,
-                selectionChangedAfterLoad: true
+                optionalTools: []
             ) == .write(nil)
         )
     }
