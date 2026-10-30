@@ -779,15 +779,20 @@ struct AppOpenerTests {
         #expect(!connection.externalSessionOpenClaimBlocks("other"))
     }
 
-    /// An open a newer one replaced asks nobody: the route's own gate covers the moved session.
-    @Test func aSupersededLoadedOpenDoesNotPromptForALockTheRefreshDiscovered() async throws {
+    /// An open a newer one replaced asks nobody (the route's own gate covers the moved session), but
+    /// its refresh still lands: the store must hold the session's new workspace for that gate, and for
+    /// Back to the chat later. A real request is cancelled with its task, so the stub fails when it is.
+    @Test func aSupersededLoadedOpenStillLandsItsRefreshButNeverPrompts() async throws {
         let harness = OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.cancelled])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
         harness.addSession("other", workspaceId: "w1", to: "server-a")
         let connection = harness.connection("server-a")
         var release: CheckedContinuation<Void, Never>?
         connection._getSessionRecordForTesting = { id in
-            if id == "child" { await withCheckedContinuation { release = $0 } }
+            if id == "child" {
+                await withCheckedContinuation { release = $0 }
+                try Task.checkCancellation()
+            }
             return makeTestSession(id: id, workspaceId: id == "child" ? "w2" : "w1", status: .busy)
         }
         harness.lockWorkspace("w2", on: "server-a")
@@ -802,7 +807,7 @@ struct AppOpenerTests {
         for _ in 0..<500 where connection.sessionStore.session(id: "child")?.workspaceId != "w2" { await Task.yield() }
         for _ in 0..<50 { await Task.yield() }
 
-        #expect(connection.sessionStore.session(id: "child")?.workspaceId == "w2")
+        #expect(connection.sessionStore.session(id: "child")?.workspaceId == "w2", "The refresh lands in the store")
         #expect(harness.authenticator.prompts == 0, "A replaced open must not prompt")
         #expect(harness.stackSessionIds == ["child", "other"], "The newer open's screen is untouched")
     }

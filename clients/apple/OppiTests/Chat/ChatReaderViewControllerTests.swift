@@ -173,6 +173,34 @@ struct ChatReaderViewControllerTests {
         #expect(host.navigation.isNavigationBarHidden)
     }
 
+    /// A reader stays on the stack under later screens. The origin it was stamped with names the workspace
+    /// its chat had when it opened; Back must follow the session's workspace in the store now.
+    @Test("a reader is covered when its origin chat's session has moved into a locked workspace")
+    func readerFollowsTheOriginSessionsLiveWorkspace() async throws {
+        let serverId = "sha256:reader-moved-\(UUID().uuidString)"
+        let locks = ScopedLockService.shared
+        let previousLookup = locks.sessionLookup
+        var live = makeTestSession(id: "child", workspaceId: "w1", status: .stopped)
+        locks.sessionLookup = { _, _ in live }
+        let origin = locks.sessionTarget(serverId: serverId, sessionId: "child", workspaceId: "w1")
+        let host = push(documentPayload(lockOrigin: origin))
+        defer {
+            host.close()
+            locks.sessionLookup = previousLookup
+            locks.forgetServer(serverId)
+        }
+        #expect(host.reader.page != nil)
+
+        live = makeTestSession(id: "child", workspaceId: "w2", status: .stopped)
+        locks.lock(.workspace(serverId: serverId, workspaceId: "w2"))
+        let covered = await waitForMainActorCondition(timeout: .seconds(3)) {
+            host.navigation.view.layoutIfNeeded()
+            return host.reader.page == nil
+                && host.reader.children.contains { $0 is ScopedLockCoverViewController }
+        }
+        #expect(covered, "the reader kept showing the content of a session that moved into a locked workspace")
+    }
+
     @Test("a reader with no origin is covered with Close while any lock exists")
     func readerWithoutOriginIsCoveredWithClose() async throws {
         let serverId = "sha256:reader-unknown-\(UUID().uuidString)"

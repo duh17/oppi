@@ -96,7 +96,10 @@ final class ChatReaderViewController: UIViewController {
         let payload = payloadHolder.resolve(from: store, target: target)
         let next: Shown
         if let payload {
-            if let origin = payload.lockOrigin {
+            if let captured = payload.lockOrigin {
+                // The origin chat's workspace is read live: its session can move
+                // into a locked workspace while this reader is under another screen.
+                let origin = locks.current(captured)
                 next = locks.isLocked(origin) ? .lockCover(origin) : .page
             } else {
                 next = locks.mayLockUnknownScope ? .closeCover : .page

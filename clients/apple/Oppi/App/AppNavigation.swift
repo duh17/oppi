@@ -1246,50 +1246,71 @@ final class AppNavigation {
 
     /// Takes the session's routes off the compact stack or the split detail,
     /// for a session whose lock was refused after its route was pushed, so Back
-    /// never reaches its chat. Every other screen stays where it is, except
-    /// that the split detail column clears when the session is its root: the
-    /// screens pushed over a root go with it. Returns true when the session was
-    /// the visible destination.
+    /// never reaches its chat. A session's route goes together with the screens
+    /// pushed from that chat (a reader, whose lock origin was fixed when it
+    /// opened), up to the next session route: another session's chat is not
+    /// under this lock, so it and what is over it stay. The split detail column
+    /// clears when the session is its root: the screens pushed over a root go
+    /// with it. Returns true when the removed screens reached the top, so the
+    /// person was still in this session's screens.
     @discardableResult
     func removeSessionRoute(serverId: String, sessionId: String) -> Bool {
         func matches(_ target: WorkspaceSessionNavTarget) -> Bool {
             target.serverId == serverId && target.sessionId == sessionId
         }
-        var wasVisible = false
         switch workspaceNavigationPresentation {
         case .stack:
-            if case .session(let top)? = workspaceStackRouteElements.last { wasVisible = matches(top) }
-            let remaining = workspaceStackRouteElements.filter {
-                if case .session(let target) = $0 { return !matches(target) }
-                return true
-            }
-            if remaining.count != workspaceStackRouteElements.count {
+            let cut = Self.removingSessionBlocks(
+                from: workspaceStackRouteElements,
+                startsRemoving: false,
+                session: { if case .session(let target) = $0 { return target } else { return nil } },
+                matches: matches
+            )
+            if cut.remaining.count != workspaceStackRouteElements.count {
                 mediaOverlayYieldsToUserNavigation()
-                workspaceStackRouteElements = remaining
+                workspaceStackRouteElements = cut.remaining
             }
+            return cut.reachedTop
         case .split:
-            switch splitDetailPathElements.last {
-            case .session(let top)?: wasVisible = matches(top)
-            case nil:
-                if case .session(let root)? = splitDetailTarget { wasVisible = matches(root) }
-            default: break
-            }
-            let remaining = splitDetailPathElements.filter {
-                if case .session(let target) = $0 { return !matches(target) }
-                return true
-            }
-            if remaining.count != splitDetailPathElements.count {
-                mediaOverlayYieldsToUserNavigation()
-                splitDetailPathElements = remaining
-            }
-            if case .session(let root)? = splitDetailTarget, matches(root) {
+            var rootMatches = false
+            if case .session(let root)? = splitDetailTarget { rootMatches = matches(root) }
+            let cut = Self.removingSessionBlocks(
+                from: splitDetailPathElements,
+                startsRemoving: rootMatches,
+                session: { if case .session(let target) = $0 { return target } else { return nil } },
+                matches: matches
+            )
+            if rootMatches {
                 mediaOverlayYieldsToUserNavigation()
                 splitDetailTarget = nil
                 splitDetailPathElements = []
                 splitColumnVisibility = .all
+            } else if cut.remaining.count != splitDetailPathElements.count {
+                mediaOverlayYieldsToUserNavigation()
+                splitDetailPathElements = cut.remaining
             }
+            return cut.reachedTop
         }
-        return wasVisible
+    }
+
+    /// Drops each matching session element and every element after it up to
+    /// the next session element. `reachedTop` is true when the last dropped
+    /// block extends to the end, so nothing of another session is above it.
+    /// `startsRemoving` treats the screens before the first session element as
+    /// part of a removed block (a split detail whose root is the session).
+    private static func removingSessionBlocks<Element>(
+        from elements: [Element],
+        startsRemoving: Bool,
+        session: (Element) -> WorkspaceSessionNavTarget?,
+        matches: (WorkspaceSessionNavTarget) -> Bool
+    ) -> (remaining: [Element], reachedTop: Bool) {
+        var removing = startsRemoving
+        var remaining: [Element] = []
+        for element in elements {
+            if let target = session(element) { removing = matches(target) }
+            if !removing { remaining.append(element) }
+        }
+        return (remaining, removing)
     }
 
     /// The user popped the split detail column back to `depth` pushed screens.

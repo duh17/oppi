@@ -278,8 +278,12 @@ final class AppOpener {
     @ObservationIgnored var generation: UInt64 = 0
     @ObservationIgnored var currentTask: Task<Void, Never>?
     /// What a loaded session or thread open still does after its route is up
-    /// (record refresh, lock re-check, dialogs). A newer open cancels it, and
-    /// it asks and loads nothing once superseded.
+    /// (record refresh, lock re-check, dialogs). A newer open lets it run on:
+    /// the refresh must land in the store, because the route's gate and a later
+    /// Back read the session's workspace from there. Once superseded it asks
+    /// nobody, loads nothing, and leaves navigation alone, except that a
+    /// refused lock it already asked still takes its session off the stack.
+    /// The open no longer tracks it after a newer one starts.
     @ObservationIgnored private var postOpenTask: Task<Void, Never>?
     @ObservationIgnored var invitePairingGate = InvitePairingGate()
     @ObservationIgnored var invitePairingTask: Task<Void, Never>?
@@ -435,7 +439,6 @@ final class AppOpener {
         pendingResourceReferenceChoice = nil
         currentTask?.cancel()
         currentTask = nil
-        postOpenTask?.cancel()
         postOpenTask = nil
     }
 
@@ -460,7 +463,6 @@ final class AppOpener {
     private func run(_ request: AppOpenRequest, generation: UInt64) {
         guard generation == self.generation else { return }
         currentTask?.cancel()
-        postOpenTask?.cancel()
         postOpenTask = nil
         activeRequest = request
         currentTask = Task { @MainActor [weak self] in

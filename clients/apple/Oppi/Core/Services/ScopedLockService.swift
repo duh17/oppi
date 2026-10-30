@@ -295,6 +295,21 @@ final class ScopedLockService {
         )
     }
 
+    /// `target` with its session's workspace and Incognito state read from the
+    /// loaded session now. A target captured when a screen opened names the
+    /// workspace the session had then, and a refreshed record can move it. A
+    /// session that is not loaded keeps the captured target.
+    func current(_ target: ScopedLockTarget) -> ScopedLockTarget {
+        guard let sessionId = target.sessionId,
+              let known = sessionLookup(target.serverId, sessionId) else { return target }
+        return .session(
+            serverId: target.serverId,
+            workspaceId: known.workspaceId ?? target.workspaceId,
+            sessionId: sessionId,
+            isIncognito: known.ephemeral == true
+        )
+    }
+
     /// Content whose scope is unknown might be locked: some lock exists, or
     /// App Lock is on (Incognito sessions are locked then).
     var mayLockUnknownScope: Bool {

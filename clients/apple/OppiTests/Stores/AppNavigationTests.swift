@@ -225,6 +225,50 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspaceStackRouteElements.isEmpty)
     }
 
+    /// A reader opened from the chat has its lock origin fixed at the workspace the chat had then, so it
+    /// goes with the chat. Another session's chat above is not under this lock: it and its screens stay.
+    @Test func removingASessionRouteAlsoDropsTheReadersOpenedFromItInTheStack() {
+        let navigation = AppNavigation()
+        let locked = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "locked", workspaceId: "w1")
+        let other = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "w1")
+        let reader = ChatReaderNavTarget(id: UUID())
+        let otherReader = ChatReaderNavTarget(id: UUID())
+        navigation.openWorkspaceSession(locked)
+        navigation.openChatReader(reader)
+        navigation.openReferencedSession(other)
+        navigation.openChatReader(otherReader)
+
+        #expect(!navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"), "Another chat was on top")
+        #expect(navigation.workspaceStackRouteElements == [.session(other), .chatReader(otherReader)])
+
+        navigation.openWorkspaceSession(locked)
+        navigation.openChatReader(reader)
+        #expect(navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"), "The reader was on top")
+        #expect(navigation.workspaceStackRouteElements == [.session(other), .chatReader(otherReader)])
+    }
+
+    @Test func removingASessionRouteAlsoDropsTheReadersOpenedFromItInTheSplitDetail() {
+        let navigation = AppNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+        let root = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "root", workspaceId: "w1")
+        let locked = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "locked", workspaceId: "w1")
+        let other = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "w1")
+        let reader = ChatReaderNavTarget(id: UUID())
+        navigation.openWorkspaceSession(root)
+        navigation.openReferencedSession(locked)
+        navigation.openChatReader(reader)
+        navigation.openReferencedSession(other)
+        #expect(navigation.splitDetailPathElements == [.session(locked), .chatReader(reader), .session(other)])
+
+        #expect(!navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"))
+        #expect(navigation.splitDetailTarget == .session(root))
+        #expect(navigation.splitDetailPathElements == [.session(other)])
+
+        navigation.openChatReader(reader)
+        #expect(navigation.removeSessionRoute(serverId: "server-1", sessionId: "other"), "The reader was on top")
+        #expect(navigation.splitDetailPathElements.isEmpty)
+    }
+
     /// The split detail's root is the session itself: removing it clears the detail column, and the
     /// screens pushed over it go with their root.
     @Test func removingTheSplitDetailSessionClearsTheColumn() {
