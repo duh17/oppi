@@ -127,7 +127,8 @@ struct McpServersModelTests {
         #expect(!model.loading)
     }
 
-    @Test func cancelledFlowKeepsAskingUntilTheHostSettlesWithoutAnError() async {        let sleeps = Counter()
+    @Test func cancelledFlowKeepsAskingUntilTheHostSettlesWithoutAnError() async {
+        let sleeps = Counter()
         let model = McpServersModel(sleep: { _ in await sleeps.increment() })
         let lists = Counter()
         await model.refresh(hostId: "host", hostName: "Studio", flowClient: IdleFlowClient()) {

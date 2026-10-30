@@ -139,9 +139,10 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// The load `refresh()` is running: the base's, cancelled when the page
     /// leaves and before another starts.
     private var refreshTask: Task<Void, Never>?
-    /// The list's pull to refresh. `nil` unless the page opted in
-    /// (`pullsToRefresh:`): only the base touches it, starting the page's
-    /// `refresh()` and ending the control when that returns.
+    /// The list's pull to refresh. It is attached to the collection view only
+    /// for a page that opted in (`pullsToRefresh:`), and then only the base
+    /// touches it: it starts the page's `refresh()` and ends the control when
+    /// that returns.
     private lazy var pullToRefreshControl = UIRefreshControl()
     /// Whether this page loads its own content: it pulls to refresh and runs
     /// `refresh()` each time it appears. The seven older pages that pull (Tailnet

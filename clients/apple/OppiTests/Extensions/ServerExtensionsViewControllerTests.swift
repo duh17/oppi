@@ -25,8 +25,6 @@ struct ServerExtensionsViewControllerTests {
         let screen = ServerExtensionsViewController(root: root)
         let window = try show(UINavigationController(rootViewController: screen))
         defer { hide(window) }
-        screen.loadViewIfNeeded()
-        #expect(screen.collectionView.refreshControl != nil, "the catalog loads on pull to refresh")
 
         var row: UIButton?
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {

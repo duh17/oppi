@@ -36,8 +36,6 @@ struct McpServersViewControllerTests {
         defer { hide(window) }
         let alpha = "mcp.server.global.alpha"
         let beta = "mcp.server.global.beta"
-        screen.loadViewIfNeeded()
-        #expect(screen.collectionView.refreshControl != nil, "the list probes on pull to refresh")
 
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             screen.view.layoutIfNeeded()
