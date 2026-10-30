@@ -1,16 +1,19 @@
 #if DEBUG
-import SwiftUI
+import UIKit
 
 /// Real Workspace Settings surfaces with one fixture workspace and no network.
 /// `SCREENSHOT_WORKSPACE_PAGE` picks the root (default, the UIKit
 /// `WorkspaceSettingsViewController`) or a page: `details`, `skills`,
 /// `extensions`. `SCREENSHOT_COLOR_SCHEME=dark|light` selects that theme.
-struct WorkspaceSettingsScreenshotPreview: View {
+final class WorkspaceSettingsPreviewController: UIViewController {
+    // The fixtures the page reads, held as long as the preview the way the
+    // SwiftUI view's constants were.
     private let connection: ServerConnection
     private let root: AppRootEnvironment
     private let workspace: Workspace
     private let model: WorkspaceSettingsModel
     private let themeStore: ThemeStore
+    private let content: UIViewController
 
     private static let serverId = "preview-server"
 
@@ -77,34 +80,57 @@ struct WorkspaceSettingsScreenshotPreview: View {
         )
         model.attach(connection: connection, workspace: workspace)
         self.model = model
+
+        content = Self.makeContent(
+            root: root, connection: connection, workspace: workspace, model: model
+        )
+        super.init(nibName: nil, bundle: nil)
+        traitOverrides.appRootEnvironment = root
     }
 
-    var body: some View {
-        content
-            .ignoresSafeArea()
-            .appRootEnvironment(root)
-            .publishesAppRootToWindow(root)
-            .preferredColorScheme(themeStore.preferredColorScheme)
-            .accessibilityIdentifier("screenshot.ready")
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = themeStore.backgroundColor
+        PreviewHost.fill(self, with: content)
+        PreviewHost.publishScreenshotReady(in: self)
     }
 
-    @ViewBuilder
-    private var content: some View {
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // The window's style comes from the app's theme store, which was built
+        // before this preview pinned `SCREENSHOT_COLOR_SCHEME`: put this
+        // preview's scheme on the window, as `.preferredColorScheme` did for the
+        // SwiftUI body, so system chrome and labels follow it.
+        themeStore.applyToWindow(of: self)
+        PreviewHost.publishAppRootToWindow(root, from: self)
+    }
+
+    /// The settings root or the page `SCREENSHOT_WORKSPACE_PAGE` names, at the
+    /// root of a router navigation controller the way the router hosts a page.
+    private static func makeContent(
+        root: AppRootEnvironment,
+        connection: ServerConnection,
+        workspace: Workspace,
+        model: WorkspaceSettingsModel
+    ) -> UIViewController {
         switch ProcessInfo.processInfo.environment["SCREENSHOT_WORKSPACE_PAGE"] {
         case "details":
-            RouterPreviewControllerStack(root: root) {
+            return PreviewHost.screenStack(root: root) {
                 WorkspaceDetailsViewController(settings: model, connection: connection, root: root)
             }
         case "skills":
-            RouterPreviewControllerStack(root: root) {
+            return PreviewHost.screenStack(root: root) {
                 WorkspaceSkillsViewController(model: model, connection: connection, root: root)
             }
         case "extensions":
-            RouterPreviewControllerStack(root: root) {
+            return PreviewHost.screenStack(root: root) {
                 WorkspaceExtensionsViewController(model: model, root: root)
             }
         default:
-            RouterPreviewControllerStack(root: root) {
+            return PreviewHost.screenStack(root: root) {
                 WorkspaceSettingsViewController(workspace: workspace, model: model, connection: connection, root: root)
             }
         }

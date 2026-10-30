@@ -1,5 +1,5 @@
 #if DEBUG
-import SwiftUI
+import UIKit
 
 /// The settings-like pages outside App, Server, and Workspace Settings: the
 /// real views over one fixture server, with API pages answered by
@@ -18,8 +18,7 @@ import SwiftUI
 /// last write the fixture server received (`settingsSweep.lastWrite`);
 /// `SCREENSHOT_SWEEP_WRITE_DELAY=<seconds>` holds each write's answer that long.
 /// `SCREENSHOT_COLOR_SCHEME=dark|light|oled|night|custom:Paper` selects that theme.
-struct SettingsSweepScreenshotPreview: View {
-    private let coordinator: ConnectionCoordinator
+final class SettingsSweepPreviewController: UIViewController {
     private let connection: ServerConnection
     private let server: PairedServer
     private let client: APIClient
@@ -27,7 +26,9 @@ struct SettingsSweepScreenshotPreview: View {
     private let root: AppRootEnvironment
     private let page: String
     private let showsWrites: Bool
-    @State private var writes = SettingsSweepWrites.shared
+    private let content: UIViewController
+    /// The last write, where the SwiftUI preview's bottom-leading overlay put it.
+    private let writeLabel = UILabel()
 
     private static let skills: [ServerSkillSummary] = [
         ServerSkillSummary(
@@ -157,7 +158,6 @@ struct SettingsSweepScreenshotPreview: View {
         } else {
             coordinator.installPreviewConnection(connection, serverId: server.id)
         }
-        self.coordinator = coordinator
 
         // The app root: router modals present with these services.
         root = AppRootEnvironment(
@@ -187,36 +187,90 @@ struct SettingsSweepScreenshotPreview: View {
         default:
             break
         }
+
+        content = Self.makeContent(page: page, root: root, server: server, connection: connection, client: client)
+        super.init(nibName: nil, bundle: nil)
+        // The sheets these screens present find the fixture root here even when
+        // they leave the screen's own trait chain (the window publishes it too).
+        traitOverrides.appRootEnvironment = root
     }
 
-    var body: some View {
-        content
-            .appRootEnvironment(root)
-            .publishesAppRootToWindow(root)
-            .preferredColorScheme(themeStore.preferredColorScheme)
-            .accessibilityIdentifier("screenshot.ready")
-            // After the ready identifier, which would replace this one.
-            .overlay(alignment: .bottomLeading) {
-                if showsWrites {
-                    Text(writes.lastWrite)
-                        .font(.caption2)
-                        .padding(4)
-                        .allowsHitTesting(false)
-                        .accessibilityIdentifier("settingsSweep.lastWrite")
-                }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = themeStore.backgroundColor
+        PreviewHost.fill(self, with: content)
+        if showsWrites { addWriteLabel() }
+        PreviewHost.publishScreenshotReady(in: self)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // The window's style comes from the app's theme store, which was built
+        // before this preview pinned `SCREENSHOT_COLOR_SCHEME`: put this
+        // preview's scheme on the window, as `.preferredColorScheme` did for the
+        // SwiftUI body, so system chrome and labels follow it.
+        themeStore.applyToWindow(of: self)
+        PreviewHost.publishAppRootToWindow(root, from: self)
+    }
+
+    /// The last write the fixture server received, where the SwiftUI preview's
+    /// bottom-leading overlay showed it.
+    private func addWriteLabel() {
+        writeLabel.font = .preferredFont(forTextStyle: .caption2)
+        writeLabel.numberOfLines = 1
+        writeLabel.isUserInteractionEnabled = false
+        writeLabel.accessibilityIdentifier = "settingsSweep.lastWrite"
+        writeLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(writeLabel)
+        NSLayoutConstraint.activate([
+            writeLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 4),
+            writeLabel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -4),
+            writeLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
+        ])
+        observeWrites()
+    }
+
+    /// The write record is shared process state (`SettingsSweepWrites`), so the
+    /// label follows it the way the SwiftUI overlay's `@State` did.
+    private func observeWrites() {
+        withObservationTracking {
+            writeLabel.text = SettingsSweepWrites.shared.lastWrite
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.observeWrites() }
+        }
+    }
+
+    /// The page's screen: the real surfaces over the fixture server, each at the
+    /// root of a router navigation controller the way the shell hosts one.
+    private static func makeContent(
+        page: String,
+        root: AppRootEnvironment,
+        server: PairedServer,
+        connection: ServerConnection,
+        client: APIClient
+    ) -> UIViewController {
+        func stack(_ screen: @escaping () -> UIViewController) -> RouterNavigationController {
+            PreviewHost.screenStack(root: root, screen: screen)
+        }
+        /// The release Skill's SKILL.md, the route's screen at the stack root.
+        func skillFilePage() -> UIViewController {
+            stack {
+                ServerSkillFileViewController(
+                    target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"),
+                    root: root,
+                    connection: connection
+                )
             }
-    }
+        }
 
-    @ViewBuilder
-    private var content: some View {
         switch page {
         case "workspace-create":
-            RouterPreviewControllerStack(root: root) {
-                WorkspaceCreateViewController(root: root, server: server)
-            }
-            .ignoresSafeArea()
+            return stack { WorkspaceCreateViewController(root: root, server: server) }
         case "workspace-create-configure":
-            RouterPreviewControllerStack(root: root) {
+            return stack {
                 WorkspaceCreateViewController(
                     root: root,
                     server: server,
@@ -224,95 +278,78 @@ struct SettingsSweepScreenshotPreview: View {
                     prefillPath: "~/workspace/oppi"
                 )
             }
-            .ignoresSafeArea()
         case "onboarding-add-server", "onboarding-tailscale":
             // The simulator has no camera; show Scan QR Code as a phone would.
-            OnboardingPreviewHost(root: root)
-                .ignoresSafeArea()
+            return OnboardingViewController(root: root, mode: .addServer, canScan: true)
         case "pairing-approval":
-            RouterPreviewControllerStack(root: root) { [root] in PairingApprovalPreviewScreen(root: root) }
-                .ignoresSafeArea()
+            return stack { PairingApprovalPreviewScreen(root: root) }
         // Shell routes the router hosts directly: search lives in its bar.
         case "skills", "skills-offline":
-            RouterPreviewControllerStack(root: root) { ServerSkillsViewController(root: root) }
-                .ignoresSafeArea()
+            return stack { ServerSkillsViewController(root: root) }
         case "extensions", "extensions-offline", "extensions-builtin-only":
-            RouterPreviewControllerStack(root: root) { ServerExtensionsViewController(root: root) }
-                .ignoresSafeArea()
+            return stack { ServerExtensionsViewController(root: root) }
         case "extensions-unavailable":
             // The disk cache outlives launches: an earlier page's saved catalog
             // would show, so the screen mounts once it is replaced by an empty one.
-            CatalogCacheCleared(serverId: server.id) {
-                RouterPreviewControllerStack(root: root) { ServerExtensionsViewController(root: root) }
-                    .ignoresSafeArea()
-            }
+            return PreviewLoadingController(
+                prepare: {
+                    await TimelineCache.shared.saveServerResourceCatalog(
+                        ServerResourceCatalogSnapshot(
+                            skills: [], extensions: [], builtInTools: [], savedAt: Date(),
+                            skillsLoaded: false, extensionsLoaded: false, skillsSavedAt: nil, extensionsSavedAt: nil
+                        ),
+                        serverId: server.id
+                    )
+                },
+                content: { stack { ServerExtensionsViewController(root: root) } }
+            )
         case "mcp":
-            RouterPreviewControllerStack(root: root) { [root] in
-                McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root)
-            }
-            .ignoresSafeArea()
+            return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
         case "ssh-hosts":
-            RouterPreviewControllerStack(root: root) { SSHTerminalHostListViewController() }
-                .ignoresSafeArea()
+            return stack { SSHTerminalHostListViewController() }
         case "theme-import":
-            RouterPreviewControllerStack(root: root) { ThemeImportViewController(root: root) }
-                .ignoresSafeArea()
+            return stack { ThemeImportViewController(root: root) }
         case "schedules":
-            RouterPreviewControllerStack(root: root) { ScheduleListViewController(root: root) }
-                .ignoresSafeArea()
+            return stack { ScheduleListViewController(root: root) }
         case "agents":
-            RouterPreviewControllerStack(root: root) { AgentListViewController(root: root) }
-                .ignoresSafeArea()
+            return stack { AgentListViewController(root: root) }
         case "agents-pi", "agents-pi-file":
-            RouterPreviewControllerStack(root: root) { PiAgentDetailViewController(root: root) }
-                .ignoresSafeArea()
+            return stack { PiAgentDetailViewController(root: root) }
         case "extension-detail":
-            RouterPreviewControllerStack(root: root) { [server, root, connection] in
+            return stack {
                 ServerExtensionDetailViewController(
                     target: .init(serverId: server.id, kind: .extension, resourceId: "workflow"),
                     root: root,
                     connection: connection
                 )
             }
-            .ignoresSafeArea()
         case "skill-detail":
-            RouterPreviewControllerStack(root: root) { [server, root, connection] in
+            return stack {
                 ServerSkillDetailViewController(
                     target: .init(serverId: server.id, kind: .skill, resourceId: "release"),
                     root: root,
                     connection: connection
                 )
             }
-            .ignoresSafeArea()
         case "skill-browser":
-            RouterPreviewControllerStack(root: root) { [server, root, connection] in
+            return stack {
                 ServerSkillBrowserViewController(
                     target: .init(serverId: server.id, resourceId: "release"),
                     root: root,
                     connection: connection
                 )
             }
-            .ignoresSafeArea()
         case "skill-file-review":
-            skillFilePage
+            return skillFilePage()
         case "skill-file-edit":
             // The editor needs the server's file-editing capability first.
-            ServerInfoLoaded(client: client) { skillFilePage }
-        default:
-            Text("Unknown SCREENSHOT_SWEEP_PAGE \(page)")
-        }
-    }
-
-    /// The release Skill's SKILL.md, the route's screen at the stack root.
-    private var skillFilePage: some View {
-        RouterPreviewControllerStack(root: root) { [server, root, connection] in
-            ServerSkillFileViewController(
-                target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"),
-                root: root,
-                connection: connection
+            return PreviewLoadingController(
+                prepare: { _ = try? await client.serverInfo() },
+                content: { skillFilePage() }
             )
+        default:
+            return PreviewHost.unknownScreen("Unknown SCREENSHOT_SWEEP_PAGE \(page)")
         }
-        .ignoresSafeArea()
     }
 
     // MARK: - Fixtures
@@ -486,60 +523,6 @@ struct SettingsSweepScreenshotPreview: View {
         // `skills-offline`: the refresh fails and the seeded catalog shows as cached.
         if page == "skills-offline" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/skills"] = nil
-        }
-    }
-}
-
-/// Add Server onboarding embedded the way the app root embeds first-run
-/// onboarding, with Scan QR Code offered.
-private struct OnboardingPreviewHost: UIViewControllerRepresentable {
-    let root: AppRootEnvironment
-
-    func makeUIViewController(context: Context) -> OnboardingViewController {
-        OnboardingViewController(root: root, mode: .addServer, canScan: true)
-    }
-
-    func updateUIViewController(_ controller: OnboardingViewController, context: Context) {}
-}
-
-/// Shows `content` after the client has read `/server/info`, the way a
-/// connected app knows its server's capabilities before a file opens.
-private struct ServerInfoLoaded<Content: View>: View {
-    let client: APIClient
-    @ViewBuilder let content: () -> Content
-    @State private var loaded = false
-
-    var body: some View {
-        Group {
-            if loaded { content() } else { ProgressView() }
-        }
-        .task {
-            _ = try? await client.serverInfo()
-            loaded = true
-        }
-    }
-}
-
-/// Shows `content` once the server's saved Skills and Extensions catalog on disk
-/// is replaced by an empty one.
-private struct CatalogCacheCleared<Content: View>: View {
-    let serverId: String
-    @ViewBuilder let content: () -> Content
-    @State private var cleared = false
-
-    var body: some View {
-        Group {
-            if cleared { content() } else { ProgressView() }
-        }
-        .task {
-            await TimelineCache.shared.saveServerResourceCatalog(
-                ServerResourceCatalogSnapshot(
-                    skills: [], extensions: [], builtInTools: [], savedAt: Date(),
-                    skillsLoaded: false, extensionsLoaded: false, skillsSavedAt: nil, extensionsSavedAt: nil
-                ),
-                serverId: serverId
-            )
-            cleared = true
         }
     }
 }

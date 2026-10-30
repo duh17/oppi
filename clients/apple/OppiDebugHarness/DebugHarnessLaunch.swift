@@ -46,7 +46,7 @@ enum DebugHarnessLaunch {
     /// when it has one, else `HostFactory.content` around its SwiftUI view
     /// until T16-z moves the rest off the SwiftUI dispatch.
     private static func harnessContent(root: AppRootEnvironment) -> UIViewController? {
-        if let controller = uiKitHarness {
+        if let controller = uiKitHarness(root: root) {
             return controller
         }
         guard let harness = harnessView else { return nil }
@@ -56,7 +56,7 @@ enum DebugHarnessLaunch {
     /// The harnesses that are their own UIKit screen, so the window hosts a
     /// controller instead of a SwiftUI representable. Each family that drops
     /// its wrappers adds its configs here.
-    private static var uiKitHarness: UIViewController? {
+    private static func uiKitHarness(root: AppRootEnvironment) -> UIViewController? {
         if HTMLDOMAnnotationHarnessConfig.isEnabled {
             return HTMLDOMAnnotationHarnessViewController()
         }
@@ -75,14 +75,27 @@ enum DebugHarnessLaunch {
         if CodeBlockWrappingHarnessConfig.isEnabled {
             return HarnessViewHostController(content: CodeBlockWrappingHarnessRootView())
         }
-        // The ask-card previews are UIKit roots too, so the preview switch
-        // (`ScreenshotPreviewView`) no longer carries them.
+        // The ask-card and settings previews are UIKit roots too, so the preview
+        // switch (`ScreenshotPreviewView`) no longer carries them.
         if ScreenshotPreviewConfig.isEnabled {
             if ScreenshotPreviewConfig.screen == "ask-card-intent-regression" {
                 return AskCardIntentRegressionPreviewController()
             }
             if ScreenshotPreviewConfig.screen == "ask-card-tall-scroll" {
                 return AskCardTallScrollPreviewController()
+            }
+            if ScreenshotPreviewConfig.screen == "settings-sweep" {
+                return SettingsSweepPreviewController()
+            }
+            if ScreenshotPreviewConfig.screen == "workspace-settings" {
+                return WorkspaceSettingsPreviewController()
+            }
+            if ScreenshotPreviewConfig.screen == "settings-chat"
+                || ScreenshotPreviewConfig.screen == "settings-chat-top-bar" {
+                return SettingsPagePreviewController(
+                    screen: ScreenshotPreviewConfig.screen,
+                    themeStore: root.themeStore
+                )
             }
         }
         return nil

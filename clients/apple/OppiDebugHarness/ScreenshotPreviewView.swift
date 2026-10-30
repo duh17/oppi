@@ -63,7 +63,7 @@ enum ScreenshotVolatileDefaults {
 
     /// The two imported fixture themes the settings captures use.
     static func applyImportedThemes() {
-        apply(["\(AppIdentifiers.subsystem).customThemes": SettingsPageScreenshotContent.importedThemes])
+        apply(["\(AppIdentifiers.subsystem).customThemes": SettingsPageThemes.importedThemes])
     }
 
     /// Call before `ThemeStore()`: its setters would persist the theme.
@@ -82,10 +82,6 @@ enum ScreenshotVolatileDefaults {
 struct ScreenshotPreviewView: View {
     var body: some View {
         switch ScreenshotPreviewConfig.screen {
-        case "workspace-settings":
-            WorkspaceSettingsScreenshotPreview()
-        case "settings-sweep":
-            SettingsSweepScreenshotPreview()
         case "ssh-terminal":
             SSHTerminalScreenshotPreview()
         case "ssh-terminal-status-blocked":
@@ -135,8 +131,6 @@ struct ScreenshotPreviewView: View {
                 order: [.outline, .files, .context, .git, .terminal],
                 shown: Set(ChatTopBarAction.allCases)
             )
-        case "settings-chat", "settings-chat-top-bar":
-            SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
         }
@@ -457,32 +451,19 @@ private struct ChatTopBarScreenshotPreview: View {
 
 /// `SCREENSHOT_SCREEN=settings-chat` / `settings-chat-top-bar`: a UIKit settings page as the root of a router stack, over fixture services.
 /// The page shares the app's `ThemeStore`. Nothing here calls a server.
-private struct SettingsPageScreenshotPreview: View {
-    let screen: String
-    @Environment(\.appRootEnvironment) private var appRoot
+@MainActor
+final class SettingsPagePreviewController: UIViewController {
+    private let root: AppRootEnvironment
+    private let content: UIViewController
 
-    var body: some View {
-        guard let appRoot else {
-            preconditionFailure("SettingsPageScreenshotPreview needs appRootEnvironment(_:) above it")
-        }
-        // The page shares the app's own `ThemeStore`, the one that owns the
-        // window: a theme chosen on the page then re-themes the window, as in
-        // the app. A store of its own would change only itself.
-        return SettingsPageScreenshotContent(screen: screen, themeStore: appRoot.themeStore)
-    }
-}
-
-private struct SettingsPageScreenshotContent: View {
-    let screen: String
-
-    @State private var root: AppRootEnvironment
-
+    /// The page shares the app's own `ThemeStore`, the one that owns the window:
+    /// a theme chosen on the page then re-themes the window, as in the app. A
+    /// store of its own would change only itself.
     init(screen: String, themeStore: ThemeStore) {
-        self.screen = screen
         // Every settings page can be captured in an imported theme
         // (`SCREENSHOT_COLOR_SCHEME=custom:Paper`), not only Appearance.
         ScreenshotVolatileDefaults.applyImportedThemes()
-        _root = State(initialValue: AppRootEnvironment(
+        let root = AppRootEnvironment(
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
             navigation: AppNavigation(),
             themeStore: themeStore,
@@ -490,23 +471,33 @@ private struct SettingsPageScreenshotContent: View {
             composerDraftStore: ComposerDraftStore(),
             chatReaderPayloadStore: ChatReaderPayloadStore(),
             sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
-        ))
-    }
-
-    var body: some View {
-        RouterPreviewControllerStack(root: root) {
+        )
+        self.root = root
+        content = PreviewHost.screenStack(root: root) {
             switch screen {
             case "settings-chat-top-bar": SettingsChatTopBarViewController()
             default: SettingsChatViewController(root: root)
             }
         }
-        .ignoresSafeArea()
-        .accessibilityIdentifier("screenshot.ready")
+        super.init(nibName: nil, bundle: nil)
+        traitOverrides.appRootEnvironment = root
     }
 
-    /// Two imported themes, one light and one dark, as `CustomThemeStore` keeps
-    /// them. Only the base colors differ; every other token follows from them.
-    fileprivate static var importedThemes: Data {
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        PreviewHost.fill(self, with: content)
+        PreviewHost.publishScreenshotReady(in: self)
+    }
+}
+
+/// The two imported themes the settings captures use, one light and one dark,
+/// as `CustomThemeStore` keeps them. Only the base colors differ; every other
+/// token follows from them.
+private enum SettingsPageThemes {
+    static var importedThemes: Data {
         func theme(
             _ name: String, scheme: String,
             bg: String, bgDark: String, highlight: String, fg: String, dim: String, comment: String,
@@ -737,18 +728,14 @@ private struct RouterPreviewNavigationHost<Content: View>: UIViewControllerRepre
 }
 
 /// A UIKit screen as the root of a router navigation controller, the way the
-/// shell hosts SSH Terminal's host list.
+/// shell hosts SSH Terminal's host list. `PreviewHost.screenStack` is the same
+/// host for a preview that is its own controller.
 struct RouterPreviewControllerStack: UIViewControllerRepresentable {
     let root: AppRootEnvironment
     let makeScreen: () -> UIViewController
 
     func makeUIViewController(context: Context) -> RouterNavigationController {
-        let screen = makeScreen()
-        screen.traitOverrides.appRootEnvironment = root
-        let navigation = RouterNavigationController(rootViewController: screen)
-        let themeStore = root.themeStore
-        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
-        return navigation
+        PreviewHost.screenStack(root: root, screen: makeScreen)
     }
 
     func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
