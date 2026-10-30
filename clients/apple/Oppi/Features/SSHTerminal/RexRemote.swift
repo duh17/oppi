@@ -281,7 +281,9 @@ struct RexMirror {
     mutating func apply(view: RexView, to id: String) {
         guard var session = sessions[id] else { return }
         if let revision = view.revision, let applied = session.revision, revision < applied { return }
-        session.revision = view.revision ?? session.revision
+        // A view without a revision counts as at least the newest one announced,
+        // so it is not asked for again until Rex announces a newer one.
+        session.revision = view.revision ?? max(session.revision ?? -1, session.wanted)
         session.label = view.label ?? session.label
         session.activeWindowID = view.activeWindowID
         session.windows = (view.windows ?? []).map { window in
@@ -662,6 +664,13 @@ final class RexMonitor: SSHTerminalOverviewSource {
         control.attach { try await stream.send($0) }
         generation += 1
         let mine = generation
+        // A cancelled subscription's reads can outlive it (its calls end when
+        // the host's close comes back), and they no longer clean up after
+        // themselves: whatever it left is this subscription's to drop.
+        fetchers.values.forEach { $0.cancel() }
+        fetchers = [:]
+        publishTask?.cancel()
+        publishTask = nil
         self.inbox = inbox
         publishing = false
         defer {
@@ -678,7 +687,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
         }
         try await withTaskCancellationHandler {
             try await control.open()
-            try await bootstrap(control, inbox)
+            try await bootstrap(control, inbox, generation: mine)
             synced = true
             for await _ in inbox.wake {
                 let events = inbox.drain()
@@ -687,7 +696,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
                 if !events.isEmpty { schedulePublish() }
                 if let ended = inbox.ended { throw ended }
                 if resyncRequested {
-                    try await bootstrap(control, inbox)
+                    try await bootstrap(control, inbox, generation: mine)
                 }
             }
         } onCancel: {
@@ -698,13 +707,15 @@ final class RexMonitor: SSHTerminalOverviewSource {
     /// Reads the whole server: the session list (which also starts the events),
     /// then every session's view and terminal blocks. Publishes the result at
     /// once, since it is the first complete picture.
-    private func bootstrap(_ control: RexControl, _ inbox: RexEventInbox) async throws {
+    private func bootstrap(_ control: RexControl, _ inbox: RexEventInbox, generation mine: Int) async throws {
         resyncRequested = false
         // Only a refresh that asked before this read started is answered by it.
         let serving = resyncWaiters
         resyncWaiters = []
         defer { for waiter in serving { waiter.resume() } }
         let answer = try await control.call("session.attach_all", ["event_scope": "all"])
+        // A newer subscription owns the mirror now; this one only winds down.
+        guard generation == mine else { throw CancellationError() }
         struct Listed: Decodable {
             struct Item: Decodable {
                 let sessionID: String
@@ -718,7 +729,8 @@ final class RexMonitor: SSHTerminalOverviewSource {
         }
         mirror.reset(listed: (listed.sessions ?? []).map { ($0.sessionID, $0.label) })
         startFetchers(control)
-        while let fetcher = fetchers.values.first { await fetcher.value }
+        while generation == mine, let fetcher = fetchers.values.first { await fetcher.value }
+        guard generation == mine else { throw CancellationError() }
         // A stream that ended while it was read leaves a picture with holes.
         if let ended = inbox.ended { throw ended }
         publishing = true

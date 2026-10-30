@@ -223,8 +223,13 @@ final class RexFakeHost: Sendable {
 
     private let state = Mutex(State())
     private let responder: @Sendable (Request) -> Answer
+    private let reportsClose: Bool
 
-    init(_ responder: @escaping @Sendable (Request) -> Answer) {
+    /// `reportsClose` false models a host whose close comes back late, as
+    /// SSH's does (the channel is only closed once the peer answers): closing
+    /// the stream reports nothing until `end(status:)`.
+    init(reportsClose: Bool = true, _ responder: @escaping @Sendable (Request) -> Answer) {
+        self.reportsClose = reportsClose
         self.responder = responder
     }
 
@@ -247,7 +252,7 @@ final class RexFakeHost: Sendable {
                     state.closed = true
                     return state.sink
                 }
-                sink?(.closed)
+                if reportsClose { sink?(.closed) }
             }
         )
     }

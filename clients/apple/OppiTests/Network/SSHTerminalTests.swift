@@ -1581,6 +1581,7 @@ struct SSHTerminalTests {
             /// The nth `session.view` of the main session gets no answer until the test gives it.
             var holdViews: Set<Int> = []
             var views = 0
+            var omitRevision = false
         }
 
         let state = Mutex(State())
@@ -1591,7 +1592,8 @@ struct SSHTerminalTests {
                 #"{"block_id":"\#(id)","label":"shell","creator_name":"\#(creator)"}"#
             }
             let first = [block(SSHTerminalTests.rexPi), block(SSHTerminalTests.rexPlain)] + (state.extraBlock ? [block(SSHTerminalTests.rexNew)] : [])
-            return #"{"revision":\#(revision ?? state.revision),"session_id":"\#(SSHTerminalTests.rexSession)","label":"\#(label ?? state.label)","active_window_id":"\#(SSHTerminalTests.rexWindow1)","windows":[{"window_id":"\#(SSHTerminalTests.rexWindow1)","label":"Window 1","focused_block_id":"\#(SSHTerminalTests.rexPi)","layers":[{"blocks":[\#(first.joined(separator: ","))]}]},{"window_id":"\#(SSHTerminalTests.rexWindow2)","label":"Window 2","focused_block_id":"\#(SSHTerminalTests.rexBlocked)","layers":[{"blocks":[\#(block(SSHTerminalTests.rexBlocked))]}]}]}"#
+            let revisionField = state.omitRevision ? "" : #""revision":\#(revision ?? state.revision),"#
+            return #"{\#(revisionField)"session_id":"\#(SSHTerminalTests.rexSession)","label":"\#(label ?? state.label)","active_window_id":"\#(SSHTerminalTests.rexWindow1)","windows":[{"window_id":"\#(SSHTerminalTests.rexWindow1)","label":"Window 1","focused_block_id":"\#(SSHTerminalTests.rexPi)","layers":[{"blocks":[\#(first.joined(separator: ","))]}]},{"window_id":"\#(SSHTerminalTests.rexWindow2)","label":"Window 2","focused_block_id":"\#(SSHTerminalTests.rexBlocked)","layers":[{"blocks":[\#(block(SSHTerminalTests.rexBlocked))]}]}]}"#
         }
 
         func answer(_ request: RexFakeHost.Request) -> RexFakeHost.Answer {
@@ -1809,6 +1811,50 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { label() == "eight" })
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) { views(host).count == 4 })
 
+        await rig.stop()
+    }
+
+    /// A subscription cancelled mid-read (the sheet's resync, then a push that
+    /// stops the polls) is still waiting on calls when the next one starts: SSH
+    /// reports the close only once the host answers it. Its leftover reads must
+    /// not hold the new subscription up, and the old one ending later must not
+    /// disturb the new one.
+    @Test func rexACancelledSubscriptionStillWindingDownDoesNotStallTheNext() async throws {
+        let slow = RexWorld()
+        slow.state.withLock { $0.holdViews = [1] }
+        let slowHost = RexFakeHost(reportsClose: false) { slow.answer($0) }
+        let rig = try await startRex([slowHost], waitForFirstRead: false)
+        let monitor = rig.monitor
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { views(slowHost).count == 1 })
+
+        rig.task.cancel() // closes its stream; its held view and its run stay out
+        #expect(slowHost.isClosed)
+        let freshHost = RexWorld().host()
+        await rig.fixture.queue(freshHost)
+        let second = Task { await monitor.run(on: rig.channel) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { monitor.available }, "the next subscription reads Rex")
+        #expect(monitor.needsAttention == 1)
+
+        slowHost.end(status: 255) // the old stream's close finally comes back
+        await rig.task.value
+        #expect(monitor.failure == nil && monitor.available)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(100)) { monitor.failure == nil })
+
+        second.cancel()
+        await second.value
+        rig.channel.close(reason: "done")
+    }
+
+    /// A view that carries no revision is not asked for again and again.
+    @Test func rexDoesNotRepeatAViewWithoutARevision() async throws {
+        let world = RexWorld()
+        let host = world.host()
+        let rig = try await startRex([host])
+        world.state.withLock { $0.omitRevision = true }
+
+        host.viewChanged(Self.rexSession, revision: 7)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { views(host).count == 2 })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { views(host).count == 2 })
         await rig.stop()
     }
 
