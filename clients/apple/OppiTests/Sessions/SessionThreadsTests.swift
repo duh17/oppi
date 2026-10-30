@@ -238,6 +238,54 @@ struct SessionThreadsTests {
         return "fold(\(fold.count)\(fold.isOpen ? ", open" : ""))"
     }
 
+    /// The fold states the list would settle for these sessions, as an owner keeps them.
+    private func settling(
+        _ sessions: [Session],
+        roots: Set<String> = ["root"],
+        folds: [String: Bool] = [:]
+    ) -> [String: Bool] {
+        SessionListEntries.settledFolds(
+            SessionListEntries.threads(listed: sessions, loaded: []),
+            expandedRoots: roots,
+            stoppedFolds: folds,
+            attention: { _ in .none }
+        )
+    }
+
+    /// A thread's fold is settled when it opens and kept afterwards, so a member starting or stopping never
+    /// unfolds the stopped rows under the person's hand. A thread opened with nothing live lists its stopped
+    /// members directly; a member coming live must not hide the rows they were looking at.
+    @Test func aThreadOpenedWithNothingLiveKeepsItsStoppedMembersWhenOneComesLive() {
+        let root = session("root", status: .ready, created: 0)
+        let stopped = session("stopped", parent: "root", created: 10)
+        let working = live("working", .working, parent: "root", created: 20)
+
+        let settled = settling([root, stopped])
+        #expect(settled == ["root": true], "A thread opened with nothing live settles its fold open")
+        #expect(
+            expand([root, stopped, working], folds: settled).map(label) == ["root", "working", "fold(1, open)", "stopped"],
+            "A member starting hid the stopped member the person was looking at"
+        )
+        #expect(settling([root, stopped], folds: settled) == settled, "A settled fold stays settled")
+    }
+
+    /// The other way: a thread opened with live members settles its fold closed, and keeps that row when the
+    /// last live member stops, instead of unfolding its stopped members inline.
+    @Test func aThreadWhoseLastLiveMemberStopsKeepsItsStoppedMembersFolded() {
+        let root = session("root", status: .ready, created: 0)
+        let stopped = session("stopped", parent: "root", created: 10)
+        let working = live("working", .working, parent: "root", created: 20)
+
+        #expect(expand([root, working, stopped], folds: ["root": false]).map(label) == ["root", "working", "fold(1)"])
+        #expect(
+            expand([root, stopped], folds: ["root": false]).map(label) == ["root", "fold(1)"],
+            "The last member stopping unfolded the stopped members inline"
+        )
+        // A fold the person opened overrides the settled state either way.
+        #expect(expand([root, stopped], folds: ["root": true]).map(label) == ["root", "stopped"])
+        #expect(settling([root, working, stopped]) == ["root": false], "A thread with live members settles its fold closed")
+    }
+
     @Test func anOpenThreadListsLiveMembersFirstByKindAndFoldsTheStoppedOnes() {
         let root = session("root", status: .ready, created: 0)
         // Launch order puts the stopped workers first and the live ones last, as in a big thread.

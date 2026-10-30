@@ -252,11 +252,20 @@ extension WorkspaceDetailViewController {
     }
 
     private func openingThreads(_ entries: [SessionListEntry], connection: ServerConnection) -> [SessionListEntry] {
-        SessionListEntries.expanding(
+        let attention: (Session) -> SessionListAttentionCounts = {
+            SessionListAttentionCounts(askCount: connection.sessionListAskCount(for: $0.id))
+        }
+        // A thread's fold is settled the first time it lists open, and kept, so a member starting or
+        // stopping never unfolds the stopped rows under the person's hand.
+        let folds = SessionListEntries.settledFolds(
+            entries, expandedRoots: state.expandedThreadRoots, stoppedFolds: state.threadStoppedFolds, attention: attention
+        )
+        if folds != state.threadStoppedFolds { state.threadStoppedFolds = folds }
+        return SessionListEntries.expanding(
             entries,
             expandedRoots: state.expandedThreadRoots,
-            stoppedFolds: state.threadStoppedFolds,
-            attention: { SessionListAttentionCounts(askCount: connection.sessionListAskCount(for: $0.id)) }
+            stoppedFolds: folds,
+            attention: attention
         )
     }
 

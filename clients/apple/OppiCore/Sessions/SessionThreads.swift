@@ -310,14 +310,13 @@ enum SessionListEntries {
     /// too: a thread is the whole launch tree, not the part this list's workspace shows.
     /// Other entries pass through.
     ///
-    /// `stoppedFolds` holds what the person chose for a thread's fold (true: open), by root id.
-    /// Without a choice the fold is closed, always: a thread whose members are all stopped has no fold
-    /// row at all, so it lists its stopped members as soon as it opens. Its strip's chevron is the only
-    /// fold there is, and a second card would repeat what the strip already says. A thread that lists
-    /// live members above its stopped ones keeps the fold, so a big thread does not bury them.
+    /// `stoppedFolds` holds what the person chose for a thread's fold (true: open), by root id; a root with
+    /// no choice follows the thread (`settledFolds`). A settled (or chosen) open fold lists the thread's
+    /// stopped members under its fold row. A thread with nothing live and no closed fold of its own has no
+    /// fold row at all: it lists its stopped members directly, since its strip's chevron is the only fold
+    /// there is and a second card would repeat what the strip already says. A thread that lists live members
+    /// above its stopped ones keeps the fold, so a big thread does not bury them.
     /// `attention` supplies each member's pending asks, which make it blocked.
-    /// A choice is kept per root until the owner clears it, so closing and reopening a thread
-    /// finds its fold as it was left.
     ///
     /// The fold row is an entry whose `session` is the root and whose `stoppedFold` is set.
     /// A thread with no stopped member has no fold row.
@@ -343,24 +342,51 @@ enum SessionListEntries {
                 SessionListEntry(session: listed.session, thread: nil, outsideRoot: nil, depth: listed.depth)
             }
             rows.append(contentsOf: listing.live.map(member))
-            guard !listing.live.isEmpty else {
+            guard !listing.stopped.isEmpty else { continue }
+            // Nothing live, and no closed fold of the person's own: the stopped members list directly, under
+            // the strip's chevron, rather than behind a row that repeats the strip's count. A fold they
+            // closed keeps its row, so a thread whose last live member stops does not unfold its stopped
+            // rows inline. `settledFolds` records which of the two a thread opens with.
+            let foldState = stoppedFolds[entry.session.id] ?? listing.live.isEmpty
+            guard !listing.live.isEmpty || foldState == false else {
                 rows.append(contentsOf: listing.stopped.map(member))
                 continue
             }
-            guard !listing.stopped.isEmpty else { continue }
-            let isOpen = stoppedFolds[entry.session.id] ?? false
             rows.append(SessionListEntry(
                 session: entry.session,
                 thread: nil,
                 outsideRoot: nil,
                 depth: 1,
                 stoppedFold: SessionThreadStoppedFold(
-                    rootId: entry.session.id, count: listing.stopped.count, isOpen: isOpen
+                    rootId: entry.session.id, count: listing.stopped.count, isOpen: foldState
                 )
             ))
-            if isOpen { rows.append(contentsOf: listing.stopped.map(member)) }
+            if foldState { rows.append(contentsOf: listing.stopped.map(member)) }
         }
         return rows
+    }
+
+    /// `stoppedFolds` with every open thread's unset fold settled, for `expanding` to draw and the owner to
+    /// keep: a thread opens with its fold open when it has nothing live (the strip's chevron is then its only
+    /// fold), and closed when it lists live members above its stopped ones. Settling the first state a thread
+    /// opens with keeps its rows steady after that: a member starting or stopping changes which rows the
+    /// thread lists, never whether the stopped ones are folded away. A settled or chosen entry is kept as it
+    /// is, so passing the result back changes nothing.
+    static func settledFolds(
+        _ entries: [SessionListEntry],
+        expandedRoots: Set<String>,
+        stoppedFolds: [String: Bool],
+        attention: (Session) -> SessionListAttentionCounts
+    ) -> [String: Bool] {
+        var settled = stoppedFolds
+        for entry in entries {
+            guard let thread = entry.thread, expandedRoots.contains(entry.session.id),
+                  settled[entry.session.id] == nil else { continue }
+            let listing = thread.listing(attention: attention)
+            guard !listing.stopped.isEmpty else { continue }
+            settled[entry.session.id] = listing.live.isEmpty
+        }
+        return settled
     }
 
     /// Thread rows for the sessions a list shows (`listed`). Launch trees are

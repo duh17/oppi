@@ -52,8 +52,8 @@ final class SessionInboxViewController: UIViewController {
     private var expandedThreadRoots: Set<String> = [] {
         didSet { setNeedsUpdateProperties() }
     }
-    /// What the person chose for an open thread's Stopped fold, by thread root. A root
-    /// without a choice takes the default (`SessionListEntries.expanding`).
+    /// What the person chose for an open thread's Stopped fold, by thread root. A root without a choice
+    /// settles when its thread first lists open (`SessionListEntries.settledFolds`) and is kept after that.
     private var threadStoppedFolds: [String: Bool] = [:] {
         didSet { setNeedsUpdateProperties() }
     }
@@ -659,11 +659,20 @@ final class SessionInboxViewController: UIViewController {
         }
         var next = List.Snapshot()
         func appendSessions(_ entries: [SessionListEntry], to section: Section, item: (String) -> Item) {
+            let attention: (Session) -> SessionListAttentionCounts = {
+                SessionListAttentionCounts(askCount: state.connection?.sessionListAskCount(for: $0.id) ?? 0)
+            }
+            // A thread's fold is settled the first time it lists open, and kept, so a member starting or
+            // stopping never unfolds the stopped rows under the person's hand.
+            let folds = SessionListEntries.settledFolds(
+                entries, expandedRoots: expandedThreadRoots, stoppedFolds: threadStoppedFolds, attention: attention
+            )
+            if folds != threadStoppedFolds { threadStoppedFolds = folds }
             let rows = SessionListEntries.expanding(
                 entries,
                 expandedRoots: expandedThreadRoots,
-                stoppedFolds: threadStoppedFolds,
-                attention: { SessionListAttentionCounts(askCount: state.connection?.sessionListAskCount(for: $0.id) ?? 0) }
+                stoppedFolds: folds,
+                attention: attention
             )
             next.append(sessions: rows, to: section, item: item) { rowContent(for: $0, data: data) }
         }

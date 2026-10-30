@@ -147,8 +147,9 @@ final class SessionThreadStripView: UIControl {
             : nil
         if let cost { parts.append(cost) }
         summary = parts.joined(separator: " · ")
-        // The cost keeps its own room next to the counts, so the counts shorten beside it rather than
-        // pushing it out; the cross-workspace note is what leaves first.
+        // The line draws the counts, then the cost, then the spacer, the Agents, and the chevron. The cost
+        // keeps its own room beside the counts, so the counts shorten beside it rather than pushing it out,
+        // and the cross-workspace note is what leaves first.
         summaryLabel.setParts(
             [statusSummary.text] + (rollup.workspaceCount > 1 ? ["\(rollup.workspaceCount) workspaces"] : [])
         )
@@ -272,7 +273,9 @@ final class SessionThreadCountsLine: UIStackView {
         // Fit before `super`, for the reason the dot line does it: a settled strip draws the Agents here.
         if let agents = arrangedSubviews.compactMap({ $0 as? SessionThreadAgentClusterView }).first,
            !agents.isHidden {
-            let gaps = CGFloat(max(0, arrangedSubviews.count - 1))
+            // Gaps between the pieces still on the line: a hidden cost leaves no gap behind it.
+            let shown = arrangedSubviews.filter { !$0.isHidden }
+            let gaps = CGFloat(max(0, shown.count - 1))
             let reserved = summary.minimumWidth + (cost.isHidden ? 0 : cost.intrinsicContentSize.width)
                 + chevron.intrinsicContentSize.width + spacing * gaps + Self.spacerMinWidth
             agents.fit(maxWidth: bounds.width - reserved)
