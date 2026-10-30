@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
 	applyGet,
 	applyWaitReading,
+	pillRows,
 	refreshLaunched,
 	renderSubagentTerminal,
 	rowFallback,
+	selectPillRows,
 	subagentFromCreate,
 	subagentRows,
 	widgetChrome,
@@ -202,6 +204,71 @@ describe("subagents", () => {
 		expect(chrome.subtitle).not.toBe(chrome.title);
 		expect(widgetChrome(rows.slice(0, 1)).subtitle).toBe("Working");
 		expect(widgetChrome([{ ...rows[1]! }]).subtitle).toBe("Done");
+	});
+
+	/** `count` children, newest first; `states` overrides by index (0 is the newest). */
+	const many = (count: number, states: Record<number, Subagent["state"]> = {}): Subagent[] =>
+		Array.from({ length: count }, (_, index) => ({
+			id: `child-${count - index}`,
+			title: `child ${count - index}`,
+			subtitle: `c${count - index}`,
+			link: `oppi://session/child-${count - index}`,
+			state: states[index] ?? "success",
+		}));
+
+	test("the pill keeps old working and blocked children, then the newest done ones", () => {
+		// 110 children; the oldest is blocked, the second oldest still working.
+		const all = many(110, { 109: "warning", 108: "running", 50: "running", 1: "error" });
+		const shown = selectPillRows(all);
+		expect(shown.map((row) => row.id)).toEqual([
+			"child-109", // needs attention first, newest first: the error
+			"child-1", // and the oldest, blocked
+			"child-60", // then working
+			"child-2",
+			"child-110", // then the newest done
+			"child-108",
+			"child-107",
+			"child-106",
+		]);
+	});
+
+	test("title counts every child and the subtitle its states, with the live ones past the rows", () => {
+		const all = many(111, { 110: "warning", 109: "running", 5: "running" });
+		expect(widgetChrome(all)).toEqual({ title: "111 subagents", subtitle: "2 working \u00b7 1 needs you" });
+		expect(widgetChrome(many(111)).subtitle).toBe("All done");
+		// Eleven live children: eight rows, three more working behind them.
+		const busy = many(20, Object.fromEntries(Array.from({ length: 11 }, (_, i) => [i, "running" as const])));
+		expect(widgetChrome(busy).subtitle).toBe("11 working \u00b7 +3 more working");
+		expect(selectPillRows(busy)).toHaveLength(8);
+		expect(selectPillRows(busy).every((row) => row.state === "running")).toBe(true);
+	});
+
+	test("a last row opens the whole thread, only when children are hidden", () => {
+		const rows = pillRows(many(111), "parent-1");
+		expect(rows).toHaveLength(9);
+		expect(rows.at(-1)).toMatchObject({
+			id: "thread",
+			title: "All 111 in thread",
+			link: "oppi://thread/parent-1",
+		});
+		expect(rows.slice(0, 8).every((row) => row.link.startsWith("oppi://session/"))).toBe(true);
+		expect(pillRows(many(8), "parent-1")).toHaveLength(8);
+		expect(pillRows(many(111))).toHaveLength(8);
+	});
+
+	test("a hidden child that starts working takes a row", () => {
+		const all = many(30);
+		expect(selectPillRows(all).map((row) => row.id)).not.toContain("child-3");
+		const woke = withStatuses(all, [{ id: "child-3", status: "busy" }]);
+		expect(selectPillRows(woke)[0]?.id).toBe("child-3");
+		expect(widgetChrome(woke).subtitle).toBe("1 working");
+	});
+
+	test("the terminal band counts every child but draws the selected rows", () => {
+		const lines = renderSubagentTerminal(many(30, { 29: "running" }));
+		expect(lines).toHaveLength(9);
+		expect(lines[0]).toContain("30 subagents");
+		expect(lines[1]).toContain("child 1");
 	});
 
 	test("a get payload puts model and context on the expanded row", () => {

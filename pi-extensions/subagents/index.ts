@@ -14,12 +14,13 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
 import {
 	applyWaitReading,
+	pillRows,
 	refreshLaunched,
+	selectPillRows,
 	rowFallback,
 	sessionIdFromCreateOutput,
 	sessionLink,
 	subagentFromCreate,
-	subagentRows,
 	renderSubagentTerminal,
 	widgetChrome,
 	type Subagent,
@@ -123,7 +124,10 @@ function runOppi(
 }
 
 export async function refreshLaunchedFromCli(launched: Subagent[]): Promise<Subagent[]> {
-	const gets = await Promise.all(launched.map((item) => runOppi(["session", "get", item.id, "--json"])));
+	// Only the children the pill draws as rows need their model and context.
+	const gets = await Promise.all(
+		selectPillRows(launched).map((item) => runOppi(["session", "get", item.id, "--json"])),
+	);
 	return refreshLaunched(
 		launched,
 		gets.map((result) => parseJson(result.stdout)),
@@ -200,7 +204,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			return;
 		}
 		const agents = shown;
-		const rows = subagentRows(agents);
+		const rows = pillRows(agents, parentId);
 		const chrome = widgetChrome(agents);
 		ui.setStatus(WIDGET_KEY, chrome.subtitle);
 		ui.setWidget(WIDGET_KEY, (_tui, theme) => ({

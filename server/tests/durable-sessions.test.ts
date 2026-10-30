@@ -624,6 +624,81 @@ describe("durable-native threads", () => {
     await until(async () => (await row())?.state === "success", "done again");
   });
 
+  it("counts every child in the pill, keeps an old working child in its rows, promotes a hidden one that starts again, and links the whole thread", async () => {
+    const slowGate = gate();
+    const againGate = gate();
+    const names = Array.from({ length: 10 }, (_, index) => `C${index}`);
+    const f = await fixture(
+      model(async ({ last, text, signal }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate many"))
+          return fauxAssistantMessage(
+            names.map((name) =>
+              fauxToolCall("subagent", { action: "spawn", name, task: `CHILD_TASK ${name}` }),
+            ),
+            { stopReason: "toolUse" },
+          );
+        if (text.includes("CHILD_TASK C0")) await slowGate.wait(signal);
+        if (text.includes("AGAIN please")) await againGate.wait(signal);
+        return fauxAssistantMessage("CHILD_OK");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate many");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    type Pill = {
+      presentation: { title: string; subtitle?: string };
+      blocks: Array<{ rows: Array<{ id: string; title: string; state: string; link: string }> }>;
+    };
+    const pill = async () =>
+      (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+        "widget:subagents"
+      ]?.nativeSurface as Pill | undefined;
+    const rows = async () => (await pill())?.blocks[0]?.rows ?? [];
+    const byName = (name: string) =>
+      f.storage.listSessions().find((session) => session.name === name)!;
+
+    // The oldest child is still working; nine others finished.
+    await until(async () => (await pill())?.presentation.title === "10 subagents", "ten children");
+    await until(
+      async () => (await pill())?.presentation.subtitle === "1 working",
+      "nine children done",
+    );
+    let shown = await rows();
+    expect(shown).toHaveLength(9);
+    expect(shown.slice(0, 8).map((row) => row.title)).toContain("C0");
+    expect(shown[0]).toMatchObject({ title: "C0", state: "running" });
+    expect(shown.slice(1, 8).every((row) => row.state === "success")).toBe(true);
+    expect(shown[8]).toEqual({
+      id: "thread",
+      title: "All 10 in thread",
+      state: "inactive",
+      link: `oppi://thread/${f.parent.id}`,
+    });
+
+    // A child that is not shown starts again: it takes a row, and the count stays whole.
+    const hidden = names.slice(1).find((name) => !shown.some((row) => row.id === byName(name).id))!;
+    const again = byName(hidden);
+    await f.manager.startSession(again.id, f.workspace);
+    await f.manager.sendPrompt(again.id, "AGAIN please");
+    await until(async () => (await pill())?.presentation.subtitle === "2 working", "two working");
+    shown = await rows();
+    expect(
+      shown
+        .slice(0, 2)
+        .map((row) => row.id)
+        .sort(),
+    ).toEqual([byName("C0").id, again.id].sort());
+    expect((await pill())?.presentation.title).toBe("10 subagents");
+
+    slowGate.open();
+    againGate.open();
+    await until(async () => (await pill())?.presentation.subtitle === "All done", "all done");
+    expect(await rows()).toHaveLength(9);
+  });
+
   it("lets its tickers release an uninstalled extension once their invocations ran their length, and keeps following the child", async () => {
     const childGate = gate();
     const againGate = gate();
@@ -856,7 +931,8 @@ describe("durable-native threads", () => {
     await until(async () => (await widgetTask()) !== retired, "a new watcher");
     await ask("Spawn kept", 2);
     await until(async () => (await rows())?.length === 2, "both rows");
-    expect(await rows()).toEqual(["Gone", "Kept"]);
+    // Newest first.
+    expect(await rows()).toEqual(["Kept", "Gone"]);
 
     const list = await ask("List them", 3);
     expect(list.isError).toBeFalsy();

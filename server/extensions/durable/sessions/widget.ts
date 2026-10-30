@@ -15,6 +15,7 @@ import {
 import {
   DurableUI,
   SESSION_REPORTER_TASK,
+  oppiHost,
   wakingTasks,
   type UINotification,
   type UIState,
@@ -25,8 +26,9 @@ import { liveTasks, wakingReporters } from "./wakers.js";
 import {
   renderSubagentTerminal,
   rowFallback,
+  pillRows,
+  selectPillRows,
   sessionLink,
-  subagentRows,
   titledWithAgent,
   widgetChrome,
   type Subagent,
@@ -34,19 +36,23 @@ import {
 
 // The durable form of the reference `subagents` extension's pill: the same activity rows, built by
 // the same helpers, published through the `oppi.extension-ui` notification slots. Rows link to
-// `oppi://session/<id>`, which the app already opens.
+// `oppi://session/<id>`, which the app already opens; the last row links to
+// `oppi://thread/<this session>`, the whole thread, when children are not shown as rows.
 //
-// Refresh follows the documents; the only timers are the activity interval, the starting retry,
-// and the invocation end below. Each shown child's `pi.live` (busy,
-// and its current activity) and `oppi.extension-ui` (an open dialog: needs attention) are
-// watched in process; a write happens only when a row changes. Model and context usage come from
-// the child's newest assistant entry, read when the child is first shown and when a run ends, so
-// a working child shows the usage of its previous answer. A change of activity alone is written
-// at most every `ACTIVITY_INTERVAL_MS`: streamed text changes it with every partial.
+// The title and subtitle count every child, and the rows are the ones that matter (`selectPillRows`):
+// those that need attention, the working ones, then the newest done ones, up to `MAX_PILL_ROWS`.
+// So every child's state is followed, not only the shown ones: a child that was done and starts
+// again, or opens a dialog, takes a row at once. Each child's `pi.live` (busy, and its current
+// activity) and `oppi.extension-ui` (an open dialog: needs attention) are watched in process; a
+// write happens only when the pill changes. Model and context usage come from the child's newest
+// assistant entry, read when the child is first seen (its failure is a row's Error) and when a run
+// ends, so a working child shows the usage of its previous answer. A change of activity alone is
+// written at most every `ACTIVITY_INTERVAL_MS`, and only while the child has a row: streamed text
+// changes it with every partial.
 //
 // An idle child is not done while background work of its own (its pending wakers: undelivered
 // jobs, its own reporters) will wake it to answer again: its row stays Working. The wakers are
-// read when the child is first shown, when a run ends, and when one of them ends; each live one
+// read when the child is first seen, when a run ends, and when one of them ends; each live one
 // has a waiter that marks the pass when it ends. No timer polls them. They are read from the
 // child's documents and tasks by `wakingTasks`, the rule `pendingWakers` uses, and not through
 // the subagent host: that needs the watcher's execution env, which a sandbox parent has only
@@ -61,8 +67,6 @@ import {
 // current registry. The new phase watches from scratch, as at first sight:
 // it reads each child's newest answer again, so a busy child's row can take that answer's usage.
 
-/** Rows the pill shows: the newest children, in spawn order. */
-const MAX_ROWS = 8;
 /** While a child waits for its first input, how often to look for its run. */
 const STARTING_RETRY_MS = 1_000;
 /** Entries read back for a child's newest assistant message. */
@@ -99,6 +103,8 @@ type Watched = {
   asking: boolean;
   /** No `pi.live` yet, and the task that hands the child its first input is still live. */
   starting: boolean;
+  /** The child has a row in the pill as last written; hidden children's activity writes nothing. */
+  visible?: boolean;
   /** Reread `answer` before the next publish: first sight, or a run ended. */
   stale: boolean;
   /** `answer` was read once. */
@@ -214,7 +220,10 @@ function shortId(sessionId: string): string {
   return sessionId.replace(/-/g, "").slice(0, 8);
 }
 
-function notifications(rows: Subagent[]): Record<string, UINotification> {
+function notifications(
+  children: Subagent[],
+  threadSessionId: string | undefined,
+): Record<string, UINotification> {
   const status: UINotification = {
     id: "subagents:status",
     method: "setStatus",
@@ -227,11 +236,11 @@ function notifications(rows: Subagent[]): Record<string, UINotification> {
     widgetKey: WIDGET_KEY,
     ...PROVENANCE,
   };
-  if (rows.length > 0) {
-    const chrome = widgetChrome(rows);
-    const native = subagentRows(rows);
+  if (children.length > 0) {
+    const chrome = widgetChrome(children);
+    const native = pillRows(children, threadSessionId);
     if (chrome.subtitle) status.statusText = chrome.subtitle;
-    widget.widgetLines = renderSubagentTerminal(rows);
+    widget.widgetLines = renderSubagentTerminal(children);
     widget.nativeSurface = {
       version: 1,
       id: `widget:${WIDGET_KEY}`,
@@ -261,6 +270,8 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
       let ending = false;
       const list = await runtime.watchDoc(Subagents, parent, context);
       if (!list) throw new Error("The subagent pill needs oppi.subagents");
+      // Where the pill's last row opens the whole thread; none for a conversation without a Session.
+      const threadSessionId = (await oppiHost().sessionName(runtime, context))?.sessionId;
       const watched = new Map<ConversationId, Watched>();
       let dirty = true;
       let wake: (() => void) | undefined;
@@ -304,7 +315,8 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
               if (busy === entry.busy) {
                 if (activity === entry.activity) return;
                 entry.activity = activity;
-                markActivity();
+                // A hidden child's activity is on no row; a pass that gives it one reads it.
+                if (entry.visible) markActivity();
                 return;
               }
               if (!busy) {
@@ -363,19 +375,20 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
           activityTimer = undefined;
           lastWrite = Date.now();
           const calls = list.value?.calls ?? {};
-          // Conversation ids ascend in spawn order; key order would put numeric names first.
-          const shown = Object.entries(list.value?.children ?? {})
+          // Every child is followed, so one that was not shown can take a row when its state
+          // changes. Conversation ids ascend in spawn order; key order would put numeric names
+          // first. Newest first, as `selectPillRows` takes them.
+          const children = Object.entries(list.value?.children ?? {})
             .filter((pair): pair is [string, Shown] => !!pair[1].sessionId)
-            .sort(([, a], [, b]) => a.conversationId - b.conversationId)
-            .slice(-MAX_ROWS);
-          const ids = new Set(shown.map(([, child]) => child.conversationId));
+            .sort(([, a], [, b]) => b.conversationId - a.conversationId);
+          const ids = new Set(children.map(([, child]) => child.conversationId));
           for (const [id, entry] of watched)
             if (!ids.has(id)) {
               watched.delete(id);
               await release(entry);
             }
           const rowsOf: Array<{ name: string; child: Shown; entry: Watched }> = [];
-          for (const [name, child] of shown) {
+          for (const [name, child] of children) {
             const id = child.conversationId;
             let entry = watched.get(id);
             if (!entry) {
@@ -403,6 +416,7 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
             rowsOf.push({ name, child, entry });
           }
 
+          let shownIds = new Set<string>();
           await runtime.commit(async (tx) => {
             const rows: Subagent[] = [];
             for (const { name, child, entry } of rowsOf) {
@@ -447,8 +461,9 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
                     : {}),
               });
             }
+            shownIds = new Set(selectPillRows(rows).map((row) => row.id));
             const ui = await tx.doc(DurableUI, parent);
-            for (const [slot, next] of Object.entries(notifications(rows))) {
+            for (const [slot, next] of Object.entries(notifications(rows, threadSessionId))) {
               const current = ui.notifications[slot];
               // Nothing shown yet: no clear to publish.
               if (current === undefined && rows.length === 0) continue;
@@ -464,6 +479,7 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
                 }
               : undefined;
           }, context);
+          for (const { child, entry } of rowsOf) entry.visible = shownIds.has(child.sessionId);
           if (ending) return;
           // After the commit that read them live: one that ended since resolves at once.
           for (const { entry } of rowsOf) for (const id of entry.wakers) watchWaker(entry, id);

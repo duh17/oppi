@@ -23,9 +23,10 @@ export interface Subagent {
 export interface SubagentRow {
 	id: string;
 	title: string;
-	subtitle: string;
+	subtitle?: string;
 	detail?: string;
-	state: Subagent["state"];
+	/** `inactive` is the thread row, which is a way to the whole thread and not a child. */
+	state: Subagent["state"] | "inactive";
 	link: string;
 	progress?: number;
 }
@@ -35,11 +36,17 @@ export interface WidgetChrome {
 	subtitle?: string;
 }
 
-const MAX_SUBAGENTS = 8;
+/** Most children the pill shows as rows; the title and subtitle count every child. */
+export const MAX_PILL_ROWS = 8;
 
 export function sessionLink(sessionId: string, workspaceId?: string): string {
 	const url = `oppi://session/${sessionId}`;
 	return workspaceId ? `${url}?workspaceId=${encodeURIComponent(workspaceId)}` : url;
+}
+
+/** The session list with `sessionId`'s thread open: the way from the pill to every child. */
+export function threadLink(sessionId: string): string {
+	return `oppi://thread/${sessionId}`;
 }
 
 export function applyGet(known: Subagent, payload: unknown): Subagent | null {
@@ -118,7 +125,7 @@ export function refreshLaunched(launched: Subagent[], gets: unknown[]): Subagent
 			else byId.delete(id);
 		}
 	}
-	return [...byId.values()].slice(0, MAX_SUBAGENTS);
+	return [...byId.values()];
 }
 
 export function withStatuses(rows: Subagent[], updates: Array<{ id: string; status?: string }>): Subagent[] {
@@ -203,7 +210,7 @@ export function renderSubagentTerminal(
 	if (subagents.length === 0) return [];
 	const style = options.style ?? plainTerminalStyle;
 	const width = options.width;
-	const specs = subagents.map(terminalSpec);
+	const specs = selectPillRows(subagents).map(terminalSpec);
 	const nameCol = terminalNameColumn(specs, width);
 	const statusCol = terminalStatusColumn(specs, width, nameCol);
 	return [
@@ -212,9 +219,40 @@ export function renderSubagentTerminal(
 	];
 }
 
-export function widgetChrome(subagents: Subagent[]): WidgetChrome {
+/**
+ * The children the pill draws as rows, from every child, newest first: the ones that need you,
+ * then the working ones, then the newest done ones, up to `max`. A working or blocked child
+ * never gives its place to a newer finished one, however long ago it started.
+ */
+export function selectPillRows(subagents: Subagent[], max = MAX_PILL_ROWS): Subagent[] {
+	const rank = (row: Subagent): number =>
+		row.state === "warning" || row.state === "error" ? 0 : row.state === "running" ? 1 : 2;
+	// Array.prototype.sort is stable: newest stays first within a rank.
+	return subagents
+		.slice()
+		.sort((a, b) => rank(a) - rank(b))
+		.slice(0, max);
+}
+
+/** The pill's rows: the selected children, then a last row to the whole thread when any is hidden. */
+export function pillRows(subagents: Subagent[], threadSessionId?: string, max = MAX_PILL_ROWS): SubagentRow[] {
+	const selected = selectPillRows(subagents, max);
+	const rows = subagentRows(selected);
+	if (threadSessionId && selected.length < subagents.length) {
+		rows.push({
+			id: "thread",
+			title: `All ${subagents.length} in thread`,
+			state: "inactive",
+			link: threadLink(threadSessionId),
+		});
+	}
+	return rows;
+}
+
+/** Title and subtitle count every child (`subagents` is all of them), not the rows shown. */
+export function widgetChrome(subagents: Subagent[], max = MAX_PILL_ROWS): WidgetChrome {
 	const title = subagents.length === 1 ? "1 subagent" : `${subagents.length} subagents`;
-	const subtitle = panelSummary(subagents);
+	const subtitle = panelSummary(subagents, max);
 	return {
 		title,
 		...(subtitle && subtitle !== title ? { subtitle } : {}),
@@ -266,18 +304,25 @@ function subagentFromSession(
 	};
 }
 
-function panelSummary(rows: Subagent[]): string | undefined {
+function panelSummary(rows: Subagent[], max: number): string | undefined {
 	if (rows.length === 0) return undefined;
 	const working = rows.filter((row) => row.state === "running").length;
 	const attention = rows.filter((row) => row.state === "warning").length;
 	const errors = rows.filter((row) => row.state === "error").length;
-	if (attention > 0) return attention === 1 ? "Needs attention" : `${attention} need attention`;
-	if (working > 0) {
-		if (working === rows.length && working === 1) return "Working";
-		return `${working} working`;
+	if (rows.length === 1) {
+		if (attention > 0) return "Needs attention";
+		if (working > 0) return "Working";
+		return errors > 0 ? "Error" : "Done";
 	}
-	if (errors > 0) return errors === 1 ? "Error" : `${errors} errors`;
-	return rows.length === 1 ? "Done" : "All done";
+	const parts: string[] = [];
+	if (working > 0) parts.push(`${working} working`);
+	if (attention > 0) parts.push(attention === 1 ? "1 needs you" : `${attention} need you`);
+	if (errors > 0) parts.push(errors === 1 ? "1 error" : `${errors} errors`);
+	if (parts.length === 0) return "All done";
+	// Live children past the rows the pill has room for.
+	const unseen = attention + working + errors - max;
+	if (unseen > 0) parts.push(`+${unseen} more working`);
+	return parts.join(" \u00b7 ");
 }
 
 function shortModelName(model: string | undefined): string | undefined {
