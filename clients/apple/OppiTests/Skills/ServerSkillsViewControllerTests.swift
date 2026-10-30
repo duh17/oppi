@@ -141,6 +141,35 @@ struct ServerSkillsViewControllerTests {
         #expect(store.skills(forServer: serverId).first?.state == .enabled)
     }
 
+    @Test("A Skill the server could not classify still offers Retry")
+    func unknownStateSkillOffersRetry() throws {
+        let root = try makeRoot()
+        let connection = try #require(root.coordinator.connection(for: serverId))
+        connection.serverResourceStore.replaceSkills([skill(state: .unknown)], serverId: serverId)
+
+        // No window, so the page never loads: no failed request adds a Retry of
+        // its own, and only the catalog row's state decides.
+        let screen = ServerSkillDetailViewController(
+            target: ServerResourceDetailNavTarget(serverId: serverId, kind: .skill, resourceId: "release"),
+            root: root,
+            connection: connection
+        )
+        screen.loadViewIfNeeded()
+        screen.updateProperties()
+        let rows = screen.shownItems
+        func isRetry(_ item: ServerSkillDetailViewController.Item) -> Bool {
+            if case .retry = item { return true }
+            return false
+        }
+        func isLoadError(_ item: ServerSkillDetailViewController.Item) -> Bool {
+            if case .loadError = item { return true }
+            return false
+        }
+        #expect(!rows.isEmpty, "the catalog row fills the page without a load")
+        #expect(!rows.contains(where: isLoadError), "no load error, which would offer a Retry of its own")
+        #expect(rows.contains(where: isRetry), "an unknown Skill's Validation offers Retry, as a failed one does")
+    }
+
     @Test("Retry on an unavailable Skills catalog says why, sends one new request, and loads the list")
     func retryReloadsAnUnavailableCatalog() async throws {
         SkillsCatalogURLProtocol.reset()

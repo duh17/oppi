@@ -202,6 +202,18 @@ struct SettingsKitTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
     }
 
+    @Test("A page that edits text dismisses the keyboard on a drag, as the lists that built their own did")
+    func draggingDismissesTheKeyboard() {
+        let page = DraggingPage()
+        page.loadViewIfNeeded()
+        #expect(page.collectionView.keyboardDismissMode == .interactive)
+        #expect(page.collectionView.alwaysBounceVertical, "a short list can still be dragged")
+
+        let plain = ScopedPage()
+        plain.loadViewIfNeeded()
+        #expect(plain.collectionView.keyboardDismissMode == .none, "a page that does not opt in keeps UIKit's default")
+    }
+
     @Test("Only a page that loads its content pulls to refresh")
     func pullToRefreshIsOptedInto() {
         let plain = ScopedPage()
@@ -346,6 +358,20 @@ private final class WholeScreenStatePage: ListScreenController<WholeScreenStateP
     override func wholeScreenState() -> LoadState? {
         .loading("Loading the resource…")
     }
+}
+
+/// A page whose list dismisses the keyboard when dragged.
+private final class DraggingPage: ListScreenController<DraggingPage.Section, Int> {
+    enum Section: Hashable, Sendable { case only }
+
+    init() {
+        super.init(
+            title: "Drag", listIdentifier: "test.drag.list",
+            endsAtKeyboard: true, dismissesKeyboardOnDrag: true
+        )
+    }
+
+    override func sections() -> [ListSection<Section, Int>] { [ListSection(.only, items: [1])] }
 }
 
 /// A page that counts its loads.

@@ -46,7 +46,10 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
             ),
             root: root
         )
-        super.init(title: "Custom Themes", listIdentifier: "themes.list", scope: .device, footers: true)
+        super.init(
+            title: "Custom Themes", listIdentifier: "themes.list", scope: .device, footers: true,
+            dismissesKeyboardOnDrag: true
+        )
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
     }
@@ -57,8 +60,6 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.keyboardDismissMode = .interactive
-        collectionView.alwaysBounceVertical = true
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
         composer.install(in: self)

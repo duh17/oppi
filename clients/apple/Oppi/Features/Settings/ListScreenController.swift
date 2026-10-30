@@ -161,6 +161,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     private let showsHeaders: Bool
     private let showsFooters: Bool
     private let listEndsAtKeyboard: Bool
+    private let dismissesKeyboardOnDrag: Bool
     private var appliedThemeID: ThemeID?
     private var changedRows = ChangedRows<ListSlot<Section, Item>>()
     private var models: [Section: ListSection<Section, Item>] = [:]
@@ -177,6 +178,10 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     ///   - largeTitle: a page that roots its stack keeps the large title.
     ///   - endsAtKeyboard: a page that edits text in place ends its list at the
     ///     keyboard (`SettingsListStyle.pin`), so the field scrolls above it.
+    ///   - dismissesKeyboardOnDrag: whether dragging the list puts the keyboard
+    ///     away. The list dismisses it interactively and bounces even when its
+    ///     rows do not fill it, which is what a list that built its own
+    ///     collection view got; a page that edits text turns it on.
     ///   - pullsToRefresh: whether the page loads its own content. It gets the
     ///     list's refresh control and has `refresh()` run on every appearance.
     ///     Off by default, so a page that loads nothing never shows a spinner
@@ -190,6 +195,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         footers: Bool = false,
         largeTitle: Bool = false,
         endsAtKeyboard: Bool = false,
+        dismissesKeyboardOnDrag: Bool = false,
         pullsToRefresh: Bool = false
     ) {
         pageScope = scope
@@ -197,6 +203,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         showsHeaders = headers
         showsFooters = footers
         listEndsAtKeyboard = endsAtKeyboard
+        self.dismissesKeyboardOnDrag = dismissesKeyboardOnDrag
         self.pullsToRefresh = pullsToRefresh
         super.init(nibName: nil, bundle: nil)
         self.title = title
@@ -335,6 +342,10 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         super.viewDidLoad()
         collectionView.delegate = self
         SettingsListStyle.pin(collectionView, in: view, endsAtKeyboard: listEndsAtKeyboard)
+        if dismissesKeyboardOnDrag {
+            collectionView.keyboardDismissMode = .interactive
+            collectionView.alwaysBounceVertical = true
+        }
         collectionView.refreshControl = pullsToRefresh ? pullToRefreshControl : nil
         if pullsToRefresh {
             pullToRefreshControl.addAction(UIAction { [weak self] _ in

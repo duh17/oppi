@@ -81,7 +81,7 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
         self.onAdded = onAdded
         super.init(
             title: "Add MCP Server", listIdentifier: "mcp.add.list",
-            headers: true, footers: true, endsAtKeyboard: true
+            headers: true, footers: true, endsAtKeyboard: true, dismissesKeyboardOnDrag: true
         )
         traitOverrides.appRootEnvironment = root
     }
@@ -117,6 +117,10 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
         // A save in flight keeps the sheet up, as a swipe-down would lose it.
         isModalInPresentation = saving
     }
+
+    /// A field that grows as it is filled swaps the rows around; they should
+    /// not slide.
+    override var animatesUpdates: Bool { false }
 
     // MARK: - List
 

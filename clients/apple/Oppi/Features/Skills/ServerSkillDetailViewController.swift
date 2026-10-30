@@ -14,7 +14,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
     ServerSkillSummary, ServerSkillDetail, ServerSkillDetailViewController.Section, ServerSkillDetailViewController.Item
 > {
     enum Section: Hashable, Sendable {
-        case summary, serverDefault, source, validation, contents
+        case summary, serverDefault, source, validation, loading, contents
     }
 
     enum Item: Hashable, Sendable {
@@ -83,7 +83,8 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             ListSection(.validation, header: "Validation", items: validationItems),
         ]
         if state.isLoading && state.detail == nil {
-            sections.append(ListSection(.contents, header: "Contents", items: [.loadingContents]))
+            // The file list has a section of its own, without a heading.
+            sections.append(ListSection(.loading, items: [.loadingContents]))
         } else if state.detail != nil {
             sections.append(ListSection(.contents, header: "Contents", items: [.browse]))
         }
@@ -96,23 +97,24 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         return items + [.detail("Provenance"), .detail("Scope"), .detail("Files")]
     }
 
-    /// The load's state and what it found: the retry under either a row error
-    /// or a failed load, and each warning once (a diffable list traps on a
-    /// repeated row).
+    /// The load's state and what it found: the retry under a row error, an
+    /// unknown state, or a failed load, and each warning once (a diffable list
+    /// traps on a repeated row).
     private var validationItems: [Item] {
         guard let state else { return [] }
         let summary = state.summary
         var items: [Item] = [.status]
         if summary.loadError ?? state.loadError != nil { items.append(.loadError) }
         items += Self.unique(summary.warnings).map(Item.warning)
-        if summary.state == .error || state.loadError != nil { items.append(.retry) }
+        let hasError = summary.state == .error || summary.state == .unknown
+        if hasError || state.loadError != nil { items.append(.retry) }
         return items
     }
 
     /// The group headings are the ones this page wrote, so only the sections
     /// with one show it.
     override func showsHeader(for section: Section) -> Bool {
-        section != .summary
+        section != .summary && section != .loading
     }
 
     /// What a row draws from, besides its own identity: a replaced switch would

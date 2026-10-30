@@ -32,7 +32,8 @@ final class QuickCommentEditorViewController: ListScreenController<QuickCommentE
             listIdentifier: "settings.quickComments.editor.list",
             scope: .device,
             headers: true,
-            footers: true
+            footers: true,
+            dismissesKeyboardOnDrag: true
         )
     }
 
@@ -44,7 +45,6 @@ final class QuickCommentEditorViewController: ListScreenController<QuickCommentE
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.keyboardDismissMode = .interactive
         let cancel = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
             guard let self else { return }
             Router.finish(self)

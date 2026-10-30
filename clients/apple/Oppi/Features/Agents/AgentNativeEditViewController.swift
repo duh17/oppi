@@ -79,7 +79,8 @@ final class AgentNativeEditViewController: ListScreenController<
             headers: true,
             footers: true,
             // The prompt editor scrolls above the keyboard.
-            endsAtKeyboard: true
+            endsAtKeyboard: true,
+            dismissesKeyboardOnDrag: true
         )
     }
 
@@ -87,7 +88,6 @@ final class AgentNativeEditViewController: ListScreenController<
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.keyboardDismissMode = .interactive
         // The text editors grow as their text does.
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
         navigationItem.leftBarButtonItem = cancelItem

@@ -38,7 +38,8 @@ final class DictationDictionaryViewController: ListScreenController<DictationDic
             listIdentifier: "settings.dictionary.list",
             scope: .server(model.serverName),
             headers: true,
-            footers: true
+            footers: true,
+            dismissesKeyboardOnDrag: true
         )
     }
 
@@ -61,7 +62,6 @@ final class DictationDictionaryViewController: ListScreenController<DictationDic
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.keyboardDismissMode = .interactive
         let save = UIBarButtonItem(title: String(localized: "Save"), primaryAction: UIAction { [weak self] _ in
             guard let self else { return }
             Task { await self.model.save() }

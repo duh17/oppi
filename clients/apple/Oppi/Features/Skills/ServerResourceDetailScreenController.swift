@@ -117,7 +117,7 @@ class ServerResourceDetailScreenController<
         self.page = page
         switchesServer = connection == nil
         loader = ServerResourceDetailLoader(target: target)
-        super.init(title: page.title, listIdentifier: page.listIdentifier, headers: true, footers: true)
+        super.init(title: page.title, listIdentifier: page.listIdentifier, headers: true, footers: true, dismissesKeyboardOnDrag: true)
         traitOverrides.appRootEnvironment = root
         navigationItem.largeTitleDisplayMode = .never
     }

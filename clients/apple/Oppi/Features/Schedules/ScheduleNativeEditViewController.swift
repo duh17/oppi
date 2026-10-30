@@ -86,7 +86,8 @@ final class ScheduleNativeEditViewController: ListScreenController<
             scope: .server(serverName),
             headers: true,
             // The prompt editor scrolls above the keyboard.
-            endsAtKeyboard: true
+            endsAtKeyboard: true,
+            dismissesKeyboardOnDrag: true
         )
     }
 
@@ -94,7 +95,6 @@ final class ScheduleNativeEditViewController: ListScreenController<
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.keyboardDismissMode = .interactive
         // The prompt editor grows as its text does.
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
         navigationItem.leftBarButtonItem = cancelItem

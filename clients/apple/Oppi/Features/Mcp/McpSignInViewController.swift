@@ -42,7 +42,10 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
         self.attempt = attempt
         self.owner = owner
         self.root = root
-        super.init(title: "Sign In", listIdentifier: "mcp.auth.list", headers: true, footers: true, endsAtKeyboard: true)
+        super.init(
+            title: "Sign In", listIdentifier: "mcp.auth.list",
+            headers: true, footers: true, endsAtKeyboard: true, dismissesKeyboardOnDrag: true
+        )
         traitOverrides.appRootEnvironment = root
         let close = UIBarButtonItem(systemItem: .close, primaryAction: UIAction(title: "Close") { [weak owner] _ in
             owner?.showingSheet = false
@@ -60,6 +63,9 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
         isModalInPresentation = attempt.isCancelling
         keyboardSubmit.isEnabled = owner.canSubmitCallback
     }
+
+    /// The sheet's rows change as the flow settles; they should not slide.
+    override var animatesUpdates: Bool { false }
 
     // MARK: - List
 
