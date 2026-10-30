@@ -208,30 +208,12 @@ final class AskCardIntentRegressionPreviewController: UIViewController {
     }
 }
 
-/// Inline Ask cards on the chat composer. `.tall`: one question with enough
+/// An inline Ask card on the chat composer: one question with enough
 /// options to exceed the inline Ask cap so the card must scroll instead of
-/// stretching the composer. `.controlReview`: a server-authored review card
-/// (summary line, labeled fields, a diff block) with two options, folded and
-/// expanded, to prove the Markdown message renders and every option stays in
-/// view.
+/// stretching the composer.
 struct AskCardTallScrollPreview: UIViewControllerRepresentable {
-    enum Fixture {
-        case tall
-        case controlReview
-        case controlReviewExpanded
-
-        var request: AskRequest {
-            switch self {
-            case .tall: AskCardTallScrollPreview.tallRequest
-            case .controlReview, .controlReviewExpanded: AskCardTallScrollPreview.controlReviewRequest
-            }
-        }
-    }
-
-    var fixture: Fixture = .tall
-
     func makeUIViewController(context: Context) -> AskCardTallScrollPreviewController {
-        AskCardTallScrollPreviewController(fixture: fixture)
+        AskCardTallScrollPreviewController()
     }
 
     func updateUIViewController(_ controller: AskCardTallScrollPreviewController, context: Context) {}
@@ -261,49 +243,12 @@ struct AskCardTallScrollPreview: UIViewControllerRepresentable {
     )
 }
 
-extension AskCardTallScrollPreview {
-    /// An extension `select` request as a server writes it: the title, then a
-    /// message of a summary line, labeled fields in code, and a fenced diff. Built
-    /// through the same conversion the app uses, so the fixture shows what a
-    /// real request renders as.
-    static let controlReviewRequest: AskRequest = {
-        let request = ExtensionUIRequest(
-            id: "ask-control-review",
-            sessionId: "preview-session",
-            method: "select",
-            title: "Change Agent \u{201C}QA reviewer\u{201D}?",
-            options: ["Apply Change", "Cancel"],
-            message: """
-            Model `fable-5` \u{2192} `sonnet-5-5` \u{00B7} Instructions changed
-
-            **Model:** `fable-5` \u{2192} `sonnet-5-5`
-
-            **Instructions**
-
-            ```diff
-              Be kind.
-            - Review tests first.
-            + Review code first.
-              Check the diff.
-              Say so.
-            ```
-
-            Details: `PATCH /agents/KQdEFkKi?expectedVersion=1`
-            """
-        )
-        guard let ask = request.askRequest else { preconditionFailure("control review fixture must convert") }
-        return ask
-    }()
-}
-
 final class AskCardTallScrollPreviewController: UIViewController {
-    private let fixture: AskCardTallScrollPreview.Fixture
     private let composer: PreviewComposerController
 
-    init(fixture: AskCardTallScrollPreview.Fixture) {
-        self.fixture = fixture
+    init() {
         composer = PreviewComposerController(values: .init(
-            askRequest: fixture.request,
+            askRequest: AskCardTallScrollPreview.tallRequest,
             colors: ComposerThemeColors(palette: ThemeRuntimeState.currentPalette())
         ))
         super.init(nibName: nil, bundle: nil)
@@ -312,29 +257,11 @@ final class AskCardTallScrollPreviewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        guard fixture != .tall else { return }
-        // The control-review fixtures report ready once the card has settled
-        // (and, expanded, once the sheet it opens has too), so a screenshot
-        // shows the resting layout.
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(1200))
-            if fixture == .controlReviewExpanded {
-                (view.descendant(identifier: "ask.expand") as? UIControl)?.sendActions(for: .touchUpInside)
-                try? await Task.sleep(for: .milliseconds(900))
-            }
-            view.accessibilityIdentifier = "screenshot.ready"
-        }
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
         overrideUserInterfaceStyle = .light
         view.backgroundColor = composer.values.colors.bg
-        if fixture == .tall {
-            view.accessibilityIdentifier = "screenshot.ready"
-        }
+        view.accessibilityIdentifier = "screenshot.ready"
         FeatureEducationTips.markPromptAnswered()
         addChild(composer)
         composer.view.translatesAutoresizingMaskIntoConstraints = false
@@ -347,16 +274,6 @@ final class AskCardTallScrollPreviewController: UIViewController {
             composer.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor, constant: -16),
             composer.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8),
         ])
-    }
-}
-
-private extension UIView {
-    func descendant(identifier: String) -> UIView? {
-        if accessibilityIdentifier == identifier { return self }
-        for subview in subviews {
-            if let match = subview.descendant(identifier: identifier) { return match }
-        }
-        return nil
     }
 }
 #endif

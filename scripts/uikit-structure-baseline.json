@@ -203,37 +203,7 @@
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/AudioScreenshotPreview.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/BuiltInToolFactsPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/ComposerScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/FeatureEducationTipsPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/FileBrowserMotionPreviewSupport.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/FullscreenChromePreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/GeoJSONMountRainierPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/LatexRenderingPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/LiveActivityScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/MermaidScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/MetalOrbScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/QuietWorkStripPreview.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/SSHTerminalScreenshotPreview.swift": {
@@ -245,18 +215,6 @@
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/SettingsSweepScreenshotPreview.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SyntaxLanguagesPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/ToolCallDocumentPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/USDZRenderingPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/WhatsNewScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/WorkspaceSettingsScreenshotPreview.swift": {
       "import SwiftUI": 1
     },
@@ -264,9 +222,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/SemanticPickHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ServerResourcesScreenshotPreview.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/StreamingFlickerPreviewView.swift": {

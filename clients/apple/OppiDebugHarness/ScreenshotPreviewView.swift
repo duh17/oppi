@@ -90,50 +90,6 @@ struct ScreenshotPreviewView: View {
             SSHTerminalScreenshotPreview()
         case "ssh-terminal-status-blocked":
             SSHTerminalScreenshotPreview(status: .blocked)
-        case "ssh-terminal-progress-set":
-            SSHTerminalScreenshotPreview(status: .progressSet)
-        case "ssh-terminal-progress-indeterminate":
-            SSHTerminalScreenshotPreview(status: .progressIndeterminate)
-        case "ssh-terminal-progress-error":
-            SSHTerminalScreenshotPreview(status: .progressError)
-        case "ssh-terminal-progress-error-no-percent":
-            SSHTerminalScreenshotPreview(status: .progressErrorNoPercent)
-        case "ssh-terminal-progress-pause":
-            SSHTerminalScreenshotPreview(status: .progressPause)
-        case "ssh-terminal-progress-with-status":
-            SSHTerminalScreenshotPreview(status: .progressWithStatus)
-        case "ssh-terminal-switcher":
-            SSHTerminalScreenshotPreview(status: .switcher)
-        case "ssh-terminal-ghostty-theme":
-            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: .tokyonight)
-        case "ssh-terminal-ghostty-theme-light":
-            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: .paper)
-        case "ssh-terminal-ghostty-theme-disconnected":
-            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: .tokyonight, disconnected: true)
-        case "ssh-terminal-ghostty-theme-light-disconnected":
-            SSHTerminalScreenshotPreview(status: .idle, ghosttyTheme: .paper, disconnected: true)
-        case "ssh-terminal-kitty":
-            SSHTerminalScreenshotPreview(status: .kitty)
-        case "ssh-terminal-password-fill":
-            SSHTerminalScreenshotPreview(status: .passwordPrompt)
-        case "review-comment-inline-draft":
-            ReviewCommentInlineDraftScreenshotPreview()
-                .ignoresSafeArea()
-        case "whats-new-build56-light", "whats-new-build55-light", "whats-new-build54-light", "whats-new-build53-light", "whats-new-build52-light", "whats-new-build51-light", "whats-new-build50-light", "whats-new-build49-light":
-            WhatsNewScreenshotPreview(themeID: .light)
-                .ignoresSafeArea()
-        case "whats-new-build56-light-bottom":
-            WhatsNewScreenshotPreview(themeID: .light, scrollsToBottom: true)
-                .ignoresSafeArea()
-        case "whats-new-build56-dark", "whats-new-build55-dark", "whats-new-build54-dark", "whats-new-build53-dark", "whats-new-build52-dark", "whats-new-build51-dark", "whats-new-build50-dark", "whats-new-build49-dark":
-            WhatsNewScreenshotPreview(themeID: .dark)
-                .ignoresSafeArea()
-        case "server-resources-skills":
-            ServerResourcesScreenshotPreview(screen: .skills)
-        case "server-resources-extensions":
-            ServerResourcesScreenshotPreview(screen: .extensions)
-        case "server-resources-cached-offline":
-            ServerResourcesScreenshotPreview(screen: .cachedOffline)
         case "router-routes":
             RouterRoutesPreview()
         case "router-modal-sites":
@@ -144,131 +100,20 @@ struct ScreenshotPreviewView: View {
             AskCardIntentRegressionPreview()
         case "ask-card-tall-scroll":
             AskCardTallScrollPreview()
-        case "ask-card-control-review":
-            AskCardTallScrollPreview(fixture: .controlReview)
-        case "ask-card-control-review-expanded":
-            AskCardTallScrollPreview(fixture: .controlReviewExpanded)
-        case "model-providers-quota-inline":
-            ModelProvidersScreenshotPreview()
-        case "server-metrics":
-            ServerMetricsScreenshotPreview(samplingOn: true)
-        case "server-metrics-off":
-            ServerMetricsScreenshotPreview(samplingOn: false)
-        case "tool-call-document":
-            ToolCallDocumentPreview(direct: false)
-        case "tool-call-document-mcp":
-            ToolCallDocumentPreview(direct: true)
         case "session-timeline":
             SessionTimelinePreview()
-        case "quiet-work-strip":
-            QuietWorkStripPreview()
-        case "input-card-disclosure":
-            InputCardDisclosurePreview()
-        case "old-server-bash":
-            BuiltInToolFactsPreview(isEdit: false)
-        case "old-server-edit":
-            BuiltInToolFactsPreview(isEdit: true)
         case "file-browser-motion":
             FileBrowserMotionPreview()
         case "review-file-motion":
             ReviewFileMotionPreview()
-        case "live-voice-composer":
-            LiveVoiceComposerPreview(pinned: nil)
-                .ignoresSafeArea()
-        case "live-voice-composer-connecting", "live-voice-composer-listening", "live-voice-composer-talking", "live-voice-composer-speaking", "live-voice-composer-muted", "live-voice-composer-restored":
-            LiveVoiceComposerPreview(pinned: LiveVoiceComposerPreview.Step(
-                rawValue: String(ScreenshotPreviewConfig.screen.dropFirst("live-voice-composer-".count))
-            ))
-            .ignoresSafeArea()
         case "streaming-flicker":
             StreamingFlickerPreviewView()
-        case "latex-rendering":
-            LatexRenderingPreview()
-        case "syntax-languages-a":
-            SyntaxLanguagesPreview(page: .webAndDynamic, engine: .treeSitter)
-        case "syntax-languages-b":
-            SyntaxLanguagesPreview(page: .systemsAndMarkup, engine: .treeSitter)
-        case "syntax-languages-a-scanner":
-            SyntaxLanguagesPreview(page: .webAndDynamic, engine: .scanner)
-        case "syntax-languages-b-scanner":
-            SyntaxLanguagesPreview(page: .systemsAndMarkup, engine: .scanner)
-        case "mermaid-rendering":
-            MermaidRenderingPreview()
-        case "geojson-mount-rainier":
-            GeoJSONMountRainierPreview()
-        case "usdz-rendering":
-            USDZRenderingPreview()
-        case "usdz-fullscreen":
-            USDZFullScreenPreviewHost(failing: false)
-                .ignoresSafeArea()
-        case "usdz-fullscreen-failed":
-            USDZFullScreenPreviewHost(failing: true)
-                .ignoresSafeArea()
-        case "fullscreen-code":
-            FullScreenReaderPreviewHost(kind: .code)
-                .ignoresSafeArea()
-        case "fullscreen-markdown":
-            FullScreenReaderPreviewHost(kind: .markdown)
-                .ignoresSafeArea()
-        case "viewing-options":
-            ViewingOptionsPreviewHost(family: .code)
-                .ignoresSafeArea()
-        case "viewing-options-markdown":
-            ViewingOptionsPreviewHost(family: .markdown)
-                .ignoresSafeArea()
-        case "app-lock-cover":
-            AppLockCoverPreviewHost(state: .locked)
-                .ignoresSafeArea()
-        case "app-lock-cover-failed":
-            AppLockCoverPreviewHost(state: .failed)
-                .ignoresSafeArea()
-        case "app-lock-cover-obscured":
-            AppLockCoverPreviewHost(state: .obscured)
-                .ignoresSafeArea()
-        case "mermaid-consistency-inline":
-            MermaidConsistencyPreview(expanded: false)
-        case "mermaid-consistency-expanded":
-            MermaidConsistencyPreview(expanded: true)
-        case "mermaid-fullscreen":
-            MermaidFullscreenPreview()
-        case "mermaid-responsive-routing":
-            MermaidResponsiveRoutingPreview()
-        case "fullscreen-mermaid":
-            FullscreenMermaidChromePreview()
-        case "fullscreen-image":
-            FullscreenImageChromePreview()
-        case "fullscreen-html":
-            FullscreenHTMLChromePreview()
-        case "fullscreen-svg":
-            FullscreenSVGChromePreview()
-        case "feature-tips":
-            FeatureEducationTipsPreview()
         case "feature-tip-p0":
             FeatureEducationP0TipPreview()
-        case "voice-message-expanded":
-            VoiceMessageExpandedPreview()
-        case "audio-file-player":
-            AudioFilePlayerScreenshotPreview()
         case "audio-script-reader":
             AudioScriptReaderPreview()
-        case "chat-reader-document", "chat-reader-extension", "chat-reader-locked", "server-lock-cover", "now-playing-player":
-            ChatReaderScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
-        case "live-activity-working":
-            LiveActivityPreviewScreen(title: "Live Activity: Running", state: .init(running: 3, needsYou: 0))
-        case "live-activity-needs-you":
-            LiveActivityPreviewScreen(title: "Live Activity: Needs You", state: .init(running: 3, needsYou: 1))
-        case "live-activity-done":
-            LiveActivityPreviewScreen(title: "Live Activity: All Done", state: .init(running: 0, needsYou: 0))
-        case "metal-orbs":
-            MetalOrbScreenshotPreview()
         case "workspace-shell":
             WorkspaceShellScreenshotPreview()
-        case "live-voice-call-strip":
-            WorkspaceShellPreview(root: LiveVoiceCallStripScreenshotPreview.root)
-                .ignoresSafeArea()
-                .preferredColorScheme(LiveVoiceCallStripScreenshotPreview.root.themeStore.preferredColorScheme)
-        case "chat-top-bar":
-            ChatRoutesHarnessPreview()
         case "chat-top-bar-default":
             ChatTopBarScreenshotPreview(
                 order: ChatTopBarAction.allCases,
@@ -294,271 +139,10 @@ struct ScreenshotPreviewView: View {
                 order: [.outline, .files, .context, .git, .terminal],
                 shown: Set(ChatTopBarAction.allCases)
             )
-        case "workspace-top-bar":
-            WorkspaceTopBarScreenshotPreview()
-        case "settings-root", "settings-general", "settings-storage", "settings-privacy", "settings-text", "settings-voice", "settings-chat", "settings-editor", "settings-chat-top-bar", "settings-experiments", "settings-editor-key-bar":
+        case "settings-chat", "settings-chat-top-bar":
             SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
-        case "settings-appearance", "settings-appearance-gallery", "settings-appearance-gallery-light", "settings-appearance-gallery-dark":
-            SettingsPageScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
-        case "push-discovery-card":
-            PushDiscoveryCardScreenshotPreview()
-        case "workspace-file-editor", "workspace-file-editor-markdown", "workspace-file-editor-vim":
-            WorkspaceFileEditorScreenshotPreview(screen: ScreenshotPreviewConfig.screen)
-                .ignoresSafeArea()
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
-        }
-    }
-}
-
-/// The chat reader's screens over fixture services, each as the shell mounts
-/// it: the route screen (`ChatReaderViewController`) with a document or an
-/// extension surface, the lock covers a reader and the shell show, and the
-/// full-screen Now Playing page.
-///
-/// - `chat-reader-document`: a Markdown document page.
-/// - `chat-reader-extension`: an extension drawer's surface, full screen.
-/// - `chat-reader-locked`: the cover a reader shows while its origin is
-///   locked. The cover is mounted directly; locking for real would write the
-///   simulator's persistent lock flags.
-/// - `server-lock-cover`: the shell's server lock cover with Switch Server.
-/// - `now-playing-player`: the Now Playing page over a paused silent clip.
-struct ChatReaderScreenshotPreview: View {
-    let screen: String
-    @State private var root = ChatReaderScreenshotFixture.makeRoot()
-    @State private var audioPlayer = AudioPlayerService()
-    private static let nowPlayingItemID = "now-playing-preview"
-
-    var body: some View {
-        RouterPreviewControllerStack(root: root) {
-            makeScreen()
-        }
-        .ignoresSafeArea()
-        .publishesAppRootToWindow(root)
-        .task {
-            guard screen == "now-playing-player" else { return }
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("now-playing-preview.wav")
-            try? AudioScriptReaderPreview.silentWAV(seconds: 90).write(to: url)
-            audioPlayer.toggleFilePlayback(fileURL: url, itemID: Self.nowPlayingItemID)
-            audioPlayer.seek(to: 31)
-            audioPlayer.pause()
-        }
-        .accessibilityIdentifier("screenshot.ready")
-    }
-
-    private func makeScreen() -> UIViewController {
-        switch screen {
-        case "chat-reader-extension":
-            return ChatReaderScreenshotFixture.reader(root: root, payload: ChatReaderScreenshotFixture.extensionPayload)
-        case "chat-reader-locked":
-            return ScopedLockCoverViewController(
-                target: ChatReaderScreenshotFixture.origin,
-                title: String(localized: "Reader")
-            )
-        case "server-lock-cover":
-            return ShellRouteScreens.serverLockCover(
-                serverId: ChatReaderScreenshotFixture.servers[0].id,
-                root: root
-            )
-        case "now-playing-player":
-            return InAppNowPlayingPlayerViewController(audioPlayer: audioPlayer, onLeave: {})
-        default:
-            return ChatReaderScreenshotFixture.reader(root: root, payload: ChatReaderScreenshotFixture.documentPayload)
-        }
-    }
-}
-
-/// The production workspace code editor over an offline session, focused so
-/// its key bar and status line show: `workspace-file-editor` (Swift),
-/// `-markdown` (Markdown source), `-vim` (Swift in Vim Normal mode). Editor
-/// settings go in the volatile argument domain, never the simulator's defaults.
-/// `SCREENSHOT_EDITOR_KEYS` types its characters after focus, through the same
-/// `insertText` path as the keyboard (in `-vim`, e.g. `Vj` shows Visual Line).
-/// `SCREENSHOT_EDITOR_SOURCE` is the path of a file to open instead of the
-/// sample (its extension picks the grammar), `SCREENSHOT_EDITOR_WRAP=on|off`
-/// sets Wrap Lines for every file kind, and `SCREENSHOT_EDITOR_SCROLL=0.5`
-/// jumps that fraction down the document once it is on screen.
-/// Dump with `UIValidateTests` (dev/testing/apple.md) and `SCREENSHOT_SCREEN=workspace-file-editor[-markdown|-vim]`.
-private struct WorkspaceFileEditorScreenshotPreview: UIViewControllerRepresentable {
-    let screen: String
-
-    func makeUIViewController(context: Context) -> UINavigationController {
-        let markdown = screen.hasSuffix("-markdown")
-        let environment = ProcessInfo.processInfo.environment
-        var editorDefaults: [String: Any] = [
-            "\(AppIdentifiers.subsystem).editor.keybindings": screen.hasSuffix("-vim") ? "vim" : "standard",
-        ]
-        if let wrap = environment["SCREENSHOT_EDITOR_WRAP"] {
-            for key in ["wrapLines", "wrapText", "wrapCode"] {
-                editorDefaults["\(AppIdentifiers.subsystem).editor.\(key)"] = wrap == "on"
-            }
-        }
-        ScreenshotVolatileDefaults.apply(editorDefaults)
-        let themeID: ThemeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" ? .light : .dark
-        ThemeRuntimeState.setThemeID(themeID)
-        let source = environment["SCREENSHOT_EDITOR_SOURCE"]
-        let text = source.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
-            ?? (markdown ? Self.markdownSample : Self.swiftSample)
-        let store = WorkspaceFileDraftStore(
-            directory: FileManager.default.temporaryDirectory.appendingPathComponent("editor-preview-\(UUID().uuidString)")
-        )
-        guard let session = WorkspaceFileEditSession(
-            identity: WorkspaceFileEditIdentity(
-                serverId: "preview", workspaceId: "preview", worktreeId: nil,
-                path: source ?? (markdown ? "docs/notes.md" : "Sources/App/Greeter.swift")
-            ),
-            disk: WorkspaceFileDiskSnapshot(bytes: Data(text.utf8), etag: "\"sha256-\(String(repeating: "0", count: 64))\""),
-            maxBytes: 1_048_576,
-            transport: WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .notSent }),
-            draftStore: store,
-            idleDelay: .seconds(3_600)
-        ) else { return UINavigationController() }
-        let editor = FocusedEditorController(session: session, themeID: themeID)
-        editor.title = markdown ? "notes.md" : "Greeter.swift"
-        let navigation = UINavigationController(rootViewController: editor)
-        navigation.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        navigation.view.accessibilityIdentifier = "screenshot.ready"
-        return navigation
-    }
-
-    func updateUIViewController(_ uiViewController: UINavigationController, context: Context) {}
-
-    /// Hosts the editor and puts the caret in it once it is on screen.
-    private final class FocusedEditorController: UIViewController {
-        private let editor: WorkspaceFileEditorViewController
-
-        init(session: WorkspaceFileEditSession, themeID: ThemeID) {
-            editor = WorkspaceFileEditorViewController(session: session, themeID: themeID) { _ in UIViewController() }
-            super.init(nibName: nil, bundle: nil)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { nil }
-
-        override func viewDidLoad() {
-            super.viewDidLoad()
-            addChild(editor)
-            editor.view.frame = view.bounds
-            editor.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            view.addSubview(editor.view)
-            editor.didMove(toParent: self)
-        }
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            let textView = editor.textView
-            textView.becomeFirstResponder()
-            let anchor = (textView.text as NSString).range(of: "return").location
-            textView.selectedRange = NSRange(location: anchor == NSNotFound ? 0 : anchor, length: 0)
-            for character in ProcessInfo.processInfo.environment["SCREENSHOT_EDITOR_KEYS"] ?? "" {
-                textView.insertText(String(character))
-            }
-            if let scroll = ProcessInfo.processInfo.environment["SCREENSHOT_EDITOR_SCROLL"].flatMap(Double.init) {
-                textView.layoutIfNeeded()
-                let maxY = max(0, textView.contentSize.height - textView.bounds.height)
-                textView.setContentOffset(CGPoint(x: textView.contentOffset.x, y: maxY * scroll), animated: false)
-            }
-        }
-    }
-
-    private static let swiftSample = """
-    import Foundation
-
-    /// Greets people by name, politely.
-    struct Greeter {
-        let greeting: String
-        var count = 0
-
-        mutating func greet(_ name: String, times: Int = 1) -> String {
-            count += times
-            let line = "\\(greeting), \\(name)."
-            // Repeat for emphasis.
-            return Array(repeating: line, count: times).joined(separator: " ")
-        }
-    }
-
-    let greeter = Greeter(greeting: "Hello")
-    print(greeter.greeting.count, 42, true)
-    """
-
-    private static let markdownSample = """
-    ---
-    title: Weekly notes
-    ---
-    # Weekly notes
-
-    Shipped the **code editor** with _Vim_ keys, `syntax` color, and [docs](https://oppi.dev/docs).
-
-    ## Next
-    - [x] Line numbers
-    - [ ] Folding
-    1. Review the [[design]] page
-    > Keep it fast on a 1 MiB file.
-
-    ```swift
-    func greet() { return print("hi") }
-    ```
-    """
-}
-
-/// The production inline review-comment composer opened over text near the
-/// bottom of the screen, so the software keyboard has to push it up. Set
-/// `SCREENSHOT_ORIENTATION=landscape` for the Duo vertical-rail pose.
-private struct ReviewCommentInlineDraftScreenshotPreview: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> InlineDraftPreviewController {
-        InlineDraftPreviewController()
-    }
-
-    func updateUIViewController(_ uiViewController: InlineDraftPreviewController, context: Context) {}
-
-    final class InlineDraftPreviewController: UIViewController {
-        private let textView = UITextView()
-
-        override func viewDidLoad() {
-            super.viewDidLoad()
-            view.backgroundColor = UIColor(ThemeID.dark.palette.bgDark)
-            view.accessibilityIdentifier = "screenshot.ready"
-            textView.isEditable = false
-            textView.backgroundColor = .clear
-            textView.textColor = UIColor(ThemeID.dark.palette.fg)
-            textView.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
-            textView.text = (1...40).map { "line \($0): let value = compute(\($0)) // review target" }
-                .joined(separator: "\n")
-            textView.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(textView)
-            NSLayoutConstraint.activate([
-                textView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-                textView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-                textView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-                textView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            ])
-        }
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            ScreenshotPreviewOrientation.applyRequested()
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(800))
-                self?.presentDraft()
-            }
-        }
-
-        private func presentDraft() {
-            view.layoutIfNeeded()
-            let anchor = CGRect(x: 40, y: textView.bounds.height - 90, width: 120, height: 22)
-            ReviewCommentInlineDraftPresenter.present(
-                sourceView: textView,
-                anchorRect: anchor,
-                request: ReviewCommentSelectionRequest(
-                    selectedText: "let value = compute(40)",
-                    source: ReviewCommentSourceContext(sessionId: "preview", surface: .fullScreenCode)
-                ),
-                router: ReviewCommentSelectionRouter(
-                    dispatch: { _ in },
-                    inlineSave: { _, _ in true },
-                    inlineQuickComments: [.fix]
-                )
-            )
         }
     }
 }
@@ -838,28 +422,7 @@ private final class RouterRoutesURLProtocol: URLProtocol {
     }
 }
 
-private struct AudioFilePlayerScreenshotPreview: View {
-    @State private var audioPlayer = AudioPlayerService()
-
-    var body: some View {
-        AudioLyricsPlayerPreviewHost(configuration: .init(
-            title: "xiaoge-story.wav",
-            lyrics: nil,
-            itemID: "audio-file-preview",
-            audioPlayer: audioPlayer,
-            play: { _ in },
-            openFile: {},
-            shareFileData: { Data("preview audio".utf8) },
-            autoplayOnAppear: false,
-            showsCloseButton: false,
-            usesNavigationBackButton: true
-        ))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("screenshot.ready")
-    }
-}
-
-/// `SCREENSHOT_SCREEN=chat-routes` / `chat-top-bar`: the production chat over
+/// `SCREENSHOT_SCREEN=chat-routes`: the production chat over
 /// the `chat-routes` fixtures with Files, Git, Outline, and Context pinned in
 /// the argument domain. These screens are about the panels the bar opens, not
 /// the default bar (`chat-top-bar-default`), and a layout saved on this
@@ -896,78 +459,8 @@ private struct ChatTopBarScreenshotPreview: View {
     var body: some View { ChatRoutesHarnessView() }
 }
 
-/// `SCREENSHOT_SCREEN=workspace-top-bar`: a workspace's bars, with its Git
-/// button (and its changed-file count) and Terminal beside Config.
-private struct WorkspaceTopBarScreenshotPreview: View {
-    @State private var root: AppRootEnvironment
-
-    init() {
-        let coordinator = RouterModalSitesFixtures.makeCoordinator(playing: false)
-        if let connection = coordinator.connection(for: RouterModalSitesFixtures.serverId) {
-            // A Git repository, so the bar offers Git; the stub answers its status.
-            var workspace = RouterModalSitesFixtures.workspaces[0]
-            workspace.gitStatusEnabled = true
-            connection.workspaceStore.upsert(workspace, serverId: RouterModalSitesFixtures.serverId)
-            // Visible rows: the screen only raises its workspace load error
-            // when it has nothing to show, and this capture is about the bar.
-            connection.sessionStore.switchServer(to: RouterModalSitesFixtures.serverId)
-            connection.sessionStore.sessions = [
-                Self.session("workspace-bar-1", name: "Fill the Duo side rail", status: .busy, minutesAgo: 2),
-                Self.session("workspace-bar-2", name: "Keep Message on the phone bar", status: .ready, minutesAgo: 18),
-            ]
-        }
-        _root = State(initialValue: AppRootEnvironment(
-            coordinator: coordinator,
-            navigation: AppNavigation(),
-            themeStore: ThemeStore(),
-            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
-            composerDraftStore: ComposerDraftStore(),
-            chatReaderPayloadStore: ChatReaderPayloadStore(),
-            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
-        ))
-    }
-
-    var body: some View {
-        RouterPreviewControllerStack(root: root) {
-            WorkspaceDetailViewController(
-                root: root,
-                target: WorkspaceNavTarget(
-                    serverId: RouterModalSitesFixtures.serverId,
-                    workspace: RouterModalSitesFixtures.workspaces[0]
-                )
-            )
-        }
-        .ignoresSafeArea()
-        .accessibilityIdentifier("screenshot.ready")
-    }
-
-    private static func session(
-        _ id: String, name: String, status: SessionStatus, minutesAgo: Double
-    ) -> Session {
-        let lastActivity = Date().addingTimeInterval(-minutesAgo * 60)
-        return Session(
-            id: id,
-            workspaceId: RouterModalSitesFixtures.workspaces[0].id,
-            workspaceName: RouterModalSitesFixtures.workspaces[0].name,
-            name: name,
-            status: status,
-            createdAt: lastActivity.addingTimeInterval(-600),
-            lastActivity: lastActivity,
-            model: "anthropic/claude-opus-5-5",
-            messageCount: 4,
-            tokens: TokenUsage(input: 8_000, output: 1_200),
-            cost: 0.18
-        )
-    }
-}
-
-/// `SCREENSHOT_SCREEN=settings-root` / `settings-general` / `settings-storage` /
-/// `settings-chat` / `settings-editor` / `settings-appearance`: a UIKit settings page as the root of a router stack, over fixture services.
-/// `settings-appearance-gallery` (and `-light`, `-dark`) is the theme gallery for the manual, Light and Dark choice, over two imported
-/// fixture themes. The theme itself is pinned by launch arguments, which `UIValidateTests` builds from `SCREENSHOT_COLOR_SCHEME` and
-/// `SCREENSHOT_THEME_MODE=system` (Appearance in Match System); the page shares the app's `ThemeStore`.
-/// Nothing here calls a server. They are captured in the same harness so their
-/// bars can be compared.
+/// `SCREENSHOT_SCREEN=settings-chat` / `settings-chat-top-bar`: a UIKit settings page as the root of a router stack, over fixture services.
+/// The page shares the app's `ThemeStore`. Nothing here calls a server.
 private struct SettingsPageScreenshotPreview: View {
     let screen: String
     @Environment(\.appRootEnvironment) private var appRoot
@@ -993,13 +486,8 @@ private struct SettingsPageScreenshotContent: View {
         // Every settings page can be captured in an imported theme
         // (`SCREENSHOT_COLOR_SCHEME=custom:Paper`), not only Appearance.
         ScreenshotVolatileDefaults.applyImportedThemes()
-        // The App Settings index shows one paired server, so its Servers
-        // section reads like a paired app's.
-        let coordinator = screen == "settings-root"
-            ? RouterModalSitesFixtures.makeCoordinator(playing: false)
-            : ConnectionCoordinator(serverStore: ServerStore())
         _root = State(initialValue: AppRootEnvironment(
-            coordinator: coordinator,
+            coordinator: ConnectionCoordinator(serverStore: ServerStore()),
             navigation: AppNavigation(),
             themeStore: themeStore,
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
@@ -1012,20 +500,7 @@ private struct SettingsPageScreenshotContent: View {
     var body: some View {
         RouterPreviewControllerStack(root: root) {
             switch screen {
-            case "settings-root": SettingsRootViewController(root: root)
-            case "settings-editor": SettingsEditorViewController()
-            case "settings-experiments": SettingsExperimentsViewController()
-            case "settings-editor-key-bar": SettingsEditorKeyBarViewController(preferences: .shared)
-            case "settings-general": SettingsGeneralViewController(root: root)
-            case "settings-storage": SettingsStorageViewController(root: root)
-            case "settings-privacy": SettingsPrivacyViewController(root: root)
-            case "settings-text": SettingsTextViewController()
-            case "settings-voice": SettingsVoiceViewController(root: root)
             case "settings-chat-top-bar": SettingsChatTopBarViewController()
-            case "settings-appearance": SettingsAppearanceViewController(root: root)
-            case "settings-appearance-gallery": ThemeGalleryViewController(themeStore: root.themeStore, slot: .manual)
-            case "settings-appearance-gallery-light": ThemeGalleryViewController(themeStore: root.themeStore, slot: .light)
-            case "settings-appearance-gallery-dark": ThemeGalleryViewController(themeStore: root.themeStore, slot: .dark)
             default: SettingsChatViewController(root: root)
             }
         }
@@ -1071,139 +546,6 @@ private struct SettingsPageScreenshotContent: View {
         ]
         return (try? JSONSerialization.data(withJSONObject: themes)) ?? Data()
     }
-}
-
-/// `SCREENSHOT_SCREEN=server-metrics` / `server-metrics-off`: the Server
-/// Metrics page over a fixture snapshot (`ServerMetricsScreenshotFixture`).
-private struct ServerMetricsScreenshotPreview: View {
-    let samplingOn: Bool
-    @State private var root = ServerMetricsScreenshotFixture.makeRoot()
-
-    var body: some View {
-        RouterPreviewControllerStack(root: root) {
-            ServerMetricsViewController(root: root, fixture: ServerMetricsScreenshotFixture.snapshot(samplingOn: samplingOn))
-        }
-        .ignoresSafeArea()
-        .publishesAppRootToWindow(root)
-        .accessibilityIdentifier("screenshot.ready")
-    }
-}
-
-/// `SCREENSHOT_SCREEN=model-providers-quota-inline`: Model Providers over
-/// fixture providers and usage (no server load), with usage windows ahead of,
-/// on, and behind an even pace, a plan, and a prepaid balance.
-private struct ModelProvidersScreenshotPreview: View {
-    @State private var root: AppRootEnvironment
-
-    init() {
-        // Pin the theme before `ThemeStore()` reads it, as the settings previews do.
-        switch ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] {
-        case "dark": ScreenshotVolatileDefaults.applyTheme(.dark)
-        case "light": ScreenshotVolatileDefaults.applyTheme(.light)
-        default: break
-        }
-        _root = State(initialValue: AppRootEnvironment(
-            coordinator: RouterModalSitesFixtures.makeCoordinator(playing: false),
-            navigation: AppNavigation(),
-            themeStore: ThemeStore(),
-            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
-            composerDraftStore: ComposerDraftStore(),
-            chatReaderPayloadStore: ChatReaderPayloadStore(),
-            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
-        ))
-    }
-
-    var body: some View {
-        RouterPreviewControllerStack(root: root) {
-            ModelProvidersViewController(
-                target: ModelProvidersNavTarget(serverId: RouterModalSitesFixtures.serverId),
-                root: root,
-                statuses: Self.statuses,
-                quotas: Self.quotas
-            )
-        }
-        .ignoresSafeArea()
-        .publishesAppRootToWindow(root)
-        .accessibilityIdentifier("screenshot.ready")
-    }
-
-    private static let oauth = ProviderAuthOAuthCapabilities(
-        flowType: .oauthCallback,
-        supportsServerBrowserLaunch: true,
-        supportsPhoneBrowserLaunch: true,
-        supportsManualCodeInput: true,
-        mayPromptForInput: false
-    )
-
-    private static let statuses: [ProviderAuthProviderStatus] = [
-        .init(id: "anthropic", name: "Anthropic", supportsApiKey: true, oauth: oauth, authenticated: true, credentialType: .oauth, expiresAt: nil, maskedKey: nil),
-        .init(id: "meta", name: "Meta", supportsApiKey: false, oauth: oauth, authenticated: true, credentialType: .oauth, expiresAt: nil, maskedKey: nil),
-        .init(id: "opencode-go", name: "OpenCode Go", supportsApiKey: true, oauth: nil, authenticated: true, credentialType: .apiKey, expiresAt: nil, maskedKey: nil),
-        .init(id: "xai", name: "xAI", supportsApiKey: true, oauth: oauth, authenticated: true, credentialType: .oauth, expiresAt: nil, maskedKey: nil),
-        .init(id: "openai-codex", name: "OpenAI Codex", supportsApiKey: false, oauth: oauth, authenticated: false, credentialType: nil, expiresAt: nil, maskedKey: nil),
-        .init(id: "google", name: "Google Gemini", supportsApiKey: true, oauth: oauth, authenticated: false, credentialType: nil, expiresAt: nil, maskedKey: nil),
-        .init(id: "deepseek", name: "DeepSeek", supportsApiKey: true, oauth: nil, authenticated: false, credentialType: nil, expiresAt: nil, maskedKey: nil),
-    ]
-
-    /// A window `hoursLeft` from reset with `remaining` percent left, paced as
-    /// the server would (supply = remaining share / time share).
-    private static func window(
-        _ key: String,
-        _ title: String,
-        seconds: Int,
-        hoursLeft: Double,
-        remaining: Double
-    ) -> ProviderQuota.Window {
-        let secondsLeft = hoursLeft * 3600
-        let supply = (remaining / 100) / (secondsLeft / Double(seconds))
-        let status = supply > 1.2 ? "plenty" : supply >= 0.8 ? "on_pace" : "conserve"
-        return ProviderQuota.Window(
-            key: key,
-            shortLabel: key,
-            title: title,
-            usedPercent: 100 - remaining,
-            remainingPercent: remaining,
-            limitWindowSeconds: seconds,
-            resetAt: Int(Date().addingTimeInterval(secondsLeft).timeIntervalSince1970),
-            includeWeekdayInReset: seconds > 86_400,
-            pacing: .init(
-                source: "snapshot",
-                status: status,
-                timeRemainingSeconds: secondsLeft,
-                supplyRatio: supply,
-                targetBurnPercentPerHour: remaining / hoursLeft,
-                recentBurnPercentPerHour: nil,
-                paceRatio: nil,
-                projectedExhaustionAt: nil,
-                projectedRemainingPercent: nil
-            )
-        )
-    }
-
-    private static let quotas: ProviderQuotasInfo = {
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        func quota(_ id: String, _ name: String, plan: String?, prepaidCents: Int? = nil, _ windows: [ProviderQuota.Window]) -> ProviderQuota {
-            ProviderQuota(
-                providerId: id, displayName: name, authenticated: true, planType: plan, windows: windows,
-                credits: nil, prepaidBalanceCents: prepaidCents, fetchedAt: now, error: nil
-            )
-        }
-        return ProviderQuotasInfo(providers: [
-            quota("anthropic", "Anthropic", plan: nil, [
-                window("five_hour", "5-hour", seconds: 18_000, hoursLeft: 1.1, remaining: 86),
-                window("seven_day", "7-day", seconds: 604_800, hoursLeft: 111, remaining: 59),
-                window("seven_day_opus", "Fable 7-day", seconds: 604_800, hoursLeft: 111, remaining: 100),
-            ]),
-            quota("opencode-go", "OpenCode Go", plan: "Go", [
-                window("five_hour", "5-hour", seconds: 18_000, hoursLeft: 5, remaining: 100),
-                window("weekly", "Weekly", seconds: 604_800, hoursLeft: 40.7, remaining: 44),
-                window("monthly", "Monthly", seconds: 2_678_400, hoursLeft: 660, remaining: 72),
-            ]),
-            quota("xai", "xAI", plan: "supergrok", prepaidCents: 0, [
-                window("monthly", "Monthly", seconds: 2_592_000, hoursLeft: 400, remaining: 18),
-            ]),
-        ], fetchedAt: now)
-    }()
 }
 
 // MARK: - Router modal sites
@@ -1299,39 +641,6 @@ private struct RouterModalSitesPreview: View {
     }
 }
 
-/// The full-screen reader, as the app presents it.
-private struct FullScreenReaderPreviewHost: UIViewControllerRepresentable {
-    let kind: FullScreenReaderScreenshotFixture.Kind
-
-    func makeUIViewController(context: Context) -> UIViewController {
-        FullScreenReaderScreenshotFixture.makeController(kind: kind)
-    }
-
-    func updateUIViewController(_ controller: UIViewController, context: Context) {}
-}
-
-/// The viewing-options panel on a themed page.
-private struct ViewingOptionsPreviewHost: UIViewControllerRepresentable {
-    let family: FullScreenReaderContentFamily
-
-    func makeUIViewController(context: Context) -> UIViewController {
-        ViewingOptionsScreenshotFixture.makeController(family: family)
-    }
-
-    func updateUIViewController(_ controller: UIViewController, context: Context) {}
-}
-
-/// The App Lock cover controller, which the app puts in its own window.
-private struct AppLockCoverPreviewHost: UIViewControllerRepresentable {
-    let state: AppLockCoverScreenshotFixture.State
-
-    func makeUIViewController(context: Context) -> AppLockCoverViewController {
-        AppLockCoverScreenshotFixture.makeController(state: state)
-    }
-
-    func updateUIViewController(_ controller: AppLockCoverViewController, context: Context) {}
-}
-
 /// Quick Session's controller over the window, the way the app root mounts it.
 /// It handles the safe area and the keyboard itself.
 private struct QuickSessionPreviewHost: UIViewControllerRepresentable {
@@ -1342,24 +651,6 @@ private struct QuickSessionPreviewHost: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: QuickSessionViewController, context: Context) {}
-}
-
-/// A screen as the root of a router navigation controller, the way the shell
-/// hosts it: for previews of screens that search through the host, push
-/// through the navigator, or show bottom-bar items.
-struct RouterPreviewStack<Content: View>: UIViewControllerRepresentable {
-    let root: AppRootEnvironment
-    @ViewBuilder let content: () -> Content
-
-    func makeUIViewController(context: Context) -> RouterNavigationController {
-        let screen = HostFactory.screen(root: root, bars: ScreenBars(showsToolbar: true), content: content)
-        let navigation = RouterNavigationController(rootViewController: screen)
-        let themeStore = root.themeStore
-        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
-        return navigation
-    }
-
-    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
 }
 
 /// A router screen at the root of a `RouterNavigationController`, the way the
@@ -1735,86 +1026,5 @@ private final class RouterModalSitesURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
-}
-
-// MARK: - Push discovery
-
-/// `SCREENSHOT_SCREEN=push-discovery-card`: All Sessions over fixture sessions, on a
-/// server that offers push, after its first session finished: the one-time card
-/// is due. Tap `workspace.pushDiscovery.turnOn` to see the relay disclosure.
-struct PushDiscoveryCardScreenshotPreview: View {
-    @State private var root: AppRootEnvironment
-
-    private static let serverId = "sha256:push-discovery-preview"
-
-    init() {
-        PushDiscoveryPreviewTheme.pin()
-        // The card's stage in the argument domain, never the simulator's saved defaults.
-        ScreenshotVolatileDefaults.apply(["\(AppIdentifiers.subsystem).push.discovery.\(Self.serverId)": "ready"])
-        _root = State(initialValue: .preview(coordinator: Self.makeCoordinator()))
-    }
-
-    var body: some View {
-        WorkspaceShellPreview(root: root)
-            .ignoresSafeArea()
-            .preferredColorScheme(root.themeStore.preferredColorScheme)
-    }
-
-    private static func makeCoordinator() -> ConnectionCoordinator {
-        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
-        guard let server = PairedServer(from: ServerCredentials(
-            host: "mac-studio.local",
-            port: 7749,
-            token: "sk_preview",
-            name: "mac-studio",
-            scheme: .https,
-            serverFingerprint: serverId,
-            tlsCertFingerprint: "sha256:push-discovery-preview-leaf"
-        )) else { return coordinator }
-        coordinator.serverStore.replaceServersForPreview([server])
-        guard coordinator.switchToServer(server),
-              let connection = coordinator.connection(for: server.id) else { return coordinator }
-        let workspace = Workspace(
-            id: "oppi",
-            name: "oppi",
-            description: nil,
-            icon: .symbol("iphone.and.arrow.forward"),
-            systemPrompt: nil,
-            hostMount: "~/workspace/oppi",
-            gitStatusEnabled: false,
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
-        )
-        connection.workspaceStore.upsert(workspace, serverId: server.id)
-        connection.setSplitStreamCapabilitiesForTesting(pushRelay: URL(string: "https://push.oppi.chaosdonkey.dev"))
-        connection.sessionStore.switchServer(to: server.id)
-        let finished = Date().addingTimeInterval(-90)
-        connection.sessionStore.sessions = [
-            Session(
-                id: "first",
-                workspaceId: workspace.id,
-                workspaceName: workspace.name,
-                name: "Fix the flaky upload test",
-                status: .ready,
-                createdAt: finished.addingTimeInterval(-600),
-                lastActivity: finished,
-                model: "anthropic/claude-opus-5-5",
-                messageCount: 4,
-                tokens: TokenUsage(input: 8_000, output: 1_200),
-                cost: 0.18
-            ),
-        ]
-        return coordinator
-    }
-}
-
-private enum PushDiscoveryPreviewTheme {
-    /// Before `ThemeStore()` reads it: the pool simulator's own appearance is dark.
-    static func pin() {
-        switch ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] {
-        case "light": ScreenshotVolatileDefaults.applyTheme(.light)
-        default: ScreenshotVolatileDefaults.applyTheme(.dark)
-        }
-    }
 }
 #endif

@@ -1,10 +1,10 @@
 import XCTest
 
-/// Fixture proof for the app-behavior feature-education tip catalogue.
+/// Fixture proof that the P0 feature-education tips appear on the hidden-gesture
+/// surfaces they teach.
 ///
 /// This launches the app's DEBUG screenshot-preview surface from the E2E target
-/// so the simulator recording can verify every candidate tip card is present
-/// and scroll through the full catalogue for visual review.
+/// with the tips forced on.
 @MainActor
 final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
     private var app: XCUIApplication!
@@ -30,61 +30,11 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
         ),
     ]
 
-    private static let tipIDs = [
-        "open-tool-details",
-        "tool-output-shortcuts",
-        "answer-inline-asks-and-extension-prompts",
-        "steer-vs-follow-up-while-busy",
-        "select-text-for-review-comments",
-        "chat-top-bar-more-tools",
-        "context-bar-multi-select-and-drag-select",
-        "message-queue-review-and-editing",
-        "session-outline-tree",
-        "fork-from-a-point-in-history",
-        "context-usage-inspector",
-        "cross-session-attention",
-        "file-repo-references",
-        "slash-command-autocomplete",
-        "expanded-full-screen-composer",
-        "workspace-row-previews",
-        "ipad-split-workspace-shell",
-        "quick-session-from-app-controls",
-        "workspace-picker-in-quick-session",
-        "file-browser-fuzzy-search",
-        "share-and-export-rendered-output",
-        "local-pi-session-import",
-        "stop-active-session-swipe-action",
-    ]
-
     override func setUpWithError() throws {
 #if !targetEnvironment(simulator)
         throw XCTSkip("Feature education tip preview is simulator-only")
 #endif
         continueAfterFailure = false
-    }
-
-    func testFeatureEducationTipsCatalogVideo() throws {
-        launchPreview(screen: "feature-tips")
-
-        XCTAssertEqual(Self.tipIDs.count, 23, "The fixture should cover every app-behavior tip candidate")
-        XCTAssertTrue(app.staticTexts["Feature education tips"].waitForExistence(timeout: 5), "Feature tip catalogue title missing")
-        XCTAssertTrue(app.staticTexts["feature-tips.total"].waitForExistence(timeout: 5), "Feature tip count missing")
-        XCTAssertEqual(app.staticTexts["feature-tips.total"].label, "23 tips covered")
-
-        let catalog = app.scrollViews["feature-tips.catalog"]
-        XCTAssertTrue(catalog.waitForExistence(timeout: 5), "Feature tip catalogue scroll view missing")
-
-        for tipID in Self.tipIDs {
-            let tipTitle = app.staticTexts["feature-tip.\(tipID)"]
-            XCTAssertTrue(
-                scrollUntilVisible(tipTitle, in: catalog),
-                "Missing feature education tip card: \(tipID)"
-            )
-            // Deliberately small pause so the simulator video can be reviewed by humans.
-            RunLoop.current.run(until: Date().addingTimeInterval(0.18))
-        }
-
-        saveScreenshot(name: "feature-education-tips-catalog-e2e")
     }
 
     func testP0FeatureEducationTipsAreWiredIntoHiddenGestureSurfaces() throws {
@@ -133,21 +83,6 @@ final class FeatureEducationTipsPreviewE2ETests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         return message.exists
-    }
-
-    private func scrollUntilVisible(_ element: XCUIElement, in scrollView: XCUIElement) -> Bool {
-        if element.waitForExistence(timeout: 0.5), element.isHittable {
-            return true
-        }
-
-        for _ in 0..<12 {
-            scrollView.swipeUp()
-            if element.waitForExistence(timeout: 0.5), element.isHittable {
-                return true
-            }
-        }
-
-        return element.exists
     }
 
     private func saveScreenshot(name: String) {

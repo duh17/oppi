@@ -612,9 +612,6 @@ private enum ChatRoutesFixture {
             routesSession.engine = .durable
         }
         connection.sessionStore.upsert(routesSession)
-        if let sender = agentMessageSenderSession() {
-            connection.sessionStore.upsert(sender)
-        }
         enableShare(on: connection)
         connection.chatState.cachedModels = models
         if environment["CHAT_ROUTES_ASK"] == "1" {
@@ -653,11 +650,6 @@ private enum ChatRoutesFixture {
     /// One staged review comment, the recommended share policy, and the Files
     /// panel on Changed on every launch.
     @MainActor private static func resetLocalState() {
-        // `CHAT_ROUTES_STYLE=chat` renders the harness timeline in the Chat style;
-        // the volatile domain keeps the simulator's saved style untouched.
-        if let style = environment["CHAT_ROUTES_STYLE"] {
-            ScreenshotVolatileDefaults.apply([AppPreferences.ChatDisplay.styleKey: style])
-        }
         AppPreferences.Share.setRedactionPolicy(.recommended)
         let store = ReviewCommentStore()
         store.load(workspaceId: workspace.id, sessionId: sessionId)
@@ -813,81 +805,7 @@ private enum ChatRoutesFixture {
         if let turns = environment["CHAT_ROUTES_LONG_TURNS"].flatMap(Int.init) {
             events += longSessionEvents(turns: turns)
         }
-        events += agentMessageEvents()
         reducer.loadSession(events)
-        // `CHAT_ROUTES_AGENT_EXPANDED=1` opens the seeded message, so both states
-        // of its card can be captured without driving a tap.
-        if environment["CHAT_ROUTES_AGENT_EXPANDED"] == "1" {
-            reducer.expandedItemIDs.insert(agentMessageId)
-        }
-    }
-
-    private static let agentMessageId = "chat-routes-agent-message"
-    /// The session `agentMessageEvents()` says sent that message.
-    static let agentMessageSenderId = "chat-routes-child"
-
-    /// `CHAT_ROUTES_AGENT_SENDER=icon`: the sending session is in the store and was
-    /// launched from a saved Agent with an emoji icon, so the card header draws that
-    /// icon. `=plain`: it is in the store with no Agent, so the header draws the
-    /// global avatar. Unset: the sender is unknown, which draws the same avatar.
-    @MainActor private static func agentMessageSenderSession() -> Session? {
-        switch environment["CHAT_ROUTES_AGENT_SENDER"] {
-        case "icon":
-            var sender = session(id: agentMessageSenderId, status: .ready)
-            sender.launch = SessionLaunchMetadata(agentId: "agent-reviewer", agentIcon: .emoji("\u{1F98A}"))
-            return sender
-        case "plain":
-            return session(id: agentMessageSenderId, status: .ready)
-        default:
-            return nil
-        }
-    }
-
-    /// `CHAT_ROUTES_AGENT_MESSAGE=report` (a long report with a heading and a
-    /// table) or `=short` (one line): what a child session's message looks like
-    /// in the parent's timeline, so its card can be captured folded and opened.
-    private static func agentMessageEvents() -> [TraceEvent] {
-        let intentText: String
-        switch environment["CHAT_ROUTES_AGENT_MESSAGE"] {
-        case "short":
-            intentText = "Verdict: the routes are correct."
-        case "report":
-            intentText = """
-            ## Verdict: APPROVE
-
-            The review found one blocking issue and two follow-ups. The blocking
-            issue is fixed in the branch; the follow-ups are filed.
-
-            | Finding | Status |
-            |---|---|
-            | P2-1 stale summary after an edit on the pushed page | Fixed |
-            | P3-1 menu rebuilt on every pass | Fixed |
-            | P3-2 outline loses the selection | Filed |
-
-            ### What changed
-
-            - The pushed page observes the change notification.
-            - The menu is built once and resolves its items lazily.
-
-            ```swift
-            let resolved = menu.resolve()
-            ```
-            """
-        default:
-            return []
-        }
-        return [TraceEvent(
-            id: agentMessageId,
-            type: .user,
-            timestamp: "2026-10-15T18:00:30.000Z",
-            text: intentText,
-            origin: MessageOrigin(
-                kind: "session",
-                sessionId: "chat-routes-child",
-                name: "Review",
-                intent: "report"
-            )
-        )]
     }
 
     /// `CHAT_ROUTES_LONG_TURNS=N`: N agent turns of thinking, a bash call

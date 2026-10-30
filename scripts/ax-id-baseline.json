@@ -35,11 +35,7 @@
     "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailViewController.swift": 4,
     "clients/apple/OppiDebugHarness/FeatureEducationP0TipPreview.swift": 5,
     "clients/apple/OppiDebugHarness/FullScreenReviewCommentHarnessView.swift": 5,
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/FeatureEducationTipsPreview.swift": 5,
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/QuietWorkStripPreview.swift": 2,
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift": 1,
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/ToolCallDocumentPreview.swift": 3,
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/USDZRenderingPreview.swift": 1,
     "clients/apple/OppiDebugHarness/StreamingFlickerPreviewView.swift": 3
   }
 }

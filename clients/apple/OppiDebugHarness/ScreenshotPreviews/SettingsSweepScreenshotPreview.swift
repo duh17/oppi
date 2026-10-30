@@ -4,26 +4,11 @@ import SwiftUI
 /// The settings-like pages outside App, Server, and Workspace Settings: the
 /// real views over one fixture server, with API pages answered by
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
-/// `tailscale`, `ssh-preflight`, `ssh-preflight-result` (Oppi answers: Pair),
-/// `ssh-preflight-install` (a fresh Mac: Install & Start),
-/// `ssh-preflight-installing`, `ssh-preflight-install-failed`, `ssh-preflight-mismatch`,
-/// `ssh-hosts`, `ssh-hosts-empty` (the list with no saved host), `ssh-setup`,
-/// `mcp`, `mcp-workspace`,
-/// `mcp-detail`, `mcp-add`, `mcp-sign-in`, `quick-comments`, `quick-comment-editor`,
-/// `theme-import`, `dictionary`, `dictionary-workspace`,
+/// `ssh-hosts`, `mcp`, `theme-import`,
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
-/// `agents-offline` (the Agents list with no server client: the Server offline row), `agents-pi`, `agent-icon-picker`, `agent-edit`, `agent-edit-tools`, `-skills`, `-extensions`, `-workspaces` (the pages it pushes), `pi-tools`, `schedule-edit`, `schedule-edit-cron`, `schedule-edit-existing`,
-/// `schedule-time-zone`, `workspaces` (the server's workspace list), `workspaces-empty`, `workspace-create`, `workspace-create-configure`, `server-settings`
-/// (Server Settings for the fixture server, loaded), `server-settings-loading` (its
-/// summary and loading rows, before the first answer), `server-about` (About This Server: an
-/// update available, voice backends), `server-paired-devices`, `server-badge` (the pages
-/// Server Settings pushes, over the same fixture model), `usage` (Usage for the fixture
-/// server: two weeks of daily bars, six models, three workspaces), `usage-setup` (no model
-/// provider signed in, so the setup card shows), `usage-detail` (a day opened under the chart),
-/// `server-inbox-provider-setup` (All Sessions of the fixture server with no provider signed in: the
-/// setup card as a list cell).
+/// `agents-pi`, `workspace-create`, `workspace-create-configure`.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -102,27 +87,6 @@ struct SettingsSweepScreenshotPreview: View {
         inherited: nil, errors: []
     )
 
-    /// A host workspace's own `.pi/mcp.json`, with the global servers it inherits.
-    static let mcpWorkspaceId = "preview-ws"
-    static let mcpWorkspace = McpScopeSnapshot(
-        id: mcpWorkspaceId, title: "oppi-dev", kind: "project", projectTrust: .trusted,
-        servers: [
-            mcpServer("project-db", config: McpServerConfig(command: "uvx", args: ["mcp-server-sqlite"]), state: "connected", tools: ["query", "list_tables"], exposure: .codemode),
-            mcpServer("staging-api", config: McpServerConfig(url: "https://staging.example.com/mcp"), state: "failed", tools: [], exposure: .deferred),
-        ],
-        inherited: [
-            mcpServer("github", config: McpServerConfig(url: "https://api.github.com/mcp"), state: "connected", tools: ["search_issues", "get_pull_request"], exposure: .deferred, oauth: true),
-        ],
-        errors: []
-    )
-
-    static let mcpSignInFlow = McpAuthFlowSnapshot(
-        flowId: "mcp-flow", scopeId: McpScopeSnapshot.globalId, serverName: "github",
-        launchMode: .phoneBrowser, status: .awaitingManualCode,
-        auth: .init(url: "https://github.com/login/oauth", instructions: nil), error: nil,
-        createdAt: 1, updatedAt: 1, expiresAt: 9_999_999_999_999
-    )
-
     private static func mcpServer(
         _ name: String, config: McpServerConfig, state: String, tools: [String],
         exposure: McpExposure, enabled: Bool = true, oauth: Bool = false
@@ -138,7 +102,7 @@ struct SettingsSweepScreenshotPreview: View {
         let environment = ProcessInfo.processInfo.environment
         ScreenshotVolatileDefaults.applyThemeScheme(environment["SCREENSHOT_COLOR_SCHEME"])
         themeStore = ThemeStore()
-        page = environment["SCREENSHOT_SWEEP_PAGE"] ?? "tailscale"
+        page = environment["SCREENSHOT_SWEEP_PAGE"] ?? ""
         showsWrites = environment["SCREENSHOT_SWEEP_SHOWS_WRITES"] == "1"
         SettingsSweepFixtureURLProtocol.writeDelay = environment["SCREENSHOT_SWEEP_WRITE_DELAY"].flatMap(Double.init) ?? 0
 
@@ -174,7 +138,7 @@ struct SettingsSweepScreenshotPreview: View {
         if page != "extensions-unavailable" {
             connection.serverResourceStore.replaceExtensions(
                 Self.catalogExtensions(page: page),
-                builtInTools: page.hasPrefix("agent-edit") ? Self.builtInTools : [],
+                builtInTools: [],
                 serverId: server.id
             )
         }
@@ -183,7 +147,7 @@ struct SettingsSweepScreenshotPreview: View {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if page.hasPrefix("mcp") || page.hasPrefix("server-") {
+        if page == "mcp" {
             // The MCP screens wait for `apiClientReady`, so their connection is
             // a ready one whose requests the fixture answers, as the Router and
             // Metrics previews build theirs.
@@ -207,7 +171,7 @@ struct SettingsSweepScreenshotPreview: View {
         )
 
         switch page {
-        case "tailscale", "onboarding-tailscale":
+        case "onboarding-tailscale":
             Self.applyTailnetFixture()
         case "ssh-hosts":
             // Live SSH drive writes real catalog entries; a volatile fixture
@@ -215,23 +179,8 @@ struct SettingsSweepScreenshotPreview: View {
             if ProcessInfo.processInfo.environment["OPPI_LIVE_SSH"] != "1" {
                 Self.seedSSHHosts()
             }
-        case "ssh-hosts-empty":
-            // An empty catalog in the argument domain, so a host saved on this
-            // simulator earlier cannot fill the page.
-            if let empty = try? JSONEncoder().encode(SSHTerminalCatalog(profiles: [])) {
-                ScreenshotVolatileDefaults.apply([SSHTerminalProfileStore.catalogKey: empty])
-            }
-        case "workspaces", "workspaces-empty":
-            connection.workspaceStore.setActiveServer(server.id)
-            connection.workspaceStore.workspacesByServer[server.id] = page == "workspaces" ? Self.workspaceList : []
-        case "agents-offline":
-            connection.setAPIClientForTesting(nil)
         case "agents":
             // Enables Schedule Recurring Run on the agent detail.
-            connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
-        case "agent-edit", "agent-edit-tools", "agent-edit-skills", "agent-edit-extensions", "agent-edit-workspaces":
-            connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace, Self.sandboxWorkspace]
-        case "schedule-edit", "schedule-edit-cron", "schedule-edit-existing":
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
         case "pairing-approval":
             connection.pendingPairingApprovals = [Self.pendingApproval]
@@ -261,11 +210,6 @@ struct SettingsSweepScreenshotPreview: View {
     @ViewBuilder
     private var content: some View {
         switch page {
-        case "workspaces", "workspaces-empty":
-            RouterPreviewControllerStack(root: root) {
-                WorkspaceListViewController(server: server, root: root)
-            }
-            .ignoresSafeArea()
         case "workspace-create":
             RouterPreviewControllerStack(root: root) {
                 WorkspaceCreateViewController(root: root, server: server)
@@ -279,49 +223,6 @@ struct SettingsSweepScreenshotPreview: View {
                     prefillName: "oppi",
                     prefillPath: "~/workspace/oppi"
                 )
-            }
-            .ignoresSafeArea()
-        case "server-settings", "server-settings-loading":
-            RouterPreviewControllerStack(root: root) { [root, server, coordinator, page] in
-                ServerSettingsViewController(
-                    server: server,
-                    root: root,
-                    model: page == "server-settings"
-                        ? .screenshotFixture(coordinator: coordinator, serverId: server.id, currentDeviceId: "dev-iphone", updateAvailable: true)
-                        : .screenshotLoading(coordinator: coordinator, serverId: server.id)
-                )
-            }
-            .ignoresSafeArea()
-        case "server-about", "server-paired-devices", "server-badge":
-            RouterPreviewControllerStack(root: root) { [root, server, coordinator, page] in
-                let model = ServerSettingsModel.screenshotFixture(
-                    coordinator: coordinator, serverId: server.id, currentDeviceId: "dev-iphone", updateAvailable: true
-                )
-                return switch page {
-                case "server-about": ServerAboutViewController(model: model, server: server, root: root)
-                case "server-paired-devices": ServerPairedDevicesViewController(model: model, server: server, root: root)
-                default: ServerBadgeViewController(server: server, root: root)
-                }
-            }
-            .ignoresSafeArea()
-        case "server-inbox-provider-setup":
-            RouterPreviewControllerStack(root: root) { [root] in
-                PreviewWidthChange.wrapping(SessionInboxViewController(root: root))
-            }
-            .ignoresSafeArea()
-        case "usage", "usage-setup", "usage-detail":
-            RouterPreviewControllerStack(root: root) { [root, server, page] in
-                let client = UsageFixtureClient(authenticated: page != "usage-setup")
-                let model = UsageModel(serverId: server.id) { client }
-                let screen = UsageViewController(server: server, root: root, model: model)
-                if page == "usage-detail" {
-                    // Once the page has loaded, as a tap on a bar would.
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(500))
-                        model.selectDay(UsageFixtureClient.detailDate)
-                    }
-                }
-                return PreviewWidthChange.wrapping(screen)
             }
             .ignoresSafeArea()
         case "onboarding-add-server", "onboarding-tailscale":
@@ -345,122 +246,26 @@ struct SettingsSweepScreenshotPreview: View {
                 RouterPreviewControllerStack(root: root) { ServerExtensionsViewController(root: root) }
                     .ignoresSafeArea()
             }
-        case "mcp", "mcp-workspace":
-            RouterPreviewControllerStack(root: root) { [root, page] in
-                McpServersViewController(
-                    scopeId: page == "mcp" ? McpScopeSnapshot.globalId : Self.mcpWorkspaceId,
-                    root: root
-                )
+        case "mcp":
+            RouterPreviewControllerStack(root: root) { [root] in
+                McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root)
             }
             .ignoresSafeArea()
-        case "mcp-detail":
-            RouterPreviewControllerStack(root: root) { [root, client, server] in
-                McpServerDetailViewController(
-                    scope: Self.mcpGlobal, entry: Self.mcpGlobal.servers[0],
-                    client: client, serverId: server.id, serverName: server.name,
-                    signIn: McpSignInOwner(), root: root
-                )
-            }
-            .ignoresSafeArea()
-        case "mcp-sign-in":
-            // The sign-in sheet's content, as the root of a stack.
-            RouterPreviewControllerStack(root: root) { [root, client, server] in
-                let owner = McpSignInOwner()
-                let attempt = ProviderAuthFlowAttempt(
-                    flow: Self.mcpSignInFlow.providerPresentation, client: McpFlowClient(client: client),
-                    serverId: server.id, serverName: server.name, providerName: "github"
-                )
-                owner.adopt(attempt, scopeId: McpScopeSnapshot.globalId)
-                return McpSignInViewController(attempt: attempt, owner: owner, root: root)
-            }
-            .ignoresSafeArea()
-        case "mcp-add":
-            RouterPreviewControllerStack(root: root) { [root, client, server] in
-                McpAddServerViewController(
-                    client: client, scope: Self.mcpGlobal, serverName: server.name, root: root, onAdded: {}
-                )
-            }
-            .ignoresSafeArea()
-        case "ssh-hosts", "ssh-hosts-empty":
+        case "ssh-hosts":
             RouterPreviewControllerStack(root: root) { SSHTerminalHostListViewController() }
                 .ignoresSafeArea()
-        case "ssh-setup":
-            RouterPreviewControllerStack(root: root) { SSHTerminalSetupViewController() }
-                .ignoresSafeArea()
-        case "tailscale":
-            RouterPreviewControllerStack(root: root) { [coordinator] in
-                TailnetSettingsViewController(coordinator: coordinator, previewProbes: Self.tailnetProbes)
-            }
-            .ignoresSafeArea()
-        case "ssh-preflight", "ssh-preflight-result", "ssh-preflight-install", "ssh-preflight-installing",
-             "ssh-preflight-install-failed", "ssh-preflight-mismatch":
-            RouterPreviewControllerStack(root: root) { [coordinator, page] in
-                Self.sshPreflightPage(page, coordinator: coordinator)
-            }
-            .ignoresSafeArea()
         case "theme-import":
             RouterPreviewControllerStack(root: root) { ThemeImportViewController(root: root) }
                 .ignoresSafeArea()
         case "schedules":
             RouterPreviewControllerStack(root: root) { ScheduleListViewController(root: root) }
                 .ignoresSafeArea()
-        case "agents", "agents-offline":
+        case "agents":
             RouterPreviewControllerStack(root: root) { AgentListViewController(root: root) }
                 .ignoresSafeArea()
         case "agents-pi", "agents-pi-file":
             RouterPreviewControllerStack(root: root) { PiAgentDetailViewController(root: root) }
                 .ignoresSafeArea()
-        case "agent-icon-picker":
-            RouterPreviewControllerStack(root: root) { [connection] in
-                AgentIconPicker.viewController(agent: Self.agent, connection: connection) { _ in }
-            }
-            .ignoresSafeArea()
-        case "schedule-edit", "schedule-edit-cron", "schedule-edit-existing":
-            RouterPreviewControllerStack(root: root) { [connection, client, server, page] in
-                ScheduleNativeEditViewController(
-                    schedule: Self.editSchedule(page: page), apiClient: client, connection: connection,
-                    serverName: server.name
-                ) { _, _ in }
-            }
-            .ignoresSafeArea()
-        case "schedule-time-zone":
-            RouterPreviewControllerStack(root: root) { [server] in
-                ScheduleTimeZonePickerViewController(
-                    selection: "America/Los_Angeles", serverName: server.name
-                ) { _ in }
-            }
-            .ignoresSafeArea()
-        case "agent-edit":
-            RouterPreviewControllerStack(root: root) { [connection, client, server] in
-                AgentNativeEditViewController(
-                    agent: Self.editAgent, apiClient: client, connection: connection, serverName: server.name
-                ) { _ in }
-            }
-            .ignoresSafeArea()
-        case "pi-tools":
-            // Pi's Tools page, as the root: exact built-in tools and an optional tool turned on.
-            RouterPreviewControllerStack(root: root) { [server] in
-                let tools = PiToolsEditor()
-                tools.applyLoaded(
-                    ["read", "+codemode"],
-                    builtInTools: Self.builtInTools,
-                    optionalTools: [ServerToolSummary(name: "codemode", description: "Run scripts that call other tools.")]
-                )
-                return AgentToolSelectionViewController(selection: .pi(tools, serverName: server.name))
-            }
-            .ignoresSafeArea()
-        case "agent-edit-tools", "agent-edit-skills", "agent-edit-extensions", "agent-edit-workspaces":
-            // The pages Edit Agent pushes, as the root, over the same draft.
-            RouterPreviewControllerStack(root: root) { [connection, server, page] () -> UIViewController in
-                let draft = AgentNativeEditDraft(agent: Self.editAgent, connection: connection, serverName: server.name)
-                switch page {
-                case "agent-edit-tools": return AgentToolSelectionViewController(selection: .agent(draft))
-                case "agent-edit-skills": return AgentResourceSelectionViewController(kind: .skills, draft: draft)
-                case "agent-edit-extensions": return AgentResourceSelectionViewController(kind: .extensions, draft: draft)
-                default: return AgentWorkspaceSelectionViewController(draft: draft)
-                }
-            }
-            .ignoresSafeArea()
         case "extension-detail":
             RouterPreviewControllerStack(root: root) { [server, root, connection] in
                 ServerExtensionDetailViewController(
@@ -493,29 +298,8 @@ struct SettingsSweepScreenshotPreview: View {
         case "skill-file-edit":
             // The editor needs the server's file-editing capability first.
             ServerInfoLoaded(client: client) { skillFilePage }
-        case "quick-comments":
-            RouterPreviewControllerStack(root: root) { [root] in QuickCommentsViewController(root: root) }
-                .ignoresSafeArea()
-        case "quick-comment-editor":
-            RouterPreviewControllerStack(root: root) {
-                QuickCommentEditorViewController(
-                    template: QuickCommentTemplate.builtInDefaults[0], isNew: false, onSave: { _ in }
-                )
-            }
-            .ignoresSafeArea()
-        case "dictionary", "dictionary-workspace":
-            RouterPreviewControllerStack(root: root) { [root, server, page] in
-                DictationDictionaryViewController.make(
-                    root: root,
-                    serverId: server.id,
-                    workspace: page == "dictionary" ? nil : (id: "preview-ws", name: "oppi-dev")
-                )
-            }
-            .ignoresSafeArea()
-        // Every other page is the root of a router stack, where its links push.
         default:
-            RouterPreviewStack(root: root) { pushedPage }
-                .ignoresSafeArea()
+            Text("Unknown SCREENSHOT_SWEEP_PAGE \(page)")
         }
     }
 
@@ -531,88 +315,13 @@ struct SettingsSweepScreenshotPreview: View {
         .ignoresSafeArea()
     }
 
-    private static func sshPreflightPage(_ page: String, coordinator: ConnectionCoordinator) -> UIViewController {
-        let host = "mac-studio.tail1234.ts.net"
-        switch page {
-        case "ssh-preflight-result":
-            return SSHPreflightViewController(coordinator: coordinator, previewReport: sshReport, host: host)
-        case "ssh-preflight-install":
-            return SSHPreflightViewController(coordinator: coordinator, previewReport: freshMacReport, host: host)
-        case "ssh-preflight-installing":
-            return SSHPreflightViewController(
-                coordinator: coordinator, previewReport: freshMacReport, host: host,
-                installProgress: installProgress(failing: false)
-            )
-        case "ssh-preflight-install-failed":
-            return SSHPreflightViewController(
-                coordinator: coordinator, previewReport: freshMacReport, host: host,
-                installProgress: installProgress(failing: true),
-                installFailure: .installFailed(code: "npm", detail: "npm install exited 1: ETIMEDOUT registry.npmjs.org")
-            )
-        case "ssh-preflight-mismatch":
-            return SSHPreflightViewController(
-                coordinator: coordinator,
-                previewFailure: .hostKeyMismatch(saved: hostKeyA, presented: hostKeyB),
-                host: host
-            )
-        default:
-            return SSHPreflightViewController(coordinator: coordinator)
-        }
-    }
-
-    /// Node.js downloaded, Oppi's package mid-install (or failed there).
-    private static func installProgress(failing: Bool) -> SSHInstallProgress {
-        var progress = SSHInstallProgress()
-        progress.apply(.step(.node, .begin, detail: "Downloading Node.js v22.20.0 (darwin-arm64)"))
-        progress.apply(.step(.node, .ok, detail: "Node.js v22.20.0 in ~/.oppi/runtime/node"))
-        progress.apply(.step(.oppi, .begin, detail: "Installing oppi-server 0.31.0"))
-        if failing {
-            progress.apply(.error(code: "npm", detail: "npm install exited 1: ETIMEDOUT registry.npmjs.org"))
-        }
-        return progress
-    }
-
-    @ViewBuilder
-    private var pushedPage: some View {
-        switch page {
-        default:
-            Text("Unknown SCREENSHOT_SWEEP_PAGE \(page)")
-        }
-    }
-
     // MARK: - Fixtures
-
-    private static let hostKeyA = SSHHostKey(openSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB0Rj5G0b3Y8Hn0m6WmTz7J1cC0Hf3p1G7f3vJmP7oXw")
-    private static let hostKeyB = SSHHostKey(openSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJq2m1m3m8k7mQ4o5r1y2u3i4o5p6a7s8d9f0g1h2j3k")
-
-    /// Oppi installed and answering over HTTPS: the result offers Pair.
-    private static let sshReport = SSHPreflightReport(
-        user: "alex", kernel: "Darwin", release: "25.0.0", arch: "arm64",
-        macOSVersion: "26.0", osRelease: nil,
-        nodePath: "/opt/homebrew/bin/node", nodeVersion: "v24.1.0", oppiNodeVersion: nil,
-        gitPath: "/usr/bin/git", oppiPath: "~/.oppi/bin/oppi", tailscalePath: "/usr/local/bin/tailscale",
-        oppiStatus: SSHOppiStatus(json: #"{"ok":true,"data":{"status":{"paired":false,"server":{"port":7749,"transport":"https","tlsMode":"self-signed"}}}}"#),
-        oppiAnswers: true, hasCommandLineTools: true
-    )
-
-    /// A new Mac with only Remote Login on: the result offers Install & Start.
-    private static let freshMacReport = SSHPreflightReport(
-        user: "alex", kernel: "Darwin", release: "25.0.0", arch: "arm64",
-        macOSVersion: "26.0", osRelease: nil,
-        nodePath: nil, nodeVersion: nil, oppiNodeVersion: nil,
-        gitPath: "/usr/bin/git", oppiPath: nil, tailscalePath: nil,
-        oppiStatus: nil, oppiAnswers: false, hasCommandLineTools: false
-    )
 
     private static let tailnetPeers: [TailnetPeer] = [
         TailnetPeer(id: "n-mac-studio", hostName: "mac-studio", dnsName: "mac-studio.tail1234.ts.net", os: "macOS", tailscaleIPs: ["100.64.1.2"], isOnline: true),
         TailnetPeer(id: "n-mac-mini", hostName: "mac-mini", dnsName: "mac-mini.tail1234.ts.net", os: "macOS", tailscaleIPs: ["100.64.1.4"], isOnline: true),
         TailnetPeer(id: "n-nas", hostName: "nas", dnsName: "nas.tail1234.ts.net", os: "linux", tailscaleIPs: ["100.64.1.5"], isOnline: true),
         TailnetPeer(id: "n-devbox", hostName: "devbox", dnsName: "devbox.tail1234.ts.net", os: "linux", tailscaleIPs: ["100.64.1.6"], isOnline: true),
-    ]
-
-    private static let tailnetProbes: [String: TailnetPeerProbe] = [
-        "n-mac-mini": .ready,
     ]
 
     private static func applyTailnetFixture() {
@@ -642,29 +351,6 @@ struct SettingsSweepScreenshotPreview: View {
         id: "preview-ws", name: "oppi-dev", createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
     )
 
-    /// A host workspace with a description, a sandbox with no folder, and one
-    /// whose folder path is long enough to wrap.
-    private static let workspaceList: [Workspace] = {
-        var sandbox = Workspace(
-            id: "preview-sandbox", name: "oppi-sandbox", icon: .symbol("shippingbox"),
-            createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
-        )
-        sandbox.runtime = .sandbox
-        return [
-            Workspace(
-                id: "preview-ws", name: "oppi-dev", description: "iOS app development workspace",
-                icon: .symbol("hammer"), hostMount: "~/workspace/oppi",
-                createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
-            ),
-            sandbox,
-            Workspace(
-                id: "preview-notes", name: "Notes", icon: .symbol("note.text"),
-                hostMount: "~/notes/with/a/rather/long/path/that/wraps/at/large/text/sizes",
-                createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
-            ),
-        ]
-    }()
-
     private static let pendingApproval = PendingPairingApproval(
         id: "pa-preview", deviceName: "Chen's iPad", method: "invite", source: nil,
         requestedAt: Int64(Date().timeIntervalSince1970 * 1_000),
@@ -678,55 +364,6 @@ struct SettingsSweepScreenshotPreview: View {
         definition: AgentDefinition(
             name: "Design Reviewer",
             instructions: AgentInstructions(text: "Review the change against the HIG.")
-        ),
-        createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
-    )
-
-    /// `schedule-edit` is an hourly schedule that starts a session; `-cron` a custom
-    /// cron schedule whose expression the server would refuse; `-existing` one that
-    /// sends its prompt to a session.
-    private static func editSchedule(page: String) -> AgentSchedule {
-        var edited = schedule
-        switch page {
-        case "schedule-edit-cron":
-            edited.trigger = .cron(expression: "61 * * * *", timeZone: "America/Los_Angeles")
-        case "schedule-edit-existing":
-            edited.action = .existingSession(
-                workspaceId: "preview-ws", sessionId: "preview-session",
-                prompt: "Check in on the nightly build.", streamingBehavior: .followUp
-            )
-        default:
-            break
-        }
-        return edited
-    }
-
-    private static let builtInTools = [
-        ServerToolSummary(name: "read", description: "Read a file from the workspace.", defaultEnabled: true),
-        ServerToolSummary(name: "bash", description: "Run a shell command in the workspace.", defaultEnabled: true),
-        ServerToolSummary(name: "browser", description: "Drive a web page.", defaultEnabled: false),
-    ]
-
-    private static let sandboxWorkspace = Workspace(
-        id: "preview-sandbox", name: "Isolated experiments", runtime: .sandbox,
-        createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
-    )
-
-    /// An Agent with an exact selection of everything the editor's pages choose,
-    /// including a tool, a Skill, and an Extension the catalogs no longer list.
-    private static let editAgent = StoredAgentDefinition(
-        id: "agent-design", name: "Design Reviewer", icon: .defaultValue, description: "Reviews UI changes.",
-        status: .active, version: 2,
-        definition: AgentDefinition(
-            name: "Design Reviewer",
-            description: "Reviews UI changes.",
-            instructions: AgentInstructions(text: "Review the change against the HIG."),
-            resources: AgentResources(
-                skillPaths: ["/Users/preview/.pi/agent/skills/release/SKILL.md", "/Users/preview/.pi/agent/skills/retired/SKILL.md"],
-                extensionIds: ["workflow", "retired-extension"]
-            ),
-            sessionDefaults: AgentSessionDefaults(thinkingLevel: .high, tools: ["read", "retired-tool"]),
-            launchConstraints: AgentLaunchConstraints(allowedWorkspaceIds: ["preview-ws"], requiredRuntime: .host)
         ),
         createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
     )
@@ -793,10 +430,7 @@ struct SettingsSweepScreenshotPreview: View {
             ])),
             "/server/metrics/settings": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/server/mobile-output-guide": Data(#"{"enabled":true,"revision":3}"#.utf8),
-            "/dictation/dictionary/global": Data(#"{"revision":3,"phrases":["Oppi","Tailscale","Herdr","Kypu","SwiftUI","Nerd Font Symbols Mono Extended Family Name That Is Long Enough To Wrap Past The Row"],"provider":"xai"}"#.utf8),
-            "/dictation/dictionary/workspaces/preview-ws": Data(#"{"revision":1,"phrases":["oppi-dev","WorkspaceStore"],"provider":null}"#.utf8),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),
-            "/mcp/scopes/\(mcpWorkspaceId)/servers": json(McpServersResponse(scope: mcpWorkspace, activeSignIn: nil)),
             "/server/resources/pi/system-prompt": json(systemPrompt),
             "/server/resources/pi/default-tools": json(PiDefaultToolsSnapshot(defaultTools: ["+codemode"])),
             "/server/resources/extensions": json(ServerExtensionCatalog(
@@ -845,11 +479,6 @@ struct SettingsSweepScreenshotPreview: View {
             "/mcp/auth/flows/mcp-flow": json(McpFlowBody(flow: mcpFlow)),
             "/mcp/auth/flows/mcp-flow/cancel": Data(#"{"flow":{"flowId":"mcp-flow","scopeId":"global","serverName":"github","launchMode":"phone_browser","status":"cancelled","createdAt":1,"updatedAt":2,"expiresAt":9999999999999}}"#.utf8),
         ]
-        // Only All Sessions' setup card reads the provider status; no other sweep page does.
-        if page == "server-inbox-provider-setup" {
-            SettingsSweepFixtureURLProtocol.routes["/provider-auth/status"] =
-                Data(#"{"providers":[{"id":"anthropic","name":"Anthropic","supportsApiKey":true,"authenticated":false}]}"#.utf8)
-        }
         // The catalog request answers 404, so a sync fails.
         if page == "extensions-offline" || page == "extensions-unavailable" {
             SettingsSweepFixtureURLProtocol.routes["/server/resources/extensions"] = nil
@@ -995,160 +624,6 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
             return ""
         }
         return String(decoding: sorted, as: UTF8.self)
-    }
-}
-
-// MARK: - Usage fixture
-
-/// Usage's server, answered from memory: two weeks of stacked daily bars over three
-/// models, six models in the breakdown, three workspaces, and one day's hourly detail.
-/// `authenticated` false offers the provider setup card.
-struct UsageFixtureClient: UsageStatsClient {
-    var authenticated = true
-    static let detailDate = "2026-10-26"
-
-    private static let models = ["anthropic/claude-sonnet-5-5", "openai/gpt-5-mini", "xai/grok-4"]
-
-    func fetchStats(range: UsageRange) async throws -> ServerStats {
-        var daily: [StatsDailyEntry] = []
-        let calendar = Calendar(identifier: .gregorian)
-        let end = DateComponents(calendar: calendar, year: 2026, month: 10, day: 27).date ?? Date()
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        for offset in stride(from: 13, through: 0, by: -1) {
-            let day = calendar.date(byAdding: .day, value: -offset, to: end) ?? end
-            var byModel: [String: DailyModelEntry] = [:]
-            var sessions = 0
-            var cost = 0.0
-            var tokens = 0
-            for (index, model) in Self.models.enumerated() {
-                let weight = Double((offset + index * 3) % 5 + 1)
-                let entry = DailyModelEntry(sessions: Int(weight), cost: weight * 0.42, tokens: Int(weight) * 90_000)
-                byModel[model] = entry
-                sessions += entry.sessions
-                cost += entry.cost
-                tokens += entry.tokens
-            }
-            daily.append(StatsDailyEntry(date: formatter.string(from: day), sessions: sessions, cost: cost, tokens: tokens, byModel: byModel))
-        }
-        func model(
-            _ name: String, _ sessions: Int, _ cost: Double, _ tokens: Int, _ input: Int, _ cacheRead: Int?, _ cacheWrite: Int?
-        ) -> StatsModelBreakdown {
-            StatsModelBreakdown(
-                model: name, sessions: sessions, cost: cost, tokens: tokens, inputTokens: input,
-                cacheRead: cacheRead, cacheWrite: cacheWrite, share: 0
-            )
-        }
-        let breakdown: [StatsModelBreakdown] = [
-            model("anthropic/claude-sonnet-5-5", 48, 31.4, 5_200_000, 800_000, 2_900_000, 410_000),
-            model("openai/gpt-5-mini", 31, 9.8, 2_100_000, 600_000, 900_000, 0),
-            model("xai/grok-4", 12, 6.1, 1_400_000, 400_000, nil, nil),
-            model("anthropic/claude-haiku-5", 22, 2.2, 1_900_000, 300_000, 1_100_000, 90_000),
-            model("openai/gpt-5", 9, 4.7, 700_000, 200_000, 300_000, 0),
-            model("google/gemini-3-pro", 6, 1.3, 500_000, 90_000, nil, nil),
-        ]
-        return ServerStats(
-            memory: StatsMemory(heapUsed: 0, heapTotal: 0, rss: 0, external: 0),
-            activeSessions: [],
-            daily: daily,
-            modelBreakdown: breakdown,
-            workspaceBreakdown: [
-                StatsWorkspaceBreakdown(id: "ws-oppi", name: "oppi", sessions: 61, cost: 38.2),
-                StatsWorkspaceBreakdown(id: "ws-kypu", name: "kypu", sessions: 24, cost: 9.4),
-                StatsWorkspaceBreakdown(id: "ws-long", name: "a-workspace-with-a-very-long-name-that-must-truncate-in-the-middle", sessions: 3, cost: 0.9),
-            ],
-            totals: StatsTotals(sessions: 128, cost: 55.5, tokens: 11_800_000)
-        )
-    }
-
-    func fetchDailyDetail(date: String) async throws -> DailyDetail {
-        let now = Double(Date().timeIntervalSince1970 * 1_000)
-        var hourly: [StatsDailyHourlyEntry] = []
-        for hour in [9, 10, 11, 14, 15, 16] {
-            let primaryCost: Double = Double(hour % 5 + 1) * 0.4
-            let secondaryCost: Double = Double(hour % 3 + 1) * 0.2
-            var byModel: [String: DailyModelEntry] = [:]
-            byModel[Self.models[0]] = DailyModelEntry(sessions: 1, cost: primaryCost, tokens: 25_000)
-            byModel[Self.models[1]] = DailyModelEntry(sessions: 0, cost: secondaryCost, tokens: 15_000)
-            hourly.append(StatsDailyHourlyEntry(
-                hour: hour, sessions: 1, cost: primaryCost + secondaryCost, tokens: 40_000, byModel: byModel
-            ))
-        }
-        return DailyDetail(
-            date: date,
-            totals: StatsTotals(sessions: 3, cost: 8.4, tokens: 240_000),
-            hourly: hourly,
-            sessions: [
-                StatsDailySession(id: "s-1", name: "Fix the Usage route", model: Self.models[0], cost: 4.2, tokens: 120_000, createdAt: now - 7_200_000, workspaceName: "oppi", status: "stopped"),
-                StatsDailySession(id: "s-2", name: nil, model: Self.models[1], cost: 2.9, tokens: 80_000, createdAt: now - 18_000_000, workspaceName: "kypu", status: "stopped"),
-                StatsDailySession(id: "s-3", name: "Review", model: Self.models[2], cost: 1.3, tokens: 40_000, createdAt: now - 30_000_000, workspaceName: nil, status: "stopped"),
-            ]
-        )
-    }
-
-    func listProviderAuthStatus() async throws -> [ProviderAuthProviderStatus] {
-        [ProviderAuthProviderStatus(
-            id: "anthropic", name: "Anthropic", supportsApiKey: true, oauth: nil, authenticated: authenticated,
-            credentialType: nil, expiresAt: nil, maskedKey: nil
-        )]
-    }
-}
-
-/// `SCREENSHOT_SWEEP_NARROW=<0-1 fraction>` narrows the previewed screen to that share of its
-/// width half a second after it appears, as an iPad split resize does (a simulation: the
-/// container's width, not a system Split View, which a UI test cannot drive). The screen's own
-/// bar items stay with the screen, so they are not drawn.
-@MainActor
-enum PreviewWidthChange {
-    static func wrapping(_ screen: UIViewController) -> UIViewController {
-        guard let value = ProcessInfo.processInfo.environment["SCREENSHOT_SWEEP_NARROW"],
-              let fraction = Double(value), fraction > 0, fraction < 1 else { return screen }
-        return NarrowingController(child: screen, fraction: CGFloat(fraction))
-    }
-
-    private final class NarrowingController: UIViewController {
-        private let child: UIViewController
-        private let fraction: CGFloat
-        private var width: NSLayoutConstraint?
-
-        init(child: UIViewController, fraction: CGFloat) {
-            self.child = child
-            self.fraction = fraction
-            super.init(nibName: nil, bundle: nil)
-            title = child.title
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { nil }
-
-        override func viewDidLoad() {
-            super.viewDidLoad()
-            addChild(child)
-            child.view.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(child.view)
-            let width = child.view.widthAnchor.constraint(equalTo: view.widthAnchor)
-            self.width = width
-            NSLayoutConstraint.activate([
-                child.view.topAnchor.constraint(equalTo: view.topAnchor),
-                child.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-                child.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                width,
-            ])
-            child.didMove(toParent: self)
-        }
-
-        override func viewDidAppear(_ animated: Bool) {
-            super.viewDidAppear(animated)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self, let old = width else { return }
-                old.isActive = false
-                let narrow = child.view.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: fraction)
-                narrow.isActive = true
-                width = narrow
-                UIView.animate(withDuration: 0.25) { self.view.layoutIfNeeded() }
-            }
-        }
     }
 }
 

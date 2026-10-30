@@ -3,41 +3,11 @@ import XCTest
 /// Fast, serverless repro for the compact navigation state used by chat Files.
 ///
 /// This launches the DEBUG navigation chrome harness directly, auto-pushes the
-/// workspace → chat stack, then taps the top Files control. It keeps the slow
-/// server-pairing E2E for end-to-end coverage, but gives us a seconds-fast
-/// signal for toolbar tap delivery and accidental root fallback.
+/// workspace → chat stack over the production `ChatViewController`, then taps
+/// the top Files control. It keeps the slow server-pairing E2E for end-to-end
+/// coverage, but gives us a seconds-fast signal for toolbar tap delivery and
+/// accidental root fallback.
 final class ChatFilesNavigationReproUITests: XCTestCase {
-    @MainActor
-    func testTopFilesControlOpensPanelWithoutRevealingWorkspaceList() {
-        let app = OppiTestLaunch.makeApp()
-        app.launchArguments += [
-            "--nav-chrome-profile",
-            "--nav-chrome-chat-files-repro",
-        ]
-        app.launchEnvironment["PI_NAV_CHROME_CHAT_FILES_REPRO"] = "1"
-        app.launch()
-
-        let filesButton = app.buttons["navChrome.chat.files"]
-        let backButton = app.buttons["navChrome.chat.back"]
-        XCTAssertTrue(filesButton.waitForExistence(timeout: 8), "Fast chat Files repro did not reach the chat surface")
-        XCTAssertTrue(backButton.exists, "Fast chat repro should use one leading pill with Back and Files")
-        XCTAssertLessThan(filesButton.frame.midX, app.frame.midX, "Files control should live on the leading side of chat navigation")
-        XCTAssertLessThan(backButton.frame.maxX, filesButton.frame.minX + 2, "Back and Files controls should be adjacent in the leading pill")
-        XCTAssertFalse(app.collectionViews["navChrome.repro.root"].exists, "Workspace list should not be visible before tapping Files")
-
-        filesButton.tap()
-
-        XCTAssertTrue(
-            app.staticTexts["navChrome.chat.filesPanel"].waitForExistence(timeout: 2),
-            "Top Files control should open the in-chat panel"
-        )
-        XCTAssertFalse(
-            app.collectionViews["navChrome.repro.root"].exists,
-            "Tapping top Files should not reveal the workspace list"
-        )
-        XCTAssertEqual(app.staticTexts["navChrome.repro.filesTapCount"].label, "1")
-    }
-
     @MainActor
     func testRealChatTopFilesControlOpensPanelWithoutRevealingWorkspaceList() {
         let app = launchRealChatHarness()
@@ -64,9 +34,7 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
 
     @MainActor
     func testChatBackFromLocalDestinationDoesNotPopWorkspaceRoute() {
-        let app = launchRealChatHarness(extraArguments: ["--nav-chrome-chat-back-local-repro"], extraEnvironment: [
-            "PI_NAV_CHROME_CHAT_BACK_LOCAL_REPRO": "1",
-        ])
+        let app = launchRealChatHarness(extraArguments: ["--nav-chrome-chat-back-local-repro"])
 
         let workspace = app.collectionViews["navChrome.repro.workspace"]
         XCTAssertTrue(workspace.waitForExistence(timeout: 8), "Local chat repro should auto-open the workspace detail")
@@ -96,21 +64,9 @@ final class ChatFilesNavigationReproUITests: XCTestCase {
     }
 
     @MainActor
-    private func launchRealChatHarness(
-        extraArguments: [String] = [],
-        extraEnvironment: [String: String] = [:]
-    ) -> XCUIApplication {
+    private func launchRealChatHarness(extraArguments: [String] = []) -> XCUIApplication {
         let app = OppiTestLaunch.makeApp()
-        app.launchArguments += [
-            "--nav-chrome-profile",
-            "--nav-chrome-chat-files-repro",
-            "--nav-chrome-chat-files-real-chat",
-        ] + ChatTopBarTestLayout.panelButtons + extraArguments
-        app.launchEnvironment["PI_NAV_CHROME_CHAT_FILES_REPRO"] = "1"
-        app.launchEnvironment["PI_NAV_CHROME_CHAT_FILES_REAL_CHAT"] = "1"
-        for (key, value) in extraEnvironment {
-            app.launchEnvironment[key] = value
-        }
+        app.launchArguments += ["--nav-chrome-profile"] + ChatTopBarTestLayout.panelButtons + extraArguments
         app.launch()
         return app
     }
