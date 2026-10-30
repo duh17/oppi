@@ -1,11 +1,11 @@
 import UIKit
 
 /// What a screen shows instead of its content while that content is not
-/// there: connecting, loading, empty, no search results, failed, or showing a
-/// saved copy. Every whole-screen state is `UIContentUnavailableConfiguration
-/// .loadState(...)`, so the words, the theme colors, and the one Retry button
-/// are the same on every screen.
-enum LoadState: Equatable {
+/// there: connecting, loading, empty, no search results, or failed. Every
+/// whole-screen state is `UIContentUnavailableConfiguration.loadState(...)`, so
+/// the words, the theme colors, and the one Retry button are the same on every
+/// screen.
+enum LoadState {
     /// "Connecting…": the screen's server is not connected yet.
     case connecting
     /// A spinner with its caption. A nil caption shows the spinner alone.
@@ -16,8 +16,6 @@ enum LoadState: Equatable {
     /// A failure. With `retry` the screen offers one "Retry" button; a screen
     /// with no way to reload passes nil and shows no button.
     case failed(title: String, message: String?, retry: RetryAction?)
-    /// A saved copy stands in for a server that cannot be reached.
-    case cached(serverName: String)
 }
 
 extension LoadState {
@@ -31,19 +29,14 @@ extension LoadState {
     }
 }
 
-/// What the Retry button does. Two actions are equal when they have the same
-/// `id`, so a screen compares states, not closures, to decide whether
-/// anything changed.
-struct RetryAction: Equatable {
-    let id: String
+/// What the Retry button does: one `@MainActor` closure the state's view runs
+/// when the person presses it.
+struct RetryAction {
     let run: @MainActor () -> Void
 
-    init(id: String = "retry", run: @escaping @MainActor () -> Void) {
-        self.id = id
+    init(run: @escaping @MainActor () -> Void) {
         self.run = run
     }
-
-    static func == (lhs: RetryAction, rhs: RetryAction) -> Bool { lhs.id == rhs.id }
 }
 
 extension UIContentUnavailableConfiguration {
@@ -91,13 +84,6 @@ extension UIContentUnavailableConfiguration {
             if let retry {
                 config.setProminentButton(String(localized: "Retry"), action: retry.run)
             }
-        case .cached(let serverName):
-            config = empty()
-            config.image = UIImage(systemName: "exclamationmark.arrow.triangle.2.circlepath")
-            config.imageProperties.tintColor = UIColor(palette.orange)
-            config.text = String(localized: "Showing Cached Data")
-            config.textProperties.color = fg
-            config.secondaryText = String(localized: "Showing cached data from \(serverName). Pull to retry.")
         }
         config.secondaryTextProperties.color = comment
         if let background { config.background.backgroundColor = background }

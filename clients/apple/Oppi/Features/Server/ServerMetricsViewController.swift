@@ -748,6 +748,9 @@ final class ServerMetricsStatusView: UIView {
         super.init(frame: frame)
         layer.cornerRadius = 12
         layer.cornerCurve = .continuous
+        // The state's own scope: a test or driver finds Retry (or Turn On)
+        // inside this view, never by title across the whole screen.
+        content.accessibilityIdentifier = "server.metrics.status"
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
         NSLayoutConstraint.activate([

@@ -182,7 +182,14 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
 
     private let scrollView = UIScrollView()
     private let list = ReviewCommentStashListView(chrome: .sheet)
-    private let empty = UIContentUnavailableView(loadState: .loading(nil))
+    /// The empty stash: never loading, so it starts as the state it shows.
+    private let empty = UIContentUnavailableView(loadState: ReviewCommentStashViewController.emptyState)
+
+    private static let emptyState = LoadState.empty(
+        title: String(localized: "No Staged Review Comments"),
+        systemImage: "text.bubble",
+        message: String(localized: "Comments you add from selected text will appear here before you send them.")
+    )
     private let editor = ReviewCommentStashViewController.makeEditorList()
     private let commentText = UITextView()
     private let errorLabel = UILabel()
@@ -296,11 +303,7 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
         view.backgroundColor = background
         scrollView.backgroundColor = background
         empty.configuration = UIContentUnavailableConfiguration.loadState(
-            .empty(
-                title: String(localized: "No Staged Review Comments"),
-                systemImage: "text.bubble",
-                message: String(localized: "Comments you add from selected text will appear here before you send them.")
-            ),
+            Self.emptyState,
             palette: palette,
             background: background
         )

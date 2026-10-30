@@ -223,7 +223,10 @@ const constructs: Construct[] = [
   // Whole-screen and in-list load states outside `LoadState`: see "Load states" in the guide.
   {
     name: "UIContentUnavailableConfiguration factory",
-    pattern: /\bUIContentUnavailableConfiguration\s*\.\s*(?:empty|loading|search)\s*\(|(?:=|:|\()\s*\.(?:empty|loading|search)\(\)/g,
+    // `UIContentUnavailableConfiguration.empty(`, and a bare `.empty()` / `.loading()` /
+    // `.search()` after `=`, `:`, `(`, `{`, `return`, or `Self.` (an initializer, an
+    // argument, a closure body, a returned value, a static member).
+    pattern: /\bUIContentUnavailableConfiguration\s*\.\s*(?:empty|loading|search)\s*\(|(?:=|:|\{|\breturn\b|\bSelf|\()\s*\.(?:empty|loading|search)\(\)/g,
     disallowed: false,
     exemptFiles: ["clients/apple/Oppi/Core/Views/LoadStateContent.swift"],
     // `.empty()` and friends are common words; only a file that uses the type is read.

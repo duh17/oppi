@@ -96,6 +96,23 @@ struct ServerMetricsEnableTests {
         return nil
     }
 
+    /// The status card's own state view, which holds the Retry and Turn On
+    /// buttons: a scoped id, so a title never matches a button elsewhere.
+    private static func statusState(in page: UIViewController) -> UIView? {
+        func find(_ view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == "server.metrics.status" { return view }
+            for subview in view.subviews {
+                if let found = find(subview) { return found }
+            }
+            return nil
+        }
+        return find(page.view)
+    }
+
+    private static func stateButton(titled title: String, in page: UIViewController) -> UIButton? {
+        statusState(in: page).flatMap { button(titled: title, in: $0) }
+    }
+
     private static func labels(in view: UIView) -> [String] {
         let own = (view as? UILabel)?.text.map { [$0] } ?? []
         return own + view.subviews.flatMap(labels)
@@ -108,9 +125,9 @@ struct ServerMetricsEnableTests {
     private func turnOn(on page: ServerMetricsViewController) async throws {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             page.view.layoutIfNeeded()
-            return Self.button(titled: "Turn On", in: page.view) != nil
+            return Self.stateButton(titled: "Turn On", in: page) != nil
         })
-        try #require(Self.button(titled: "Turn On", in: page.view)).sendActions(for: .primaryActionTriggered)
+        try #require(Self.stateButton(titled: "Turn On", in: page)).sendActions(for: .primaryActionTriggered)
     }
 
     @Test("Turning on saves through the store against the loaded revision and updates the cached flag")

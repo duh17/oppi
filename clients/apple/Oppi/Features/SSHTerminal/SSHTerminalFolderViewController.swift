@@ -17,6 +17,16 @@ final class SSHTerminalFolderViewController: UIViewController {
     private let target: SSHTerminalFolderTarget
     private let session = SSHTerminalConnectSession()
     private var chrome: SSHTerminalConnectChrome?
+    /// The connecting and failed states, in a view this screen owns so a test or
+    /// driver can query Retry inside its scope. The state kind rides on
+    /// `accessibilityValue` because one view cannot carry two identifiers.
+    private let stateView = UIContentUnavailableView(loadState: .loading(nil))
+
+    /// What `stateView` is showing, for the accessibility value and for tests.
+    enum ShownState: String {
+        case connecting = "connecting"
+        case failure = "failure"
+    }
 
     /// The terminal has been reached. From then on this connecting screen's job
     /// is done, so it leaves with the terminal instead of waiting to be popped.
@@ -38,6 +48,15 @@ final class SSHTerminalFolderViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.accessibilityIdentifier = "sshTerminal.folder"
+        stateView.accessibilityIdentifier = "sshTerminal.folder.state"
+        stateView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stateView)
+        NSLayoutConstraint.activate([
+            stateView.topAnchor.constraint(equalTo: view.topAnchor),
+            stateView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            stateView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            stateView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
         chrome = SSHTerminalConnectChrome(
             host: self,
             session: session,
@@ -75,26 +94,26 @@ final class SSHTerminalFolderViewController: UIViewController {
         let palette = sshTerminalThemeID.palette
         view.backgroundColor = UIColor(palette.bg)
         let folder = target.folderLabel
+        let state: LoadState
         if let failure = session.failure {
+            stateView.accessibilityValue = ShownState.failure.rawValue
             // Retry is for a failure the person can act on; a live shell is the
             // terminal screen, and a password or trust sheet is over this one.
             let canRetry = !(session.connecting || session.showsTerminal || session.passwordPrompt)
-            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
-                .failed(
-                    title: String(localized: "Could not open \(folder) on \(profile.endpointLabel)"),
-                    message: failure,
-                    retry: canRetry ? RetryAction { [weak self] in self?.connect() } : nil
-                ),
-                palette: palette,
-                background: UIColor(palette.bg)
+            state = .failed(
+                title: String(localized: "Could not open \(folder) on \(profile.endpointLabel)"),
+                message: failure,
+                retry: canRetry ? RetryAction { [weak self] in self?.connect() } : nil
             )
         } else {
-            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
-                .loading(multiplexerLabel(folder)),
-                palette: palette,
-                background: UIColor(palette.bg)
-            )
+            stateView.accessibilityValue = ShownState.connecting.rawValue
+            state = .loading(multiplexerLabel(folder))
         }
+        stateView.configuration = UIContentUnavailableConfiguration.loadState(
+            state,
+            palette: palette,
+            background: UIColor(palette.bg)
+        )
         if session.showsTerminal { hasShownTerminal = true }
         chrome?.sync()
     }

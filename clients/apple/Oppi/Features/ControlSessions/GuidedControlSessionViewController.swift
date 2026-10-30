@@ -8,7 +8,18 @@ final class GuidedControlSessionViewController: UIViewController {
     private let configuration: GuidedControlComposerConfiguration
     private let root: AppRootEnvironment
     private let composer: GuidedControlComposerController
-    private let emptyState = UIContentUnavailableView(loadState: .loading(nil))
+
+    /// What the sheet says before a session exists. It is never loading, so the
+    /// view starts as the state it shows rather than as a spinner placeholder.
+    private lazy var emptyState = UIContentUnavailableView(loadState: emptyLoadState)
+
+    private var emptyLoadState: LoadState {
+        .empty(
+            title: title ?? "",
+            systemImage: Self.systemImage(configuration.domain),
+            message: String(localized: "Describe the outcome you want. Oppi will inspect the current definition and clarify anything ambiguous before changing it.")
+        )
+    }
 
     /// `connection` is the server the session starts on (the active one when
     /// nil). `onSessionPrepared` takes the prepared session; without it the
@@ -92,13 +103,6 @@ final class GuidedControlSessionViewController: UIViewController {
         let palette = theme.activeThemeID.palette
         overrideUserInterfaceStyle = theme.userInterfaceStyle
         view.backgroundColor = theme.backgroundColor
-        emptyState.configuration = UIContentUnavailableConfiguration.loadState(
-            .empty(
-                title: title ?? "",
-                systemImage: Self.systemImage(configuration.domain),
-                message: String(localized: "Describe the outcome you want. Oppi will inspect the current definition and clarify anything ambiguous before changing it.")
-            ),
-            palette: palette
-        )
+        emptyState.configuration = UIContentUnavailableConfiguration.loadState(emptyLoadState, palette: palette)
     }
 }

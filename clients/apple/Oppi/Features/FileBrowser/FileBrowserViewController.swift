@@ -121,7 +121,8 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private let divider = UIView()
     private let dividerTint = UIView()
     private let paneContainer = UIView()
-    private let paneEmpty = UIContentUnavailableView(loadState: .loading(nil))
+    /// The "select a file" pane: never loading, so it starts as the state it shows.
+    private let paneEmpty = UIContentUnavailableView(loadState: FileBrowserViewController.paneEmptyState)
     private let search = ScreenSearchController(prompt: String(localized: "Search files"))
     private var searchInstalled = false
     private var listConstraints: [NSLayoutConstraint] = []
