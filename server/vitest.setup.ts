@@ -70,3 +70,14 @@ process.env.PI_CODING_AGENT_DIR = piAgentDir;
 afterAll(() => {
   rmSync(piAgentDir, { recursive: true, force: true });
 });
+
+// Skill discovery (Pi's SDK and Oppi's resource service) reads ~/.agents/skills,
+// ~/.claude/skills and other user-level dirs through os.homedir(), which follows HOME. A skill
+// the developer installs there must not change what tests see, so every file runs against an
+// empty temp home. Tests that need a populated home set HOME themselves and restore it.
+const home = mkdtempSync(join(tmpdir(), "oppi-vitest-home-"));
+process.env.HOME = home;
+process.env.USERPROFILE = home;
+afterAll(() => {
+  rmSync(home, { recursive: true, force: true });
+});
