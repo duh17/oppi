@@ -18,15 +18,14 @@ import UIKit
 /// last write the fixture server received (`settingsSweep.lastWrite`);
 /// `SCREENSHOT_SWEEP_WRITE_DELAY=<seconds>` holds each write's answer that long.
 /// `SCREENSHOT_COLOR_SCHEME=dark|light|oled|night|custom:Paper` selects that theme.
-final class SettingsSweepPreviewController: UIViewController {
+final class SettingsSweepPreviewController: PreviewRootController {
+    // The fixtures the pages read, held as long as the preview the way the
+    // SwiftUI view's constants were.
     private let connection: ServerConnection
     private let server: PairedServer
     private let client: APIClient
-    private let themeStore: ThemeStore
-    private let root: AppRootEnvironment
     private let page: String
     private let showsWrites: Bool
-    private let content: UIViewController
     /// The last write, where the SwiftUI preview's bottom-leading overlay put it.
     private let writeLabel = UILabel()
 
@@ -102,7 +101,7 @@ final class SettingsSweepPreviewController: UIViewController {
     init() {
         let environment = ProcessInfo.processInfo.environment
         ScreenshotVolatileDefaults.applyThemeScheme(environment["SCREENSHOT_COLOR_SCHEME"])
-        themeStore = ThemeStore()
+        let themeStore = ThemeStore()
         page = environment["SCREENSHOT_SWEEP_PAGE"] ?? ""
         showsWrites = environment["SCREENSHOT_SWEEP_SHOWS_WRITES"] == "1"
         SettingsSweepFixtureURLProtocol.writeDelay = environment["SCREENSHOT_SWEEP_WRITE_DELAY"].flatMap(Double.init) ?? 0
@@ -160,7 +159,7 @@ final class SettingsSweepPreviewController: UIViewController {
         }
 
         // The app root: router modals present with these services.
-        root = AppRootEnvironment(
+        let root = AppRootEnvironment(
             coordinator: coordinator,
             navigation: AppNavigation(),
             themeStore: themeStore,
@@ -188,11 +187,11 @@ final class SettingsSweepPreviewController: UIViewController {
             break
         }
 
-        content = Self.makeContent(page: page, root: root, server: server, connection: connection, client: client)
-        super.init(nibName: nil, bundle: nil)
-        // The sheets these screens present find the fixture root here even when
-        // they leave the screen's own trait chain (the window publishes it too).
-        traitOverrides.appRootEnvironment = root
+        super.init(
+            root: root,
+            themeStore: themeStore,
+            content: Self.makeContent(page: page, root: root, server: server, connection: connection, client: client)
+        )
     }
 
     @available(*, unavailable)
@@ -200,20 +199,7 @@ final class SettingsSweepPreviewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = themeStore.backgroundColor
-        PreviewHost.fill(self, with: content)
         if showsWrites { addWriteLabel() }
-        PreviewHost.publishScreenshotReady(in: self)
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        // The window's style comes from the app's theme store, which was built
-        // before this preview pinned `SCREENSHOT_COLOR_SCHEME`: put this
-        // preview's scheme on the window, as `.preferredColorScheme` did for the
-        // SwiftUI body, so system chrome and labels follow it.
-        themeStore.applyToWindow(of: self)
-        PreviewHost.publishAppRootToWindow(root, from: self)
     }
 
     /// The last write the fixture server received, where the SwiftUI preview's

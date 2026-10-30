@@ -82,6 +82,48 @@ enum PreviewHost {
     private static let screenshotReadyTag = 0x0F51_0011
 }
 
+/// A preview that is its own window root: the fixture app root in the
+/// controller's traits, its screen filling the view, the `screenshot.ready`
+/// marker, and the window's theme and app root, which every preview that is its
+/// own controller had spelled out separately.
+@MainActor
+class PreviewRootController: UIViewController {
+    private let root: AppRootEnvironment
+    private let themeStore: ThemeStore
+    private let content: UIViewController
+
+    init(root: AppRootEnvironment, themeStore: ThemeStore, content: UIViewController) {
+        self.root = root
+        self.themeStore = themeStore
+        self.content = content
+        super.init(nibName: nil, bundle: nil)
+        // Sheets a screen presents find the fixture root here even when they
+        // leave the screen's own trait chain (the window carries it too).
+        traitOverrides.appRootEnvironment = root
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = themeStore.backgroundColor
+        PreviewHost.fill(self, with: content)
+        PreviewHost.publishScreenshotReady(in: self)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Before the first frame a reader waits on `screenshot.ready` for: the
+        // window's style comes from the app root's theme store, which was built
+        // before this preview pinned `SCREENSHOT_COLOR_SCHEME`, so put this
+        // preview's scheme on the window as `.preferredColorScheme` did for the
+        // SwiftUI body of these previews.
+        themeStore.applyToWindow(of: self)
+        PreviewHost.publishAppRootToWindow(root, from: self)
+    }
+}
+
 /// A screen a preview shows once one fixture fact is in place: a spinner until
 /// `prepare` returns, then `content`. The settings pages need this for the
 /// server's capabilities (`/server/info`, which the Skill file editor reads
@@ -104,8 +146,9 @@ final class PreviewLoadingController: UIViewController {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        // A preview the window drops must not keep a request the fixture never
-        // answers running.
+        // The task holds the controller weakly across `prepare`, so a window that
+        // drops the preview reaches this and cancels work the fixture may never
+        // finish.
         task?.cancel()
     }
 
@@ -118,10 +161,10 @@ final class PreviewLoadingController: UIViewController {
             spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
         spinner.startAnimating()
+        let prepare = prepare
         task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.prepare()
-            guard !Task.isCancelled else { return }
+            await prepare()
+            guard !Task.isCancelled, let self else { return }
             self.spinner.stopAnimating()
             self.spinner.removeFromSuperview()
             PreviewHost.fill(self, with: self.makeContent())

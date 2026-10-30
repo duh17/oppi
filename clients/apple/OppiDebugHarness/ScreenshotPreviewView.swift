@@ -452,10 +452,7 @@ private struct ChatTopBarScreenshotPreview: View {
 /// `SCREENSHOT_SCREEN=settings-chat` / `settings-chat-top-bar`: a UIKit settings page as the root of a router stack, over fixture services.
 /// The page shares the app's `ThemeStore`. Nothing here calls a server.
 @MainActor
-final class SettingsPagePreviewController: UIViewController {
-    private let root: AppRootEnvironment
-    private let content: UIViewController
-
+final class SettingsPagePreviewController: PreviewRootController {
     /// The page shares the app's own `ThemeStore`, the one that owns the window:
     /// a theme chosen on the page then re-themes the window, as in the app. A
     /// store of its own would change only itself.
@@ -472,25 +469,20 @@ final class SettingsPagePreviewController: UIViewController {
             chatReaderPayloadStore: ChatReaderPayloadStore(),
             sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
         )
-        self.root = root
-        content = PreviewHost.screenStack(root: root) {
-            switch screen {
-            case "settings-chat-top-bar": SettingsChatTopBarViewController()
-            default: SettingsChatViewController(root: root)
+        super.init(
+            root: root,
+            themeStore: themeStore,
+            content: PreviewHost.screenStack(root: root) {
+                switch screen {
+                case "settings-chat-top-bar": SettingsChatTopBarViewController()
+                default: SettingsChatViewController(root: root)
+                }
             }
-        }
-        super.init(nibName: nil, bundle: nil)
-        traitOverrides.appRootEnvironment = root
+        )
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        PreviewHost.fill(self, with: content)
-        PreviewHost.publishScreenshotReady(in: self)
-    }
 }
 
 /// The two imported themes the settings captures use, one light and one dark,
