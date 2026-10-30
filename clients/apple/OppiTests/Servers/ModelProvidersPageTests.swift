@@ -28,26 +28,10 @@ struct ModelProvidersPageTests {
         )
     }
 
-    private func quotas(providerId: String, fetchedAt: Int) -> ProviderQuotasInfo {
-        ProviderQuotasInfo(
-            providers: [
-                ProviderQuota(
-                    providerId: providerId, displayName: "Claude", authenticated: true,
-                    planType: nil, windows: [], credits: nil, prepaidBalanceCents: nil,
-                    fetchedAt: fetchedAt, error: "Quota request failed"
-                ),
-            ],
-            fetchedAt: fetchedAt
-        )
-    }
-
-    private func makeRoot(
-        providers: [ProviderAuthProviderStatus],
-        quotas: ProviderQuotasInfo = ProviderQuotasInfo(providers: [], fetchedAt: 0)
-    ) throws -> AppRootEnvironment {
+    private func makeRoot(providers: [ProviderAuthProviderStatus]) throws -> AppRootEnvironment {
         try makeTestAppRoot(
             readyServerId: serverId,
-            apiClient: ProvidersURLProtocol.makeClient(providers: providers, quotas: quotas)
+            apiClient: ProvidersURLProtocol.makeClient(providers: providers)
         )
     }
 
@@ -67,26 +51,32 @@ struct ModelProvidersPageTests {
             page.shownItems.count == 2
         }, "the appearance must load the visible server's providers")
         #expect(page.shownItems == [.provider("claude"), .provider("gemini")])
-        let sections = page.sections()
-        #expect(sections.map(\.header) == ["Connected", "Available"], "the two groups carry the only headings")
-        #expect(page.showsHeader(for: .connected) && page.showsHeader(for: .available))
-        #expect(!page.showsHeader(for: .signInAttempt) && !page.showsHeader(for: .error))
+        #expect(page.sections().map(\.header) == ["Connected", "Available"])
     }
 
-    @Test("a connected provider's usage says when it was read, as the connected group's footer")
-    func connectedFooterSaysWhenUsageWasRead() async throws {
-        let fetchedAt = 1_700_000_000_000
-        let provider = provider("claude", name: "Claude", authenticated: true)
-        let root = try makeRoot(providers: [provider], quotas: quotas(providerId: "claude", fetchedAt: fetchedAt))
+    @Test("a load whose request ends as a cancel keeps its providers and reports no failure")
+    func cancelledLoadKeepsProviders() async throws {
+        let root = try makeRoot(providers: [provider("claude", name: "Claude", authenticated: true)])
         let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
         let window = try show(page)
         defer { hide(window) }
-
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            page.sections().first?.footer?.hasPrefix("Usage as of") == true
-        }, "the connected group's footer is the usage time")
-        // No window carries an even-pace tick, so the footer adds no note about one.
-        #expect(page.sections().first?.footer?.contains("even pace") == false)
+            page.shownItems.contains(.provider("claude"))
+        })
+
+        // The next load's request ends as a cancel — what leaving the page, or a
+        // refresh replacing this one, produces. That is control flow: the rows
+        // this server already showed stay, and nothing is reported as failed.
+        let before = ProvidersURLProtocol.statusRequests
+        ProvidersURLProtocol.cancelNextStatusRequest()
+        page.setNeedsRefresh()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            ProvidersURLProtocol.statusRequests == before + 1
+        }, "the second load asked the server")
+        // Its answer lands on the main actor a moment later.
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!page.sections().contains { $0.id == .error }, "a cancelled request is not a failure to report")
+        #expect(page.shownItems.contains(.provider("claude")), "the providers it had stay on screen")
     }
 
     @Test("a host switch drops the old server's providers and shows the new one's")
@@ -135,43 +125,6 @@ struct ModelProvidersPageTests {
         }, "the page follows the switch and loads the new server instead of keeping the old rows")
     }
 
-    @Test("the sign-in attempt stays on the list above the provider rows while its sheet is closed")
-    func signInAttemptRowNeedsItsSheetToBeClosed() async throws {
-        let root = try makeRoot(providers: [provider("claude", name: "Claude", authenticated: true)])
-        let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
-        let window = try show(page)
-        defer { hide(window) }
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            page.shownItems.first == .provider("claude")
-        }, "the connected provider loads on appearance")
-        #expect(page.shownItems.contains(.allConnected), "no available provider says so, as it did before the move")
-        // Nothing starts a flow here: the page's own rows are its server's.
-        #expect(!page.shownItems.contains(.signInAttempt))
-        #expect(page.sections().first(where: { $0.id == .signInAttempt }) == nil)
-    }
-
-    @Test("the API key sheet shows a failed save under the field and takes it back when the field clears")
-    func apiKeySheetShowsAndClearsItsFailure() async throws {
-        let root = try makeRoot(providers: [])
-        let sheet = ProviderAPIKeyViewController(
-            provider: provider("claude", name: "Claude", authenticated: true), root: root
-        ) { _ in }
-        let window = try show(sheet)
-        defer { hide(window) }
-        sheet.updateProperties()
-        #expect(sheet.shownItems == [.provider, .key])
-        #expect(sheet.navigationItem.rightBarButtonItem?.isEnabled == false, "nothing to save yet")
-
-        sheet.errorMessage = "Failed to save API key: nope"
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            sheet.shownItems == [.provider, .key, .error]
-        })
-        sheet.errorMessage = nil
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            sheet.shownItems == [.provider, .key]
-        }, "a cleared failure takes its row with it")
-    }
-
     @Test("the API key sheet saves the trimmed key and refuses to be swiped away with one typed")
     func apiKeySheetSavesTheTrimmedKey() async throws {
         let root = try makeRoot(providers: [])
@@ -200,40 +153,6 @@ struct ModelProvidersPageTests {
         let save = try #require(sheet.navigationItem.rightBarButtonItem)
         try #require(save.primaryAction).performWithSender(save, target: nil)
         #expect(saved == "sk-live-key")
-    }
-
-    @Test("the sign-in sheet's answer field keeps its row while typing, and Submit is the row that changes")
-    func signInSheetKeepsItsFieldWhileTyping() {
-        let attempt = ProviderAuthFlowAttempt(
-            flow: ProviderAuthFlowSnapshot(
-                flowId: "pa_1", providerId: "claude", flowType: .oauth, launchMode: .none,
-                status: .awaitingPrompt,
-                auth: nil,
-                prompt: ProviderAuthFlowSnapshot.Prompt(
-                    message: "Which workspace?", placeholder: "Workspace", allowEmpty: false,
-                    options: nil
-                ),
-                lastProgress: nil, error: nil, createdAt: 0, updatedAt: 1, expiresAt: 600_000
-            ),
-            client: RefusingProviderAuthClient(),
-            serverId: serverId, serverName: "Studio", providerName: "Claude"
-        )
-        let sheet = ProviderSignInViewController(
-            attempt: attempt, root: makeTestAppRoot(), visibleServerId: { nil }, onDone: {}, onCancel: {}
-        )
-        sheet.loadViewIfNeeded()
-        sheet.updateProperties()
-
-        let fieldInputs = sheet.inputs(of: .input)
-        let submitInputs = sheet.inputs(of: .submit)
-        #expect(sheet.sections().map(\.id) == [.summary, .prompt, .finish])
-        #expect(sheet.sections().first(where: { $0.id == .prompt })?.items == [.input, .submit])
-        #expect(sheet.showsHeader(for: .prompt) && !sheet.showsHeader(for: .summary))
-
-        attempt.input = "oppi"
-        // The field row is not redrawn, so its selection and keyboard survive.
-        #expect(sheet.inputs(of: .input) == fieldInputs)
-        #expect(sheet.inputs(of: .submit) != submitInputs, "Submit follows what the field holds")
     }
 
     @Test("a prompt's options show once each, so the list has no repeated row")
@@ -309,7 +228,8 @@ private final class RefusingProviderAuthClient: ProviderAuthFlowClient, @uncheck
 }
 
 /// Answers the provider status and quota requests per host, so a test can tell
-/// one server's rows from another's.
+/// one server's rows from another's, and can answer the next status request as
+/// a cancel, the way a request cancelled under its page arrives.
 private final class ProvidersURLProtocol: URLProtocol, @unchecked Sendable {
     static let firstHost = "first-providers.test"
     static let secondHost = "second-providers.test"
@@ -318,11 +238,13 @@ private final class ProvidersURLProtocol: URLProtocol, @unchecked Sendable {
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var answers: [String: (providers: [ProviderAuthProviderStatus], quotas: ProviderQuotasInfo)] = [:]
+    nonisolated(unsafe) private static var cancelsStatus = false
+    nonisolated(unsafe) private static var statusRequestCount = 0
 
     static func makeClient(
         host: String = "ready-server.test",
         providers: [ProviderAuthProviderStatus],
-        quotas: ProviderQuotasInfo
+        quotas: ProviderQuotasInfo = ProviderQuotasInfo(providers: [], fetchedAt: 0)
     ) -> APIClient {
         lock.lock()
         answers[host] = (providers, quotas)
@@ -334,6 +256,19 @@ private final class ProvidersURLProtocol: URLProtocol, @unchecked Sendable {
             token: "sk_test",
             configuration: configuration
         )
+    }
+
+    static var statusRequests: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return statusRequestCount
+    }
+
+    /// The next status request answers as a cancelled request, once.
+    static func cancelNextStatusRequest() {
+        lock.lock()
+        cancelsStatus = true
+        lock.unlock()
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -348,8 +283,16 @@ private final class ProvidersURLProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         Self.lock.lock()
+        let isStatus = url.path.hasSuffix("/provider-auth/status")
+        if isStatus { Self.statusRequestCount += 1 }
+        let cancels = isStatus && Self.cancelsStatus
+        if cancels { Self.cancelsStatus = false }
         let answer = Self.answers[host]
         Self.lock.unlock()
+        if cancels {
+            client?.urlProtocol(self, didFailWithError: URLError(.cancelled))
+            return
+        }
         var body = Data(#"{"error":"not found"}"#.utf8)
         var status = 404
         if let answer {

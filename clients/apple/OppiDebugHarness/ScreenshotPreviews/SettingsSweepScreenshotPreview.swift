@@ -9,8 +9,7 @@ import UIKit
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
-/// `model-providers` (the connected and available groups over fixture usage),
-/// `model-providers-api-key` (the key sheet with a failed save).
+/// `model-providers` (the connected and available groups over fixture usage).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -342,14 +341,6 @@ final class SettingsSweepPreviewController: PreviewRootController {
             return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
         case "model-providers":
             return stack { ModelProvidersViewController(target: .init(serverId: server.id), root: root) }
-        case "model-providers-api-key":
-            // The sheet at the root instead of over its row, with a failed save
-            // to capture, for a capture of the form itself.
-            return stack {
-                let sheet = ProviderAPIKeyViewController(provider: Self.providers[0], root: root) { _ in }
-                sheet.errorMessage = "Failed to save API key: The server rejected the key."
-                return sheet
-            }
         case "mcp-add":
             // The add-server form at the root instead of in its sheet, for a
             // capture of the form itself.

@@ -215,15 +215,16 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     /// usage (provider round-trips on the server, often seconds) fills in
     /// behind them, and a reload keeps the previous usage until then. A load
     /// for a host that is no longer visible, or that a newer load replaced,
-    /// is dropped. Returns once both settle, so pull to refresh spins until
-    /// usage is current.
+    /// is dropped. A load this page cancelled — it left, or a newer one
+    /// replaced it — is no failure: the rows it showed stay. Returns once both
+    /// settle, so pull to refresh spins until usage is current.
     private func load() async {
         loadGeneration += 1
         let generation = loadGeneration
         guard let serverId = loadedServerId else { return }
         let isCurrent = { [weak self] in self?.loadGeneration == generation && self?.loadedServerId == serverId }
         guard let client = await coordinator.apiClientReady(for: serverId) else {
-            guard isCurrent() else { return }
+            guard isCurrent(), !Task.isCancelled else { return }
             setupState = .unavailable
             errorMessage = "Unable to prepare server transport"
             return
@@ -242,13 +243,16 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
                 setupState = ProviderSetupState(providerStatuses: loaded)
                 errorMessage = nil
             case .failure(let error):
+                // Cancelled under the page, or served as URLSession's own cancel:
+                // the providers it shows are still what this server has.
+                guard !Task.isCancelled, !error.isLoadCancellation else { return }
                 statuses = []
                 setupState = .unavailable
                 errorMessage = "Failed to load provider status: \(error.localizedDescription)"
             }
         }
         let loadedQuotas = await fetchedQuotas
-        guard isCurrent() else { return }
+        guard isCurrent(), !Task.isCancelled else { return }
         // A failed refresh keeps the usage already on screen; its footer time says how old it is.
         if let loadedQuotas { quotas = loadedQuotas }
     }
