@@ -110,7 +110,7 @@ struct SSHTerminalScreenshotPreview: View {
         guard !channel.connected else { return }
         let esc = "\u{1b}["
         let panes = [
-            RexFakeSession.Pane(block: "block:preview-pi", label: "shell", title: "pi - oppi", screen: "\(esc)1mpi\(esc)0m in ~/oppi\r\n\(esc)32m>\(esc)0m refactor the connection\r\n\r\nThe terminal stands for the session.\r\nSwipe sideways to move between its panes.\r\n"),
+            RexFakeSession.Pane(block: "block:preview-pi", label: "shell", title: "pi - oppi", screen: (1...80).map { "\(esc)2mbuild log line \($0)\(esc)0m\r\n" }.joined() + "\(esc)1mpi\(esc)0m in ~/oppi\r\n\(esc)32m>\(esc)0m refactor the connection\r\n\r\nThe terminal stands for the session.\r\nSwipe sideways to move between its panes.\r\n"),
             RexFakeSession.Pane(block: "block:preview-logs", label: "shell", title: "tail -f server.log", screen: "\(esc)2m12:01:09\(esc)0m listening on :7749\r\n\(esc)2m12:01:11\(esc)0m GET /health 200\r\n"),
             RexFakeSession.Pane(block: "block:preview-shell", label: "shell", title: "~/dotfiles", screen: "$ git status\r\nOn branch main\r\nnothing to commit\r\n$ "),
         ]

@@ -440,6 +440,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// socket, so the channel's end follows the close frame: that end is
         /// the pane leaving, not the connection failing.
         var retired: Set<Int> = []
+        /// Panes Rex closed (by event, by their stream, or by dropping out of
+        /// the view). The layout held here is stale until the next view is
+        /// read, so a pane in it is not a pane that is still there.
+        var closedBlocks: Set<String> = []
         var stream: SSHExecStream?
         var parser: RexDataStream?
         var exitStatus: Int?
@@ -528,7 +532,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     /// swipe, and VoiceOver alike. A pane the view does not list is ignored.
     func show(_ blockID: String) {
         let start = core.withLock { state -> Bool in
-            guard !state.ended, blockID != state.requested else { return false }
+            guard !state.ended, blockID != state.requested, !state.closedBlocks.contains(blockID) else { return false }
             if let layout = state.layout, !layout.contains(blockID) { return false }
             state.requested = blockID
             publish(state)
@@ -668,15 +672,33 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             do {
                 try await switchData(to: block)
             } catch {
-                // Rex refused the pane (it closed meanwhile): stay where the
-                // person is. Anything else is the connection failing.
-                let stays = core.withLock { state -> Bool in
-                    guard case RexClientError.refused = error, let shown = state.streamBlock, !state.ended else { return false }
-                    state.requested = shown
+                // Rex refused the pane: it closed before this terminal heard.
+                // Anything else is the connection failing.
+                enum Recovery { case carryOn, ended, failed }
+                let recovery = core.withLock { state -> Recovery in
+                    guard case RexClientError.refused = error, !state.ended else { return .failed }
+                    // A newer request replaced this one while it waited; it stands.
+                    guard state.requested == block else { return .carryOn }
+                    state.closedBlocks.insert(block)
+                    // Back to the pane on screen if it is still there, else the
+                    // first pane that is; with none left there is nothing to show.
+                    let streaming = state.streamBlock.flatMap { shown in
+                        !state.closedBlocks.contains(shown) && !state.retired.contains(state.generation) ? shown : nil
+                    }
+                    let live = state.layout?.panes.map(\.blockID).first { !state.closedBlocks.contains($0) }
+                    guard let next = streaming ?? live else { return .ended }
+                    state.requested = next
                     publish(state)
-                    return true
+                    return .carryOn
                 }
-                if !stays {
+                switch recovery {
+                case .carryOn:
+                    break
+                case .ended:
+                    core.withLock { $0.switching = false }
+                    end("The pane closed in Rex.")
+                    return
+                case .failed:
                     core.withLock { $0.switching = false }
                     end(error.localizedDescription)
                     return
@@ -798,16 +820,20 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     /// ends with `reason`.
     private func closed(_ block: String, reason: String) {
         let order = core.withLock { $0.layout?.panes.map(\.blockID) ?? [block] }
-        leave(block, order: order, surviving: Set(order).subtracting([block]), reason: reason)
+        leave(block, order: order, surviving: Set(order), reason: reason)
     }
 
     /// The pane on screen is `block`, and it is gone: show the neighbour it
     /// had in `order` among `surviving`, or end the terminal with `reason`.
     /// Nothing happens for a pane that is not on screen.
     private func leave(_ block: String, order: [String], surviving: Set<String>, reason: String) {
-        let onScreen = core.withLock { !$0.ended && $0.requested == block }
+        // `surviving` comes from a view that may be stale: what Rex has closed since is not in it.
+        let (onScreen, alive) = core.withLock { state -> (Bool, Set<String>) in
+            state.closedBlocks.insert(block)
+            return (!state.ended && state.requested == block, surviving.subtracting(state.closedBlocks))
+        }
         guard onScreen else { return }
-        if let next = RexSessionLayout.neighbour(of: block, in: order, surviving: surviving) {
+        if let next = RexSessionLayout.neighbour(of: block, in: order, surviving: alive) {
             show(next)
         } else {
             // The last pane: its program's exit status is what the person wants to know.
@@ -878,6 +904,8 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         state.revision = view.revision ?? max(state.revision ?? -1, state.wanted)
         let layout = RexSessionLayout(view: view)
         let before = state.layout?.panes.map(\.blockID)
+        // A pane the new view no longer lists is closed.
+        if let before { state.closedBlocks.formUnion(Set(before).subtracting(layout.panes.map(\.blockID))) }
         state.layout = layout
         for pane in layout.panes {
             if let label = pane.label { state.labels[pane.blockID] = label }

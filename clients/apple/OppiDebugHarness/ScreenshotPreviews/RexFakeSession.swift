@@ -179,6 +179,8 @@ final class RexFakeSession: Sendable {
         var served: [RexFakeDataHost] = []
         var held: Set<String> = []
         var refusing: Set<String> = []
+        /// Limits `refusing` to requests that name one of these panes.
+        var refusingBlocks: Set<String>?
     }
 
     let sessionID: String
@@ -227,8 +229,14 @@ final class RexFakeSession: Sendable {
     /// `data.connect` for these panes is not answered until `release`.
     func hold(dataConnectFor blocks: Set<String>) { state.withLock { $0.held = blocks } }
 
-    /// These methods answer `not_found`, as Rex does for a pane that closed.
-    func refuse(_ methods: Set<String>) { state.withLock { $0.refusing = methods } }
+    /// These methods answer `not_found`, as Rex does for a pane that closed:
+    /// for every pane, or only a request that names one of `blocks`.
+    func refuse(_ methods: Set<String>, for blocks: Set<String>? = nil) {
+        state.withLock {
+            $0.refusing = methods
+            $0.refusingBlocks = blocks
+        }
+    }
 
     /// Answers the held `data.connect` for `block`.
     func release(dataConnectFor block: String) {
@@ -323,7 +331,11 @@ final class RexFakeSession: Sendable {
 
     private func answer(_ request: RexFakeHost.Request) -> RexFakeHost.Answer {
         let block = request.string("block_id") ?? ""
-        if state.withLock({ $0.refusing.contains(request.method) }) {
+        let refused = state.withLock { state in
+            state.refusing.contains(request.method)
+                && (state.refusingBlocks.map { blocks in blocks.contains { request.payload.contains($0) } } ?? true)
+        }
+        if refused {
             return .refuse(code: "not_found", message: "no such block")
         }
         switch request.method {

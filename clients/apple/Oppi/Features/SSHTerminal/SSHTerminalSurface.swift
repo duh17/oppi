@@ -1164,10 +1164,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         // A sideways swipe is not also a history scroll or an app's wheel
         // events. It only begins when mostly horizontal (`gestureRecognizerShouldBegin`),
         // so a vertical drag still reaches the scroll pan.
-        let scrollPan = historyScroll.panGestureRecognizer
-        if (gestureRecognizer === paneSwipe && other === scrollPan) || (other === paneSwipe && gestureRecognizer === scrollPan) {
-            return false
-        }
+        if gestureRecognizer === paneSwipe && other === historyScroll.panGestureRecognizer { return false }
         return true
     }
 

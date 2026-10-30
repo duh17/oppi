@@ -681,6 +681,49 @@ struct RexSessionTerminalTests {
         await rig.stop()
     }
 
+    /// The neighbour closed before the terminal heard (Rex refuses to take it):
+    /// the terminal does not fall back onto the pane that just closed, and moves
+    /// to the first pane that is still there.
+    @Test func aRefusedNeighbourMovesOnToALivePaneNotBackToTheClosedOne() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (a, b, c) = (Self.block("a"), Self.block("b"), Self.block("c"))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 3 })
+        rig.fake.refuse(["session.own_block"], for: [b])
+        rig.fake.blockClosed(a)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
+        #expect(rig.model.state.shown == c && rig.channel.connected)
+        #expect(rig.fake.requests("data.connect").allSatisfy { $0.string("block_id") != b })
+        await rig.stop()
+    }
+
+    /// With every other pane gone, a refused neighbour ends the terminal with
+    /// the reason, instead of leaving it on a dead pane.
+    @Test func aRefusedNeighbourWithNoPaneLeftEndsTheTerminal() async throws {
+        let rig = try await open(["a", "b"])
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 2 })
+        rig.fake.refuse(["session.own_block"], for: [Self.block("b")])
+        rig.fake.blockClosed(Self.block("a"))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !rig.channel.connected })
+        #expect(rig.channel.reason == "The pane closed in Rex.")
+        await rig.stop()
+    }
+
+    /// The view the terminal holds is stale until Rex announces the next one:
+    /// a second close must not hand the terminal back to the pane that closed
+    /// first.
+    @Test func aSecondCloseNeverHandsBackToTheFirstClosedPane() async throws {
+        let rig = try await open(["a", "b"])
+        let (a, b) = (Self.block("a"), Self.block("b"))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 2 })
+        rig.fake.blockClosed(a)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") })
+        rig.fake.blockClosed(b)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !rig.channel.connected })
+        #expect(rig.channel.reason == "The pane closed in Rex.")
+        #expect(rig.fake.requests("data.connect").filter { $0.string("block_id") == a }.count == 1, "only the one that opened the terminal")
+        await rig.stop()
+    }
+
     /// A switch that is overtaken after the pane was taken (A to B, then back
     /// to A before B's stream) must not leave B at this screen's size.
     @Test func aSwitchOvertakenAfterTakingAPaneHandsItBack() async throws {

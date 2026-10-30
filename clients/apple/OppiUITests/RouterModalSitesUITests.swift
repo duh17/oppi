@@ -360,6 +360,42 @@ final class RouterModalSitesUITests: XCTestCase {
         }
     }
 
+    /// A Rex terminal moves between its session's panes with a sideways swipe,
+    /// and a vertical drag on the same grid still scrolls history (the swipe
+    /// must neither swallow the scroll nor scroll along with it).
+    func testRexTerminalSwipesBetweenPanesAndStillScrollsHistory() {
+        launch(screen: "ssh-terminal-rex-panes")
+        let first = app.buttons["sshTerminal.rexPanes.0"]
+        let second = app.buttons["sshTerminal.rexPanes.1"]
+        XCTAssertTrue(first.waitForExistence(timeout: 15), "The pane strip did not appear")
+        XCTAssertTrue(first.isSelected && !second.isSelected, "The session opens on its first pane")
+        let grid = app.descendants(matching: .any)["sshTerminal.grid"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        attachScreenshot("rex-panes-first")
+
+        // A vertical drag scrolls history: the grid leaves the live screen and the pane stays.
+        let backToLive = app.buttons["sshTerminal.backToLive"]
+        XCTAssertFalse(backToLive.exists, "The grid starts on the live screen")
+        let top = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+        let bottom = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+        top.press(forDuration: 0.05, thenDragTo: bottom, withVelocity: .default, thenHoldForDuration: 0)
+        XCTAssertTrue(backToLive.waitForExistence(timeout: 5), "A vertical drag must scroll the history")
+        XCTAssertTrue(first.isSelected, "A vertical drag must not change pane")
+        attachScreenshot("rex-panes-scrolled")
+        backToLive.tap()
+
+        // A sideways swipe moves to the next pane, and back.
+        grid.swipeLeft()
+        XCTAssertTrue(waitFor(second.isSelected), "A swipe left must show the next pane")
+        XCTAssertFalse(first.isSelected)
+        XCTAssertTrue(waitFor(app.buttons["sshTerminal.rexMinimap.1"].isSelected), "The minimap follows the swipe")
+        XCTAssertFalse(backToLive.exists, "A sideways swipe must not scroll history")
+        attachScreenshot("rex-panes-second")
+        grid.swipeRight()
+        XCTAssertTrue(waitFor(first.isSelected), "A swipe right must show the previous pane")
+        assertRunning()
+    }
+
     func testProgramStatusPopoverOpensAndClosesOnOutsideTap() {
         launch(screen: "ssh-terminal-status-blocked")
         let glyph = app.buttons["sshTerminal.programStatus"]
