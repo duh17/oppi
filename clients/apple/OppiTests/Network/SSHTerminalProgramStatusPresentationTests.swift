@@ -228,45 +228,43 @@ struct SSHTerminalProgramStatusPresentationTests {
         #expect(SSHTerminalDisplayText.sanitized(tower, limit: 4) == "a\u{0301}\u{0301}b")
     }
 
-    /// Only an agent's own root report picks the chat bar. Herdr reports no
-    /// root, so a Herdr client stays in direct typing whatever its panes run.
-    @Test func inputModeFollowsOnlyTheRootRecord() {
+    /// Only an agent's own root report picks the key strip's program. Herdr
+    /// reports no root, so a Herdr client keeps the shell's keys whatever its
+    /// panes run. A report never opens the chat bar; the view controller owns
+    /// that choice.
+    @Test func keymapProgramFollowsOnlyTheRootRecord() {
         let agent = record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "pi")
         let shell = record(GHOSTTY_PROGRAM_STATUS_STATE_IDLE, app: "fish")
         let other = record(GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED, kind: GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION, app: "terraform")
         let prefixed = record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "claude-code")
         typealias Detection = SSHTerminalAgentDetection
 
-        #expect(Detection.mode(root: agent, app: "pi") == .chat)
-        #expect(Detection.mode(root: prefixed, app: "claude-code") == .chat)
-        #expect(Detection.mode(root: shell, app: "fish") == nil)
-        #expect(Detection.mode(root: other, app: "terraform") == nil)
-        #expect(Detection.mode(root: nil, app: "") == nil)
-
-        // The key strip follows the same report; `claude-code` uses Claude's.
+        #expect(Detection.keymapProgram(root: agent, app: "pi") == "pi")
+        // `claude-code` uses Claude's keys.
         #expect(Detection.keymapProgram(root: prefixed, app: "claude-code") == "claude")
-        #expect(Detection.keymapProgram(root: nil, app: "") == "shell")
+        #expect(Detection.keymapProgram(root: shell, app: "fish") == "shell")
         #expect(Detection.keymapProgram(root: other, app: "terraform") == "shell")
+        #expect(Detection.keymapProgram(root: nil, app: "") == "shell")
     }
 
-    /// A live report keeps the chat bar. Once the shell shows its next prompt,
-    /// the done report that outlives it no longer does.
-    @Test func aReportFromBeforeTheShellPromptNoLongerPicksTheChatBar() throws {
+    /// A live report keeps the agent's keys. Once the shell shows its next
+    /// prompt, the done report that outlives it no longer does.
+    @Test func aReportFromBeforeTheShellPromptNoLongerPicksTheAgentKeymap() throws {
         let engine = try SSHTerminalEngine { _ in }
-        func mode() -> SSHTerminalInputMode? {
-            SSHTerminalAgentDetection.mode(
+        func program() -> String {
+            SSHTerminalAgentDetection.keymapProgram(
                 root: engine.programStatus.liveRoot, app: engine.programStatus.app(of: "")
             )
         }
         engine.receive(Data("\u{1b}]7501;state=done:app=pi\u{1b}\\".utf8))
-        #expect(mode() == .chat, "Pi between turns")
+        #expect(program() == "pi", "Pi between turns")
 
         engine.receive(Data("\u{1b}]133;A\u{7}".utf8))
         #expect(engine.programStatus.root?.state == GHOSTTY_PROGRAM_STATUS_STATE_DONE, "the outcome still shows")
-        #expect(mode() == nil, "the shell is back in front")
+        #expect(program() == "shell", "the shell is back in front")
 
         engine.receive(Data("\u{1b}]7501;state=working:app=pi\u{1b}\\".utf8))
-        #expect(mode() == .chat, "Pi started again")
+        #expect(program() == "pi", "Pi started again")
     }
 
     @Test func herdrStatusesUseTheSharedPresentation() {

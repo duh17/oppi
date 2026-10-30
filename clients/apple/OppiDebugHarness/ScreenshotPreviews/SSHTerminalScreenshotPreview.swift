@@ -67,9 +67,10 @@ struct SSHTerminalScreenshotPreview: View {
         guard !channel.connected else { return }
         // Echo what the composer and key strip send, escaped, so a driven run
         // (OPPI_UI_VALIDATE_TAPS) shows the bytes that reached the "PTY".
-        // The default preview is a Herdr client, which starts in direct
-        // typing. Status variants run a login shell, so only the root record
-        // can pick the input mode.
+        // Both previews start in direct typing: a report never brings up the
+        // chat bar, so the blocked variant shows the card and status symbol
+        // over the terminal's own bar. The status variants run a login shell,
+        // so only the root record picks the key strip.
         channel.opened(PreviewConnection { [weak channel] bytes in
             let shown = String(decoding: bytes, as: UTF8.self).unicodeScalars.map { scalar -> String in
                 switch scalar.value {

@@ -1,17 +1,19 @@
 import Foundation
 import GhosttyVt
 
-/// Which input the terminal offers. An agent TUI gets Oppi's chat bar (edit,
-/// dictate, attach, send as one prompt); a shell gets direct terminal typing.
+/// Which input the terminal offers. Direct typing is the default; the chat bar
+/// (edit, dictate, attach, send as one prompt) shows only after the person asks
+/// for it with the Chat Bar button, and lasts as long as the terminal channel.
 enum SSHTerminalInputMode: Equatable {
     case chat
     case terminal
 }
 
-/// Picks the input mode and key strip from what the host declares: the
-/// program's own OSC 7501 report. Oppi never inspects the host's process table
-/// to guess, and a Herdr client gets direct typing whatever its panes run;
-/// the chat bar is one tap away on the terminal keyboard's bar.
+/// Names the coding agent the host declares through the program's own OSC 7501
+/// report, so the key strips offer that agent's bindings. Oppi never inspects
+/// the host's process table to guess, and a report never opens the chat bar or
+/// changes the input mode. Herdr passes no pane's report through, so a Herdr
+/// client keeps the shell's keys.
 enum SSHTerminalAgentDetection {
     /// OSC 7501 `app` ids of coding agents. An id also matches by its first
     /// `-`/`_`/`.` segment, so `claude-code` reads as `claude`.
@@ -19,13 +21,6 @@ enum SSHTerminalAgentDetection {
         "pi", "claude", "codex", "opencode", "gemini", "amp", "aider", "goose",
         "crush", "droid", "cursor-agent", "qwen", "kimi", "copilot", "kilo", "grok",
     ]
-
-    /// The OSC 7501 root. Nil means nothing has decided; the terminal view
-    /// treats that as direct typing. The view controller's `inputMode` owns the
-    /// manual override.
-    static func mode(root: SSHTerminalProgramStatusStore.Record?, app: String) -> SSHTerminalInputMode? {
-        agentApp(root: root, app: app) != nil ? .chat : nil
-    }
 
     /// Whose key bindings the strips offer: the reporting agent, or the shell.
     static func keymapProgram(root: SSHTerminalProgramStatusStore.Record?, app: String) -> String {

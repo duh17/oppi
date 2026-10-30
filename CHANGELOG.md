@@ -38,6 +38,7 @@ Example:
 ```markdown
 ### Changed
 
+- **Client:** The SSH terminal's chat bar no longer appears on its own when a coding agent reports itself (OSC 7501): it shows only after you tap **Chat Bar** (or the chat button on the terminal keyboard's bar), the way the terminal keyboard opens only when you ask. Your choice lasts for that terminal's connection; switching terminals, opening a Rex pane, or reconnecting starts over in direct typing. The key strips still follow the reporting agent. See [SSH Terminal](docs/ssh-terminal.md#input-bar-touch-and-keyboard).
 - **Client:** **Settings → Chat → Style** picks Full, Compact, or Chat. It replaces the Compact Turns toggle.
 
 ### Fixed

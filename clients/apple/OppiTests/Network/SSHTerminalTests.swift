@@ -1156,8 +1156,9 @@ struct SSHTerminalTests {
             mounted.host.view.layoutIfNeeded()
         }
 
-        // A coding agent reports itself: the chat bar replaces direct typing.
+        // A coding agent reports itself, and Chat Bar is asked for by hand.
         channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
+        try mounted.tapChatBar()
         try await settle()
         let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
         let grid = try #require(mounted.controller.gridView)
@@ -2833,12 +2834,19 @@ struct SSHTerminalTests {
             SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
         )
         defer { mounted.dismiss(); channel.close(reason: "done") }
-        // An agent that reports itself gets the chat bar.
+        // An agent that reports itself does not bring up the chat bar.
         channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
         try await settle(mounted)
         let grid = try #require(mounted.controller.gridView)
         let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
-        let textView = try #require(draft(), "pi gets the chat bar")
+        #expect(draft() == nil, "a pi report alone shows no chat bar")
+        try mounted.tapChatBar()
+        try await settle(mounted)
+        let textView = try #require(draft(), "Chat Bar brings it up")
+        // A later report change does not close a bar the person opened.
+        channel.event(.data(Data("\u{1b}]7501;state=working:app=pi\u{1b}\\".utf8)))
+        try await settle(mounted)
+        #expect(draft() === textView, "a report change leaves the bar open")
 
         channel.engine.receive(Data("\r\n[sudo] password for duh: ".utf8))
         grid.drawFrame()
@@ -2913,10 +2921,11 @@ struct SSHTerminalTests {
         )
         defer { mounted.dismiss(); channel.close(reason: "done") }
         channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
+        try mounted.tapChatBar()
         try await settle(mounted)
         let grid = try #require(mounted.controller.gridView)
         let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
-        #expect(draft() != nil, "pi gets the chat bar")
+        #expect(draft() != nil, "Chat Bar brings the chat bar")
 
         channel.engine.receive(Data("\r\n[sudo] password for duh: ".utf8))
         grid.drawFrame()
@@ -2949,6 +2958,50 @@ struct SSHTerminalTests {
         #expect(!grid.isSecureTextEntry)
         let textView = try #require(draft(), "the chat bar comes back")
         #expect(textView.isFirstResponder, "with the keyboard the user brought back")
+    }
+
+    /// A coding agent's report picks the key strip's program, never the input:
+    /// the chat bar shows only after Chat Bar, and then outlives report changes.
+    @Test func anAgentReportDoesNotShowTheChatBarButTheChatBarActionDoes() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let draft = { mounted.find { $0 is PastableUITextView } as? PastableUITextView }
+        func selected(_ id: String) throws -> Bool {
+            let button = try #require(mounted.find { $0.accessibilityIdentifier == id } as? UIButton, "\(id)")
+            return button.accessibilityTraits.contains(.selected)
+        }
+
+        for report in ["idle", "working", "blocked:kind=permission", "done"] {
+            channel.event(.data(Data("\u{1b}]7501;state=\(report):app=pi\u{1b}\\".utf8)))
+            try await settle(mounted)
+            #expect(draft() == nil, "a \(report) pi report shows no chat bar")
+            #expect(try selected("sshTerminal.bar.keyboard"), "and typing stays in the terminal")
+        }
+
+        // Chat Bar on a pane running pi turns the bar on (it must not toggle it off).
+        try mounted.tapChatBar()
+        try await settle(mounted)
+        let textView = try #require(draft(), "Chat Bar brings the bar up on a pi pane")
+        #expect(textView.isFirstResponder)
+        #expect(try selected("sshTerminal.bar.chatBar"))
+
+        // The choice outlives the program: its report ends and changes.
+        channel.event(.data(Data("\u{1b}]133;A\u{7}".utf8)))
+        try await settle(mounted)
+        #expect(draft() === textView, "the shell coming back does not close it")
+        channel.event(.data(Data("\u{1b}]7501;state=working:app=pi\u{1b}\\".utf8)))
+        try await settle(mounted)
+        #expect(draft() === textView, "a new report does not either")
+
+        // The raw keyboard still wins over the explicit choice.
+        let grid = try #require(mounted.controller.gridView)
+        grid.rawKeyboardChanged(true)
+        try await settle(mounted)
+        #expect(draft() == nil, "the remote raw keyboard hides the bar")
     }
 
     /// The bar's input buttons move typing where they say, and the one in use
@@ -3112,6 +3165,12 @@ private final class MountedTerminalTestController {
         find(in: host.view, matching: predicate)
     }
 
+    /// The person's explicit ask for the chat bar: the bottom bar's button.
+    func tapChatBar() throws {
+        let button = try #require(find { $0.accessibilityIdentifier == "sshTerminal.bar.chatBar" } as? UIButton)
+        button.sendActions(for: .touchUpInside)
+    }
+
     func find(in view: UIView, matching predicate: (UIView) -> Bool) -> UIView? {
         if predicate(view) { return view }
         for child in view.subviews {
@@ -3203,6 +3262,7 @@ private final class GrownChatBarTerminal {
             SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
         )
         channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
+        try mounted.tapChatBar()
         try await Self.settle(mounted)
         let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
         grid = try #require(mounted.controller.gridView)

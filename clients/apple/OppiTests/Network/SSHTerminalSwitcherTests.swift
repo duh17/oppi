@@ -535,6 +535,17 @@ struct SSHTerminalSwitcherTests {
             }
             return try #require(search(terminal.view))
         }
+        /// The explicit ask for the bar. A swap starts the next terminal over in
+        /// direct typing, so each terminal's bar is asked for again.
+        func askForChatBar() async throws {
+            func search(_ view: UIView) -> UIButton? {
+                if let button = view as? UIButton, button.accessibilityIdentifier == "sshTerminal.bar.chatBar" { return button }
+                for child in view.subviews { if let hit = search(child) { return hit } }
+                return nil
+            }
+            try #require(search(terminal.view)).sendActions(for: .touchUpInside)
+            try await settle()
+        }
         func type(_ text: String) throws {
             let field = try chatField()
             field.text = text
@@ -544,21 +555,25 @@ struct SSHTerminalSwitcherTests {
         first.event(.data(agent))
         second.event(.data(agent))
         try await settle()
+        try await askForChatBar()
         try type("draft for studio")
 
         session.show(try #require(registry.terminal(for: mini.id)))
         try await settle()
         #expect(terminal.channel === second)
+        try await askForChatBar()
         #expect(try chatField().text.isEmpty, "the other terminal starts with its own, empty bar")
         try type("draft for mini")
 
         session.show(try #require(registry.terminal(for: studio.id)))
         try await settle()
         #expect(terminal.channel === first)
+        try await askForChatBar()
         #expect(try chatField().text == "draft for studio")
 
         session.show(try #require(registry.terminal(for: mini.id)))
         try await settle()
+        try await askForChatBar()
         #expect(try chatField().text == "draft for mini")
     }
 
