@@ -9,28 +9,29 @@ import UIKit
 /// active server changes, and when a sign-in ends. A sign-in the host still
 /// has open is adopted here (Continue / Cancel), and the sheet it opens is
 /// presented from whichever MCP screen is on top (`McpSignInPresenter`).
+///
+/// A `ListScreenController`: the base owns the list, the loading and
+/// unavailable rows, and the probe on appearance and pull to refresh.
 @MainActor
-final class McpServersViewController: UIViewController, UICollectionViewDelegate {
+final class McpServersViewController: ListScreenController<McpServersViewController.Section, McpServersViewController.Item> {
     let scopeId: String
 
     var showsSidebarToggle: Bool {
         didSet { setNeedsUpdateProperties() }
     }
 
-    private enum Section: Hashable {
+    enum Section: Hashable, Sendable {
         case host, signIn, error, loading, servers, inherited, unavailable, note
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case host
         case signInProvider, signInContinue, signInCancel, signInError
         case error, retry
-        case loading
         case scopeError(Int)
         case noServers
         case server(String)
         case inherited(String)
-        case unavailable
         case note
     }
 
@@ -50,10 +51,6 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
 
     private let root: AppRootEnvironment
     private let model = McpServersModel()
-    private let collectionView = ListScreen.makeCollectionView()
-    private let refreshControl = UIRefreshControl()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var changedRows = ChangedRows<Item>()
     private var state = ViewState(
         server: nil, hasClient: false, hostState: nil, serverCount: 0,
         snapshot: nil, error: nil, loading: false, liveAttempt: nil
@@ -73,14 +70,9 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
         self.scopeId = scopeId
         self.root = root
         self.showsSidebarToggle = showsSidebarToggle
-        super.init(nibName: nil, bundle: nil)
+        super.init(title: "MCP Servers", listIdentifier: "mcp.list", headers: true, footers: true)
         traitOverrides.appRootEnvironment = root
-        title = "MCP Servers"
-        navigationItem.largeTitleDisplayMode = .never
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
 
     private var coordinator: ConnectionCoordinator { root.coordinator }
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
@@ -102,22 +94,6 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "mcp.list"
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in
-            Task { [weak self] in
-                await self?.refresh()
-                self?.refreshControl.endRefreshing()
-            }
-        }, for: .valueChanged)
-        SettingsListStyle.pin(collectionView, in: view)
-        installDataSource()
-
         addItem.title = "Add MCP Server"
         addItem.image = UIImage(systemName: "plus")
         addItem.primaryAction = UIAction(title: "Add MCP Server", image: UIImage(systemName: "plus")) { [weak self] _ in
@@ -142,17 +118,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        // Like the SwiftUI `.task` it replaces: a probe each time the list
-        // shows, so a server removed from its detail is gone on return.
-        Task { [weak self] in await self?.refresh() }
-    }
-
     override func updateProperties() {
-        super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
-
         let server = server
         // Rows and errors show only for the host that produced them: the active
         // server can change (the host menu, the iPad sidebar) before its client
@@ -170,6 +136,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
             loading: model.loading || preparingCount > 0,
             liveAttempt: signIn.hasActive ? attempt : nil
         )
+        super.updateProperties()
         addItem.isEnabled = !(snapshot == nil || state.loading || signIn.hasActive)
         ListScreen.setBarItems(trailing: [addItem], leading: sidebarItems(), on: navigationItem)
 
@@ -178,17 +145,16 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
         if activeId != observedServerId {
             let first = observedServerId == nil
             observedServerId = activeId
-            // The first probe is `viewIsAppearing`'s.
-            if !first { Task { [weak self] in await self?.refresh() } }
+            // The first probe is the base's, when the page appears.
+            if !first { setNeedsRefresh() }
         }
         // A sign-in that ends changes what the host has: probe again.
         let status = attempt?.flow.status
         if status != observedFlowStatus {
             observedFlowStatus = status
-            if status?.isTerminal == true { Task { [weak self] in await self?.refresh() } }
+            if status?.isTerminal == true { setNeedsRefresh() }
         }
         signInPresenter.sync(owner: signIn, root: root, from: self)
-        applySnapshot()
     }
 
     /// The sidebar toggle at the split detail root.
@@ -202,10 +168,11 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
 
     // MARK: - Data
 
-    /// Probes the active server. The old host's rows go first, then it waits
-    /// for the new host's client; a host that stopped being active meanwhile
-    /// is not probed.
-    private func refresh() async {
+    /// Probes the active server: on every appearance, on pull to refresh, when
+    /// another server becomes active, and when a sign-in ends. The old host's
+    /// rows go first, then it waits for the new host's client; a host that
+    /// stopped being active meanwhile is not probed.
+    override func refresh() async {
         guard let server else { return }
         model.switchHost(to: server.id)
         preparingCount += 1
@@ -224,7 +191,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
         let add = McpAddServerViewController(
             client: client, scope: snapshot.scope, serverName: server.name, root: root
         ) { [weak self] in
-            Task { [weak self] in await self?.refresh() }
+            self?.setNeedsRefresh()
         }
         Router.present(add, presentation: .sheet.inNavigation(), from: self)
     }
@@ -243,55 +210,63 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
 
     // MARK: - List
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+    override func sections() -> [ListSection<Section, Item>] {
+        var sections: [ListSection<Section, Item>] = []
         // A workspace belongs to one host; only the global list can switch hosts.
         if isGlobal, state.server != nil {
-            snapshot.appendSections([.host])
-            snapshot.appendItems([.host], toSection: .host)
+            sections.append(ListSection(.host, items: [.host]))
         }
-        if state.liveAttempt != nil {
-            snapshot.appendSections([.signIn])
+        if let attempt = state.liveAttempt {
             var items: [Item] = [.signInProvider, .signInContinue, .signInCancel]
-            if state.liveAttempt?.actionError != nil { items.append(.signInError) }
-            snapshot.appendItems(items, toSection: .signIn)
+            if attempt.actionError != nil { items.append(.signInError) }
+            sections.append(ListSection(.signIn, header: "Sign-In on \(attempt.serverName)", items: items))
         }
         if state.error != nil {
-            snapshot.appendSections([.error])
-            snapshot.appendItems([.error, .retry], toSection: .error)
+            sections.append(ListSection(.error, items: [.error, .retry]))
         }
         if state.loading {
-            snapshot.appendSections([.loading])
-            snapshot.appendItems([.loading], toSection: .loading)
+            sections.append(ListSection(
+                .loading, items: [],
+                state: ListStateRow(state: .loading("Probing MCP servers…"), identifier: "mcp.loading")
+            ))
         }
         if let scope = state.snapshot?.scope, state.hasClient, state.server != nil {
-            snapshot.appendSections([.servers])
             var items: [Item] = scope.errors.indices.map(Item.scopeError)
             if scope.servers.isEmpty { items.append(.noServers) }
             items += scope.servers.map { Item.server($0.name) }
-            snapshot.appendItems(items, toSection: .servers)
+            sections.append(ListSection(.servers, header: serverSectionHeader, footer: serversFooter, items: items))
             if let inherited = scope.inherited, !inherited.isEmpty {
-                snapshot.appendSections([.inherited])
-                snapshot.appendItems(inherited.map { Item.inherited($0.name) }, toSection: .inherited)
+                sections.append(ListSection(
+                    .inherited,
+                    header: "From Global",
+                    footer: "Global servers that also load in this workspace. Change them from MCP Servers in the sidebar.",
+                    items: inherited.map { Item.inherited($0.name) }
+                ))
             }
         } else if !state.loading, state.error == nil {
-            snapshot.appendSections([.unavailable])
-            snapshot.appendItems([.unavailable], toSection: .unavailable)
+            sections.append(ListSection(
+                .unavailable, items: [],
+                state: ListStateRow(
+                    state: .empty(
+                        title: "MCP servers are unavailable. Connect to a paired server to manage MCP.",
+                        systemImage: "server.rack"
+                    ),
+                    identifier: "mcp.unavailable"
+                )
+            ))
         }
-        snapshot.appendSections([.note])
-        snapshot.appendItems([.note], toSection: .note)
+        sections.append(ListSection(.note, items: [.note]))
+        return sections
+    }
 
-        // Only the rows whose inputs changed: a reconfigured host row would
-        // close the server menu it has open.
-        let current = dataSource.snapshot()
-        let themeID = root.themeStore.activeThemeID
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) {
-            AnyHashable([AnyHashable(themeID)] + rowInputs($0))
-        }
-        snapshot.reconfigureItems(changed.filter { current.indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
-        refreshSignInHeader()
+    private var serverSectionHeader: String? {
+        isGlobal ? nil : "This Workspace"
+    }
+
+    private var serversFooter: String {
+        isGlobal
+            ? "Global servers from ~/.pi/agent/mcp.json load in every host workspace. Each workspace\u{2019}s own servers are in its Workspace Settings."
+            : "Servers from this workspace\u{2019}s .pi/mcp.json. A server here replaces a global server with the same name."
     }
 
     private func scopeError(at index: Int) -> String? {
@@ -299,131 +274,80 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
         return errors[index]
     }
 
-    private func rowInputs(_ item: Item) -> [AnyHashable] {
+    /// What a row draws from, besides its own identity: a reconfigured host row
+    /// would close the server menu it has open.
+    override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .host:
-            return [state.server?.id, state.server?.name, state.server?.resolvedBadgeIcon.symbolName,
-                    state.hostState?.title, state.serverCount]
+            return AnyHashable([AnyHashable(state.server?.id), AnyHashable(state.server?.name),
+                                AnyHashable(state.server?.resolvedBadgeIcon.symbolName),
+                                AnyHashable(state.hostState?.title), AnyHashable(state.serverCount)])
         case .signInProvider, .signInContinue, .signInCancel, .signInError:
-            guard let attempt = state.liveAttempt else { return [] }
-            return [ObjectIdentifier(attempt), attempt.providerName, attempt.isCancelling, attempt.actionError]
+            guard let attempt = state.liveAttempt else { return AnyHashable(0) }
+            return AnyHashable([
+                AnyHashable(ObjectIdentifier(attempt)), AnyHashable(attempt.providerName),
+                AnyHashable(attempt.isCancelling), AnyHashable(attempt.actionError),
+            ])
         case .error, .retry:
-            return [state.error]
+            return AnyHashable(state.error)
         case .scopeError(let index):
-            return [scopeError(at: index)]
+            return AnyHashable(scopeError(at: index))
         case .server(let name):
-            guard let entry = state.snapshot?.scope.servers.first(where: { $0.name == name }) else { return [] }
-            return [entry.transport, entry.tools.count, entry.exposure.rawValue, entry.state, state.snapshot?.scope.id]
+            guard let entry = state.snapshot?.scope.servers.first(where: { $0.name == name }) else { return AnyHashable(0) }
+            return AnyHashable([AnyHashable(entry.transport), AnyHashable(entry.tools.count),
+                                AnyHashable(entry.exposure.rawValue), AnyHashable(entry.state),
+                                AnyHashable(state.snapshot?.scope.id)])
         case .inherited(let name):
-            guard let entry = state.snapshot?.scope.inherited?.first(where: { $0.name == name }) else { return [] }
-            return [entry.transport, entry.tools.count, entry.exposure.rawValue, entry.state, state.snapshot?.scope.id]
-        case .loading, .noServers, .unavailable, .note:
-            return []
+            guard let entry = state.snapshot?.scope.inherited?.first(where: { $0.name == name }) else { return AnyHashable(0) }
+            return AnyHashable([AnyHashable(entry.transport), AnyHashable(entry.tools.count),
+                                AnyHashable(entry.exposure.rawValue), AnyHashable(entry.state),
+                                AnyHashable(state.snapshot?.scope.id)])
+        case .noServers, .note:
+            return AnyHashable(0)
         }
-    }
-
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            if let self, let section = dataSource?.sectionIdentifier(for: indexPath.section) {
-                content.text = headerText(section)
-            }
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            if let self, let section = dataSource?.sectionIdentifier(for: indexPath.section) {
-                content.text = footerText(section)
-            }
-            view.contentConfiguration = content
-        }
-        let host = UICollectionView.CellRegistration<ServerCatalogServerRowCell, Item> { [weak self] cell, _, _ in
-            guard let self, let server = state.server, let hostState = state.hostState else { return }
-            cell.configure(
-                server: server,
-                state: hostState,
-                palette: palette,
-                menu: state.serverCount > 1
-                    ? ServerCatalogServerMenu.make(
-                        coordinator: coordinator, navigation: root.navigation,
-                        shownServerId: { [weak self] in self?.state.server?.id }
-                    )
-                    : nil
-            )
-        }
-        let message = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { cell, _, item in
-            if item == .loading {
-                cell.configure(.loading("Probing MCP servers…"))
-            } else {
-                cell.configure(.message("MCP servers are unavailable. Connect to a paired server to manage MCP."))
-            }
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            switch item {
-            case .host:
-                collectionView.dequeueConfiguredReusableCell(using: host, for: indexPath, item: item)
-            case .loading, .unavailable:
-                collectionView.dequeueConfiguredReusableCell(using: message, for: indexPath, item: item)
-            default:
-                collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-            }
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
-    }
-
-    private func headerText(_ section: Section) -> String? {
-        switch section {
-        case .signIn: state.liveAttempt.map { "Sign-In on \($0.serverName)" }
-        case .servers: isGlobal ? nil : "This Workspace"
-        case .inherited: "From Global"
-        case .host, .error, .loading, .unavailable, .note: nil
-        }
-    }
-
-    private func footerText(_ section: Section) -> String? {
-        switch section {
-        case .servers:
-            isGlobal
-                ? "Global servers from ~/.pi/agent/mcp.json load in every host workspace. Each workspace\u{2019}s own servers are in its Workspace Settings."
-                : "Servers from this workspace\u{2019}s .pi/mcp.json. A server here replaces a global server with the same name."
-        case .inherited:
-            "Global servers that also load in this workspace. Change them from MCP Servers in the sidebar."
-        case .host, .signIn, .error, .loading, .unavailable, .note:
-            nil
-        }
-    }
-
-    /// The sign-in header names the attempt's server; supplementary views do
-    /// not reconfigure, so a new attempt rewrites the visible one.
-    private func refreshSignInHeader() {
-        guard let section = dataSource?.snapshot().indexOfSection(.signIn),
-              let header = collectionView.supplementaryView(
-                  forElementKind: UICollectionView.elementKindSectionHeader,
-                  at: IndexPath(item: 0, section: section)
-              ) as? UICollectionViewListCell else { return }
-        var content = UIListContentConfiguration.header()
-        content.text = headerText(.signIn)
-        header.contentConfiguration = content
     }
 
     // MARK: - Rows
+
+    private lazy var hostRow = UICollectionView.CellRegistration<ServerCatalogServerRowCell, Item> { [weak self] cell, _, _ in
+        guard let self, let server = state.server, let hostState = state.hostState else { return }
+        cell.configure(
+            server: server,
+            state: hostState,
+            palette: palette,
+            menu: state.serverCount > 1
+                ? ServerCatalogServerMenu.make(
+                    coordinator: coordinator, navigation: root.navigation,
+                    shownServerId: { [weak self] in self?.state.server?.id }
+                )
+                : nil
+        )
+    }
+
+    private lazy var sidebarRow = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        self?.configure(cell, item: item)
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = (hostRow, sidebarRow)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        switch item {
+        case .host:
+            collectionView.dequeueConfiguredReusableCell(using: hostRow, for: indexPath, item: item)
+        case .signInProvider, .signInContinue, .signInCancel, .signInError, .error, .retry,
+             .scopeError, .noServers, .server, .inherited, .note:
+            collectionView.dequeueConfiguredReusableCell(using: sidebarRow, for: indexPath, item: item)
+        }
+    }
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
-        case .host, .loading, .unavailable:
+        case .host:
             break
         case .signInProvider:
             ListScreen.staticRow(cell)
@@ -461,7 +385,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
             }
         case .retry:
             ListScreen.buttonRow(cell, identifier: "mcp.retry", label: "Retry") { [weak self] in
-                Task { [weak self] in await self?.refresh() }
+                self?.setNeedsRefresh()
             }
             cell.contentConfiguration = Self.actionContent("Retry", color: UIColor(palette.blue))
         case .scopeError(let index):

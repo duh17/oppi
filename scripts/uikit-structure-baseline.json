@@ -70,9 +70,6 @@
     "clients/apple/Oppi/Features/Mcp/McpServerDetailViewController.swift": {
       ".settingsToggle(": 1
     },
-    "clients/apple/Oppi/Features/Mcp/McpServersViewController.swift": {
-      "SettingsListStyle.pin(": 1
-    },
     "clients/apple/Oppi/Features/Mcp/McpSignInViewController.swift": {
       "SettingsListStyle.pin(": 1
     },
