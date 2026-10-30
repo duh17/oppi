@@ -206,3 +206,60 @@ enum ChatMountTelemetry {
     }
 }
 
+
+/// Phase durations of one session or thread link, from the tap to the route.
+/// `AppOpener` times each phase it runs before navigating and logs one
+/// `Link opened` breadcrumb when the route is set. A phase that did not run
+/// is absent; `lockAuthorizeMs` adds every lock check, including the time a
+/// person spends on a Face ID prompt.
+@MainActor
+final class LinkOpenTimer {
+    /// How the open reached the route: `blocking` waited on the network for
+    /// the session's record and dialogs; `cached` pushed from the loaded record.
+    enum Path: String { case blocking, cached }
+
+    static let message = "Link opened"
+
+    private let kind: String
+    private let origin: SessionNavigationSource
+    private let clock = ContinuousClock()
+    private let start: ContinuousClock.Instant
+    private var durations: [String: Int] = [:]
+    var path: Path = .blocking
+
+    init(kind: String, origin: SessionNavigationSource) {
+        self.kind = kind
+        self.origin = origin
+        start = clock.now
+    }
+
+    func time<T>(_ phase: String, _ body: () async -> T) async -> T {
+        let phaseStart = clock.now
+        let result = await body()
+        durations[phase, default: 0] += Self.milliseconds(phaseStart.duration(to: clock.now))
+        return result
+    }
+
+    func time<T>(_ phase: String, _ body: () -> T) -> T {
+        let phaseStart = clock.now
+        let result = body()
+        durations[phase, default: 0] += Self.milliseconds(phaseStart.duration(to: clock.now))
+        return result
+    }
+
+    func metadata() -> [String: String] {
+        var metadata: [String: String] = [
+            "kind": kind,
+            "origin": origin == .inAppHyperlink ? "in_app" : "external",
+            "path": path.rawValue,
+            "totalMs": String(Self.milliseconds(start.duration(to: clock.now))),
+        ]
+        for (phase, ms) in durations { metadata[phase] = String(ms) }
+        return metadata
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Int {
+        let parts = duration.components
+        return max(0, Int(parts.seconds * 1_000 + parts.attoseconds / 1_000_000_000_000_000))
+    }
+}

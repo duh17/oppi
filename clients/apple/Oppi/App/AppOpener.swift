@@ -277,6 +277,10 @@ final class AppOpener {
     /// checks it so a superseded open cannot navigate.
     @ObservationIgnored var generation: UInt64 = 0
     @ObservationIgnored var currentTask: Task<Void, Never>?
+    /// What a loaded session or thread open still reads after its route is
+    /// up (record refresh, prefetch, dialogs). It is not the open: a newer open
+    /// does not cancel it, but it stops acting once it is superseded.
+    @ObservationIgnored private var postOpenTask: Task<Void, Never>?
     @ObservationIgnored var invitePairingGate = InvitePairingGate()
     @ObservationIgnored var invitePairingTask: Task<Void, Never>?
     /// Returns once the app has read the pairing list. The app sets it; an
@@ -295,6 +299,8 @@ final class AppOpener {
     @ObservationIgnored var _browserLinkPreferenceForTesting: AppPreferences.Browser.LinkOpeningMode?
     /// Advances the parked-request lifetime in tests.
     @ObservationIgnored var _nowForTesting: (() -> Date)?
+    /// Receives the metadata of every `Link opened` breadcrumb in unit tests.
+    @ObservationIgnored var _linkOpenedForTesting: (([String: String]) -> Void)?
 #endif
 
     /// A parked request is given up after this long: it is a tap, not a task.
@@ -682,12 +688,22 @@ final class AppOpener {
         }
     }
 
+    /// The one breadcrumb that makes tap→route latency measurable.
+    private func logLinkOpened(_ timer: LinkOpenTimer) {
+        let metadata = timer.metadata()
+        ClientLog.info("Navigation", LinkOpenTimer.message, metadata: metadata, flush: true)
+#if DEBUG
+        _linkOpenedForTesting?(metadata)
+#endif
+    }
+
     private func performSession(
         _ open: SessionOpen,
         generation: UInt64
     ) async -> AppOpenOutcome {
+        let timer = LinkOpenTimer(kind: "session", origin: open.origin)
         let serverId: String
-        switch await resolveLinkServer(for: open, link: "session", generation: generation) {
+        switch await timer.time("resolveServerMs", { await resolveLinkServer(for: open, link: "session", generation: generation) }) {
         case .server(let resolved):
             serverId = resolved
         case .notFound, .lookupFailed:
@@ -711,13 +727,16 @@ final class AppOpener {
         // scope comes from the known session, never from a URL's workspace
         // hint: the hint is content, not lock authority. The route gate checks
         // again once the session's workspace is loaded.
-        guard await scopedLock.authorize(scopedLock.sessionTarget(
-            serverId: serverId,
-            sessionId: open.sessionId
-        )), isCurrent(generation) else { return .finished }
+        let allowed = await timer.time("lockAuthorizeMs") {
+            await scopedLock.authorize(scopedLock.sessionTarget(
+                serverId: serverId,
+                sessionId: open.sessionId
+            ))
+        }
+        guard allowed, isCurrent(generation) else { return .finished }
 
         let previousServerId = coordinator.activeServerId
-        let switched = await openServer(serverId, generation: generation)
+        let switched = await timer.time("switchServerMs") { await openServer(serverId, generation: generation) }
         guard isCurrent(generation) else { return .finished }
         guard switched, let connection = coordinator.connection(for: serverId) else {
             toastUnreachableIfFirstAttempt(serverId)
@@ -732,7 +751,8 @@ final class AppOpener {
             connection: connection,
             origin: open.origin,
             previousServerId: previousServerId,
-            generation: generation
+            generation: generation,
+            timer: timer
         )
     }
 
@@ -749,13 +769,30 @@ final class AppOpener {
         connection: ServerConnection,
         origin: SessionNavigationSource,
         previousServerId: String?,
-        generation: UInt64
+        generation: UInt64,
+        timer: LinkOpenTimer? = nil
     ) async -> AppOpenOutcome {
-        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
-            shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
-            navigate: {}
-        )
+        let timer = timer ?? LinkOpenTimer(kind: "session", origin: origin)
+        await timer.time("dismissOverlayMs") {
+            await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
+                shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
+                navigate: {}
+            )
+        }
         guard isCurrent(generation) else { return .finished }
+
+        if hasLoadedWorkspace(sessionId, on: connection) {
+            return await openLoadedSession(
+                serverId: serverId,
+                sessionId: sessionId,
+                workspaceIdHint: workspaceIdHint,
+                connection: connection,
+                origin: origin,
+                previousServerId: previousServerId,
+                generation: generation,
+                timer: timer
+            )
+        }
 
         // The lock scope comes from loaded session data (the record, a pending
         // ask, or a dialog), never from a URL hint. Read the record and ask
@@ -763,13 +800,15 @@ final class AppOpener {
         // stream, and seen state alone. This covers a record that only became
         // readable after the pre-switch gate; an unknown workspace still
         // checks the session and server scopes.
-        await connection.refreshSessionRecordIfPossible(sessionId: sessionId)
+        await timer.time("recordRefreshMs") { await connection.refreshSessionRecordIfPossible(sessionId: sessionId) }
         guard isCurrent(generation) else { return .finished }
-        let recordUnlocked = await scopedLock.authorize(scopedLock.sessionTarget(
-            serverId: serverId,
-            sessionId: sessionId,
-            workspaceId: connection.sessionReentryWorkspaceId(for: sessionId)
-        ))
+        let recordUnlocked = await timer.time("lockAuthorizeMs") {
+            await scopedLock.authorize(scopedLock.sessionTarget(
+                serverId: serverId,
+                sessionId: sessionId,
+                workspaceId: connection.sessionReentryWorkspaceId(for: sessionId)
+            ))
+        }
         guard isCurrent(generation) else { return .finished }
         guard recordUnlocked else {
             restoreServer(previousServerId, after: serverId)
@@ -778,20 +817,24 @@ final class AppOpener {
 
         let previousActiveSessionId = connection.sessionStore.activeSessionId
         let previousFocusedSessionId = connection.focusedSessionId
-        await connection.prepareExternalSessionOpen(
-            sessionId: sessionId,
-            workspaceIdHint: workspaceIdHint
-        )
+        await timer.time("prepareMs") {
+            await connection.prepareExternalSessionOpen(
+                sessionId: sessionId,
+                workspaceIdHint: workspaceIdHint
+            )
+        }
         guard isCurrent(generation) else { return .finished }
 
         // Hydrated dialogs can name a workspace the record did not; the route
         // gate uses the same value.
         let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
-        let unlocked = await scopedLock.authorize(scopedLock.sessionTarget(
-            serverId: serverId,
-            sessionId: sessionId,
-            workspaceId: workspaceId
-        ))
+        let unlocked = await timer.time("lockAuthorizeMs") {
+            await scopedLock.authorize(scopedLock.sessionTarget(
+                serverId: serverId,
+                sessionId: sessionId,
+                workspaceId: workspaceId
+            ))
+        }
         guard isCurrent(generation) else { return .finished }
         guard unlocked else {
             // Cancel restores the target's active session, claim, and focus,
@@ -806,16 +849,101 @@ final class AppOpener {
             restoreServer(previousServerId, after: serverId)
             return .finished
         }
-        navigation.selectedTab = .workspaces
-        navigation.openSession(
-            WorkspaceSessionNavTarget(
+        timer.time("pushMs") {
+            navigation.selectedTab = .workspaces
+            navigation.openSession(
+                WorkspaceSessionNavTarget(
+                    serverId: serverId,
+                    sessionId: sessionId,
+                    workspaceId: workspaceId,
+                    routeScope: connection.sessionStore.routeScope(for: sessionId)
+                ),
+                source: origin
+            )
+        }
+        logLinkOpened(timer)
+        return .finished
+    }
+
+    /// True when the session's record is loaded and names its workspace. A
+    /// session's workspace never changes, so that record already says which
+    /// lock scopes the session is in: the open need not wait for the network.
+    private func hasLoadedWorkspace(_ sessionId: String, on connection: ServerConnection) -> Bool {
+        guard let workspaceId = connection.sessionStore.session(id: sessionId)?.workspaceId else { return false }
+        return !workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// `openPreparedSession` for a session whose record is loaded: ask for its
+    /// lock from that record, claim and focus it, and push at once. The
+    /// record refresh, timeline prefetch and dialog hydration follow in the
+    /// background (`finishLoadedSessionOpen`); the chat shows what is cached
+    /// meanwhile. The route's own lock gate still covers the screen.
+    private func openLoadedSession(
+        serverId: String,
+        sessionId: String,
+        workspaceIdHint: String?,
+        connection: ServerConnection,
+        origin: SessionNavigationSource,
+        previousServerId: String?,
+        generation: UInt64,
+        timer: LinkOpenTimer
+    ) async -> AppOpenOutcome {
+        timer.path = .cached
+        let workspaceId = connection.sessionReentryWorkspaceId(for: sessionId)
+        let lockTarget = scopedLock.sessionTarget(serverId: serverId, sessionId: sessionId, workspaceId: workspaceId)
+        let unlocked = await timer.time("lockAuthorizeMs") { await scopedLock.authorize(lockTarget) }
+        guard isCurrent(generation) else { return .finished }
+        guard unlocked else {
+            restoreServer(previousServerId, after: serverId)
+            return .finished
+        }
+
+        let previousActiveSessionId = connection.sessionStore.activeSessionId
+        let previousFocusedSessionId = connection.focusedSessionId
+        timer.time("prepareMs") {
+            connection.beginExternalSessionOpen(sessionId: sessionId, workspaceIdHint: workspaceIdHint)
+        }
+        timer.time("pushMs") {
+            navigation.selectedTab = .workspaces
+            navigation.openSession(
+                WorkspaceSessionNavTarget(
+                    serverId: serverId,
+                    sessionId: sessionId,
+                    workspaceId: workspaceId,
+                    routeScope: connection.sessionStore.routeScope(for: sessionId)
+                ),
+                source: origin
+            )
+        }
+        logLinkOpened(timer)
+
+        postOpenTask = Task { @MainActor [weak self, weak connection] in
+            guard let self, let connection else { return }
+            await connection.refreshSessionRecordIfPossible(sessionId: sessionId)
+            // The refreshed record may name a different lock scope than the
+            // cached one did; ask again before anything else loads. Cancel
+            // takes the session off screen, as a cancel before the push would.
+            let refreshed = scopedLock.sessionTarget(
                 serverId: serverId,
                 sessionId: sessionId,
-                workspaceId: workspaceId,
-                routeScope: connection.sessionStore.routeScope(for: sessionId)
-            ),
-            source: origin
-        )
+                workspaceId: connection.sessionReentryWorkspaceId(for: sessionId)
+            )
+            if refreshed != lockTarget, await scopedLock.authorize(refreshed) == false {
+                connection.abandonExternalSessionOpen(
+                    sessionId: sessionId,
+                    restoringActiveSessionId: previousActiveSessionId,
+                    restoringFocusedSessionId: previousFocusedSessionId
+                )
+                if generation == self.generation {
+                    restoreServer(previousServerId, after: serverId)
+                    showWorkspaceRoot()
+                }
+                return
+            }
+            // A newer open owns focus now.
+            guard generation == self.generation else { return }
+            await connection.completeExternalSessionOpen(sessionId: sessionId, workspaceIdHint: workspaceIdHint)
+        }
         return .finished
     }
 
@@ -826,8 +954,9 @@ final class AppOpener {
     /// switch, and another once the record names the session's workspace). The session's record
     /// and its ancestors' are read when they are not loaded, so a descendant finds its root.
     private func performThread(_ open: SessionOpen, generation: UInt64) async -> AppOpenOutcome {
+        let timer = LinkOpenTimer(kind: "thread", origin: open.origin)
         let serverId: String
-        switch await resolveLinkServer(for: open, link: "thread", generation: generation) {
+        switch await timer.time("resolveServerMs", { await resolveLinkServer(for: open, link: "thread", generation: generation) }) {
         case .server(let resolved):
             serverId = resolved
         case .notFound:
@@ -842,27 +971,69 @@ final class AppOpener {
         }
 
         // A locked session asks before Oppi switches servers, so cancel leaves everything where it was.
-        guard await scopedLock.authorize(scopedLock.sessionTarget(
-            serverId: serverId,
-            sessionId: open.sessionId
-        )), isCurrent(generation) else { return .finished }
+        let allowed = await timer.time("lockAuthorizeMs") {
+            await scopedLock.authorize(scopedLock.sessionTarget(
+                serverId: serverId,
+                sessionId: open.sessionId
+            ))
+        }
+        guard allowed, isCurrent(generation) else { return .finished }
 
         let previousServerId = coordinator.activeServerId
-        let switched = await openServer(serverId, generation: generation)
+        let switched = await timer.time("switchServerMs") { await openServer(serverId, generation: generation) }
         guard isCurrent(generation) else { return .finished }
         guard switched, let connection = coordinator.connection(for: serverId) else {
             toastUnreachableIfFirstAttempt(serverId)
             return .unreachable
         }
-        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
-            shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
-            navigate: {}
-        )
+        await timer.time("dismissOverlayMs") {
+            await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
+                shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
+                navigate: {}
+            )
+        }
         guard isCurrent(generation) else { return .finished }
+
+        // A session whose record and ancestors are loaded already names its root and its lock scope:
+        // open the thread now and refresh the record behind it.
+        if hasLoadedWorkspace(open.sessionId, on: connection),
+           SessionThreadGrouping.missingAncestorId(of: open.sessionId, in: connection.sessionStore.sessions) == nil,
+           let rootId = SessionThreadGrouping.rootId(of: open.sessionId, in: connection.sessionStore.sessions) {
+            timer.path = .cached
+            let lockTarget = scopedLock.sessionTarget(
+                serverId: serverId,
+                sessionId: open.sessionId,
+                workspaceId: connection.sessionReentryWorkspaceId(for: open.sessionId)
+            )
+            let unlocked = await timer.time("lockAuthorizeMs") { await scopedLock.authorize(lockTarget) }
+            guard isCurrent(generation) else { return .finished }
+            guard unlocked else {
+                restoreServer(previousServerId, after: serverId)
+                return .finished
+            }
+            guard coordinator.activeServerId == serverId else { return .finished }
+            timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId) }
+            logLinkOpened(timer)
+            postOpenTask = Task { @MainActor [weak self, weak connection] in
+                guard let self, let connection else { return }
+                _ = await connection.loadSessionRecord(sessionId: open.sessionId)
+                let refreshed = scopedLock.sessionTarget(
+                    serverId: serverId,
+                    sessionId: open.sessionId,
+                    workspaceId: connection.sessionReentryWorkspaceId(for: open.sessionId)
+                )
+                if refreshed != lockTarget, await scopedLock.authorize(refreshed) == false,
+                   generation == self.generation {
+                    restoreServer(previousServerId, after: serverId)
+                    showWorkspaceRoot()
+                }
+            }
+            return .finished
+        }
 
         // Read the record so the lock scope comes from loaded data, never from the URL. A server that
         // says it has no such session is a not-found; one that did not answer is not.
-        let load = await connection.loadSessionRecord(sessionId: open.sessionId)
+        let load = await timer.time("recordRefreshMs") { await connection.loadSessionRecord(sessionId: open.sessionId) }
         guard isCurrent(generation) else { return .finished }
         guard connection.sessionStore.session(id: open.sessionId) != nil else {
             if load == .notFound {
@@ -872,18 +1043,22 @@ final class AppOpener {
             toastUnreachableIfFirstAttempt(serverId)
             return .unreachable
         }
-        let recordUnlocked = await scopedLock.authorize(scopedLock.sessionTarget(
-            serverId: serverId,
-            sessionId: open.sessionId,
-            workspaceId: connection.sessionReentryWorkspaceId(for: open.sessionId)
-        ))
+        let recordUnlocked = await timer.time("lockAuthorizeMs") {
+            await scopedLock.authorize(scopedLock.sessionTarget(
+                serverId: serverId,
+                sessionId: open.sessionId,
+                workspaceId: connection.sessionReentryWorkspaceId(for: open.sessionId)
+            ))
+        }
         guard isCurrent(generation) else { return .finished }
         guard recordUnlocked else {
             restoreServer(previousServerId, after: serverId)
             return .finished
         }
 
-        await loadMissingAncestors(of: open.sessionId, on: connection, generation: generation)
+        await timer.time("ancestorsMs") {
+            await loadMissingAncestors(of: open.sessionId, on: connection, generation: generation)
+        }
         guard isCurrent(generation) else { return .finished }
         guard let rootId = SessionThreadGrouping.rootId(of: open.sessionId, in: connection.sessionStore.sessions) else {
             showThreadNotFound()
@@ -891,7 +1066,8 @@ final class AppOpener {
         }
         // The list drops a focus for another server, so leave the screen alone rather than reset it for nothing.
         guard coordinator.activeServerId == serverId else { return .finished }
-        navigation.showThread(serverId: serverId, rootId: rootId)
+        timer.time("pushMs") { navigation.showThread(serverId: serverId, rootId: rootId) }
+        logLinkOpened(timer)
         return .finished
     }
 
@@ -1137,6 +1313,7 @@ final class AppOpener {
         for _ in 0..<8 {
             let awaited = generation
             await currentTask?.value
+            await postOpenTask?.value
             await Task.yield()
             if awaited == generation { return }
         }

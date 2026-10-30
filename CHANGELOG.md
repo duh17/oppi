@@ -121,6 +121,7 @@ Example:
 
 ### Fixed
 
+- **Client:** Tapping a link to a session or thread the app already has (a row in the Subagents list, a `[[session]]` reference, a notification) opens it at once instead of waiting on the server, which took seconds over a slow route such as the in-app Tailscale connection. The session's record and pending questions refresh behind the open, and a locked session or workspace still asks first. Each open logs a `Link opened` breadcrumb with its phase timings ([telemetry](dev/telemetry.md#navigation-breadcrumbs)).
 - **Server:** The Subagents pill counts every child (for example "111 subagents · 2 working · 1 needs you") instead of the newest eight. Its rows (up to eight) are the children that need you, then the working ones, then the newest finished ones (rows sort by state, then newest first, so they no longer keep spawn order), so an older child that is still working no longer drops out; a last row, "All 111 in thread", links to `oppi://thread/<session id>`.
 - **Client:** SSH Terminal: Nerd Font icons in prompts (Starship's Node.js and git branch icons, for example) draw whole inside their cell instead of cut off at half, and Powerline separators fill their cell so prompt segments join without gaps.
 - **Client:** In the Git panel's commit graph, each commit's dot sits level with its subject line, and the ring on the checked-out commit is no longer cut off at the top.

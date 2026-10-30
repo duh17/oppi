@@ -2703,6 +2703,36 @@ final class ServerConnection {
         sessionStore.activeSessionId = sessionId
     }
 
+    /// The open of a session whose record and workspace are already loaded:
+    /// everything `prepareExternalSessionOpen` does before its first network
+    /// read, so the route can be pushed now. The claim keeps a still-mounted
+    /// chat for another session from stealing the transport until the target
+    /// mounts. `completeExternalSessionOpen` finishes the rest.
+    func beginExternalSessionOpen(sessionId: String, workspaceIdHint: String? = nil) {
+        beginExternalSessionOpenClaim(for: sessionId)
+        sessionStore.activeSessionId = sessionId
+        bindSessionForReentry(
+            sessionId,
+            workspaceIdHint: sessionReentryWorkspaceId(for: sessionId, workspaceIdHint: workspaceIdHint),
+            routeScope: nil
+        )
+    }
+
+    /// The network half of `prepareExternalSessionOpen` for an open that
+    /// `beginExternalSessionOpen` already routed: warm the timeline cache and
+    /// hydrate pending dialogs, binding again when they name a new workspace.
+    /// It does not re-assert the active session: the route is up, and the
+    /// person may have moved on while the reads ran.
+    func completeExternalSessionOpen(sessionId: String, workspaceIdHint: String? = nil) async {
+        await prefetchSessionTimelineIfPossible(sessionId: sessionId)
+        let initialWorkspaceId = sessionReentryWorkspaceId(for: sessionId, workspaceIdHint: workspaceIdHint)
+        await hydrateSessionDialogs(sessionId: sessionId)
+        let resolvedWorkspaceId = sessionReentryWorkspaceId(for: sessionId, workspaceIdHint: initialWorkspaceId)
+        if resolvedWorkspaceId != initialWorkspaceId {
+            bindSessionForReentry(sessionId, workspaceIdHint: resolvedWorkspaceId, routeScope: nil)
+        }
+    }
+
     /// Load current session JSON so tap does not trust a stale cached status.
     /// Failure keeps the cached row; it must not block ask-card hydration.
     func refreshSessionRecordIfPossible(sessionId: String) async {

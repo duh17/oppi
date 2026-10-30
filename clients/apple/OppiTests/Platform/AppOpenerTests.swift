@@ -624,6 +624,168 @@ struct AppOpenerTests {
         #expect(harness.navigation.pendingThreadFocus == nil)
     }
 
+    // MARK: - Loaded sessions open before the network answers
+
+    /// A slow network (Tailscale SOCKS) must not hold a link to a session the phone already has: the
+    /// route is up while the record refresh is still out, and the refresh lands behind it.
+    @Test func aLoadedSessionLinkPushesBeforeTheRecordRefreshReturns() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        let connection = harness.connection("server-a")
+        var release: CheckedContinuation<Void, Never>?
+        connection._getSessionRecordForTesting = { id in
+            await withCheckedContinuation { release = $0 }
+            return makeTestSession(id: id, workspaceId: "w1", status: .stopped)
+        }
+        var logged: [String: String] = [:]
+        harness.opener._linkOpenedForTesting = { logged = $0 }
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "child", origin: .inAppHyperlink)))
+        for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
+
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+        #expect(release != nil, "The refresh is still out when the route is up")
+        #expect(connection.sessionStore.session(id: "child")?.status == .busy, "The chat opens from the cached record")
+        #expect(logged["path"] == "cached")
+        #expect(logged["recordRefreshMs"] == nil)
+
+        release?.resume()
+        await harness.settle()
+        #expect(connection.sessionStore.session(id: "child")?.status == .stopped, "The refresh still lands")
+    }
+
+    /// Only a record that names its workspace gives the lock scope; any other session still waits for
+    /// the record before it is pushed, so a locked workspace can never be shown early.
+    @Test func aSessionThatIsNotLoadedStillWaitsForItsRecordBeforeTheRoute() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        let connection = harness.connection("server-a")
+        var release: CheckedContinuation<Void, Never>?
+        connection._getSessionRecordForTesting = { id in
+            await withCheckedContinuation { release = $0 }
+            return makeTestSession(id: id, workspaceId: "w1", status: .busy)
+        }
+        var logged: [String: String] = [:]
+        harness.opener._linkOpenedForTesting = { logged = $0 }
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "fresh", origin: .externalURL)))
+        for _ in 0..<500 where release == nil { await Task.yield() }
+        for _ in 0..<50 { await Task.yield() }
+        #expect(release != nil)
+        #expect(harness.lastSessionRoute == nil, "No record yet: nothing to gate on")
+
+        release?.resume()
+        await harness.settle()
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "fresh")
+        #expect(logged["path"] == "blocking")
+    }
+
+    /// The cached record names a locked workspace: the prompt comes before the route and before the
+    /// refresh, and a cancel leaves focus, the claim, and the route untouched.
+    @Test func aLoadedSessionInALockedWorkspaceAsksBeforeItOpensAndCancelLeavesNothing() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.cancelled])
+        harness.addSession("locked", workspaceId: "w2", to: "server-a")
+        let connection = harness.connection("server-a")
+        var refreshes = 0
+        connection._getSessionRecordForTesting = { id in
+            refreshes += 1
+            return makeTestSession(id: id, workspaceId: "w2", status: .busy)
+        }
+        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
+            harness?.connection(serverId).sessionStore.session(id: sessionId)
+        }
+        harness.scopedLock.lock(.workspace(serverId: "server-a", workspaceId: "w2"))
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "locked", origin: .inAppHyperlink)))
+        await harness.settle()
+
+        #expect(harness.lastSessionRoute == nil)
+        #expect(refreshes == 0)
+        #expect(connection.sessionStore.activeSessionId == nil)
+        #expect(connection.focusedSessionId == nil)
+        #expect(!connection.externalSessionOpenClaimBlocks("other"))
+    }
+
+    /// A successful unlock opens the loaded session without waiting for the network either.
+    @Test func aLoadedSessionInALockedWorkspaceOpensAfterUnlockBeforeTheRefreshReturns() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.success])
+        harness.addSession("locked", workspaceId: "w2", to: "server-a")
+        let connection = harness.connection("server-a")
+        var release: CheckedContinuation<Void, Never>?
+        connection._getSessionRecordForTesting = { id in
+            await withCheckedContinuation { release = $0 }
+            return makeTestSession(id: id, workspaceId: "w2", status: .busy)
+        }
+        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
+            harness?.connection(serverId).sessionStore.session(id: sessionId)
+        }
+        harness.scopedLock.lock(.workspace(serverId: "server-a", workspaceId: "w2"))
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "locked", origin: .inAppHyperlink)))
+        for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
+
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "locked")
+        #expect(release != nil)
+        release?.resume()
+        await harness.settle()
+    }
+
+    /// The lock scope only the refreshed record knows (it moved to a locked workspace): the route is
+    /// taken back off screen when the prompt is cancelled, before anything else about it loads.
+    @Test func aLockDiscoveredOnlyByTheRefreshTakesTheOpenedSessionBackOffScreen() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.cancelled])
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        let connection = harness.connection("server-a")
+        var release: CheckedContinuation<Void, Never>?
+        var traceReads = 0
+        connection._getSessionRecordForTesting = { id in
+            await withCheckedContinuation { release = $0 }
+            return makeTestSession(id: id, workspaceId: "w2", status: .busy)
+        }
+        let defaultTrace = connection._getSessionTraceForTesting
+        connection._getSessionTraceForTesting = { id in
+            traceReads += 1
+            return try await defaultTrace!(id)
+        }
+        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
+            harness?.connection(serverId).sessionStore.session(id: sessionId)
+        }
+        harness.scopedLock.lock(.workspace(serverId: "server-a", workspaceId: "w2"))
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "child", origin: .externalURL)))
+        for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+
+        release?.resume()
+        await harness.settle()
+
+        #expect(harness.lastSessionRoute == nil, "The locked workspace's session is not left on screen")
+        #expect(traceReads == 0, "Nothing else about the session loads after the cancel")
+        #expect(connection.sessionStore.activeSessionId == nil)
+        #expect(!connection.externalSessionOpenClaimBlocks("other"))
+    }
+
+    @Test func aLoadedThreadLinkOpensBeforeTheRecordRefreshReturns() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("root", workspaceId: "w1", to: "server-a")
+        harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-a")
+        let connection = harness.connection("server-a")
+        var release: CheckedContinuation<Void, Never>?
+        connection._getSessionRecordForTesting = { id in
+            await withCheckedContinuation { release = $0 }
+            var session = makeTestSession(id: id, workspaceId: "w1", status: .busy)
+            session.parentSessionId = "root"
+            return session
+        }
+
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "child", origin: .externalURL)))
+        for _ in 0..<500 where release == nil || harness.navigation.pendingThreadFocus == nil { await Task.yield() }
+
+        #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
+        #expect(release != nil, "The refresh is still out when the thread is open")
+        release?.resume()
+        await harness.settle()
+    }
+
     @Test func unreachableServerKeepsTheRequestAndRetriesOnTheNextForeground() async throws {
         let harness = OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
