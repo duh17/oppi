@@ -8,8 +8,9 @@ import UIKit
 struct SessionRowPreviewSubject {
     struct Thread {
         let rollup: SessionThreadRollup
-        /// Status of each member, fixed when the subject is built.
-        let statuses: [String: SessionStatusKind]
+        /// Pending asks of each member, fixed when the subject is built. The strip classifies from these,
+        /// so the preview draws what a list row would.
+        let askCounts: [String: Int]
     }
 
     let presentation: SessionRowPresentation
@@ -77,16 +78,13 @@ struct SessionRowPreviewSubject {
             programStatus: ProgramStatus(state: .done, since: now.addingTimeInterval(-2_400))
         )
         let rollup = SessionThreadGrouping.rollups(from: [root, working, question, finished])[0]
-        // Nothing in a sample has been seen, so the root's result reads Done.
-        let statuses = Dictionary(uniqueKeysWithValues: rollup.members.map {
-            ($0.id, SessionStatusKind.resolve(session: $0, seenAt: nil))
-        })
         return Self(
             presentation: SessionRowPresentationBuilder.make(
                 session: root,
                 workspaceContext: root.workspaceName
             ),
-            thread: Thread(rollup: rollup, statuses: statuses)
+            // Nothing in a sample has a pending ask: its blocked child comes from its own record.
+            thread: Thread(rollup: rollup, askCounts: [:])
         )
     }
 
@@ -119,16 +117,10 @@ struct SessionRowPreviewSubject {
             seenAt: store.seenAt(for: root.id),
             catalogModels: connection.chatState.cachedModels
         )
-        let statuses = Dictionary(uniqueKeysWithValues: rollup.members.map {
-            ($0.id, SessionStatusKind.resolve(
-                session: $0,
-                pendingAskCount: askCount($0.id),
-                seenAt: store.seenAt(for: $0.id)
-            ))
-        })
+        let askCounts = Dictionary(uniqueKeysWithValues: rollup.members.map { ($0.id, askCount($0.id)) })
         return Self(
             presentation: presentation,
-            thread: rollup.descendants.isEmpty ? nil : Thread(rollup: rollup, statuses: statuses)
+            thread: rollup.descendants.isEmpty ? nil : Thread(rollup: rollup, askCounts: askCounts)
         )
     }
 }
@@ -275,7 +267,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         if let thread = subject.thread {
             previewStrip.isHidden = false
             previewStrip.apply(
-                SessionThreadStripView.Content(rollup: thread.rollup, statuses: thread.statuses),
+                SessionThreadStripView.Content(rollup: thread.rollup, askCounts: thread.askCounts),
                 display: draft,
                 style: SessionRowStyle.for(themeID),
                 iconAssetCache: root.coordinator.activeConnection.iconAssetCache

@@ -6,6 +6,15 @@ enum SessionListActiveSectionKind: Equatable {
     case working
 }
 
+/// What the list says about one row, resolved without this device's seen state: the section it lists in
+/// and the status it reads.
+struct SessionListClassification: Equatable, Sendable {
+    /// The section the row lists in. Nil exactly when the row is stopped, so it sits behind a thread's
+    /// stopped fold whatever its settled outcome reads.
+    let section: SessionListActiveSectionKind?
+    let status: SessionStatusKind
+}
+
 struct SessionListAttentionCounts: Equatable, Sendable {
     var askCount: Int
 
@@ -66,24 +75,39 @@ struct SessionListRefreshPollingPolicy: Equatable {
 }
 
 enum SessionListPresentation {
-    /// Working = working. Your Turn = blocked, done, error, and idle. A stopped session is in neither.
-    /// Whether a done or error outcome is seen does not move a row, so no seen state is needed.
-    static func activeSectionKind(
-        for session: Session,
+    /// The list's classification of a row: Working = working. Your Turn = blocked, done, error, and idle.
+    /// A stopped session is in neither, whatever its settled outcome was. Whether a done or error outcome
+    /// is seen does not move a row, so no seen state is needed; every summary that says what a set of rows
+    /// holds reads this, so they all answer the same question.
+    static func classify(
+        _ session: Session,
         attention: SessionListAttentionCounts = .none
-    ) -> SessionListActiveSectionKind? {
+    ) -> SessionListClassification {
+        let status = SessionStatusKind.resolve(session: session, pendingAskCount: attention.askCount, seenAt: nil)
+        return SessionListClassification(section: section(for: session, status: status), status: status)
+    }
+
+    /// A stopped session is stopped however its program status reads: that is the fold's own test.
+    private static func section(for session: Session, status: SessionStatusKind) -> SessionListActiveSectionKind? {
         if session.status == .stopped { return nil }
-        switch SessionStatusKind.resolve(session: session, pendingAskCount: attention.askCount, seenAt: nil) {
+        switch status {
         case .working: return .working
         case .stopped: return nil
         case .needsApproval, .question, .signIn, .error, .done, .idle: return .yourTurn
         }
     }
 
+    static func activeSectionKind(
+        for session: Session,
+        attention: SessionListAttentionCounts = .none
+    ) -> SessionListActiveSectionKind? {
+        classify(session, attention: attention).section
+    }
+
     /// Whether the session waits on the person (any blocked kind). Server program status
     /// owns this; `attention` covers a missing program status.
     static func isBlocked(_ session: Session, attention: SessionListAttentionCounts = .none) -> Bool {
-        SessionStatusKind.resolve(session: session, pendingAskCount: attention.askCount, seenAt: nil).isBlocked
+        classify(session, attention: attention).status.isBlocked
     }
 
     /// Your Turn order: blocked first, then the oldest visible activity, the

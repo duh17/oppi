@@ -4,17 +4,14 @@ import Testing
 
 @Suite("SessionThreadStripSummary")
 struct SessionThreadStripSummaryTests {
-    private func member(_ id: String, parent: String? = "root", status: SessionStatusKind) -> (Session, SessionStatusKind) {
-        let lifecycle: SessionStatus = switch status {
-        case .working: .busy
-        case .stopped: .stopped
-        default: .ready
-        }
-        let session = Session(
+    /// A session whose own status, resolved without this device's seen state, is `kind`. The strip reads
+    /// the record, so every fixture has to carry the record that resolves to the state it stands for.
+    private func session(_ id: String, parent: String? = "root", _ kind: SessionStatusKind) -> Session {
+        var session = Session(
             id: id,
             workspaceId: "ws",
             name: id,
-            status: lifecycle,
+            status: .ready,
             createdAt: Date(timeIntervalSince1970: 1_000),
             lastActivity: Date(timeIntervalSince1970: 1_000),
             messageCount: 3,
@@ -22,28 +19,88 @@ struct SessionThreadStripSummaryTests {
             cost: 0,
             parentSessionId: parent
         )
-        return (session, status)
+        let since = Date(timeIntervalSince1970: 2_000)
+        switch kind {
+        case .working:
+            session.status = .busy
+            session.currentTurnStartedAt = since
+            session.programStatus = ProgramStatus(state: .working, since: since)
+        case .needsApproval: session.programStatus = ProgramStatus(state: .blocked, kind: .permission, since: since)
+        case .question: session.programStatus = ProgramStatus(state: .blocked, kind: .question, since: since)
+        case .signIn: session.programStatus = ProgramStatus(state: .blocked, kind: .auth, since: since)
+        case .error: session.programStatus = ProgramStatus(state: .error, since: since)
+        case .done: session.programStatus = ProgramStatus(state: .done, since: since)
+        case .idle: session.programStatus = ProgramStatus(state: .idle, since: since)
+        case .stopped: session.status = .stopped
+        }
+        return session
     }
 
-    /// A thread of `root` plus children with these statuses, resolved the way the strip is given them.
-    private func summary(root: SessionStatusKind = .idle, _ children: [SessionStatusKind]) -> SessionThreadStripSummary {
-        let rootMember = member("root", parent: nil, status: root)
-        let kids = children.enumerated().map { member("child-\($0.offset)", status: $0.element) }
-        let all = [rootMember] + kids
-        let statuses = Dictionary(uniqueKeysWithValues: all.map { ($0.0.id, $0.1) })
-        let rollup = SessionThreadGrouping.rollups(from: all.map(\.0))[0]
-        return SessionThreadStripSummary(rollup: rollup) { statuses[$0.id] ?? .idle }
+    private func summary(root: SessionStatusKind = .idle, children: [Session]) -> SessionThreadStripSummary {
+        let rollup = SessionThreadGrouping.rollups(from: [session("root", parent: nil, root)] + children)[0]
+        return SessionThreadStripSummary(rollup: rollup) { SessionListPresentation.classify($0) }
+    }
+
+    /// A thread of `root` plus one child per kind.
+    private func summary(root: SessionStatusKind = .idle, _ kinds: [SessionStatusKind]) -> SessionThreadStripSummary {
+        summary(root: root, children: kinds.enumerated().map { session("child-\($0.offset)", $0.element) })
     }
 
     private func repeated(_ kind: SessionStatusKind, _ count: Int) -> [SessionStatusKind] {
         Array(repeating: kind, count: count)
     }
 
+    /// The strip's stopped count is the fold's count: both answer "is this member stopped", never "has the
+    /// person looked at it". The fixture is Chen's screenshot: stopped members whose result this device has
+    /// not opened read Done on their own rows, and the fold holds every one of them.
+    @Test func theStoppedCountIsTheFoldsOwnCount() {
+        var unseenResult = session("unseen-result", .stopped)
+        unseenResult.programStatus = ProgramStatus(state: .done, since: Date(timeIntervalSince1970: 2_000))
+        let liveResult = session("live-result", .done)
+        let thread = [
+            session("root", parent: nil, .idle), unseenResult, session("plain-stopped", .stopped),
+            session("worker", .working), liveResult,
+        ]
+        let rollup = SessionThreadGrouping.rollups(from: thread)[0]
+        let result = SessionThreadStripSummary(rollup: rollup) { SessionListPresentation.classify($0) }
+        let fold = rollup.listing { _ in .none }.stopped
+
+        #expect(fold.count == 2)
+        #expect(result.counts.first { $0.bucket == .stopped }?.count == fold.count)
+        #expect(result.counts.reduce(0) { $0 + $1.count } == rollup.descendants.count)
+        #expect(result.text == "1 working · 1 idle · 2 stopped")
+    }
+
+    /// Every bucket adds up to the children, on any mix.
+    @Test(arguments: [
+        [SessionStatusKind.stopped, .done, .idle, .working, .question, .error],
+        Array(repeating: SessionStatusKind.stopped, count: 7),
+        [SessionStatusKind.working, .working, .working, .signIn, .needsApproval],
+        [SessionStatusKind.done, .done, .stopped],
+    ])
+    func everyBucketAddsUpToTheChildren(kinds: [SessionStatusKind]) {
+        let result = summary(kinds)
+        #expect(result.counts.reduce(0) { $0 + $1.count } == kinds.count)
+        #expect(result.counts.allSatisfy { $0.count > 0 })
+    }
+
+    /// Opening a member is not news: a stopped member stays stopped whether its result is unseen (Done on its
+    /// row) or seen, and a live one keeps its bucket, so the strip never changes under the person's thumb.
+    @Test func aMemberBeingSeenNeverChangesTheStrip() {
+        var unseen = session("a", .stopped)
+        unseen.programStatus = ProgramStatus(state: .done, since: Date(timeIntervalSince1970: 2_000))
+        let seen = session("a", .stopped)
+
+        #expect(summary(children: [unseen]) == summary(children: [seen]))
+        // A live member's unseen result and its settled rest are the same quiet state here.
+        #expect(summary(children: [session("b", .done)]) == summary(children: [session("b", .idle)]))
+    }
+
     @Test func countsUseTheListsWordsInTheStripsOrderAndOmitZeros() {
         let result = summary(repeated(.stopped, 101) + repeated(.done, 23) + [.question] + repeated(.working, 3))
 
-        #expect(result.text == "3 working · 1 needs you · 23 done · 101 stopped")
-        #expect(result.counts.map(\.bucket) == [.working, .needsYou, .done, .stopped])
+        #expect(result.text == "3 working · 1 needs you · 23 idle · 101 stopped")
+        #expect(result.counts.map(\.bucket) == [.working, .needsYou, .idle, .stopped])
     }
 
     @Test func everyStateHasItsWordAndBlockedKindsShareNeedsYou() {
@@ -51,7 +108,8 @@ struct SessionThreadStripSummaryTests {
             .stopped, .idle, .done, .error, .signIn, .needsApproval, .question, .working,
         ])
 
-        #expect(result.text == "1 working · 3 need you · 1 error · 1 done · 1 idle · 1 stopped")
+        #expect(result.text == "1 working · 3 need you · 1 error · 2 idle · 1 stopped")
+        #expect(!result.text.contains("done"), "The strip has no Done: a settled outcome is Idle here, seen or not")
     }
 
     @Test func aSingleBlockedMemberAgrees() {
@@ -64,7 +122,8 @@ struct SessionThreadStripSummaryTests {
     }
 
     /// The SSH terminal's record-tree summary and the strip use one vocabulary for the states they share.
-    @Test(arguments: [SessionStatusKind.working, .error, .done, .idle, .stopped])
+    /// Done is not one of them: the strip answers the fold's question, which has no Done.
+    @Test(arguments: [SessionStatusKind.working, .error, .idle, .stopped])
     func theStripAndTheTerminalRollupSayTheSameThing(kind: SessionStatusKind) {
         for count in [1, 2] {
             #expect(
@@ -75,7 +134,7 @@ struct SessionThreadStripSummaryTests {
 
     @Test func theRootIsInNeitherTheCountsNorTheDots() {
         let working = summary(root: .working, [.stopped, .done])
-        #expect(working.text == "1 done · 1 stopped")
+        #expect(working.text == "1 idle · 1 stopped")
         #expect(working.dots.isEmpty)
 
         let blocked = summary(root: .needsApproval, [.working])
@@ -107,9 +166,9 @@ struct SessionThreadStripSummaryTests {
     }
 
     @Test func aThreadWhoseMembersAllStoppedHasCountsAndNoDots() {
-        let result = summary(repeated(.stopped, 4) + [.done])
+        let result = summary(repeated(.stopped, 4) + [.idle])
 
-        #expect(result.text == "1 done · 4 stopped")
+        #expect(result.text == "1 idle · 4 stopped")
         #expect(result.dots.isEmpty)
         #expect(result.hiddenDotCount == 0)
     }

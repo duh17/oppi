@@ -124,19 +124,7 @@ struct SessionThreadRollup: Sendable, Equatable {
     var workspaceCount: Int { Set(members.compactMap(\.workspaceId)).count }
 }
 
-enum SessionThreadStatus {
-    /// Status of a session when the caller has no per-device seen state: every done or
-    /// error outcome counts as unseen.
-    static func withoutSeenState(_ session: Session) -> SessionStatusKind {
-        SessionStatusKind.resolve(session: session, seenAt: nil)
-    }
-}
-
 enum SessionThreadGrouping {
-    static func isWorking(_ session: Session) -> Bool {
-        SessionListPresentation.activeSectionKind(for: session) == .working
-    }
-
     /// Group sessions by launch root. A session whose parent is not loaded is a
     /// root, so a partial list never hides sessions. Roots keep input order.
     static func rollups(from sessions: [Session]) -> [SessionThreadRollup] {

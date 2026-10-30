@@ -11,18 +11,27 @@ import UIKit
 /// The strip describes the children only: the working line, the dots, the
 /// status counts, the Agent summary, and the VoiceOver child count all cover
 /// the thread's other sessions, so they add up. The root row above already
-/// shows its own status.
+/// shows its own status. Both the dots and the counts read the list's own
+/// classification of a member, without this device's seen state, so the stopped
+/// count is the count of the thread's stopped fold and opening a member never
+/// changes the strip.
 ///
 /// Display choices only hide the Agent summary and the cost total. The
 /// chevron, a blocked child, who is working, the dots, and the status counts
-/// always stay. The headline line and the dot line keep their height whether
-/// or not any member is active, so a member changing state never moves the
-/// rows below.
+/// always stay.
+///
+/// A settled thread, one with no member needing you, working, or in error,
+/// draws one line: the counts, the Agents, and the chevron. While a member is
+/// active the strip keeps its headline and dot lines at a fixed height, so a
+/// member changing state never moves the rows below; the row changes height
+/// only when the thread settles or wakes.
 final class SessionThreadStripView: UIControl {
     struct Content: Equatable {
         let rollup: SessionThreadRollup
-        /// This device's status for each member: its seen state and pending asks applied.
-        let statuses: [String: SessionStatusKind]
+        /// Pending asks per member. With the rollup they give the list's own classification of each
+        /// member, without this device's seen state, so the strip says the same thing whether or not the
+        /// person has opened a member.
+        var askCounts: [String: Int] = [:]
         /// Locked root: names and counts only, no dots, Agents, or cost.
         var hidesDetails = false
         /// A locked member: its cost stays out of the total.
@@ -30,13 +39,16 @@ final class SessionThreadStripView: UIControl {
         /// The thread's child rows are listed under the root.
         var isExpanded = false
 
-        func status(_ session: Session) -> SessionStatusKind {
-            statuses[session.id] ?? SessionThreadStatus.withoutSeenState(session)
+        func classification(_ session: Session) -> SessionListClassification {
+            SessionListPresentation.classify(
+                session,
+                attention: SessionListAttentionCounts(askCount: askCounts[session.id] ?? 0)
+            )
         }
 
         /// A blocked child, shown so the user knows where to answer.
         var blockedMember: Session? {
-            rollup.descendants.first { status($0).isBlocked }
+            rollup.descendants.first { classification($0).status.isBlocked }
         }
     }
 
@@ -48,11 +60,14 @@ final class SessionThreadStripView: UIControl {
     private let statusRow = SessionThreadStatusRow()
     private var dots: SessionThreadStatusDotsView { statusRow.dots }
     private var agents: SessionThreadAgentClusterView { statusRow.agents }
-    private let footer = UIStackView()
-    private let summaryLabel = SessionThreadSummaryLabel()
-    private let chevron = UIImageView()
+    private let footer = SessionThreadCountsLine()
+    private var summaryLabel: SessionThreadSummaryLabel { footer.summary }
+    private var chevron: UIImageView { footer.chevron }
     private var verticalPadding: [NSLayoutConstraint] = []
     private lazy var headlineHeight = headline.heightAnchor.constraint(equalToConstant: Self.headlineLineHeight())
+    /// The counts line holds the Agents while the thread is settled; the dot line holds them while active.
+    private var agentsAreSettled: Bool?
+    private var isSettled = false
     private var summary = ""
 
     override init(frame: CGRect) {
@@ -64,18 +79,7 @@ final class SessionThreadStripView: UIControl {
 
         headline.adjustsFontForContentSizeCategory = true
         headline.translatesAutoresizingMaskIntoConstraints = false
-
-        summaryLabel.font = UIFont.scaled(.caption1)
-        summaryLabel.adjustsFontForContentSizeCategory = true
-        summaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        chevron.image = UIImage.scaledSymbol("chevron.right", style: .caption1, weight: .semibold)
-        chevron.setContentHuggingPriority(.required, for: .horizontal)
-        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         agents.setContentCompressionResistancePriority(.required, for: .horizontal)
-        footer.axis = .horizontal
-        footer.alignment = .center
-        footer.spacing = 8
-        [summaryLabel, SessionRowSpacer(minWidth: 4), chevron].forEach(footer.addArrangedSubview)
 
         stack.axis = .vertical
         stack.alignment = .leading
@@ -96,7 +100,7 @@ final class SessionThreadStripView: UIControl {
             headlineHeight,
         ])
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, _) in
-            view.headlineHeight.constant = Self.headlineLineHeight()
+            view.headlineHeight.constant = view.isSettled ? 0 : Self.headlineLineHeight()
         }
     }
 
@@ -125,9 +129,18 @@ final class SessionThreadStripView: UIControl {
         stack.spacing = display.isCompact ? 2 : 4
         for constraint in verticalPadding { constraint.constant = display.isCompact ? 4 : 6 }
 
-        let working = rollup.descendants.filter(SessionThreadGrouping.isWorking)
+        let statusSummary = SessionThreadStripSummary(rollup: rollup, classify: content.classification)
+        // A settled thread has nothing to headline and nothing to dot, so it draws the counts line only.
+        // While a member is active both lines stay, at a fixed height, so member changes move nothing.
+        isSettled = !statusSummary.isActive
+        placeAgents(settled: isSettled)
+        headline.setHiddenIfChanged(isSettled)
+        headlineHeight.constant = isSettled ? 0 : Self.headlineLineHeight()
+        statusRow.setHiddenIfChanged(isSettled || content.hidesDetails)
+
+        let working = rollup.descendants.filter { content.classification($0).section == .working }
         if let blocked = content.blockedMember {
-            let status = content.status(blocked)
+            let status = content.classification(blocked).status
             headline.attributedText = SessionRowText.symbolAndText(
                 status.badgeSymbol, "\(status.label) · \(blocked.displayTitle)", style: .footnote,
                 symbolWeight: .semibold, textWeight: .semibold, spacing: 5, color: style.tint(status)
@@ -143,9 +156,6 @@ final class SessionThreadStripView: UIControl {
             headline.attributedText = nil
         }
 
-        let statusSummary = SessionThreadStripSummary(rollup: rollup, status: content.status)
-        // The dots stay laid out, empty, when no member is active: the line keeps its height.
-        statusRow.setHiddenIfChanged(content.hidesDetails)
         dots.apply(statusSummary.dots, hiddenCount: statusSummary.hiddenDotCount, style: style)
 
         let showsAgents = display.showsThreadAgentSummary && !content.hidesDetails
@@ -154,7 +164,6 @@ final class SessionThreadStripView: UIControl {
             agents.apply(SessionThreadAgentGroup.groups(Array(rollup.descendants)), maxGroups: 3, colors: colors, iconAssetCache: iconAssetCache)
         }
 
-        let statusRollup = rollup.statusRollup(status: content.status)
         var parts: [String] = [statusSummary.text]
         // Same rule as a row: unknown or zero cost is absent, never "$0.00".
         if display.showsCost, !content.hidesDetails, !content.hidesCost, rollup.totalCost > 0 {
@@ -173,7 +182,12 @@ final class SessionThreadStripView: UIControl {
             UIView.animate(withDuration: animates ? 0.2 : 0) { self.chevron.transform = chevronTransform }
         }
 
-        let blocked = content.blockedMember.map { "\(content.status($0).label) from \($0.displayTitle). " } ?? ""
+        // The thread's own headline in the strip's words: a settled outcome is idle here, so VoiceOver says
+        // the same states the counts do.
+        let statusRollup = rollup.statusRollup {
+            SessionThreadStripSummary.Bucket(content.classification($0)).kind
+        }
+        let blocked = content.blockedMember.map { "\(content.classification($0).status.label) from \($0.displayTitle). " } ?? ""
         let headlineStatus = statusRollup.headline.map { "\($0.label). " } ?? ""
         let children = rollup.descendants.count
         accessibilityLabel = blocked + headlineStatus
@@ -183,12 +197,26 @@ final class SessionThreadStripView: UIControl {
             ? String(localized: "Hides the thread's sessions")
             : String(localized: "Shows the thread's sessions")
     }
+
+    /// The Agents sit on the dot line while a member is active, where the dots leave them the whole width,
+    /// and join the counts line once the thread settles, so a settled strip stays one line. They move only
+    /// when the thread wakes or settles, never as a member changes state.
+    private func placeAgents(settled: Bool) {
+        guard agentsAreSettled != settled else { return }
+        agentsAreSettled = settled
+        agents.removeFromSuperview()
+        if settled {
+            footer.insertArrangedSubview(agents, at: footer.arrangedSubviews.count - 1)
+        } else {
+            statusRow.addArrangedSubview(agents)
+        }
+    }
 }
 
 // MARK: - Status row
 
-/// The strip's dots on the left and Agents on the right. The dots keep their width; the Agents take what
-/// is left and drop trailing groups to fit, so the row never overflows.
+/// The strip's dots on the left and, while a member is active, the Agents on the right. The dots keep
+/// their width; the Agents take what is left and drop trailing groups to fit, so the row never overflows.
 final class SessionThreadStatusRow: UIStackView {
     /// The least room the row keeps between the dots and the Agents. `layoutSubviews` fits the Agents in
     /// what is left after it, so the spacer and the fit read the same number.
@@ -211,9 +239,49 @@ final class SessionThreadStatusRow: UIStackView {
     override func layoutSubviews() {
         // Fit before `super`: `apply` unhides the Agent groups, and the row is wider than the strip until the
         // trailing groups fold into "+N". Fitting first hides them in this same pass, so the row never lays
-        // out over-wide against its required width.
-        if !agents.isHidden {
+        // out over-wide against its required width. A settled thread hosts the Agents on its counts line.
+        if agents.superview === self, !agents.isHidden {
             agents.fit(maxWidth: bounds.width - dots.intrinsicContentSize.width - spacing * 2 - Self.spacerMinWidth)
+        }
+        super.layoutSubviews()
+    }
+}
+
+// MARK: - Counts line
+
+/// The strip's counts line: the status counts, the chevron, and, while the thread is settled, the Agents.
+/// The counts are never dropped, so the Agents fold into the room they leave and the line never overflows.
+final class SessionThreadCountsLine: UIStackView {
+    /// The least room kept between the counts and what follows, as the dot line keeps.
+    private static let spacerMinWidth: CGFloat = 4
+
+    let summary = SessionThreadSummaryLabel()
+    let chevron = UIImageView()
+
+    init() {
+        super.init(frame: .zero)
+        summary.font = UIFont.scaled(.caption1)
+        summary.adjustsFontForContentSizeCategory = true
+        summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        chevron.image = UIImage.scaledSymbol("chevron.right", style: .caption1, weight: .semibold)
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
+        axis = .horizontal
+        alignment = .center
+        spacing = 8
+        [summary, SessionRowSpacer(minWidth: Self.spacerMinWidth), chevron].forEach(addArrangedSubview)
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) { fatalError("Not supported") }
+
+    override func layoutSubviews() {
+        // Fit before `super`, for the reason the dot line does it: a settled strip draws the Agents here.
+        if let agents = arrangedSubviews.compactMap({ $0 as? SessionThreadAgentClusterView }).first,
+           !agents.isHidden {
+            let reserved = summary.minimumWidth + chevron.intrinsicContentSize.width
+                + spacing * 3 + Self.spacerMinWidth
+            agents.fit(maxWidth: bounds.width - reserved)
         }
         super.layoutSubviews()
     }
@@ -471,6 +539,12 @@ final class SessionThreadSummaryLabel: UILabel {
     override var intrinsicContentSize: CGSize {
         let size = Self.width(of: parts.joined(separator: Self.separator), font: font)
         return CGSize(width: size, height: super.intrinsicContentSize.height)
+    }
+
+    /// What the counts alone need. They are never dropped, so this is the room the counts keep when the
+    /// Agents share their line.
+    var minimumWidth: CGFloat {
+        parts.first.map { Self.width(of: $0, font: font) } ?? 0
     }
 
     override func layoutSubviews() {

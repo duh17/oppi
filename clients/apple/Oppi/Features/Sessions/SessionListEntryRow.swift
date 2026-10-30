@@ -166,7 +166,7 @@ final class SessionListEntryContentView: UIView, UIContentView {
             stripView.apply(
                 SessionThreadStripView.Content(
                     rollup: thread,
-                    statuses: row.statuses,
+                    askCounts: row.askCounts,
                     hidesDetails: row.lockBadge(of: thread.root) == .locked,
                     hidesCost: thread.members.contains { row.lockBadge(of: $0) == .locked },
                     isExpanded: entry.isExpanded

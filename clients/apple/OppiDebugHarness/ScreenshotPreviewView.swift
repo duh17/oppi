@@ -926,7 +926,8 @@ private enum RouterModalSitesFixtures {
     /// `SCREENSHOT_THREAD_WORKING_COUNT` and `SCREENSHOT_THREAD_BLOCKED_COUNT` add that many more working
     /// children and children waiting on a question, so the strip's status dots have a crowd to draw.
     /// `SCREENSHOT_THREAD_AGENT_GROUPS` (up to 3) launches those added children from that many saved Agents in turn.
-    /// `SCREENSHOT_THREAD_FOCUS=<root id>` (the inbox site) opens that thread as a thread link does.
+    /// `SCREENSHOT_THREAD_SETTLED=1` stops the fixed working child too, so the strip has no active member and
+    /// draws its settled one line. `SCREENSHOT_THREAD_FOCUS=<root id>` (the inbox site) opens that thread as a thread link does.
     private static var threadSessions: [Session] {
         let now = Date()
         func session(
@@ -950,6 +951,7 @@ private enum RouterModalSitesFixtures {
             )
         }
         let extraStopped = (Int(ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_STOPPED_COUNT"] ?? "") ?? 0)
+        let settledChild = ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_SETTLED"] == "1"
         let oldWorkers = (0..<extraStopped).map { index in
             session(
                 "old-worker-\(index)", "Stopped worker \(index + 1)", parent: "thread-root",
@@ -985,7 +987,10 @@ private enum RouterModalSitesFixtures {
         }
         return filler + added + [
             session("thread-root", "Plan the router migration", status: .ready, minutesAgo: 60, cost: 1.42),
-            session("child-working", "Migrate the chat routes", parent: "thread-root", status: .busy, minutesAgo: 40, cost: 0.61),
+            session(
+                "child-working", "Migrate the chat routes", parent: "thread-root",
+                status: settledChild ? .stopped : .busy, minutesAgo: 40, cost: 0.61
+            ),
             session("child-done", "Audit the old routes", parent: "thread-root", status: .stopped, minutesAgo: 35, cost: 0.33),
             session("grandchild", "Write the route table", parent: "child-done", status: .stopped, minutesAgo: 30, cost: 0.12),
             session("child-kypu", "Check the kypu client", workspace: "kypu", parent: "thread-root", status: .ready, minutesAgo: 25, cost: 0.2),

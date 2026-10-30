@@ -3,45 +3,55 @@ import UIKit
 @testable import Oppi
 
 /// The Thread strip's status dots and summary as a list cell draws them: live dots for members still
-/// going, counts in the list's words, and a strip that keeps its height as members change state.
+/// going, counts in the list's words, one line while the thread is settled, and a strip that keeps its
+/// height as members change state.
 @MainActor
 @Suite("Session thread strip view")
 struct SessionThreadStripViewTests {
     private let style = SessionRowStyle.for(.dark)
 
-    /// A root and one child per status. `agents` gives the children those saved Agents in turn.
-    private func members(
-        _ children: [SessionStatusKind],
-        agents: [String] = []
-    ) -> (SessionThreadRollup, [String: SessionStatusKind]) {
-        func session(_ id: String, parent: String?, status: SessionStatusKind) -> Session {
-            var session = Session(
-                id: id,
-                workspaceId: "ws",
-                name: id,
-                status: status == .stopped ? .stopped : status == .working ? .busy : .ready,
-                createdAt: Date(timeIntervalSince1970: 1_000),
-                lastActivity: Date(timeIntervalSince1970: 1_000),
-                messageCount: 3,
-                tokens: TokenUsage(input: 0, output: 0),
-                cost: 0,
-                parentSessionId: parent
-            )
-            // The strip names working children by their lifecycle, so a working child is really busy.
-            if status == .working { session.programStatus = ProgramStatus(state: .working, since: Date(timeIntervalSince1970: 1_000)) }
-            return session
+    /// A member whose own status, resolved without this device's seen state, is `kind`.
+    private func session(_ id: String, parent: String?, _ kind: SessionStatusKind) -> Session {
+        var session = Session(
+            id: id,
+            workspaceId: "ws",
+            name: id,
+            status: .ready,
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            lastActivity: Date(timeIntervalSince1970: 1_000),
+            messageCount: 3,
+            tokens: TokenUsage(input: 0, output: 0),
+            cost: 0,
+            parentSessionId: parent
+        )
+        let since = Date(timeIntervalSince1970: 2_000)
+        switch kind {
+        case .working:
+            session.status = .busy
+            session.currentTurnStartedAt = since
+            session.programStatus = ProgramStatus(state: .working, since: since)
+        case .needsApproval: session.programStatus = ProgramStatus(state: .blocked, kind: .permission, since: since)
+        case .question: session.programStatus = ProgramStatus(state: .blocked, kind: .question, since: since)
+        case .signIn: session.programStatus = ProgramStatus(state: .blocked, kind: .auth, since: since)
+        case .error: session.programStatus = ProgramStatus(state: .error, since: since)
+        case .done: session.programStatus = ProgramStatus(state: .done, since: since)
+        case .idle: session.programStatus = ProgramStatus(state: .idle, since: since)
+        case .stopped: session.status = .stopped
         }
-        var all = [session("root", parent: nil, status: .idle)]
-        var statuses = ["root": SessionStatusKind.idle]
-        for (index, status) in children.enumerated() {
-            var child = session("child-\(index)", parent: "root", status: status)
+        return session
+    }
+
+    /// A root and one child per state. `agents` gives the children those saved Agents in turn.
+    private func members(_ children: [SessionStatusKind], agents: [String] = []) -> SessionThreadRollup {
+        var all = [session("root", parent: nil, .idle)]
+        for (index, kind) in children.enumerated() {
+            var child = session("child-\(index)", parent: "root", kind)
             if !agents.isEmpty {
                 child.launch = SessionLaunchMetadata(agentId: agents[index % agents.count], agentIcon: .emoji("\u{1F6E0}\u{FE0F}"))
             }
             all.append(child)
-            statuses["child-\(index)"] = status
         }
-        return (SessionThreadGrouping.rollups(from: all)[0], statuses)
+        return SessionThreadGrouping.rollups(from: all)[0]
     }
 
     private func strip(
@@ -49,10 +59,10 @@ struct SessionThreadStripViewTests {
         agents: [String] = [],
         width: CGFloat = 330
     ) -> (SessionThreadStripView, CGFloat) {
-        let (rollup, statuses) = members(children, agents: agents)
+        let rollup = members(children, agents: agents)
         let view = SessionThreadStripView()
         view.apply(
-            SessionThreadStripView.Content(rollup: rollup, statuses: statuses),
+            SessionThreadStripView.Content(rollup: rollup),
             display: .standard, style: style, iconAssetCache: nil
         )
         let height = view.systemLayoutSizeFitting(
@@ -113,18 +123,40 @@ struct SessionThreadStripViewTests {
 
     // MARK: Strip
 
-    @Test func aMemberStartingOrStoppingNeverChangesTheStripHeight() {
-        // The headline line ("X working", "Question \u{00B7} Y") keeps its height empty, so a member going
-        // active, blocked, or settled moves nothing below the strip.
+    /// Settling is the only state change that resizes the row: a settled thread draws one line, and every
+    /// thread with an active member keeps the taller headline + dots + counts, so a member changing state
+    /// inside an active thread never moves the rows below.
+    @Test func aSettledThreadIsOneLineAndEveryActiveThreadKeepsItsHeight() {
         let (_, settled) = strip([.stopped, .stopped])
-        let (_, mixed) = strip([.done, .idle, .stopped, .stopped])
+        let (_, settledDone) = strip([.done, .idle, .stopped])
         let (_, working) = strip([.working, .stopped])
         let (_, blocked) = strip([.question, .stopped])
         let (_, crowd) = strip(Array(repeating: .working, count: 40) + [.question, .stopped])
-        #expect(settled == mixed)
-        #expect(working == settled, "A working member changed the strip's height")
-        #expect(blocked == settled, "A blocked member changed the strip's height")
-        #expect(crowd == settled, "A crowd of active members changed the strip's height")
+
+        #expect(settledDone == settled, "A thread with no active member draws the same one line")
+        #expect(working > settled, "An active thread keeps the headline and dot lines")
+        #expect(blocked == working, "A blocked member changed an active strip's height")
+        #expect(crowd == working, "A crowd of active members changed an active strip's height")
+    }
+
+    /// The Agents sit on the dot line while a member is active, where they have the whole width, and join
+    /// the counts line once the thread settles, so the settled strip stays one line.
+    @Test func theAgentsShareTheCountsLineOnlyWhileTheThreadIsSettled() {
+        func lines(_ children: [SessionStatusKind]) -> (agents: CGRect, counts: CGRect, dots: CGRect, view: UIView) {
+            let (view, _) = strip(children, agents: ["a", "b"])
+            let agents = descendants(of: view, SessionThreadAgentClusterView.self)[0]
+            let counts = descendants(of: view, SessionThreadSummaryLabel.self)[0]
+            let dots = descendants(of: view, SessionThreadStatusDotsView.self)[0]
+            return (agents.convert(agents.bounds, to: view), counts.convert(counts.bounds, to: view), dots.convert(dots.bounds, to: view), view)
+        }
+
+        let settled = lines([.stopped, .stopped])
+        #expect(abs(settled.agents.midY - settled.counts.midY) < 1, "The settled strip keeps the Agents on the counts line")
+        #expect(settled.agents.maxY <= settled.view.bounds.maxY)
+
+        let active = lines([.working, .stopped])
+        #expect(abs(active.agents.midY - active.dots.midY) < 1, "An active strip keeps the Agents on the dot line")
+        #expect(active.counts.minY > active.dots.minY)
     }
 
     @Test func theStripLabelCarriesTheListsCountsForTheChildrenAndNoRetiredWords() {
@@ -132,9 +164,10 @@ struct SessionThreadStripViewTests {
 
         let label = view.accessibilityLabel ?? ""
         #expect(
-            label.contains("Thread with 7 child sessions, 3 working · 1 needs you · 1 done · 2 stopped"),
+            label.contains("Thread with 7 child sessions, 3 working · 1 needs you · 1 idle · 2 stopped"),
             Comment(rawValue: label)
         )
+        #expect(!label.contains("done"), Comment(rawValue: label))
         #expect(!label.contains("finished"))
         #expect(strip([.working]).0.accessibilityLabel?.contains("Thread with 1 child session, 1 working") == true)
     }
@@ -167,5 +200,17 @@ struct SessionThreadStripViewTests {
         #expect(clusterFrame.maxX <= view.bounds.maxX - 8 + 0.5, "Agents reach past the strip: \(clusterFrame)")
         if !groups.isEmpty { #expect(dotsFrame.maxX <= clusterFrame.minX, "Agents overlap the dots") }
         #expect(width > 300 ? groups.count == 3 : groups.count < 3)
+    }
+
+    /// A settled strip never runs past its width either: the counts keep their room and the Agents fold.
+    @Test(arguments: [330.0, 260.0])
+    func aSettledStripWithAgentsNeverRunsPastItsWidth(width: Double) {
+        let children = Array(repeating: SessionStatusKind.stopped, count: 137) + [.idle, .idle]
+        let (view, _) = strip(children, agents: ["worker", "reviewer", "scout"], width: CGFloat(width))
+        let cluster = descendants(of: view, SessionThreadAgentClusterView.self)[0]
+        let counts = descendants(of: view, SessionThreadSummaryLabel.self)[0]
+
+        #expect(counts.convert(counts.bounds, to: view).maxX <= view.bounds.maxX - 8 + 0.5)
+        #expect(cluster.convert(cluster.bounds, to: view).maxX <= view.bounds.maxX - 8 + 0.5)
     }
 }

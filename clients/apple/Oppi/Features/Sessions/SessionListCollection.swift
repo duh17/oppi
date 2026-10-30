@@ -16,6 +16,9 @@ struct SessionListRowContent: Equatable {
     /// Status of every session the entry draws: the row, its thread members,
     /// and the root it links to.
     let statuses: [String: SessionStatusKind]
+    /// Pending asks of every drawn session. A thread strip reads them with each member's record to say what
+    /// the thread holds, without this device's seen state.
+    var askCounts: [String: Int] = [:]
     /// Workspace names to show for sessions outside the list's workspace.
     var foreignWorkspaceNames: [String: String] = [:]
     /// Lock badge of every drawn session that has one (`lockBadges(of:target:)`).
@@ -75,11 +78,14 @@ struct SessionListRowContent: Equatable {
         callBadge: SessionRowCallBadge? = nil
     ) -> Self {
         var statuses: [String: SessionStatusKind] = [:]
+        var askCounts: [String: Int] = [:]
         var foreignNames: [String: String] = [:]
         for session in Self.drawnSessions(of: entry) {
+            let askCount = connection.sessionListAskCount(for: session.id)
+            askCounts[session.id] = askCount
             statuses[session.id] = SessionStatusKind.resolve(
                 session: session,
-                pendingAskCount: connection.sessionListAskCount(for: session.id),
+                pendingAskCount: askCount,
                 seenAt: connection.sessionStore.seenAt(for: session.id)
             )
             if let name = foreignWorkspaceName(session) {
@@ -99,6 +105,7 @@ struct SessionListRowContent: Equatable {
                 catalogModels: connection.chatState.cachedModels
             ),
             statuses: statuses,
+            askCounts: askCounts,
             foreignWorkspaceNames: foreignNames,
             lockBadges: Self.lockBadges(of: entry, target: lockTarget),
             isDurable: session.showsDurableMark,
