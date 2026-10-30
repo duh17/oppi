@@ -10,31 +10,121 @@ struct SessionThreadRollup: Sendable, Equatable {
 
     var descendants: ArraySlice<Session> { members.dropFirst() }
 
-    /// Descendants as an outline: each session is followed by its own children in
-    /// launch order, and `depth` is 1 for a direct child of the root. A member whose
-    /// parent is not a member hangs off the root, so every descendant appears exactly once.
-    var outline: [(session: Session, depth: Int)] {
-        var childrenByParent: [String: [Session]] = [:]
-        let memberIds = Set(members.map(\.id))
-        for session in descendants {
-            let parentId = session.parentSessionId.flatMap { memberIds.contains($0) ? $0 : nil } ?? root.id
-            childrenByParent[parentId, default: []].append(session)
-        }
-        var rows: [(session: Session, depth: Int)] = []
-        var visited: Set<String> = [root.id]
-        func visit(_ parentId: String, depth: Int) {
-            for child in childrenByParent[parentId] ?? [] where visited.insert(child.id).inserted {
-                rows.append((child, depth))
-                visit(child.id, depth: depth + 1)
+    /// What an open thread lists after its root, in two groups (`Member`: depth 1 is a first-level row).
+    ///
+    /// - `live`: members that are not stopped, blocked first, then working, then error, then
+    ///   done and idle, most recent first within a kind (working by launch, as the Working
+    ///   section sorts). The kind is the one the list's sections classify by
+    ///   (`SessionListPresentation.activeSectionKind`), without this device's seen state, so a
+    ///   glance never reorders the rows.
+    /// - `stopped`: the stopped members, most recent activity first, as the list sorts stopped rows.
+    ///
+    /// A group is a forest. A member's parent is its nearest ancestor in the same group, skipping
+    /// the root and members of the other group; with none it is first level (depth 1). A member
+    /// therefore keeps its depth under a parent listed in its group, and a live grandchild whose
+    /// parent is stopped hangs off the nearest live ancestor, or sits at depth 1. Children follow
+    /// their parent directly, and a branch sorts where its most urgent member would, as a thread
+    /// does in the list's sections. A parent cycle never reaches a first-level member: those
+    /// members are listed last, at depth 1, so every descendant appears exactly once.
+    typealias Member = (session: Session, depth: Int)
+
+    func listing(
+        attention: (Session) -> SessionListAttentionCounts
+    ) -> (live: [Member], stopped: [Member]) {
+        var live: [Session] = []
+        var stopped: [Session] = []
+        var liveRank: [String: Int] = [:]
+        for member in descendants {
+            let memberAttention = attention(member)
+            if SessionListPresentation.activeSectionKind(for: member, attention: memberAttention) == nil {
+                stopped.append(member)
+            } else {
+                live.append(member)
+                liveRank[member.id] = Self.liveRank(of: member, attention: memberAttention)
             }
         }
-        visit(root.id, depth: 1)
-        // A parent cycle among descendants never reaches the root: list what is left.
-        for session in descendants where visited.insert(session.id).inserted {
+        return (
+            forest(live) { lhs, rhs in
+                let (lhsRank, rhsRank) = (liveRank[lhs.id] ?? 0, liveRank[rhs.id] ?? 0)
+                if lhsRank != rhsRank { return lhsRank < rhsRank }
+                if lhsRank == Self.workingRank { return SessionListPresentation.compareWorking(lhs, rhs) }
+                return Self.isMoreRecent(lhs, rhs)
+            },
+            forest(stopped, precedes: Self.isMoreRecent)
+        )
+    }
+
+    private static let workingRank = 1
+
+    /// Blocked, working, error, then done and idle.
+    private static func liveRank(of member: Session, attention: SessionListAttentionCounts) -> Int {
+        switch SessionStatusKind.resolve(session: member, pendingAskCount: attention.askCount, seenAt: nil) {
+        case .needsApproval, .question, .signIn: 0
+        case .working: workingRank
+        case .error: 2
+        case .done, .idle, .stopped: 3
+        }
+    }
+
+    private static func isMoreRecent(_ lhs: Session, _ rhs: Session) -> Bool {
+        if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
+        return lhs.id < rhs.id
+    }
+
+    /// `group` as an outline ordered by `precedes` (a strict total order).
+    private func forest(_ group: [Session], precedes: (Session, Session) -> Bool) -> [Member] {
+        let groupIds = Set(group.map(\.id))
+        let byId = Dictionary(members.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var childrenByParent: [String: [Session]] = [:]
+        var firstLevel: [Session] = []
+        for session in group {
+            // Nearest ancestor in this group; the walk stops at the root, a missing parent, or a cycle.
+            var parentId = session.parentSessionId
+            var seen: Set<String> = [session.id]
+            var listedParent: String?
+            while let id = parentId, seen.insert(id).inserted, let ancestor = byId[id] {
+                if groupIds.contains(id) { listedParent = id; break }
+                parentId = ancestor.parentSessionId
+            }
+            if let listedParent {
+                childrenByParent[listedParent, default: []].append(session)
+            } else {
+                firstLevel.append(session)
+            }
+        }
+
+        // The member of a branch that sorts first stands for the whole branch.
+        var leaders: [String: Session] = [:]
+        func leader(_ session: Session) -> Session {
+            if let known = leaders[session.id] { return known }
+            var winner = session
+            for child in childrenByParent[session.id] ?? [] {
+                let candidate = leader(child)
+                if precedes(candidate, winner) { winner = candidate }
+            }
+            leaders[session.id] = winner
+            return winner
+        }
+        func ordered(_ sessions: [Session]) -> [Session] {
+            sessions.sorted { precedes(leader($0), leader($1)) }
+        }
+
+        var rows: [Member] = []
+        var listed: Set<String> = []
+        func visit(_ session: Session, depth: Int) {
+            guard listed.insert(session.id).inserted else { return }
+            rows.append((session, depth))
+            for child in ordered(childrenByParent[session.id] ?? []) { visit(child, depth: depth + 1) }
+        }
+        for session in ordered(firstLevel) { visit(session, depth: 1) }
+        for session in group.sorted(by: precedes) where !listed.contains(session.id) {
             rows.append((session, 1))
+            listed.insert(session.id)
         }
         return rows
     }
+
     var latestActivity: Date { members.lazy.map(\.lastActivity).max() ?? root.lastActivity }
     var totalCost: Double { members.reduce(0) { $0 + $1.cost } }
     /// Distinct workspaces the loaded members run in; above 1 marks a cross-workspace thread.
@@ -100,6 +190,12 @@ enum SessionThreadGrouping {
         }
     }
 
+    /// Root of the launch tree `sessionId` belongs to among the loaded `sessions`: the session
+    /// itself when it has no loaded parent. Nil when `sessionId` is not among them.
+    static func rootId(of sessionId: String, in sessions: [Session]) -> String? {
+        rollups(from: sessions).first { rollup in rollup.members.contains { $0.id == sessionId } }?.root.id
+    }
+
     /// Thread section: a blocked member anywhere > any member working > any member
     /// idle > stopped. A root that is idle or stopped while a child works still
     /// lists the thread as Working, so detached hand-offs stay visible.
@@ -148,8 +244,10 @@ struct SessionListEntry: Sendable, Equatable, Identifiable {
     var depth = 0
     /// The thread this row roots is open, so its children are listed after it.
     var isExpanded = false
+    /// Set on the row that folds an open thread's stopped members; `session` is the thread root.
+    var stoppedFold: SessionThreadStoppedFold?
 
-    var id: String { session.id }
+    var id: String { stoppedFold?.rowID ?? session.id }
     /// `ForEach` id for stopped sections; see `SessionListPresentation.stoppedRowID`.
     var stoppedListID: String { SessionListPresentation.stoppedRowID(id) }
 
@@ -176,17 +274,43 @@ struct SessionListEntry: Sendable, Equatable, Identifiable {
     }
 }
 
+/// The row at the end of an open thread that folds its stopped members.
+struct SessionThreadStoppedFold: Sendable, Equatable {
+    let rootId: String
+    let count: Int
+    /// The stopped members are listed after this row.
+    let isOpen: Bool
+
+    /// List item id; never a session id, so it cannot collide with a member's row.
+    var rowID: String { "stopped-members:\(rootId)" }
+}
+
 enum SessionListEntries {
     /// One plain row per session: search results, which never fold into threads.
     static func flat(_ sessions: [Session]) -> [SessionListEntry] {
         sessions.map { SessionListEntry(session: $0, thread: nil, outsideRoot: nil) }
     }
 
-    /// The rows of `entries` with each thread in `expandedRoots` open: its root row,
-    /// then every descendant as its own row, indented by `depth`, in outline order.
-    /// Members that run in another workspace are listed too: a thread is the whole launch
-    /// tree, not the part this list's workspace shows. Other entries pass through.
-    static func expanding(_ entries: [SessionListEntry], expandedRoots: Set<String>) -> [SessionListEntry] {
+    /// The rows of `entries` with each thread in `expandedRoots` open: its root row, its
+    /// live members, then one fold row for its stopped members and, when the fold is open,
+    /// those members. Each member is its own row, indented by `depth`; order and depth rules
+    /// are `SessionThreadRollup.listing`. Members that run in another workspace are listed
+    /// too: a thread is the whole launch tree, not the part this list's workspace shows.
+    /// Other entries pass through.
+    ///
+    /// `stoppedFolds` holds what the person chose for a thread's fold (true: open), by root id.
+    /// Without a choice the fold is closed, unless the thread has no live member: then the
+    /// fold row would be the only row, so it opens itself. `attention` supplies each member's
+    /// pending asks, which rank it as blocked.
+    ///
+    /// The fold row is an entry whose `session` is the root and whose `stoppedFold` is set.
+    /// A thread with no stopped member has no fold row.
+    static func expanding(
+        _ entries: [SessionListEntry],
+        expandedRoots: Set<String>,
+        stoppedFolds: [String: Bool],
+        attention: (Session) -> SessionListAttentionCounts
+    ) -> [SessionListEntry] {
         guard !expandedRoots.isEmpty else { return entries }
         var rows: [SessionListEntry] = []
         rows.reserveCapacity(entries.count)
@@ -198,9 +322,23 @@ enum SessionListEntries {
             var root = entry
             root.isExpanded = true
             rows.append(root)
-            for (session, depth) in thread.outline {
-                rows.append(SessionListEntry(session: session, thread: nil, outsideRoot: nil, depth: depth))
+            let listing = thread.listing(attention: attention)
+            func member(_ listed: SessionThreadRollup.Member) -> SessionListEntry {
+                SessionListEntry(session: listed.session, thread: nil, outsideRoot: nil, depth: listed.depth)
             }
+            rows.append(contentsOf: listing.live.map(member))
+            guard !listing.stopped.isEmpty else { continue }
+            let isOpen = stoppedFolds[entry.session.id] ?? listing.live.isEmpty
+            rows.append(SessionListEntry(
+                session: entry.session,
+                thread: nil,
+                outsideRoot: nil,
+                depth: 1,
+                stoppedFold: SessionThreadStoppedFold(
+                    rootId: entry.session.id, count: listing.stopped.count, isOpen: isOpen
+                )
+            ))
+            if isOpen { rows.append(contentsOf: listing.stopped.map(member)) }
         }
         return rows
     }

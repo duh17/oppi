@@ -144,11 +144,26 @@ final class SessionListCollection<
     struct Snapshot {
         enum Cell {
             case session(SessionListRowContent)
+            /// The fold row of an open thread's stopped members.
+            case stoppedFold(SessionThreadStoppedFold, depth: Int)
             case row(Row)
+
+            /// The cell of a list entry: its fold row, or the session row `content` makes.
+            static func entry(_ entry: SessionListEntry, content: (SessionListEntry) -> SessionListRowContent?) -> Cell? {
+                if let fold = entry.stoppedFold { return .stoppedFold(fold, depth: entry.depth) }
+                return content(entry).map(Cell.session)
+            }
+        }
+
+        /// A thread's stopped-members row and the indent it draws at.
+        fileprivate struct Fold: Equatable {
+            let fold: SessionThreadStoppedFold
+            let depth: Int
         }
 
         fileprivate var items = NSDiffableDataSourceSnapshot<Section, Item>()
         fileprivate var sessions: [Item: SessionListRowContent] = [:]
+        fileprivate var folds: [Item: Fold] = [:]
         fileprivate var rows: [Item: Row] = [:]
         fileprivate var headers: [Section: Header] = [:]
 
@@ -178,9 +193,10 @@ final class SessionListCollection<
             ids.reserveCapacity(elements.count)
             for element in elements {
                 let id = item(element)
-                guard sessions[id] == nil, rows[id] == nil else { continue }
+                guard sessions[id] == nil, folds[id] == nil, rows[id] == nil else { continue }
                 switch cell(element) {
                 case .session(let content): sessions[id] = content
+                case .stoppedFold(let fold, let depth): folds[id] = Fold(fold: fold, depth: depth)
                 case .row(let row): rows[id] = row
                 case nil: continue
                 }
@@ -189,14 +205,14 @@ final class SessionListCollection<
             items.appendItems(ids, toSection: section)
         }
 
-        /// Session rows in order.
+        /// Session rows in order, and the fold rows of open threads.
         mutating func append(
             sessions entries: [SessionListEntry],
             to section: Section,
             item: (String) -> Item,
             content: (SessionListEntry) -> SessionListRowContent?
         ) {
-            append(entries, to: section, item: { item($0.id) }, cell: { content($0).map(Cell.session) })
+            append(entries, to: section, item: { item($0.id) }, cell: { Cell.entry($0, content: content) })
         }
     }
 
@@ -276,6 +292,7 @@ final class SessionListCollection<
             guard existing.contains(item) else { return false }
             if reconfigureAll { return true }
             if let session = next.sessions[item] { return current.sessions[item] != session }
+            if let fold = next.folds[item] { return current.folds[item] != fold }
             return current.rows[item] != next.rows[item]
         }
         let headersChanged = reconfigureAll || current.headers != next.headers
@@ -294,6 +311,17 @@ final class SessionListCollection<
         current = Snapshot()
         hasApplied = false
         dataSource?.apply(NSDiffableDataSourceSnapshot<Section, Item>(), animatingDifferences: false)
+    }
+
+    /// Scrolls the first of `items` that the list holds to the top. False when it holds none.
+    @discardableResult
+    func scrollToTop(ofFirstOf items: [Item]) -> Bool {
+        guard let dataSource, let indexPath = items.lazy.compactMap({ dataSource.indexPath(for: $0) }).first else {
+            return false
+        }
+        collectionView.layoutIfNeeded()
+        collectionView.scrollToItem(at: indexPath, at: .top, animated: false)
+        return true
     }
 
     /// The first of `items` with a cell on screen (a confirmation's anchor).
@@ -348,11 +376,27 @@ final class SessionListCollection<
             cell.automaticallyUpdatesBackgroundConfiguration = false
             configureRow(cell, row)
         }
+        let foldCell = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+            guard let self, let row = current.folds[item] else { return }
+            // The fold's own control carries the identifier and the action; the cell is only its frame.
+            cell.accessibilityIdentifier = nil
+            cell.accessories = []
+            cell.contentConfiguration = SessionThreadStoppedFoldConfiguration(
+                fold: row.fold,
+                depth: row.depth,
+                themeID: root.themeStore.activeThemeID,
+                actions: actions
+            )
+            cell.backgroundConfiguration = rowBackground()
+            cell.automaticallyUpdatesBackgroundConfiguration = false
+        }
         let dataSource = UICollectionViewDiffableDataSource<Section, Item>(
             collectionView: collectionView
         ) { [weak self] collectionView, indexPath, item in
             if self?.current.sessions[item] != nil {
                 collectionView.dequeueConfiguredReusableCell(using: sessionCell, for: indexPath, item: item)
+            } else if self?.current.folds[item] != nil {
+                collectionView.dequeueConfiguredReusableCell(using: foldCell, for: indexPath, item: item)
             } else {
                 collectionView.dequeueConfiguredReusableCell(using: rowCell, for: indexPath, item: item)
             }
@@ -423,6 +467,8 @@ final class SessionListCollection<
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }
         if current.sessions[item] != nil { return true }
+        // The fold row is a button of its own; the list never selects it.
+        if current.folds[item] != nil { return false }
         return current.rows[item].map(isRowSelectable) ?? false
     }
 

@@ -7,6 +7,8 @@ struct SessionListRowActions {
     let open: (Session) -> Void
     /// Opens or closes the thread a root session starts: its descendants list under it.
     let toggleThread: (Session) -> Void
+    /// Opens or closes the fold of an open thread's stopped members (`SessionThreadStoppedFold`).
+    let toggleStoppedMembers: (SessionThreadStoppedFold) -> Void
     let stop: (Session) -> Void
     let resume: (Session) -> Void
     /// Nil when this list cannot delete the session.

@@ -51,6 +51,7 @@ struct SessionRowRelayoutTests {
         SessionListRowActions(
             open: { _ in },
             toggleThread: { _ in },
+            toggleStoppedMembers: { _ in },
             stop: { _ in },
             resume: { _ in },
             delete: { _ in nil },

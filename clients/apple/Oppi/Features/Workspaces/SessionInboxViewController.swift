@@ -52,6 +52,11 @@ final class SessionInboxViewController: UIViewController {
     private var expandedThreadRoots: Set<String> = [] {
         didSet { setNeedsUpdateProperties() }
     }
+    /// What the person chose for an open thread's Stopped fold, by thread root. A root
+    /// without a choice takes the default (`SessionListEntries.expanding`).
+    private var threadStoppedFolds: [String: Bool] = [:] {
+        didSet { setNeedsUpdateProperties() }
+    }
     private var providerSetupState: ProviderSetupState = .unknown {
         didSet { setNeedsUpdateProperties() }
     }
@@ -99,6 +104,9 @@ final class SessionInboxViewController: UIViewController {
         },
         toggleThread: { [weak self] rootSession in
             self?.toggleThread(rootSession)
+        },
+        toggleStoppedMembers: { [weak self] fold in
+            self?.threadStoppedFolds[fold.rootId] = !fold.isOpen
         },
         stop: { [weak self] session in
             guard let self, let item = item(for: session) else { return }
@@ -547,6 +555,7 @@ final class SessionInboxViewController: UIViewController {
         expandedStoppedGroupIDs = reset.expandedStoppedGroupIDs
         collapsedStoppedGroupIDs = reset.collapsedStoppedGroupIDs
         expandedThreadRoots = []
+        threadStoppedFolds = [:]
         // Another server's sessions replace the list; they are not edits of
         // this one. Emptying it makes this pass's snapshot apply without
         // animation. Animated, the old server's deleted headers fade out
@@ -611,7 +620,12 @@ final class SessionInboxViewController: UIViewController {
         itemsById = data.itemsById
         var next = List.Snapshot()
         func appendSessions(_ entries: [SessionListEntry], to section: Section, item: (String) -> Item) {
-            let rows = SessionListEntries.expanding(entries, expandedRoots: expandedThreadRoots)
+            let rows = SessionListEntries.expanding(
+                entries,
+                expandedRoots: expandedThreadRoots,
+                stoppedFolds: threadStoppedFolds,
+                attention: { SessionListAttentionCounts(askCount: state.connection?.sessionListAskCount(for: $0.id) ?? 0) }
+            )
             next.append(sessions: rows, to: section, item: item) { rowContent(for: $0, data: data) }
         }
 

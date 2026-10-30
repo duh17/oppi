@@ -1590,6 +1590,8 @@ private enum RouterModalSitesFixtures {
 
     /// One launch tree across two workspaces: an idle root with a working child, a finished
     /// child with its own child, and a child that runs in kypu, plus a plain session.
+    /// `SCREENSHOT_THREAD_STOPPED_COUNT` adds that many day-old stopped workers to the tree, the
+    /// shape of a big thread whose live members sit among stopped ones.
     private static var threadSessions: [Session] {
         let now = Date()
         func session(
@@ -1612,7 +1614,14 @@ private enum RouterModalSitesFixtures {
                 parentSessionId: parent
             )
         }
-        return [
+        let extraStopped = (Int(ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_STOPPED_COUNT"] ?? "") ?? 0)
+        let oldWorkers = (0..<extraStopped).map { index in
+            session(
+                "old-worker-\(index)", "Stopped worker \(index + 1)", parent: "thread-root",
+                status: .stopped, minutesAgo: 1_600 + Double(index), cost: 0.05
+            )
+        }
+        return oldWorkers + [
             session("thread-root", "Plan the router migration", status: .ready, minutesAgo: 60, cost: 1.42),
             session("child-working", "Migrate the chat routes", parent: "thread-root", status: .busy, minutesAgo: 40, cost: 0.61),
             session("child-done", "Audit the old routes", parent: "thread-root", status: .stopped, minutesAgo: 35, cost: 0.33),

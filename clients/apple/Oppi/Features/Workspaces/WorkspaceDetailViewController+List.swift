@@ -146,21 +146,21 @@ extension WorkspaceDetailViewController {
         var next = List.Snapshot()
 
         func append(_ items: [WorkspaceStoppedSessionGrouping.Item], to section: Section, archive: Bool) {
-            next.append(openingThreads(items), to: section) { item -> Item in
+            next.append(openingThreads(items, connection: connection), to: section) { item -> Item in
                 switch item {
                 case .entry(let entry): return archive ? .archiveSession(entry.id) : .stoppedSession(entry.id)
                 case .local(let local): return archive ? .archiveLocal(local.path) : .local(local.path)
                 }
             } cell: { item in
                 switch item {
-                case .entry(let entry): .session(rowContent(for: entry, connection: connection))
+                case .entry(let entry): List.Snapshot.Cell.entry(entry) { rowContent(for: $0, connection: connection) }
                 case .local(let local): .row(.local(local, isEnabled: localsEnabled))
                 }
             }
         }
         func appendSessions(_ entries: [SessionListEntry], to section: Section, title: String) {
             next.appendSection(section, header: .title(title))
-            let rows = SessionListEntries.expanding(entries, expandedRoots: state.expandedThreadRoots)
+            let rows = openingThreads(entries, connection: connection)
             next.append(sessions: rows, to: section, item: Item.session) { rowContent(for: $0, connection: connection) }
         }
 
@@ -241,11 +241,23 @@ extension WorkspaceDetailViewController {
     }
 
     /// Stopped-section items with each open thread's child rows listed after its root.
-    private func openingThreads(_ items: [WorkspaceStoppedSessionGrouping.Item]) -> [WorkspaceStoppedSessionGrouping.Item] {
+    private func openingThreads(
+        _ items: [WorkspaceStoppedSessionGrouping.Item],
+        connection: ServerConnection
+    ) -> [WorkspaceStoppedSessionGrouping.Item] {
         items.flatMap { item -> [WorkspaceStoppedSessionGrouping.Item] in
             guard case .entry(let entry) = item else { return [item] }
-            return SessionListEntries.expanding([entry], expandedRoots: state.expandedThreadRoots).map { .entry($0) }
+            return openingThreads([entry], connection: connection).map { .entry($0) }
         }
+    }
+
+    private func openingThreads(_ entries: [SessionListEntry], connection: ServerConnection) -> [SessionListEntry] {
+        SessionListEntries.expanding(
+            entries,
+            expandedRoots: state.expandedThreadRoots,
+            stoppedFolds: state.threadStoppedFolds,
+            attention: { SessionListAttentionCounts(askCount: connection.sessionListAskCount(for: $0.id)) }
+        )
     }
 
     /// A state row, or a local session that imports and resumes on a tap.

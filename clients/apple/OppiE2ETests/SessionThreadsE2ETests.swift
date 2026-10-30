@@ -14,6 +14,8 @@ final class SessionThreadsE2ETests: E2ETestCase {
     nonisolated private static let orchestratorKey = "d0dd7892-8366-4793-b923-debbc77c7ad3"
     private static let donkeyMasterKey = "0562cb98-a36a-432f-8ddd-48eed410ab73"
     private static let finishedFixKey = "7422b7a7-fe4c-4a8f-a41b-41562a6f2182"
+    /// Busy child of the Donkey Master: a live member listed under its live parent.
+    private static let liveReviewerKey = "058ed8f8-9061-42c3-b6bd-27fb4d2c12e9"
     private static let reviewCleanupKey = "f7741ae5-2491-47a3-bb68-c0a0e57d32c0"
     /// A stopped root with stopped children: history-only from both inbox targets.
     private static let stoppedRootKey = "145f0dcd-266a-42fe-9f97-2f8e58672536"
@@ -140,10 +142,12 @@ final class SessionThreadsE2ETests: E2ETestCase {
     }
 
     /// Folding is the default: a thread is one strip under its root, and tapping the strip lists
-    /// every descendant as an indented row, each with its status, swipes, and its own chat.
-    func testThreadStripExpandsEveryDescendantInlineAndCollapses() throws {
+    /// its live members as indented rows, each with its status, swipes, and its own chat. Its
+    /// stopped members sit behind one "N Stopped" row after them, which lists them when tapped.
+    func testThreadStripExpandsLiveMembersFirstAndFoldsStoppedOnesBehindOneRow() throws {
         let orchestrator = try id(Self.orchestratorKey)
         let donkeyMaster = try id(Self.donkeyMasterKey)
+        let liveReviewer = try id(Self.liveReviewerKey)
         let finishedFix = try id(Self.finishedFixKey)
         let inbox = app.collectionViews["workspace.sessionList"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
@@ -172,8 +176,27 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(reveal(working, in: inbox), "Expanding should list the working child")
         XCTAssertTrue(working.label.contains("Donkey Master"), working.label)
         XCTAssertGreaterThan(working.frame.minX, rootMinX + 8, "Child rows are indented under their root")
+
+        // The live child under its live parent, then the one fold row for every stopped member:
+        // eight workers and reviewers that finished stay out of the way.
+        let reviewer = app.buttons["session.nav.\(liveReviewer)"]
+        let stoppedFold = app.buttons["thread.stopped.\(orchestrator)"]
+        XCTAssertTrue(reveal(stoppedFold, in: inbox), "The thread's Stopped row is missing")
+        XCTAssertTrue(working.exists && reviewer.exists, "Live members list before the Stopped row")
+        XCTAssertGreaterThan(reviewer.frame.minY, working.frame.minY, "A live child lists under its live parent")
+        XCTAssertGreaterThan(reviewer.frame.minX, working.frame.minX + 8, "A live child keeps its depth under its live parent")
+        XCTAssertGreaterThan(stoppedFold.frame.minY, reviewer.frame.minY, "The Stopped row ends the thread's list")
+        XCTAssertEqual(stoppedFold.label, "8 Stopped")
+        XCTAssertEqual(stoppedFold.value as? String, "Collapsed")
+        XCTAssertFalse(
+            app.buttons["session.nav.\(finishedFix)"].exists,
+            "Stopped members stay behind the Stopped row until it is opened"
+        )
+
+        stoppedFold.tap()
+        XCTAssertTrue(waitForValue(stoppedFold, "Expanded"), "Stopped row did not report Expanded")
         let finished = app.buttons["session.nav.\(finishedFix)"]
-        XCTAssertTrue(reveal(finished, in: inbox), "Expanding should list finished children too")
+        XCTAssertTrue(reveal(finished, in: inbox), "Opening the Stopped row should list the stopped members")
         XCTAssertTrue(finished.label.contains("Stopped"), "A child row keeps its status: \(finished.label)")
         beat(1.5)
 
@@ -195,12 +218,21 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(inbox.waitForExistence(timeout: 10), "Back did not return to the inbox")
         XCTAssertTrue(reveal(strip, in: inbox))
         XCTAssertEqual(strip.value as? String, "Expanded", "The thread closed while its child chat was open")
+        XCTAssertTrue(reveal(stoppedFold, in: inbox))
+        XCTAssertEqual(stoppedFold.value as? String, "Expanded", "The Stopped row closed while a child chat was open")
+
+        // Closing the Stopped row hides its members again and keeps the live ones.
+        stoppedFold.tap()
+        XCTAssertTrue(waitForValue(stoppedFold, "Collapsed"), "Stopped row did not report Collapsed")
+        XCTAssertTrue(waitForNonExistence(finished, timeout: 5), "Closing the Stopped row left a stopped member")
+        XCTAssertTrue(working.exists, "Closing the Stopped row hid a live member")
 
         // Collapsing folds the children away again.
+        XCTAssertTrue(reveal(strip, in: inbox))
         strip.tap()
         XCTAssertTrue(waitForValue(strip, "Collapsed"), "Strip did not report Collapsed")
         XCTAssertTrue(waitForNonExistence(app.buttons["session.nav.\(donkeyMaster)"], timeout: 5), "Collapse left the child row")
-        XCTAssertTrue(waitForNonExistence(finished, timeout: 5))
+        XCTAssertTrue(waitForNonExistence(stoppedFold, timeout: 5), "Collapse left the Stopped row")
         beat(1)
     }
 
@@ -295,6 +327,10 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(reveal(stoppedStrip, in: inbox), "Stopped root Thread strip missing")
         stoppedStrip.tap()
         XCTAssertTrue(waitForValue(stoppedStrip, "Expanded"), "Stopped root strip did not expand")
+        // Nothing in this thread is live, so its Stopped row opens itself.
+        let allStoppedFold = app.buttons["thread.stopped.\(stoppedRoot)"]
+        XCTAssertTrue(reveal(allStoppedFold, in: inbox), "Stopped row missing from an all-stopped thread")
+        XCTAssertEqual(allStoppedFold.value as? String, "Expanded")
         let childRow = app.buttons["session.nav.\(stoppedChild)"]
         XCTAssertTrue(reveal(childRow, in: inbox), "Stopped child row missing under its root")
         childRow.tap()
@@ -454,10 +490,18 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(reveal(workspaceStrip, in: oppiList), "Workspace thread strip missing")
         workspaceStrip.tap()
         XCTAssertTrue(waitForValue(workspaceStrip, "Expanded"), "Workspace strip did not expand")
-        XCTAssertTrue(reveal(app.buttons["session.nav.\(localChild)"], in: oppiList), "Local child row missing once expanded")
         let remoteRow = app.buttons["session.nav.\(remoteChild)"]
         XCTAssertTrue(reveal(remoteRow, in: oppiList), "The member from another workspace is part of the thread")
         XCTAssertTrue(remoteRow.label.contains(Self.crossWorkspaceName), "The row should name its workspace: \(remoteRow.label)")
+        // The idle member lists first; the stopped one is behind the Stopped row.
+        let localFold = app.buttons["thread.stopped.\(root)"]
+        XCTAssertTrue(reveal(localFold, in: oppiList), "Workspace list did not draw the thread's Stopped row")
+        XCTAssertEqual(localFold.label, "1 Stopped")
+        XCTAssertEqual(localFold.value as? String, "Collapsed")
+        XCTAssertFalse(app.buttons["session.nav.\(localChild)"].exists, "A stopped member stays behind the Stopped row")
+        localFold.tap()
+        XCTAssertTrue(waitForValue(localFold, "Expanded"), "Workspace Stopped row did not expand")
+        XCTAssertTrue(reveal(app.buttons["session.nav.\(localChild)"], in: oppiList), "Local child row missing once the Stopped row opened")
         try returnToInbox()
 
         // Other workspace: the child stays a row, linked to the thread by name and workspace.
@@ -826,6 +870,10 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(reveal(strip, in: inbox, timeout: 20), "Orchestrator thread strip missing")
         strip.tap()
         XCTAssertTrue(waitForValue(strip, "Expanded"), "Strip did not expand")
+        let stoppedFold = app.buttons["thread.stopped.\(orchestrator)"]
+        XCTAssertTrue(reveal(stoppedFold, in: inbox), "The thread's Stopped row is missing")
+        stoppedFold.tap()
+        XCTAssertTrue(waitForValue(stoppedFold, "Expanded"), "Stopped row did not expand")
         let finishedRow = app.buttons["session.nav.\(finishedFix)"]
         XCTAssertTrue(reveal(finishedRow, in: inbox), "Stopped child row missing")
         XCTAssertTrue(finishedRow.label.contains("Stopped"), "Row should read stopped first: \(finishedRow.label)")

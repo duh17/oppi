@@ -166,33 +166,198 @@ struct SessionThreadsTests {
 
     // MARK: Expanded threads
 
-    @Test func expandingAThreadListsEveryDescendantAfterItsRootInOutlineOrder() {
-        let root = session("root", status: .ready, created: 0)
-        let late = session("late", parent: "root", created: 60)
-        let early = session("early", parent: "root", created: 10)
-        let grandchild = session("grandchild", parent: "early", created: 12)
-        let great = session("great", parent: "grandchild", created: 13)
-        let solo = session("solo", created: 5)
-        let entries = SessionListEntries.threads(
-            listed: [solo, root, late, early, grandchild, great], loaded: []
+    /// Live statuses by the kinds the list sorts on, from lifecycle and program status.
+    private enum Live { case blocked, working, error, done, idle }
+
+    private func live(
+        _ id: String,
+        _ kind: Live,
+        parent: String? = nil,
+        created: TimeInterval,
+        last: TimeInterval? = nil
+    ) -> Session {
+        var member = session(id, parent: parent, status: kind == .working ? .busy : .ready, created: created, last: last)
+        let since = Date(timeIntervalSince1970: created)
+        switch kind {
+        case .blocked: member.programStatus = ProgramStatus(state: .blocked, kind: .question, since: since)
+        case .working: member.programStatus = ProgramStatus(state: .working, since: since)
+        case .error: member.programStatus = ProgramStatus(state: .error, since: since)
+        case .done: member.programStatus = ProgramStatus(state: .done, since: since)
+        case .idle: member.programStatus = ProgramStatus(state: .idle, since: since)
+        }
+        return member
+    }
+
+    private func expand(
+        _ sessions: [Session],
+        roots: Set<String> = ["root"],
+        folds: [String: Bool] = [:],
+        attention: (Session) -> SessionListAttentionCounts = { _ in .none }
+    ) -> [SessionListEntry] {
+        SessionListEntries.expanding(
+            SessionListEntries.threads(listed: sessions, loaded: []),
+            expandedRoots: roots,
+            stoppedFolds: folds,
+            attention: attention
         )
+    }
 
-        let rows = SessionListEntries.expanding(entries, expandedRoots: ["root"])
+    /// A row's id, with the Stopped fold written `fold(<count>)` or `fold(<count>, open)`.
+    private func label(_ row: SessionListEntry) -> String {
+        guard let fold = row.stoppedFold else { return row.id }
+        return "fold(\(fold.count)\(fold.isOpen ? ", open" : ""))"
+    }
 
-        #expect(rows.map(\.id) == ["solo", "root", "early", "grandchild", "great", "late"])
-        #expect(rows.map(\.depth) == [0, 0, 1, 2, 3, 1])
-        #expect(rows.map(\.isExpanded) == [false, true, false, false, false, false])
-        #expect(rows.dropFirst(2).allSatisfy { $0.thread == nil && $0.outsideRoot == nil }, "Children are ordinary rows")
+    @Test func anOpenThreadListsLiveMembersFirstByKindAndFoldsTheStoppedOnes() {
+        let root = session("root", status: .ready, created: 0)
+        // Launch order puts the stopped workers first and the live ones last, as in a big thread.
+        let sessions = [
+            root,
+            session("stopped-old", parent: "root", created: 10, last: 20),
+            session("stopped-new", parent: "root", created: 11, last: 500),
+            live("idle", .idle, parent: "root", created: 30, last: 300),
+            live("done-old", .done, parent: "root", created: 31, last: 100),
+            live("done-new", .done, parent: "root", created: 32, last: 400),
+            live("error", .error, parent: "root", created: 33, last: 50),
+            live("working-old", .working, parent: "root", created: 34, last: 600),
+            live("working-new", .working, parent: "root", created: 35, last: 60),
+            live("blocked", .blocked, parent: "root", created: 36, last: 10),
+        ]
+
+        let rows = expand(sessions)
+
+        // Blocked, working, error, then done and idle together; most recent first within a kind
+        // (working by launch, as the Working section sorts).
+        #expect(rows.map(label) == [
+            "root", "blocked", "working-new", "working-old", "error", "done-new", "idle", "done-old", "fold(2)",
+        ])
+        #expect(rows.map(\.isExpanded) == [true] + Array(repeating: false, count: 8))
+        #expect(rows.dropFirst().allSatisfy { $0.thread == nil && $0.outsideRoot == nil }, "Children are ordinary rows")
+        #expect(rows.last?.session.id == "root", "The fold row stands for the thread root")
+    }
+
+    @Test func aPendingQuestionRanksAMemberBlockedWithoutProgressStatus() {
+        let sessions = [
+            session("root", status: .ready, created: 0),
+            session("busy", parent: "root", status: .busy, created: 10),
+            session("asking", parent: "root", status: .ready, created: 5),
+        ]
+
+        let rows = expand(sessions) { SessionListAttentionCounts(askCount: $0.id == "asking" ? 1 : 0) }
+
+        #expect(rows.map(\.id) == ["root", "asking", "busy"])
+    }
+
+    @Test func theStoppedFoldIsClosedUntilOpenedThenListsNewestFirst() {
+        let sessions = [
+            session("root", status: .ready, created: 0),
+            session("old", parent: "root", created: 10, last: 100),
+            session("new", parent: "root", created: 11, last: 900),
+            session("middle", parent: "root", created: 12, last: 500),
+            live("working", .working, parent: "root", created: 20),
+        ]
+
+        #expect(expand(sessions).map(label) == ["root", "working", "fold(3)"])
+        #expect(expand(sessions, folds: ["root": false]).map(label) == ["root", "working", "fold(3)"])
+        #expect(expand(sessions, folds: ["root": true]).map(label) == [
+            "root", "working", "fold(3, open)", "new", "middle", "old",
+        ])
+    }
+
+    @Test func aThreadWithNoStoppedMembersHasNoFold() {
+        let rows = expand([
+            session("root", status: .ready, created: 0),
+            live("a", .done, parent: "root", created: 10),
+            live("b", .working, parent: "root", created: 20),
+        ])
+
+        #expect(rows.map(label) == ["root", "b", "a"])
+        #expect(rows.allSatisfy { $0.stoppedFold == nil })
+    }
+
+    @Test func aThreadWithOnlyStoppedMembersShowsJustTheFoldOpenUnlessClosed() {
+        let sessions = [
+            session("root", status: .ready, created: 0),
+            session("first", parent: "root", created: 10, last: 100),
+            session("second", parent: "root", created: 11, last: 200),
+        ]
+
+        // Nothing live competes for the list, so the fold opens itself; the person can still close it.
+        #expect(expand(sessions).map(label) == ["root", "fold(2, open)", "second", "first"])
+        #expect(expand(sessions, folds: ["root": false]).map(label) == ["root", "fold(2)"])
+    }
+
+    @Test func eachThreadKeepsItsOwnFoldChoice() {
+        let sessions = [
+            session("a", status: .ready, created: 0),
+            live("a-live", .working, parent: "a", created: 1),
+            session("a-stopped", parent: "a", created: 2),
+            session("b", status: .ready, created: 5),
+            live("b-live", .working, parent: "b", created: 6),
+            session("b-stopped", parent: "b", created: 7),
+        ]
+
+        let rows = expand(sessions, roots: ["a", "b"], folds: ["b": true])
+
+        #expect(rows.map(label) == ["a", "a-live", "fold(1)", "b", "b-live", "fold(1, open)", "b-stopped"])
+        #expect(Set(rows.map(\.id)).count == rows.count, "Each fold row has an id of its own")
+    }
+
+    /// Depth counts listed ancestors: a live child under a live parent keeps its place under it;
+    /// a live member whose parent is stopped hangs off its nearest listed ancestor, or at depth 1.
+    @Test func depthIsRelativeToTheNearestListedAncestor() {
+        let sessions = [
+            session("root", status: .ready, created: 0),
+            live("parent", .working, parent: "root", created: 10),
+            live("child", .working, parent: "parent", created: 11),
+            session("stopped-mid", parent: "child", created: 12, last: 20),
+            live("under-stopped", .done, parent: "stopped-mid", created: 13),
+            session("stopped-top", parent: "root", created: 14, last: 30),
+            live("under-stopped-top", .idle, parent: "stopped-top", created: 15),
+            session("stopped-leaf", parent: "stopped-mid", created: 16, last: 10),
+        ]
+
+        let rows = expand(sessions, folds: ["root": true])
+
+        #expect(rows.map(label) == [
+            "root",
+            "parent", "child",           // working tree: parent, then its child
+            "under-stopped",             // done, under the stopped mid: nearest listed ancestor is `child`
+            "under-stopped-top",         // idle, parent stopped: nothing listed above it
+            "fold(3, open)",
+            "stopped-top", "stopped-mid", "stopped-leaf",
+        ])
+        #expect(rows.map(\.depth) == [0, 1, 2, 3, 1, 1, 1, 1, 2])
+    }
+
+    /// A thread lists where its most urgent member would, so a blocked grandchild stays under
+    /// its working parent and drags that pair above an unrelated working member.
+    @Test func aLiveTreeSitsWhereItsMostUrgentMemberWould() {
+        let sessions = [
+            session("root", status: .ready, created: 0),
+            live("newer", .working, parent: "root", created: 50),
+            live("older", .working, parent: "root", created: 40),
+            live("asks", .blocked, parent: "older", created: 45),
+            live("newer-child", .done, parent: "newer", created: 60),
+        ]
+
+        let rows = expand(sessions)
+
+        #expect(rows.map(\.id) == ["root", "older", "asks", "newer", "newer-child"])
+        #expect(rows.map(\.depth) == [0, 1, 2, 1, 2])
     }
 
     @Test func collapsedAndUnknownRootsListNothingExtra() {
         let root = session("root", status: .ready, created: 0)
-        let child = session("child", parent: "root", created: 10)
+        let child = live("child", .working, parent: "root", created: 10)
         let entries = SessionListEntries.threads(listed: [root, child], loaded: [])
+        func expanding(_ roots: Set<String>) -> [SessionListEntry] {
+            SessionListEntries.expanding(entries, expandedRoots: roots, stoppedFolds: ["root": true], attention: { _ in .none })
+        }
 
-        #expect(SessionListEntries.expanding(entries, expandedRoots: []) == entries)
-        #expect(SessionListEntries.expanding(entries, expandedRoots: ["child", "elsewhere"]) == entries)
-        #expect(SessionListEntries.expanding(entries, expandedRoots: ["root"]).map(\.id) == ["root", "child"])
+        #expect(expanding([]) == entries)
+        #expect(expanding(["child", "elsewhere"]) == entries)
+        #expect(expanding(["root"]).map(\.id) == ["root", "child"])
     }
 
     /// A thread is the whole launch tree: members running in another workspace are rows too.
@@ -203,11 +368,14 @@ struct SessionThreadsTests {
         let remoteChild = session("remote-child", parent: "remote", workspace: "b", created: 40)
         let entries = SessionListEntries.threads(listed: [root, local], loaded: [root, local, remote, remoteChild])
 
-        let rows = SessionListEntries.expanding(entries, expandedRoots: ["root"])
+        let rows = SessionListEntries.expanding(
+            entries, expandedRoots: ["root"], stoppedFolds: ["root": true], attention: { _ in .none }
+        )
 
-        #expect(rows.map(\.id) == ["root", "local", "remote", "remote-child"])
-        #expect(rows.map(\.depth) == [0, 1, 1, 2])
-        #expect(rows.map(\.session.workspaceId) == ["a", "a", "b", "b"])
+        // All stopped: the fold is open. The newest member's tree lists first, a parent before its child.
+        #expect(rows.map(label) == ["root", "fold(3, open)", "remote", "remote-child", "local"])
+        #expect(rows.map(\.depth) == [0, 1, 1, 2, 1])
+        #expect(rows.dropFirst(2).map(\.session.workspaceId) == ["b", "b", "a"])
     }
 
     @Test func outlineListsEveryDescendantOnceEvenAroundAParentCycle() {
@@ -223,10 +391,11 @@ struct SessionThreadsTests {
             ]
         )
 
-        let outline = rollup.outline
-        #expect(Set(outline.map(\.session.id)) == ["a", "b", "c"])
-        #expect(outline.count == 3)
-        #expect(outline.first { $0.session.id == "c" }?.depth == 1, "An absent parent hangs the member off the root")
+        let listing = rollup.listing(attention: { _ in .none })
+        #expect(listing.live.isEmpty)
+        #expect(Set(listing.stopped.map(\.session.id)) == ["a", "b", "c"])
+        #expect(listing.stopped.count == 3)
+        #expect(listing.stopped.first { $0.session.id == "c" }?.depth == 1, "An absent parent hangs the member off the root")
     }
 
     // MARK: Lanes

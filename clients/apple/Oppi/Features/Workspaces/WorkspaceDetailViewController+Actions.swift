@@ -59,6 +59,7 @@ extension WorkspaceDetailViewController {
         state.expandedStoppedGroupIDs = []
         state.collapsedStoppedGroupIDs = []
         state.expandedThreadRoots = []
+        state.threadStoppedFolds = [:]
         state.isRefreshingWorkspaceData = false
         state.workspaceLoad = nil
     }
