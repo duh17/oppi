@@ -8,7 +8,7 @@ import UIKit
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
-/// `agents-pi`, `workspace-create`, `workspace-create-configure`.
+/// `agents-pi`, `workspace-create`, `workspace-create-configure`, `mcp-add`.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -291,6 +291,14 @@ final class SettingsSweepPreviewController: PreviewRootController {
             )
         case "mcp":
             return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
+        case "mcp-add":
+            // The add-server form at the root instead of in its sheet, for a
+            // capture of the form itself.
+            return stack {
+                McpAddServerViewController(
+                    client: client, scope: Self.mcpGlobal, serverName: server.name, root: root
+                ) {}
+            }
         case "ssh-hosts":
             return stack { SSHTerminalHostListViewController() }
         case "theme-import":
