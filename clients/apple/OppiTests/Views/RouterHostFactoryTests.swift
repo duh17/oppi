@@ -11,12 +11,14 @@ import UIKit
 @Suite("UIKit router and host factory")
 struct RouterHostFactoryTests {
     /// A pushed reader that hides the navigation bar for its own chrome once it
-    /// is the top screen, as the file viewers do from their updates. The stack
-    /// shows the bar for each incoming screen first, so this runs after that.
-    private final class BarHidingReaderViewController: UIViewController {
+    /// is the top screen, as the file viewers do from their updates: it says so
+    /// through `NavigationBarHiding` and asks the stack to apply it.
+    private final class BarHidingReaderViewController: UIViewController, NavigationBarHiding {
+        var hidesNavigationBar: Bool { true }
+
         override func viewIsAppearing(_ animated: Bool) {
             super.viewIsAppearing(animated)
-            navigationController?.setNavigationBarHidden(true, animated: false)
+            navigationController?.updateNavigationBar(for: self, animated: false)
         }
     }
 

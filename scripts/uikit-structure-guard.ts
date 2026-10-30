@@ -60,7 +60,8 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    disclosure, whose third button (Privacy Policy) a `Confirmation` has no
  *    room for. A new file has baseline 0; the count only goes down.
  *
- *  - `setNavigationBarHidden(` is disallowed outside Router.swift (the one owner
+ *  - `setNavigationBarHidden(` and an `isNavigationBarHidden =` assignment are
+ *    disallowed outside Router.swift (the one owner
  *    of the stack's bar) and FullScreenCodeViewController.swift (its private
  *    navigation controller). A screen that brings its own Back conforms to
  *    `NavigationBarHiding` and calls `navigationController?.updateNavigationBar(for:animated:)`.
@@ -164,6 +165,14 @@ const settingsApiWrites = [
 ];
 const featuresOnly = /^clients\/apple\/Oppi\/Features\//;
 
+/** The files that may set a navigation controller's bar state. */
+const navigationBarOwners = [
+  // The owner: `applyNavigationBar(forIncoming:)` and `updateNavigationBar(for:animated:)`.
+  "clients/apple/Oppi/App/Router.swift",
+  // Hides the bar of its own private navigation controller, which never sits in a shared stack.
+  "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift",
+];
+
 const constructs: Construct[] = [
   { name: "NavigationStack", pattern: /\bNavigationStack\b/g, disallowed: true },
   { name: "NavigationSplitView", pattern: /\bNavigationSplitView\b/g, disallowed: true },
@@ -181,12 +190,14 @@ const constructs: Construct[] = [
     name: "setNavigationBarHidden(",
     pattern: /\bsetNavigationBarHidden\s*\(/g,
     disallowed: true,
-    exemptFiles: [
-      // The owner: `applyNavigationBar(forIncoming:)` and `updateNavigationBar(for:animated:)`.
-      "clients/apple/Oppi/App/Router.swift",
-      // Hides the bar of its own private navigation controller, which never sits in a shared stack.
-      "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift",
-    ],
+    exemptFiles: navigationBarOwners,
+  },
+  {
+    name: "isNavigationBarHidden =",
+    // An assignment, not a read or a comparison (`==`, `!=`, `<=`, `>=`).
+    pattern: /\bisNavigationBarHidden\s*=(?!=)/g,
+    disallowed: true,
+    exemptFiles: navigationBarOwners,
   },
   { name: "import SwiftUI", pattern: /^[ \t]*(?:@\w+[ \t]+)*import[ \t]+SwiftUI\b/gm, disallowed: false },
   // Alerts outside the shared presenters: see "Alerts" in the guide.
@@ -397,7 +408,7 @@ error with \`errorAlerts.show(...)\` (or \`errorAlerts.sync(...)\` for an error 
 in state), and ask with \`Confirmation(...).present(from:anchor:)\`; a choice
 sheet anchors through \`AlertAnchor.present\`. See ${alertsGuide}.
 
-setNavigationBarHidden( outside Router.swift means a screen decides the stack's bar
+setNavigationBarHidden( or an isNavigationBarHidden = assignment outside Router.swift means a screen decides the stack's bar
 itself and can race the stack. Conform to NavigationBarHiding, answer
 hidesNavigationBar, and call navigationController?.updateNavigationBar(for:animated:)
 when the answer changes; see ${navigationBarGuide}.

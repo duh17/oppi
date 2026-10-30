@@ -1245,8 +1245,9 @@ final class ChatRoutesUITests: XCTestCase {
         let back = app.buttons["fullScreen.code.close"]
         XCTAssertTrue(back.waitForExistence(timeout: 10), "\(name) reader was not pushed")
         assertRunning()
-        // The reader brings its own Back, so the panel's bar under it is hidden.
-        XCTAssertFalse(bar.exists, "\(name) reader shows the panel's bar above its own Back")
+        // The reader brings its own Back, so the panel's bar under it hides:
+        // once the text loads, and animated.
+        XCTAssertTrue(waitForDisappearance(of: bar), "\(name) reader shows the panel's bar above its own Back")
         back.tap()
         XCTAssertTrue(bar.waitForExistence(timeout: 5), "\(name) reader's back must pop it")
     }

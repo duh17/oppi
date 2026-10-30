@@ -963,8 +963,14 @@ private struct UIHangHarnessContent: View {
 
             // Diagnostics must not impose their combined intrinsic width on
             // the queue/composer; growing counters otherwise push Remove offscreen.
-            ScrollView(.horizontal, showsIndicators: false) {
-                diagnosticsBar
+            // The reader probes beside them, not in the control strip: a control
+            // there re-wraps the strip and moves every row the other tests scroll
+            // to, and an overlay on it could cover one on a narrow width.
+            HStack(spacing: 4) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    diagnosticsBar
+                }
+                readerProbeControls
             }
             .frame(height: 16)
         }
@@ -1123,9 +1129,6 @@ private struct UIHangHarnessContent: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Not in the flow above: another control there re-wraps the strip
-            // and moves every row the other tests scroll to.
-            .overlay(alignment: .bottomTrailing) { readerProbeControls }
 
             if UIHangHarnessConfig.queueHarnessEnabled {
                 HarnessControlFlowLayout(spacing: 8) {
@@ -1159,13 +1162,17 @@ private struct UIHangHarnessContent: View {
     private var readerProbeControls: some View {
         HStack(spacing: 2) {
             Button("T") { focusReaderThinking() }
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
                 .accessibilityIdentifier("harness.thinking.focus")
             Button("E") { openExtensionSurfaceReader() }
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
                 .accessibilityIdentifier("harness.extensionReader.open")
         }
         .font(.system(size: 8))
         .buttonStyle(.plain)
-        .frame(width: 28, height: 14)
+        .fixedSize()
     }
 
     private func openExtensionSurfaceReader() {
