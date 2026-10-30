@@ -87,6 +87,82 @@ final class UIHarnessExpandTests: UIHarnessTestCase {
         XCTAssertLessThanOrEqual(perfGuardrailAfter - perfGuardrailBefore, 1)
     }
 
+    /// A reader pushed from a chat brings its own Back and actions, so the
+    /// stack's navigation bar stays hidden while it shows (a second Back above
+    /// the page's was the bug). The bar coming back on pop is checked in
+    /// `ChatReaderViewControllerTests`; this harness root is not a chat.
+    func testThinkingAndToolReadersShowOnlyThePagesBack() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+        XCTAssertGreaterThanOrEqual(waitForDiagnosticAtLeast("diag.visualTools", minimum: 7, timeout: 6), 7)
+
+        let thinkingFocus = app.descendants(matching: .any)["harness.thinking.focus"]
+        XCTAssertTrue(thinkingFocus.waitForExistence(timeout: 4))
+        thinkingFocus.tap()
+        openFullScreenFromExpandedTool(
+            rowIdentifier: "chat.timeline.row.alpha-reader-thinking",
+            contentIdentifier: nil,
+            expectedFullscreenContentIdentifier: nil,
+            expectedContentSnippet: "Reader thinking line"
+        )
+        assertOnlyThePageBackShows("thinking reader")
+        dismissFullScreenAndReturnToTimeline(expectedFullscreenContentIdentifier: nil)
+
+        let toolFocus = app.descendants(matching: .any)["harness.extensionText.focus"]
+        XCTAssertTrue(toolFocus.waitForExistence(timeout: 4))
+        toolFocus.tap()
+        XCTAssertEqual(waitForDiagnostic("diag.extensionTextExpanded", equals: 1, timeout: 4), 1)
+        openFullScreenFromExpandedTool(
+            rowIdentifier: "chat.timeline.row.alpha-visual-tool-extension-a",
+            contentIdentifier: nil,
+            expectedFullscreenContentIdentifier: nil,
+            expectedContentSnippet: "extension lookup result"
+        )
+        assertOnlyThePageBackShows("tool output reader")
+        dismissFullScreenAndReturnToTimeline(expectedFullscreenContentIdentifier: nil)
+        XCTAssertTrue(assertHarnessStillRunning(context: "reader navigation bar"))
+    }
+
+    /// An extension widget opened full screen (the subagents pill's list) is
+    /// the same reader route with an extension-surface page: its own floating
+    /// Back, and no navigation bar above it.
+    func testExtensionSurfaceReaderShowsOnlyThePagesBack() throws {
+        launchHarness(noStream: true, includeVisualFixtures: true)
+
+        let open = app.descendants(matching: .any)["harness.extensionReader.open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 6))
+        open.tap()
+
+        let back = app.buttons["extension-native-surface-jobs-detail-back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 6), "The extension reader did not open with its own Back")
+        XCTAssertEqual(
+            app.navigationBars.count, 0,
+            "The extension reader must not sit under the stack's bar: \(app.navigationBars.allElementsBoundByIndex.map(\.identifier))"
+        )
+        XCTAssertEqual(app.buttons.matching(identifier: "extension-native-surface-jobs-detail-back").count, 1)
+
+        back.tap()
+        XCTAssertTrue(waitForElementToDisappear(back, timeout: 5), "The page's Back did not leave the reader")
+        XCTAssertTrue(assertHarnessStillRunning(context: "extension reader navigation bar"))
+    }
+
+    /// One navigation bar is on screen, the page's own, and it holds the
+    /// page's Back.
+    private func assertOnlyThePageBackShows(_ name: String) {
+        let bars = app.navigationBars
+        XCTAssertEqual(
+            bars.count, 1,
+            "The \(name) must show only its own bar, not the stack's: \(bars.allElementsBoundByIndex.map(\.identifier))"
+        )
+        XCTAssertEqual(
+            app.buttons.matching(identifier: "fullScreen.code.close").count, 1,
+            "The \(name) must show exactly one page Back"
+        )
+        XCTAssertTrue(
+            bars.firstMatch.buttons["fullScreen.code.close"].exists,
+            "The \(name)'s only bar must hold the page's Back"
+        )
+    }
+
     /// A single tap anywhere in an expanded notebook cell, including blank
     /// space beside a call, must leave the row expanded so it can be the first
     /// half of the double-tap that opens the reader.

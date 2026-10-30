@@ -40,7 +40,7 @@ final class FileViewerBar {
 /// text changed, so inline players survive; a missing or denied file replaces
 /// stale text.
 @MainActor
-final class FileViewerViewController: UIViewController {
+final class FileViewerViewController: UIViewController, NavigationBarHiding {
     struct Configuration {
         let workspaceId: String
         var worktreeId: String? = nil
@@ -302,11 +302,6 @@ final class FileViewerViewController: UIViewController {
         }
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        applyHostNavigationBar(animated: animated)
-    }
-
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
         isOnScreen = true
@@ -317,12 +312,6 @@ final class FileViewerViewController: UIViewController {
         if let videoModel, case .video(let source) = content {
             prepareVideo(videoModel, source: source)
         }
-        applyHostNavigationBar(animated: animated)
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        applyHostNavigationBar(animated: false)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -367,7 +356,7 @@ final class FileViewerViewController: UIViewController {
         updateMountedContent(palette: palette)
         updateFloatingControls(themeID: themeID)
         updateBar()
-        applyHostNavigationBar(animated: true)
+        updateHostNavigationBar(animated: true)
         let editing = isEditingText
         if editing != reportedEditing {
             reportedEditing = editing
@@ -1156,20 +1145,19 @@ final class FileViewerViewController: UIViewController {
         }
     }
 
-    /// Hides the stack's bar while the reader shows its own (pushed text).
-    private func applyHostNavigationBar(animated: Bool) {
+    /// The stack's bar hides while the reader shows its own (pushed text). The
+    /// stack asks as this viewer's screen comes forward; content that changes
+    /// the answer while it is in front calls `updateHostNavigationBar`.
+    var hidesNavigationBar: Bool {
+        guard configuration.chromeMode == .pushed else { return false }
+        if case .loading = content { return settledHidesHostBar }
+        return shouldHideHostNavigationBar
+    }
+
+    private func updateHostNavigationBar(animated: Bool) {
         guard configuration.chromeMode == .pushed else { return }
-        let hides: Bool
-        if case .loading = content {
-            hides = settledHidesHostBar
-        } else {
-            hides = shouldHideHostNavigationBar
-            settledHidesHostBar = hides
-        }
-        guard let navigation = navigationController,
-              navigation.topViewController === stackScreen,
-              navigation.isNavigationBarHidden != hides else { return }
-        navigation.setNavigationBarHidden(hides, animated: animated && isOnScreen)
+        if case .loading = content {} else { settledHidesHostBar = shouldHideHostNavigationBar }
+        navigationController?.updateNavigationBar(for: self, animated: animated && isOnScreen)
     }
 
     /// The controller in the navigation stack: this viewer, or the screen

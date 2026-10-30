@@ -163,7 +163,7 @@ final class WorkspaceLinkedFileViewController: UIViewController {
             removeViewer()
             // Pushed text hid the stack's bar for its own; the cover and the
             // status pages need it back for the title and Back.
-            navigationController?.setNavigationBarHidden(false, animated: false)
+            navigationController?.updateNavigationBar(for: self, animated: false)
         }
         if next != .locked, let lockCover {
             remove(lockCover)

@@ -11,7 +11,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Skil
 /// The file is fetched on the presenting screen's server, with the same
 /// project folder (`cwd`) the skill was listed for.
 @MainActor
-final class SkillFileViewController: UIViewController {
+final class SkillFileViewController: UIViewController, NavigationBarHiding {
     private enum Phase: Equatable {
         case loading
         case failed(String)
@@ -67,12 +67,14 @@ final class SkillFileViewController: UIViewController {
         return false
     }
 
+    /// The reader draws its own bar, so the stack's hides while it shows.
+    var hidesNavigationBar: Bool { isShowingFile }
+
     // MARK: - Lifecycle
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
-        applyHostNavigationBar(animated: animated)
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -97,15 +99,7 @@ final class SkillFileViewController: UIViewController {
         }
         reader?.applyThemeIfNeeded(themeID)
         navigationItem.title = isShowingFile ? "" : fileName
-        applyHostNavigationBar(animated: false)
-    }
-
-    /// The reader draws its own bar, so the stack's hides while it shows.
-    private func applyHostNavigationBar(animated: Bool) {
-        guard let navigation = navigationController,
-              navigation.topViewController === self,
-              navigation.isNavigationBarHidden != isShowingFile else { return }
-        navigation.setNavigationBarHidden(isShowingFile, animated: animated)
+        navigationController?.updateNavigationBar(for: self, animated: false)
     }
 
     // MARK: - Content

@@ -113,6 +113,84 @@ struct ChatReaderViewControllerTests {
         }
     }
 
+    /// A stack root that says when its appearance finished: UIKit holds a push
+    /// or pop issued before then, so a test must wait for it.
+    private final class AppearanceRoot: UIViewController {
+        private(set) var didAppear = false
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            didAppear = true
+        }
+    }
+
+    @Test(
+        "the router stack's delegate keeps the bar hidden over a page and brings it back on pop",
+        arguments: [false, true]
+    )
+    func routerStackHidesTheBarOverAPageOnly(animated: Bool) async throws {
+        forgetSharedScopedLockFlags()
+        let store = ChatReaderPayloadStore()
+        let appNavigation = AppNavigation()
+        let root = AppearanceRoot()
+        let navigation = RouterNavigationController(rootViewController: root)
+        // Only a window in the app's scene gets real appearance transitions.
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = navigation
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let appeared = await waitForMainActorCondition(timeout: .seconds(5)) { root.didAppear }
+        try #require(appeared, "the stack's root never appeared")
+        #expect(!navigation.isNavigationBarHidden)
+
+        func settle() async {
+            let settled = await waitForMainActorCondition(timeout: .seconds(5)) {
+                navigation.view.layoutIfNeeded()
+                return navigation.transitionCoordinator == nil
+            }
+            #expect(settled, "the transition never finished")
+        }
+        func openReader(_ payload: ChatReaderPayload?) async -> ChatReaderViewController {
+            let target = payload.map { store.store($0) } ?? ChatReaderNavTarget(id: UUID())
+            let reader = ChatReaderViewController(target: target, store: store, navigation: appNavigation)
+            navigation.pushViewController(reader, animated: animated)
+            await settle()
+            return reader
+        }
+        func pop() async {
+            navigation.popViewController(animated: animated)
+            await settle()
+        }
+
+        let page = await openReader(documentPayload())
+        #expect(page.page != nil)
+        #expect(navigation.isNavigationBarHidden, "the stack's bar showed above the page's own Back")
+
+        let nested = await openReader(documentPayload())
+        #expect(nested.page != nil)
+        #expect(navigation.isNavigationBarHidden)
+        await pop()
+        #expect(navigation.isNavigationBarHidden, "back to the first reader keeps its page's Back alone")
+        await pop()
+        #expect(!navigation.isNavigationBarHidden, "popping the reader must bring the stack's Back back")
+
+        _ = await openReader(nil)
+        #expect(!navigation.isNavigationBarHidden, "the unavailable message needs the stack's Back")
+
+        // Routes the app sets without a user pop: a deep link that rebuilds the
+        // stack around a reader, and a reset to the root.
+        let rebuilt = ChatReaderViewController(
+            target: store.store(documentPayload()), store: store, navigation: appNavigation
+        )
+        navigation.setViewControllers([root, rebuilt], animated: animated)
+        await settle()
+        #expect(navigation.isNavigationBarHidden, "a stack rebuilt around a reader hides the stack's bar")
+        navigation.popToRootViewController(animated: animated)
+        await settle()
+        #expect(!navigation.isNavigationBarHidden, "a reset to the root brings the stack's Back back")
+    }
+
     @Test("a missing payload shows the unavailable message with the stack's Back")
     func missingPayloadShowsUnavailableWithStackBar() async throws {
         let host = push(nil)

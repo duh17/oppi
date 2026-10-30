@@ -16,7 +16,7 @@ import UIKit
 /// page again. A reader with content but no origin cannot be checked and stays
 /// covered, with Close, while any lock exists.
 @MainActor
-final class ChatReaderViewController: UIViewController {
+final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     let target: ChatReaderNavTarget
 
     private enum Shown: Equatable {
@@ -50,6 +50,14 @@ final class ChatReaderViewController: UIViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// The pages bring their own Back; a cover or the unavailable message
+    /// needs the stack's. The stack's delegate asks before the reader is
+    /// laid out, so the answer builds the content first.
+    var hidesNavigationBar: Bool {
+        loadViewIfNeeded()
+        return shown == .page
+    }
+
     // MARK: Lifecycle
 
     override func viewDidLoad() {
@@ -60,7 +68,6 @@ final class ChatReaderViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
-        applyNavigationBar(animated: animated)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -135,16 +142,10 @@ final class ChatReaderViewController: UIViewController {
             unavailable.secondaryText = String(localized: "This reader is no longer available.")
             contentUnavailableConfiguration = unavailable
         }
-        applyNavigationBar(animated: false)
-    }
-
-    /// The pages bring their own Back; a cover or the unavailable message
-    /// needs the stack's.
-    private func applyNavigationBar(animated: Bool) {
-        guard let navigation = navigationController, navigation.topViewController === self else { return }
-        let hides = shown == .page
-        guard navigation.isNavigationBarHidden != hides else { return }
-        navigation.setNavigationBarHidden(hides, animated: animated)
+        // The stack's delegate applies the bar as this reader comes forward;
+        // a lock or unlock that swaps the page and a cover while it is in
+        // front, or the first content built as it is pushed, asks here.
+        navigationController?.updateNavigationBar(for: self, animated: false)
     }
 
     private func leave() {

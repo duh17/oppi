@@ -243,7 +243,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     ) {
         // A skill or workspace file reader hid the bar, and the screen it
         // popped back to lost its Back button.
-        applyNavigationBarForIncomingScreen(viewController, animated: animated)
+        applyNavigationBar(forIncoming: viewController, animated: animated)
     }
 
     func navigationController(

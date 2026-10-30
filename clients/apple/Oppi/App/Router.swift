@@ -140,7 +140,7 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
         animated: Bool
     ) {
         // The panel lost its title, Done, and search after a reader popped.
-        applyNavigationBarForIncomingScreen(viewController, animated: animated)
+        applyNavigationBar(forIncoming: viewController, animated: animated)
     }
 
     override func updateProperties() {
@@ -170,29 +170,61 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
     }
 }
 
-/// A screen that floats its own Back and actions and keeps the navigation
-/// bar hidden while it is on top (the SSH terminal).
+/// A screen that brings its own Back and actions, so the stack's navigation
+/// bar stays hidden while the screen is on top and `hidesNavigationBar` is
+/// true (the SSH terminal, a chat reader showing a page, a file reader showing
+/// a file). Every other screen shows the bar.
+///
+/// The bar's hidden state follows the screen in front and nothing else sets
+/// it: no other code calls `setNavigationBarHidden`, which the UIKit structure
+/// guard enforces. A stack's delegate calls `applyNavigationBar(forIncoming:)`
+/// as each screen comes forward. A screen whose answer changes while it is on
+/// top (a file finishing its load, a lock cover replacing a page) calls
+/// `updateNavigationBar(for:animated:)`. A screen that only wraps one of these
+/// (a screen that embeds a file viewer) need not conform: the policy asks its
+/// child controllers.
 @MainActor
-protocol RouterHidesNavigationBar: UIViewController {}
+protocol NavigationBarHiding: UIViewController {
+    var hidesNavigationBar: Bool { get }
+}
+
+@MainActor
+private func screenHidesNavigationBar(_ screen: UIViewController) -> Bool {
+    if let hiding = screen as? NavigationBarHiding { return hiding.hidesNavigationBar }
+    return screen.children.contains(where: screenHidesNavigationBar)
+}
 
 extension UINavigationController {
-    /// Call from `navigationController(_:willShow:animated:)`. A pushed file
-    /// reader hides the bar for its own chrome
-    /// (`toolbarVisibility(.hidden, for: .navigationBar)`), and nothing shows
-    /// it again when the reader pops: the screen below loses its Back button,
-    /// title, items, and search bar. Every screen starts with the bar, except
-    /// a `RouterHidesNavigationBar` screen, which starts without it; content
-    /// that hides it hides it again. A cancelled back swipe leaves the old
-    /// screen on top, so its bar state comes back.
-    func applyNavigationBarForIncomingScreen(_ incoming: UIViewController, animated: Bool) {
+    /// Call from `navigationController(_:willShow:animated:)`: the incoming
+    /// screen's bar state replaces the outgoing one's, so the screen below a
+    /// reader gets its Back button, title, items, and search bar back when the
+    /// reader pops. A cancelled back swipe leaves the old screen on top, so its
+    /// bar state comes back.
+    func applyNavigationBar(forIncoming incoming: UIViewController, animated: Bool) {
         let wasHidden = isNavigationBarHidden
-        let hidden = incoming is RouterHidesNavigationBar
+        let hidden = screenHidesNavigationBar(incoming)
         guard wasHidden != hidden else { return }
         setNavigationBarHidden(hidden, animated: animated)
         transitionCoordinator?.notifyWhenInteractionChanges { [weak self] context in
             guard context.isCancelled else { return }
             self?.setNavigationBarHidden(wasHidden, animated: true)
         }
+    }
+
+    /// A screen's `hidesNavigationBar` changed (or a child that decides it came
+    /// or went). `screen` is the stack's screen or any controller inside it;
+    /// nothing happens unless that screen is on top, since the screen in front
+    /// owns the bar.
+    func updateNavigationBar(for screen: UIViewController, animated: Bool) {
+        var stackScreen = screen
+        while stackScreen.parent !== self {
+            guard let parent = stackScreen.parent else { return }
+            stackScreen = parent
+        }
+        guard topViewController === stackScreen else { return }
+        let hidden = screenHidesNavigationBar(stackScreen)
+        guard isNavigationBarHidden != hidden else { return }
+        setNavigationBarHidden(hidden, animated: animated)
     }
 }
 

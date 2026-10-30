@@ -6,7 +6,9 @@ import UIKit
 /// top; Back, status, Herdr or Rex, and the … menu sit in a glass bar at the bottom
 /// edge, below the grid, so they never cover a terminal row.
 @MainActor
-final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBar {
+final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
+    /// Back and the actions float over the grid instead.
+    var hidesNavigationBar: Bool { true }
     private(set) var channel: SSHTerminalChannel
     private let reconnect: () -> Void
     private let editHost: () -> Void
@@ -233,8 +235,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         isOnScreen = true
         isLeaving = false
         gridView?.releaseResize()
-        // Back and the actions float over the grid instead.
-        navigationController?.setNavigationBarHidden(true, animated: animated)
         applyControlsVisibility(animation: nil)
     }
 
@@ -277,8 +277,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         resizeHoldTask?.cancel()
         gridView?.holdResize()
         channel.cancelPendingResize()
-        // The incoming screen needs its Back and title.
-        navigationController?.setNavigationBarHidden(false, animated: animated)
     }
 
     override func viewDidDisappear(_ animated: Bool) {

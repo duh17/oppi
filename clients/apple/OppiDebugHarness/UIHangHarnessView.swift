@@ -1123,6 +1123,9 @@ private struct UIHangHarnessContent: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Not in the flow above: another control there re-wraps the strip
+            // and moves every row the other tests scroll to.
+            .overlay(alignment: .bottomTrailing) { readerProbeControls }
 
             if UIHangHarnessConfig.queueHarnessEnabled {
                 HarnessControlFlowLayout(spacing: 8) {
@@ -1148,6 +1151,37 @@ private struct UIHangHarnessContent: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    /// Open a reader the way a timeline row does: a thinking row long enough
+    /// to overflow (full screen by double tap), and an extension widget's
+    /// surface, the subagents pill's list.
+    private var readerProbeControls: some View {
+        HStack(spacing: 2) {
+            Button("T") { focusReaderThinking() }
+                .accessibilityIdentifier("harness.thinking.focus")
+            Button("E") { openExtensionSurfaceReader() }
+                .accessibilityIdentifier("harness.extensionReader.open")
+        }
+        .font(.system(size: 8))
+        .buttonStyle(.plain)
+        .frame(width: 28, height: 14)
+    }
+
+    private func openExtensionSurfaceReader() {
+        openChatReader(.extensionNative(ExtensionNativeReaderContent(
+            surface: ExtensionUINativeSurface(
+                version: 1,
+                id: "widget:jobs",
+                source: "widget",
+                presentation: ExtensionUINativePresentation(style: "surfacePanel", title: "Jobs", subtitle: nil),
+                blocks: [],
+                fallback: ExtensionUINativeFallback(text: "nothing running", lines: nil)
+            ),
+            identifierSuffix: "jobs",
+            title: "Jobs",
+            subtitle: "2 running"
+        )))
     }
 
     private func harnessControl(
@@ -1605,6 +1639,24 @@ private struct UIHangHarnessContent: View {
 
     private func focusReadMarkdownTool() {
         focusTool(itemID: readMarkdownToolItemID(for: selectedSession))
+    }
+
+    /// A thinking row long enough that its viewport overflows, which is what
+    /// offers the full-screen reader. Added on first use.
+    private func focusReaderThinking() {
+        let itemID = "\(selectedSession.rawValue)-reader-thinking"
+        if !currentItems.contains(where: { $0.id == itemID }) {
+            let lines = (1...80).map { "Reader thinking line \($0): weighing the renderer parity trade-offs." }
+            var items = currentItems
+            items.append(.thinking(
+                id: itemID,
+                preview: lines.joined(separator: "\n"),
+                hasMore: true,
+                isDone: true
+            ))
+            sessionItems[selectedSession] = items
+        }
+        focusTool(itemID: itemID)
     }
 
     private func focusTool(itemID: String) {

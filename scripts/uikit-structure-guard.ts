@@ -60,6 +60,11 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    disclosure, whose third button (Privacy Policy) a `Confirmation` has no
  *    room for. A new file has baseline 0; the count only goes down.
  *
+ *  - `setNavigationBarHidden(` is disallowed outside Router.swift (the one owner
+ *    of the stack's bar) and FullScreenCodeViewController.swift (its private
+ *    navigation controller). A screen that brings its own Back conforms to
+ *    `NavigationBarHiding` and calls `navigationController?.updateNavigationBar(for:animated:)`.
+ *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
  *
@@ -87,6 +92,7 @@ const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const scanRoots = ["clients/apple/Oppi", "clients/apple/OppiDebugHarness"].map((dir) => join(repoRoot, dir));
 const baselinePath = join(repoRoot, "scripts/uikit-structure-baseline.json");
 const guide = "dev/architecture-client.md, section \"UIKit and SwiftUI ownership\"";
+const navigationBarGuide = "dev/architecture-client.md, section \"Navigation bar\"";
 const alertsGuide = "dev/architecture-client.md, section \"Alerts and confirmations\"";
 const settingsGuide = "dev/architecture-client.md, section \"Settings pages\"";
 const settingsBase = "clients/apple/Oppi/Features/Settings/SettingsListViewController.swift";
@@ -170,6 +176,18 @@ const constructs: Construct[] = [
   { name: "UIHostingController(", pattern: /\bUIHostingController\s*(?:<[^>(]*>)?\s*\(/g, disallowed: true },
   // A subclass or stored type reaches a hosting controller without the call form.
   { name: "UIHostingController<", pattern: /\bUIHostingController\s*</g, disallowed: true },
+  // The navigation bar's hidden state follows the screen in front through one owner: see "Navigation bar" in the guide.
+  {
+    name: "setNavigationBarHidden(",
+    pattern: /\bsetNavigationBarHidden\s*\(/g,
+    disallowed: true,
+    exemptFiles: [
+      // The owner: `applyNavigationBar(forIncoming:)` and `updateNavigationBar(for:animated:)`.
+      "clients/apple/Oppi/App/Router.swift",
+      // Hides the bar of its own private navigation controller, which never sits in a shared stack.
+      "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift",
+    ],
+  },
   { name: "import SwiftUI", pattern: /^[ \t]*(?:@\w+[ \t]+)*import[ \t]+SwiftUI\b/gm, disallowed: false },
   // Alerts outside the shared presenters: see "Alerts" in the guide.
   {
@@ -378,6 +396,11 @@ means a screen builds its own error alert or confirmation. Tell the person an
 error with \`errorAlerts.show(...)\` (or \`errorAlerts.sync(...)\` for an error held
 in state), and ask with \`Confirmation(...).present(from:anchor:)\`; a choice
 sheet anchors through \`AlertAnchor.present\`. See ${alertsGuide}.
+
+setNavigationBarHidden( outside Router.swift means a screen decides the stack's bar
+itself and can race the stack. Conform to NavigationBarHiding, answer
+hidesNavigationBar, and call navigationController?.updateNavigationBar(for:animated:)
+when the answer changes; see ${navigationBarGuide}.
 
 AppPreferences.*.set, UserDefaults.standard.set(, FontPreferences.set, an APIClient
 call that writes a setting, and toggleRow( or .settingsToggle( in Features are settings written outside
