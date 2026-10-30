@@ -208,7 +208,7 @@ final class SSHTerminalChannel {
     private(set) var herdrFolder = HerdrLocalFolder.unknown
     /// How long a Herdr folder outlives the last successful snapshot while
     /// reads fail. Two polls (6 s apart) plus the side command's 10 s timeout.
-    @ObservationIgnored var herdrFolderGrace = Duration.seconds(25)
+    @ObservationIgnored private let herdrFolderGrace: Duration
     @ObservationIgnored private var herdrFolderRead: ContinuousClock.Instant?
     @ObservationIgnored private var herdrFolderExpiry: Task<Void, Never>?
     /// True while a network path change is being checked.
@@ -285,7 +285,8 @@ final class SSHTerminalChannel {
     private var requestedGeometry: SSHTerminalGeometry?
     static let maximumQueuedBytes = 128 * 1024
 
-    init() throws {
+    init(herdrFolderGrace: Duration = .seconds(25)) throws {
+        self.herdrFolderGrace = herdrFolderGrace
         weak var target: SSHTerminalChannel?
         engine = try SSHTerminalEngine { reply in target?.send(reply) }
         engine.copied = { text in target?.copyToClipboard(text) }

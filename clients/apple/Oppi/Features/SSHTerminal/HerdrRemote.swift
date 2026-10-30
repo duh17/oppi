@@ -388,13 +388,21 @@ final class HerdrMonitor {
     /// The poll is not running (switched away, reconnecting, disconnected): a
     /// read still in flight must not set the terminal's folder after that.
     private var stopped = false
+    /// Which `run` is the current poll. A run that ends after a newer one
+    /// started (leave the screen and return within one read) is not the poll
+    /// any more and changes nothing.
+    private var runToken = 0
 
     /// A stopped poll takes its folder with it: nothing keeps it current.
     func run(on channel: SSHTerminalChannel) async {
+        runToken &+= 1
+        let token = runToken
         stopped = false
         defer {
-            stopped = true
-            channel.setHerdrFolder(.unknown)
+            if runToken == token {
+                stopped = true
+                channel.setHerdrFolder(.unknown)
+            }
         }
         while !Task.isCancelled, channel.connected, !unavailable {
             await refresh(on: channel)

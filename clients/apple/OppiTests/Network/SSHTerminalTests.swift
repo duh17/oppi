@@ -1606,11 +1606,13 @@ struct SSHTerminalTests {
     """#
     private static let herdrDown = SSHExecResult(output: Data(), errorOutput: Data("herdr: server not running".utf8), exitStatus: 1)
 
-    private func herdrFolderFixture(snapshot: SSHExecResult?, machines: String = "[]") async throws -> (TerminalConnectionFixture, SSHTerminalChannel) {
+    private func herdrFolderFixture(
+        snapshot: SSHExecResult?, machines: String = "[]", grace: Duration = .seconds(25)
+    ) async throws -> (TerminalConnectionFixture, SSHTerminalChannel) {
         let fixture = TerminalConnectionFixture()
         await fixture.setRunResult(Self.herdrOK(machines), for: HerdrRemote.machinesCommand)
         if let snapshot { await fixture.setRunResult(snapshot, for: "herdr api snapshot") }
-        let channel = try SSHTerminalChannel()
+        let channel = try SSHTerminalChannel(herdrFolderGrace: grace)
         channel.opened(fixture, command: "herdr")
         return (fixture, channel)
     }
@@ -1676,9 +1678,8 @@ struct SSHTerminalTests {
     }
 
     @Test func aFailedReadKeepsTheHerdrFolderOnlyForTheGracePeriod() async throws {
-        let (fixture, channel) = try await herdrFolderFixture(snapshot: Self.herdrDown)
+        let (fixture, channel) = try await herdrFolderFixture(snapshot: Self.herdrDown, grace: .milliseconds(300))
         defer { channel.close(reason: "done") }
-        channel.herdrFolderGrace = .milliseconds(300)
         let monitor = HerdrMonitor()
         channel.event(.data(Self.enterHerdr))
 
@@ -1695,14 +1696,16 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorCondition { channel.workingDirectory.isEmpty }, "then it is unknown")
 
         // A good read within the grace period restarts it.
-        channel.herdrFolderGrace = .seconds(60)
-        await fixture.setRunResult(Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
-        await monitor.refresh(on: channel)
-        await fixture.setRunResult(Self.herdrDown, for: "herdr api snapshot")
-        await monitor.refresh(on: channel)
-        await fixture.setRunResult(Self.herdrSnapshot(focused: "w1:p2", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
-        await monitor.refresh(on: channel)
-        #expect(channel.workingDirectory == "/Users/duh/notes")
+        let (again, longer) = try await herdrFolderFixture(snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes))
+        defer { longer.close(reason: "done") }
+        longer.event(.data(Self.enterHerdr))
+        let second = HerdrMonitor()
+        await second.refresh(on: longer)
+        await again.setRunResult(Self.herdrDown, for: "herdr api snapshot")
+        await second.refresh(on: longer)
+        await again.setRunResult(Self.herdrSnapshot(focused: "w1:p2", panes: Self.herdrTwoPanes), for: "herdr api snapshot")
+        await second.refresh(on: longer)
+        #expect(longer.workingDirectory == "/Users/duh/notes")
     }
 
     @Test func stoppingThePollClearsTheHerdrFolder() async throws {
@@ -1725,6 +1728,41 @@ struct SSHTerminalTests {
         #expect(await waitForMainActorCondition { channel.workingDirectory == "/Users/duh/workspace/oppi/server" }, "polling again sets it again")
         again.cancel()
         await again.value
+    }
+
+    /// Leave the screen and return while a read is still out: the old run ends
+    /// after the new one started, and must neither clear the folder nor leave the
+    /// new run's reads ignored.
+    @Test func anOldPollEndingAfterTheNewOneStartedDoesNotStopIt() async throws {
+        let (fixture, channel) = try await herdrFolderFixture(snapshot: Self.herdrSnapshot(focused: "w1:p1", panes: Self.herdrTwoPanes))
+        defer { channel.close(reason: "done") }
+        channel.event(.data(Self.enterHerdr))
+        func asked(_ command: String) async -> Int { await fixture.runs.filter { $0.command == command }.count }
+        func waitUntil(_ condition: () async -> Bool) async throws {
+            for _ in 0..<300 where !(await condition()) { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        await fixture.hang("herdr api snapshot")
+        let monitor = HerdrMonitor()
+
+        let old = Task { await monitor.run(on: channel) }
+        try await waitUntil { await asked("herdr api snapshot") == 1 }
+        old.cancel() // switched away with the read still out
+        let new = Task { await monitor.run(on: channel) }
+        try await waitUntil { await asked(HerdrRemote.machinesCommand) == 2 } // returned
+        #expect(await asked("herdr api snapshot") == 1, "the new poll joins the read in flight")
+
+        await fixture.releaseHangs() // the old read ends late
+        await old.value
+        #expect(channel.workingDirectory.isEmpty)
+
+        // The new poll's next read is still applied.
+        await monitor.refresh(on: channel)
+        #expect(channel.workingDirectory == "/Users/duh/workspace/oppi/server")
+
+        // Only the current poll's end clears it.
+        new.cancel()
+        await new.value
+        #expect(channel.workingDirectory.isEmpty)
     }
 
     @Test func herdrFolderTakesWhatTheSnapshotOffersAndNothingElse() async throws {
