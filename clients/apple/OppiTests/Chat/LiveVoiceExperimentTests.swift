@@ -120,12 +120,12 @@ struct LiveVoiceExperimentTests {
     }
 }
 
-/// The Experiments page: every toggle writes the setting it names, the Durable
-/// Sessions default row follows its parent, and the root count includes Live Voice.
+/// The Experiments page: its toggle writes the setting it names, and the root
+/// count includes Live Voice.
 @Suite("Settings Experiments page", .serialized)
 @MainActor
 struct SettingsExperimentsPageTests {
-    @Test("Each toggle saves its own experiment and Start Sessions as Durable shows only with Durable Sessions")
+    @Test("The Live Voice toggle saves its experiment")
     func togglesSaveTheirExperiments() async throws {
         let defaults = try #require(UserDefaults(suiteName: "SettingsExperimentsPageTests-\(UUID().uuidString)"))
         let page = SettingsExperimentsViewController(defaults: defaults)
@@ -149,29 +149,10 @@ struct SettingsExperimentsPageTests {
             toggle.sendActions(for: .valueChanged)
         }
 
-        // Everything starts off, and the default row is hidden until Durable Sessions is on.
-        for id in ["experiments.liveVoice", "experiments.durableSessions"] {
-            let found = await toggle("settings.\(id)")
-            #expect(found?.isOn == false, "\(id) should start off")
-        }
-        #expect(Self.switches(in: page.view).allSatisfy { $0.accessibilityIdentifier != "settings.experiments.durableSessionsDefault" })
-
-        flip(try #require(await toggle("settings.experiments.liveVoice")))
+        let liveVoice = try #require(await toggle("settings.experiments.liveVoice"))
+        #expect(!liveVoice.isOn)
+        flip(liveVoice)
         #expect(defaults.bool(forKey: AppPreferences.Experiments.liveVoiceKey))
-
-        flip(try #require(await toggle("settings.experiments.durableSessions")))
-        #expect(defaults.bool(forKey: AppPreferences.Experiments.durableSessionsKey))
-        let defaultRow = try #require(await toggle("settings.experiments.durableSessionsDefault"))
-        flip(defaultRow)
-        #expect(defaults.bool(forKey: AppPreferences.Experiments.durableSessionsDefaultKey))
-
-        flip(try #require(await toggle("settings.experiments.durableSessions")))
-        #expect(!defaults.bool(forKey: AppPreferences.Experiments.durableSessionsKey))
-        for _ in 0..<100 where Self.switches(in: page.view).contains(where: { $0.accessibilityIdentifier == "settings.experiments.durableSessionsDefault" }) {
-            try await Task.sleep(for: .milliseconds(20))
-            page.view.layoutIfNeeded()
-        }
-        #expect(Self.switches(in: page.view).allSatisfy { $0.accessibilityIdentifier != "settings.experiments.durableSessionsDefault" })
     }
 
     @Test("The root count includes Live Voice")

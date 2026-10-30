@@ -36,7 +36,8 @@ export interface ServerSettingDefinition<T> {
   validate(value: unknown): T;
 }
 
-export interface ServerMetricsPatch {
+/** A config-stored on/off setting's write: Server Metrics, Durable Sessions. */
+export interface EnabledPatch {
   enabled: boolean;
 }
 
@@ -59,7 +60,7 @@ function asSettingError<T>(validate: () => T): T {
   }
 }
 
-function validateServerMetrics(value: unknown): ServerMetricsPatch {
+function validateEnabledPatch(value: unknown): EnabledPatch {
   if (!isRecord(value) || typeof value.enabled !== "boolean") {
     return fail("enabled must be a boolean");
   }
@@ -232,9 +233,16 @@ const SETTINGS = {
   serverMetrics: {
     scope: "server",
     storage: "config",
-    default: { enabled: false } as ServerMetricsPatch,
+    default: { enabled: false } as EnabledPatch,
     revisioned: true,
-    validate: validateServerMetrics,
+    validate: validateEnabledPatch,
+  },
+  durableSessions: {
+    scope: "server",
+    storage: "config",
+    default: { enabled: false } as EnabledPatch,
+    revisioned: true,
+    validate: validateEnabledPatch,
   },
   mobileOutputGuide: {
     scope: "server",

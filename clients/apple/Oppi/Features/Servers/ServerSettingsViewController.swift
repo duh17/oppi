@@ -2,8 +2,8 @@ import ActivityKit
 import UIKit
 
 /// Server Settings for one server: a summary of it, one index row per focused
-/// page, its badge, the Mobile Output Guide and Server Metrics switches, this
-/// device's Notifications for it, its lock, and Remove Server.
+/// page, its badge, the Mobile Output Guide, Server Metrics, and Durable Sessions
+/// switches, this device's Notifications for it, its lock, and Remove Server.
 ///
 /// The page is pinned to the server it was made for: its `SettingsStore`, its
 /// `ServerSettingsModel`, its Notifications controller, the switcher's current
@@ -11,19 +11,20 @@ import UIKit
 /// `ServerSettingsRouteViewController` shows the visible server's page and
 /// replaces it when the visible server changes; a page never follows a switch.
 ///
-/// The page scope is the server (every device on it). Four sections are not:
-/// Notifications (this device's, kept for this server), Badge Icon, Lock, and
-/// Remove Server (this device only). Each says so in its footer.
+/// The page scope is the server (every device on it). Five sections are not:
+/// Notifications (this device's, kept for this server), Badge Icon, Start Sessions
+/// as Durable, Lock, and Remove Server (this device only). Each says so in its footer.
 @MainActor
 final class ServerSettingsViewController: ListScreenController<ServerSettingsViewController.Section, ServerSettingsViewController.Item> {
     enum Section: Hashable, Sendable {
-        case summary, pages, badge, mobileOutputGuide, serverMetrics, notifications, lock, remove
+        case summary, pages, badge, mobileOutputGuide, serverMetrics, durableSessions, startDurable
+        case notifications, lock, remove
     }
 
     enum Item: Hashable, Sendable {
         case summary, summaryError
         case modelProviders, workspaces, dictionary, pairedDevices, about
-        case mobileOutputGuide, serverMetrics, settingFailure(String)
+        case mobileOutputGuide, serverMetrics, durableSessions, startDurable, settingFailure(String)
         case pushSwitch, pushWorking, pushError
         case liveActivitySwitch, liveActivityWorking, liveActivityError, liveActivitySystemOff
         case badge, lock, remove
@@ -97,6 +98,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
                 // The page's own switch reads the store; a pull reads the document again.
                 _ = await self?.settings?.reload(SettingsCatalog.serverMetricsEnabled)
                 _ = await self?.settings?.reload(SettingsCatalog.mobileOutputGuideEnabled)
+                _ = await self?.settings?.reload(SettingsCatalog.durableSessionsEnabled)
                 refresh?.endRefreshing()
             }
         }, for: .valueChanged)
@@ -113,6 +115,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             Task {
                 _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
                 _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
+                _ = await settings.reload(SettingsCatalog.durableSessionsEnabled)
             }
         }
         hasAppeared = true
@@ -160,7 +163,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             notificationItems.append(.liveActivitySystemOff)
         }
 
-        return [
+        let serverSections: [ListSection<Section, Item>] = [
             ListSection(.summary, items: summary),
             ListSection(.pages, items: [.modelProviders, .workspaces, .dictionary, .pairedDevices, .about]),
             ListSection(
@@ -179,6 +182,13 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
                 footer: String(localized: "Off by default. When on, this server samples its CPU, memory, and disk every 30 seconds for the Server Metrics page, and keeps the samples for 30 days."),
                 items: settingRows(SettingsCatalog.serverMetricsEnabled, .serverMetrics) { .settingFailure($0) }
             ),
+            ListSection(
+                .durableSessions,
+                footer: SettingsCatalog.durableSessionsEnabled.copy.footer,
+                items: settingRows(SettingsCatalog.durableSessionsEnabled, .durableSessions) { .settingFailure($0) }
+            ),
+        ]
+        let deviceSections: [ListSection<Section, Item>] = [
             ListSection(
                 .notifications,
                 header: String(localized: "Notifications"),
@@ -203,7 +213,23 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
                 items: [.remove]
             ),
         ]
+        return serverSections + startDurableSection + deviceSections
     }
+
+    /// This device's default engine, shown under the server's switch while it is on: it
+    /// changes nothing on a server that offers no durable sessions.
+    private var startDurableSection: [ListSection<Section, Item>] {
+        guard settings?.read(SettingsCatalog.durableSessionsEnabled).current == true else { return [] }
+        return [ListSection(
+            .startDurable,
+            footer: SettingsCatalog.startSessionsAsDurable.copy.footer,
+            scope: .device,
+            items: [.startDurable]
+        )]
+    }
+
+    /// The device store, which holds Start Sessions as Durable.
+    private var deviceSettings: SettingsStore { coordinator.deviceSettings }
 
     /// The host the server's push relay is on, known while the server is connected.
     private var relayHost: String? {
@@ -244,6 +270,10 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             return settingInputs(SettingsCatalog.mobileOutputGuideEnabled)
         case .serverMetrics:
             return settingInputs(SettingsCatalog.serverMetricsEnabled)
+        case .durableSessions:
+            return settingInputs(SettingsCatalog.durableSessionsEnabled)
+        case .startDurable:
+            return settingInputs(SettingsCatalog.startSessionsAsDurable, store: deviceSettings)
         case .settingFailure(let id):
             return settingFailureInputs(id)
         case .pushSwitch:
@@ -334,7 +364,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
         case .remove:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
-        case .mobileOutputGuide, .serverMetrics, .pushSwitch, .liveActivitySwitch, .lock:
+        case .mobileOutputGuide, .serverMetrics, .durableSessions, .startDurable, .pushSwitch, .liveActivitySwitch, .lock:
             super.dequeue(item, at: indexPath)
         }
     }
@@ -346,6 +376,10 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             settingToggleRow(cell, SettingsCatalog.mobileOutputGuideEnabled)
         case .serverMetrics:
             settingToggleRow(cell, SettingsCatalog.serverMetricsEnabled)
+        case .durableSessions:
+            settingToggleRow(cell, SettingsCatalog.durableSessionsEnabled)
+        case .startDurable:
+            settingToggleRow(cell, SettingsCatalog.startSessionsAsDurable, store: deviceSettings)
         case .pushSwitch:
             switchRow(
                 cell,

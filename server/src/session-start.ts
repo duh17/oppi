@@ -55,6 +55,8 @@ export interface SessionStartCoordinatorDeps {
   isClosed?: () => boolean;
   metrics?: ServerTelemetry;
   durableHarness: Promise<DurableHarness>;
+  /** Whether ordinary durable sessions are on now (`SessionManager.durableSessionsAvailable`). */
+  durableSessionsAvailable: () => boolean;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
   hasUI?: (key: string) => boolean;
   liveVoiceExtension?: (sessionId: string) => InlineExtension | undefined;
@@ -90,7 +92,7 @@ export class SessionStartCoordinator {
           workspace?.runtime === "sandbox" ||
           session.launch?.target?.runtime === "sandbox" ||
           agentDefinition?.launchConstraints?.requiredRuntime === "sandbox";
-        // The flag decides whether durable sessions can be created. A bound
+        // The setting decides whether durable sessions can be created. A bound
         // conversation always resumes on DurableBackend; a durable request that
         // never bound one goes back to the classic SDK backend while it is off.
         // A durable Oppi Control session never falls back: it runs on the durable engine on
@@ -99,7 +101,7 @@ export class SessionStartCoordinator {
           session.serverDurable &&
           session.serverDurable.conversationId === undefined &&
           !isControlConversation(session) &&
-          this.deps.config.experimental?.serverDurable !== true
+          !this.deps.durableSessionsAvailable()
         ) {
           delete session.serverDurable;
           session.warnings = [

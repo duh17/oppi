@@ -152,7 +152,8 @@ export function parseRequestedEngine(
   if (!durableAvailable()) {
     return {
       status: 409,
-      error: "Durable sessions are not available on this server; enable experimental.serverDurable",
+      error:
+        "Durable sessions are off on this server; turn on Durable Sessions in Server Settings or set experimental.serverDurable",
     };
   }
   return { engine: "durable" };

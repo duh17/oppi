@@ -58,6 +58,23 @@ struct SettingsServerTransportTests {
         #expect(server.log == ["GET", "PUT enabled=true"])
         #expect(store.read(enabled) == .value(true, revision: nil))
     }
+
+    @Test("Durable Sessions saves on its own route, and a 409 there reloads it too")
+    func durableSessionsRoute() async {
+        let durable = SettingsCatalog.durableSessionsEnabled
+        let server = ScriptedMetricsServer(enabled: false, revision: 2)
+        let store = makeStore(server)
+        _ = store.read(durable)
+        #expect(await waitForMainActorCondition { store.read(durable).current != nil })
+
+        _ = await store.set(durable, true).value
+        server.changeElsewhere()
+        let latest = await store.set(durable, false).value
+
+        #expect(server.log == ["GET", "PUT base=2 enabled=true", "PUT base=3 enabled=false", "GET"])
+        #expect(Set(server.paths) == ["/server/durable-sessions/settings"])
+        #expect(latest == .failed(last: true, reason: "Changed on another device; showing the latest."))
+    }
 }
 
 /// `GET`/`PUT /server/metrics/settings` with optimistic concurrency, as the
@@ -68,6 +85,7 @@ private final class ScriptedMetricsServer: @unchecked Sendable {
     private var enabled: Bool
     private var revision: Int?
     private var requests: [String] = []
+    private var requestPaths: [String] = []
 
     init(enabled: Bool, revision: Int?) {
         self.enabled = enabled
@@ -77,6 +95,8 @@ private final class ScriptedMetricsServer: @unchecked Sendable {
 
     /// One line per request: `GET`, or `PUT` with what it carried.
     var log: [String] { lock.withLock { requests } }
+    /// The path of every request, in order.
+    var paths: [String] { lock.withLock { requestPaths } }
 
     /// Another device saves: the revision moves on.
     func changeElsewhere() {
@@ -94,8 +114,9 @@ private final class ScriptedMetricsServer: @unchecked Sendable {
     }
 
     /// The answer to one request: a status and a JSON body.
-    func answer(method: String?, body: Data) -> (status: Int, json: [String: Any]) {
+    func answer(method: String?, path: String, body: Data) -> (status: Int, json: [String: Any]) {
         lock.withLock {
+            requestPaths.append(path)
             if method == "PUT" {
                 let sent = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
                 let base = sent["baseRevision"] as? Int
@@ -128,7 +149,7 @@ private final class MetricsURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let (status, json) = Self.server?.answer(method: request.httpMethod, body: Self.bodyData(request)) ?? (500, [:])
+        let (status, json) = Self.server?.answer(method: request.httpMethod, path: request.url?.path ?? "", body: Self.bodyData(request)) ?? (500, [:])
         let response = HTTPURLResponse(
             url: request.url ?? URL(fileURLWithPath: "/"), statusCode: status,
             httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"]

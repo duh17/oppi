@@ -18,16 +18,27 @@ extension SettingsStore {
         )
     }
 
-    /// What a stored write to a server's setting triggers: the connection's cached Server
-    /// Metrics flag (the host pill shows or hides Server Metrics by it, and the Metrics page
-    /// opens off it) follows what the server stored, whichever screen saved it. The store
-    /// is the server's own, read back from the coordinator; a removed server updates nothing.
+    /// What a stored write to a server's setting triggers, whichever screen saved it:
+    /// - Server Metrics: the connection's cached flag (the host pill shows or hides Server
+    ///   Metrics by it, and the Metrics page opens off it) follows what the server stored.
+    /// - Durable Sessions: the connection's `durableSessions` capability follows it, so
+    ///   Quick Session's engine switch appears or goes without waiting for `/server/info`.
+    /// The store is the server's own, read back from the coordinator; a removed server
+    /// updates nothing.
     static func liveServerAfterWrite(serverId: String, coordinator: ConnectionCoordinator) -> @MainActor (String) -> Void {
         { [weak coordinator] id in
-            let setting = SettingsCatalog.serverMetricsEnabled
-            guard id == setting.id, let coordinator, coordinator.serverStore.server(for: serverId) != nil,
-                  let stored = coordinator.settings(for: serverId).read(setting).current else { return }
-            coordinator.setServerMetricsEnabledCache(stored, for: serverId)
+            guard let coordinator, coordinator.serverStore.server(for: serverId) != nil else { return }
+            let settings = coordinator.settings(for: serverId)
+            switch id {
+            case SettingsCatalog.serverMetricsEnabled.id:
+                guard let stored = settings.read(SettingsCatalog.serverMetricsEnabled).current else { return }
+                coordinator.setServerMetricsEnabledCache(stored, for: serverId)
+            case SettingsCatalog.durableSessionsEnabled.id:
+                guard let stored = settings.read(SettingsCatalog.durableSessionsEnabled).current else { return }
+                coordinator.connection(for: serverId)?.noteDurableSessionsAvailable(stored)
+            default:
+                break
+            }
         }
     }
 

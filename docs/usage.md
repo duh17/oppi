@@ -129,7 +129,7 @@ The sidebar holds saved **Agents** and **Schedules**.
 
 Describe a change in a composer: a list's composer to create something, or the **Describe a change…** bar at the bottom of a detail page to change it (the bar shows the model and thinking pills once you tap it). Each request opens a new **Oppi Control** session in the regular chat. It inspects the current setup, asks if the outcome is unclear, shows the change, and applies it. A change to an Agent, schedule, workspace, or session through Oppi's tools waits for a confirm card: the card says in plain words what changes; tap its button (for example **Apply Change** or **Create Agent**) to send it or **Cancel** to skip it, and the server enforces the card. Files (Skills, extensions, themes, Pi's `SYSTEM.md`) and commands the session runs through its shell (server settings, the dictation dictionary) get no card: the session says what will change and asks first, which is an instruction to the model, not an enforced confirmation. At the end it tells you where to see the change and whether a running session must reload.
 
-Oppi Control sessions work on every server, with or without the Durable Sessions experiment. They use Oppi's own setup prompt, not your global Pi prompt ([Oppi Control sessions](extensions.md#oppi-control-sessions)). Pi Control sessions from before keep working on the classic engine.
+Oppi Control sessions work on every server, whether or not [Durable Sessions](#durable-sessions) is on. They use Oppi's own setup prompt, not your global Pi prompt ([Oppi Control sessions](extensions.md#oppi-control-sessions)). Pi Control sessions from before keep working on the classic engine.
 
 | Surface | Create | Change |
 | --- | --- | --- |
@@ -147,17 +147,19 @@ Oppi Control sessions work on every server, with or without the Durable Sessions
 - [Oppi Mirror](oppi-mirror.md) shows a live terminal Pi session in Oppi.
 - [SSH Terminal](ssh-terminal.md) opens a shell on a host saved on this device (**Settings → SSH Hosts**, or **Terminal** below **MCP Servers**). A workspace's or chat's **Terminal** button opens that folder on the saved host.
 
-## Durable Sessions experiment
+## Durable Sessions
 
-Durable sessions run on the server's durable engine instead of the classic Pi session. A server offers them only after `oppi config set experimental.serverDurable true` and a restart. They are a development playground and do not match terminal coding agents feature for feature.
+Durable sessions run on the server's durable engine instead of the classic Pi session. The server saves each turn as it happens and resumes interrupted work after a restart without sending your message again. They do not match terminal coding agents feature for feature: they run only extensions that ship a durable entry, have no session tree, export, or reload, and cannot be incognito.
 
-Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the server offers durable sessions, Quick Session shows a **Classic** pill beside the workspace; tap it to start that one session **∞ Durable**. **Start Sessions as Durable** makes durable the default and the pill switches one session to Classic. A saved Agent follows the same default. Incognito sessions are always Classic.
+Turn on **Server Settings → Durable Sessions** (off by default). It is a setting of the server, for every device paired with it, and it applies at once: the server starts offering durable sessions to new sessions without a restart. From the host, `oppi config set experimental.serverDurable true` does the same at the next restart. Turning it off stops new durable sessions; sessions that are already durable keep working and keep resuming.
+
+While it is on, Quick Session shows a **Classic** pill beside the workspace; tap it to start that one session **∞ Durable**. **Start Sessions as Durable**, under the switch, is this device's choice: it makes durable the default, and the pill switches one session to Classic. A saved Agent follows the same default. Incognito sessions are always Classic.
 
 Durable sessions appear in All Sessions with a small **∞** after the title and follow **Settings → Chat → Style**. A durable session has no tree, so Outline lists the timeline and you fork from a message to branch. A fork keeps the session's Agent setup (Extensions, MCP, Skills, and instructions), including a fork at the first message.
 
 A durable session runs only extensions that ship a durable entry ([Durable extensions](extensions.md#durable-extensions)), plus MCP when the Agent selects it. It offers Pi's own tools as **Pi → Tools** sets them, as a classic session does: `read`, `bash`, `edit`, `write`, and the optional `grep`, `find`, `ls`, `codemode`, and `tool_search`, in host and sandbox workspaces. A running session picks up a tool you turn on there the next time it attaches; one you turn off stays until the session ends. MCP servers follow their exposure as in classic: a server on the default `codemode` exposure turns codemode on, and scripts call its tools; `tool_search` loads them for direct calls. When a saved Agent selected extensions that have no durable entry (or that `oppi extensions disable` turned off), the session shows a warning that names them.
 
-From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session (it fails while the server flag is off). Add `--agent <name>` for a saved Agent, or use `oppi schedule create --engine durable`.
+From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session (it fails while Durable Sessions is off). Add `--agent <name>` for a saved Agent, or use `oppi schedule create --engine durable`.
 
 A durable session can start helper sessions with its `subagent` tool. Each child opens from the tool row or the **Subagents** pill above the composer and is listed in All Sessions. The pill's title counts every child and its subtitle says how many are working or need you. It shows up to eight children as Working, Needs attention, Done, or Error, with model and context use (those that need you first, then the working ones, then the newest done ones); expand it to see what each child is doing now, and tap its last row, **All N in thread**, to open the whole thread. A child reports each answer back to its parent as a card that names the sender and kind (report, task, or message), folded to its first lines; tap the card to read it all, or the sender's name to open the child. A child can start its own children only when its parent allows it, and can work in a git worktree of its own on a branch named after it, so an editing child never touches its parent's checkout.
 
@@ -173,7 +175,7 @@ Below it: **Instructions** (its own editor and **Save**), **Skills** and **Exten
 
 ## Server settings
 
-**Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. On the same screen: **Mobile Output Guide** ([what it does](extensions.md#mobile-output-guide)), **Server Metrics** (off by default; see [Server Metrics](server-configuration.md#server-metrics)), **Notifications** (push and Live Activities, per server), **Lock Server**, and **Remove Server**. Add another server from Settings.
+**Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. On the same screen: **Mobile Output Guide** ([what it does](extensions.md#mobile-output-guide)), **Server Metrics** (off by default; see [Server Metrics](server-configuration.md#server-metrics)), **Durable Sessions** (off by default; see [Durable Sessions](#durable-sessions)), **Notifications** (push and Live Activities, per server), **Lock Server**, and **Remove Server**. Add another server from Settings.
 
 **About This Server** shows connection, uptime, the Pi SDK, Pi TUI, and server versions, and the **Voice** backend states. Its row reads **Update Available** when a newer `oppi-server` is on npm.
 

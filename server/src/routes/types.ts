@@ -12,8 +12,8 @@ import type { AppEventEmitter } from "../app-event-stream.js";
 import type { SessionRuntimes } from "../runtime-router.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ServerResourceService } from "../server-resource-service.js";
-import type { ConfigSettingResult, RevisionedServerMetrics } from "../settings/config-settings.js";
-import type { ServerMetricsPatch } from "../settings/registry.js";
+import type { ConfigSettingResult, RevisionedEnabled } from "../settings/config-settings.js";
+import type { EnabledPatch } from "../settings/registry.js";
 import type { ServerUpdateService } from "../server-update.js";
 import type { McpService } from "../mcp-service.js";
 import type { ServerTelemetry } from "../telemetry/server-telemetry.js";
@@ -28,12 +28,9 @@ export interface ServerMetricsControl {
   telemetryDir: string;
   intervalMs: number;
   isEnabled(): boolean;
-  settings(): RevisionedServerMetrics;
+  settings(): RevisionedEnabled;
   /** Saves `serverMetrics.enabled` (see `applySetting`) and starts or stops the sampler. */
-  apply(
-    patch: ServerMetricsPatch,
-    baseRevision: number | undefined,
-  ): ConfigSettingResult<"serverMetrics">;
+  apply(patch: EnabledPatch, baseRevision: number | undefined): ConfigSettingResult;
   latestSample(): ServerResourceRecord | null;
 }
 

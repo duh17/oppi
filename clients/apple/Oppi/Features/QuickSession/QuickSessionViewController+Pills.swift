@@ -73,7 +73,7 @@ extension QuickSessionViewController {
         }
     }
 
-    /// Durable Sessions experiment: the engine this launch uses. A toggle between
+    /// Durable Sessions: the engine this launch uses. A toggle between
     /// Durable and Classic, or a fixed Classic with its reason when the server
     /// would refuse durable for this launch.
     private func updateEnginePill(colors: ComposerThemeColors, enabled: Bool) {

@@ -1,14 +1,9 @@
 import Foundation
 
-/// Rules for the Durable Sessions experiment: with the device opted in and the
-/// server offering durable sessions, the composer can start a session durable.
-/// New sessions start Classic unless the device also chose Durable by default.
+/// Rules for Durable Sessions: with the server offering durable sessions (its Durable
+/// Sessions setting, advertised as `capabilities.durableSessions`), the composer can start
+/// a session durable. New sessions start Classic unless this device chose Durable by default.
 enum DurableSessions {
-    /// Durable applies only when this device opted in and the server advertises
-    /// `capabilities.durableSessions`. Gates the composer's engine pill, and the durable default.
-    static func isAvailable(experimentEnabled: Bool, serverOffersDurable: Bool) -> Bool {
-        experimentEnabled && serverOffersDurable
-    }
 
     /// Engine a new session's composer launches with, and what the composer shows for it.
     struct LaunchDecision: Equatable, Sendable {
@@ -47,14 +42,13 @@ enum DurableSessions {
     /// `durableByDefault` picks the engine a launch starts with; `chosenEngine` is the
     /// user's pill choice for this one launch and wins over the default.
     static func launchDecision(
-        experimentEnabled: Bool,
         serverOffersDurable: Bool,
         durableByDefault: Bool,
         incognito: Bool = false,
         chosenEngine: SessionEngine?,
         agentResolution: AgentResolution = .resolved
     ) -> LaunchDecision {
-        guard isAvailable(experimentEnabled: experimentEnabled, serverOffersDurable: serverOffersDurable) else {
+        guard serverOffersDurable else {
             return LaunchDecision(engine: .classic, showsPill: false, classicReason: nil, blocksLaunch: false)
         }
         if let reason = agentResolution.blockReason {

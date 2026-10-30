@@ -751,8 +751,6 @@ final class ChatTitleView: UIView {
     private let subtitleLabel = ExtensionChromeFont.label(.caption2)
     private var maxWidth: NSLayoutConstraint?
     private var appliedAvatar: AvatarKey?
-    private var isDurableSession = false
-    nonisolated(unsafe) private var defaultsObserver: NSObjectProtocol?
 
     /// What the avatar shows; it renders again only when this changes.
     private struct AvatarKey: Equatable {
@@ -808,28 +806,11 @@ final class ChatTitleView: UIView {
             piIcon.trailingAnchor.constraint(equalTo: piTile.trailingAnchor),
             maxWidth,
         ])
-        // The Durable mark follows the experiment switch in Settings. Defaults
-        // post from any thread and on every write; only the mark updates.
-        defaultsObserver = NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applyDurableMark() }
-        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
-        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
-    }
-
-    private func applyDurableMark() {
-        let hidden = !(isDurableSession && AppPreferences.Experiments.durableSessionsEnabled)
-        if durableLabel.isHidden != hidden { durableLabel.isHidden = hidden }
-    }
 
     override func updateProperties() {
         super.updateProperties()
@@ -850,8 +831,8 @@ final class ChatTitleView: UIView {
         let mirrorPresentation = TerminalMirrorIndicatorPresentation(session: session)
         mirror.isHidden = mirrorPresentation == nil
         if let mirrorPresentation { mirror.apply(mirrorPresentation) }
-        isDurableSession = session?.engine == .durable
-        applyDurableMark()
+        let hidesDurable = session?.showsDurableMark != true
+        if durableLabel.isHidden != hidesDurable { durableLabel.isHidden = hidesDurable }
         durableLabel.textColor = UIColor(palette.comment)
         let subtitle = chat.conversationTitleSubtitle
         subtitleLabel.text = subtitle

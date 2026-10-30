@@ -37,10 +37,7 @@ final class QuickSessionModel {
     @ObservationIgnored let liveVoiceCalls: LiveVoiceCallCenter
     /// Closes Quick Session; set by its view controller.
     @ObservationIgnored var onDismiss: () -> Void = {}
-    @ObservationIgnored private let durableExperimentEnabled = AppPreferences.Experiments.durableSessionsEnabled
-    @ObservationIgnored private let durableByDefault = UserDefaults.standard.bool(
-        forKey: AppPreferences.Experiments.durableSessionsDefaultKey
-    )
+    @ObservationIgnored private let durableByDefault = AppPreferenceStore.DurableSessions.startsDurable
 
     // MARK: Draft
 
@@ -175,7 +172,6 @@ final class QuickSessionModel {
     /// Durability is per server, so it follows the selected workspace's server.
     var engineDecision: DurableSessions.LaunchDecision {
         DurableSessions.launchDecision(
-            experimentEnabled: durableExperimentEnabled,
             serverOffersDurable: selectedServerConnection()?.durableSessionsAvailable == true,
             durableByDefault: durableByDefault,
             incognito: launchesIncognito,

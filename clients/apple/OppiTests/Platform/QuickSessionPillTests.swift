@@ -10,17 +10,6 @@ import UIKit
 struct QuickSessionPillTests {
     @Test("Incognito and engine pills report not enabled until setup finishes")
     func pillsAreNotEnabledWhileSetupRuns() throws {
-        let durableKey = AppPreferences.Experiments.durableSessionsKey
-        let hadDurable = UserDefaults.standard.object(forKey: durableKey)
-        UserDefaults.standard.set(true, forKey: durableKey)
-        defer {
-            if let hadDurable {
-                UserDefaults.standard.set(hadDurable, forKey: durableKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: durableKey)
-            }
-        }
-
         let client = APIClient(baseURL: try #require(URL(string: "http://127.0.0.1:1")), token: "sk_test", configuration: .ephemeral)
         let root = try makeTestAppRoot(readyServerId: "sha256:qs-pills-\(UUID().uuidString)", apiClient: client)
         try #require(root.coordinator.activeConnection).setSplitStreamCapabilitiesForTesting(durableSessions: true)

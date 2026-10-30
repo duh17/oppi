@@ -70,4 +70,28 @@ describe("settings through a running server", () => {
       revision: 3,
     });
   }, 30_000);
+
+  it("turns durable sessions on and off for the running server with one save each", async () => {
+    const capability = async () =>
+      (
+        (await (await request("GET", "/server/info")).json()) as {
+          capabilities: { durableSessions?: { version: number } };
+        }
+      ).capabilities.durableSessions;
+    expect(await capability()).toBeUndefined();
+
+    const on = await request("PUT", "/server/durable-sessions/settings", {
+      enabled: true,
+      baseRevision: 0,
+    });
+    expect(await on.json()).toEqual({ enabled: true, revision: 1 });
+    expect(await capability()).toEqual({ version: 1 });
+
+    const off = await request("PUT", "/server/durable-sessions/settings", {
+      enabled: false,
+      baseRevision: 1,
+    });
+    expect(await off.json()).toEqual({ enabled: false, revision: 2 });
+    expect(await capability()).toBeUndefined();
+  }, 30_000);
 });

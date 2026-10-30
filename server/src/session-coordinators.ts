@@ -97,6 +97,8 @@ export interface SessionCoordinatorBundleDeps {
   /** Server telemetry for session lifecycle timing. */
   metrics?: ServerTelemetry;
   durableHarness: Promise<DurableHarness>;
+  /** Whether ordinary durable sessions are on now (`SessionManager.durableSessionsAvailable`). */
+  durableSessionsAvailable: () => boolean;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
   hasUI?: (key: string) => boolean;
   takeStartupUIRequests?: (
@@ -161,6 +163,7 @@ export function createSessionCoordinatorBundle(
     runtimeManager: deps.runtimeManager,
     config: deps.config,
     durableHarness: deps.durableHarness,
+    durableSessionsAvailable: deps.durableSessionsAvailable,
     eventRingCapacity: deps.eventRingCapacity,
     getSkillPathResolver: () => deps.getSkillPathResolver(),
     getNotifyPort: () => deps.getNotifyPort(),

@@ -253,6 +253,20 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
+    path: "/server/durable-sessions/settings",
+    operationId: "getDurableSessionsSettings",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "PUT",
+    path: "/server/durable-sessions/settings",
+    operationId: "setDurableSessionsSettings",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "GET",
     path: "/server/resources/skills",
     operationId: "listServerSkills",
     surface: "admin",

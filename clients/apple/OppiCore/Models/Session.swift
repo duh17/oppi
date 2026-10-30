@@ -379,6 +379,10 @@ struct Session: Identifiable, Sendable, Equatable {
     /// Durable control conversation. Distinct from a declared Pi Control session (`control != nil`).
     var isControlConversation: Bool { Self.isControlRole(serverDurableRole) }
 
+    /// A workspace session on the durable engine: the list's ∞ and the chat title's Durable
+    /// mark. Oppi Control is always durable, so the mark would say nothing there.
+    var showsDurableMark: Bool { engine == .durable && !isControlConversation }
+
     /// The one definition of the durable control role, shared with `SessionSummary`.
     static func isControlRole(_ role: String?) -> Bool { role == "control" }
 

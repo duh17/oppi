@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createIdentityRoutes } from "../src/routes/identity.js";
+import { createDurableSessionsSettingsRoutes } from "../src/routes/durable-sessions-settings.js";
 import { createServerMetricsRoutes } from "../src/routes/server-metrics.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { applySetting, readConfigSetting } from "../src/settings/config-settings.js";
@@ -89,5 +90,77 @@ describe("PUT /server/metrics/settings", () => {
     });
     expect((await route("PUT", { enabled: "no" })).status).toBe(400);
     expect((await route("PUT", { enabled: true, baseRevision: 1.5 })).status).toBe(400);
+  });
+});
+
+describe("/server/durable-sessions/settings", () => {
+  /** The route over a stand-in for the SessionManager's running switch, latched like the real one. */
+  function durable(startedOn = false) {
+    let running = startedOn;
+    const sessions = {
+      durableSessionsAvailable: () => running,
+      setDurableSessionsAvailable: (enabled: boolean) => {
+        running = enabled;
+      },
+    };
+    const ctx = { storage, sessions } as unknown as RouteContext;
+    const dispatch = createDurableSessionsSettingsRoutes(ctx, createRouteHelpers());
+    const route = (method: string, body?: unknown) =>
+      call(dispatch as never, method, "/server/durable-sessions/settings", body);
+    return { route, running: () => running };
+  }
+
+  it("saves experimental.serverDurable with a revision and turns durable creates on without a restart", async () => {
+    const { route, running } = durable();
+    expect((await route("GET")).json).toEqual({ enabled: false, revision: 0 });
+
+    expect((await route("PUT", { enabled: true, baseRevision: 0 })).json).toEqual({
+      enabled: true,
+      revision: 1,
+    });
+    expect(running()).toBe(true);
+    const saved = new Storage(dataDir).getConfig().experimental;
+    expect(saved).toMatchObject({ serverDurable: true, serverDurableRevision: 1 });
+
+    expect((await route("PUT", { enabled: false })).json).toEqual({ enabled: false, revision: 2 });
+    expect(running()).toBe(false);
+  });
+
+  it("keeps the other experimental settings it shares a block with", async () => {
+    storage.mutateConfig(() => ({
+      experimental: { durableExtensions: { disabled: ["codemode"] } },
+    }));
+    const { route } = durable();
+    await route("PUT", { enabled: true });
+    expect(new Storage(dataDir).getConfig().experimental).toEqual({
+      serverDurable: true,
+      serverDurableRevision: 1,
+      durableExtensions: { disabled: ["codemode"] },
+    });
+  });
+
+  it("answers a stale baseRevision with 409 and the running value, and changes nothing", async () => {
+    const { route, running } = durable();
+    await route("PUT", { enabled: true });
+
+    expect(await route("PUT", { enabled: false, baseRevision: 0 })).toEqual({
+      status: 409,
+      json: {
+        error: "Durable Sessions setting changed",
+        code: "revision_conflict",
+        current: { enabled: true, revision: 1 },
+      },
+    });
+    expect(running()).toBe(true);
+    expect((await route("PUT", { enabled: "yes" })).status).toBe(400);
+    expect((await route("PUT", { enabled: true, baseRevision: -1 })).status).toBe(400);
+    expect(running()).toBe(true);
+  });
+
+  it("reports what the running server does when config.json says otherwise", async () => {
+    // `oppi config set experimental.serverDurable true` while the server runs: on at next restart.
+    storage.mutateConfig(() => ({ experimental: { serverDurable: true } }));
+    const { route } = durable(false);
+    expect((await route("GET")).json).toEqual({ enabled: false, revision: 0 });
   });
 });

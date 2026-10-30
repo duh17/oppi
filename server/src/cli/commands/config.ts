@@ -42,7 +42,7 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   },
   "experimental.serverDurable": {
     type: "boolean",
-    desc: "Make durable sessions available; only creates that ask for engine durable use it (experimental; default false; restart). Existing durable sessions keep working when off",
+    desc: "Make durable sessions available; only creates that ask for engine durable use it (experimental; default false; restart, or toggle live in the app's Server Settings). Existing durable sessions keep working when off",
   },
   tls: { type: "json", desc: "TLS config JSON object" },
   "tls.mode": { type: "string", desc: "TLS mode" },

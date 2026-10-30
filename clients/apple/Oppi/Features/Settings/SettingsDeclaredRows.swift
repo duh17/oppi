@@ -30,9 +30,11 @@ extension ListScreenController {
         return [item, failure(declaration.id)]
     }
 
-    /// What a declared setting's row is drawn from, for `inputs(of:)`.
-    func settingInputs<Value>(_ declaration: SettingDeclaration<Value>) -> AnyHashable {
-        AnyHashable(settings.map { String(describing: $0.read(declaration)) } ?? "")
+    /// What a declared setting's row is drawn from, for `inputs(of:)`. `store` is for a
+    /// section kept somewhere other than the page's own store (a device setting on a
+    /// server's page); it defaults to the page's.
+    func settingInputs<Value>(_ declaration: SettingDeclaration<Value>, store: SettingsStore? = nil) -> AnyHashable {
+        AnyHashable((store ?? settings).map { String(describing: $0.read(declaration)) } ?? "")
     }
 
     /// What the failure row under a setting is drawn from, for `inputs(of:)`.
@@ -47,9 +49,10 @@ extension ListScreenController {
 
     // MARK: - Toggle
 
-    /// Makes `cell` the switch row of a declared on/off setting.
-    func settingToggleRow(_ cell: UICollectionViewListCell, _ declaration: SettingDeclaration<Bool>) {
-        let state = settings?.read(declaration) ?? .unavailable(reason: Self.noStore)
+    /// Makes `cell` the switch row of a declared on/off setting. `store` as in `settingInputs`.
+    func settingToggleRow(_ cell: UICollectionViewListCell, _ declaration: SettingDeclaration<Bool>, store: SettingsStore? = nil) {
+        let store = store ?? settings
+        let state = store?.read(declaration) ?? .unavailable(reason: Self.noStore)
         var content = content(state.unavailableReason == nil ? .plain : .subtitle)
         content.text = declaration.copy.title
         content.secondaryText = state.unavailableReason == nil ? nil : Self.unavailableTitle
@@ -60,8 +63,8 @@ extension ListScreenController {
             label: declaration.copy.title,
             isEnabled: state.canBeginSaving,
             reusing: cell
-        ) { [weak self] isOn in
-            self?.settings?.set(declaration, isOn)
+        ) { [weak store] isOn in
+            store?.set(declaration, isOn)
         }]
     }
 

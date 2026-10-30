@@ -20,7 +20,7 @@ struct SessionListRowContent: Equatable {
     var foreignWorkspaceNames: [String: String] = [:]
     /// Lock badge of every drawn session that has one (`lockBadges(of:target:)`).
     var lockBadges: [String: ScopedLockState] = [:]
-    /// Durable Sessions experiment: the row session runs on the durable engine.
+    /// The row session shows the durable mark (`Session.showsDurableMark`).
     var isDurable = false
     /// The row session has the app's live Live Voice call (`LiveVoiceCallCenter.rowBadge`).
     var callBadge: SessionRowCallBadge?
@@ -47,10 +47,6 @@ struct SessionListRowContent: Equatable {
             if badge != .none { badges[session.id] = badge }
         }
         return badges
-    }
-
-    static func isDurable(_ session: Session) -> Bool {
-        AppPreferences.Experiments.durableSessionsEnabled && session.engine == .durable
     }
 
     /// Every session whose status the entry draws.
@@ -105,7 +101,7 @@ struct SessionListRowContent: Equatable {
             statuses: statuses,
             foreignWorkspaceNames: foreignNames,
             lockBadges: Self.lockBadges(of: entry, target: lockTarget),
-            isDurable: Self.isDurable(session),
+            isDurable: session.showsDurableMark,
             callBadge: callBadge
         )
     }

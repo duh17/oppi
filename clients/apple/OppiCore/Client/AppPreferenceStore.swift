@@ -214,6 +214,21 @@ enum AppPreferenceStore {
         }
     }
 
+    // MARK: - Durable Sessions
+
+    /// Which engine Quick Session starts a new session on, where its server has Durable
+    /// Sessions on (Server Settings). The pill still switches one session either way.
+    enum DurableSessions {
+        /// Kept under the name it had on the Experiments page, so that choice carries over.
+        static let startDurableKey = "\(AppIdentifiers.subsystem).experiments.durableSessionsDefault"
+        /// What nothing stored means; `SettingsCatalog.startSessionsAsDurable` uses this same constant.
+        static let startDurableDefault = false
+
+        static var startsDurable: Bool {
+            UserDefaults.standard.object(forKey: startDurableKey) as? Bool ?? startDurableDefault
+        }
+    }
+
     // MARK: - Browser
 
     /// Where regular web links open. Key matches iOS `AppPreferences.Browser`.

@@ -90,6 +90,7 @@ function makeDeps(session: Session): SessionStartCoordinatorDeps & {
     bootstrapSessionState: vi.fn(async () => {}),
     // These sessions are classic; nothing awaits the harness.
     durableHarness: new Promise<never>(() => {}),
+    durableSessionsAvailable: () => false,
     persistedStatuses,
   };
 

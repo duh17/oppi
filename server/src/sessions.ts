@@ -109,6 +109,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   /** Callers of `withIncomingWork` per session whose work has not committed yet. */
   private readonly incomingWork = new Map<string, number>();
   private readonly config: ServerConfig;
+  /**
+   * `experimental.serverDurable` as this server runs it: read at startup, then set by the
+   * Durable Sessions setting's save (`setDurableSessionsAvailable`).
+   */
+  private durableSessionsOn: boolean;
   private readonly runtimeManager: WorkspaceRuntime;
   private readonly startupUI = new Map<string, { bridge: SdkUiBridge; state: ExtensionUIState }>();
   private readonly startupUISubscribers = new Map<string, Set<(message: ServerMessage) => void>>();
@@ -155,6 +160,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (metrics) this.opsMetrics = metrics;
     const config = storage.getConfig();
     this.config = config;
+    this.durableSessionsOn = config.experimental?.serverDurable === true;
     // Every server runs the Harness: Oppi Control sessions are durable whether or not
     // `experimental.serverDurable` is on. The flag gates only ordinary durable sessions
     // (`engine: "durable"` creates and `capabilities.durableSessions`).
@@ -223,6 +229,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       storage,
       config,
       durableHarness: this.durableHarness,
+      durableSessionsAvailable: () => this.durableSessionsAvailable(),
       runtimeManager,
       active: this.active,
       mobileRenderers: this.mobileRenderers,
@@ -640,11 +647,17 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   /**
-   * Whether create requests may ask for `engine: "durable"`. Read at startup,
-   * like the Harness it implies; already-bound durable sessions run either way.
+   * Whether create requests may ask for `engine: "durable"`. Read from config at startup and
+   * changed live by the Durable Sessions setting; already-bound durable sessions run either way.
+   * Every server runs the Harness (Oppi Control is durable), so nothing else follows it.
    */
   durableSessionsAvailable(): boolean {
-    return this.config.experimental?.serverDurable === true;
+    return this.durableSessionsOn;
+  }
+
+  /** Applies a saved Durable Sessions setting to new creates, without a restart. */
+  setDurableSessionsAvailable(enabled: boolean): void {
+    this.durableSessionsOn = enabled;
   }
 
   /** Re-read the durable entries of enabled Pi packages into the Harness registry. */

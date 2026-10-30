@@ -2,10 +2,9 @@ import Foundation
 import Testing
 @testable import Oppi
 
-@Suite("Durable Sessions experiment")
+@Suite("Durable Sessions")
 struct DurableSessionsTests {
     private func decide(
-        experiment: Bool,
         offered: Bool,
         durableDefault: Bool = false,
         incognito: Bool = false,
@@ -13,7 +12,6 @@ struct DurableSessionsTests {
         agent resolution: DurableSessions.AgentResolution = .resolved
     ) -> DurableSessions.LaunchDecision {
         DurableSessions.launchDecision(
-            experimentEnabled: experiment,
             serverOffersDurable: offered,
             durableByDefault: durableDefault,
             incognito: incognito,
@@ -23,33 +21,32 @@ struct DurableSessionsTests {
     }
 
     @Test func newSessionsStartClassicWithASwitchUnlessDurableIsTheDefault() {
-        let classic = decide(experiment: true, offered: true)
+        let classic = decide(offered: true)
         #expect(classic.engine == .classic)
         #expect(classic.showsPill)
         #expect(classic.canToggle)
         #expect(classic.classicReason == nil)
 
-        let durable = decide(experiment: true, offered: true, durableDefault: true)
+        let durable = decide(offered: true, durableDefault: true)
         #expect(durable.engine == .durable)
         #expect(durable.showsPill)
         #expect(durable.canToggle)
     }
 
-    @Test func durableNeedsTheDeviceOptInAndTheServerEvenWhenItIsTheDefault() {
-        for (experiment, offered) in [(true, false), (false, true), (false, false)] {
-            let classic = decide(experiment: experiment, offered: offered, durableDefault: true, chose: .durable)
-            #expect(classic.engine == .classic, "experiment \(experiment), offered \(offered)")
-            #expect(!classic.showsPill)
-            #expect(!classic.canToggle)
-        }
+    @Test func durableNeedsTheServerEvenWhenItIsTheDefault() {
+        let classic = decide(offered: false, durableDefault: true, chose: .durable)
+        #expect(classic.engine == .classic)
+        #expect(!classic.showsPill)
+        #expect(!classic.canToggle)
+        #expect(classic.classicReason == nil)
     }
 
     @Test func thePillChoiceOverridesTheDefaultForOneLaunchInEitherDirection() {
-        let durable = decide(experiment: true, offered: true, chose: .durable)
+        let durable = decide(offered: true, chose: .durable)
         #expect(durable.engine == .durable)
         #expect(durable.canToggle)
 
-        let classic = decide(experiment: true, offered: true, durableDefault: true, chose: .classic)
+        let classic = decide(offered: true, durableDefault: true, chose: .classic)
         #expect(classic.engine == .classic)
         #expect(classic.canToggle)
         #expect(classic.classicReason == nil)
@@ -57,7 +54,7 @@ struct DurableSessionsTests {
 
     @Test func incognitoLaunchRunsClassicWithoutAnEnginePillEvenWhenDurableWasChosen() {
         for chose in [nil, SessionEngine.durable] {
-            let incognito = decide(experiment: true, offered: true, durableDefault: true, incognito: true, chose: chose)
+            let incognito = decide(offered: true, durableDefault: true, incognito: true, chose: chose)
             #expect(incognito.engine == .classic)
             #expect(!incognito.showsPill)
             #expect(!incognito.canToggle)
@@ -67,24 +64,17 @@ struct DurableSessionsTests {
     @Test func aLaunchWhoseSavedAgentIsNotResolvedIsBlockedAndNeverDurable() {
         for resolution in [DurableSessions.AgentResolution.pending, .failed] {
             for chose in [nil, SessionEngine.durable] {
-                let held = decide(experiment: true, offered: true, durableDefault: true, chose: chose, agent: resolution)
+                let held = decide(offered: true, durableDefault: true, chose: chose, agent: resolution)
                 #expect(held.blocksLaunch, "\(resolution), chose \(String(describing: chose))")
                 #expect(held.engine == .classic)
                 #expect(!held.canToggle)
                 #expect(held.classicReason == resolution.blockReason)
             }
         }
-        #expect(!decide(experiment: true, offered: true, agent: .resolved).blocksLaunch)
+        #expect(!decide(offered: true, agent: .resolved).blocksLaunch)
         // Without durable there is nothing to protect, so the hold does not apply.
-        #expect(!decide(experiment: false, offered: true, agent: .pending).blocksLaunch)
-        #expect(!decide(experiment: true, offered: false, agent: .failed).blocksLaunch)
-    }
-
-    @Test func aChoiceChangesNothingWhenDurableIsUnavailable() {
-        let off = decide(experiment: false, offered: true, chose: .durable)
-        #expect(off.engine == .classic)
-        #expect(!off.showsPill)
-        #expect(off.classicReason == nil)
+        #expect(!decide(offered: false, agent: .pending).blocksLaunch)
+        #expect(!decide(offered: false, agent: .failed).blocksLaunch)
     }
 
     @Test func serverInfoAdvertisesDurableSessionsOnlyWhenPresent() throws {

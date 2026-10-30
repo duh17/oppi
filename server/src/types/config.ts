@@ -122,7 +122,14 @@ export interface ServerConfig {
 
   /** Opt-in runtime experiments. Each needs a server restart unless its comment says otherwise. */
   experimental?: {
+    /**
+     * Offers durable sessions: create requests may ask for `engine: "durable"`. The running
+     * server latches it at startup; a save through `PUT /server/durable-sessions/settings`
+     * (the app's Server Settings switch) applies at once, `oppi config set` at the next restart.
+     */
     serverDurable?: boolean;
+    /** Counts saves made through `PUT /server/durable-sessions/settings`; absent reads as 0. */
+    serverDurableRevision?: number;
     /**
      * Durable extensions workspace sessions leave out, by name (built-ins and Pi packages'
      * durable entries). Read at each use, no restart; a bound session drops one at its next

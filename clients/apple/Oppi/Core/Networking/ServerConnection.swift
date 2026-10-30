@@ -1476,6 +1476,12 @@ final class ServerConnection {
         connectedServerVersion = version
     }
 
+    /// The Durable Sessions setting as the server stored it. The server applies a save at
+    /// once, so the loaded capabilities follow it until the next `/server/info` read.
+    func noteDurableSessionsAvailable(_ available: Bool) {
+        serverCapabilities?.durableSessions = available ? ServerInfo.CapabilityVersion(version: 1) : nil
+    }
+
     private func applyStreamCapabilities(
         _ info: ServerInfo,
         startAppEventStream: Bool

@@ -165,6 +165,7 @@ const settingsThemingExempt = [settingsBase, settingsStyle, ...settingsThemingEx
 const settingsApiWrites = [
   "setMobileOutputGuideConfiguration",
   "setServerMetricsEnabled",
+  "saveDurableSessionsSettings",
   "setServerSkillEnabled",
   "setServerExtensionEnabled",
   "setPiResourceEnabled",

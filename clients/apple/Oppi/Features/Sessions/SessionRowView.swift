@@ -21,7 +21,7 @@ final class SessionRowView: UIView {
         /// A locked session shows its name, time, and status only: no question
         /// text, search snippet, model, cost, context, or file counts.
         var hidesDetails = false
-        /// Durable Sessions experiment: marks a durable-engine session, as the chat title does.
+        /// Marks a durable-engine session (`Session.showsDurableMark`), as the chat title does.
         var isDurable = false
         /// The session has the app's live Live Voice call.
         var callBadge: SessionRowCallBadge?

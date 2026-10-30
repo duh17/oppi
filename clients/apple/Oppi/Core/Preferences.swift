@@ -45,21 +45,12 @@ enum AppPreferences {
 
     /// Opt-in features, saved on this device. Every flag defaults to off.
     enum Experiments {
-        static let durableSessionsKey = "\(AppIdentifiers.subsystem).experiments.durableSessions"
-        static let durableSessionsDefaultKey = "\(AppIdentifiers.subsystem).experiments.durableSessionsDefault"
         static let liveVoiceKey = "\(AppIdentifiers.subsystem).experiments.liveVoice"
 
         /// Live Voice: the call entries in chat and Quick Session. It only governs new
         /// starts; a call already running keeps running when this turns off.
         static var liveVoiceEnabled: Bool {
             UserDefaults.standard.bool(forKey: liveVoiceKey)
-        }
-
-        /// Durable Sessions: the new-session composer can start durable sessions on
-        /// servers that advertise them. New sessions start Classic unless
-        /// `durableSessionsDefaultKey` is also on.
-        static var durableSessionsEnabled: Bool {
-            UserDefaults.standard.bool(forKey: durableSessionsKey)
         }
     }
 

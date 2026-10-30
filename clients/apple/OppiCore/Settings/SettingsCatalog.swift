@@ -8,6 +8,8 @@ enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
     case serverMetrics = "/server/metrics/settings"
     /// `GET`/`PUT /server/mobile-output-guide`: `{ enabled, revision }`; a write carries `baseRevision`.
     case mobileOutputGuide = "/server/mobile-output-guide"
+    /// `GET`/`PUT /server/durable-sessions/settings`: `{ enabled, revision }` (`experimental.serverDurable`).
+    case durableSessions = "/server/durable-sessions/settings"
 
     /// The route's row in `protocol/settings.json`, where the server lists the
     /// setting's scope and whether its saves carry a revision.
@@ -16,6 +18,7 @@ enum SettingEndpoint: String, Hashable, Sendable, CaseIterable {
         switch self {
         case .serverMetrics: "serverMetrics"
         case .mobileOutputGuide: "mobileOutputGuide"
+        case .durableSessions: "durableSessions"
         }
     }
 }
@@ -206,6 +209,36 @@ enum SettingsCatalog {
         )
     )
 
+    // MARK: - Durable Sessions
+
+    /// Whether the server offers durable sessions to new creates, for every device that uses
+    /// it (`durableSessions` in `protocol/settings.json`, stored as `experimental.serverDurable`).
+    /// A save applies on the server at once; the connection's `durableSessions` capability
+    /// follows it (`SettingsStore.liveServerAfterWrite`).
+    static let durableSessionsEnabled = SettingDeclaration<Bool>(
+        id: "server.durableSessions.enabled",
+        key: "enabled",
+        storage: .server(.durableSessions, revisioned: true),
+        default: false,
+        copy: SettingCopy(
+            title: String(localized: "Durable Sessions"),
+            footer: String(localized: "Lets new sessions on this server run on the durable engine, which saves each turn on the server and resumes interrupted work after a restart. When on, Quick Session shows a Classic / Durable switch. Durable sessions run only extensions that support them and have no session tree, export, or reload. Turning this off keeps sessions that are already durable working.")
+        )
+    )
+
+    /// Whether Quick Session starts new sessions Durable on a server with Durable Sessions on.
+    /// A device setting on the existing `AppPreferenceStore` key.
+    static let startSessionsAsDurable = SettingDeclaration<Bool>(
+        id: "server.durableSessions.startDurable",
+        key: AppPreferenceStore.DurableSessions.startDurableKey,
+        storage: .device(perServer: false),
+        default: AppPreferenceStore.DurableSessions.startDurableDefault,
+        copy: SettingCopy(
+            title: String(localized: "Start Sessions as Durable"),
+            footer: String(localized: "New sessions from Quick Session start Durable instead of Classic on servers that have Durable Sessions on. The switch in Quick Session still changes one session.")
+        )
+    )
+
     /// Every declared setting, type-erased. Ids and storage keys are unique
     /// across it (`SettingsCatalogTests`).
     static let all: [SettingDescriptor] = [
@@ -214,5 +247,7 @@ enum SettingsCatalog {
         openLinks.descriptor,
         serverMetricsEnabled.descriptor,
         mobileOutputGuideEnabled.descriptor,
+        durableSessionsEnabled.descriptor,
+        startSessionsAsDurable.descriptor,
     ]
 }

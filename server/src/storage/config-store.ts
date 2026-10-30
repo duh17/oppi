@@ -340,7 +340,12 @@ function normalizeConfig(
       errors.push("config.experimental: expected object");
     } else {
       for (const key of Object.keys(obj.experimental)) {
-        if (key !== "serverDurable" && key !== "durableExtensions" && strictUnknown) {
+        if (
+          key !== "serverDurable" &&
+          key !== "serverDurableRevision" &&
+          key !== "durableExtensions" &&
+          strictUnknown
+        ) {
           errors.push(`config.experimental.${key}: unknown key`);
         }
       }
@@ -350,6 +355,15 @@ function normalizeConfig(
           errors.push("config.experimental.serverDurable: expected boolean");
         } else {
           experimental.serverDurable = obj.experimental.serverDurable;
+        }
+      }
+      if ("serverDurableRevision" in obj.experimental) {
+        if (isRevision(obj.experimental.serverDurableRevision)) {
+          experimental.serverDurableRevision = obj.experimental.serverDurableRevision;
+        } else {
+          errors.push(
+            "config.experimental.serverDurableRevision: expected a non-negative safe integer",
+          );
         }
       }
       if ("durableExtensions" in obj.experimental) {

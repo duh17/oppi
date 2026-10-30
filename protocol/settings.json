@@ -4,7 +4,7 @@
     "scope": "server = one value for the whole server; workspace = one value per workspace; device = one value per paired device, stored on the server.",
     "storage": "config = config.json; settings-file = <dataDir>/settings/*.json; workspace = the workspace record; pi = Pi's settings.json (the terminal sees it too); push-registration = the device's stored push registration.",
     "default": "null means no value to default to: derived when the workspace is created, owned by Pi, or required on write.",
-    "revisioned": "true means the stored value carries a revision the API returns. serverMetrics and mobileOutputGuide save with an optional baseRevision (mobileOutputGuide requires it); a stale one answers 409 { error, code: \"revision_conflict\", current } and leaves the setting unchanged. The dictionaries keep their own contract: PUT carries `revision`, a stale one answers 409 { error }."
+    "revisioned": "true means the stored value carries a revision the API returns. serverMetrics, durableSessions and mobileOutputGuide save with an optional baseRevision (mobileOutputGuide requires it); a stale one answers 409 { error, code: \"revision_conflict\", current } and leaves the setting unchanged. The dictionaries keep their own contract: PUT carries `revision`, a stale one answers 409 { error }."
   },
   "settings": [
     {
@@ -14,6 +14,15 @@
       "type": "{ enabled: boolean }",
       "default": { "enabled": false },
       "validation": "PUT /server/metrics/settings takes enabled as a boolean.",
+      "revisioned": true
+    },
+    {
+      "key": "durableSessions",
+      "scope": "server",
+      "storage": "config",
+      "type": "{ enabled: boolean }",
+      "default": { "enabled": false },
+      "validation": "PUT /server/durable-sessions/settings takes enabled as a boolean; it is stored as experimental.serverDurable (revision as experimental.serverDurableRevision) and applies without a restart. GET answers the value the running server uses.",
       "revisioned": true
     },
     {
