@@ -2706,6 +2706,22 @@ final class ServerConnection {
     /// Load current session JSON so tap does not trust a stale cached status.
     /// Failure keeps the cached row; it must not block ask-card hydration.
     func refreshSessionRecordIfPossible(sessionId: String) async {
+        _ = await loadSessionRecord(sessionId: sessionId)
+    }
+
+    /// What reading one session record from the server came to.
+    enum SessionRecordLoad: Equatable {
+        /// The record is in the session store.
+        case loaded
+        /// The server answered that it has no such session (404).
+        case notFound
+        /// No answer: no client, a network error, or another failure.
+        case failed
+    }
+
+    /// `refreshSessionRecordIfPossible` that says how the read ended, for a caller that must tell a
+    /// session the server does not have from a server it could not ask.
+    func loadSessionRecord(sessionId: String) async -> SessionRecordLoad {
         do {
             let session: Session
             if let fetchHook = _getSessionRecordForTesting {
@@ -2713,15 +2729,19 @@ final class ServerConnection {
             } else if let apiClient {
                 session = try await apiClient.getSessionRecord(sessionId: sessionId)
             } else {
-                return
+                return .failed
             }
             sessionStore.upsert(session)
+            return .loaded
         } catch {
             recordRefreshEvent(
                 "session_record.refresh_failed",
                 level: .warning,
                 metadata: Self.refreshErrorMetadata(error)
             )
+            if case APIError.server(let status, _) = error, status == 404 { return .notFound }
+            if case APIError.codedServer(let status, _, _) = error, status == 404 { return .notFound }
+            return .failed
         }
     }
 

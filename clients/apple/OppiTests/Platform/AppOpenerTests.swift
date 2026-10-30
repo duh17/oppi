@@ -510,7 +510,7 @@ struct AppOpenerTests {
         harness.addSession("grandchild", parent: "child", workspaceId: "w1", to: "server-a")
         harness.connection("server-a")._getSessionRecordForTesting = { id in
             var session = makeTestSession(id: id, workspaceId: "w1", status: .stopped)
-            session.parentSessionId = id == "child" ? "root" : nil
+            session.parentSessionId = ["grandchild": "child", "child": "root"][id]
             return session
         }
 
@@ -534,8 +534,9 @@ struct AppOpenerTests {
 
     @Test func aThreadLinkToAnUnknownSessionShowsTheListAndANotice() async throws {
         let harness = OpenerHarness(servers: [makeServer("server-a")])
-        harness.connection("server-a")._getSessionRecordForTesting = { _ in throw URLError(.fileDoesNotExist) }
-        harness.coordinator._getSessionRecordForTesting = { _, _ in throw URLError(.fileDoesNotExist) }
+        // The server answers 404: it does not have the session.
+        harness.connection("server-a")._getSessionRecordForTesting = { _ in throw APIError.server(status: 404, message: "Not found") }
+        harness.coordinator._getSessionRecordForTesting = { _, _ in throw APIError.server(status: 404, message: "Not found") }
 
         // Named server, and a link that names none.
         harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "gone", origin: .externalURL)))
@@ -549,6 +550,78 @@ struct AppOpenerTests {
         await harness.settle()
         #expect(harness.navigation.pendingThreadFocus == nil)
         #expect(harness.connection("server-a").extensionToast == "Session not found for this thread link")
+    }
+
+    /// A server that did not answer is not a session that does not exist: no "not found" notice, the list
+    /// stays where it was, and the request waits for the next foreground like an unreachable session link.
+    @Test func aThreadLinkThatCouldNotAskTheServerIsNotANotFound() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.connection("server-a")._getSessionRecordForTesting = { _ in throw URLError(.notConnectedToInternet) }
+        harness.coordinator._getSessionRecordForTesting = { _, _ in throw URLError(.notConnectedToInternet) }
+        harness.navigation.openWorkspaceSession(.init(serverId: "server-a", sessionId: "current", workspaceId: "w1"))
+
+        for link in [
+            SessionOpen(serverId: "server-a", sessionId: "gone", origin: .externalURL),
+            SessionOpen(sessionId: "gone", origin: .externalURL),
+        ] {
+            harness.connection("server-a").extensionToast = nil
+            harness.opener.open(.thread(link))
+            await harness.settle()
+
+            #expect(harness.navigation.pendingThreadFocus == nil)
+            #expect(!harness.navigation.workspaceStackRouteElements.isEmpty, "The screen is not reset for a link that did not resolve")
+            #expect(harness.connection("server-a").extensionToast == "Could not reach server-a")
+            #expect(harness.opener._parkedRequestForTesting == .thread(link))
+        }
+    }
+
+    /// A newer open supersedes a thread link that is still reading an ancestor: the older link must not
+    /// open its thread when the read returns.
+    @Test func aNewerLinkWinsOverAThreadLinkStillReadingAnAncestor() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("grandchild", parent: "child", workspaceId: "w1", to: "server-a")
+        harness.addSession("other-root", workspaceId: "w1", to: "server-a")
+        var release: CheckedContinuation<Void, Never>?
+        harness.connection("server-a")._getSessionRecordForTesting = { id in
+            if id == "child" { await withCheckedContinuation { release = $0 } }
+            var session = makeTestSession(id: id, workspaceId: "w1", status: .stopped)
+            session.parentSessionId = ["grandchild": "child", "child": "root"][id]
+            return session
+        }
+
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "grandchild", origin: .externalURL)))
+        for _ in 0..<500 where release == nil { await Task.yield() }
+        #expect(release != nil, "The first link should be reading its missing ancestor")
+
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "other-root", origin: .externalURL)))
+        await harness.settle()
+        #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "other-root"))
+
+        harness.navigation.pendingThreadFocus = nil
+        release?.resume()
+        for _ in 0..<200 { await Task.yield() }
+        #expect(harness.navigation.pendingThreadFocus == nil, "The superseded link must not open its thread")
+    }
+
+    /// The lock gate is the session link's: a record that names a locked workspace is refused after it loads.
+    @Test func aThreadLinkToASessionInALockedWorkspaceIsRefusedAndRestoresTheServer() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a"), makeServer("server-b")],
+            authOutcomes: [.cancelled]
+        )
+        let target = harness.connection("server-b")
+        // Only the loaded record names the locked workspace, so the gate before the switch cannot know it.
+        target._getSessionRecordForTesting = { id in makeTestSession(id: id, workspaceId: "w2", status: .busy) }
+        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
+            harness?.connection(serverId).sessionStore.session(id: sessionId)
+        }
+        harness.scopedLock.lock(.workspace(serverId: "server-b", workspaceId: "w2"))
+
+        harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "locked", origin: .externalURL)))
+        await harness.settle()
+
+        #expect(harness.coordinator.activeServerId == "server-a")
+        #expect(harness.navigation.pendingThreadFocus == nil)
     }
 
     @Test func unreachableServerKeepsTheRequestAndRetriesOnTheNextForeground() async throws {

@@ -57,8 +57,9 @@ final class SessionInboxViewController: UIViewController {
     private var threadStoppedFolds: [String: Bool] = [:] {
         didSet { setNeedsUpdateProperties() }
     }
-    /// A thread link's root row to bring to the top once the list holds it; given up at `expires`.
-    private var pendingThreadScroll: (rootId: String, expires: Date)?
+    /// A thread link's root row to bring into view in the first snapshot that holds it. A finger on
+    /// the list, or another server, ends it.
+    private var pendingThreadScroll: String?
     private var providerSetupState: ProviderSetupState = .unknown {
         didSet { setNeedsUpdateProperties() }
     }
@@ -167,6 +168,7 @@ final class SessionInboxViewController: UIViewController {
             collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         list.refreshControl.addAction(UIAction { [weak self] _ in self?.pullToRefresh() }, for: .valueChanged)
+        list.onUserScroll = { [weak self] in self?.pendingThreadScroll = nil }
 
         titleLabel.text = String(localized: "All Sessions")
         titleLabel.font = UIFontMetrics(forTextStyle: .headline).scaledFont(
@@ -496,12 +498,12 @@ final class SessionInboxViewController: UIViewController {
         guard focus.serverId == coordinator.activeServerId else { return }
         applySearchNavigation(.reset)
         expandedThreadRoots.insert(focus.rootId)
-        pendingThreadScroll = (focus.rootId, Date().addingTimeInterval(10))
+        pendingThreadScroll = focus.rootId
     }
 
     private func scrollToPendingThreadRoot() {
-        guard let pending = pendingThreadScroll else { return }
-        if Date() > pending.expires || list.scrollToTop(ofFirstOf: [.session(pending.rootId), .stoppedSession(pending.rootId)]) {
+        guard let rootId = pendingThreadScroll else { return }
+        if list.scrollToTop(ofFirstOf: [.session(rootId), .stoppedSession(rootId)]) {
             pendingThreadScroll = nil
         }
     }
@@ -580,6 +582,7 @@ final class SessionInboxViewController: UIViewController {
         collapsedStoppedGroupIDs = reset.collapsedStoppedGroupIDs
         expandedThreadRoots = []
         threadStoppedFolds = [:]
+        pendingThreadScroll = nil
         // Another server's sessions replace the list; they are not edits of
         // this one. Emptying it makes this pass's snapshot apply without
         // animation. Animated, the old server's deleted headers fade out
@@ -643,7 +646,7 @@ final class SessionInboxViewController: UIViewController {
         let data = viewData(state)
         itemsById = data.itemsById
         // A thread link's root that sits in a collapsed stopped day would stay out of sight.
-        if let rootId = pendingThreadScroll?.rootId,
+        if let rootId = pendingThreadScroll,
            let group = data.stoppedGroups.first(where: { $0.items.contains { $0.id == rootId } }),
            !isStoppedDayExpanded(group.id, day: group.day) {
             toggleStoppedDayExpansion(group.id, day: group.day)

@@ -1212,6 +1212,25 @@ struct ConnectionCoordinatorTests {
         #expect(result?.connection.sessionStore.session(id: "missing-child")?.status == .busy)
     }
 
+    @Test func lookupSessionSeparatesASessionTheServerLacksFromAServerThatDidNotAnswer() async {
+        let (coordinator, _) = makeCoordinator()
+        let serverA = makeServer(id: "sha256:lookup-a", name: "A")
+        coordinator.serverStore.addOrUpdate(serverA)
+        coordinator.switchToServer(serverA)
+
+        coordinator._getSessionRecordForTesting = { _, _ in throw APIError.server(status: 404, message: "Not found") }
+        guard case .notFound = await coordinator.lookupSession(id: "gone") else {
+            Issue.record("A 404 means the server has no such session")
+            return
+        }
+
+        coordinator._getSessionRecordForTesting = { _, _ in throw URLError(.timedOut) }
+        guard case .unreachable = await coordinator.lookupSession(id: "gone") else {
+            Issue.record("A timeout means the session may still exist")
+            return
+        }
+    }
+
     // MARK: - Push Navigation
 
     @Test func pushNavigationSwitchesServerForCrossServerSession() {

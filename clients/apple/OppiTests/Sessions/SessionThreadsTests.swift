@@ -61,9 +61,12 @@ struct SessionThreadsTests {
         #expect(SessionThreadGrouping.rootId(of: "missing", in: loaded) == nil)
         // With the parent not loaded, the loaded top of the chain stands in for the root.
         #expect(SessionThreadGrouping.rootId(of: "grandchild", in: [loaded[0], loaded[2]]) == "child")
-        // A parent cycle resolves to one root, the same one the rollups pick.
+        // A parent cycle resolves both members to the one root the list shows for it.
         let cycle = [session("a", parent: "b", created: 1), session("b", parent: "a", created: 2)]
-        #expect(SessionThreadGrouping.rootId(of: "a", in: cycle) == SessionThreadGrouping.rollups(from: cycle).first?.root.id)
+        let cycleRoot = SessionThreadGrouping.rollups(from: cycle).first?.root.id
+        #expect(cycleRoot != nil)
+        #expect(SessionThreadGrouping.rootId(of: "a", in: cycle) == cycleRoot)
+        #expect(SessionThreadGrouping.rootId(of: "b", in: cycle) == cycleRoot)
     }
 
     @Test func theMissingAncestorIsTheFirstUnloadedParentOnTheChain() {

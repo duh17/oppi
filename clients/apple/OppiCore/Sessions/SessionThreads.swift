@@ -186,14 +186,8 @@ enum SessionThreadGrouping {
     /// Root of the launch tree `sessionId` belongs to among the loaded `sessions`: the session
     /// itself when it has no loaded parent. Nil when `sessionId` is not among them.
     static func rootId(of sessionId: String, in sessions: [Session]) -> String? {
-        let byId = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        guard var current = byId[sessionId] else { return nil }
-        // Walk up the chain; a parent cycle ends at the session that closes it, as `rollups` does.
-        var visited: Set<String> = [sessionId]
-        while let parentId = current.parentSessionId, let parent = byId[parentId], visited.insert(parentId).inserted {
-            current = parent
-        }
-        return current.id
+        // The rollup's own root, so a parent cycle resolves to the root the list shows for it.
+        rollups(from: sessions).first { rollup in rollup.members.contains { $0.id == sessionId } }?.root.id
     }
 
     /// The first parent on `sessionId`'s chain that is not among `sessions`, so a caller can load

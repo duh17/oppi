@@ -221,6 +221,8 @@ final class SessionListCollection<
     /// Whether a row that is not a session takes a tap, and what the tap does.
     var isRowSelectable: (Row) -> Bool = { _ in false }
     var didSelectRow: (Row) -> Void = { _ in }
+    /// A finger starts dragging the list (never a scroll the list made itself).
+    var onUserScroll: () -> Void = {}
 
     private let root: AppRootEnvironment
     private let actions: SessionListRowActions
@@ -463,6 +465,10 @@ final class SessionListCollection<
     }
 
     // MARK: UICollectionViewDelegate
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        onUserScroll()
+    }
 
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }

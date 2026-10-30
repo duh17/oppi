@@ -1459,8 +1459,23 @@ final class ConnectionCoordinator {
     /// Active server first, then any server that already has this ask in memory.
     /// Do not probe the rest of the pairing list on the tap path.
     func findOrFetchSession(id: String) async -> SessionLookupResult? {
+        if case .found(let result) = await lookupSession(id: id) { return result }
+        return nil
+    }
+
+    /// How `lookupSession` ended.
+    enum SessionLookup {
+        case found(SessionLookupResult)
+        /// Every server asked answered, and none has the session.
+        case notFound
+        /// A server could not be asked, or failed, so the session may still exist.
+        case unreachable
+    }
+
+    /// `findOrFetchSession` that tells a session no server has from a server that did not answer.
+    func lookupSession(id: String) async -> SessionLookup {
         if let found = findSession(id: id) {
-            return found
+            return .found(found)
         }
 
         let hintedServerIds = SessionDeepLinkSessionResolution.fetchServerIds(
@@ -1470,6 +1485,7 @@ final class ConnectionCoordinator {
             }
         )
 
+        var couldNotAsk = false
         for serverId in hintedServerIds {
             guard let connection = connections[serverId] else { continue }
             do {
@@ -1479,16 +1495,19 @@ final class ConnectionCoordinator {
                 } else if let api = await apiClientReady(for: serverId) {
                     session = try await api.getSessionRecord(sessionId: id)
                 } else {
+                    couldNotAsk = true
                     continue
                 }
                 connection.sessionStore.upsert(session)
-                return SessionLookupResult(serverId: serverId, connection: connection)
+                return .found(SessionLookupResult(serverId: serverId, connection: connection))
             } catch {
-                continue
+                if case APIError.server(let status, _) = error, status == 404 { continue }
+                if case APIError.codedServer(let status, _, _) = error, status == 404 { continue }
+                couldNotAsk = true
             }
         }
 
-        return nil
+        return couldNotAsk ? .unreachable : .notFound
     }
 
     /// Get the connection for a specific server.

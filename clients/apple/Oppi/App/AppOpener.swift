@@ -632,8 +632,10 @@ final class AppOpener {
     /// The server a session or thread link resolves to, or why it does not.
     private enum LinkServer {
         case server(String)
-        /// No paired server knows the session.
+        /// Every server asked answered, and none knows the session.
         case notFound
+        /// A server could not be asked, so the session may still exist.
+        case lookupFailed
         /// The link ends here with this outcome.
         case done(AppOpenOutcome)
     }
@@ -670,11 +672,13 @@ final class AppOpener {
                 }
                 return .server(named)
             }
-            guard let found = await coordinator.findOrFetchSession(id: open.sessionId) else {
-                return .notFound
-            }
+            let lookup = await coordinator.lookupSession(id: open.sessionId)
             guard isCurrent(generation) else { return .done(.finished) }
-            return .server(found.serverId)
+            switch lookup {
+            case .found(let found): return .server(found.serverId)
+            case .notFound: return .notFound
+            case .unreachable: return .lookupFailed
+            }
         }
     }
 
@@ -686,8 +690,8 @@ final class AppOpener {
         switch await resolveLinkServer(for: open, link: "session", generation: generation) {
         case .server(let resolved):
             serverId = resolved
-        case .notFound:
-            // No paired server knows this session: the workspace root,
+        case .notFound, .lookupFailed:
+            // No paired server gave this session: the workspace root,
             // the same landing a missing deep link always had.
             showWorkspaceRoot()
             return .finished
@@ -818,7 +822,8 @@ final class AppOpener {
     // MARK: - Threads
 
     /// `oppi://thread/<id>`: All Sessions with the thread open in place and scrolled to its root.
-    /// The server resolves and locks exactly as a session link does; the session's own record
+    /// The server resolves and locks as a session link does (a lock check before the server
+    /// switch, and another once the record names the session's workspace). The session's record
     /// and its ancestors' are read when they are not loaded, so a descendant finds its root.
     private func performThread(_ open: SessionOpen, generation: UInt64) async -> AppOpenOutcome {
         let serverId: String
@@ -828,6 +833,10 @@ final class AppOpener {
         case .notFound:
             showThreadNotFound()
             return .finished
+        case .lookupFailed:
+            // A server could not be asked, so the session may exist: keep the request for the next foreground.
+            if let activeServerId = coordinator.activeServerId { toastUnreachableIfFirstAttempt(activeServerId) }
+            return .unreachable
         case .done(let outcome):
             return outcome
         }
@@ -838,6 +847,7 @@ final class AppOpener {
             sessionId: open.sessionId
         )), isCurrent(generation) else { return .finished }
 
+        let previousServerId = coordinator.activeServerId
         let switched = await openServer(serverId, generation: generation)
         guard isCurrent(generation) else { return .finished }
         guard switched, let connection = coordinator.connection(for: serverId) else {
@@ -850,32 +860,54 @@ final class AppOpener {
         )
         guard isCurrent(generation) else { return .finished }
 
-        guard let rootId = await threadRootId(of: open.sessionId, on: connection, generation: generation) else {
-            guard isCurrent(generation) else { return .finished }
+        // Read the record so the lock scope comes from loaded data, never from the URL. A server that
+        // says it has no such session is a not-found; one that did not answer is not.
+        let load = await connection.loadSessionRecord(sessionId: open.sessionId)
+        guard isCurrent(generation) else { return .finished }
+        guard connection.sessionStore.session(id: open.sessionId) != nil else {
+            if load == .notFound {
+                showThreadNotFound()
+                return .finished
+            }
+            toastUnreachableIfFirstAttempt(serverId)
+            return .unreachable
+        }
+        let recordUnlocked = await scopedLock.authorize(scopedLock.sessionTarget(
+            serverId: serverId,
+            sessionId: open.sessionId,
+            workspaceId: connection.sessionReentryWorkspaceId(for: open.sessionId)
+        ))
+        guard isCurrent(generation) else { return .finished }
+        guard recordUnlocked else {
+            restoreServer(previousServerId, after: serverId)
+            return .finished
+        }
+
+        await loadMissingAncestors(of: open.sessionId, on: connection, generation: generation)
+        guard isCurrent(generation) else { return .finished }
+        guard let rootId = SessionThreadGrouping.rootId(of: open.sessionId, in: connection.sessionStore.sessions) else {
             showThreadNotFound()
             return .finished
         }
+        // The list drops a focus for another server, so leave the screen alone rather than reset it for nothing.
+        guard coordinator.activeServerId == serverId else { return .finished }
         navigation.showThread(serverId: serverId, rootId: rootId)
         return .finished
     }
 
-    /// The root of the thread `sessionId` belongs to on `connection`, reading the session and
-    /// each missing ancestor from the server first. Nil when the server has no such session.
-    private func threadRootId(
+    /// Reads each ancestor of `sessionId` that is not loaded, so its chain reaches the root. An
+    /// ancestor the server cannot give leaves the loaded top of the chain as the root.
+    private func loadMissingAncestors(
         of sessionId: String,
         on connection: ServerConnection,
         generation: UInt64
-    ) async -> String? {
-        if connection.sessionStore.session(id: sessionId) == nil {
-            await connection.refreshSessionRecordIfPossible(sessionId: sessionId)
-        }
+    ) async {
         var asked: Set<String> = []
         while let missing = SessionThreadGrouping.missingAncestorId(of: sessionId, in: connection.sessionStore.sessions),
               asked.insert(missing).inserted {
-            await connection.refreshSessionRecordIfPossible(sessionId: missing)
-            guard isCurrent(generation) else { return nil }
+            _ = await connection.loadSessionRecord(sessionId: missing)
+            guard isCurrent(generation) else { return }
         }
-        return SessionThreadGrouping.rootId(of: sessionId, in: connection.sessionStore.sessions)
     }
 
     /// The list, with the notice a thread link to an unknown session shows.
