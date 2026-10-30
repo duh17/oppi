@@ -1,6 +1,6 @@
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -176,10 +176,23 @@ describe.each(clients)("session history shapes for a client with $name", ({ head
     return JSON.parse(response.body) as T;
   }
 
-  function attachmentManifests(): string[] {
-    return readdirSync(dataDir, { recursive: true, encoding: "utf8" }).filter(
-      (path) => basename(path) === "manifest.json",
-    );
+  /**
+   * The attachment records the session's manifest holds, read at the store's own path.
+   * The data directory must not be walked recursively: beside `session-attachments` the durable
+   * store creates and removes its directory lock (`durable/sessions/<storeId>.lock`) whenever a
+   * request opens the store or the idle close releases it, and `readdirSync(…, { recursive: true })`
+   * throws ENOENT when that directory goes away between listing it and opening it.
+   *
+   * `storeUserMessageImages` writes this manifest before the history response is built, so the
+   * records are on disk by the time a route's trace assertions above have run.
+   */
+  function storedAttachments(sessionId: string): Array<Record<string, unknown>> {
+    const path = join(dataDir, "session-attachments", sessionId, "manifest.json");
+    if (!existsSync(path)) return [];
+    const manifest = JSON.parse(readFileSync(path, "utf8")) as {
+      attachments?: Array<Record<string, unknown>>;
+    };
+    return manifest.attachments ?? [];
   }
 
   function expectStoredImageRef(trace: TraceEventBody[], label: string): void {
@@ -202,7 +215,11 @@ describe.each(clients)("session history shapes for a client with $name", ({ head
     for (const path of routes) {
       expectStoredImageRef((await get<{ trace: TraceEventBody[] }>(path)).trace, path);
     }
-    expect(attachmentManifests()).not.toEqual([]);
+    for (const sessionId of [workspaceSessionId, controlSessionId]) {
+      expect(storedAttachments(sessionId), sessionId).toMatchObject([
+        { kind: "image", mimeType: "image/png" },
+      ]);
+    }
   });
 
   it("returns a durable session's user images as stored media refs", async () => {
@@ -214,7 +231,9 @@ describe.each(clients)("session history shapes for a client with $name", ({ head
     ]) {
       expectStoredImageRef((await get<{ trace: TraceEventBody[] }>(path)).trace, path);
     }
-    expect(attachmentManifests()).not.toEqual([]);
+    expect(storedAttachments(durableSession.id)).toMatchObject([
+      { kind: "image", mimeType: "image/png" },
+    ]);
   }, 30_000);
 
   it("keeps a control session's domain unchanged in the session list", async () => {
