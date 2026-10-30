@@ -161,6 +161,7 @@ private final class MainSliceProbe {
 private struct IdleConnection: SSHTerminalConnection {
     func send(_ bytes: Data) async throws {}
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream { throw SSHConnectionError.notConnected }
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
         throw SSHConnectionError.notConnected
     }

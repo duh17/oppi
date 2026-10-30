@@ -10,6 +10,7 @@ private final class QuietConnection: SSHTerminalConnection {
     func close() {}
     func send(_ bytes: Data) async throws {}
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream { throw SSHConnectionError.notConnected }
     func run(_ command: String, input: Data) async throws -> SSHExecResult { throw SSHConnectionError.commandRequestRejected }
     func checkAlive() async throws {}
     func cancel() async {}
@@ -26,6 +27,7 @@ private final class ThemedConnection: SSHTerminalConnection {
     func close() {}
     func send(_ bytes: Data) async throws {}
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream { throw SSHConnectionError.notConnected }
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
         if let themeName, command == SSHTerminalGhosttyRemote.configCommand() {
             return SSHExecResult(output: Data("theme = \(themeName)\n".utf8), errorOutput: Data(), exitStatus: 0)

@@ -348,6 +348,7 @@ private actor RecordingConnection: SSHTerminalConnection {
 
     func send(_ bytes: Data) async throws { sink.yield(bytes) }
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream { throw SSHConnectionError.notConnected }
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
         SSHExecResult(output: Data(), errorOutput: Data(), exitStatus: 0)
     }

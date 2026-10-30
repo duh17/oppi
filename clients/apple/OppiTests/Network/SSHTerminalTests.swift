@@ -2984,6 +2984,7 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
         hung.forEach { $0.resume() }
         hung.removeAll()
     }
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream { throw SSHConnectionError.notConnected }
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
         runs.append((command, input))
         if hanging.contains(command) {

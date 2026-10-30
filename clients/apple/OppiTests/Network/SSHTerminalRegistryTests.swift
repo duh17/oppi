@@ -505,6 +505,7 @@ private final class FakeConnection: SSHTerminalConnection {
     func close() { closed.withLock { $0 = true } }
     func send(_ bytes: Data) async throws {}
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream { throw SSHConnectionError.notConnected }
     func run(_ command: String, input: Data) async throws -> SSHExecResult { throw SSHConnectionError.commandRequestRejected }
     func checkAlive() async throws {}
     func cancel() async { cancelled.withLock { $0 = true } }

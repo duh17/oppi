@@ -164,6 +164,11 @@ struct RexControlTests {
         let written = WrittenFrames()
         let control = RexControl()
         control.attach { written.append($0) }
+        let events = Mutex<[String]>([])
+        control.onEvent { event in
+            let inner = event["payload"] as? [String: Any]
+            events.withLock { $0.append(inner?["type"] as? String ?? "?") }
+        }
 
         let opening = Task { try await control.open() }
         try await waitUntil { !written.all.isEmpty }
@@ -191,6 +196,7 @@ struct RexControlTests {
         control.receive(.data(serverFrame(.text, Data(#"{"type":"response","id":"\#(versionID)","seq":1,"payload":{"rex_version":"0.1.0"}}"#.utf8))))
         let version = try JSONSerialization.jsonObject(with: try await first.value) as? [String: Any]
         #expect(version?["rex_version"] as? String == "0.1.0")
+        #expect(events.withLock { $0 } == ["session_created"], "events reach the handler, whole, in order")
         await #expect(throws: RexClientError.refused(code: "session_not_found", message: "no session")) { try await second.value }
 
         let waiting = Task { try await control.call("server.status", [:]) }
@@ -344,6 +350,7 @@ private actor RecordingConnection: SSHTerminalConnection {
     private(set) var sent = [Data]()
     func send(_ bytes: Data) async throws { sent.append(bytes) }
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream { throw SSHConnectionError.notConnected }
     func run(_ command: String, input: Data) async throws -> SSHExecResult { throw SSHConnectionError.commandRequestRejected }
     func checkAlive() async throws {}
     nonisolated func close() {}

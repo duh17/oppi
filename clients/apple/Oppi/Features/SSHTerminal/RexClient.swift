@@ -57,8 +57,9 @@ enum RexClientError: Error, Equatable, LocalizedError {
 }
 
 /// Rex's control connection (`/api/control`, `rex.control.v1`) over a byte
-/// pipe: one hello, then JSON requests matched to their responses by id. A
-/// single pane needs no events, so they are skipped. Pings are answered.
+/// pipe: one hello, then JSON requests matched to their responses by id.
+/// Events go to `onEvent` when one is set, and are skipped otherwise. Pings
+/// are answered.
 ///
 /// Thread-safe: `receive` runs on the SSH event loop, requests on any task.
 final class RexControl: Sendable {
@@ -83,6 +84,7 @@ final class RexControl: Sendable {
         var exitStatus: Int?
         var ended: (any Error)?
         var onEnd: (@Sendable (any Error) -> Void)?
+        var onEvent: (@Sendable ([String: Any]) -> Void)?
     }
 
     private static let upgradeID = "upgrade"
@@ -104,6 +106,14 @@ final class RexControl: Sendable {
             return state.ended
         }
         if let ended { handler(ended) }
+    }
+
+    /// Called for every server event, as Rex framed it (`{"type":"event","seq":…,"payload":{…}}`),
+    /// on the SSH event loop and in the order Rex sent them. A single pane
+    /// does not set one: the connection only receives events once it has
+    /// attached to a session or to the whole server.
+    func onEvent(_ handler: @escaping @Sendable ([String: Any]) -> Void) {
+        state.withLock { $0.onEvent = handler }
     }
 
     /// Upgrades the pipe and says hello. Returns once Rex welcomed this client.
@@ -179,8 +189,10 @@ final class RexControl: Sendable {
                     let payload = object["payload"].flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.fragmentsAllowed]) }
                     resolve(id, .success(payload ?? Data("{}".utf8)))
                 }
+            case "event":
+                state.withLock { $0.onEvent }?(object)
             default:
-                break // Events: a single pane does not follow them.
+                break
             }
         case .close:
             end(RexClientError.connectionClosed)
@@ -427,6 +439,10 @@ final class RexPaneConnection: SSHTerminalConnection, Sendable {
 
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
         try await (session as any SSHTerminalConnection).run(command, input: input)
+    }
+
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        try await session.openStream(command: command, inboundFlow: nil, sink: sink)
     }
 
     func checkAlive() async throws { try await session.checkAlive(timeout: .seconds(8)) }

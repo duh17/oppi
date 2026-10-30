@@ -12,6 +12,10 @@ protocol SSHTerminalConnection: Sendable {
     /// One-shot command on the same connection, outside the terminal's PTY.
     /// `input` becomes its stdin.
     func run(_ command: String, input: Data) async throws -> SSHExecResult
+    /// A long-lived command beside the terminal, no PTY: its output streams to
+    /// `sink` as it arrives, and `SSHExecStream.send` writes its stdin. The
+    /// stream ends with the command, `close()`, or the connection.
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream
     /// One SSH round trip. Throwing means the connection is gone.
     func checkAlive() async throws
     /// Submits the close to the connection and returns without waiting. It
@@ -27,6 +31,9 @@ extension SSHPTYSession: SSHTerminalConnection {
         // An upload over a slow link needs longer than an API call.
         try await run(command, input: input, maximumOutputBytes: 2 * 1024 * 1024,
                       timeout: input.count > 64 * 1024 ? .seconds(120) : .seconds(10))
+    }
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        try await openStream(command: command, inboundFlow: nil, sink: sink)
     }
     func checkAlive() async throws { try await checkAlive(timeout: .seconds(8)) }
 }
@@ -452,6 +459,12 @@ final class SSHTerminalChannel {
     func run(_ command: String, input: Data = Data()) async throws -> SSHExecResult {
         guard connected, let connection else { throw SSHConnectionError.notConnected }
         return try await connection.run(command, input: input)
+    }
+
+    /// Opens a long-lived command on this terminal's connection (`SSHTerminalConnection.openStream`).
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        guard connected, let connection else { throw SSHConnectionError.notConnected }
+        return try await connection.openStream(command: command, sink: sink)
     }
 
     /// Saves `data` in a private temporary folder on the host and returns its
