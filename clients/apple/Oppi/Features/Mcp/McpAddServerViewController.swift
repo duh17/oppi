@@ -308,7 +308,10 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
             }
         case .saving:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Adding server…")
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Adding server…")),
+                palette: palette
+            )
             ControlScreenList.background(cell, grouped: false, palette: palette)
         default:
             break

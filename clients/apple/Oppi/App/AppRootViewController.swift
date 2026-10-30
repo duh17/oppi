@@ -158,20 +158,19 @@ final class AppRootViewController: UIViewController {
 
     /// The saved servers could not be read with the device unlocked. The
     /// pairings may be intact, so this is never onboarding.
-    private static func pairedServersUnavailableScreen(retry: @escaping () -> Void) -> UIViewController {
+    private static func pairedServersUnavailableScreen(retry: @escaping @MainActor () -> Void) -> UIViewController {
         let screen = UIViewController()
-        screen.view.backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bg)
-        var configuration = UIContentUnavailableConfiguration.empty()
-        configuration.image = UIImage(systemName: "lock")
-        configuration.text = String(localized: "Can\u{2019}t Read Saved Servers")
-        configuration.secondaryText = String(
-            localized: "Oppi can\u{2019}t read its saved servers. Unlock your device or restart Oppi."
+        let palette = ThemeRuntimeState.currentPalette()
+        screen.view.backgroundColor = UIColor(palette.bg)
+        screen.contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+            .failed(
+                title: String(localized: "Can\u{2019}t Read Saved Servers"),
+                message: String(localized: "Oppi can\u{2019}t read its saved servers. Unlock your device or restart Oppi."),
+                retry: RetryAction(run: retry)
+            ),
+            palette: palette,
+            background: UIColor(palette.bg)
         )
-        var button = UIButton.Configuration.filled()
-        button.title = String(localized: "Retry")
-        configuration.button = button
-        configuration.buttonProperties.primaryAction = UIAction { _ in retry() }
-        screen.contentUnavailableConfiguration = configuration
         return screen
     }
 

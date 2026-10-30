@@ -130,14 +130,15 @@ final class ServerMetricsViewController: UIViewController {
             snapshot = nil
             updateAutoRefresh()
             scrollView.isHidden = true
-            var unavailable = ControlScreenList.unavailable(
-                "No Servers",
-                systemImage: "server.rack",
-                description: "Pair a server to view its metrics.",
-                palette: themeID.palette
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: String(localized: "No Servers"),
+                    systemImage: "server.rack",
+                    message: String(localized: "Pair a server to view its metrics.")
+                ),
+                palette: themeID.palette,
+                background: root.themeStore.backgroundColor
             )
-            unavailable.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = unavailable
             return
         }
         scrollView.isHidden = false
@@ -727,7 +728,8 @@ enum ServerMetricsFormat {
 
 // MARK: - Status card
 
-/// Loading, failure, and sampling-off states above the cards.
+/// Loading, failure, and sampling-off states above the cards: a load state in
+/// a rounded card. Sampling-off has Turn On where a failure has Retry.
 final class ServerMetricsStatusView: UIView {
     enum State: Equatable {
         case loading
@@ -738,43 +740,23 @@ final class ServerMetricsStatusView: UIView {
     var onTurnOn: (() -> Void)?
     var onRetry: (() -> Void)?
 
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    private let titleLabel = UILabel()
-    private let messageLabel = UILabel()
-    private let button = UIButton(configuration: .borderedProminent())
+    private let content = UIContentUnavailableView(loadState: .loading(nil))
+    private var palette = ThemeRuntimeState.currentPalette()
     private var state: State = .loading
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         layer.cornerRadius = 12
         layer.cornerCurve = .continuous
-
-        titleLabel.font = .preferredFont(forTextStyle: .headline)
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.textAlignment = .center
-        titleLabel.numberOfLines = 0
-        messageLabel.font = .preferredFont(forTextStyle: .subheadline)
-        messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.textAlignment = .center
-        messageLabel.numberOfLines = 0
-        button.addAction(UIAction { [weak self] _ in self?.buttonTapped() }, for: .primaryActionTriggered)
-
-        let stack = UIStackView(arrangedSubviews: [spinner, titleLabel, messageLabel, button])
-        stack.axis = .vertical
-        stack.alignment = .center
-        stack.spacing = 10
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 24),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -24),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            // A centered stack leaves a label at its one-line width, so its
-            // wrapped height is measured wrong and the message truncates.
-            titleLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            messageLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+        render()
     }
 
     @available(*, unavailable)
@@ -783,54 +765,43 @@ final class ServerMetricsStatusView: UIView {
     }
 
     func apply(_ palette: ThemePalette) {
+        self.palette = palette
         backgroundColor = UIColor(palette.bgHighlight)
-        titleLabel.textColor = UIColor(palette.fg)
-        messageLabel.textColor = UIColor(palette.comment)
-        spinner.color = UIColor(palette.comment)
+        render()
     }
 
     func show(_ newState: State) {
         state = newState
-        switch newState {
-        case .loading:
-            spinner.startAnimating()
-            spinner.isHidden = false
-            titleLabel.isHidden = true
-            messageLabel.isHidden = true
-            button.isHidden = true
-        case .failed(let message):
-            spinner.stopAnimating()
-            spinner.isHidden = true
-            titleLabel.isHidden = false
-            titleLabel.text = "Unable to load server metrics"
-            messageLabel.isHidden = false
-            messageLabel.text = message
-            button.isHidden = false
-            button.configuration?.title = "Try Again"
-            button.configuration?.showsActivityIndicator = false
-            button.isEnabled = true
-            button.accessibilityIdentifier = "server.metrics.retry"
-        case .off(let isTurningOn, let error):
-            spinner.stopAnimating()
-            spinner.isHidden = true
-            titleLabel.isHidden = false
-            titleLabel.text = "Server metrics are off"
-            messageLabel.isHidden = false
-            messageLabel.text = error
-                ?? "Turn on to sample this server's CPU, memory, and disk every 30 seconds. Samples stay on the server."
-            button.isHidden = false
-            button.configuration?.title = "Turn On"
-            button.configuration?.showsActivityIndicator = isTurningOn
-            button.isEnabled = !isTurningOn
-            button.accessibilityIdentifier = "server.metrics.turnOn"
-        }
+        render()
     }
 
-    private func buttonTapped() {
+    private func render() {
         switch state {
-        case .loading: break
-        case .failed: onRetry?()
-        case .off: onTurnOn?()
+        case .loading:
+            content.configuration = UIContentUnavailableConfiguration.loadState(.loading(nil), palette: palette)
+        case .failed(let message):
+            content.configuration = UIContentUnavailableConfiguration.loadState(
+                .failed(
+                    title: String(localized: "Unable to load server metrics"),
+                    message: message,
+                    retry: RetryAction { [weak self] in self?.onRetry?() }
+                ),
+                palette: palette
+            )
+        case .off(let isTurningOn, let error):
+            var configuration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: String(localized: "Server metrics are off"),
+                    systemImage: "chart.xyaxis.line",
+                    message: error
+                        ?? String(localized: "Turn on to sample this server's CPU, memory, and disk every 30 seconds. Samples stay on the server.")
+                ),
+                palette: palette
+            )
+            configuration.setProminentButton(String(localized: "Turn On")) { [weak self] in self?.onTurnOn?() }
+            configuration.button.showsActivityIndicator = isTurningOn
+            configuration.buttonProperties.isEnabled = !isTurningOn
+            content.configuration = configuration
         }
     }
 }

@@ -395,7 +395,7 @@ final class FullScreenUSDZViewController: UIViewController {
     private let initialHandle: USDZLocalFileStore.Handle?
     private let fileProvider: MarkdownUSDZFileProvider?
     private let sceneView = USDZSceneView()
-    private let statusView = UIContentUnavailableView(configuration: .empty())
+    private let statusView = UIContentUnavailableView(loadState: .loading(nil))
     private var handle: USDZLocalFileStore.Handle?
     private var loadTask: Task<Void, Never>?
 
@@ -506,25 +506,24 @@ final class FullScreenUSDZViewController: UIViewController {
     private func showLoading() {
         sceneView.isHidden = true
         statusView.isHidden = false
-        var configuration = UIContentUnavailableConfiguration.loading()
-        configuration.text = String(localized: "Loading 3D scene")
-        statusView.configuration = configuration
+        statusView.configuration = UIContentUnavailableConfiguration.loadState(
+            .loading(String(localized: "Loading 3D scene")),
+            palette: ThemeRuntimeState.currentPalette()
+        )
     }
 
     private func showFailure() {
         sceneView.clear()
         sceneView.isHidden = true
         statusView.isHidden = false
-        var configuration = UIContentUnavailableConfiguration.empty()
-        configuration.image = UIImage(systemName: "cube")
-        configuration.text = String(localized: "Unable to load 3D scene")
-        configuration.secondaryText = embed.displayLabel
-        var retry = UIButton.Configuration.borderedProminent()
-        retry.title = String(localized: "Retry")
-        configuration.button = retry
-        configuration.buttonProperties.primaryAction = UIAction { [weak self] _ in
-            self?.startLoading()
-        }
+        var configuration = UIContentUnavailableConfiguration.loadState(
+            .failed(
+                title: String(localized: "Unable to load 3D scene"),
+                message: embed.displayLabel,
+                retry: RetryAction { [weak self] in self?.startLoading() }
+            ),
+            palette: ThemeRuntimeState.currentPalette()
+        )
         var open = UIButton.Configuration.bordered()
         open.title = String(localized: "Open file")
         configuration.secondaryButton = open

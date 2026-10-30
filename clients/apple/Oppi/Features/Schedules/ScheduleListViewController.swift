@@ -169,10 +169,12 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
             }
         case .empty:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.unavailable(
-                selectedStatus.emptyTitle,
-                systemImage: selectedStatus.emptySystemImage,
-                description: selectedStatus.emptyDescription,
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: selectedStatus.emptyTitle,
+                    systemImage: selectedStatus.emptySystemImage,
+                    message: selectedStatus.emptyDescription
+                ),
                 palette: palette
             )
         case .schedule(let id):

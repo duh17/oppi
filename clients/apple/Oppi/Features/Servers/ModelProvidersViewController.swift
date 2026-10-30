@@ -169,14 +169,11 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
             loadedServerId = nil
             installSwitcher(nil)
             collectionView.isHidden = true
-            var unavailable = ControlScreenList.unavailable(
-                "Server Unavailable",
-                systemImage: "server.rack",
-                description: "This paired server is no longer available.",
-                palette: palette
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .serverUnavailable,
+                palette: palette,
+                background: root.themeStore.backgroundColor
             )
-            unavailable.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = unavailable
             return
         }
         collectionView.isHidden = false
@@ -439,7 +436,10 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
             configureAttemptRow(cell, palette: palette)
         case .loading:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Loading providers…")
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Loading providers…")),
+                palette: palette
+            )
             ControlScreenList.background(cell, grouped: false, palette: palette)
         case .onboarding:
             ControlScreenList.staticRow(cell, identifier: "server.modelProviders.onboarding")

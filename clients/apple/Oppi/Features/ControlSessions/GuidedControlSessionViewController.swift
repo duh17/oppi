@@ -8,7 +8,7 @@ final class GuidedControlSessionViewController: UIViewController {
     private let configuration: GuidedControlComposerConfiguration
     private let root: AppRootEnvironment
     private let composer: GuidedControlComposerController
-    private let emptyState = UIContentUnavailableView(configuration: UIContentUnavailableConfiguration.empty())
+    private let emptyState = UIContentUnavailableView(loadState: .loading(nil))
 
     /// `connection` is the server the session starts on (the active one when
     /// nil). `onSessionPrepared` takes the prepared session; without it the
@@ -92,10 +92,12 @@ final class GuidedControlSessionViewController: UIViewController {
         let palette = theme.activeThemeID.palette
         overrideUserInterfaceStyle = theme.userInterfaceStyle
         view.backgroundColor = theme.backgroundColor
-        emptyState.configuration = ControlScreenList.unavailable(
-            title ?? "",
-            systemImage: Self.systemImage(configuration.domain),
-            description: "Describe the outcome you want. Oppi will inspect the current definition and clarify anything ambiguous before changing it.",
+        emptyState.configuration = UIContentUnavailableConfiguration.loadState(
+            .empty(
+                title: title ?? "",
+                systemImage: Self.systemImage(configuration.domain),
+                message: String(localized: "Describe the outcome you want. Oppi will inspect the current definition and clarify anything ambiguous before changing it.")
+            ),
             palette: palette
         )
     }

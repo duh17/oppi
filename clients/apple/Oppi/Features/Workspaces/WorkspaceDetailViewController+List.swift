@@ -265,17 +265,24 @@ extension WorkspaceDetailViewController {
         let palette = root.themeStore.activeThemeID.palette
         switch row {
         case .searching:
-            cell.contentConfiguration = UIContentUnavailableConfiguration.sessionListSearching()
-        case .noMatches(let query):
-            cell.contentConfiguration = UIContentUnavailableConfiguration.sessionListNoMatches(query: query)
-        case .empty:
-            var content = UIContentUnavailableConfiguration.empty()
-            content.image = UIImage(systemName: "terminal")
-            content.text = String(localized: "No Sessions")
-            content.secondaryText = String(
-                localized: "Tap Message to compose a Quick Session in this worktree."
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Searching sessions…")),
+                palette: palette
             )
-            cell.contentConfiguration = content
+        case .noMatches(let query):
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .noResults(query: query),
+                palette: palette
+            )
+        case .empty:
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: String(localized: "No Sessions"),
+                    systemImage: "terminal",
+                    message: String(localized: "Tap Message to compose a Quick Session in this worktree.")
+                ),
+                palette: palette
+            )
         case .archiveLoading:
             var content = UIListContentConfiguration.cell()
             content.text = String(localized: "Loading older sessions…")

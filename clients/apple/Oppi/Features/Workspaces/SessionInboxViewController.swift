@@ -775,45 +775,52 @@ final class SessionInboxViewController: UIViewController {
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "workspace.sessionList.cachedWarning"
         case .searching:
-            cell.contentConfiguration = UIContentUnavailableConfiguration.sessionListSearching()
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Searching sessions…")),
+                palette: palette
+            )
         case .noMatches(let query):
-            cell.contentConfiguration = UIContentUnavailableConfiguration.sessionListNoMatches(query: query)
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .noResults(query: query),
+                palette: palette
+            )
         case .empty(let empty):
-            cell.contentConfiguration = emptyConfiguration(empty)
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                loadState(for: empty),
+                palette: palette
+            )
         }
     }
 
-    private func emptyConfiguration(_ empty: EmptyState) -> UIContentUnavailableConfiguration {
-        var content = UIContentUnavailableConfiguration.empty()
+    private func loadState(for empty: EmptyState) -> LoadState {
         switch empty {
         case .noServers:
-            content.image = UIImage(systemName: "server.rack")
-            content.text = String(localized: "No Servers")
-            content.secondaryText = String(localized: "Pair with a server to get started.")
+            return .empty(
+                title: String(localized: "No Servers"),
+                systemImage: "server.rack",
+                message: String(localized: "Pair with a server to get started.")
+            )
         case .loading(let serverName):
-            content.image = UIImage(systemName: "arrow.triangle.2.circlepath")
-            content.text = String(localized: "Loading Sessions")
-            content.secondaryText = String(localized: "Refreshing \(serverName)…")
+            return .loading(String(localized: "Refreshing \(serverName)…"))
         case .unavailable(let serverName, let afterRetry):
-            content.image = UIImage(systemName: "exclamationmark.triangle.fill")
-            content.text = String(localized: "Server Data Unavailable")
-            content.secondaryText = afterRetry
-                ? String(localized: "\(serverName) is still unavailable after retry.")
-                : String(localized: "\(serverName)'s workspace and session data are unavailable.")
-            var button = UIButton.Configuration.borderedProminent()
-            button.title = String(localized: "Retry")
-            content.button = button
-            content.buttonProperties.primaryAction = UIAction { [weak self] _ in
-                Task { await self?.retryVisibleServer() }
-            }
+            return .failed(
+                title: String(localized: "Server Data Unavailable"),
+                message: afterRetry
+                    ? String(localized: "\(serverName) is still unavailable after retry.")
+                    : String(localized: "\(serverName)'s workspace and session data are unavailable."),
+                retry: RetryAction { [weak self] in
+                    Task { await self?.retryVisibleServer() }
+                }
+            )
         case .noActiveSessions(let serverName):
-            content.image = UIImage(systemName: "text.bubble")
-            content.text = String(localized: "No Active Sessions")
-            content.secondaryText = String(
-                localized: "No active sessions on \(serverName). Start a quick session or choose a workspace from the sidebar."
+            return .empty(
+                title: String(localized: "No Active Sessions"),
+                systemImage: "text.bubble",
+                message: String(
+                    localized: "No active sessions on \(serverName). Start a quick session or choose a workspace from the sidebar."
+                )
             )
         }
-        return content
     }
 
     // MARK: Actions

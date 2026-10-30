@@ -131,18 +131,22 @@ final class SkillDetailViewController: UIViewController {
         switch phase {
         case .loading:
             scrollView.isHidden = true
-            var loading = UIContentUnavailableConfiguration.loading()
-            loading.text = String(localized: "Loading skill…")
-            loading.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = loading
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Loading skill…")),
+                palette: ThemeRuntimeState.currentPalette(),
+                background: root.themeStore.backgroundColor
+            )
         case .failed(let message):
             scrollView.isHidden = true
-            var failed = UIContentUnavailableConfiguration.empty()
-            failed.image = UIImage(systemName: "exclamationmark.triangle")
-            failed.text = String(localized: "Failed to load")
-            failed.secondaryText = message
-            failed.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = failed
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .failed(
+                    title: String(localized: "Failed to load"),
+                    message: message,
+                    retry: RetryAction { [weak self] in self?.load() }
+                ),
+                palette: ThemeRuntimeState.currentPalette(),
+                background: root.themeStore.backgroundColor
+            )
         case .loaded:
             contentUnavailableConfiguration = nil
             scrollView.isHidden = false

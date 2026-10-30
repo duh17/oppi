@@ -330,11 +330,14 @@ final class DiffReaderView: UIView {
     }
 
     private func showEmptyState() {
-        var configuration = UIContentUnavailableConfiguration.empty()
-        configuration.image = UIImage(systemName: "checkmark.circle")
-        configuration.text = "No Textual Changes"
-        configuration.secondaryText = emptyDescription
-        let view = UIContentUnavailableView(configuration: configuration)
+        let view = UIContentUnavailableView(configuration: .loadState(
+            .empty(
+                title: String(localized: "No Textual Changes"),
+                systemImage: "checkmark.circle",
+                message: emptyDescription
+            ),
+            palette: ThemeRuntimeState.currentPalette()
+        ))
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
         NSLayoutConstraint.activate([

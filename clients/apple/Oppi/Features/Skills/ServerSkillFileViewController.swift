@@ -229,13 +229,18 @@ final class ServerSkillFileViewController: UIViewController {
         removeContent()
         switch next {
         case .connecting:
-            contentUnavailableConfiguration = loadingConfiguration(String(localized: "Connecting…"))
+            contentUnavailableConfiguration = loadStateConfiguration(.connecting)
         case .loading:
-            contentUnavailableConfiguration = loadingConfiguration(String(localized: "Loading file…"))
-        case .unavailable(let reason):
-            contentUnavailableConfiguration = unavailableConfiguration(reason)
-        case .file(.unavailable(let reason)):
-            contentUnavailableConfiguration = unavailableConfiguration(reason)
+            contentUnavailableConfiguration = loadStateConfiguration(.loading(String(localized: "Loading file…")))
+        case .unavailable(let reason), .file(.unavailable(let reason)):
+            contentUnavailableConfiguration = loadStateConfiguration(.failed(
+                title: String(localized: "File Unavailable"),
+                message: reason,
+                retry: RetryAction { [weak self] in
+                    guard let self, let connection = self.connection else { return }
+                    self.loadSummary(connection)
+                }
+            ))
         case .file(.editable(let hostPath)):
             contentUnavailableConfiguration = nil
             guard let summary, let connection else { return }
@@ -267,27 +272,8 @@ final class ServerSkillFileViewController: UIViewController {
         }
     }
 
-    private func loadingConfiguration(_ text: String) -> UIContentUnavailableConfiguration {
-        var loading = UIContentUnavailableConfiguration.loading()
-        loading.text = text
-        loading.background.backgroundColor = root.themeStore.backgroundColor
-        return loading
-    }
-
-    private func unavailableConfiguration(_ reason: String) -> UIContentUnavailableConfiguration {
-        var unavailable = UIContentUnavailableConfiguration.empty()
-        unavailable.image = UIImage(systemName: "exclamationmark.triangle.fill")
-        unavailable.text = String(localized: "File Unavailable")
-        unavailable.secondaryText = reason
-        var retry = UIButton.Configuration.borderedProminent()
-        retry.title = String(localized: "Retry")
-        unavailable.button = retry
-        unavailable.buttonProperties.primaryAction = UIAction { [weak self] _ in
-            guard let self, let connection = self.connection else { return }
-            self.loadSummary(connection)
-        }
-        unavailable.background.backgroundColor = root.themeStore.backgroundColor
-        return unavailable
+    private func loadStateConfiguration(_ state: LoadState) -> UIContentUnavailableConfiguration {
+        .loadState(state, palette: ThemeRuntimeState.currentPalette(), background: root.themeStore.backgroundColor)
     }
 
     private func embed(_ controller: UIViewController) {

@@ -145,36 +145,29 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
     private func show(_ next: Shown) {
         collectionView.isHidden = next != .tree
         // Rebuilt on every pass, so a theme change recolors these states.
-        var configuration: UIContentUnavailableConfiguration?
+        let state: LoadState
         switch next {
         case .tree:
-            break
+            contentUnavailableConfiguration = nil
+            return
         case .connecting:
-            configuration = ControlScreenList.loading(String(localized: "Connecting…"))
+            state = .connecting
         case .loading:
-            configuration = ControlScreenList.loading(String(localized: "Loading skill files…"))
+            state = .loading(String(localized: "Loading skill files…"))
         case .empty:
-            configuration = ControlScreenList.unavailable(
-                "No Skill Files",
+            state = .empty(
+                title: String(localized: "No Skill Files"),
                 systemImage: "folder",
-                description: "This skill did not expose any browsable files.",
-                palette: palette
+                message: String(localized: "This skill did not expose any browsable files.")
             )
         case .unavailable(let reason):
-            var unavailable = ControlScreenList.unavailable(
-                "Files Unavailable",
-                systemImage: "exclamationmark.triangle.fill",
-                description: reason,
-                palette: palette
+            state = .failed(
+                title: String(localized: "Files Unavailable"),
+                message: reason,
+                retry: RetryAction { [weak self] in self?.load() }
             )
-            var retry = UIButton.Configuration.borderedProminent()
-            retry.title = String(localized: "Retry")
-            unavailable.button = retry
-            unavailable.buttonProperties.primaryAction = UIAction { [weak self] _ in self?.load() }
-            configuration = unavailable
         }
-        configuration?.background.backgroundColor = root.themeStore.backgroundColor
-        contentUnavailableConfiguration = configuration
+        contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(state, palette: palette, background: root.themeStore.backgroundColor)
     }
 
     // MARK: - Tree

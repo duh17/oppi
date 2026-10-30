@@ -508,23 +508,6 @@ enum SessionListSectionHeader<Toggle: Equatable>: Equatable {
     case group(title: String, detail: String? = nil, isExpanded: Bool, accessibilityIdentifier: String?, toggle: Toggle)
 }
 
-extension UIContentUnavailableConfiguration {
-    /// A session search the server is still answering.
-    static func sessionListSearching() -> Self {
-        var content = loading()
-        content.text = String(localized: "Searching sessions…")
-        return content
-    }
-
-    static func sessionListNoMatches(query: String) -> Self {
-        var content = empty()
-        content.image = UIImage(systemName: "magnifyingglass")
-        content.text = String(localized: "No Matching Sessions")
-        content.secondaryText = String(localized: "No sessions match “\(query)”.")
-        return content
-    }
-}
-
 // MARK: - Search
 
 extension ScreenSearchController {

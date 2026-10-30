@@ -43,7 +43,7 @@ final class ChatFilePanelViewController: UIViewController {
     private let readInputs: () -> ChatFilePanelInputs?
     private let onClose: () -> Void
 
-    private let noWorkspace = UIContentUnavailableView(configuration: .empty())
+    private let noWorkspace = UIContentUnavailableView(loadState: .loading(nil))
     private let search = ScreenSearchController(prompt: String(localized: "Search files"))
     private var searchInstalled = false
     private var hasAppeared = false
@@ -162,12 +162,15 @@ final class ChatFilePanelViewController: UIViewController {
 
     private func applyTheme(_ palette: ThemePalette) {
         view.backgroundColor = UIColor(palette.bg)
-        var configuration = UIContentUnavailableConfiguration.empty()
-        configuration.image = UIImage(systemName: "folder.badge.questionmark")
-        configuration.text = String(localized: "No Workspace")
-        configuration.secondaryText = String(localized: "This session is not attached to a workspace.")
-        configuration.background.backgroundColor = UIColor(palette.bg)
-        noWorkspace.configuration = configuration
+        noWorkspace.configuration = UIContentUnavailableConfiguration.loadState(
+            .empty(
+                title: String(localized: "No Workspace"),
+                systemImage: "folder.badge.questionmark",
+                message: String(localized: "This session is not attached to a workspace.")
+            ),
+            palette: palette,
+            background: UIColor(palette.bg)
+        )
         barKey = nil
     }
 

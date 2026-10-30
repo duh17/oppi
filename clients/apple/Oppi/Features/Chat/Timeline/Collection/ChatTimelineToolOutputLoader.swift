@@ -69,7 +69,7 @@ final class ExpandedToolOutputLoader {
         }
     #endif
 
-    private var loadState = LoadState()
+    private var loadState = ToolOutputLoadState()
     private var pendingRetryWorkByID: [String: DispatchWorkItem] = [:]
 
     private static let retryMaxAttempts = 6
@@ -245,7 +245,7 @@ final class ExpandedToolOutputLoader {
     }
 }
 
-private struct LoadState {
+private struct ToolOutputLoadState {
     var loadingIDs: Set<String> = []
     var tasks: [String: Task<Void, Never>] = [:]
 

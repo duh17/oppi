@@ -229,35 +229,34 @@ final class ModelPickerViewController: UIViewController, UICollectionViewDelegat
         dataSource.apply(snapshot, animatingDifferences: !UIAccessibility.isReduceMotionEnabled && list.window != nil)
         refreshHeaders()
 
-        var content = unavailableConfiguration()
-        list.isHidden = content != nil
-        content?.textProperties.color = UIColor(palette.fg)
-        content?.secondaryTextProperties.color = UIColor(palette.comment)
-        content?.imageProperties.tintColor = UIColor(palette.comment)
-        content?.background.backgroundColor = UIColor(palette.bg)
-        contentUnavailableConfiguration = content
+        let state = unavailableState()
+        list.isHidden = state != nil
+        contentUnavailableConfiguration = state.map {
+            UIContentUnavailableConfiguration.loadState($0, palette: palette, background: UIColor(palette.bg))
+        }
     }
 
-    private func unavailableConfiguration() -> UIContentUnavailableConfiguration? {
+    private func unavailableState() -> LoadState? {
         guard models.isEmpty else { return nil }
         if !modelsCacheReady, modelLoadError == nil {
-            var loading = UIContentUnavailableConfiguration.loading()
-            loading.text = "Loading models…"
-            return loading
+            return .loading(String(localized: "Loading models…"))
         }
-        var empty = UIContentUnavailableConfiguration.empty()
-        empty.image = UIImage(systemName: modelLoadError == nil ? "cpu" : "wifi.exclamationmark")
-        empty.text = modelLoadError == nil ? "No Models Available" : "Models Unavailable"
-        empty.secondaryText = modelLoadError ?? "Server returned no models."
-        if modelLoadError != nil, let apiClient {
-            empty.button = .plain()
-            empty.button.title = "Try Again"
-            empty.button.baseForegroundColor = UIColor(palette.blue)
-            empty.buttonProperties.primaryAction = UIAction { [weak self] _ in
-                Task { await self?.loadModels(api: apiClient) }
+        guard let modelLoadError else {
+            return .empty(
+                title: String(localized: "No Models Available"),
+                systemImage: "cpu",
+                message: String(localized: "Server returned no models.")
+            )
+        }
+        return .failed(
+            title: String(localized: "Models Unavailable"),
+            message: modelLoadError,
+            retry: apiClient.map { apiClient in
+                RetryAction { [weak self] in
+                    Task { await self?.loadModels(api: apiClient) }
+                }
             }
-        }
-        return empty
+        )
     }
 
     /// All models grouped by provider, excluding any in the recent section.

@@ -217,6 +217,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private var checkoutLabel: UILabel?
     private var noticeLabel: UILabel?
     private var sizeWarning: FileViewerSizeWarningView?
+    /// The unavailable or failed state on screen, kept to repaint on a theme change.
+    private var stateView: (view: UIContentUnavailableView, state: LoadState)?
     private var videoPage: UIView?
     /// Under the reader: the reader's own page color, so the band below its
     /// safe area (the home indicator) does not show the viewer's lighter page.
@@ -484,11 +486,11 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             sizeWarning = warning
             mounted = warning
         case .error(let message):
-            mounted = unavailable(
+            mounted = unavailable(.failed(
                 title: String(localized: "Unable to Load"),
-                systemImage: "exclamationmark.triangle",
-                message: message
-            )
+                message: message,
+                retry: RetryAction { [weak self] in self?.startLoad(force: true) }
+            ))
         case .text(let text):
             if isEditorOpen, let editSession {
                 mounted = mountEditor(session: editSession)
@@ -506,11 +508,11 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         case .usdz(let handle):
             mounted = mountUSDZ(handle)
         case .binary:
-            mounted = unavailable(
+            mounted = unavailable(.empty(
                 title: String(localized: "Binary File"),
                 systemImage: "doc.fill",
                 message: String(localized: "This file type cannot be displayed as text.")
-            )
+            ))
         }
         mountedView = mounted
         if FileBrowserContentRenderingPolicy.shouldInstallHorizontalBackSwipe(
@@ -566,6 +568,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         checkoutLabel = nil
         noticeLabel = nil
         sizeWarning = nil
+        stateView = nil
         videoPage = nil
         readerPage = nil
         audioPlayerController = nil
@@ -618,14 +621,18 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         return page
     }
 
-    private func unavailable(title: String, systemImage: String, message: String) -> UIView {
-        var configuration = UIContentUnavailableConfiguration.empty()
-        configuration.image = UIImage(systemName: systemImage)
-        configuration.text = title
-        configuration.secondaryText = message
-        let unavailable = UIContentUnavailableView(configuration: configuration)
+    private func unavailable(_ state: LoadState) -> UIView {
+        let unavailable = makeStateView(state)
         addPage(unavailable)
         return unavailable
+    }
+
+    private func makeStateView(_ state: LoadState) -> UIContentUnavailableView {
+        let view = UIContentUnavailableView(
+            configuration: .loadState(state, palette: ThemeRuntimeState.currentPalette())
+        )
+        stateView = (view, state)
+        return view
     }
 
     private func mountReader(text: String) -> UIView {
@@ -889,11 +896,11 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     private func mountPDF(_ data: Data) -> UIView {
         guard let document = PDFDocument(data: data) else {
-            let invalid = unavailable(
+            let invalid = unavailable(.empty(
                 title: String(localized: "Invalid PDF"),
                 systemImage: "doc.badge.exclamationmark",
                 message: String(localized: "Could not decode PDF data.")
-            )
+            ))
             installOwnBackSwipe(on: invalid)
             return invalid
         }
@@ -943,15 +950,22 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             scene.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
         ])
         let fileName = currentFileName
-        scene.onLoadFailed = { [weak page, weak scene] in
-            guard let page else { return }
-            scene?.clear()
-            scene?.isHidden = true
-            var configuration = UIContentUnavailableConfiguration.empty()
-            configuration.image = UIImage(systemName: "cube")
-            configuration.text = String(localized: "Unable to load 3D scene")
-            configuration.secondaryText = fileName
-            let unavailable = UIContentUnavailableView(configuration: configuration)
+        let fileURL = handle.url
+        scene.onLoadFailed = { [weak self, weak page, weak scene] in
+            guard let self, let page, let scene else { return }
+            scene.clear()
+            scene.isHidden = true
+            let unavailable = makeStateView(.failed(
+                title: String(localized: "Unable to load 3D scene"),
+                message: fileName,
+                retry: RetryAction { [weak self, weak scene] in
+                    guard let scene else { return }
+                    self?.stateView?.view.removeFromSuperview()
+                    self?.stateView = nil
+                    scene.isHidden = false
+                    scene.show(fileURL: fileURL)
+                }
+            ))
             unavailable.translatesAutoresizingMaskIntoConstraints = false
             page.addSubview(unavailable)
             NSLayoutConstraint.activate([
@@ -970,6 +984,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     /// player's lyrics, and the theme colors of the pages this viewer draws.
     private func updateMountedContent(palette: ThemePalette) {
         sizeWarning?.apply(palette)
+        if let stateView {
+            stateView.view.configuration = UIContentUnavailableConfiguration.loadState(stateView.state, palette: palette)
+        }
         editBanner?.update(palette: palette)
         videoPage?.backgroundColor = UIColor(palette.bgDark)
         readerPage?.backgroundColor = UIColor(palette.bgDark)

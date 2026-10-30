@@ -313,10 +313,11 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             lockCover = cover
             contentUnavailableConfiguration = nil
         case .connecting:
-            var loading = UIContentUnavailableConfiguration.loading()
-            loading.text = String(localized: "Connecting…")
-            loading.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = loading
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .connecting,
+                palette: ThemeRuntimeState.currentPalette(),
+                background: root.themeStore.backgroundColor
+            )
         case .list:
             contentUnavailableConfiguration = nil
         }

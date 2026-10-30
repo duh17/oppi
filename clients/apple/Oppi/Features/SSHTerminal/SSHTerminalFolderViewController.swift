@@ -18,9 +18,6 @@ final class SSHTerminalFolderViewController: UIViewController {
     private let session = SSHTerminalConnectSession()
     private var chrome: SSHTerminalConnectChrome?
 
-    private let statusLabel = UILabel()
-    private let retryButton = UIButton(type: .system)
-    private var lastThemeID: ThemeID?
     /// The terminal has been reached. From then on this connecting screen's job
     /// is done, so it leaves with the terminal instead of waiting to be popped.
     private var hasShownTerminal = false
@@ -41,30 +38,6 @@ final class SSHTerminalFolderViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.accessibilityIdentifier = "sshTerminal.folder"
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.numberOfLines = 0
-        statusLabel.textAlignment = .center
-        statusLabel.font = .preferredFont(forTextStyle: .subheadline)
-        statusLabel.adjustsFontForContentSizeCategory = true
-        var retry = UIButton.Configuration.tinted()
-        retry.title = String(localized: "Retry")
-        retryButton.configuration = retry
-        retryButton.translatesAutoresizingMaskIntoConstraints = false
-        retryButton.accessibilityIdentifier = "sshTerminal.folder.retry"
-        retryButton.addAction(UIAction { [weak self] _ in self?.connect() }, for: .touchUpInside)
-
-        let stack = UIStackView(arrangedSubviews: [statusLabel, retryButton])
-        stack.axis = .vertical
-        stack.spacing = 16
-        stack.alignment = .center
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            stack.leadingAnchor.constraint(equalTo: view.readableContentGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.readableContentGuide.trailingAnchor),
-        ])
-
         chrome = SSHTerminalConnectChrome(
             host: self,
             session: session,
@@ -99,26 +72,29 @@ final class SSHTerminalFolderViewController: UIViewController {
         _ = session.failure
         _ = session.passwordPrompt
         _ = session.showsTerminal
-        let themeID = sshTerminalThemeID
-        if lastThemeID != themeID {
-            lastThemeID = themeID
-            view.backgroundColor = UIColor(themeID.palette.bg)
-            statusLabel.textColor = UIColor(themeID.palette.comment)
-            retryButton.tintColor = UIColor(themeID.palette.blue)
-        }
+        let palette = sshTerminalThemeID.palette
+        view.backgroundColor = UIColor(palette.bg)
         let folder = target.folderLabel
         if let failure = session.failure {
-            statusLabel.text = String(localized: "Could not open \(folder) on \(profile.endpointLabel).\n\n\(failure)")
-            statusLabel.accessibilityIdentifier = "sshTerminal.folder.failure"
+            // Retry is for a failure the person can act on; a live shell is the
+            // terminal screen, and a password or trust sheet is over this one.
+            let canRetry = !(session.connecting || session.showsTerminal || session.passwordPrompt)
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .failed(
+                    title: String(localized: "Could not open \(folder) on \(profile.endpointLabel)"),
+                    message: failure,
+                    retry: canRetry ? RetryAction { [weak self] in self?.connect() } : nil
+                ),
+                palette: palette,
+                background: UIColor(palette.bg)
+            )
         } else {
-            statusLabel.text = multiplexerLabel(folder)
-            statusLabel.accessibilityIdentifier = "sshTerminal.folder.connecting"
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(multiplexerLabel(folder)),
+                palette: palette,
+                background: UIColor(palette.bg)
+            )
         }
-        statusLabel.accessibilityValue = folder
-        // Retry is for a failure the person can act on; a live shell is the
-        // terminal screen, and a password or trust sheet is over this one.
-        retryButton.isHidden = session.failure == nil || session.connecting
-            || session.showsTerminal || session.passwordPrompt
         if session.showsTerminal { hasShownTerminal = true }
         chrome?.sync()
     }

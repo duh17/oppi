@@ -76,12 +76,7 @@ class PinnedServerRouteViewController<Page: UIViewController>: UIViewController,
 
     /// What the route shows while no server is paired for it.
     func unavailableContent(palette: ThemePalette) -> UIContentUnavailableConfiguration {
-        ControlScreenList.unavailable(
-            String(localized: "Server Unavailable"),
-            systemImage: "server.rack",
-            description: String(localized: "This paired server is no longer available."),
-            palette: palette
-        )
+        .loadState(.serverUnavailable, palette: palette)
     }
 
     // MARK: - Lifecycle

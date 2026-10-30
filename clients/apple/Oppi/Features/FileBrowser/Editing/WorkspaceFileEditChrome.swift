@@ -395,15 +395,14 @@ final class WorkspaceFileConflictReviewViewController: UIViewController {
             self.reader = reader
             return
         case .resolved:
-            content = ReviewPagePlaceholder.unavailable(
+            content = ReviewPagePlaceholder.show(.empty(
                 title: String(localized: "Already Saved"),
                 systemImage: "checkmark.circle",
                 message: String(localized: "The disk version matches your edits.")
-            )
+            ))
         case .unavailable:
             content = ReviewPagePlaceholder.unavailable(
                 title: String(localized: "Unable to Load"),
-                systemImage: "wifi.exclamationmark",
                 message: String(localized: "The disk version could not be read. Your edits were not changed.")
             )
         }

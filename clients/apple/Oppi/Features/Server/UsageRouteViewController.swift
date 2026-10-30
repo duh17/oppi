@@ -19,16 +19,15 @@ final class UsageRouteViewController: PinnedServerRouteViewController<UsageViewC
     }
 
     override func unavailableContent(palette: ThemePalette) -> UIContentUnavailableConfiguration {
-        var content = ControlScreenList.unavailable(
-            String(localized: "No Servers"),
-            systemImage: "server.rack",
-            description: String(localized: "Pair a server to view usage."),
+        var content = UIContentUnavailableConfiguration.loadState(
+            .empty(
+                title: String(localized: "No Servers"),
+                systemImage: "server.rack",
+                message: String(localized: "Pair a server to view usage.")
+            ),
             palette: palette
         )
-        content.button = .borderedProminent()
-        content.button.title = String(localized: "Add Server")
-        content.button.baseBackgroundColor = UIColor(palette.blue)
-        content.buttonProperties.primaryAction = UIAction { [weak self] _ in self?.addServer() }
+        content.setProminentButton(String(localized: "Add Server")) { [weak self] in self?.addServer() }
         return content
     }
 

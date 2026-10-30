@@ -88,10 +88,10 @@ struct ServerMetricsEnableTests {
         harness.window.rootViewController = nil
     }
 
-    private static func button(withIdentifier identifier: String, in view: UIView) -> UIButton? {
-        if let button = view as? UIButton, button.accessibilityIdentifier == identifier { return button }
+    private static func button(titled title: String, in view: UIView) -> UIButton? {
+        if let button = view as? UIButton, button.configuration?.title == title { return button }
         for subview in view.subviews {
-            if let found = button(withIdentifier: identifier, in: subview) { return found }
+            if let found = button(titled: title, in: subview) { return found }
         }
         return nil
     }
@@ -108,9 +108,9 @@ struct ServerMetricsEnableTests {
     private func turnOn(on page: ServerMetricsViewController) async throws {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             page.view.layoutIfNeeded()
-            return Self.button(withIdentifier: "server.metrics.turnOn", in: page.view) != nil
+            return Self.button(titled: "Turn On", in: page.view) != nil
         })
-        try #require(Self.button(withIdentifier: "server.metrics.turnOn", in: page.view)).sendActions(for: .primaryActionTriggered)
+        try #require(Self.button(titled: "Turn On", in: page.view)).sendActions(for: .primaryActionTriggered)
     }
 
     @Test("Turning on saves through the store against the loaded revision and updates the cached flag")

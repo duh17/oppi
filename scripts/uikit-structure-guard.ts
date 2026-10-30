@@ -66,6 +66,15 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    navigation controller). A screen that brings its own Back conforms to
  *    `NavigationBarHiding` and calls `navigationController?.updateNavigationBar(for:animated:)`.
  *
+ *  - `UIContentUnavailableConfiguration` factory is a ratchet of the same kind: a
+ *    screen's whole-screen (or list-cell) loading, empty, no-results, and failed
+ *    states go through `LoadState` and `.loadState(...)`, which own the words, the
+ *    theme colors, and the one Retry button. `UIContentUnavailableConfiguration.empty/loading/search(`
+ *    and a bare `.empty()`/`.loading()`/`.search()` in a file that uses the type
+ *    count, except in `LoadStateContent.swift`. Its baseline is empty: the count
+ *    only goes down. Strings are stripped before matching, so the guard cannot see
+ *    a retyped "Retry" or "Connecting…"; those live in `LoadState` only.
+ *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
  *
@@ -94,6 +103,7 @@ const scanRoots = ["clients/apple/Oppi", "clients/apple/OppiDebugHarness"].map((
 const baselinePath = join(repoRoot, "scripts/uikit-structure-baseline.json");
 const guide = "dev/architecture-client.md, section \"UIKit and SwiftUI ownership\"";
 const navigationBarGuide = "dev/architecture-client.md, section \"Navigation bar\"";
+const loadStateGuide = "dev/architecture-client.md, section \"Load states\"";
 const alertsGuide = "dev/architecture-client.md, section \"Alerts and confirmations\"";
 const settingsGuide = "dev/architecture-client.md, section \"Settings pages\"";
 const settingsBase = "clients/apple/Oppi/Features/Settings/SettingsListViewController.swift";
@@ -209,6 +219,15 @@ const constructs: Construct[] = [
       "clients/apple/Oppi/Core/Views/ErrorAlertPresenter.swift",
       "clients/apple/Oppi/Core/Views/ConfirmationSheet.swift",
     ],
+  },
+  // Whole-screen and in-list load states outside `LoadState`: see "Load states" in the guide.
+  {
+    name: "UIContentUnavailableConfiguration factory",
+    pattern: /\bUIContentUnavailableConfiguration\s*\.\s*(?:empty|loading|search)\s*\(|(?:=|:|\()\s*\.(?:empty|loading|search)\(\)/g,
+    disallowed: false,
+    exemptFiles: ["clients/apple/Oppi/Core/Views/LoadStateContent.swift"],
+    // `.empty()` and friends are common words; only a file that uses the type is read.
+    fileMustMatch: /UIContentUnavailable/,
   },
   // Settings-list theming outside the kit's base: see "Settings pages" in the guide.
   {
@@ -412,6 +431,11 @@ setNavigationBarHidden( or an isNavigationBarHidden = assignment outside Router.
 itself and can race the stack. Conform to NavigationBarHiding, answer
 hidesNavigationBar, and call navigationController?.updateNavigationBar(for:animated:)
 when the answer changes; see ${navigationBarGuide}.
+
+UIContentUnavailableConfiguration.empty(/.loading(/.search( outside LoadStateContent.swift
+means a screen builds its own loading, empty, or failed state. Show a \`LoadState\` with
+\`contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(state, palette:, background:)\`
+(or \`UIContentUnavailableView(loadState:)\` for a region); see ${loadStateGuide}.
 
 AppPreferences.*.set, UserDefaults.standard.set(, FontPreferences.set, an APIClient
 call that writes a setting, and toggleRow( or .settingsToggle( in Features are settings written outside

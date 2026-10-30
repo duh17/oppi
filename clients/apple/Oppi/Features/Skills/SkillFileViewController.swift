@@ -108,17 +108,24 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
         removeReader()
         switch phase {
         case .loading:
-            var loading = UIContentUnavailableConfiguration.loading()
-            loading.text = String(localized: "Loading…")
-            loading.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = loading
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Loading…")),
+                palette: ThemeRuntimeState.currentPalette(),
+                background: root.themeStore.backgroundColor
+            )
         case .failed(let message):
-            var failed = UIContentUnavailableConfiguration.empty()
-            failed.image = UIImage(systemName: "exclamationmark.triangle")
-            failed.text = String(localized: "Failed to load")
-            failed.secondaryText = message
-            failed.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = failed
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .failed(
+                    title: String(localized: "Failed to load"),
+                    message: message,
+                    retry: RetryAction { [weak self] in
+                        self?.phase = .loading
+                        self?.load()
+                    }
+                ),
+                palette: ThemeRuntimeState.currentPalette(),
+                background: root.themeStore.backgroundColor
+            )
         case .loaded(let text):
             contentUnavailableConfiguration = nil
             embedReader(text: text)

@@ -154,28 +154,4 @@ enum ControlScreenList {
         }
         cell.setNeedsUpdateConfiguration()
     }
-
-    /// A centered spinner with its caption (SwiftUI `ProgressView("…")`).
-    static func loading(_ text: String) -> UIContentUnavailableConfiguration {
-        var config = UIContentUnavailableConfiguration.loading()
-        config.text = text
-        return config
-    }
-
-    /// An empty or failed state (SwiftUI `ContentUnavailableView`).
-    static func unavailable(
-        _ title: String,
-        systemImage: String,
-        description: String? = nil,
-        palette: ThemePalette
-    ) -> UIContentUnavailableConfiguration {
-        var config = UIContentUnavailableConfiguration.empty()
-        config.image = UIImage(systemName: systemImage)
-        config.imageProperties.tintColor = UIColor(palette.comment)
-        config.text = title
-        config.textProperties.color = UIColor(palette.fg)
-        config.secondaryText = description
-        config.secondaryTextProperties.color = UIColor(palette.comment)
-        return config
-    }
 }

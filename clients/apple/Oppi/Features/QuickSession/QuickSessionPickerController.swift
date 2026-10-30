@@ -184,14 +184,7 @@ final class QuickSessionPickerController: UIViewController, RouterModalContainer
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         switch content {
         case .loading(let message):
-            let spinner = UIActivityIndicatorView(style: .medium)
-            spinner.color = colors.comment
-            spinner.startAnimating()
-            let label = label(message, style: .subheadline, color: colors.comment)
-            let row = UIStackView(arrangedSubviews: [spinner, label])
-            row.spacing = 8
-            row.alignment = .center
-            stack.addArrangedSubview(padded(row, insets: NSDirectionalEdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18)))
+            stack.addArrangedSubview(loadingRow(message, insets: NSDirectionalEdgeInsets(top: 18, leading: 18, bottom: 18, trailing: 18)))
         case .empty(let title, let systemImage, let message):
             let icon = UIImageView(image: UIImage.scaledSymbol(systemImage, style: .body, weight: .semibold, color: colors.fg))
             let titleLabel = label(title, style: .body, weight: .semibold, color: colors.fg)
@@ -237,17 +230,23 @@ final class QuickSessionPickerController: UIViewController, RouterModalContainer
         preferredContentSize = CGSize(width: style.width, height: min(style.maxHeight, ceil(fitting.height)))
     }
 
+    /// A spinner beside its message, padded. The picker is a popover sized from
+    /// its rows, so its states are rows, not a full-size `LoadState`.
+    private func loadingRow(_ message: String, insets: NSDirectionalEdgeInsets) -> UIView {
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.color = colors.comment
+        spinner.startAnimating()
+        let row = UIStackView(arrangedSubviews: [spinner, label(message, style: .subheadline, color: colors.comment)])
+        row.spacing = 8
+        row.alignment = .center
+        return padded(row, insets: insets)
+    }
+
     private func noteView(_ note: QuickSessionPickerNote) -> UIView {
         let insets = NSDirectionalEdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)
         switch note {
         case .loading(let message):
-            let spinner = UIActivityIndicatorView(style: .medium)
-            spinner.color = colors.comment
-            spinner.startAnimating()
-            let row = UIStackView(arrangedSubviews: [spinner, label(message, style: .subheadline, color: colors.comment)])
-            row.spacing = 8
-            row.alignment = .center
-            return padded(row, insets: insets)
+            return loadingRow(message, insets: insets)
         case .message(let message):
             return padded(label(message, style: .subheadline, color: colors.comment), insets: insets)
         }

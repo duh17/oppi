@@ -316,7 +316,10 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
                 return ControlRowViews.stack(views, spacing: 2)
             }
         case .busy:
-            cell.contentConfiguration = ControlScreenList.loading("Updating…")
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Updating…")),
+                palette: palette
+            )
         case .error:
             cell.accessibilityIdentifier = "mcp.detail.error"
             let message = error

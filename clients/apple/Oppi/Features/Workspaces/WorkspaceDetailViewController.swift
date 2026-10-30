@@ -347,10 +347,11 @@ final class WorkspaceDetailViewController: UIViewController {
         }
 
         if next == .connecting {
-            var loading = UIContentUnavailableConfiguration.loading()
-            loading.text = String(localized: "Connecting…")
-            loading.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = loading
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .connecting,
+                palette: ThemeRuntimeState.currentPalette(),
+                background: root.themeStore.backgroundColor
+            )
         } else {
             contentUnavailableConfiguration = nil
         }

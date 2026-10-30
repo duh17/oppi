@@ -190,27 +190,21 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
         shown = next
         collectionView.isHidden = next != .list
         // Rebuilt on every pass, so a theme change recolors these states.
+        let state: LoadState
         switch next {
         case .list:
             contentUnavailableConfiguration = nil
+            return
         case .loading:
-            var loading = ControlScreenList.loading("Loading extension…")
-            loading.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = loading
+            state = .loading(String(localized: "Loading extension…"))
         case .unavailable(let reason):
-            var unavailable = ControlScreenList.unavailable(
-                "Extension Unavailable",
-                systemImage: "exclamationmark.triangle.fill",
-                description: reason,
-                palette: palette
+            state = .failed(
+                title: String(localized: "Extension Unavailable"),
+                message: reason,
+                retry: RetryAction { [weak self] in self?.startLoad() }
             )
-            var retry = UIButton.Configuration.borderedProminent()
-            retry.title = "Retry"
-            unavailable.button = retry
-            unavailable.buttonProperties.primaryAction = UIAction { [weak self] _ in self?.startLoad() }
-            unavailable.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = unavailable
         }
+        contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(state, palette: palette, background: root.themeStore.backgroundColor)
     }
 
     // MARK: - List
@@ -436,7 +430,10 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
             cell.contentConfiguration = content
         case .loadingContributions:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Loading contributions…")
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Loading contributions…")),
+                palette: palette
+            )
             ControlScreenList.background(cell, grouped: false, palette: palette)
         case .tool(let name), .command(let name):
             ControlScreenList.staticRow(cell)

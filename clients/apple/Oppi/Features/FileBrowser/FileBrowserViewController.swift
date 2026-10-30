@@ -116,12 +116,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private let columnSearch = FileBrowserColumnSearchField()
     private let collectionView: UICollectionView
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private let stateView = UIContentUnavailableView(configuration: .empty())
+    private let stateView = UIContentUnavailableView(loadState: .loading(nil))
     private let refreshControl = UIRefreshControl()
     private let divider = UIView()
     private let dividerTint = UIView()
     private let paneContainer = UIView()
-    private let paneEmpty = UIContentUnavailableView(configuration: .empty())
+    private let paneEmpty = UIContentUnavailableView(loadState: .loading(nil))
     private let search = ScreenSearchController(prompt: String(localized: "Search files"))
     private var searchInstalled = false
     private var listConstraints: [NSLayoutConstraint] = []
@@ -377,9 +377,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
         divider.backgroundColor = .separator
         dividerTint.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.18)
         columnSearch.apply(palette)
-        var empty = paneEmptyConfiguration()
-        empty.background.backgroundColor = background
-        paneEmpty.configuration = empty
+        paneEmpty.configuration = UIContentUnavailableConfiguration.loadState(Self.paneEmptyState, palette: palette, background: background)
         paneViewer?.view.backgroundColor = background
         overlay = nil
     }
@@ -422,10 +420,11 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             lockCover = cover
         }
         if next == .connecting {
-            var loading = UIContentUnavailableConfiguration.loading()
-            loading.text = String(localized: "Connecting…")
-            loading.background.backgroundColor = root.themeStore.backgroundColor
-            contentUnavailableConfiguration = loading
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .connecting,
+                palette: palette,
+                background: root.themeStore.backgroundColor
+            )
         } else {
             contentUnavailableConfiguration = nil
         }
@@ -755,6 +754,12 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
     private func ensureFileIndex(_ services: FileBrowserServices) {
         guard !isHostHome, let api = services.apiClient else { return }
         services.fileIndexStore.ensureLoaded(workspaceId: workspaceId, worktreeId: worktreeId, apiClient: api)
+    }
+
+    /// Retry on a failed listing: back to the loading state, then list again.
+    private func retryDirectoryLoad() {
+        state.error = nil
+        startDirectoryLoad()
     }
 
     /// Lists the folder again; a workspace's file index reloads too.
@@ -1339,45 +1344,38 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             stateView.isHidden = true
             return
         }
-        var configuration: UIContentUnavailableConfiguration
+        let state: LoadState
         switch next {
         case .loading:
-            configuration = .loading()
-            configuration.text = nil
+            state = .loading(nil)
         case .indexLoading:
-            configuration = .loading()
-            configuration.text = String(localized: "Loading file index...")
+            state = .loading(String(localized: "Loading file index..."))
         case .noResults(let query):
-            configuration = .search()
-            configuration.text = String(localized: "No Results for “\(query)”")
+            state = .noResults(query: query)
         case .error(let message):
-            configuration = .empty()
-            configuration.image = UIImage(systemName: "exclamationmark.triangle")
-            configuration.text = String(localized: "Unable to Load")
-            configuration.secondaryText = message
+            state = .failed(
+                title: String(localized: "Unable to Load"),
+                message: message,
+                retry: RetryAction { [weak self] in self?.retryDirectoryLoad() }
+            )
         case .empty:
-            configuration = emptyDirectoryConfiguration()
+            state = Self.emptyDirectoryState
         }
-        configuration.background.backgroundColor = UIColor(palette.bg)
-        stateView.configuration = configuration
+        stateView.configuration = UIContentUnavailableConfiguration.loadState(state, palette: palette, background: UIColor(palette.bg))
         stateView.isHidden = false
     }
 
-    private func emptyDirectoryConfiguration() -> UIContentUnavailableConfiguration {
-        var configuration = UIContentUnavailableConfiguration.empty()
-        configuration.image = UIImage(systemName: "folder")
-        configuration.text = String(localized: "Empty Directory")
-        configuration.secondaryText = String(localized: "No files in this directory.")
-        return configuration
-    }
+    private static let emptyDirectoryState = LoadState.empty(
+        title: String(localized: "Empty Directory"),
+        systemImage: "folder",
+        message: String(localized: "No files in this directory.")
+    )
 
-    private func paneEmptyConfiguration() -> UIContentUnavailableConfiguration {
-        var configuration = UIContentUnavailableConfiguration.empty()
-        configuration.image = UIImage(systemName: "doc.text.magnifyingglass")
-        configuration.text = String(localized: "Select a File")
-        configuration.secondaryText = String(localized: "Choose a file from the tree.")
-        return configuration
-    }
+    private static let paneEmptyState = LoadState.empty(
+        title: String(localized: "Select a File"),
+        systemImage: "doc.text.magnifyingglass",
+        message: String(localized: "Choose a file from the tree.")
+    )
 
     // MARK: Cells
 
@@ -1402,7 +1400,7 @@ final class FileBrowserViewController: UIViewController, UICollectionViewDelegat
             applyPlainBackground(to: cell)
         case .emptyDirectory:
             // At least the SwiftUI view's 220 pt under the breadcrumb.
-            var content = emptyDirectoryConfiguration()
+            var content = UIContentUnavailableConfiguration.loadState(Self.emptyDirectoryState, palette: palette)
             content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 50, leading: 16, bottom: 50, trailing: 16)
             cell.contentConfiguration = content
             applyPlainBackground(to: cell)

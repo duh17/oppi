@@ -207,11 +207,17 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
             )
         case .finishing:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Finishing sign-in on the host…")
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Finishing sign-in on the host…")),
+                palette: palette
+            )
             ControlScreenList.background(cell, grouped: false, palette: palette)
         case .preparing:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Preparing sign-in…")
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Preparing sign-in…")),
+                palette: palette
+            )
             ControlScreenList.background(cell, grouped: false, palette: palette)
         case .openLink:
             ControlScreenList.buttonRow(cell, identifier: "mcp.auth.open", label: "Open Sign-In Page") { [weak self] in

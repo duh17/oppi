@@ -290,13 +290,18 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         switch item {
         case .loading:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Loading schedule…")
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Loading schedule…")),
+                palette: palette
+            )
             ControlScreenList.background(cell, grouped: false, palette: palette)
         case .notFound:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.unavailable(
-                "Schedule Not Found",
-                systemImage: "questionmark.circle",
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: String(localized: "Schedule Not Found"),
+                    systemImage: "questionmark.circle"
+                ),
                 palette: palette
             )
             ControlScreenList.background(cell, grouped: false, palette: palette)
@@ -368,10 +373,12 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
             cell.accessories = [.customView(configuration: .init(customView: toggle, placement: .trailing()))]
         case .noRuns:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.unavailable(
-                "No Runs Yet",
-                systemImage: "clock.arrow.circlepath",
-                description: "Scheduled and manual runs will appear here.",
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: String(localized: "No Runs Yet"),
+                    systemImage: "clock.arrow.circlepath",
+                    message: String(localized: "Scheduled and manual runs will appear here.")
+                ),
                 palette: palette
             )
         case .run(let id):

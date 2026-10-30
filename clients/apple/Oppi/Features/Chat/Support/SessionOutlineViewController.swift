@@ -83,7 +83,7 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
     private let treeFilterBar = SessionOutlineFilterBar(titles: SessionTreeFilterMode.allCases.map(\.title))
     private let treeBanner = SessionOutlineBannerView()
     private let treeList: UICollectionView
-    private let treeUnavailable = UIContentUnavailableView(configuration: .empty())
+    private let treeUnavailable = UIContentUnavailableView(loadState: .loading(nil))
     private var treeDataSource: UICollectionViewDiffableDataSource<Int, String>!
 
     init(
@@ -558,42 +558,45 @@ final class SessionOutlineViewController: UIViewController, UICollectionViewDele
             palette: palette
         )
 
-        let unavailable = treeUnavailableConfiguration()
+        let unavailable = treeUnavailableState()
         treeUnavailable.isHidden = unavailable == nil
         treeList.isHidden = unavailable != nil
-        if var unavailable {
-            unavailable.textProperties.color = UIColor(palette.fg)
-            unavailable.secondaryTextProperties.color = UIColor(palette.comment)
-            unavailable.imageProperties.tintColor = UIColor(palette.comment)
-            unavailable.background.backgroundColor = UIColor(palette.bgDark)
-            treeUnavailable.configuration = unavailable
+        if let unavailable {
+            treeUnavailable.configuration = UIContentUnavailableConfiguration.loadState(
+                unavailable,
+                palette: palette,
+                background: UIColor(palette.bgDark)
+            )
         }
         treeBanner.show(unavailable == nil ? treeNavigateErrorMessage : nil, palette: palette)
     }
 
-    private func treeUnavailableConfiguration() -> UIContentUnavailableConfiguration? {
+    private func treeUnavailableState() -> LoadState? {
         if isLoadingTree, treeSnapshot == nil {
-            var loading = UIContentUnavailableConfiguration.loading()
-            loading.text = "Loading session tree…"
-            return loading
+            return .loading(String(localized: "Loading session tree…"))
         }
         guard treeDisplayNodesByID.isEmpty else { return nil }
-        var empty = UIContentUnavailableConfiguration.empty()
-        empty.image = UIImage(systemName: "arrow.triangle.branch")
         if let treeLoadErrorMessage, treeSnapshot == nil {
-            empty.text = "Tree unavailable"
-            empty.secondaryText = treeLoadErrorMessage
-            return empty
+            return .failed(
+                title: String(localized: "Tree unavailable"),
+                message: treeLoadErrorMessage,
+                retry: RetryAction { [weak self] in
+                    Task { [weak self] in
+                        await self?.loadTreeIfNeeded()
+                        self?.applyTreeFilter()
+                    }
+                }
+            )
         }
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedQuery.isEmpty {
-            var noResults = UIContentUnavailableConfiguration.search()
-            noResults.text = "No Results for “\(query)”"
-            return noResults
+            return .noResults(query: query)
         }
-        empty.text = "No tree data"
-        empty.secondaryText = "This session has no tree entries yet."
-        return empty
+        return .empty(
+            title: String(localized: "No tree data"),
+            systemImage: "arrow.triangle.branch",
+            message: String(localized: "This session has no tree entries yet.")
+        )
     }
 
     private func toggleTreeNodeCollapsed(_ nodeId: String) {

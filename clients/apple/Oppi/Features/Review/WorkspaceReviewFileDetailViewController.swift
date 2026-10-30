@@ -1088,31 +1088,27 @@ enum WorkspaceQuickActionMenu {
 /// A review page while it loads, or when it cannot show its content.
 @MainActor
 enum ReviewPagePlaceholder {
-    /// A spinner over `text`, centered in `page`'s safe area.
+    /// A spinner over `text`, centered in `page`.
     static func showLoading(_ text: String, on page: UIView) {
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.startAnimating()
-        let label = UILabel()
-        label.text = text
-        label.font = .preferredFont(forTextStyle: .body)
-        label.textColor = .secondaryLabel
-        let stack = UIStackView(arrangedSubviews: [spinner, label])
-        stack.axis = .vertical
-        stack.spacing = 8
-        stack.alignment = .center
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        page.addSubview(stack)
+        let loading = UIContentUnavailableView(configuration: .loadState(
+            .loading(text),
+            palette: ThemeRuntimeState.currentPalette()
+        ))
+        loading.translatesAutoresizingMaskIntoConstraints = false
+        page.addSubview(loading)
         NSLayoutConstraint.activate([
-            stack.centerXAnchor.constraint(equalTo: page.safeAreaLayoutGuide.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: page.safeAreaLayoutGuide.centerYAnchor),
+            loading.topAnchor.constraint(equalTo: page.topAnchor),
+            loading.bottomAnchor.constraint(equalTo: page.bottomAnchor),
+            loading.leadingAnchor.constraint(equalTo: page.leadingAnchor),
+            loading.trailingAnchor.constraint(equalTo: page.trailingAnchor),
         ])
     }
 
-    static func unavailable(title: String, systemImage: String = "exclamationmark.triangle", message: String) -> UIView {
-        var configuration = UIContentUnavailableConfiguration.empty()
-        configuration.image = UIImage(systemName: systemImage)
-        configuration.text = title
-        configuration.secondaryText = message
-        return UIContentUnavailableView(configuration: configuration)
+    static func unavailable(title: String, message: String) -> UIView {
+        show(.failed(title: title, message: message, retry: nil))
+    }
+
+    static func show(_ state: LoadState) -> UIView {
+        UIContentUnavailableView(loadState: state)
     }
 }

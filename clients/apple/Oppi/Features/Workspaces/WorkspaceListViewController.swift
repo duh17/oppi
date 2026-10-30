@@ -107,10 +107,12 @@ final class WorkspaceListViewController: SettingsListViewController<
         super.updateProperties()
         ControlScreenList.setBarItems(trailing: [createItem], leading: [], on: navigationItem)
         if workspaces.isEmpty {
-            contentUnavailableConfiguration = ControlScreenList.unavailable(
-                String(localized: "No Workspaces"),
-                systemImage: "square.grid.2x2",
-                description: String(localized: "Tap + to create one."),
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: String(localized: "No Workspaces"),
+                    systemImage: "square.grid.2x2",
+                    message: String(localized: "Tap + to create one.")
+                ),
                 palette: ThemeRuntimeState.currentPalette()
             )
         } else {

@@ -245,9 +245,10 @@ private final class ConnectingViewController: UIViewController {
     override func updateProperties() {
         super.updateProperties()
         // Observation tracking re-runs this when the theme changes.
-        var loading = UIContentUnavailableConfiguration.loading()
-        loading.text = String(localized: "Connecting\u{2026}")
-        loading.background.backgroundColor = root.themeStore.backgroundColor
-        contentUnavailableConfiguration = loading
+        contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+            .connecting,
+            palette: ThemeRuntimeState.currentPalette(),
+            background: root.themeStore.backgroundColor
+        )
     }
 }

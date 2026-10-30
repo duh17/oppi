@@ -178,32 +178,23 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
     private func show(_ next: Shown) {
         collectionView.isHidden = next != .list
         // Rebuilt on every pass, so a theme change recolors these states.
+        let state: LoadState
         switch next {
         case .list:
             contentUnavailableConfiguration = nil
+            return
         case .connecting:
-            contentUnavailableConfiguration = backed(ControlScreenList.loading(String(localized: "Connecting…")))
+            state = .connecting
         case .loading:
-            contentUnavailableConfiguration = backed(ControlScreenList.loading(String(localized: "Loading skill…")))
+            state = .loading(String(localized: "Loading skill…"))
         case .unavailable(let reason):
-            var unavailable = ControlScreenList.unavailable(
-                "Skill Unavailable",
-                systemImage: "exclamationmark.triangle.fill",
-                description: reason,
-                palette: palette
+            state = .failed(
+                title: String(localized: "Skill Unavailable"),
+                message: reason,
+                retry: RetryAction { [weak self] in self?.startLoad() }
             )
-            var retry = UIButton.Configuration.borderedProminent()
-            retry.title = String(localized: "Retry")
-            unavailable.button = retry
-            unavailable.buttonProperties.primaryAction = UIAction { [weak self] _ in self?.startLoad() }
-            contentUnavailableConfiguration = backed(unavailable)
         }
-    }
-
-    private func backed(_ configuration: UIContentUnavailableConfiguration) -> UIContentUnavailableConfiguration {
-        var configuration = configuration
-        configuration.background.backgroundColor = root.themeStore.backgroundColor
-        return configuration
+        contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(state, palette: palette, background: root.themeStore.backgroundColor)
     }
 
     // MARK: - List
@@ -435,7 +426,10 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             cell.contentConfiguration = content
         case .loadingContents:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Loading skill contents…")
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Loading skill contents…")),
+                palette: palette
+            )
             ControlScreenList.background(cell, grouped: false, palette: palette)
         case .browse:
             let count = state.detail?.files.count ?? 0

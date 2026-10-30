@@ -126,7 +126,7 @@ struct OnboardingPairingFailure: Equatable {
             : String(localized: "Couldn’t Pair")
     }
 
-    /// Try Again sends the same code again, so it shows only while the code
+    /// Retry sends the same code again, so it shows only while the code
     /// is unspent.
     var offersRetry: Bool {
         recovery == .reachability || recovery == .retry
@@ -177,7 +177,7 @@ final class OnboardingViewController: UIViewController, RouterModalContainer {
     private var announcesPhase = false
     private var pairingTask: Task<Void, Never>?
     private var pairingGeneration: UInt64 = 0
-    /// The last attempt's credentials, for Try Again.
+    /// The last attempt's credentials, for Retry.
     private var lastCredentials: ServerCredentials?
     private weak var computerSetupScreen: UIViewController?
 
@@ -679,7 +679,7 @@ extension OnboardingViewController {
 
 // MARK: - Failure card
 
-/// The failed attempt: what happened, what to do next, and Try Again when the
+/// The failed attempt: what happened, what to do next, and Retry when the
 /// same code can still work. The pairing choices stay below it.
 @MainActor
 private final class OnboardingFailureCard: UIView {
@@ -746,7 +746,7 @@ private final class OnboardingFailureCard: UIView {
 
         retryButton.isHidden = !failure.offersRetry
         var retry = UIButton.Configuration.bordered()
-        retry.title = String(localized: "Try Again")
+        retry.title = String(localized: "Retry")
         retry.baseForegroundColor = colors.blue
         retry.cornerStyle = .capsule
         retryButton.configuration = retry

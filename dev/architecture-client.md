@@ -153,6 +153,15 @@ Two shared pieces in `Oppi/Core/Views` own every error alert and confirmation; `
 
 One owner decides whether a navigation stack's bar is hidden: `Oppi/App/Router.swift`. A screen that brings its own Back and actions (a chat reader showing a page, a file or skill file reader showing a file, the SSH terminal) conforms to `NavigationBarHiding` and answers `hidesNavigationBar`; every other screen shows the bar. The stack's delegate (`ShellNavigationController`, `RouterNavigationController`) calls `applyNavigationBar(forIncoming:animated:)` as each screen comes forward, which also gives the screen below a reader its Back, title, and items when the reader pops, and restores the state after a cancelled back swipe. A screen whose answer changes while it is in front (a file finishing its load, a lock cover replacing a page) calls `navigationController?.updateNavigationBar(for: self, animated:)`, which acts only when that screen is on top. A screen that only embeds one of these does not conform: the policy asks its child controllers. `setNavigationBarHidden(` is disallowed everywhere else by `scripts/uikit-structure-guard.ts`, except `FullScreenCodeViewController`, which hides the bar of its own private navigation controller.
 
+### Load states
+
+One shared piece in `Oppi/Core/Views/LoadStateContent.swift` owns every state a screen shows instead of its content. `scripts/uikit-structure-guard.ts` counts `UIContentUnavailableConfiguration.empty(`, `.loading(`, `.search(` (and a bare `.empty()` in a file that uses the type) outside it as a ratchet with an empty baseline.
+
+- `LoadState`: `connecting`, `loading(caption)`, `empty(title:systemImage:message:)`, `noResults(query:)`, `failed(title:message:retry:)`, and `cached(serverName:)`. A screen holds one and paints it with `contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(state, palette:, background:)` (a region of a screen, such as a pane or a list overlay: `UIContentUnavailableView(loadState:)`; a list cell: the same call with no background).
+- The rendering is the same everywhere: title in the palette's text color, symbol and message in its comment color, a warning-colored symbol on a failure, the theme background behind a whole screen, and for a failure with a `retry` one prominent button titled "Retry" (`OfflinePairedServerE2ETests` taps `app.buttons["Retry"]`). A failure whose screen has no way to reload passes `retry: nil` and shows no button. A button on a `UIContentUnavailableConfiguration` cannot carry an accessibility identifier, so UI tests find it by its title.
+- A screen's second way out of its state (Server Metrics' Turn On, Usage's Add Server) is `configuration.setProminentButton(title:action:)` on the result. A choice a screen needs in a popover sized from its rows (the Quick Session picker) keeps its own compact rows; it is not a screen.
+- Onboarding's pairing failure keeps its own chrome but its button says "Retry" too.
+
 ### Remaining SwiftUI
 
 - **Untouched for now:** Settings and admin screens (workspace settings' Dictionary page), and debug and screenshot previews.

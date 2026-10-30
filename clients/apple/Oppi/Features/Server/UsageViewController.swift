@@ -238,7 +238,12 @@ final class UsageViewController: UIViewController {
             if model.isLoading {
                 message.showLoading(colors: colors)
             } else {
-                message.showFailure(model.error ?? String(localized: "Not connected to a server"), colors: colors)
+                message.showFailure(
+                    model.error ?? String(localized: "Not connected to a server"),
+                    colors: colors
+                ) { [weak self] in
+                    Task { await self?.model.refresh() }
+                }
             }
         }
         guard let stats else {

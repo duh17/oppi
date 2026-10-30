@@ -136,11 +136,16 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
                 onClose: { [weak self] in self?.leave() }
             ))
         case .unavailable:
-            var unavailable = UIContentUnavailableConfiguration.empty()
-            unavailable.image = UIImage(systemName: "doc")
-            unavailable.text = String(localized: "Unable to Open")
-            unavailable.secondaryText = String(localized: "This reader is no longer available.")
-            contentUnavailableConfiguration = unavailable
+            let palette = (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
+            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: String(localized: "Unable to Open"),
+                    systemImage: "doc",
+                    message: String(localized: "This reader is no longer available.")
+                ),
+                palette: palette,
+                background: UIColor(palette.bg)
+            )
         }
         // The stack's delegate applies the bar as this reader comes forward;
         // a lock or unlock that swaps the page and a cover while it is in

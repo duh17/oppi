@@ -646,66 +646,36 @@ final class UsageDailyDetailView: UIView {
 
 // MARK: - Messages
 
-/// Loading and failure in the page body, centered.
+/// Loading and failure in the page body, centered: a load state, with Retry
+/// on a failure.
 final class UsageMessageView: UIView {
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    private let icon = UIImageView(image: UIImage(systemName: "exclamationmark.triangle"))
-    private let titleLabel = UILabel()
-    private let messageLabel = UILabel()
+    private let content = UIContentUnavailableView(loadState: .loading(nil))
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        let stack = UIStackView(arrangedSubviews: [spinner, icon, titleLabel, messageLabel])
-        stack.axis = .vertical
-        stack.alignment = .center
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 40),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -40),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
-        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .title2)
-        titleLabel.font = .preferredFont(forTextStyle: .subheadline).withWeight(.medium)
-        messageLabel.font = .preferredFont(forTextStyle: .caption1)
-        for label in [titleLabel, messageLabel] {
-            label.adjustsFontForContentSizeCategory = true
-            label.numberOfLines = 0
-            label.textAlignment = .center
-        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
     func showLoading(colors: UsageColors) {
-        spinner.color = colors.comment
-        spinner.startAnimating()
-        spinner.isHidden = false
-        icon.isHidden = true
-        titleLabel.isHidden = true
-        messageLabel.isHidden = true
-        isAccessibilityElement = true
-        accessibilityLabel = String(localized: "Loading usage")
+        content.configuration = UIContentUnavailableConfiguration.loadState(.loading(String(localized: "Loading usage")), palette: colors.palette)
         accessibilityIdentifier = "server.usage.loading"
     }
 
-    func showFailure(_ message: String, colors: UsageColors) {
-        spinner.stopAnimating()
-        spinner.isHidden = true
-        icon.isHidden = false
-        icon.tintColor = colors.orange
-        titleLabel.isHidden = false
-        titleLabel.text = String(localized: "Unable to load usage")
-        titleLabel.textColor = colors.fg
-        messageLabel.isHidden = false
-        messageLabel.text = message
-        messageLabel.textColor = colors.comment
-        isAccessibilityElement = true
-        accessibilityLabel = String(localized: "Unable to load usage")
-        accessibilityValue = message
+    func showFailure(_ message: String, colors: UsageColors, retry: @escaping @MainActor () -> Void) {
+        content.configuration = UIContentUnavailableConfiguration.loadState(
+            .failed(title: String(localized: "Unable to load usage"), message: message, retry: RetryAction(run: retry)),
+            palette: colors.palette
+        )
         accessibilityIdentifier = "server.usage.error"
     }
 }

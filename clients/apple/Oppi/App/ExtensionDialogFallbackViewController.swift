@@ -123,13 +123,16 @@ final class ExtensionDialogFallbackViewController: SettingsListViewController<
             cell.contentConfiguration = content
             cell.accessibilityIdentifier = "extension.dialog.message"
         case .unsupported:
-            var content = UIContentUnavailableConfiguration.empty()
-            content.image = UIImage(systemName: "questionmark.app")
-            content.text = String(localized: "Unsupported extension UI")
-            content.secondaryText = String(
-                localized: "This extension asked for \"\(request.method)\". Cancel and try the task another way."
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: String(localized: "Unsupported extension UI"),
+                    systemImage: "questionmark.app",
+                    message: String(
+                        localized: "This extension asked for \"\(request.method)\". Cancel and try the task another way."
+                    )
+                ),
+                palette: ThemeRuntimeState.currentPalette()
             )
-            cell.contentConfiguration = content
             cell.accessibilityIdentifier = "extension.dialog.unsupported"
         case .timeout:
             let style = SettingsStyle.current

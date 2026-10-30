@@ -334,11 +334,20 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         switch item {
         case .loading:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.loading("Loading agent…")
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .loading(String(localized: "Loading agent…")),
+                palette: palette
+            )
             ControlScreenList.background(cell, grouped: false, palette: palette)
         case .notFound:
             ControlScreenList.staticRow(cell)
-            cell.contentConfiguration = ControlScreenList.unavailable("Agent Not Found", systemImage: "questionmark.circle", palette: palette)
+            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+                .empty(
+                    title: String(localized: "Agent Not Found"),
+                    systemImage: "questionmark.circle"
+                ),
+                palette: palette
+            )
             ControlScreenList.background(cell, grouped: false, palette: palette)
         case .icon:
             guard let agent else { return }

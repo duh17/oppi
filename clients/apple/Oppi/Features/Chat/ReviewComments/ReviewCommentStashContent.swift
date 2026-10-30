@@ -182,7 +182,7 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
 
     private let scrollView = UIScrollView()
     private let list = ReviewCommentStashListView(chrome: .sheet)
-    private let empty = UIContentUnavailableView(configuration: .empty())
+    private let empty = UIContentUnavailableView(loadState: .loading(nil))
     private let editor = ReviewCommentStashViewController.makeEditorList()
     private let commentText = UITextView()
     private let errorLabel = UILabel()
@@ -236,11 +236,6 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
         list.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = false
         scrollView.addSubview(list)
-        var emptyConfiguration = UIContentUnavailableConfiguration.empty()
-        emptyConfiguration.image = UIImage(systemName: "text.bubble")
-        emptyConfiguration.text = "No Staged Review Comments"
-        emptyConfiguration.secondaryText = "Comments you add from selected text will appear here before you send them."
-        empty.configuration = emptyConfiguration
 
         // Registrations exist before the list asks for a cell.
         _ = (editorRowRegistration, editorHeaderRegistration)
@@ -300,7 +295,15 @@ final class ReviewCommentStashViewController: UIViewController, UITextViewDelega
         let background = UIColor(palette.bg)
         view.backgroundColor = background
         scrollView.backgroundColor = background
-        empty.backgroundColor = background
+        empty.configuration = UIContentUnavailableConfiguration.loadState(
+            .empty(
+                title: String(localized: "No Staged Review Comments"),
+                systemImage: "text.bubble",
+                message: String(localized: "Comments you add from selected text will appear here before you send them.")
+            ),
+            palette: palette,
+            background: background
+        )
         let appearance = UINavigationBarAppearance()
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = background
