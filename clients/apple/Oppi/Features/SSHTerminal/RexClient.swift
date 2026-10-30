@@ -436,6 +436,10 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         /// Panes this client has taken for size and not handed back.
         var owned: Set<String> = []
         var generation = 0
+        /// Generations whose pane Rex closed. `nc` exits when Rex closes its
+        /// socket, so the channel's end follows the close frame: that end is
+        /// the pane leaving, not the connection failing.
+        var retired: Set<Int> = []
         var stream: SSHExecStream?
         var parser: RexDataStream?
         var exitStatus: Int?
@@ -545,11 +549,16 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     // MARK: - SSHTerminalConnection
 
     func send(_ bytes: Data) async throws {
-        _ = try await control.call("com.superlogical.terminal.write", blockCall([
-            // Keys, pastes, and SGR mouse reports are UTF-8; only legacy X10
-            // mouse coordinates past column 95 are not, and they arrive mangled.
-            "data": String(decoding: bytes, as: UTF8.self),
-        ]))
+        do {
+            _ = try await control.call("com.superlogical.terminal.write", blockCall([
+                // Keys, pastes, and SGR mouse reports are UTF-8; only legacy X10
+                // mouse coordinates past column 95 are not, and they arrive mangled.
+                "data": String(decoding: bytes, as: UTF8.self),
+            ]))
+        } catch RexClientError.refused {
+            // The pane closed before this terminal heard: it is leaving, and
+            // the session goes on. Anything else is the connection failing.
+        }
     }
 
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {
@@ -560,7 +569,11 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             cellHeight: pixelWidth >= columns && pixelHeight >= rows ? pixelHeight / rows : nil
         )
         core.withLock { $0.geometry = geometry }
-        _ = try await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments))
+        do {
+            _ = try await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments))
+        } catch RexClientError.refused {
+            // A pane that closed meanwhile, as for a write.
+        }
         arm()
     }
 
@@ -617,17 +630,41 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         return true
     }
 
-    /// Switches until the data connection carries the pane asked for last.
+    /// Switches until the data connection carries the pane asked for last,
+    /// then hands back every pane taken and not shown (a switch overtaken
+    /// after its pane was taken would otherwise leave it at this screen's
+    /// size). Both run in this loop, so no switch starts while a hand-back
+    /// is in flight.
     private func runSwitches() async {
+        enum Work { case done, show(String), handBack([String]) }
         while true {
-            let block = core.withLock { state -> String? in
-                guard !state.ended, state.armed, state.streamBlock != state.requested else {
+            let work = core.withLock { state -> Work in
+                guard !state.ended, state.armed else {
                     state.switching = false
-                    return nil
+                    return .done
                 }
-                return state.requested
+                if state.streamBlock != state.requested { return .show(state.requested) }
+                if let shown = state.streamBlock {
+                    let behind = state.owned.subtracting([shown])
+                    if !behind.isEmpty {
+                        state.owned = [shown]
+                        return .handBack(Array(behind))
+                    }
+                }
+                state.switching = false
+                return .done
             }
-            guard let block else { return }
+            let block: String
+            switch work {
+            case .done:
+                return
+            case .handBack(let behind):
+                // Best effort: a pane that closed has nothing to give back.
+                _ = try? await control.call("session.disown_block", ["session_id": sessionID, "block_ids": behind])
+                continue
+            case .show(let next):
+                block = next
+            }
             do {
                 try await switchData(to: block)
             } catch {
@@ -700,17 +737,6 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
             return
         }
         try await stream.send(parser.upgradeRequest)
-        // Hand back every pane but this one, so the Mac's windows for them
-        // are not left at this screen's size. It is best effort: a pane that
-        // closed has nothing to give back.
-        let behind = core.withLock { state -> [String] in
-            let behind = state.owned.subtracting([block])
-            state.owned = [block]
-            return Array(behind)
-        }
-        if !behind.isEmpty {
-            _ = try? await control.call("session.disown_block", ["session_id": sessionID, "block_ids": behind])
-        }
     }
 
     /// The data connection's events, on the SSH event loop and in order, so
@@ -737,15 +763,17 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 case .exited(let code):
                     if let block { core.withLock { $0.exitCodes[block] = code } }
                 case .paneClosed:
+                    // The bridge's end follows this frame; it is not a failure.
+                    core.withLock { _ = $0.retired.insert(mine) }
                     if let block { closed(block, reason: "The pane closed in Rex.") }
                 case .ended(let reason): end(reason)
                 }
             }
         case .exitStatus(let status):
-            core.withLock { if $0.generation == mine { $0.exitStatus = status } }
+            core.withLock { if $0.generation == mine, !$0.retired.contains(mine) { $0.exitStatus = status } }
         case .closed:
             let reason = core.withLock { state -> String? in
-                guard !state.ended, state.generation == mine else { return nil }
+                guard !state.ended, state.generation == mine, !state.retired.contains(mine) else { return nil }
                 return RexBridge.failure(exitStatus: state.exitStatus).localizedDescription
             }
             if let reason { end(reason) }
@@ -875,10 +903,6 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
                 publish(state)
             }
         }
-    }
-
-    private func name(of block: String) -> String {
-        core.withLock { Self.name(of: block, in: $0) }
     }
 
     private static func name(of block: String, in state: State) -> String {

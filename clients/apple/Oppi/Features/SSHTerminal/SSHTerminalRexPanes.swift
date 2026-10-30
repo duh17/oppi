@@ -70,9 +70,6 @@ final class SSHTerminalRexStripPill: SSHTerminalGlassPill {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// The glyph for pane `index`.
-    func button(at index: Int) -> SSHTerminalPillButton? { buttons.indices.contains(index) ? buttons[index] : nil }
-
     func apply(state: RexSessionState, tint: UIColor, selectedTint: UIColor) {
         if state.panes != panes {
             panes = state.panes
@@ -139,9 +136,6 @@ final class SSHTerminalRexMinimapView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    /// The cell button for pane `blockID`.
-    func button(for blockID: String) -> UIButton? { cells.first { $0.cell.blockID == blockID }?.button }
 
     func apply(state: RexSessionState, shownTint: UIColor, otherTint: UIColor, backdropColor: UIColor) {
         if state.minimap != cells.map(\.cell) {

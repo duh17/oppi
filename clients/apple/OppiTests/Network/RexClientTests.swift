@@ -502,7 +502,6 @@ struct RexSessionTerminalTests {
     /// way the connect session opens one, with the grid at 40 × 10.
     @MainActor struct Rig {
         let fake: RexFakeSession
-        let transport: RexFakeTransport
         let channel: SSHTerminalChannel
         let connection: RexSessionConnection
         let model: RexSessionModel
@@ -541,7 +540,7 @@ struct RexSessionTerminalTests {
         channel.opened(connection)
         let consumer = Task { await channel.consume(queue) }
         channel.resize(.init(columns: 40, rows: 10))
-        let rig = Rig(fake: fake, transport: transport, channel: channel, connection: connection, model: model, consumer: consumer)
+        let rig = Rig(fake: fake, channel: channel, connection: connection, model: model, consumer: consumer)
         guard await waitForMainActorCondition(timeout: .seconds(5), { rig.shows("screen of \(opening)") }) else {
             await rig.stop()
             Issue.record("the first pane never showed")
@@ -657,6 +656,63 @@ struct RexSessionTerminalTests {
         let shown = rig.model.state.shown
         rig.fake.blockClosed(shown == a ? c : a)
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { rig.model.state.shown == shown })
+        await rig.stop()
+    }
+
+    /// The bridge is `exec nc -U`: when Rex closes the pane's socket `nc`
+    /// exits and the channel reports it closed, right behind the close frame
+    /// and before the neighbour's stream is open. That is the pane leaving,
+    /// not the connection failing: the terminal stays and ends on the neighbour.
+    @Test func theBridgeExitingWithAClosedPaneDoesNotEndTheTerminal() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (b, c) = (Self.block("b"), Self.block("c"))
+        rig.model.show(b)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") })
+        // The neighbour's stream is slow to open, so the bridge's end lands first.
+        rig.fake.hold(dataConnectFor: [c])
+        rig.fake.dataHosts[1].closePane()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.shown == c })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            rig.channel.connected && rig.model.state.shown == c
+        })
+        rig.fake.release(dataConnectFor: c)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
+        #expect(rig.channel.connected)
+        await rig.stop()
+    }
+
+    /// A switch that is overtaken after the pane was taken (A to B, then back
+    /// to A before B's stream) must not leave B at this screen's size.
+    @Test func aSwitchOvertakenAfterTakingAPaneHandsItBack() async throws {
+        let rig = try await open(["a", "b"])
+        let (a, b) = (Self.block("a"), Self.block("b"))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 2 })
+        rig.fake.hold(dataConnectFor: [b])
+        rig.model.show(b)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("data.connect").contains { $0.string("block_id") == b }
+        })
+        rig.model.show(a)
+        rig.fake.release(dataConnectFor: b)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("session.disown_block").contains { $0.payload.contains(b) }
+        })
+        #expect(rig.fake.dataHosts.map(\.block) == [a], "b never got a stream")
+        await rig.stop()
+    }
+
+    /// Rex refuses a write or a resize for a pane that closed before the
+    /// terminal heard of it. That pane is leaving; the session is not over.
+    @Test func aRefusedWriteOrResizeDoesNotEndTheTerminal() async throws {
+        let rig = try await open(["a", "b"])
+        rig.fake.refuse(["com.superlogical.terminal.write", "com.superlogical.terminal.resize"])
+        rig.channel.send(Data("x".utf8))
+        rig.channel.resize(.init(columns: 50, rows: 12))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            !rig.fake.requests("com.superlogical.terminal.write").isEmpty
+                && rig.fake.requests("com.superlogical.terminal.resize").contains { $0.payload.contains(#""columns":50"#) }
+        })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { rig.channel.connected })
         await rig.stop()
     }
 

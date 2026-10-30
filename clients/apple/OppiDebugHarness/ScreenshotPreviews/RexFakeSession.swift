@@ -44,8 +44,6 @@ final class RexFakeDataHost: Sendable {
         )
     }
 
-    /// The ticket the client said HELLO with, once it has.
-    var ticket: Data? { state.withLock { $0.ticket } }
     /// The client closed its end of the pipe.
     var isClosed: Bool { state.withLock { $0.closed } }
     /// The data connection is open and welcomed: output can flow.
@@ -67,9 +65,18 @@ final class RexFakeDataHost: Sendable {
         deliver(Self.frame(0x02, message(#"{"type":"child_exited","exit_code":\#(code)}"#)))
     }
 
-    /// Rex closed the pane: WebSocket close 4000.
+    /// Rex closed the pane: WebSocket close 4000. The bridge is `exec nc -U`,
+    /// so `nc` exits when Rex closes the socket and the channel reports its
+    /// end right behind the frame: EOF, exit status 0, closed.
     func closePane() {
         deliver(Self.frame(0x08, Data([0x0F, 0xA0])))
+        let sink = state.withLock { state -> SSHPTYByteSink? in
+            state.closed = true
+            return state.sink
+        }
+        sink?(.eof)
+        sink?(.exitStatus(0))
+        sink?(.closed)
     }
 
     /// The command ended, as the bridge's exit does.
@@ -171,6 +178,7 @@ final class RexFakeSession: Sendable {
         var dataHosts: [RexFakeDataHost] = []
         var served: [RexFakeDataHost] = []
         var held: Set<String> = []
+        var refusing: Set<String> = []
     }
 
     let sessionID: String
@@ -218,6 +226,9 @@ final class RexFakeSession: Sendable {
 
     /// `data.connect` for these panes is not answered until `release`.
     func hold(dataConnectFor blocks: Set<String>) { state.withLock { $0.held = blocks } }
+
+    /// These methods answer `not_found`, as Rex does for a pane that closed.
+    func refuse(_ methods: Set<String>) { state.withLock { $0.refusing = methods } }
 
     /// Answers the held `data.connect` for `block`.
     func release(dataConnectFor block: String) {
@@ -312,6 +323,9 @@ final class RexFakeSession: Sendable {
 
     private func answer(_ request: RexFakeHost.Request) -> RexFakeHost.Answer {
         let block = request.string("block_id") ?? ""
+        if state.withLock({ $0.refusing.contains(request.method) }) {
+            return .refuse(code: "not_found", message: "no such block")
+        }
         switch request.method {
         case "session.attach":
             return .result(#"{"client_id":"client:preview","view":\#(state.withLock { $0.view })}"#)
@@ -338,8 +352,6 @@ final class RexFakeSession: Sendable {
 final class RexFakeTransport: RexTransport {
     private struct State {
         var streams: [SSHExecStream] = []
-        var commands: [String] = []
-        var closed = false
     }
 
     private let control: SSHExecStream
@@ -351,14 +363,9 @@ final class RexFakeTransport: RexTransport {
         self.control = host.open(sink: { control.receive($0) })
     }
 
-    /// The commands the terminal opened streams with, in order.
-    var commands: [String] { state.withLock { $0.commands } }
-    var isClosed: Bool { state.withLock { $0.closed } }
-
     func send(_ bytes: Data) async throws { try await control.send(bytes) }
 
     func openStream(command: String, inboundFlow: SSHPTYInboundFlow?, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-        state.withLock { $0.commands.append(command) }
         guard command == RexBridge.command, let data = session.nextDataHost() else { throw SSHConnectionError.notConnected }
         let stream = data.open(sink: sink)
         state.withLock { $0.streams.append(stream) }
@@ -370,10 +377,7 @@ final class RexFakeTransport: RexTransport {
     func checkAlive() async throws {}
 
     func close() {
-        let streams = state.withLock { state -> [SSHExecStream] in
-            state.closed = true
-            return state.streams
-        }
+        let streams = state.withLock { $0.streams }
         control.close()
         streams.forEach { $0.close() }
     }

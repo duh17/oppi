@@ -2068,6 +2068,24 @@ struct SSHTerminalTests {
         await rig.stop()
     }
 
+    /// The sideways swipe is exclusive with the history scroll's pan: a swipe
+    /// that is recognized must not also scroll history or send wheel events in
+    /// an app that scrolls itself. A vertical drag never begins the swipe (its
+    /// velocity test), so scrolling keeps its pan.
+    @Test func theSwipeNeverRecognizesAlongsideTheHistoryScroll() async throws {
+        let rig = try await RexSessionTerminalTests().open(["a", "b"])
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss() }
+        let grid = try #require(mounted.controller.gridView)
+        let scroll = try #require(mounted.find { $0 is UIScrollView && $0.isDescendant(of: grid) } as? UIScrollView)
+        let swipe = try #require(scroll.gestureRecognizers?.first { $0 is UIPanGestureRecognizer && $0 !== scroll.panGestureRecognizer })
+        #expect(grid.gestureRecognizer(swipe, shouldRecognizeSimultaneouslyWith: scroll.panGestureRecognizer) == false)
+        #expect(grid.gestureRecognizer(scroll.panGestureRecognizer, shouldRecognizeSimultaneouslyWith: swipe) == false)
+        await rig.stop()
+    }
+
     /// One pane has no strip, no minimap, and nothing to swipe to.
     @Test func aRexTerminalOfOnePaneHasNoStripNoMinimapAndNoSwipe() async throws {
         let rig = try await RexSessionTerminalTests().open(["a"])
