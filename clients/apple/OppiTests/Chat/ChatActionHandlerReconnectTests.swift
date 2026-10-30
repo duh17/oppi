@@ -2,6 +2,12 @@ import Testing
 import Foundation
 @testable import Oppi
 
+/// Every send here waits for two injected 100 ms ack timeouts — the send, then
+/// its retry — to clear `isSending`. The wait is headroom for a loaded host, not
+/// the behaviour under test: 500 ms and 1 s were too tight, and a loaded unit
+/// shard overran them.
+private let sendSettlesWithinMs = 5_000
+
 /// Regression tests for prompt delivery after WebSocket reconnect.
 ///
 /// Reproduces the bug from session W01FGDYt (2026-03-13): user sends prompts
@@ -72,7 +78,7 @@ struct ChatActionHandlerReconnectTests {
         #expect(third == "?", "Third send should also be blocked")
 
         // Wait for ack timeout + retry to exhaust
-        let finished = await waitForTestCondition(timeoutMs: 500) {
+        let finished = await waitForTestCondition(timeoutMs: sendSettlesWithinMs) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished, "Send should eventually finish after ack timeout")
@@ -137,8 +143,11 @@ struct ChatActionHandlerReconnectTests {
             sessionId: "s1"
         )
 
-        // Wait for timeout to clear
-        let cleared = await waitForTestCondition(timeoutMs: 500) {
+        // The ack wait has to fail twice (the send, then its retry) before
+        // `isSending` clears: two 100 ms injected timeouts plus scheduling. These
+        // budgets are headroom for a loaded host, not the behaviour under test —
+        // they were 500 ms and 1 s, which a loaded unit shard overran.
+        let cleared = await waitForTestCondition(timeoutMs: 5_000) {
             await MainActor.run { !handler.isSending }
         }
         #expect(cleared)
@@ -154,7 +163,7 @@ struct ChatActionHandlerReconnectTests {
         )
         #expect(result.isEmpty, "Send should be accepted after isSending clears")
 
-        let sent = await waitForTestCondition(timeoutMs: 1_000) {
+        let sent = await waitForTestCondition(timeoutMs: 5_000) {
             await MainActor.run { !handler.isSending }
         }
         #expect(sent)
@@ -196,7 +205,7 @@ struct ChatActionHandlerReconnectTests {
         #expect(queueBefore.steering.count == 1)
 
         // Wait for send to fail
-        let finished = await waitForTestCondition(timeoutMs: 500) {
+        let finished = await waitForTestCondition(timeoutMs: sendSettlesWithinMs) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished)
@@ -243,7 +252,7 @@ struct ChatActionHandlerReconnectTests {
             sessionId: "s1"
         )
 
-        let finished = await waitForTestCondition(timeoutMs: 1_000) {
+        let finished = await waitForTestCondition(timeoutMs: sendSettlesWithinMs) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished)
@@ -283,7 +292,7 @@ struct ChatActionHandlerReconnectTests {
             }
         )
 
-        let finished = await waitForTestCondition(timeoutMs: 500) {
+        let finished = await waitForTestCondition(timeoutMs: sendSettlesWithinMs) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished, "Send should eventually fail, not hang forever")
@@ -346,7 +355,7 @@ struct ChatActionHandlerReconnectTests {
             sessionId: "s1"
         )
 
-        let sent = await waitForTestCondition(timeoutMs: 1_000) {
+        let sent = await waitForTestCondition(timeoutMs: sendSettlesWithinMs) {
             await MainActor.run { !handler.isSending }
         }
         #expect(sent)
@@ -394,7 +403,7 @@ struct ChatActionHandlerReconnectTests {
             )
             #expect(result.isEmpty, "Send of '\(text)' should be accepted")
 
-            let done = await waitForTestCondition(timeoutMs: 1_000) {
+            let done = await waitForTestCondition(timeoutMs: sendSettlesWithinMs) {
                 await MainActor.run { !handler.isSending }
             }
             #expect(done, "Send of '\(text)' should complete")
@@ -439,7 +448,7 @@ struct ChatActionHandlerReconnectTests {
             }
         )
 
-        let finished = await waitForTestCondition(timeoutMs: 500) {
+        let finished = await waitForTestCondition(timeoutMs: sendSettlesWithinMs) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished, "Should fast-fail, not wait for ack timeout")
@@ -544,7 +553,7 @@ struct ChatActionHandlerReconnectTests {
         )
 
         // Wait for first send to timeout
-        _ = await waitForTestCondition(timeoutMs: 500) {
+        _ = await waitForTestCondition(timeoutMs: sendSettlesWithinMs) {
             await MainActor.run { !handler.isSending }
         }
     }
@@ -579,7 +588,7 @@ struct ChatActionHandlerReconnectTests {
             }
         )
 
-        let finished = await waitForTestCondition(timeoutMs: 500) {
+        let finished = await waitForTestCondition(timeoutMs: sendSettlesWithinMs) {
             await MainActor.run { !handler.isSending }
         }
         #expect(finished)
