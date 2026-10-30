@@ -58,7 +58,7 @@ final class SessionInboxViewController: UIViewController {
         didSet { setNeedsUpdateProperties() }
     }
     /// A thread link's root row to bring into view in the first snapshot that holds it. A finger on
-    /// the list, or another server, ends it.
+    /// the list, another server, or the sessions finishing loading without it ends it.
     private var pendingThreadScroll: String?
     private var providerSetupState: ProviderSetupState = .unknown {
         didSet { setNeedsUpdateProperties() }
@@ -253,7 +253,7 @@ final class SessionInboxViewController: UIViewController {
         let state = readState()
         search.show(state.search, toolbar: state.toolbar)
         applySnapshot(state)
-        scrollToPendingThreadRoot()
+        scrollToPendingThreadRoot(state)
         syncBars(state)
     }
 
@@ -501,11 +501,17 @@ final class SessionInboxViewController: UIViewController {
         pendingThreadScroll = focus.rootId
     }
 
-    private func scrollToPendingThreadRoot() {
+    /// Scrolls to the link's root in the first snapshot that holds it. Once the sessions have loaded
+    /// the scroll ends even when the root never appeared.
+    private func scrollToPendingThreadRoot(_ state: InboxState) {
         guard let rootId = pendingThreadScroll else { return }
-        if list.scrollToTop(ofFirstOf: [.session(rootId), .stoppedSession(rootId)]) {
-            pendingThreadScroll = nil
-        }
+        let scrolled = list.scrollToTop(ofFirstOf: [.session(rootId), .stoppedSession(rootId)])
+        let store = state.connection?.sessionStore
+        let step = SessionThreadLinkScroll.step(
+            rootIsListed: scrolled,
+            sessionsHaveLoaded: store.map { $0.lastSuccessfulSyncAt != nil && !$0.isSyncing } ?? false
+        )
+        if step != .wait { pendingThreadScroll = nil }
     }
 
     private func startServerTask(for serverId: String?) {

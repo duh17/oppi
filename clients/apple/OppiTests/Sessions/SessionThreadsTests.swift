@@ -84,6 +84,16 @@ struct SessionThreadsTests {
         #expect(SessionThreadGrouping.missingAncestorId(of: "a", in: [a, b]) == nil)
     }
 
+    @Test func aThreadLinksScrollEndsWhenTheRootIsListedOrTheSessionsLoadedWithoutIt() {
+        func step(listed: Bool, loaded: Bool) -> SessionThreadLinkScroll.Step {
+            SessionThreadLinkScroll.step(rootIsListed: listed, sessionsHaveLoaded: loaded)
+        }
+        #expect(step(listed: true, loaded: false) == .scroll)
+        #expect(step(listed: true, loaded: true) == .scroll)
+        #expect(step(listed: false, loaded: false) == .wait, "Sessions are still loading: the root may arrive")
+        #expect(step(listed: false, loaded: true) == .drop, "Loaded without the root: nothing left to wait for")
+    }
+
     // MARK: List entries
 
     /// A workspace list: its own sessions are listed, every loaded session feeds the trees.

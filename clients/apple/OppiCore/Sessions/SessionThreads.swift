@@ -292,6 +292,23 @@ struct SessionThreadStoppedFold: Sendable, Equatable {
     var rowID: String { "stopped-members:\(rootId)" }
 }
 
+/// What a list does about the scroll a thread link asked for, snapshot by snapshot.
+enum SessionThreadLinkScroll {
+    enum Step: Equatable {
+        /// The root is in the list: scrolled to it, done.
+        case scroll
+        /// The root is not in the list yet and sessions are still loading: try the next snapshot.
+        case wait
+        /// Sessions have loaded and the root is not among them (an old stopped thread, say): nothing to wait for.
+        case drop
+    }
+
+    static func step(rootIsListed: Bool, sessionsHaveLoaded: Bool) -> Step {
+        if rootIsListed { return .scroll }
+        return sessionsHaveLoaded ? .drop : .wait
+    }
+}
+
 enum SessionListEntries {
     /// One plain row per session: search results, which never fold into threads.
     static func flat(_ sessions: [Session]) -> [SessionListEntry] {
