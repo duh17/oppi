@@ -113,7 +113,7 @@ struct WorkspaceCreationIntakeTests {
         #expect(intake.createSheetContext == nil)
     }
 
-    @Test("guided creation opens once for an empty server and not again until the shell remounts")
+    @Test("guided creation opens once for an empty server and not again within the shell")
     func guidedCreationIsOncePerShell() async throws {
         let alpha = try server("alpha")
         let root = makeRoot(servers: [alpha])
@@ -136,13 +136,6 @@ struct WorkspaceCreationIntakeTests {
         root.navigation.shouldGuideWorkspaceCreation = true
         intake.update()
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) { recorder.started.count == 1 })
-
-        // The owner drops the intake when the shell unmounts; the next shell starts over.
-        let (remounted, _, remountRecorder) = makeIntake(root: root)
-        root.navigation.shouldGuideWorkspaceCreation = true
-        remounted.update()
-        #expect(await waitForMainActorCondition { remounted.createSheetContext != nil })
-        #expect(remountRecorder.started == [alpha.id])
     }
 
     @Test("a server that already has workspaces ends the guide without a sheet")
@@ -187,41 +180,44 @@ struct WorkspaceCreationIntakeTests {
         #expect(await waitForMainActorCondition { intake.createSheetContext?.server.id == beta.id })
     }
 
-    @Test("the root keeps an intake only while it shows the shell, and a remounted shell gets a fresh one")
-    func theRootOwnsTheIntakeWhileTheShellShows() throws {
-        let app = OppiApp()
-        let controller = AppRootViewController(app: app)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        let navigation = app.root.navigation
+    @Test("a stopped intake does nothing when its server refresh returns")
+    func stoppedIntakeIgnoresALateRefresh() async throws {
+        let alpha = try server("alpha")
+        let root = makeRoot(servers: [alpha])
+        let recorder = RefreshRecorder()
+        recorder.hanging = [alpha.id]
+        root.navigation.shouldGuideWorkspaceCreation = true
+        let (intake, _, _) = makeIntake(root: root, recorder: recorder)
+        intake.update()
+        #expect(await waitForMainActorCondition { recorder.started == [alpha.id] })
 
-        func render() {
-            controller.view.layoutIfNeeded()
-            controller.updatePropertiesIfNeeded()
-        }
+        // The shell goes while the refresh is out; the refresh then returns.
+        intake.stop()
+        #expect(await waitForMainActorCondition { recorder.cancelled == [alpha.id] })
 
-        render()
-        #expect(navigation.launchPhase == .resolving)
-        #expect(controller.workspaceCreation == nil)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) {
+            intake.createSheetContext == nil && root.navigation.shouldGuideWorkspaceCreation
+        })
+    }
 
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = true
-        render()
-        #expect(controller.workspaceCreation == nil, "onboarding is not the shell")
+    @Test("the root holds an intake only while the shell shows, and a remounted shell gets a fresh one")
+    func theRootHoldsTheIntakeWhileTheShellShows() throws {
+        let root = makeRoot(servers: [try server("alpha")])
+        let anchor = UIViewController()
+        let holder = WorkspaceCreationIntakeHolder()
 
-        navigation.showOnboarding = false
-        render()
-        let first = try #require(controller.workspaceCreation)
+        holder.update(showsShell: false, root: root, anchor: anchor)
+        #expect(holder.intake == nil, "launching and onboarding are not the shell")
 
-        navigation.showOnboarding = true
-        render()
-        #expect(controller.workspaceCreation == nil)
+        holder.update(showsShell: true, root: root, anchor: anchor)
+        let first = try #require(holder.intake)
+        holder.update(showsShell: true, root: root, anchor: anchor)
+        #expect(holder.intake === first, "an update keeps the shell's intake")
 
-        navigation.showOnboarding = false
-        render()
-        let second = try #require(controller.workspaceCreation)
-        #expect(second !== first)
+        holder.update(showsShell: false, root: root, anchor: anchor)
+        #expect(holder.intake == nil)
+
+        holder.update(showsShell: true, root: root, anchor: anchor)
+        #expect(holder.intake !== first)
     }
 }

@@ -20,6 +20,8 @@ final class WorkspaceCreationIntake {
     }
     private var pendingCreatedWorkspaceTarget: WorkspaceNavTarget?
     private var guidedCreateConsumed = false
+    /// Set once the shell is gone: a run that was waiting on the server does nothing when it resumes.
+    private var isStopped = false
 
     /// Runs `processWorkspaceCreationIntake` for the active server; a server
     /// switch cancels it and starts over for the new server.
@@ -55,6 +57,7 @@ final class WorkspaceCreationIntake {
     /// The shell is going: stop the work in flight. The slot dismisses a sheet
     /// that is up when the intake is released.
     func stop() {
+        isStopped = true
         intakeTask?.cancel()
         intakeTask = nil
     }
@@ -138,7 +141,7 @@ final class WorkspaceCreationIntake {
 
     @discardableResult
     private func consumeWorkspaceDeepLinkIfNeeded() async -> Bool {
-        guard let payload = navigation.pendingWorkspaceDeepLink else { return false }
+        guard !isStopped, let payload = navigation.pendingWorkspaceDeepLink else { return false }
         navigation.pendingWorkspaceDeepLink = nil
         navigation.shouldGuideWorkspaceCreation = false
 
@@ -162,11 +165,12 @@ final class WorkspaceCreationIntake {
     }
 
     private func presentGuidedWorkspaceCreationIfNeeded() async {
-        guard navigation.shouldGuideWorkspaceCreation, !guidedCreateConsumed else { return }
+        guard !isStopped, navigation.shouldGuideWorkspaceCreation, !guidedCreateConsumed else { return }
         guard let server = selectedServer else { return }
 
         await refreshServer(server.id)
 
+        guard !isStopped, !Task.isCancelled else { return }
         guard navigation.shouldGuideWorkspaceCreation, !guidedCreateConsumed else { return }
         guard coordinator.activeServerId == server.id else { return }
         guard let connection = coordinator.connection(for: server.id),
@@ -193,5 +197,27 @@ final class WorkspaceCreationIntake {
         guard let target = pendingCreatedWorkspaceTarget else { return }
         pendingCreatedWorkspaceTarget = nil
         navigation.openWorkspace(target)
+    }
+}
+
+/// The root's hold on the intake: one while the shell shows, none otherwise, so
+/// the next shell starts with a fresh one.
+@MainActor
+final class WorkspaceCreationIntakeHolder {
+    private(set) var intake: WorkspaceCreationIntake?
+
+    func update(showsShell: Bool, root: AppRootEnvironment, anchor: UIViewController) {
+        guard showsShell else {
+            intake?.stop()
+            intake = nil
+            return
+        }
+        let current = intake ?? WorkspaceCreationIntake(root: root, anchor: anchor)
+        intake = current
+        current.update()
+    }
+
+    func anchorDidAppear() {
+        intake?.anchorDidAppear()
     }
 }

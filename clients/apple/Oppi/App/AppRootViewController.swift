@@ -27,7 +27,7 @@ final class AppRootViewController: UIViewController {
     private var resourceChoiceShown: [String]?
     /// Workspace creation the shell starts (`oppi://workspace`, the guided first workspace):
     /// exists while the shell shows, so its state starts over with the next shell.
-    private(set) var workspaceCreation: WorkspaceCreationIntake?
+    private let workspaceCreation = WorkspaceCreationIntakeHolder()
     private lazy var quickSession = QuickSessionPresentation(root: root, host: self)
     /// The pairing approval sheet, over whatever the window shows.
     private lazy var pairingApprovals = PairingApprovalPresentation(
@@ -66,7 +66,7 @@ final class AppRootViewController: UIViewController {
         super.viewDidAppear(animated)
         // A request that came in before the window was up presents now.
         pairingApprovals.anchorDidAppear()
-        workspaceCreation?.anchorDidAppear()
+        workspaceCreation.anchorDidAppear()
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -104,14 +104,7 @@ final class AppRootViewController: UIViewController {
 
     /// Only the shell starts workspace creation by itself.
     private func updateWorkspaceCreation() {
-        guard contentKind == .shell else {
-            workspaceCreation?.stop()
-            workspaceCreation = nil
-            return
-        }
-        let intake = workspaceCreation ?? WorkspaceCreationIntake(root: root, anchor: self)
-        workspaceCreation = intake
-        intake.update()
+        workspaceCreation.update(showsShell: contentKind == .shell, root: root, anchor: self)
     }
 
     private static func content(for navigation: AppNavigation, pairedServersUnavailable: Bool) -> Content {
