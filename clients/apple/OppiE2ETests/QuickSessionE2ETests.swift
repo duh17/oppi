@@ -436,6 +436,10 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
         let thread = app.buttons["thread.nav.\(rootId)"]
         XCTAssertTrue(thread.waitForExistence(timeout: 15), "Thread strip missing")
         thread.tap()
+        // The thread's only member is stopped, so it is behind the thread's Stopped row.
+        let stoppedRow = app.buttons["thread.stopped.\(rootId)"]
+        XCTAssertTrue(stoppedRow.waitForExistence(timeout: 15), "Expanding the thread did not list its Stopped row")
+        stoppedRow.tap()
         let childRow = app.descendants(matching: .any)["session.nav.\(childId)"]
         XCTAssertTrue(childRow.waitForExistence(timeout: 15), "Expanding the thread did not list its child")
         assertLauncherPresent(on: "expanded thread")

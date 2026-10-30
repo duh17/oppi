@@ -44,8 +44,8 @@ final class SessionThreadListUITests: XCTestCase {
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 
-    /// Live members (a working child, an idle child from another workspace) list before the
-    /// fold; the finished child and its own child sit behind it until it is opened, indented
+    /// Live members (an idle child from another workspace, then a working child) list in the list's
+    /// own order before the fold; the finished child and its own child sit behind it until it is opened, indented
     /// under their listed parent.
     func testOpenThreadListsLiveMembersFirstAndFoldsStoppedOnesBehindOneRow() {
         launch()
@@ -62,8 +62,8 @@ final class SessionThreadListUITests: XCTestCase {
         XCTAssertTrue(fold.exists, "The stopped members should fold behind one row")
         XCTAssertEqual(fold.label, "2 Stopped")
         XCTAssertEqual(fold.value as? String, "Collapsed")
-        XCTAssertLessThan(working.frame.minY, idle.frame.minY, "Working lists before done and idle")
-        XCTAssertLessThan(idle.frame.minY, fold.frame.minY, "The fold row ends the thread")
+        XCTAssertLessThan(idle.frame.minY, working.frame.minY, "Your Turn lists before Working, as the list does")
+        XCTAssertLessThan(working.frame.minY, fold.frame.minY, "The fold row ends the thread")
         XCTAssertFalse(app.buttons["session.nav.child-done"].exists, "A stopped member stays folded")
 
         scrollClearOfBottomBar(fold)

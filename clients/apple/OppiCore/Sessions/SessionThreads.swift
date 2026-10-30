@@ -12,11 +12,12 @@ struct SessionThreadRollup: Sendable, Equatable {
 
     /// What an open thread lists after its root, in two groups (`Member`: depth 1 is a first-level row).
     ///
-    /// - `live`: members that are not stopped, blocked first, then working, then error, then
-    ///   done and idle, most recent first within a kind (working by launch, as the Working
-    ///   section sorts). The kind is the one the list's sections classify by
-    ///   (`SessionListPresentation.activeSectionKind`), without this device's seen state, so a
-    ///   glance never reorders the rows.
+    /// - `live`: members that are not stopped, in the order the list's own sections use: the
+    ///   Your Turn ones (blocked, error, done, idle) first, sorted by
+    ///   `SessionListPresentation.compareYourTurn` (blocked first, then the oldest activity),
+    ///   then the Working ones, sorted by `compareWorking`. The section is the one the list
+    ///   classifies by (`activeSectionKind`), without this device's seen state, so a glance
+    ///   never reorders the rows, and a working member's activity ticking never moves it.
     /// - `stopped`: the stopped members, most recent activity first, as the list sorts stopped rows.
     ///
     /// A group is a forest. A member's parent is its nearest ancestor in the same group, skipping
@@ -33,43 +34,34 @@ struct SessionThreadRollup: Sendable, Equatable {
     ) -> (live: [Member], stopped: [Member]) {
         var live: [Session] = []
         var stopped: [Session] = []
-        var liveRank: [String: Int] = [:]
+        // Section and blocked state of each live member, as the list classifies a row.
+        var sectionById: [String: SessionListActiveSectionKind] = [:]
+        var blockedIds: Set<String> = []
         for member in descendants {
             let memberAttention = attention(member)
-            if SessionListPresentation.activeSectionKind(for: member, attention: memberAttention) == nil {
+            guard let section = SessionListPresentation.activeSectionKind(for: member, attention: memberAttention) else {
                 stopped.append(member)
-            } else {
-                live.append(member)
-                liveRank[member.id] = Self.liveRank(of: member, attention: memberAttention)
+                continue
             }
+            live.append(member)
+            sectionById[member.id] = section
+            if SessionListPresentation.isBlocked(member, attention: memberAttention) { blockedIds.insert(member.id) }
         }
         return (
             forest(live) { lhs, rhs in
-                let (lhsRank, rhsRank) = (liveRank[lhs.id] ?? 0, liveRank[rhs.id] ?? 0)
-                if lhsRank != rhsRank { return lhsRank < rhsRank }
-                if lhsRank == Self.workingRank { return SessionListPresentation.compareWorking(lhs, rhs) }
-                return Self.isMoreRecent(lhs, rhs)
+                let (lhsSection, rhsSection) = (sectionById[lhs.id] ?? .working, sectionById[rhs.id] ?? .working)
+                if lhsSection != rhsSection { return lhsSection == .yourTurn }
+                if lhsSection == .working { return SessionListPresentation.compareWorking(lhs, rhs) }
+                return SessionListPresentation.compareYourTurn(
+                    lhs, lhsBlocked: blockedIds.contains(lhs.id), rhs, rhsBlocked: blockedIds.contains(rhs.id)
+                )
             },
-            forest(stopped, precedes: Self.isMoreRecent)
+            // The list's stopped sort: most recent activity first.
+            forest(stopped) { lhs, rhs in
+                if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
+                return lhs.id < rhs.id
+            }
         )
-    }
-
-    private static let workingRank = 1
-
-    /// Blocked, working, error, then done and idle.
-    private static func liveRank(of member: Session, attention: SessionListAttentionCounts) -> Int {
-        switch SessionStatusKind.resolve(session: member, pendingAskCount: attention.askCount, seenAt: nil) {
-        case .needsApproval, .question, .signIn: 0
-        case .working: workingRank
-        case .error: 2
-        case .done, .idle, .stopped: 3
-        }
-    }
-
-    private static func isMoreRecent(_ lhs: Session, _ rhs: Session) -> Bool {
-        if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
-        if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
-        return lhs.id < rhs.id
     }
 
     /// `group` as an outline ordered by `precedes` (a strict total order).
@@ -79,7 +71,8 @@ struct SessionThreadRollup: Sendable, Equatable {
         var childrenByParent: [String: [Session]] = [:]
         var firstLevel: [Session] = []
         for session in group {
-            // Nearest ancestor in this group; the walk stops at the root, a missing parent, or a cycle.
+            // Nearest ancestor in this group. The walk passes over the root and members of the other
+            // group, and ends at a missing parent or a cycle.
             var parentId = session.parentSessionId
             var seen: Set<String> = [session.id]
             var listedParent: String?
@@ -193,7 +186,14 @@ enum SessionThreadGrouping {
     /// Root of the launch tree `sessionId` belongs to among the loaded `sessions`: the session
     /// itself when it has no loaded parent. Nil when `sessionId` is not among them.
     static func rootId(of sessionId: String, in sessions: [Session]) -> String? {
-        rollups(from: sessions).first { rollup in rollup.members.contains { $0.id == sessionId } }?.root.id
+        let byId = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        guard var current = byId[sessionId] else { return nil }
+        // Walk up the chain; a parent cycle ends at the session that closes it, as `rollups` does.
+        var visited: Set<String> = [sessionId]
+        while let parentId = current.parentSessionId, let parent = byId[parentId], visited.insert(parentId).inserted {
+            current = parent
+        }
+        return current.id
     }
 
     /// The first parent on `sessionId`'s chain that is not among `sessions`, so a caller can load
@@ -312,9 +312,11 @@ enum SessionListEntries {
     /// Other entries pass through.
     ///
     /// `stoppedFolds` holds what the person chose for a thread's fold (true: open), by root id.
-    /// Without a choice the fold is closed, unless the thread has no live member: then the
-    /// fold row would be the only row, so it opens itself. `attention` supplies each member's
-    /// pending asks, which rank it as blocked.
+    /// Without a choice the fold is closed, always: a thread whose members are all stopped lists
+    /// its root and the fold row. `attention` supplies each member's pending asks, which make it
+    /// blocked.
+    /// A choice is kept per root until the owner clears it, so closing and reopening a thread
+    /// finds its fold as it was left.
     ///
     /// The fold row is an entry whose `session` is the root and whose `stoppedFold` is set.
     /// A thread with no stopped member has no fold row.
@@ -341,7 +343,7 @@ enum SessionListEntries {
             }
             rows.append(contentsOf: listing.live.map(member))
             guard !listing.stopped.isEmpty else { continue }
-            let isOpen = stoppedFolds[entry.session.id] ?? listing.live.isEmpty
+            let isOpen = stoppedFolds[entry.session.id] ?? false
             rows.append(SessionListEntry(
                 session: entry.session,
                 thread: nil,

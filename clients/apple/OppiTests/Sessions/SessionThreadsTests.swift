@@ -61,6 +61,9 @@ struct SessionThreadsTests {
         #expect(SessionThreadGrouping.rootId(of: "missing", in: loaded) == nil)
         // With the parent not loaded, the loaded top of the chain stands in for the root.
         #expect(SessionThreadGrouping.rootId(of: "grandchild", in: [loaded[0], loaded[2]]) == "child")
+        // A parent cycle resolves to one root, the same one the rollups pick.
+        let cycle = [session("a", parent: "b", created: 1), session("b", parent: "a", created: 2)]
+        #expect(SessionThreadGrouping.rootId(of: "a", in: cycle) == SessionThreadGrouping.rollups(from: cycle).first?.root.id)
     }
 
     @Test func theMissingAncestorIsTheFirstUnloadedParentOnTheChain() {
@@ -259,10 +262,10 @@ struct SessionThreadsTests {
 
         let rows = expand(sessions)
 
-        // Blocked, working, error, then done and idle together; most recent first within a kind
-        // (working by launch, as the Working section sorts).
+        // The list's own order: Your Turn (blocked first, then the oldest activity), then Working
+        // (newest launched first).
         #expect(rows.map(label) == [
-            "root", "blocked", "working-new", "working-old", "error", "done-new", "idle", "done-old", "fold(2)",
+            "root", "blocked", "error", "done-old", "idle", "done-new", "working-new", "working-old", "fold(2)",
         ])
         #expect(rows.map(\.isExpanded) == [true] + Array(repeating: false, count: 8))
         #expect(rows.dropFirst().allSatisfy { $0.thread == nil && $0.outsideRoot == nil }, "Children are ordinary rows")
@@ -304,20 +307,40 @@ struct SessionThreadsTests {
             live("b", .working, parent: "root", created: 20),
         ])
 
-        #expect(rows.map(label) == ["root", "b", "a"])
+        #expect(rows.map(label) == ["root", "a", "b"], "Your Turn lists before Working")
         #expect(rows.allSatisfy { $0.stoppedFold == nil })
     }
 
-    @Test func aThreadWithOnlyStoppedMembersShowsJustTheFoldOpenUnlessClosed() {
+    @Test func aThreadWithOnlyStoppedMembersShowsJustTheFoldClosedUntilOpened() {
         let sessions = [
             session("root", status: .ready, created: 0),
             session("first", parent: "root", created: 10, last: 100),
             session("second", parent: "root", created: 11, last: 200),
         ]
 
-        // Nothing live competes for the list, so the fold opens itself; the person can still close it.
-        #expect(expand(sessions).map(label) == ["root", "fold(2, open)", "second", "first"])
-        #expect(expand(sessions, folds: ["root": false]).map(label) == ["root", "fold(2)"])
+        #expect(expand(sessions).map(label) == ["root", "fold(2)"], "The fold is closed by default, even with nothing live")
+        #expect(expand(sessions, folds: ["root": true]).map(label) == ["root", "fold(2, open)", "second", "first"])
+    }
+
+    /// A working member's activity ticks as it streams; its row must not move for that, and a member
+    /// that stops or resumes moves between the list and the fold with its row id.
+    @Test func rowsKeepTheirPlaceWhileActivityTicksAndMembersMoveInAndOutOfTheFold() {
+        func rows(_ sessions: [Session]) -> [String] { expand(sessions, folds: ["root": true]).map(label) }
+        var working = live("working", .working, parent: "root", created: 20, last: 30)
+        let otherWorking = live("other-working", .working, parent: "root", created: 10, last: 90)
+        let done = live("done", .done, parent: "root", created: 5, last: 40)
+        let root = session("root", status: .ready, created: 0)
+        let before = rows([root, working, otherWorking, done])
+        #expect(before == ["root", "done", "working", "other-working"])
+
+        working.lastActivity = Date(timeIntervalSince1970: 500)
+        #expect(rows([root, working, otherWorking, done]) == before, "A working member's activity does not reorder it")
+
+        // Stopping moves the member into the fold; resuming brings it back to its place.
+        var stopped = working
+        stopped.status = .stopped
+        #expect(rows([root, stopped, otherWorking, done]) == ["root", "done", "other-working", "fold(1, open)", "working"])
+        #expect(rows([root, working, otherWorking, done]) == before)
     }
 
     @Test func eachThreadKeepsItsOwnFoldChoice() {
@@ -405,7 +428,7 @@ struct SessionThreadsTests {
             entries, expandedRoots: ["root"], stoppedFolds: ["root": true], attention: { _ in .none }
         )
 
-        // All stopped: the fold is open. The newest member's tree lists first, a parent before its child.
+        // All stopped, fold opened. The newest member's tree lists first, a parent before its child.
         #expect(rows.map(label) == ["root", "fold(3, open)", "remote", "remote-child", "local"])
         #expect(rows.map(\.depth) == [0, 1, 1, 2, 1])
         #expect(rows.dropFirst(2).map(\.session.workspaceId) == ["b", "b", "a"])

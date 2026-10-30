@@ -327,10 +327,13 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(reveal(stoppedStrip, in: inbox), "Stopped root Thread strip missing")
         stoppedStrip.tap()
         XCTAssertTrue(waitForValue(stoppedStrip, "Expanded"), "Stopped root strip did not expand")
-        // Nothing in this thread is live, so its Stopped row opens itself.
+        // Nothing in this thread is live, and its Stopped row is closed like any other: the root and that row.
         let allStoppedFold = app.buttons["thread.stopped.\(stoppedRoot)"]
         XCTAssertTrue(reveal(allStoppedFold, in: inbox), "Stopped row missing from an all-stopped thread")
-        XCTAssertEqual(allStoppedFold.value as? String, "Expanded")
+        XCTAssertEqual(allStoppedFold.value as? String, "Collapsed")
+        XCTAssertFalse(app.buttons["session.nav.\(stoppedChild)"].exists, "A stopped member stays behind the Stopped row")
+        allStoppedFold.tap()
+        XCTAssertTrue(waitForValue(allStoppedFold, "Expanded"), "Stopped row did not expand")
         let childRow = app.buttons["session.nav.\(stoppedChild)"]
         XCTAssertTrue(reveal(childRow, in: inbox), "Stopped child row missing under its root")
         childRow.tap()
