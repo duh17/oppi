@@ -4,5 +4,4 @@ import CoreGraphics
 /// inner display); compact-width layouts are unchanged.
 enum IPadReadableContentWidth {
     static let form: CGFloat = 760
-    static let detail: CGFloat = 900
 }

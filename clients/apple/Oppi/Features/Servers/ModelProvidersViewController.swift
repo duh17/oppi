@@ -9,15 +9,19 @@ import UIKit
 /// Usage reloads on appearance, pull to refresh, a return to the foreground,
 /// and after a credential change, so the even-pace tick on each bar reflects
 /// the current time.
+///
+/// A `ListScreenController`: the base owns the list, the section headings and
+/// footer, and the load on appearance and pull to refresh. This page keeps the
+/// rows, the bar's host switcher, and the sign-in and API key sheets it opens.
 @MainActor
-final class ModelProvidersViewController: UIViewController, UICollectionViewDelegate {
+final class ModelProvidersViewController: ListScreenController<ModelProvidersViewController.Section, ModelProvidersViewController.Item> {
     let target: ModelProvidersNavTarget
 
-    private enum Section: Hashable {
+    enum Section: Hashable, Sendable {
         case signInAttempt, loading, connected, available, error
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case signInAttempt
         case loading
         case onboarding
@@ -27,14 +31,9 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ListScreen.makeCollectionView()
-    private let refreshControl = UIRefreshControl()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var changedRows = ChangedRows<Item>()
     private var switcher: SessionListServerSwitcher?
     private var switcherServerId: String?
     private var foregroundObserver: NSObjectProtocol?
-    private var hasAppeared = false
 
     // Host-local state, reset when the visible server changes.
     private var loadedServerId: String?
@@ -66,41 +65,19 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
     /// The attempt's last settled state, so settling reloads the providers once.
     private var attemptWasSettled = false
 
-    /// Fixture data that replaces the server load (screenshot preview only).
-    private let fixture: (statuses: [ProviderAuthProviderStatus], quotas: ProviderQuotasInfo)?
-
     init(target: ModelProvidersNavTarget, root: AppRootEnvironment) {
         self.target = target
         self.root = root
-        fixture = nil
-        super.init(nibName: nil, bundle: nil)
-        setUp()
+        super.init(
+            title: HostSwitcherDestination.modelProviders.title,
+            listIdentifier: "server.modelProviders.list",
+            headers: true, footers: true, pullsToRefresh: true
+        )
+        traitOverrides.appRootEnvironment = root
     }
-
-    #if DEBUG
-    /// Screenshot harness entry: fixture providers and usage, no server load.
-    init(
-        target: ModelProvidersNavTarget,
-        root: AppRootEnvironment,
-        statuses: [ProviderAuthProviderStatus],
-        quotas: ProviderQuotasInfo
-    ) {
-        self.target = target
-        self.root = root
-        fixture = (statuses, quotas)
-        super.init(nibName: nil, bundle: nil)
-        setUp()
-    }
-    #endif
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    private func setUp() {
-        traitOverrides.appRootEnvironment = root
-        navigationItem.largeTitleDisplayMode = .never
-        title = HostSwitcherDestination.modelProviders.title
-    }
 
     private var coordinator: ConnectionCoordinator { root.coordinator }
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
@@ -118,16 +95,8 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "server.modelProviders.list"
-        collectionView.refreshControl = refreshControl
-        refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ModelProvidersList.pinReadable(collectionView, in: view, maxWidth: IPadReadableContentWidth.detail)
-        installDataSource()
+        // The bar's switcher joins the Duo's rail, so the bar is laid out again
+        // when the size classes change.
         registerForTraitChanges([UITraitHorizontalSizeClass.self, UITraitVerticalSizeClass.self]) { (screen: Self, _) in
             screen.setNeedsUpdateProperties()
         }
@@ -135,11 +104,8 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
 
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
+        // Usage drifts while the screen is away; the base's refresh reloads it.
         resumeFlowPollingIfLive()
-        // Usage drifts while the screen is away; the first load starts with the
-        // host in updateProperties.
-        if hasAppeared, loadedServerId != nil { reload() }
-        hasAppeared = true
         // A cancelled interactive pop appears again without disappearing.
         guard foregroundObserver == nil else { return }
         foregroundObserver = NotificationCenter.default.addObserver(
@@ -150,36 +116,25 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
             MainActor.assumeIsolated {
                 guard let self, self.loadedServerId != nil else { return }
                 self.resumeFlowPollingIfLive()
-                self.reload()
+                self.setNeedsRefresh()
             }
         }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
         if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
         foregroundObserver = nil
         flowAttempt?.stopPolling()
+        super.viewDidDisappear(animated)
     }
 
     override func updateProperties() {
-        super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
-        guard let server else {
-            loadedServerId = nil
-            installSwitcher(nil)
-            collectionView.isHidden = true
-            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
-                .serverUnavailable,
-                palette: palette,
-                background: root.themeStore.backgroundColor
-            )
-            return
-        }
-        collectionView.isHidden = false
-        contentUnavailableConfiguration = nil
+        let server = server
+        if server == nil { loadedServerId = nil }
         installSwitcher(server)
-        if loadedServerId != server.id {
+        // Host-local state belongs to one server: a switch starts that server's
+        // rows from nothing and loads them again.
+        if let server, loadedServerId != server.id {
             switchHost(to: server.id)
         }
         // A sign-in that settles changes what the server has; show it.
@@ -188,7 +143,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
             reloadIfVisible(serverId: attempt.serverId)
         }
         attemptWasSettled = settled
-        applySnapshot()
+        super.updateProperties()
     }
 
     // MARK: - Bar
@@ -227,29 +182,33 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
     /// Host-local state resets on a host switch. A live sign-in stays: it is
     /// bound to its own server's client and keeps polling.
     private func switchHost(to serverId: String) {
+        resetHostState(to: serverId)
+        // The first load is the base's, when the page appears; a switch made on
+        // the page loads its server now.
+        if isShowing { setNeedsRefresh() }
+    }
+
+    private func resetHostState(to serverId: String) {
         loadedServerId = serverId
         statuses = []
         setupState = .unknown
         quotas = nil
         errorMessage = nil
         if let apiKeySheet { Router.finish(apiKeySheet) }
-        reload()
     }
 
-    private func reload() {
-        Task { await load() }
-    }
-
-    private func refresh() {
-        Task {
-            await load()
-            refreshControl.endRefreshing()
-        }
+    /// The active server's providers and usage: on every appearance, on pull to
+    /// refresh, when the app becomes active, and after a credential change.
+    override func refresh() async {
+        // The appearance's load starts before the first `updateProperties`, so
+        // it takes the server that pass would have taken.
+        if let server, loadedServerId != server.id { resetHostState(to: server.id) }
+        await load()
     }
 
     private func reloadIfVisible(serverId: String) {
         guard serverId == loadedServerId else { return }
-        reload()
+        setNeedsRefresh()
     }
 
     /// Statuses and usage in parallel. Statuses show as soon as they arrive;
@@ -261,12 +220,6 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
     private func load() async {
         loadGeneration += 1
         let generation = loadGeneration
-        if let fixture {
-            statuses = fixture.statuses
-            setupState = ProviderSetupState(providerStatuses: fixture.statuses)
-            quotas = fixture.quotas
-            return
-        }
         guard let serverId = loadedServerId else { return }
         let isCurrent = { [weak self] in self?.loadGeneration == generation && self?.loadedServerId == serverId }
         guard let client = await coordinator.apiClientReady(for: serverId) else {
@@ -322,115 +275,103 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
         flowAttempt.map { !$0.isSettled } ?? false
     }
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+    override func sections() -> [ListSection<Section, Item>] {
+        // Without a server there is nothing to list: the page is its state.
+        guard server != nil else { return [] }
+        var sections: [ListSection<Section, Item>] = []
         if flowAttempt != nil, flowSheet == nil {
-            snapshot.appendSections([.signInAttempt])
-            snapshot.appendItems([.signInAttempt], toSection: .signInAttempt)
+            sections.append(ListSection(.signInAttempt, items: [.signInAttempt]))
         }
         let presentation = ProviderConfigurationPresentation(state: setupState)
         if presentation.showsLoading {
-            snapshot.appendSections([.loading])
-            snapshot.appendItems([.loading], toSection: .loading)
+            sections.append(ListSection(.loading, items: [.loading]))
         } else if presentation.showsProviderSections {
-            snapshot.appendSections([.connected, .available])
             let connected = connectedProviders.map { Item.provider($0.id) }
-            snapshot.appendItems(connected.isEmpty ? [.onboarding] : connected, toSection: .connected)
+            sections.append(ListSection(
+                .connected,
+                header: "Connected",
+                footer: connectedFooterText,
+                items: connected.isEmpty ? [.onboarding] : connected
+            ))
             let available = availableProviders.map { Item.provider($0.id) }
-            snapshot.appendItems(available.isEmpty ? [.allConnected] : available, toSection: .available)
+            sections.append(ListSection(
+                .available, header: "Available", items: available.isEmpty ? [.allConnected] : available
+            ))
         }
         if errorMessage != nil {
-            snapshot.appendSections([.error])
-            snapshot.appendItems([.error], toSection: .error)
+            sections.append(ListSection(.error, items: [.error]))
         }
-        // Only the rows whose inputs changed. A refreshed row keeps its ⋯ menu
-        // when the menu's choices are the same (`ProviderRowContentView`).
-        let current = dataSource.snapshot()
-        let themeID = root.themeStore.activeThemeID
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { AnyHashable([AnyHashable(themeID)] + rowInputs($0)) }
-        snapshot.reconfigureItems(changed.filter { current.indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
-        // The footer carries the usage time; supplementary views do not reconfigure.
-        if let section = snapshot.indexOfSection(.connected),
-           let footer = collectionView.supplementaryView(
-               forElementKind: UICollectionView.elementKindSectionFooter,
-               at: IndexPath(item: 0, section: section)
-           ) as? UICollectionViewListCell {
-            footer.contentConfiguration = connectedFooter()
-        }
+        return sections
     }
 
-    private func rowInputs(_ item: Item) -> [AnyHashable] {
+    /// "Connected" and "Available" carry a heading; the sign-in attempt, the
+    /// loading and error rows do not.
+    override func showsHeader(for section: Section) -> Bool {
+        section == .connected || section == .available
+    }
+
+    /// A page with no server says so over the whole screen instead of in a row.
+    override func wholeScreenState() -> LoadState? {
+        server == nil ? .serverUnavailable : nil
+    }
+
+    override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .signInAttempt:
-            guard let attempt = flowAttempt else { return [] }
-            return [ObjectIdentifier(attempt), attempt.flow.status.rawValue, attempt.isGone, attempt.isSettled, loadedServerId]
+            guard let attempt = flowAttempt else { return AnyHashable(0) }
+            return AnyHashable([
+                AnyHashable(ObjectIdentifier(attempt)), AnyHashable(attempt.flow.status.rawValue),
+                AnyHashable(attempt.isGone), AnyHashable(attempt.isSettled), AnyHashable(loadedServerId),
+            ])
         case .provider(let id):
-            guard let provider = statuses.first(where: { $0.id == id }) else { return [] }
+            guard let provider = statuses.first(where: { $0.id == id }) else { return AnyHashable(0) }
             let quota = quota(for: provider)
-            return [
-                provider.name, provider.authenticated, provider.credentialType?.rawValue, provider.expiresAt,
-                provider.maskedKey, provider.supportsApiKey, provider.oauth != nil,
-                quota?.fetchedAt, quota?.error, actionInFlightId == id, hasLiveSignIn, actionInFlightId != nil,
-            ]
+            return AnyHashable([
+                AnyHashable(provider.name), AnyHashable(provider.authenticated),
+                AnyHashable(provider.credentialType?.rawValue), AnyHashable(provider.expiresAt),
+                AnyHashable(provider.maskedKey), AnyHashable(provider.supportsApiKey), AnyHashable(provider.oauth != nil),
+                AnyHashable(quota?.fetchedAt), AnyHashable(quota?.error),
+                AnyHashable(actionInFlightId == id), AnyHashable(hasLiveSignIn), AnyHashable(actionInFlightId != nil),
+            ])
         case .error:
-            return [errorMessage]
+            return AnyHashable(errorMessage)
         case .loading, .onboarding, .allConnected:
-            return []
+            return AnyHashable(0)
         }
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = switch self?.dataSource?.sectionIdentifier(for: indexPath.section) {
-            case .connected: "Connected"
-            case .available: "Available"
-            default: nil
-            }
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            guard let self else { return }
-            view.contentConfiguration = dataSource?.sectionIdentifier(for: indexPath.section) == .connected
-                ? connectedFooter()
-                : UIListContentConfiguration.footer()
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
-        }
-    }
-
-    /// When the usage on screen was read, so a stale bar is recognizable.
-    private func connectedFooter() -> UIListContentConfiguration {
-        var content = UIListContentConfiguration.footer()
+    /// When the usage on screen was read, so a stale bar is recognizable. It is
+    /// the connected group's footer, rebuilt on every pass.
+    private var connectedFooterText: String? {
         let shown = connectedProviders.compactMap { quota(for: $0) }
-        if !shown.isEmpty, let fetchedAt = quotas?.fetchedAt {
-            let date = Date(timeIntervalSince1970: TimeInterval(fetchedAt) / 1000)
-            let now = Date()
-            let hasTick = shown.contains { $0.windows.contains { $0.evenPaceRemainingFraction(at: now) != nil } }
-            content.text = "Usage as of \(date.formatted(date: .omitted, time: .shortened))."
-                + (hasTick ? " The tick on each bar marks an even pace." : "")
-        }
-        return content
+        guard !shown.isEmpty, let fetchedAt = quotas?.fetchedAt else { return nil }
+        let date = Date(timeIntervalSince1970: TimeInterval(fetchedAt) / 1000)
+        let hasTick = shown.contains { $0.windows.contains { $0.evenPaceRemainingFraction(at: Date()) != nil } }
+        return "Usage as of \(date.formatted(date: .omitted, time: .shortened))."
+            + (hasTick ? " The tick on each bar marks an even pace." : "")
+    }
+
+    // MARK: - Rows
+
+    /// The page's rows: one `SidebarListCell`, a themed card, filled by
+    /// `configure(_:item:)`.
+    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
+        configure(cell, item: item)
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = row
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
     }
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .signInAttempt:
             configureAttemptRow(cell, palette: palette)
@@ -440,6 +381,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
                 .loading(String(localized: "Loading providers…")),
                 palette: palette
             )
+            // The state fills its row; it is not a card of its own.
             ListScreen.background(cell, grouped: false, palette: palette)
         case .onboarding:
             ListScreen.staticRow(cell, identifier: "server.modelProviders.onboarding")
@@ -562,7 +504,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
 
     /// The row's cell, to anchor a sheet that pops over on iPad.
     private func anchor(for provider: ProviderAuthProviderStatus) -> UIView? {
-        dataSource?.indexPath(for: .provider(provider.id)).flatMap(collectionView.cellForItem(at:))
+        indexPath(for: .provider(provider.id)).flatMap(collectionView.cellForItem(at:))
     }
 
     /// Where the sign-in page opens, asked before any flow starts.
@@ -735,24 +677,5 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
         flowSheet = nil
         guard flowAttempt === attempt, !attempt.sheetDismissed() else { return }
         flowAttempt = nil
-    }
-}
-
-/// Layout shared by Model Providers and its sheets.
-@MainActor
-enum ModelProvidersList {
-    /// The list at a readable width, centered, on iPad; full width on iPhone.
-    static func pinReadable(_ collectionView: UICollectionView, in view: UIView, maxWidth: CGFloat) {
-        collectionView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(collectionView)
-        let fillWidth = collectionView.widthAnchor.constraint(equalTo: view.widthAnchor)
-        fillWidth.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
-            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            collectionView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            collectionView.widthAnchor.constraint(lessThanOrEqualToConstant: maxWidth),
-            fillWidth,
-        ])
     }
 }

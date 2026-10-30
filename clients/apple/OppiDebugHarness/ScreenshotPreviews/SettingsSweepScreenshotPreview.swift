@@ -8,7 +8,9 @@ import UIKit
 /// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
-/// `agents-pi`, `workspace-create`, `workspace-create-configure`, `mcp-add`.
+/// `agents-pi`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
+/// `model-providers` (the connected and available groups over fixture usage),
+/// `model-providers-api-key` (the key sheet with a failed save).
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -74,6 +76,53 @@ final class SettingsSweepPreviewController: PreviewRootController {
 
     private static func catalogExtensions(page: String) -> [ServerExtensionSummary] {
         page == "extensions-builtin-only" ? extensions.filter { $0.kind == .builtIn } : extensions
+    }
+
+    /// Model Providers' fixture: one provider connected with usage, one still
+    /// to connect, so both groups have a row.
+    static let providers: [ProviderAuthProviderStatus] = [
+        ProviderAuthProviderStatus(
+            id: "anthropic", name: "Anthropic", supportsApiKey: true,
+            oauth: ProviderAuthOAuthCapabilities(
+                flowType: .oauth, supportsServerBrowserLaunch: true, supportsPhoneBrowserLaunch: true,
+                supportsManualCodeInput: false, mayPromptForInput: false
+            ),
+            authenticated: true, credentialType: .apiKey, expiresAt: nil, maskedKey: "sk-ant-…c4f2"
+        ),
+        ProviderAuthProviderStatus(
+            id: "openai", name: "OpenAI", supportsApiKey: true, oauth: nil,
+            authenticated: false, credentialType: nil, expiresAt: nil, maskedKey: nil
+        ),
+    ]
+
+    static var providerQuotas: ProviderQuotasInfo {
+        let now = Date()
+        let fetchedAt = Int(now.timeIntervalSince1970 * 1000)
+        return ProviderQuotasInfo(
+            providers: [
+                ProviderQuota(
+                    providerId: "anthropic", displayName: "Anthropic", authenticated: true,
+                    planType: "Pro",
+                    windows: [
+                        ProviderQuota.Window(
+                            key: "5h", shortLabel: "5h", title: "5-hour window",
+                            usedPercent: 62, remainingPercent: 38,
+                            limitWindowSeconds: 18_000,
+                            resetAt: Int(now.addingTimeInterval(3_600).timeIntervalSince1970),
+                            includeWeekdayInReset: false,
+                            pacing: ProviderQuota.Window.Pacing(
+                                source: "server", status: "plenty", timeRemainingSeconds: 3_600,
+                                supplyRatio: 1.8, targetBurnPercentPerHour: 5,
+                                recentBurnPercentPerHour: 3, paceRatio: 1.8,
+                                projectedExhaustionAt: nil, projectedRemainingPercent: nil
+                            )
+                        ),
+                    ],
+                    credits: nil, prepaidBalanceCents: nil, fetchedAt: fetchedAt, error: nil
+                ),
+            ],
+            fetchedAt: fetchedAt
+        )
     }
 
     static let mcpGlobal = McpScopeSnapshot(
@@ -147,10 +196,10 @@ final class SettingsSweepPreviewController: PreviewRootController {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if page == "mcp" {
-            // The MCP screens wait for `apiClientReady`, so their connection is
-            // a ready one whose requests the fixture answers, as the Router and
-            // Metrics previews build theirs.
+        if page == "mcp" || page == "model-providers" {
+            // The MCP and provider screens wait for `apiClientReady`, so their
+            // connection is a ready one whose requests the fixture answers, as
+            // the Router and Metrics previews build theirs.
             if coordinator.switchToServer(server) {
                 coordinator.connection(for: server.id)?.setAPIClientForTesting(client)
             }
@@ -291,6 +340,16 @@ final class SettingsSweepPreviewController: PreviewRootController {
             )
         case "mcp":
             return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
+        case "model-providers":
+            return stack { ModelProvidersViewController(target: .init(serverId: server.id), root: root) }
+        case "model-providers-api-key":
+            // The sheet at the root instead of over its row, with a failed save
+            // to capture, for a capture of the form itself.
+            return stack {
+                let sheet = ProviderAPIKeyViewController(provider: Self.providers[0], root: root) { _ in }
+                sheet.errorMessage = "Failed to save API key: The server rejected the key."
+                return sheet
+            }
         case "mcp-add":
             // The add-server form at the root instead of in its sheet, for a
             // capture of the form itself.
@@ -420,6 +479,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
         struct Schedules: Encodable { let schedules: [AgentScheduleSummary] }
         struct ScheduleBody: Encodable { let schedule: AgentSchedule }
         struct McpFlowBody: Encodable { let flow: McpAuthFlowSnapshot }
+        struct Providers: Encodable { let providers: [ProviderAuthProviderStatus] }
 
         let agentSummary = AgentDefinitionSummary(
             id: agent.id, name: agent.name, icon: agent.icon, description: agent.description,
@@ -462,6 +522,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
             "/server/metrics/settings": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/server/mobile-output-guide": Data(#"{"enabled":true,"revision":3}"#.utf8),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),
+            // Model Providers: the statuses and the usage the page loads.
+            "/provider-auth/status": json(Providers(providers: providers)),
+            "/server/provider-quotas": json(providerQuotas),
             "/server/resources/pi/system-prompt": json(systemPrompt),
             "/server/resources/pi/default-tools": json(PiDefaultToolsSnapshot(defaultTools: ["+codemode"])),
             "/server/resources/extensions": json(ServerExtensionCatalog(

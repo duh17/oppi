@@ -4,13 +4,17 @@ import UIKit
 /// link, a prompt or authorization code to answer, the server's progress and
 /// errors, and Cancel Sign-In (Done once it settles). Model Providers owns the
 /// attempt: closing the sheet does not cancel it.
+///
+/// A `ListScreenController`: the base owns the list, the section headings, and
+/// the rows redrawn only when their inputs change, so typing keeps the answer
+/// field's selection.
 @MainActor
-final class ProviderSignInViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable {
+final class ProviderSignInViewController: ListScreenController<ProviderSignInViewController.Section, ProviderSignInViewController.Item> {
+    enum Section: Hashable, Sendable {
         case summary, signIn, prompt, manualCode, progress, error, notices, finish
     }
 
-    private enum Item: Hashable {
+    enum Item: Hashable, Sendable {
         case value(String)
         case openLink
         case linkUnavailable
@@ -32,9 +36,6 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
     private let visibleServerId: () -> String?
     private let onDone: () -> Void
     private let onCancel: () -> Void
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    private var changedRows = ChangedRows<Item>()
 
     init(
         attempt: ProviderAuthFlowAttempt,
@@ -48,10 +49,12 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
         self.visibleServerId = visibleServerId
         self.onDone = onDone
         self.onCancel = onCancel
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: "Sign in to \(attempt.providerName)",
+            listIdentifier: "server.modelProviders.signIn",
+            headers: true, dismissesKeyboardOnDrag: true
+        )
         traitOverrides.appRootEnvironment = root
-        navigationItem.largeTitleDisplayMode = .never
-        title = "Sign in to \(attempt.providerName)"
     }
 
     @available(*, unavailable)
@@ -59,24 +62,10 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
 
     private var palette: ThemePalette { root.themeStore.activeThemeID.palette }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "server.modelProviders.signIn"
-        ModelProvidersList.pinReadable(collectionView, in: view, maxWidth: IPadReadableContentWidth.form)
-        installDataSource()
-    }
-
     override func updateProperties() {
-        super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         // A cancel in flight must finish before the sheet can go.
         isModalInPresentation = attempt.isCancelling
-        applySnapshot()
+        super.updateProperties()
     }
 
     // MARK: - List
@@ -99,88 +88,72 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
         }
     }
 
-    private func applySnapshot() {
-        guard let dataSource else { return }
+    override func sections() -> [ListSection<Section, Item>] {
         let flow = attempt.flow
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.summary])
         var summary: [Item] = [.value("Provider"), .value("Status")]
         if attempt.serverId != visibleServerId() { summary.append(.value("Server")) }
-        snapshot.appendItems(summary, toSection: .summary)
+        var sections: [ListSection<Section, Item>] = [ListSection(.summary, items: summary)]
 
         if let auth = flow.auth {
-            snapshot.appendSections([.signIn])
             var items: [Item] = [ProviderAuthFlowPresentation.signInURL(auth.url) == nil ? .linkUnavailable : .openLink]
             if auth.instructions?.isEmpty == false { items.append(.instructions) }
-            snapshot.appendItems(items, toSection: .signIn)
+            sections.append(ListSection(.signIn, header: "Sign In", items: items))
         }
         if flow.status == .awaitingPrompt, let prompt = flow.prompt {
-            snapshot.appendSections([.prompt])
+            let items: [Item]
             if let options = prompt.options, !options.isEmpty {
-                snapshot.appendItems(Self.unique(options.map(\.id)).map(Item.option), toSection: .prompt)
+                items = Self.unique(options.map(\.id)).map(Item.option)
             } else {
-                snapshot.appendItems([.input, .submit], toSection: .prompt)
+                items = [.input, .submit]
             }
+            sections.append(ListSection(.prompt, header: prompt.message, items: items))
         }
         if flow.status == .awaitingManualCode {
-            snapshot.appendSections([.manualCode])
-            snapshot.appendItems([.input, .submit], toSection: .manualCode)
+            sections.append(ListSection(.manualCode, header: "Authorization Code", items: [.input, .submit]))
         }
         if flow.lastProgress?.isEmpty == false {
-            snapshot.appendSections([.progress])
-            snapshot.appendItems([.progress], toSection: .progress)
+            sections.append(ListSection(.progress, header: "Progress", items: [.progress]))
         }
         if flow.error?.isEmpty == false {
-            snapshot.appendSections([.error])
-            snapshot.appendItems([.error], toSection: .error)
+            sections.append(ListSection(.error, header: "Error", items: [.error]))
         }
         var notices: [Item] = []
         if attempt.isGone { notices.append(.gone) }
         if attempt.refreshError != nil, !attempt.isSettled { notices.append(.refreshError) }
         if attempt.actionError?.isEmpty == false { notices.append(.actionError) }
         if !notices.isEmpty {
-            snapshot.appendSections([.notices])
-            snapshot.appendItems(notices, toSection: .notices)
+            sections.append(ListSection(.notices, items: notices))
         }
-        snapshot.appendSections([.finish])
-        snapshot.appendItems([.finish], toSection: .finish)
+        sections.append(ListSection(.finish, items: [.finish]))
+        return sections
+    }
 
-        // Only the rows whose inputs changed: a reconfigured field would drop
-        // its selection, and typing changes only the Submit row.
-        let current = dataSource.snapshot()
-        let themeID = root.themeStore.activeThemeID
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { AnyHashable([AnyHashable(themeID)] + rowInputs($0)) }
-        snapshot.reconfigureItems(changed.filter { current.indexOfItem($0) != nil })
-        dataSource.apply(snapshot, animatingDifferences: false)
-        // The prompt's question is its header; a chained prompt replaces it in
-        // place, and supplementary views do not reconfigure.
-        if let section = snapshot.indexOfSection(.prompt),
-           let header = collectionView.supplementaryView(
-               forElementKind: UICollectionView.elementKindSectionHeader,
-               at: IndexPath(item: 0, section: section)
-           ) as? UICollectionViewListCell,
-           var content = header.contentConfiguration as? UIListContentConfiguration,
-           content.text != flow.prompt?.message {
-            content.text = flow.prompt?.message
-            header.contentConfiguration = content
+    /// The sign-in link, the question, the code, the progress, and the error
+    /// carry headings; the summary and the notices do not.
+    override func showsHeader(for section: Section) -> Bool {
+        switch section {
+        case .signIn, .prompt, .manualCode, .progress, .error: true
+        case .summary, .notices, .finish: false
         }
     }
 
-    private func rowInputs(_ item: Item) -> [AnyHashable] {
+    /// Only the Submit row changes while typing, so the field keeps its
+    /// selection and the keyboard.
+    override func inputs(of item: Item) -> AnyHashable {
         let flow = attempt.flow
         return switch item {
-        case .value: [statusText, attempt.serverName, attempt.providerName]
-        case .openLink, .linkUnavailable: [flow.auth?.url]
-        case .instructions: [flow.auth?.instructions]
-        case .option: [isBusy, flow.prompt?.options?.map(\.label)]
-        case .input: [isBusy, flow.status.rawValue, flow.prompt?.placeholder]
-        case .submit: [canSubmit]
-        case .progress: [flow.lastProgress]
-        case .error: [flow.error]
-        case .gone: []
-        case .refreshError: [attempt.refreshError]
-        case .actionError: [attempt.actionError]
-        case .finish: [attempt.isSettled, attempt.isCancelling]
+        case .value: AnyHashable([AnyHashable(statusText), AnyHashable(attempt.serverName), AnyHashable(attempt.providerName)])
+        case .openLink, .linkUnavailable: AnyHashable([AnyHashable(flow.auth?.url)])
+        case .instructions: AnyHashable([AnyHashable(flow.auth?.instructions)])
+        case .option: AnyHashable([AnyHashable(isBusy), AnyHashable(flow.prompt?.options?.map(\.label))])
+        case .input: AnyHashable([AnyHashable(isBusy), AnyHashable(flow.status.rawValue), AnyHashable(flow.prompt?.placeholder)])
+        case .submit: AnyHashable([AnyHashable(canSubmit)])
+        case .progress: AnyHashable([AnyHashable(flow.lastProgress)])
+        case .error: AnyHashable([AnyHashable(flow.error)])
+        case .refreshError: AnyHashable([AnyHashable(attempt.refreshError)])
+        case .actionError: AnyHashable([AnyHashable(attempt.actionError)])
+        case .finish: AnyHashable([AnyHashable(attempt.isSettled), AnyHashable(attempt.isCancelling)])
+        case .gone: AnyHashable(0)
         }
     }
 
@@ -189,36 +162,25 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
         return values.filter { seen.insert($0).inserted }
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            self?.configure(cell, item: item)
-        }
-        let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
-            self?.configureInput(cell)
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = switch self?.dataSource?.sectionIdentifier(for: indexPath.section) {
-            case .signIn: "Sign In"
-            case .prompt: self?.attempt.flow.prompt?.message
-            case .manualCode: "Authorization Code"
-            case .progress: "Progress"
-            case .error: "Error"
-            default: nil
-            }
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            if item == .input {
-                return collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            }
-            return collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
-            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-        }
+    // MARK: - Rows
+
+    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        self?.configure(cell, item: item)
+    }
+
+    private lazy var field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
+        self?.configureInput(cell)
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = (row, field)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        item == .input
+            ? collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
+            : collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
     }
 
     private func configureInput(_ cell: SSHTerminalTextFieldCell) {
@@ -242,7 +204,7 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         let flow = attempt.flow
-        ListScreen.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         switch item {
         case .value(let title):
             ListScreen.staticRow(cell, identifier: "server.modelProviders.signIn.\(title.lowercased())")
@@ -371,15 +333,13 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
 /// Oppi connection; Model Providers saves it and closes the sheet on success,
 /// or shows the failure here.
 @MainActor
-final class ProviderAPIKeyViewController: UIViewController, UICollectionViewDelegate {
-    private enum Section: Hashable { case provider, key }
-    private enum Item: Hashable { case provider, key, error }
+final class ProviderAPIKeyViewController: ListScreenController<ProviderAPIKeyViewController.Section, ProviderAPIKeyViewController.Item> {
+    enum Section: Hashable, Sendable { case provider, key }
+    enum Item: Hashable, Sendable { case provider, key, error }
 
     let provider: ProviderAuthProviderStatus
     private let root: AppRootEnvironment
     private let onSave: (String) -> Void
-    private let collectionView = ListScreen.makeCollectionView()
-    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private let saveItem = UIBarButtonItem()
     private let savingItem: UIBarButtonItem = {
         let spinner = UIActivityIndicatorView(style: .medium)
@@ -405,10 +365,12 @@ final class ProviderAPIKeyViewController: UIViewController, UICollectionViewDele
         self.provider = provider
         self.root = root
         self.onSave = onSave
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            title: provider.credentialType == .apiKey ? "Replace API Key" : "Set API Key",
+            listIdentifier: "server.modelProviders.apiKey",
+            headers: true, footers: true, dismissesKeyboardOnDrag: true
+        )
         traitOverrides.appRootEnvironment = root
-        navigationItem.largeTitleDisplayMode = .never
-        title = provider.credentialType == .apiKey ? "Replace API Key" : "Set API Key"
     }
 
     @available(*, unavailable)
@@ -419,13 +381,6 @@ final class ProviderAPIKeyViewController: UIViewController, UICollectionViewDele
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(
-            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
-            animated: false
-        )
-        collectionView.delegate = self
-        collectionView.accessibilityIdentifier = "server.modelProviders.apiKey"
-        ModelProvidersList.pinReadable(collectionView, in: view, maxWidth: IPadReadableContentWidth.form)
         navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
             guard let self else { return }
             Router.finish(self)
@@ -433,27 +388,16 @@ final class ProviderAPIKeyViewController: UIViewController, UICollectionViewDele
         saveItem.primaryAction = UIAction(title: "Save") { [weak self] _ in self?.save() }
         saveItem.style = .done
         saveItem.accessibilityIdentifier = "server.modelProviders.apiKey.save"
-        installDataSource()
     }
 
     override func updateProperties() {
-        super.updateProperties()
-        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         saveItem.isEnabled = !trimmedDraft.isEmpty
         let trailing = isSaving ? savingItem : saveItem
         if navigationItem.rightBarButtonItem !== trailing {
             navigationItem.rightBarButtonItem = trailing
         }
         isModalInPresentation = isSaving || !draft.isEmpty
-        guard let dataSource else { return }
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.provider, .key])
-        snapshot.appendItems([.provider], toSection: .provider)
-        snapshot.appendItems(errorMessage == nil ? [.key] : [.key, .error], toSection: .key)
-        if dataSource.snapshot().indexOfItem(.error) != nil, errorMessage != nil {
-            snapshot.reconfigureItems([.error])
-        }
-        dataSource.apply(snapshot, animatingDifferences: false)
+        super.updateProperties()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -469,74 +413,88 @@ final class ProviderAPIKeyViewController: UIViewController, UICollectionViewDele
         onSave(key)
     }
 
-    private func installDataSource() {
-        let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-            guard let self else { return }
-            let palette = palette
-            ListScreen.background(cell, grouped: true, palette: palette)
-            ListScreen.staticRow(cell)
-            if item == .provider {
-                var content = UIListContentConfiguration.cell()
-                content.text = provider.name
-                content.textProperties.color = UIColor(palette.fg)
-                content.image = ComposerProviderIconRenderer.image(
-                    provider: provider.id,
-                    size: 18,
-                    colors: SessionRowStyle.for(root.themeStore.activeThemeID).colors
-                )
-                content.imageProperties.maximumSize = CGSize(width: 18, height: 18)
-                cell.contentConfiguration = content
-            } else {
-                cell.accessibilityIdentifier = "server.modelProviders.apiKey.error"
-                let message = errorMessage
-                cell.contentConfiguration = ControlViewContent {
-                    ControlRowViews.symbolLabel(
-                        message ?? "",
-                        systemImage: "exclamationmark.triangle.fill",
-                        style: .footnote,
-                        color: UIColor(palette.red)
-                    )
-                }
-            }
+    // MARK: - List
+
+    override func sections() -> [ListSection<Section, Item>] {
+        [
+            ListSection(.provider, header: "Provider", items: [.provider]),
+            ListSection(
+                .key,
+                header: "API Key",
+                footer: "The key is sent directly to your server over the existing Oppi connection and saved there.",
+                items: errorMessage == nil ? [.key] : [.key, .error]
+            ),
+        ]
+    }
+
+    /// Only the field row and the failure line change as they are typed or
+    /// saved; the page's own symbol row does not.
+    override func inputs(of item: Item) -> AnyHashable {
+        switch item {
+        case .provider: AnyHashable([AnyHashable(provider.id), AnyHashable(provider.name)])
+        case .error: AnyHashable([AnyHashable(errorMessage)])
+        // Reconfiguring the field would drop its selection.
+        case .key: AnyHashable(0)
         }
-        let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
-            guard let self else { return }
-            cell.configure(
-                text: draft,
-                placeholder: "Paste API key",
-                identifier: "server.modelProviders.apiKey.field",
-                isSecure: true,
-                textColor: UIColor(palette.fg),
-                returnKey: .done,
-                onReturn: { [weak self] in self?.save() },
-                onChange: { [weak self] text in self?.draft = text }
+    }
+
+    // MARK: - Rows
+
+    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        self?.configure(cell, item: item)
+    }
+
+    private lazy var field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
+        guard let self else { return }
+        cell.configure(
+            text: draft,
+            placeholder: "Paste API key",
+            identifier: "server.modelProviders.apiKey.field",
+            isSecure: true,
+            textColor: UIColor(palette.fg),
+            returnKey: .done,
+            onReturn: { [weak self] in self?.save() },
+            onChange: { [weak self] text in self?.draft = text }
+        )
+    }
+
+    // A registration must exist before the first row is dequeued.
+    override func prepareRegistrations() {
+        _ = (row, field)
+    }
+
+    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        item == .key
+            ? collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
+            : collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
+    }
+
+    private func configure(_ cell: SidebarListCell, item: Item) {
+        let palette = palette
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
+        ListScreen.staticRow(cell)
+        if item == .provider {
+            var content = UIListContentConfiguration.cell()
+            content.text = provider.name
+            content.textProperties.color = UIColor(palette.fg)
+            content.image = ComposerProviderIconRenderer.image(
+                provider: provider.id,
+                size: 18,
+                colors: SessionRowStyle.for(root.themeStore.activeThemeID).colors
             )
-        }
-        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionHeader
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.header()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section) == .key ? "API Key" : "Provider"
-            view.contentConfiguration = content
-        }
-        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
-            elementKind: UICollectionView.elementKindSectionFooter
-        ) { [weak self] view, _, indexPath in
-            var content = UIListContentConfiguration.footer()
-            content.text = self?.dataSource?.sectionIdentifier(for: indexPath.section) == .key
-                ? "The key is sent directly to your server over the existing Oppi connection and saved there."
-                : nil
-            view.contentConfiguration = content
-        }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            item == .key
-                ? collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-                : collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
-        }
-        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
-            kind == UICollectionView.elementKindSectionHeader
-                ? collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
-                : collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+            content.imageProperties.maximumSize = CGSize(width: 18, height: 18)
+            cell.contentConfiguration = content
+        } else {
+            cell.accessibilityIdentifier = "server.modelProviders.apiKey.error"
+            let message = errorMessage
+            cell.contentConfiguration = ControlViewContent {
+                ControlRowViews.symbolLabel(
+                    message ?? "",
+                    systemImage: "exclamationmark.triangle.fill",
+                    style: .footnote,
+                    color: UIColor(palette.red)
+                )
+            }
         }
     }
 }
