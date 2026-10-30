@@ -117,7 +117,7 @@ struct RexClientProtocolTests {
         )))
         #expect(try RexDataHandshake.answer(Data([0x82, 0x01])) == .reject(0x01))
         #expect(throws: RexDataHandshake.Failure.malformed) { try RexDataHandshake.answer(Data([0x81, 0x00])) }
-        #expect(RexPaneConnection.base64URL("AQID_-8") == Data([1, 2, 3, 255, 239]))
+        #expect(RexSessionConnection.base64URL("AQID_-8") == Data([1, 2, 3, 255, 239]))
     }
 
     /// The snapshot is everything before the stream's first Rex message. Rex's
@@ -326,7 +326,7 @@ struct RexDataStreamTests {
         let body = snapshot + message(#"{"type":"resize","cols":80,"rows":24}"#) + Data("$ ls\r\n".utf8)
             + message(#"{"type":"child_exited","exit_code":2}"#)
         #expect(stream.receive(serverFrame(.binary, body)) == [.snapshot(snapshot), .output(Data("$ ls\r\n".utf8)), .exited(code: 2)])
-        #expect(stream.receive(serverFrame(.close, Data([0x0F, 0xA0]))) == [.ended("The pane closed in Rex.")])
+        #expect(stream.receive(serverFrame(.close, Data([0x0F, 0xA0]))) == [.paneClosed])
         #expect(stream.receive(serverFrame(.binary, Data("late".utf8))).isEmpty)
 
         var refused = RexDataStream(ticket: ticket, key: "dGhlIHNhbXBsZSBub25jZQ==")
@@ -405,4 +405,342 @@ private actor RecordingConnection: SSHTerminalConnection {
     func checkAlive() async throws {}
     nonisolated func close() {}
     func cancel() async {}
+}
+
+// MARK: - A Rex session as a terminal
+
+/// `session.view` as a Rex server answers it for one window split in two,
+/// captured from a running server (labels and ids kept, nothing else).
+private let realSessionView = #"""
+{"revision":91,"session_id":"session:01a18b8b-8553-7528-a80f-b22306f97869","label":"wispy-lagoon","active_window_id":"window:01a18b8b-8573-7a06-b823-adc052256a88","windows":[{"window_id":"window:01a18b8b-8573-7a06-b823-adc052256a88","label":"Window 52256a88","focused_block_id":"block:01a18b97-3672-78d5-8997-d7f0f053c94a","layers":[{"layer_id":"layer:01a18b8b-8573-7a0e-8875-5b84bd348249","kind":"tiled","bounds":[0,0,1,1],"layout":{"rect":[0,0,1,1],"split":{"split_id":"split:01a18b97-3693-7ce8-afb3-b248042618d0","direction":"horizontal","ratio":0.5,"before":{"rect":[0,0,0.5,1],"block_id":"block:01a18b8b-8553-762a-a19b-0e6b2ec933b8"},"after":{"rect":[0.5,0,0.5,1],"block_id":"block:01a18b97-3672-78d5-8997-d7f0f053c94a"}}},"blocks":[{"block_id":"block:01a18b8b-8553-762a-a19b-0e6b2ec933b8","label":"shell","creator_name":"com.superlogical.terminal","flavor":"com.superlogical.terminal.shell","host_id":"ae49134e-bb38-46b4-b36b-0b34cfc1656b"},{"block_id":"block:01a18b97-3672-78d5-8997-d7f0f053c94a","label":"shell","creator_name":"com.superlogical.terminal","flavor":"com.superlogical.terminal.shell","host_id":"ae49134e-bb38-46b4-b36b-0b34cfc1656b"}]}]}]}
+"""#
+
+@Suite("Rex session layout")
+struct RexSessionLayoutTests {
+    private func layout(_ json: String) throws -> RexSessionLayout {
+        RexSessionLayout(view: try JSONDecoder().decode(RexView.self, from: Data(json.utf8)))
+    }
+
+    /// A real server's view: the tiled layer's split decodes to its two
+    /// blocks, before then after, each at its rect.
+    @Test func aRealViewDecodesToPanesAndMinimapCells() throws {
+        let view = try JSONDecoder().decode(RexView.self, from: Data(realSessionView.utf8))
+        let tiled = try #require(view.windows?.first?.layers?.first)
+        #expect(tiled.kind == "tiled")
+        guard case .split(let direction, let ratio, let before, let after, let rect)? = tiled.layout else {
+            Issue.record("the layout is not a split")
+            return
+        }
+        #expect(direction == .horizontal && ratio == 0.5 && rect == [0, 0, 1, 1])
+        #expect(before == .block(id: "block:01a18b8b-8553-762a-a19b-0e6b2ec933b8", rect: [0, 0, 0.5, 1]))
+        #expect(after == .block(id: "block:01a18b97-3672-78d5-8997-d7f0f053c94a", rect: [0.5, 0, 0.5, 1]))
+
+        let panes = RexSessionLayout(view: view)
+        #expect(panes.panes.map(\.blockID) == ["block:01a18b8b-8553-762a-a19b-0e6b2ec933b8", "block:01a18b97-3672-78d5-8997-d7f0f053c94a"])
+        #expect(panes.minimap(around: "block:01a18b97-3672-78d5-8997-d7f0f053c94a").map(\.rect) == [
+            CGRect(x: 0, y: 0, width: 0.5, height: 1), CGRect(x: 0.5, y: 0, width: 0.5, height: 1),
+        ])
+    }
+
+    /// Strip order: windows in view order; inside a window, an in-order walk
+    /// of the split tree (before, then after), whatever order `blocks` lists.
+    /// A block that is not a terminal is no pane. The minimap is the shown
+    /// pane's window only.
+    @Test func paneOrderFollowsWindowsThenTheLayoutTree() throws {
+        func leaf(_ id: String, _ rect: String) -> String { #"{"rect":\#(rect),"block_id":"\#(id)"}"# }
+        func block(_ id: String, creator: String = "com.superlogical.terminal") -> String {
+            #"{"block_id":"\#(id)","label":"\#(id)","creator_name":"\#(creator)"}"#
+        }
+        // Window one: a vertical split whose bottom half splits again; `blocks` lists them scrambled.
+        let inner = #"{"rect":[0,0.5,1,0.5],"split":{"split_id":"s2","direction":"horizontal","ratio":0.5,"before":\#(leaf("c", "[0,0.5,0.5,0.5]")),"after":\#(leaf("d", "[0.5,0.5,0.5,0.5]"))}}"#
+        let tree = #"{"rect":[0,0,1,1],"split":{"split_id":"s1","direction":"vertical","ratio":0.5,"before":\#(leaf("b", "[0,0,1,0.5]")),"after":\#(inner)}}"#
+        let json = #"{"revision":1,"session_id":"s","windows":[{"window_id":"w1","layers":[{"kind":"tiled","layout":\#(tree),"blocks":[\#([block("d"), block("b"), block("walkthrough", creator: "com.superlogical.onboarding"), block("c")].joined(separator: ","))]}]},{"window_id":"w2","layers":[{"kind":"tiled","layout":\#(leaf("e", "[0,0,1,1]")),"blocks":[\#(block("e"))]}]}]}"#
+        let parsed = try layout(json)
+        #expect(parsed.panes.map(\.blockID) == ["b", "c", "d", "e"])
+        #expect(parsed.minimap(around: "c").map(\.blockID) == ["b", "c", "d"])
+        #expect(parsed.minimap(around: "e").map(\.blockID) == ["e"])
+        // A layout this build cannot read still lists its blocks.
+        let unreadable = try layout(#"{"revision":1,"session_id":"s","windows":[{"window_id":"w","layers":[{"kind":"tiled","layout":{"rect":[0,0,1,1]},"blocks":[\#(block("x")),\#(block("y"))]}]}]}"#)
+        #expect(unreadable.panes.map(\.blockID) == ["x", "y"] && unreadable.minimap(around: "x").isEmpty)
+    }
+
+    @Test func aClosedPanesNeighbourIsTheNextThenThePrevious() {
+        let order = ["a", "b", "c"]
+        #expect(RexSessionLayout.neighbour(of: "b", in: order, surviving: ["a", "c"]) == "c")
+        #expect(RexSessionLayout.neighbour(of: "c", in: order, surviving: ["a", "b"]) == "b")
+        #expect(RexSessionLayout.neighbour(of: "b", in: order, surviving: ["a"]) == "a")
+        #expect(RexSessionLayout.neighbour(of: "a", in: ["a"], surviving: []) == nil)
+    }
+
+    @Test func aSwipePastTheEndsDoesNothingAndEachSideMovesOnePane() {
+        let state = RexSessionState(
+            panes: ["a", "b", "c"].map { .init(blockID: $0, name: $0) }, shown: "b", minimap: []
+        )
+        #expect(state.pane(offsetBy: 1) == "c" && state.pane(offsetBy: -1) == "a")
+        var last = state
+        last.shown = "c"
+        #expect(last.pane(offsetBy: 1) == nil)
+        var first = state
+        first.shown = "a"
+        #expect(first.pane(offsetBy: -1) == nil)
+        // A sideways drag far enough, or fast enough; never a diagonal one.
+        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: -80, y: 10), velocity: .zero) == 1)
+        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: 80, y: -10), velocity: .zero) == -1)
+        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: -30, y: 0), velocity: CGPoint(x: -900, y: 0)) == 1)
+        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: -30, y: 0), velocity: CGPoint(x: -100, y: 0)) == nil)
+        #expect(SSHTerminalPaneSwipe.step(translation: CGPoint(x: -80, y: 70), velocity: .zero) == nil)
+        #expect(SSHTerminalPaneSwipe.begins(velocity: CGPoint(x: 300, y: 40)) && !SSHTerminalPaneSwipe.begins(velocity: CGPoint(x: 300, y: 250)))
+    }
+}
+
+@Suite("Rex session terminal", .serialized, .timeLimit(.minutes(1)))
+@MainActor
+struct RexSessionTerminalTests {
+    static let session = "session:rex-test"
+
+    /// A session of panes `a`, `b`, ... on a fake host, opened on `first`, the
+    /// way the connect session opens one, with the grid at 40 × 10.
+    @MainActor struct Rig {
+        let fake: RexFakeSession
+        let transport: RexFakeTransport
+        let channel: SSHTerminalChannel
+        let connection: RexSessionConnection
+        let model: RexSessionModel
+        let consumer: Task<Void, Never>
+
+        var rows: [String] {
+            channel.engine.frame().rows.map { $0.map(\.text).joined().trimmingCharacters(in: .whitespaces) }
+        }
+
+        func shows(_ text: String) -> Bool { rows.contains { $0.contains(text) } }
+
+        func stop() async {
+            channel.close(reason: "done")
+            consumer.cancel()
+            await consumer.value
+        }
+    }
+
+    static func block(_ name: String) -> String { "block:\(name)" }
+
+    func open(_ names: [String], first: String? = nil) async throws -> Rig {
+        let fake = RexFakeSession(sessionID: Self.session, panes: names.map {
+            .init(block: Self.block($0), label: "shell", title: "title \($0)", screen: "screen of \($0)\r\n$ ")
+        })
+        let control = RexControl()
+        let transport = fake.transport(control: control)
+        let queue = SSHTerminalEventQueue()
+        let opening = first ?? names[0]
+        let connection = try await RexSessionConnection.open(
+            transport: transport, control: control,
+            target: RexPaneTarget(sessionID: Self.session, blockID: Self.block(opening), label: "shell"), queue: queue
+        )
+        let channel = try SSHTerminalChannel(answersTerminalQueries: false)
+        let model = RexSessionModel(connection: connection)
+        channel.rex = model
+        channel.opened(connection)
+        let consumer = Task { await channel.consume(queue) }
+        channel.resize(.init(columns: 40, rows: 10))
+        let rig = Rig(fake: fake, transport: transport, channel: channel, connection: connection, model: model, consumer: consumer)
+        guard await waitForMainActorCondition(timeout: .seconds(5), { rig.shows("screen of \(opening)") }) else {
+            await rig.stop()
+            Issue.record("the first pane never showed")
+            throw CancellationError()
+        }
+        return rig
+    }
+
+    /// Switching takes the new pane for size, sizes it, and only then asks for
+    /// its stream, whose snapshot replaces the grid. Typing and resizing go to
+    /// it from then on, the pane left behind is handed back, and nothing ever
+    /// focuses a pane on the host.
+    @Test func switchingRetargetsWritesAndResizesAndRestoresTheNewPanesSnapshot() async throws {
+        let rig = try await open(["a", "b"])
+        let (a, b) = (Self.block("a"), Self.block("b"))
+        #expect(rig.model.state.shown == a && rig.model.state.panes.map(\.name) == ["title a", "title b"])
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.map(\.name) == ["title a", "title b"] })
+
+        rig.model.show(b)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") }, "the new pane's snapshot is on the grid")
+        #expect(!rig.shows("screen of a"))
+
+        // Order of what Rex was asked: take, size, then its stream.
+        let methods = rig.fake.requests.filter { $0.string("block_id") == b || $0.method == "session.own_block" }
+        let own = try #require(methods.firstIndex { $0.method == "session.own_block" && $0.payload.contains(b) })
+        let resize = try #require(methods.firstIndex { $0.method == "com.superlogical.terminal.resize" && $0.string("block_id") == b })
+        let connect = try #require(methods.firstIndex { $0.method == "data.connect" && $0.string("block_id") == b })
+        #expect(own < resize && resize < connect)
+        #expect(rig.fake.requests("session.own_block").last?.payload.contains(#""mode":"take""#) == true)
+        let size = try #require(rig.fake.requests("com.superlogical.terminal.resize").last { $0.string("block_id") == b }?.payload)
+        #expect(size.contains(#""columns":40"#) && size.contains(#""rows":10"#))
+
+        #expect(rig.fake.dataHosts.count == 2 && rig.fake.dataHosts[0].isClosed, "one data connection at a time")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("session.disown_block").contains { $0.payload.contains(a) }
+        }, "the pane left behind goes back to the host's own clients")
+
+        // Typing and resizing now reach b.
+        rig.channel.send(Data("ls\r".utf8))
+        rig.channel.resize(.init(columns: 50, rows: 12))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.fake.requests("com.superlogical.terminal.write").last?.string("block_id") == b
+                && rig.fake.requests("com.superlogical.terminal.resize").last?.payload.contains(#""columns":50"#) == true
+        })
+        #expect(rig.fake.requests("com.superlogical.terminal.write").allSatisfy { $0.string("block_id") == b })
+        #expect(rig.fake.requests("com.superlogical.terminal.resize").last?.string("block_id") == b)
+
+        // The host's own focus never moved.
+        #expect(!rig.fake.requests.contains { $0.method.contains("focus") })
+        await rig.stop()
+    }
+
+    /// A pane's status and progress belong to its program: a pane swapped in
+    /// does not show the one before's.
+    @Test func statusOfThePaneLeftBehindDoesNotFollowTheSwitch() async throws {
+        let rig = try await open(["a", "b"])
+        rig.fake.dataHosts[0].emit("\u{1B}]7501;state=blocked:kind=permission:app=pi:msg=\(Data("ok?".utf8).base64EncodedString())\u{1B}\\")
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.channel.programStatus.root != nil })
+
+        rig.model.show(Self.block("b"))
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") })
+        #expect(rig.channel.programStatus.records.isEmpty)
+        await rig.stop()
+    }
+
+    /// A fast double swipe goes through the strip's order, one pane at a time,
+    /// and ends on the last pane asked for. The pane overtaken never gets a
+    /// data connection, and what a pane left behind sends late never reaches
+    /// the grid.
+    @Test func aSupersededSwitchNeverReachesTheGridAndTheLastRequestWins() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (b, c) = (Self.block("b"), Self.block("c"))
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 3 })
+        rig.fake.hold(dataConnectFor: [b])
+
+        #expect(rig.model.step(1) == true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !rig.fake.requests("data.connect").filter { $0.string("block_id") == b }.isEmpty })
+        // The second swipe lands while b's ticket is still outstanding, and counts from b.
+        #expect(rig.model.step(1) == true)
+        #expect(rig.connection.state.shown == c)
+        rig.fake.release(dataConnectFor: b)
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
+        #expect(rig.fake.dataHosts.map(\.block) == [Self.block("a"), c], "b never got a stream")
+        #expect(rig.model.step(1) == false, "a swipe past the last pane does nothing")
+
+        // Output the first pane's stream sends after it was left is not drawn.
+        rig.fake.dataHosts[0].emit("LATE FROM A")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) { !rig.shows("LATE FROM A") })
+        #expect(rig.channel.connected, "a stream closing because of a switch does not end the terminal")
+        await rig.stop()
+    }
+
+    /// A pane closed on the host moves the terminal to its neighbour (the
+    /// next, else the one before), by Rex's event or by its data connection
+    /// closing; with none left the terminal ends and says why.
+    @Test func closingTheShownPaneMovesToItsNeighbourAndTheLastOneEndsTheTerminal() async throws {
+        let rig = try await open(["a", "b", "c"])
+        let (a, b, c) = (Self.block("a"), Self.block("b"), Self.block("c"))
+        rig.model.show(b)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") })
+
+        rig.fake.blockClosed(b)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") }, "the next pane")
+        #expect(rig.model.state.shown == c)
+
+        // The last pane closes through its stream: the one before it.
+        rig.fake.dataHosts.last?.closePane()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.shown == a || rig.model.state.shown == b })
+        #expect(rig.channel.connected)
+
+        // A pane closing that is not on screen changes nothing.
+        let shown = rig.model.state.shown
+        rig.fake.blockClosed(shown == a ? c : a)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { rig.model.state.shown == shown })
+        await rig.stop()
+    }
+
+    @Test func theLastPaneClosingEndsTheTerminalWithAReason() async throws {
+        let rig = try await open(["a"])
+        rig.fake.dataHosts[0].closePane()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !rig.channel.connected })
+        #expect(rig.channel.reason == "The pane closed in Rex.")
+        await rig.stop()
+    }
+
+    /// Rex closes a pane whose program exited. Until it does the pane stays
+    /// on screen; then the terminal moves to the neighbour, and if there is
+    /// none it ends saying how the program exited.
+    @Test func aProgramExitingIsFollowedByRexClosingItsPane() async throws {
+        let rig = try await open(["a", "b"])
+        rig.fake.dataHosts[0].emitChildExit(code: 3)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) {
+            rig.channel.connected && rig.model.state.shown == Self.block("a")
+        })
+        rig.fake.dataHosts[0].closePane()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") })
+        // Rex's view no longer lists the pane that closed.
+        let remaining = RexFakeSession(sessionID: Self.session, panes: [.init(block: Self.block("b"), label: "shell", title: "", screen: "")])
+        rig.fake.setView(remaining.viewJSON(revision: 5), revision: 5)
+        rig.fake.viewChanged(revision: 5)
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 1 })
+        rig.fake.dataHosts[1].emitChildExit(code: 2)
+        rig.fake.dataHosts[1].closePane()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !rig.channel.connected })
+        #expect(rig.channel.reason == "title b exited with status 2.")
+        await rig.stop()
+    }
+
+    /// A real close of the shown pane's stream (the bridge dying) still ends
+    /// the terminal, with the bridge's reason.
+    @Test func theShownPanesStreamDyingEndsTheTerminal() async throws {
+        let rig = try await open(["a", "b"])
+        rig.fake.dataHosts[0].end(status: 4)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !rig.channel.connected })
+        #expect(rig.channel.reason == "Rex is not running on this host.")
+        await rig.stop()
+    }
+
+    /// The strip follows the session: a `session_view_changed` reads the view
+    /// again (one read for one change, a revision already applied is not read
+    /// again), and a title event renames a pane in place.
+    @Test func theStripFollowsViewChangesAndTitles() async throws {
+        let rig = try await open(["a", "b"])
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 2 })
+        #expect(rig.model.state.showsStrip && rig.model.state.showsMinimap)
+
+        let bigger = RexFakeSession(sessionID: Self.session, panes: ["a", "b", "c"].map {
+            .init(block: Self.block($0), label: "shell", title: "t", screen: "")
+        })
+        let before = rig.fake.requests("session.view").count
+        rig.fake.setView(bigger.viewJSON(revision: 7), revision: 7)
+        rig.fake.viewChanged(revision: 7)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 3 })
+        #expect(rig.model.state.minimap.count == 3)
+        #expect(rig.fake.requests("session.view").count == before + 1)
+        rig.fake.viewChanged(revision: 7)
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { rig.fake.requests("session.view").count == before + 1 })
+
+        rig.fake.titleChanged(Self.block("b"), "vim")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.map(\.name) == ["title a", "vim", "shell"] })
+        await rig.stop()
+    }
+
+    @Test func aSessionOfOnePaneHasNoStripAndAWindowOfOneHasNoMinimap() async throws {
+        let rig = try await open(["a"])
+        #expect(!rig.model.state.showsStrip && !rig.model.state.showsMinimap)
+        #expect(rig.model.step(1) == false && rig.model.step(-1) == false)
+        await rig.stop()
+    }
+
+    /// A pane the host's view does not list is not shown, so a stale tap cannot
+    /// make the terminal ask Rex for it.
+    @Test func aPaneTheViewDoesNotListIsNotShown() async throws {
+        let rig = try await open(["a", "b"])
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 2 })
+        rig.model.show("block:ghost")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) { rig.model.state.shown == Self.block("a") })
+        #expect(rig.fake.requests("data.connect").count == 1)
+        await rig.stop()
+    }
 }

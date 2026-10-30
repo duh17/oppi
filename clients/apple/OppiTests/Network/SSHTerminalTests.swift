@@ -2006,6 +2006,92 @@ struct SSHTerminalTests {
         await rig.stop()
     }
 
+    /// A Rex terminal draws its session on the screen: a strip of one glyph
+    /// per pane (the shown one selected), the minimap of the shown pane's
+    /// window at the grid's top right, and a swipe on the grid with VoiceOver's
+    /// Next and Previous Pane as its twins. Strip glyph, minimap cell, and
+    /// action all show a pane the same way.
+    @Test func aRexTerminalDrawsItsStripAndMinimapAndTwinsTheSwipeForVoiceOver() async throws {
+        let rig = try await RexSessionTerminalTests().open(["a", "b", "c"])
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss() }
+        func control(_ id: String) -> UIView? {
+            mounted.find { $0.accessibilityIdentifier == id }
+        }
+        func shown(_ id: String) -> Bool {
+            guard var view = control(id) else { return false }
+            while true {
+                if view.isHidden || view.alpha == 0 { return false }
+                guard let parent = view.superview else { return true }
+                view = parent
+            }
+        }
+        func selected(_ id: String) -> Bool { control(id)?.accessibilityTraits.contains(.selected) == true }
+        _ = await waitForMainActorCondition(timeout: .seconds(5)) {
+            mounted.host.view.layoutIfNeeded()
+            return shown("sshTerminal.rexPanes.2")
+        }
+
+        #expect((0...2).allSatisfy { shown("sshTerminal.rexPanes.\($0)") && shown("sshTerminal.rexMinimap.\($0)") })
+        #expect(control("sshTerminal.rexPanes.1")?.accessibilityLabel == "title b")
+        #expect(selected("sshTerminal.rexPanes.0") && !selected("sshTerminal.rexPanes.1"))
+        #expect(selected("sshTerminal.rexMinimap.0") && control("sshTerminal.rexMinimap.2")?.accessibilityLabel == "title c")
+        // The minimap sits at the grid's top right, and the strip above the bar.
+        let minimap = try #require(control("sshTerminal.rexMinimap.0")?.superview)
+        let grid = try #require(mounted.controller.gridView)
+        let corner = minimap.convert(CGPoint(x: minimap.bounds.maxX, y: minimap.bounds.minY), to: grid)
+        #expect(corner.x > grid.bounds.width - 24 && corner.y < 24)
+        let strip = try #require(control("sshTerminal.rexPanes.0"))
+        let more = try #require(control("sshTerminal.more"))
+        #expect(strip.convert(CGPoint.zero, to: mounted.controller.view).y < more.convert(CGPoint.zero, to: mounted.controller.view).y)
+
+        // A strip glyph shows its pane.
+        let glyph = try #require(control("sshTerminal.rexPanes.2") as? UIControl)
+        glyph.sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { selected("sshTerminal.rexPanes.2") && selected("sshTerminal.rexMinimap.2") })
+
+        // A minimap cell does the same.
+        let cell = try #require(control("sshTerminal.rexMinimap.0") as? UIControl)
+        cell.sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") })
+
+        // VoiceOver's actions are the swipe's owner: the grid says so, and they move one pane.
+        let actions = try #require(grid.accessibilityCustomActions)
+        #expect(actions.map(\.name) == ["Next Pane", "Previous Pane"])
+        #expect(grid.stepPane?(1) == true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") })
+        #expect(grid.stepPane?(-1) == true && grid.stepPane?(-1) == false, "the first pane has none before it")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of a") })
+        await rig.stop()
+    }
+
+    /// One pane has no strip, no minimap, and nothing to swipe to.
+    @Test func aRexTerminalOfOnePaneHasNoStripNoMinimapAndNoSwipe() async throws {
+        let rig = try await RexSessionTerminalTests().open(["a"])
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss() }
+        for _ in 0..<4 {
+            await Task.yield()
+            mounted.host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        func visible(_ prefix: String) -> Bool {
+            mounted.find {
+                $0.accessibilityIdentifier?.hasPrefix(prefix) == true && !$0.isHidden
+                    && sequence(first: $0, next: \.superview).allSatisfy { !$0.isHidden }
+            } != nil
+        }
+        #expect(!visible("sshTerminal.rexPanes.") && !visible("sshTerminal.rexMinimap."))
+        #expect(mounted.controller.gridView?.stepPane == nil)
+        #expect(mounted.controller.gridView?.accessibilityCustomActions?.isEmpty ?? true)
+        await rig.stop()
+    }
+
     /// A saved machine that stops answering (a laptop asleep) must not slow
     /// Local: the poll waits for Local only, and the hung machine is not asked
     /// again while its read is still out.

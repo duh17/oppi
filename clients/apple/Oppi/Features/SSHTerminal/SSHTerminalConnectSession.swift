@@ -98,7 +98,7 @@ final class SSHTerminalConnectSession {
         if !listsRexSessions, let live = registry.terminal(for: value.id, folder: folder, rexPane: rexPane),
            live.profile.sameConnection(as: value) {
             if live.profile == value && sudoPassword == nil {
-                show(live)
+                show(live, movingTo: rexPane)
             } else if value.authentication == .password && value.savesPassword && suppliedPassword == nil
                         && !value.reusesSavedPassword(of: profileStore().profile(id: value.id)) {
                 // Save Password was just turned on and no password is stored:
@@ -114,7 +114,7 @@ final class SSHTerminalConnectSession {
                 ) { [weak self] saved in
                     onSaved?(saved)
                     guard let self, let live = self.registry.terminal(for: saved.id, folder: self.folder, rexPane: self.rexPane) else { return }
-                    self.show(live)
+                    self.show(live, movingTo: self.rexPane)
                 }
             }
             return
@@ -183,7 +183,7 @@ final class SSHTerminalConnectSession {
                 // Connect command belongs to its own terminal. A Rex pane runs
                 // no shell: the connection's main channel is Rex's control
                 // connection, with no PTY, and the pane's output comes on a
-                // second channel (`RexPaneConnection`).
+                // second channel (`RexSessionConnection`).
                 let command: String?
                 let control = RexControl()
                 if rexPane != nil {
@@ -212,11 +212,12 @@ final class SSHTerminalConnectSession {
                 } catch { queue.finish(); throw error }
                 guard !Task.isCancelled, runID == self.runID else { queue.finish(); await session.cancel(); return }
                 if let rexPane {
-                    let pane: RexPaneConnection
+                    let pane: RexSessionConnection
                     do {
-                        pane = try await RexPaneConnection.open(session: session, control: control, target: rexPane, queue: queue)
+                        pane = try await RexSessionConnection.open(transport: session, control: control, target: rexPane, queue: queue)
                     } catch { queue.finish(); await session.cancel(); throw error }
                     guard !Task.isCancelled, runID == self.runID else { queue.finish(); await pane.cancel(); return }
+                    owner.rex = RexSessionModel(connection: pane)
                     owner.opened(pane)
                 } else {
                     owner.opened(session, command: command)
@@ -254,8 +255,10 @@ final class SSHTerminalConnectSession {
 
     /// Shows a terminal the registry already holds: no dial, no sign-in. This
     /// session then stands for that terminal, so Reconnect and Edit Host act
-    /// on it. Nothing happens when it has ended since the caller read it.
-    func show(_ terminal: SSHTerminalRegistry.Terminal) {
+    /// on it. Nothing happens when it has ended since the caller read it. A
+    /// Rex terminal stands for its whole session: `pane` (one of that
+    /// session's) is shown in it, else the pane it already shows stays.
+    func show(_ terminal: SSHTerminalRegistry.Terminal, movingTo pane: RexPaneTarget? = nil) {
         guard registry.terminal(
             for: terminal.profile.id, folder: terminal.folder, rexPane: terminal.rexPane
         )?.channel === terminal.channel else { return }
@@ -264,7 +267,11 @@ final class SSHTerminalConnectSession {
         hostFailure = nil
         folder = terminal.folder
         folderTerminalCommand = terminal.folderCommand
-        rexPane = terminal.rexPane
+        rexPane = terminal.shownRexPane
+        if let pane, let model = terminal.channel.rex, pane.sessionID == model.sessionID {
+            model.show(pane.blockID)
+            rexPane = pane
+        }
         // A folder still waiting to open inside the opening terminal's
         // multiplexer belongs to that terminal, not this one.
         multiplexerFolder = nil
@@ -335,9 +342,11 @@ final class SSHTerminalConnectSession {
     }
 
     /// Opens the terminal this session stands for again: its host, folder, and
-    /// attach command, whichever screen opened the session.
+    /// attach command, whichever screen opened the session. A Rex terminal
+    /// reopens on the pane it showed last.
     func reconnect(suppliedPassword: String? = nil, onSaved: ((SSHTerminalProfile) -> Void)? = nil) {
         guard var profile = currentProfile else { return }
+        if rexPane != nil, let shown = channel?.rex?.shownTarget { rexPane = shown }
         // A save that only changed which passwords are kept keeps this
         // connection; reconnecting with the older copy would delete the new one.
         if let stored = profileStore().profile(id: profile.id), stored.sameConnection(as: profile) {

@@ -6,6 +6,9 @@ import UIKit
 /// Which OSC 7501 report this preview feeds through the real terminal engine.
 enum SSHTerminalScreenshotStatus: String {
     case none, blocked
+    /// A Rex session terminal: three panes in one window, over a fake host,
+    /// so the pane strip, the minimap, and the swipe draw.
+    case rexPanes
 }
 
 /// The real terminal surface over an in-memory connection: a Herdr-like
@@ -50,7 +53,13 @@ struct SSHTerminalScreenshotPreview: View {
                     themeID: themeID,
                     connection: connection
                 )
-                .task { play(on: channel) }
+                .task {
+                    if status == .rexPanes {
+                        await playRexSession(on: channel)
+                    } else {
+                        play(on: channel)
+                    }
+                }
             }
         }
         .ignoresSafeArea()
@@ -86,11 +95,36 @@ struct SSHTerminalScreenshotPreview: View {
         let esc = "\u{1b}["
         let screen = switch status {
         case .none: herdrScreen(esc)
-        case .blocked: statusScreen(esc)
+        case .blocked, .rexPanes: statusScreen(esc)
         }
         var bytes = Data(screen.utf8)
         bytes.append(statusReports(status))
         channel.event(.data(bytes))
+    }
+
+    /// The terminal's connection is a `RexSessionConnection` to a fake Rex
+    /// session of three panes (`RexFakeSession`), opened on the first. Its
+    /// real control and data protocols run against the fake host, so a tap on
+    /// the strip or a minimap cell switches panes for real.
+    private func playRexSession(on channel: SSHTerminalChannel) async {
+        guard !channel.connected else { return }
+        let esc = "\u{1b}["
+        let panes = [
+            RexFakeSession.Pane(block: "block:preview-pi", label: "shell", title: "pi - oppi", screen: "\(esc)1mpi\(esc)0m in ~/oppi\r\n\(esc)32m>\(esc)0m refactor the connection\r\n\r\nThe terminal stands for the session.\r\nSwipe sideways to move between its panes.\r\n"),
+            RexFakeSession.Pane(block: "block:preview-logs", label: "shell", title: "tail -f server.log", screen: "\(esc)2m12:01:09\(esc)0m listening on :7749\r\n\(esc)2m12:01:11\(esc)0m GET /health 200\r\n"),
+            RexFakeSession.Pane(block: "block:preview-shell", label: "shell", title: "~/dotfiles", screen: "$ git status\r\nOn branch main\r\nnothing to commit\r\n$ "),
+        ]
+        let fake = RexFakeSession(sessionID: "session:preview", panes: panes)
+        let control = RexControl()
+        let transport = fake.transport(control: control)
+        let queue = SSHTerminalEventQueue()
+        guard let connection = try? await RexSessionConnection.open(
+            transport: transport, control: control,
+            target: RexPaneTarget(sessionID: fake.sessionID, blockID: panes[0].block, label: "pi"), queue: queue
+        ) else { return }
+        channel.rex = RexSessionModel(connection: connection)
+        channel.opened(connection)
+        Task { await channel.consume(queue) }
     }
 
     private func herdrScreen(_ esc: String) -> String {
@@ -114,7 +148,7 @@ struct SSHTerminalScreenshotPreview: View {
 
     private func statusReports(_ status: SSHTerminalScreenshotStatus) -> Data {
         switch status {
-        case .none:
+        case .none, .rexPanes:
             return Data()
         case .blocked:
             return osc("state=blocked:kind=permission:app=pi:msg=\(b64("Allow running rg in the repo?"))")

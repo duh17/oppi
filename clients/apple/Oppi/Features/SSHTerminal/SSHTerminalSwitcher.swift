@@ -18,8 +18,8 @@ enum SSHTerminalSwitcher {
         let identity: SSHTerminalIdentity
         /// The saved host, `user@host`.
         let title: String
-        /// The folder's last component for a folder terminal, the pane's name
-        /// for a Rex pane; for the host's own terminal its Run on Connect
+        /// The folder's last component for a folder terminal, the shown pane's
+        /// name for a Rex session; for the host's own terminal its Run on Connect
         /// command, or Login shell. A blocked terminal adds what it waits on.
         let subtitle: String
         let state: State
@@ -34,11 +34,11 @@ enum SSHTerminalSwitcher {
                 store: terminal.channel.programStatus,
                 isStopped: false
             )?.headline.flatMap { $0.isBlocked ? $0 : nil }
-            var subtitle = detail(profile: terminal.profile, folder: terminal.folder, rexPane: terminal.rexPane)
+            var subtitle = detail(profile: terminal.profile, folder: terminal.folder, rexPane: terminal.shownRexPane)
             if let blocked { subtitle += " \u{00B7} " + blocked.label }
             return Item(
                 identity: SSHTerminalIdentity(
-                    profileID: terminal.profile.id, folder: terminal.folder, rexBlock: terminal.rexPane?.blockID
+                    profileID: terminal.profile.id, folder: terminal.folder, rexSession: terminal.rexPane?.sessionID
                 ),
                 title: terminal.profile.endpointLabel,
                 subtitle: subtitle,

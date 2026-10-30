@@ -86,6 +86,8 @@ struct ScreenshotPreviewView: View {
             SSHTerminalScreenshotPreview()
         case "ssh-terminal-status-blocked":
             SSHTerminalScreenshotPreview(status: .blocked)
+        case "ssh-terminal-rex-panes":
+            SSHTerminalScreenshotPreview(status: .rexPanes)
         case "router-routes":
             RouterRoutesPreview()
         case "router-modal-sites":

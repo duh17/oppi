@@ -238,6 +238,46 @@ struct SSHTerminalSwitcherTests {
         #expect(session.channel === shell, "Shell opens the host's own terminal")
     }
 
+    /// A Rex terminal stands for its whole session. A pane row of a session
+    /// that has a terminal open shows that terminal and moves it to the tapped
+    /// pane (no second connection), the switcher lists the session once and
+    /// names the pane it shows, and a reconnect reopens the pane shown last.
+    @Test func aRexTerminalStandsForItsSessionAndAPaneRowMovesIt() async throws {
+        let registry = makeRegistry()
+        defer { closeEverything(registry) }
+        let rexHost = SSHTerminalProfile(host: "mac-studio", username: "chen", opensRexSessions: true)
+        let rig = try await RexSessionTerminalTests().open(["a", "b", "c"])
+        let (a, b, c) = ("block:a", "block:b", "block:c")
+        let target = { (block: String, label: String) in
+            RexPaneTarget(sessionID: RexSessionTerminalTests.session, blockID: block, label: label)
+        }
+        registry.adopt(rig.channel, profile: rexHost, rexPane: target(a, "title a"), queue: SSHTerminalEventQueue())
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 3 })
+
+        let session = SSHTerminalConnectSession(registry: registry, profileStore: IsolatedProfiles().make)
+        session.connectedProfile = rexHost
+        session.openRexPane(target(c, "title c"))
+        #expect(session.channel === rig.channel && session.showsTerminal, "the terminal that is open is shown")
+        #expect(!session.connecting && registry.openTerminals().count == 1, "no second connection")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of c") })
+        #expect(session.rexPane?.blockID == c)
+
+        let items = SSHTerminalSwitcher.items(terminals: registry.openTerminals(), current: rig.channel)
+        #expect(items.map(\.subtitle) == ["Rex \u{00B7} title c"], "one entry per session, named for its shown pane")
+        #expect(items.first?.identity == SSHTerminalIdentity(
+            profileID: rexHost.id, folder: nil, rexSession: RexSessionTerminalTests.session
+        ))
+
+        // A swipe moves the pane; the entry follows it, and so does a reconnect.
+        rig.model.show(b)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { rig.shows("screen of b") })
+        #expect(SSHTerminalSwitcher.items(terminals: registry.openTerminals(), current: rig.channel).map(\.subtitle) == ["Rex \u{00B7} title b"])
+        session.reconnect()
+        #expect(session.rexPane?.blockID == b, "it reopens the pane last shown")
+        session.cancel()
+        await rig.stop()
+    }
+
     @Test func aTerminalThatEndedMeanwhileIsNotShown() throws {
         let registry = makeRegistry()
         let session = SSHTerminalConnectSession(registry: registry)

@@ -163,6 +163,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
 
     private var longPress: UILongPressGestureRecognizer?
     private var tapRecognizer: UITapGestureRecognizer?
+    private var paneSwipe: UIPanGestureRecognizer?
+    /// Set while the terminal shows a Rex session with more than one pane:
+    /// moves `delta` panes (-1 previous, +1 next); false past either end. A
+    /// sideways swipe and VoiceOver's Next Pane and Previous Pane both call it.
+    var stepPane: ((Int) -> Bool)? { didSet { updatePaneStepping() } }
     private var tapIgnore = SSHTerminalTapIgnore()
     private var tapSequence = SSHTerminalTapSequence()
     private var pendingHide: Task<Void, Never>?
@@ -1159,6 +1164,37 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         return true
     }
 
+    /// A sideways swipe starts only when the finger moves mostly sideways, so
+    /// the vertical scroll of history keeps its pan.
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, pan === paneSwipe else {
+            return super.gestureRecognizerShouldBegin(gestureRecognizer)
+        }
+        return SSHTerminalPaneSwipe.begins(velocity: pan.velocity(in: self))
+    }
+
+    /// The screen's left edge is the back swipe's.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === paneSwipe else { return true }
+        return touch.location(in: self).x >= SSHTerminalPaneSwipe.edgeInset
+    }
+
+    @objc private func paneSwiped(_ pan: UIPanGestureRecognizer) {
+        guard pan.state == .ended,
+              let step = SSHTerminalPaneSwipe.step(translation: pan.translation(in: self), velocity: pan.velocity(in: self))
+        else { return }
+        _ = stepPane?(step)
+    }
+
+    private func updatePaneStepping() {
+        paneSwipe?.isEnabled = stepPane != nil
+        // VoiceOver has no swipe to make: the same step is an action.
+        accessibilityCustomActions = stepPane == nil ? nil : [
+            UIAccessibilityCustomAction(name: "Next Pane") { [weak self] _ in self?.stepPane?(1) ?? false },
+            UIAccessibilityCustomAction(name: "Previous Pane") { [weak self] _ in self?.stepPane?(-1) ?? false },
+        ]
+    }
+
     private func configureHistoryScroll() {
         historyScroll.delegate = self
         historyScroll.alwaysBounceVertical = true
@@ -1191,11 +1227,17 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         }
         historyScroll.touchMoved = { [weak self] travel in self?.leadHistory(fingerTravel: travel) }
         historyScroll.touchEnded = { [weak self] in self?.endHistoryLead() }
+        let swipe = UIPanGestureRecognizer(target: self, action: #selector(paneSwiped(_:)))
+        swipe.delegate = self
+        swipe.isEnabled = false
+        swipe.cancelsTouchesInView = false
         historyScroll.addGestureRecognizer(tap)
         historyScroll.addGestureRecognizer(doubleTap)
         historyScroll.addGestureRecognizer(press)
+        historyScroll.addGestureRecognizer(swipe)
         tapRecognizer = tap
         longPress = press
+        paneSwipe = swipe
         updateTouchMode()
     }
 

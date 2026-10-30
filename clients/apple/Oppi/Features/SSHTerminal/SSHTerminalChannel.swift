@@ -224,6 +224,10 @@ final class SSHTerminalChannel {
     /// OSC 9 / OSC 777 notifications and BEL in this terminal.
     var alerts: SSHTerminalAlertFeed { engine.alerts }
     var modifierLatch = SSHTerminalModifierLatch()
+    /// The Rex session this terminal shows, when it is a Rex terminal: its
+    /// panes, minimap, and the switch between them. Set before `opened`; stays
+    /// after the terminal ends, so a reconnect knows the pane shown last.
+    @ObservationIgnored var rex: RexSessionModel?
     private(set) var connected = false
     private(set) var connecting = true
     /// EOF stops input and terminal replies. The channel stays open so a

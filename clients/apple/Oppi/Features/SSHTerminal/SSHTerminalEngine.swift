@@ -391,6 +391,13 @@ final class SSHTerminalEngine {
             setColors(foreground: colors.foreground, background: colors.background, dark: colors.dark,
                       palette: colors.palette, cursor: colors.cursor)
         }
+        // What the program reported lived in the terminal that was dropped,
+        // and the snapshot carries none of it: a pane swapped in must not show
+        // the status, progress, or OSC 7 machine of the one before. Its own
+        // program reports again, as at the first open.
+        programStatus.removeAll()
+        progress.reset()
+        workingDirectoryHost = nil
         heldSince = nil
         following = true
         cachedRows = []

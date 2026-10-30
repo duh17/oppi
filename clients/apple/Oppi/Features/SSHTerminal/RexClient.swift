@@ -2,7 +2,8 @@ import Foundation
 import Synchronization
 
 /// The Rex pane a terminal shows: a block in a session on the host's Rex
-/// server, and what to call it.
+/// server, and what to call it. A terminal stands for the whole session; this
+/// is the pane it opens on, and the one it reopens on after a reconnect.
 struct RexPaneTarget: Hashable, Sendable {
     let sessionID: String
     let blockID: String
@@ -292,6 +293,8 @@ struct RexDataStream {
         case snapshot(Data)
         case output(Data)
         case exited(code: Int)
+        /// Rex closed the pane (close code 4000). Nothing follows it.
+        case paneClosed
         /// The stream is over, and why. Nothing follows it.
         case ended(String)
     }
@@ -302,7 +305,7 @@ struct RexDataStream {
     private var over = false
 
     init(ticket: Data, key: String = RexWebSocketCodec.makeKey()) {
-        codec = RexWebSocketCodec(subprotocol: RexPaneConnection.dataSubprotocol, key: key)
+        codec = RexWebSocketCodec(subprotocol: RexSessionConnection.dataSubprotocol, key: key)
         self.ticket = ticket
     }
 
@@ -353,7 +356,7 @@ struct RexDataStream {
             }
         case .close(let code, let reason):
             over = true
-            if code == 4000 { return [.ended("The pane closed in Rex.")] }
+            if code == 4000 { return [.paneClosed] }
             return [.ended(reason.isEmpty ? "Rex ended the pane's stream." : "Rex ended the pane's stream: \(reason).")]
         case .text:
             return []
@@ -361,73 +364,185 @@ struct RexDataStream {
     }
 }
 
-/// One Rex pane shown as a terminal, over the SSH connection to its host.
+/// What a Rex terminal needs of its SSH connection: writes to the control
+/// channel (its main channel), more exec streams beside it, side commands, and
+/// the connection's own lifecycle. `SSHPTYSession` is one; tests and previews
+/// stand in for the host with another.
+protocol RexTransport: Sendable {
+    func send(_ bytes: Data) async throws
+    func openStream(command: String, inboundFlow: SSHPTYInboundFlow?, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream
+    func run(_ command: String, input: Data) async throws -> SSHExecResult
+    func checkAlive() async throws
+    func close()
+    func cancel() async
+}
+
+extension SSHPTYSession: RexTransport {}
+
+/// One Rex session shown as a terminal, over the SSH connection to its host:
+/// one control connection, attached to the session, and one data connection
+/// for the pane on screen.
 ///
-/// The connection's main channel is the control connection; the pane's output
-/// comes on a second channel, the data connection, which opens on the first
-/// resize so the snapshot Rex starts it with is already at this screen's size.
-/// This client owns the pane while it shows it (`session.own_block`, take), so
-/// the pane follows the phone's size; when the connection drops Rex hands it
-/// back to the client in line, such as the Mac app.
+/// The connection's main channel is the control connection. The shown pane's
+/// output comes on a second channel, the data connection, which first opens on
+/// the first resize so the snapshot Rex starts it with is already at this
+/// screen's size. This client owns the pane while it shows it
+/// (`session.own_block`, take), so the pane follows the phone's size; a pane
+/// left behind is handed back (`session.disown_block`), and when the
+/// connection drops Rex hands the rest back to the client in line, such as the
+/// Mac app. It never focuses anything: the host's own focus stays where it is.
+///
+/// Showing another pane (`show`) takes it, sizes it, closes the data
+/// connection of the one before and opens one for the new pane, whose snapshot
+/// replaces the grid (`SSHTerminalEventQueue.pushSnapshot`). Switches run one
+/// at a time, so a fast double swipe ends on the last pane asked for, and the
+/// stream of a pane left behind is dropped by generation: it is never fed to
+/// the grid and never ends the terminal. The strip and minimap follow
+/// `session.view`, read again at each `session_view_changed` (at most one read
+/// at a time, again if another came meanwhile, an older answer dropped).
 ///
 /// Typing goes to the pane as `com.superlogical.terminal.write`, one call at a
 /// time (the channel waits for each), so keys keep their order. Side commands
 /// (uploads, the Ghostty theme, keybindings) run on the same SSH connection as
 /// for a shell, since the pane is on the same host.
-final class RexPaneConnection: SSHTerminalConnection, Sendable {
+final class RexSessionConnection: SSHTerminalConnection, Sendable {
     static let dataSubprotocol = "rex.data.terminal.v1"
     /// A screen that never sizes the terminal still gets its pane.
     static let firstResizeWait: Duration = .milliseconds(1500)
 
-    private struct DataState {
-        var started = false
+    /// The last size the screen asked for, which each pane taken is given
+    /// before its snapshot is made.
+    private struct Geometry: Sendable {
+        let columns: Int
+        let rows: Int
+        let cellWidth: Int?
+        let cellHeight: Int?
+
+        var arguments: [String: Any] {
+            var args: [String: Any] = ["columns": columns, "rows": rows]
+            if let cellWidth, let cellHeight {
+                args["cell_width_px"] = cellWidth
+                args["cell_height_px"] = cellHeight
+            }
+            return args
+        }
+    }
+
+    private struct State: Sendable {
+        /// The pane asked for last: typing and sizing go here.
+        var requested: String
+        /// The pane the current data connection carries.
+        var streamBlock: String?
+        /// Panes this client has taken for size and not handed back.
+        var owned: Set<String> = []
+        var generation = 0
         var stream: SSHExecStream?
         var parser: RexDataStream?
         var exitStatus: Int?
+        /// The first resize came (or its wait ran out): data may open.
+        var armed = false
+        /// The switch loop is running.
+        var switching = false
         var ended = false
+        var geometry: Geometry?
+        /// Panes whose program exited, with its exit status. Rex closes such a
+        /// pane by default; until it does, the pane stays where it is.
+        var exitCodes: [String: Int] = [:]
+
+        var layout: RexSessionLayout?
+        var revision: Int?
+        /// The highest revision a `session_view_changed` announced.
+        var wanted = -1
+        var reading = false
+        var labels: [String: String]
+        var titles: [String: String] = [:]
+        var titlesAsked: Set<String> = []
     }
 
-    private let session: SSHPTYSession
+    let sessionID: String
+    /// The strip and minimap, newest only. Ends with the connection.
+    let updates: AsyncStream<RexSessionState>
+    private let updateSink: AsyncStream<RexSessionState>.Continuation
+    private let transport: any RexTransport
     private let control: RexControl
-    private let target: RexPaneTarget
     private let queue: SSHTerminalEventQueue
-    private let data = Mutex(DataState())
+    private let core: Mutex<State>
 
-    private init(session: SSHPTYSession, control: RexControl, target: RexPaneTarget, queue: SSHTerminalEventQueue) {
-        self.session = session
+    private init(transport: any RexTransport, control: RexControl, target: RexPaneTarget, queue: SSHTerminalEventQueue) {
+        self.transport = transport
         self.control = control
-        self.target = target
         self.queue = queue
+        sessionID = target.sessionID
+        core = Mutex(State(requested: target.blockID, labels: [target.blockID: target.label]))
+        (updates, updateSink) = AsyncStream.makeStream(of: RexSessionState.self, bufferingPolicy: .bufferingNewest(1))
     }
 
-    /// Says hello on the control connection already running on `session`,
-    /// attaches to the pane's session, and takes the pane. Cancelling it
-    /// closes the connection, so a background cancel leaves nothing open.
+    /// Says hello on the control connection already running on `transport`,
+    /// attaches to the pane's session (which starts its events, and answers
+    /// with its view), and takes the pane. Cancelling it closes the
+    /// connection, so a background cancel leaves nothing open.
     static func open(
-        session: SSHPTYSession,
+        transport: any RexTransport,
         control: RexControl,
         target: RexPaneTarget,
         queue: SSHTerminalEventQueue
-    ) async throws -> RexPaneConnection {
+    ) async throws -> RexSessionConnection {
         try await withTaskCancellationHandler {
-            control.attach { try await session.send($0) }
+            control.attach { try await transport.send($0) }
             try await control.open()
-            _ = try await control.call("session.attach", ["session_id": target.sessionID])
+            let connection = RexSessionConnection(transport: transport, control: control, target: target, queue: queue)
+            control.onEvent { [weak connection] frame in
+                if let event = RexEvent(frame: frame) { connection?.receive(event) }
+            }
+            let attached = try await control.call("session.attach", ["session_id": target.sessionID])
+            struct Attached: Decodable { let view: RexView? }
+            if let view = try? JSONDecoder().decode(Attached.self, from: attached).view {
+                connection.core.withLock { _ = connection.apply(view: view, to: &$0) }
+            }
             _ = try await control.call("session.own_block", [
                 "session_id": target.sessionID, "block_ids": [target.blockID], "mode": "take",
             ])
+            connection.core.withLock { _ = $0.owned.insert(target.blockID) }
             try Task.checkCancellation()
-            let pane = RexPaneConnection(session: session, control: control, target: target, queue: queue)
-            control.onEnd { [weak pane] error in pane?.end(error.localizedDescription) }
-            Task { [weak pane] in
+            control.onEnd { [weak connection] error in connection?.end(error.localizedDescription) }
+            Task { [weak connection] in
                 try? await Task.sleep(for: firstResizeWait)
-                await pane?.startData()
+                connection?.arm()
             }
-            return pane
+            return connection
         } onCancel: {
-            session.close()
+            transport.close()
         }
     }
+
+    // MARK: - What the screen reads and asks for
+
+    /// What the strip and minimap show now.
+    var state: RexSessionState { core.withLock { Self.snapshot($0) } }
+
+    /// Shows `blockID`: the screen's one way to change pane, for a tap, a
+    /// swipe, and VoiceOver alike. A pane the view does not list is ignored.
+    func show(_ blockID: String) {
+        let start = core.withLock { state -> Bool in
+            guard !state.ended, blockID != state.requested else { return false }
+            if let layout = state.layout, !layout.contains(blockID) { return false }
+            state.requested = blockID
+            publish(state)
+            return startSwitching(&state)
+        }
+        if start { Task { await runSwitches() } }
+    }
+
+    /// Shows the pane `delta` places along the strip from the one last asked
+    /// for, so two quick swipes go two panes. False past either end.
+    @discardableResult
+    func step(_ delta: Int) -> Bool {
+        guard let next = state.pane(offsetBy: delta) else { return false }
+        show(next)
+        return true
+    }
+
+    // MARK: - SSHTerminalConnection
 
     func send(_ bytes: Data) async throws {
         _ = try await control.call("com.superlogical.terminal.write", blockCall([
@@ -439,80 +554,177 @@ final class RexPaneConnection: SSHTerminalConnection, Sendable {
 
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {
         guard columns > 0, rows > 0 else { return }
-        var args: [String: Any] = ["columns": columns, "rows": rows]
-        if pixelWidth >= columns, pixelHeight >= rows {
-            args["cell_width_px"] = pixelWidth / columns
-            args["cell_height_px"] = pixelHeight / rows
-        }
-        _ = try await control.call("com.superlogical.terminal.resize", blockCall(args))
-        await startData()
+        let geometry = Geometry(
+            columns: columns, rows: rows,
+            cellWidth: pixelWidth >= columns && pixelHeight >= rows ? pixelWidth / columns : nil,
+            cellHeight: pixelWidth >= columns && pixelHeight >= rows ? pixelHeight / rows : nil
+        )
+        core.withLock { $0.geometry = geometry }
+        _ = try await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments))
+        arm()
     }
 
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
-        try await (session as any SSHTerminalConnection).run(command, input: input)
+        try await transport.run(command, input: input)
     }
 
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
-        try await session.openStream(command: command, inboundFlow: nil, sink: sink)
+        try await transport.openStream(command: command, inboundFlow: nil, sink: sink)
     }
 
-    func checkAlive() async throws { try await session.checkAlive(timeout: .seconds(8)) }
+    func checkAlive() async throws { try await transport.checkAlive() }
 
     func close() {
-        data.withLock { $0.ended = true }
-        session.close()
+        core.withLock { state in
+            state.ended = true
+            state.generation += 1
+            state.stream = nil
+        }
+        updateSink.finish()
+        transport.close()
     }
 
     func cancel() async {
-        data.withLock { $0.ended = true }
-        await session.cancel()
+        core.withLock { $0.ended = true }
+        updateSink.finish()
+        await transport.cancel()
     }
 
-    private func blockCall(_ args: [String: Any]) -> [String: Any] {
-        ["session_id": target.sessionID, "block_id": target.blockID, "args": args]
+    // MARK: - Switching panes
+
+    private func blockCall(_ args: [String: Any], block: String? = nil) -> [String: Any] {
+        let target = block ?? core.withLock { $0.requested }
+        return ["session_id": sessionID, "block_id": target, "args": args]
     }
 
-    /// Opens the pane's data connection, once.
-    private func startData() async {
-        let first = data.withLock { state -> Bool in
-            guard !state.started, !state.ended else { return false }
-            state.started = true
+    /// Data may open: the first time, for the pane asked for; after that,
+    /// again for any pane asked for since.
+    private func arm() {
+        let start = core.withLock { state -> Bool in
+            guard !state.ended else { return false }
+            state.armed = true
+            return startSwitching(&state)
+        }
+        if start { Task { await runSwitches() } }
+    }
+
+    /// Decides, under the lock, whether the caller starts the switch loop:
+    /// data is allowed, the pane on screen is not the one asked for, and no
+    /// loop is running.
+    private func startSwitching(_ state: inout State) -> Bool {
+        guard state.armed, !state.ended, !state.switching, state.streamBlock != state.requested else { return false }
+        state.switching = true
+        return true
+    }
+
+    /// Switches until the data connection carries the pane asked for last.
+    private func runSwitches() async {
+        while true {
+            let block = core.withLock { state -> String? in
+                guard !state.ended, state.armed, state.streamBlock != state.requested else {
+                    state.switching = false
+                    return nil
+                }
+                return state.requested
+            }
+            guard let block else { return }
+            do {
+                try await switchData(to: block)
+            } catch {
+                // Rex refused the pane (it closed meanwhile): stay where the
+                // person is. Anything else is the connection failing.
+                let stays = core.withLock { state -> Bool in
+                    guard case RexClientError.refused = error, let shown = state.streamBlock, !state.ended else { return false }
+                    state.requested = shown
+                    publish(state)
+                    return true
+                }
+                if !stays {
+                    core.withLock { $0.switching = false }
+                    end(error.localizedDescription)
+                    return
+                }
+            }
+        }
+    }
+
+    /// Takes `block` for size (if this client has not), sizes it to the
+    /// screen, then swaps the data connection. A request overtaken while this
+    /// waits on Rex returns before it touches the stream.
+    private func switchData(to block: String) async throws {
+        func wanted() -> Bool { core.withLock { !$0.ended && $0.requested == block } }
+        if core.withLock({ !$0.owned.contains(block) }) {
+            _ = try await control.call("session.own_block", [
+                "session_id": sessionID, "block_ids": [block], "mode": "take",
+            ])
+            core.withLock { _ = $0.owned.insert(block) }
+        }
+        // The pane takes this screen's size before its snapshot is made.
+        if let geometry = core.withLock({ $0.geometry }) {
+            _ = try await control.call("com.superlogical.terminal.resize", blockCall(geometry.arguments, block: block))
+        }
+        guard wanted() else { return }
+        let answer = try await control.call("data.connect", [
+            "session_id": sessionID, "block_id": block,
+            "data_ref_id": "terminal", "subprotocol": Self.dataSubprotocol,
+        ])
+        struct Ticket: Decodable { let ticket: String }
+        guard let ticket = try? JSONDecoder().decode(Ticket.self, from: answer),
+              let bytes = Self.base64URL(ticket.ticket), bytes.count == 16 else {
+            throw RexClientError.unreadable("a data ticket")
+        }
+        guard wanted() else { return }
+        let parser = RexDataStream(ticket: bytes)
+        // From here the old pane's stream is dead to the grid: its events
+        // carry the generation they were opened under.
+        let (old, generation) = core.withLock { state -> (SSHExecStream?, Int) in
+            state.generation += 1
+            let old = state.stream
+            state.stream = nil
+            state.parser = parser
+            state.streamBlock = block
+            state.exitStatus = nil
+            return (old, state.generation)
+        }
+        old?.close()
+        let stream = try await transport.openStream(command: RexBridge.command, inboundFlow: queue.flow) { [weak self] event in
+            self?.receiveData(event, generation: generation)
+        }
+        let kept = core.withLock { state -> Bool in
+            guard !state.ended, state.generation == generation else { return false }
+            state.stream = stream
             return true
         }
-        guard first else { return }
-        do {
-            let answer = try await control.call("data.connect", [
-                "session_id": target.sessionID, "block_id": target.blockID,
-                "data_ref_id": "terminal", "subprotocol": Self.dataSubprotocol,
-            ])
-            struct Ticket: Decodable { let ticket: String }
-            guard let ticket = try? JSONDecoder().decode(Ticket.self, from: answer),
-                  let bytes = Self.base64URL(ticket.ticket), bytes.count == 16 else {
-                throw RexClientError.unreadable("a data ticket")
-            }
-            let parser = RexDataStream(ticket: bytes)
-            data.withLock { $0.parser = parser }
-            let stream = try await session.openStream(command: RexBridge.command, inboundFlow: queue.flow) { [weak self] event in
-                self?.receiveData(event)
-            }
-            data.withLock { $0.stream = stream }
-            try await stream.send(parser.upgradeRequest)
-        } catch {
-            end(error.localizedDescription)
+        guard kept else {
+            stream.close()
+            return
+        }
+        try await stream.send(parser.upgradeRequest)
+        // Hand back every pane but this one, so the Mac's windows for them
+        // are not left at this screen's size. It is best effort: a pane that
+        // closed has nothing to give back.
+        let behind = core.withLock { state -> [String] in
+            let behind = state.owned.subtracting([block])
+            state.owned = [block]
+            return Array(behind)
+        }
+        if !behind.isEmpty {
+            _ = try? await control.call("session.disown_block", ["session_id": sessionID, "block_ids": behind])
         }
     }
 
     /// The data connection's events, on the SSH event loop and in order, so
     /// the snapshot and output reach the queue in the order Rex sent them.
     /// EOF comes before the bridge's exit status; `.closed` follows both.
-    private func receiveData(_ event: SSHPTYEvent) {
+    /// Events of a connection that was replaced (`generation`) are dropped.
+    private func receiveData(_ event: SSHPTYEvent, generation mine: Int) {
         switch event {
         case .data(let bytes):
-            let (outputs, stream) = data.withLock { state -> ([RexDataStream.Output], SSHExecStream?) in
-                guard !state.ended, var parser = state.parser else { return ([], nil) }
+            let (outputs, stream, block) = core.withLock { state -> ([RexDataStream.Output], SSHExecStream?, String?) in
+                guard !state.ended, state.generation == mine, var parser = state.parser else { return ([], nil, nil) }
                 let outputs = parser.receive(bytes)
                 state.parser = parser
-                return (outputs, state.stream)
+                return (outputs, state.stream, state.streamBlock)
             }
             for output in outputs {
                 switch output {
@@ -522,27 +734,171 @@ final class RexPaneConnection: SSHTerminalConnection, Sendable {
                     }
                 case .snapshot(let snapshot): queue.pushSnapshot(snapshot)
                 case .output(let bytes): queue.push(.data(bytes))
-                case .exited(let code): end("\(target.label) exited with status \(code).")
+                case .exited(let code):
+                    if let block { core.withLock { $0.exitCodes[block] = code } }
+                case .paneClosed:
+                    if let block { closed(block, reason: "The pane closed in Rex.") }
                 case .ended(let reason): end(reason)
                 }
             }
         case .exitStatus(let status):
-            data.withLock { $0.exitStatus = status }
+            core.withLock { if $0.generation == mine { $0.exitStatus = status } }
         case .closed:
-            end(RexBridge.failure(exitStatus: data.withLock { $0.exitStatus }).localizedDescription)
+            let reason = core.withLock { state -> String? in
+                guard !state.ended, state.generation == mine else { return nil }
+                return RexBridge.failure(exitStatus: state.exitStatus).localizedDescription
+            }
+            if let reason { end(reason) }
         case .eof, .exitSignal, .writabilityChanged:
             break
         }
     }
 
     private func end(_ reason: String) {
-        let first = data.withLock { state -> Bool in
+        let first = core.withLock { state -> Bool in
             guard !state.ended else { return false }
             state.ended = true
             return true
         }
         guard first else { return }
+        updateSink.finish()
         queue.end(reason)
+    }
+
+    /// `block` is gone from the host. If it is the pane on screen, move to its
+    /// neighbour (the next, else the one before); with none left the terminal
+    /// ends with `reason`.
+    private func closed(_ block: String, reason: String) {
+        let order = core.withLock { $0.layout?.panes.map(\.blockID) ?? [block] }
+        leave(block, order: order, surviving: Set(order).subtracting([block]), reason: reason)
+    }
+
+    /// The pane on screen is `block`, and it is gone: show the neighbour it
+    /// had in `order` among `surviving`, or end the terminal with `reason`.
+    /// Nothing happens for a pane that is not on screen.
+    private func leave(_ block: String, order: [String], surviving: Set<String>, reason: String) {
+        let onScreen = core.withLock { !$0.ended && $0.requested == block }
+        guard onScreen else { return }
+        if let next = RexSessionLayout.neighbour(of: block, in: order, surviving: surviving) {
+            show(next)
+        } else {
+            // The last pane: its program's exit status is what the person wants to know.
+            let exited = core.withLock { state in
+                state.exitCodes[block].map { "\(Self.name(of: block, in: state)) exited with status \($0)." }
+            }
+            end(exited ?? reason)
+        }
+    }
+
+    // MARK: - The session's view
+
+    private func receive(_ event: RexEvent) {
+        guard event.session == sessionID else { return }
+        switch event {
+        case .viewChanged(_, let revision):
+            core.withLock { $0.wanted = max($0.wanted, revision) }
+            readView()
+        case .title(_, let block, let title):
+            core.withLock { state in
+                state.titles[block] = title
+                publish(state)
+            }
+        case .blockClosed(_, let block):
+            closed(block, reason: "The pane closed in Rex.")
+        case .sessionDestroyed:
+            end("The Rex session was closed.")
+        default:
+            break
+        }
+    }
+
+    /// Reads the view again if an event announced a newer one than the one
+    /// applied: one read at a time, again if another event came meanwhile.
+    private func readView() {
+        let start = core.withLock { state -> Bool in
+            guard !state.ended, !state.reading, state.wanted > (state.revision ?? -1) else { return false }
+            state.reading = true
+            return true
+        }
+        guard start else { return }
+        Task { [weak self] in
+            while let self {
+                let answer = try? await control.call("session.view", ["session_id": sessionID])
+                let decoded = answer.flatMap { try? JSONDecoder().decode(RexView.self, from: $0) }
+                let (again, gone) = core.withLock { state -> (Bool, (String, [String], Set<String>)?) in
+                    var gone: (String, [String], Set<String>)?
+                    if let decoded { gone = apply(view: decoded, to: &state) }
+                    // A read that failed waits for the next event.
+                    let again = decoded != nil && !state.ended && state.wanted > (state.revision ?? -1)
+                    if !again { state.reading = false }
+                    return (again, gone)
+                }
+                if let gone { leave(gone.0, order: gone.1, surviving: gone.2, reason: "The pane closed in Rex.") }
+                if !again { return }
+            }
+        }
+    }
+
+    /// Applies a view unless a newer one already is (replies can overtake each
+    /// other), publishes it, and asks for the titles of panes not yet read. A
+    /// view without a revision counts as at least the newest one announced.
+    /// Returns the pane on screen, with its neighbours, if the view no longer
+    /// lists it.
+    @discardableResult
+    private func apply(view: RexView, to state: inout State) -> (String, [String], Set<String>)? {
+        if let revision = view.revision, let applied = state.revision, revision < applied { return nil }
+        state.revision = view.revision ?? max(state.revision ?? -1, state.wanted)
+        let layout = RexSessionLayout(view: view)
+        let before = state.layout?.panes.map(\.blockID)
+        state.layout = layout
+        for pane in layout.panes {
+            if let label = pane.label { state.labels[pane.blockID] = label }
+        }
+        publish(state)
+        for pane in layout.panes where state.titlesAsked.insert(pane.blockID).inserted {
+            readTitle(of: pane.blockID)
+        }
+        guard !layout.contains(state.requested), let before, before.contains(state.requested) else { return nil }
+        return (state.requested, before, Set(layout.panes.map(\.blockID)))
+    }
+
+    private func readTitle(of block: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            let answer = try? await control.call("com.superlogical.terminal.title", blockCall([:], block: block))
+            struct Title: Decodable { let title: String? }
+            guard let title = answer.flatMap({ try? JSONDecoder().decode(Title.self, from: $0).title }) else { return }
+            // A title event that came first is newer.
+            core.withLock { state in
+                guard state.titles[block] == nil else { return }
+                state.titles[block] = title
+                publish(state)
+            }
+        }
+    }
+
+    private func name(of block: String) -> String {
+        core.withLock { Self.name(of: block, in: $0) }
+    }
+
+    private static func name(of block: String, in state: State) -> String {
+        RexSnapshot.Pane(
+            blockID: block, label: state.labels[block], title: state.titles[block], pwd: nil, records: []
+        ).displayName
+    }
+
+    private static func snapshot(_ state: State) -> RexSessionState {
+        // Until a view has been read, the pane that was asked for is the only one known.
+        let order = state.layout?.panes.map(\.blockID) ?? [state.requested]
+        return RexSessionState(
+            panes: order.map { .init(blockID: $0, name: name(of: $0, in: state)) },
+            shown: state.requested,
+            minimap: state.layout?.minimap(around: state.requested) ?? []
+        )
+    }
+
+    private func publish(_ state: State) {
+        updateSink.yield(Self.snapshot(state))
     }
 
     /// Rex writes tickets as base64url without padding.

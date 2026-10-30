@@ -79,6 +79,17 @@ enum RexEvent: Sendable, Equatable {
 
     static let terminalCreator = "com.superlogical.terminal"
 
+    /// The session the event is about.
+    var session: String {
+        switch self {
+        case .sessionCreated(let session), .sessionDestroyed(let session), .viewChanged(let session, _),
+             .blockCreated(let session, _), .blockClosed(let session, _), .title(let session, _, _),
+             .pwd(let session, _, _), .status(let session, _, _), .statusRemoved(let session, _, _),
+             .childExited(let session, _):
+            session
+        }
+    }
+
     init?(frame: [String: Any]) {
         guard let event = frame["payload"] as? [String: Any], let type = event["type"] as? String,
               let body = event["payload"] as? [String: Any] else { return nil }
@@ -357,7 +368,21 @@ struct RexView: Decodable, Sendable {
     }
 
     struct Layer: Decodable, Sendable {
+        /// `tiled` for the layer that fills the window, else floating.
+        let kind: String?
         let blocks: [Block]?
+        /// Where each block sits. Nil for an empty layer, and for a tree this
+        /// build cannot read: the blocks still list in layout order.
+        let layout: RexLayout?
+
+        enum CodingKeys: String, CodingKey { case kind, blocks, layout }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            kind = try container.decodeIfPresent(String.self, forKey: .kind)
+            blocks = try container.decodeIfPresent([Block].self, forKey: .blocks)
+            layout = try? container.decodeIfPresent(RexLayout.self, forKey: .layout)
+        }
     }
 
     struct Window: Decodable, Sendable {
@@ -377,6 +402,63 @@ struct RexView: Decodable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case revision, label, activeWindowID = "active_window_id", windows
+    }
+}
+
+/// A layer's layout tree from `session.view`: a block at a place, or a split
+/// of two such nodes. A rect is `[x, y, width, height]` in fractions of the
+/// window.
+indirect enum RexLayout: Decodable, Equatable, Sendable {
+    enum Direction: Equatable, Sendable {
+        /// Before on the left, after on the right.
+        case horizontal
+        /// Before above, after below.
+        case vertical
+    }
+
+    case block(id: String, rect: [Double])
+    case split(direction: Direction, ratio: Double, before: Self, after: Self, rect: [Double])
+
+    private enum CodingKeys: String, CodingKey { case rect, blockID = "block_id", split }
+    private enum SplitKeys: String, CodingKey { case direction, ratio, before, after }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rect = try container.decode([Double].self, forKey: .rect)
+        guard rect.count == 4 else {
+            throw DecodingError.dataCorruptedError(forKey: .rect, in: container, debugDescription: "a rect has four numbers")
+        }
+        if let split = try container.decodeIfPresent(SplitBody.self, forKey: .split) {
+            self = .split(direction: split.direction, ratio: split.ratio, before: split.before, after: split.after, rect: rect)
+        } else if let id = try container.decodeIfPresent(String.self, forKey: .blockID) {
+            self = .block(id: id, rect: rect)
+        } else {
+            throw DecodingError.dataCorruptedError(forKey: .blockID, in: container, debugDescription: "a node with neither a block nor a split")
+        }
+    }
+
+    private struct SplitBody: Decodable {
+        let direction: Direction
+        let ratio: Double
+        let before: RexLayout
+        let after: RexLayout
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: SplitKeys.self)
+            // A direction this build does not know draws as horizontal, as Rex's API page says.
+            direction = try container.decode(String.self, forKey: .direction) == "vertical" ? .vertical : .horizontal
+            ratio = try container.decode(Double.self, forKey: .ratio)
+            before = try container.decode(RexLayout.self, forKey: .before)
+            after = try container.decode(RexLayout.self, forKey: .after)
+        }
+    }
+
+    /// The blocks in layout order: an in-order walk, before then after.
+    var leaves: [(id: String, rect: [Double])] {
+        switch self {
+        case .block(let id, let rect): [(id, rect)]
+        case .split(_, _, let before, let after, _): before.leaves + after.leaves
+        }
     }
 }
 
