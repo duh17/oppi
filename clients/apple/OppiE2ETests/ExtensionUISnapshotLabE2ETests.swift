@@ -1565,9 +1565,12 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
     /// message injected before the chat's stream attaches is dropped without an
     /// error and the sheet it asked for never appears. Wait for the socket, then
     /// fail here — not ten seconds later on the missing sheet — when the server
-    /// had nobody to deliver to.
+    /// had nobody to deliver to. A `persist` send lands in the server's stored
+    /// transcript whether or not a socket is attached, so it is sent once:
+    /// resending a request the server already kept would duplicate it.
     @discardableResult
     private func sendHarnessMessage(sessionId: String, _ message: [String: Any]) throws -> [String: Any] {
+        let isPersisted = (message["persist"] as? Bool) == true
         let deadline = Date().addingTimeInterval(10)
         var response: [String: Any] = [:]
         while true {
@@ -1577,14 +1580,16 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
                 body: message
             )
             let subscribers = response["subscriberCount"] as? Int ?? 0
-            if subscribers > 0 || Date() >= deadline { break }
+            if isPersisted || subscribers > 0 || Date() >= deadline { break }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
-        XCTAssertGreaterThan(
-            response["subscriberCount"] as? Int ?? 0,
-            0,
-            "The server had no subscribed socket for \(sessionId), so \(message["type"] ?? "the message") was dropped"
-        )
+        if !isPersisted {
+            XCTAssertGreaterThan(
+                response["subscriberCount"] as? Int ?? 0,
+                0,
+                "The server had no subscribed socket for \(sessionId), so \(message["type"] ?? "the message") was dropped"
+            )
+        }
         return response
     }
 

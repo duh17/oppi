@@ -364,6 +364,10 @@ struct AppRootModalsTests {
         connection.pendingExtensionDialogQueues["waiting"] = [
             ExtensionUIRequest(id: "editor-waiting", sessionId: "waiting", method: "editor", prefill: "queued first"),
         ]
+        // Run the update pass this expectation is about: a root that never looked
+        // after the queue changed would pass by not having looked yet.
+        host.setNeedsUpdateProperties()
+        try await Task.sleep(for: .milliseconds(250))
         #expect(host.presentedViewController == nil, "an unfocused session's dialog must stay queued")
 
         _ = connection.focusedSessionStore.focus(sessionId: "waiting")
