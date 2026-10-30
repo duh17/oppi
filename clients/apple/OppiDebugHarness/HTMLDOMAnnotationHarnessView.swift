@@ -1,5 +1,4 @@
 #if DEBUG
-import SwiftUI
 import UIKit
 
 /// Simulator-only launch surface for finger-input proof of the production HTML
@@ -13,16 +12,6 @@ enum HTMLDOMAnnotationHarnessConfig {
 #else
         return false
 #endif
-    }
-}
-
-struct HTMLDOMAnnotationHarnessView: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> HTMLDOMAnnotationHarnessViewController {
-        HTMLDOMAnnotationHarnessViewController()
-    }
-
-    func updateUIViewController(_ uiViewController: HTMLDOMAnnotationHarnessViewController, context: Context) {
-        uiViewController.updateDiagnostics()
     }
 }
 

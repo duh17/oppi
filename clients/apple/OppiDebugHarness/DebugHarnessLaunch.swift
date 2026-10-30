@@ -30,39 +30,67 @@ enum DebugHarnessLaunch {
     /// root publishes as its marker (`HarnessLaunchReset`); nil for a launch
     /// that is not reused.
     static func makeHarnessRoot(root: AppRootEnvironment, generation: UInt64?) -> HarnessRootViewController? {
-        guard let harness = harnessView else { return nil }
+        guard let content = harnessContent(root: root) else { return nil }
         // Harnesses and previews render app screens, the timeline, and
         // UIKit-hosted SwiftUI without the app's root controller. The
         // router and HostFactory need the app root above them there too,
         // and the window needs the theme applied the way the app root does.
         return HarnessRootViewController(
-            content: HostFactory.content(harness, root: root),
+            content: content,
             themeStore: root.themeStore,
             resetGeneration: generation
         )
     }
 
-    /// The harness or screenshot preview chosen by launch arguments, or nil
-    /// for the app.
-    private static var harnessView: AnyView? {
+    /// What the harness window root shows: a harness's own UIKit controller
+    /// when it has one, else `HostFactory.content` around its SwiftUI view
+    /// until T16-z moves the rest off the SwiftUI dispatch.
+    private static func harnessContent(root: AppRootEnvironment) -> UIViewController? {
+        if let controller = uiKitHarness {
+            return controller
+        }
+        guard let harness = harnessView else { return nil }
+        return HostFactory.content(harness, root: root)
+    }
+
+    /// The harnesses that are their own UIKit screen, so the window hosts a
+    /// controller instead of a SwiftUI representable. Each family that drops
+    /// its wrappers adds its configs here.
+    private static var uiKitHarness: UIViewController? {
         if HTMLDOMAnnotationHarnessConfig.isEnabled {
-            return AnyView(HTMLDOMAnnotationHarnessView().ignoresSafeArea())
+            return HTMLDOMAnnotationHarnessViewController()
         }
         if WikiLineAnchorHarnessConfig.isEnabled {
-            return AnyView(WikiLineAnchorHarnessView().ignoresSafeArea())
+            return WikiLineAnchorHarnessViewController()
         }
         if SemanticPickHarnessConfig.isEnabled {
-            return AnyView(SemanticPickHarnessView().ignoresSafeArea())
+            return SemanticPickHarnessViewController()
         }
         if FullScreenReviewCommentHarnessConfig.isEnabled {
-            return AnyView(FullScreenReviewCommentHarnessView().ignoresSafeArea())
+            return FullScreenReviewCommentHarnessViewController()
         }
         if CodeGutterAlignmentHarnessConfig.isEnabled {
-            return AnyView(CodeGutterAlignmentHarnessView().ignoresSafeArea())
+            return HarnessViewHostController(content: CodeGutterAlignmentHarnessRootView())
         }
         if CodeBlockWrappingHarnessConfig.isEnabled {
-            return AnyView(CodeBlockWrappingHarnessView().ignoresSafeArea())
+            return HarnessViewHostController(content: CodeBlockWrappingHarnessRootView())
         }
+        // The ask-card previews are UIKit roots too, so the preview switch
+        // (`ScreenshotPreviewView`) no longer carries them.
+        if ScreenshotPreviewConfig.isEnabled {
+            if ScreenshotPreviewConfig.screen == "ask-card-intent-regression" {
+                return AskCardIntentRegressionPreviewController()
+            }
+            if ScreenshotPreviewConfig.screen == "ask-card-tall-scroll" {
+                return AskCardTallScrollPreviewController()
+            }
+        }
+        return nil
+    }
+
+    /// The SwiftUI harness or screenshot preview chosen by launch arguments, or
+    /// nil for the app.
+    private static var harnessView: AnyView? {
         if ChatOutlineColdHarnessConfig.isEnabled {
             return AnyView(ChatOutlineColdHarnessView())
         }
@@ -137,6 +165,46 @@ final class HarnessRootViewController: UIViewController {
         // VoiceOver skips the harness content while the App Lock cover
         // window is up above it.
         content.view.accessibilityElementsHidden = appLock.isLocked
+    }
+}
+
+/// A harness screen that is a bare view, refreshing its own diagnostics (the
+/// code gutter and code block harnesses).
+@MainActor
+protocol HarnessDiagnosticsView: UIView {
+    func updateDiagnostics()
+}
+
+/// Hosts a harness screen that is a bare view, refreshing its diagnostics as
+/// the SwiftUI representable's `updateUIView` did.
+@MainActor
+final class HarnessViewHostController<Content: HarnessDiagnosticsView>: UIViewController {
+    private let content: Content
+
+    init(content: Content) {
+        self.content = content
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            content.topAnchor.constraint(equalTo: view.topAnchor),
+            content.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        content.updateDiagnostics()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        content.updateDiagnostics()
     }
 }
 

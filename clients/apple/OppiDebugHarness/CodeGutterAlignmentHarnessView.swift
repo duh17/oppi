@@ -1,5 +1,4 @@
 #if DEBUG
-import SwiftUI
 import UIKit
 
 enum CodeGutterAlignmentHarnessConfig {
@@ -14,17 +13,7 @@ enum CodeGutterAlignmentHarnessConfig {
     }
 }
 
-struct CodeGutterAlignmentHarnessView: UIViewRepresentable {
-    func makeUIView(context: Context) -> CodeGutterAlignmentHarnessRootView {
-        CodeGutterAlignmentHarnessRootView()
-    }
-
-    func updateUIView(_ uiView: CodeGutterAlignmentHarnessRootView, context: Context) {
-        uiView.updateDiagnostics()
-    }
-}
-
-final class CodeGutterAlignmentHarnessRootView: UIView {
+final class CodeGutterAlignmentHarnessRootView: UIView, HarnessDiagnosticsView {
     private static let fixtureCode = """
     source.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
     ranges.append(NSRange(location: location, length: max(0, contentsEnd - location)))

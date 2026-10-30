@@ -96,10 +96,6 @@ struct ScreenshotPreviewView: View {
             RouterModalSitesPreview()
         case "chat-routes":
             ChatRoutesHarnessPreview()
-        case "ask-card-intent-regression":
-            AskCardIntentRegressionPreview()
-        case "ask-card-tall-scroll":
-            AskCardTallScrollPreview()
         case "session-timeline":
             SessionTimelinePreview()
         case "file-browser-motion":

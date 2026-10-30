@@ -1,5 +1,4 @@
 #if DEBUG
-import SwiftUI
 import UIKit
 
 /// Parks the production Ask delay owner until the fixture releases it.
@@ -64,13 +63,7 @@ final class AskCardIntentRegressionSession {
 /// Lane-local Ask delayed-advance fixture: a three-question single-select
 /// Ask on the chat's composer (`ChatComposerOwner`), busy so the composer's
 /// Ignore control shows, with a same-id replacement button.
-struct AskCardIntentRegressionPreview: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> AskCardIntentRegressionPreviewController {
-        AskCardIntentRegressionPreviewController()
-    }
-
-    func updateUIViewController(_ controller: AskCardIntentRegressionPreviewController, context: Context) {}
-
+final class AskCardIntentRegressionPreviewController: UIViewController {
     static let threeQuestionRequest = AskRequest(
         id: "ask-intent-regression",
         sessionId: "preview-session",
@@ -123,9 +116,7 @@ struct AskCardIntentRegressionPreview: UIViewControllerRepresentable {
         allowCustom: false,
         timeout: nil
     )
-}
 
-final class AskCardIntentRegressionPreviewController: UIViewController {
     private let session = AskCardIntentRegressionSession()
     private let statusLabel = UILabel()
     private let delayLabel = UILabel()
@@ -134,7 +125,7 @@ final class AskCardIntentRegressionPreviewController: UIViewController {
     init() {
         composer = PreviewComposerController(values: .init(
             isBusy: true,
-            askRequest: AskCardIntentRegressionPreview.threeQuestionRequest,
+            askRequest: Self.threeQuestionRequest,
             colors: ComposerThemeColors(palette: ThemeRuntimeState.currentPalette())
         ))
         super.init(nibName: nil, bundle: nil)
@@ -172,7 +163,7 @@ final class AskCardIntentRegressionPreviewController: UIViewController {
         })
         release.accessibilityIdentifier = "ask.intent.releaseDelay"
         let replace = UIButton(configuration: .plain(), primaryAction: UIAction(title: "Replace same-id content") { [weak self] _ in
-            self?.composer.values.askRequest = AskCardIntentRegressionPreview.replacementRequest
+            self?.composer.values.askRequest = Self.replacementRequest
             self?.setStatus("Replaced same id")
         })
         replace.accessibilityIdentifier = "ask.intent.replaceSameId"
@@ -211,13 +202,7 @@ final class AskCardIntentRegressionPreviewController: UIViewController {
 /// An inline Ask card on the chat composer: one question with enough
 /// options to exceed the inline Ask cap so the card must scroll instead of
 /// stretching the composer.
-struct AskCardTallScrollPreview: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> AskCardTallScrollPreviewController {
-        AskCardTallScrollPreviewController()
-    }
-
-    func updateUIViewController(_ controller: AskCardTallScrollPreviewController, context: Context) {}
-
+final class AskCardTallScrollPreviewController: UIViewController {
     static let tallRequest = AskRequest(
         id: "ask-tall-scroll",
         sessionId: "preview-session",
@@ -241,14 +226,12 @@ struct AskCardTallScrollPreview: UIViewControllerRepresentable {
         allowCustom: true,
         timeout: nil
     )
-}
 
-final class AskCardTallScrollPreviewController: UIViewController {
     private let composer: PreviewComposerController
 
     init() {
         composer = PreviewComposerController(values: .init(
-            askRequest: AskCardTallScrollPreview.tallRequest,
+            askRequest: Self.tallRequest,
             colors: ComposerThemeColors(palette: ThemeRuntimeState.currentPalette())
         ))
         super.init(nibName: nil, bundle: nil)

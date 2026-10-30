@@ -1,5 +1,4 @@
 #if DEBUG
-import SwiftUI
 import UIKit
 
 enum CodeBlockWrappingHarnessConfig {
@@ -14,18 +13,8 @@ enum CodeBlockWrappingHarnessConfig {
     }
 }
 
-struct CodeBlockWrappingHarnessView: UIViewRepresentable {
-    func makeUIView(context: Context) -> CodeBlockWrappingHarnessRootView {
-        CodeBlockWrappingHarnessRootView()
-    }
-
-    func updateUIView(_ uiView: CodeBlockWrappingHarnessRootView, context: Context) {
-        uiView.updateDiagnostics()
-    }
-}
-
 @MainActor
-final class CodeBlockWrappingHarnessRootView: UIView {
+final class CodeBlockWrappingHarnessRootView: UIView, HarnessDiagnosticsView {
     private static let markdown = """
     Wrapping should not stretch this code block when its parent is temporarily taller than the content.
 

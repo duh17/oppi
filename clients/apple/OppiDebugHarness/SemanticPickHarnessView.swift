@@ -1,5 +1,4 @@
 #if DEBUG
-import SwiftUI
 import UIKit
 
 enum SemanticPickHarnessConfig {
@@ -12,14 +11,6 @@ enum SemanticPickHarnessConfig {
         return false
 #endif
     }
-}
-
-struct SemanticPickHarnessView: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> SemanticPickHarnessViewController {
-        SemanticPickHarnessViewController()
-    }
-
-    func updateUIViewController(_ uiViewController: SemanticPickHarnessViewController, context: Context) {}
 }
 
 final class SemanticPickHarnessViewController: UIViewController {

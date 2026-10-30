@@ -1,5 +1,4 @@
 #if DEBUG
-import SwiftUI
 import UIKit
 
 enum WikiLineAnchorHarnessConfig {
@@ -23,16 +22,6 @@ enum FullScreenReviewCommentHarnessConfig {
 #else
         return false
 #endif
-    }
-}
-
-struct FullScreenReviewCommentHarnessView: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> FullScreenReviewCommentHarnessViewController {
-        FullScreenReviewCommentHarnessViewController()
-    }
-
-    func updateUIViewController(_ uiViewController: FullScreenReviewCommentHarnessViewController, context: Context) {
-        uiViewController.updateDiagnostics()
     }
 }
 
@@ -384,16 +373,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         let text = String(value)
         label.text = text
         label.accessibilityValue = text
-    }
-}
-
-struct WikiLineAnchorHarnessView: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> WikiLineAnchorHarnessViewController {
-        WikiLineAnchorHarnessViewController()
-    }
-
-    func updateUIViewController(_ uiViewController: WikiLineAnchorHarnessViewController, context: Context) {
-        uiViewController.updateDiagnostics()
     }
 }
 

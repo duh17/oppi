@@ -167,28 +167,13 @@
     "clients/apple/Oppi/Features/Workspaces/WorkspaceToggleRows.swift": {
       "toggleRow(": 1
     },
-    "clients/apple/OppiDebugHarness/AskCardIntentRegressionPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/OppiDebugHarness/ChatOutlineColdHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/CodeBlockWrappingHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/CodeGutterAlignmentHarnessView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/DebugHarnessLaunch.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/FeatureEducationP0TipPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/FullScreenReviewCommentHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/HTMLDOMAnnotationHarnessView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/NavigationChromeProfileHarnessView.swift": {
@@ -216,9 +201,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/WorkspaceShellScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/SemanticPickHarnessView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/OppiDebugHarness/StreamingFlickerPreviewView.swift": {
