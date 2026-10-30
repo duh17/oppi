@@ -365,10 +365,12 @@ function runAppleGuardrails(): GuardrailResult {
 
   // Readers come from the helpers. The UIKit screens that embed one as a
   // child are named here: the chat reader, the file viewer, the reviewable
-  // control Markdown screen, the editor's conflict review, and a skill's file.
+  // control Markdown screen, the editor's conflict review, a skill's file, and
+  // Pi's read-only default system prompt (a full-screen route that is only the
+  // reader).
   hits = filterAllowed(
     rgFiles("FullScreenCodeViewController\\(", ["Oppi/"], { cwd: appleRoot, type: "swift" }),
-    /(^|\/)(FullScreenCodeViewController|ChatReaderViewController|ToolTimelineRowHelpers|FileViewerViewController|WorkspaceFileEditChrome|ReviewableControlMarkdownViewController|SkillFileViewController)\.swift$/,
+    /(^|\/)(FullScreenCodeViewController|ChatReaderViewController|ToolTimelineRowHelpers|FileViewerViewController|WorkspaceFileEditChrome|ReviewableControlMarkdownViewController|SkillFileViewController|PiDefaultPromptViewController)\.swift$/,
   );
   if (hits.length > 0) {
     err(
