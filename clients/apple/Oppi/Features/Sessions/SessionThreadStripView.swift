@@ -182,10 +182,13 @@ final class SessionThreadStripView: UIControl {
             UIView.animate(withDuration: animates ? 0.2 : 0) { self.chevron.transform = chevronTransform }
         }
 
-        // The thread's own headline in the strip's words: a settled outcome is idle here, so VoiceOver says
-        // the same states the counts do.
-        let statusRollup = rollup.statusRollup {
-            SessionThreadStripSummary.Bucket(content.classification($0)).kind
+        // The thread's own headline in the strip's words, with each member's real state: a child waiting on a
+        // question says Question, not the "needs you" the counts use for every blocked kind. A stopped member
+        // reads Stopped and a settled outcome reads Idle, since the strip has no Done.
+        let statusRollup = rollup.statusRollup { session in
+            let classification = content.classification(session)
+            if classification.section == nil { return .stopped }
+            return classification.status == .done ? .idle : classification.status
         }
         let blocked = content.blockedMember.map { "\(content.classification($0).status.label) from \($0.displayTitle). " } ?? ""
         let headlineStatus = statusRollup.headline.map { "\($0.label). " } ?? ""

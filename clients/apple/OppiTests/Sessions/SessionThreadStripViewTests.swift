@@ -80,6 +80,36 @@ struct SessionThreadStripViewTests {
         root.subviews.flatMap { ([$0 as? T].compactMap { $0 }) + descendants(of: $0, type) }
     }
 
+    /// Applies one thread to an existing strip and returns the height it takes, laid out at `width`.
+    private func apply(
+        _ children: [SessionStatusKind],
+        agents: [String] = [],
+        to view: SessionThreadStripView,
+        width: CGFloat = 330
+    ) -> CGFloat {
+        view.apply(
+            SessionThreadStripView.Content(rollup: members(children, agents: agents)),
+            display: .standard, style: style, iconAssetCache: nil
+        )
+        let height = view.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        view.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        view.layoutIfNeeded()
+        return height
+    }
+
+    /// The middle of the Agents, the dot line, and the counts line, in the strip's own coordinates.
+    private func rows(of view: SessionThreadStripView) -> (agents: CGFloat, dots: CGFloat, counts: CGFloat) {
+        func middle<T: UIView>(_ type: T.Type) -> CGFloat {
+            let child = descendants(of: view, type)[0]
+            return child.convert(child.bounds, to: view).midY
+        }
+        return (middle(SessionThreadAgentClusterView.self), middle(SessionThreadStatusDotsView.self), middle(SessionThreadSummaryLabel.self))
+    }
+
     private func shownDots(_ view: SessionThreadStatusDotsView) -> [CALayer] {
         (view.layer.sublayers ?? []).filter { !$0.isHidden }
     }
@@ -159,6 +189,36 @@ struct SessionThreadStripViewTests {
         #expect(active.counts.minY > active.dots.minY)
     }
 
+    /// A list reuses the strip's cell as threads wake and settle: one reused view draws every state as a
+    /// fresh one does, and the Agents land in that state's row each time.
+    @Test func reusingOneStripAcrossStatesDrawsEachLikeAFreshOne() {
+        let agents = ["a", "b"]
+        let active = [SessionStatusKind.working, .stopped, .stopped]
+        let settled = [SessionStatusKind.stopped, .idle, .stopped]
+        let runs: [(states: [[SessionStatusKind]], isActive: [Bool])] = [
+            ([active, settled, active], [true, false, true]),
+            ([settled, active, settled], [false, true, false]),
+        ]
+
+        for run in runs {
+            let reused = SessionThreadStripView()
+            for (state, isActive) in zip(run.states, run.isActive) {
+                let reusedHeight = apply(state, agents: agents, to: reused)
+                let (fresh, freshHeight) = strip(state, agents: agents)
+                #expect(reusedHeight == freshHeight, "A reused strip is \(reusedHeight) high where a fresh one is \(freshHeight)")
+
+                let reusedRows = rows(of: reused)
+                let freshRows = rows(of: fresh)
+                #expect(abs(reusedRows.agents - freshRows.agents) < 0.5, "The Agents sit elsewhere after a reuse")
+                if isActive {
+                    #expect(abs(reusedRows.agents - reusedRows.dots) < 1, "The Agents left the dot line of an active strip")
+                } else {
+                    #expect(abs(reusedRows.agents - reusedRows.counts) < 1, "The Agents left the counts line of a settled strip")
+                }
+            }
+        }
+    }
+
     @Test func theStripLabelCarriesTheListsCountsForTheChildrenAndNoRetiredWords() {
         let (view, _) = strip([.working, .working, .working, .question, .done, .stopped, .stopped])
 
@@ -170,6 +230,21 @@ struct SessionThreadStripViewTests {
         #expect(!label.contains("done"), Comment(rawValue: label))
         #expect(!label.contains("finished"))
         #expect(strip([.working]).0.accessibilityLabel?.contains("Thread with 1 child session, 1 working") == true)
+    }
+
+    /// VoiceOver names the answer a blocked child waits for, while the counts fold every blocked kind into
+    /// one "needs you".
+    @Test func theVoiceOverHeadlineKeepsEachBlockedKindsOwnWords() {
+        let question = strip([.question, .stopped]).0.accessibilityLabel ?? ""
+        #expect(
+            question.contains("Question. Thread with 2 child sessions, 1 needs you · 1 stopped"),
+            Comment(rawValue: question)
+        )
+        let signIn = strip([.signIn, .stopped]).0.accessibilityLabel ?? ""
+        #expect(
+            signIn.contains("Sign-in. Thread with 2 child sessions, 1 needs you · 1 stopped"),
+            Comment(rawValue: signIn)
+        )
     }
 
     @Test func theAgentsClusterCountsTheChildrenSoItAddsUpToTheCounts() {
