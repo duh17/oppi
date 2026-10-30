@@ -1,4 +1,3 @@
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -6,19 +5,40 @@ import UIKit
 @Suite("Application notices", .serialized)
 @MainActor
 struct ContentViewNoticeTests {
+    /// The root's owner of the notice: `AppRootModals`, driven from `updateProperties()`.
+    private final class RootHost: UIViewController {
+        private let root: AppRootEnvironment
+        private lazy var modals = AppRootModals(root: root, anchor: self)
+
+        init(root: AppRootEnvironment) {
+            self.root = root
+            super.init(nibName: nil, bundle: nil)
+            traitOverrides.appRootEnvironment = root
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            modals.anchorDidAppear()
+        }
+
+        override func updateProperties() {
+            super.updateProperties()
+            modals.update()
+        }
+    }
+
     @Test("file resolution notices have a neutral title")
     func fileResolutionNoticeUsesNeutralTitle() async throws {
-        let connection = ServerConnection()
-        let coordinator = ConnectionCoordinator(
-            serverStore: ServerStore(), lanDiscovery: LANDiscovery(browsesBonjour: false)
-        )
-        let navigation = AppNavigation()
         let root = makeTestAppRoot()
-        // The router hosts the notice with the app root, as the app does.
-        let host = UIHostingController(rootView: AppRootLayer(root: root)
-            .environment(connection).environment(coordinator).environment(navigation)
-            .appRootEnvironment(root))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let connection = root.coordinator.activeConnection
+        let host = RootHost(root: root)
+        // A window on the test host's scene: a scene-less window never runs `updateProperties`.
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         window.rootViewController = host
         window.makeKeyAndVisible()
         defer {
@@ -35,8 +55,9 @@ struct ContentViewNoticeTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         let labels = labelTexts(in: window)
-        try #require(host.presentedViewController != nil, "The app root layer did not present its notice")
+        try #require(host.presentedViewController != nil, "The app root did not present its notice")
         #expect(labels.contains("Notice"), "File-resolution sheet has no neutral title: \(labels)")
+        #expect(labels.contains(message), "The notice must show its message: \(labels)")
         #expect(!labels.contains("Extension"))
     }
 

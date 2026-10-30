@@ -73,3 +73,47 @@ enum WorkspaceMediaOverlayNavigationPolicy {
         return snapshotServerId != currentServerId
     }
 }
+
+/// The app root's half of the media overlay freeze: the begin and end of
+/// native AVKit fullscreen (`WorkspaceMediaOverlayPost`) snapshot the
+/// navigation, and an end that finds another server active brings the
+/// snapshotted one back. Observes for as long as it lives.
+@MainActor
+final class WorkspaceMediaOverlayObserver {
+    private let navigation: AppNavigation
+    private let coordinator: ConnectionCoordinator
+    private var observers: [NSObjectProtocol] = []
+
+    init(root: AppRootEnvironment) {
+        navigation = root.navigation
+        coordinator = root.coordinator
+        observers = [
+            NotificationCenter.default.addObserver(
+                forName: .workspaceMediaOverlayDidBegin, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.overlayDidBegin() }
+            },
+            NotificationCenter.default.addObserver(
+                forName: .workspaceMediaOverlayDidEnd, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.overlayDidEnd() }
+            },
+        ]
+    }
+
+    isolated deinit {
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    private func overlayDidBegin() {
+        navigation.beginMediaOverlay(activeServerId: coordinator.activeServerId)
+    }
+
+    private func overlayDidEnd() {
+        let restoreServerId = navigation.endMediaOverlay(currentServerId: coordinator.activeServerId)
+        guard let restoreServerId else { return }
+        _ = coordinator.restoreActiveServer(restoreServerId)
+    }
+}

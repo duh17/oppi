@@ -1,12 +1,13 @@
 import UIKit
 
 /// The window's root. UIKit owns what the window shows: the launch backdrop,
-/// onboarding, or the workspace shell, with the app root's SwiftUI layer
-/// (`AppRootLayer`) beneath them for app-wide modals and Quick Session
-/// (`QuickSessionPresentation`) above them. It also applies the theme to the
-/// window, follows the system appearance in the theme's system mode, hides the
-/// app from VoiceOver while App Lock covers it, and shows the root prompts
-/// `OppiApp` raises.
+/// onboarding, or the workspace shell, with Quick Session
+/// (`QuickSessionPresentation`) above them. It presents the app-wide modals
+/// (`AppRootModals`: extension dialogs and notices, What's New), applies the
+/// theme to the window, follows the system appearance in the theme's system
+/// mode, hides the app from VoiceOver while App Lock covers it, and shows the
+/// root prompts `OppiApp` raises. A DEBUG E2E launch also carries the
+/// diagnostics the E2E tests read, beneath the content.
 final class AppRootViewController: UIViewController {
     private enum Content: Equatable {
         case launching
@@ -18,7 +19,9 @@ final class AppRootViewController: UIViewController {
     private let app: OppiApp
     private var root: AppRootEnvironment { app.root }
     private var navigation: AppNavigation { root.navigation }
-    private let layer: HostedContentController
+#if DEBUG
+    private var e2eDiagnostics: E2EDiagnosticsView?
+#endif
     private var content: UIViewController?
     private var contentKind: Content?
     private var pairingWait: PairingWaitCoverViewController?
@@ -28,6 +31,8 @@ final class AppRootViewController: UIViewController {
     /// Workspace creation the shell starts (`oppi://workspace`, the guided first workspace):
     /// exists while the shell shows, so its state starts over with the next shell.
     private let workspaceCreation = WorkspaceCreationIntakeHolder()
+    private lazy var modals = AppRootModals(root: root, anchor: self)
+    private var mediaOverlay: WorkspaceMediaOverlayObserver?
     private lazy var quickSession = QuickSessionPresentation(root: root, host: self)
     /// The pairing approval sheet, over whatever the window shows.
     private lazy var pairingApprovals = PairingApprovalPresentation(
@@ -36,7 +41,6 @@ final class AppRootViewController: UIViewController {
 
     init(app: OppiApp) {
         self.app = app
-        layer = HostFactory.content(AppRootLayer(root: app.root), root: app.root)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -54,8 +58,14 @@ final class AppRootViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        layer.view.backgroundColor = .clear
-        embed(layer, at: 0)
+#if DEBUG
+        if E2EDiagnosticsView.isEnabled {
+            let diagnostics = E2EDiagnosticsView(coordinator: root.coordinator)
+            view.insertSubview(diagnostics, at: 0)
+            e2eDiagnostics = diagnostics
+        }
+#endif
+        mediaOverlay = WorkspaceMediaOverlayObserver(root: root)
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (controller: Self, _: UITraitCollection) in
             controller.root.themeStore.followSystemAppearance(from: controller)
         }
@@ -67,6 +77,7 @@ final class AppRootViewController: UIViewController {
         // A request that came in before the window was up presents now.
         pairingApprovals.anchorDidAppear()
         workspaceCreation.anchorDidAppear()
+        modals.anchorDidAppear()
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -79,6 +90,7 @@ final class AppRootViewController: UIViewController {
         applyTheme()
         showContent(Self.content(for: navigation, pairedServersUnavailable: app.pairedServersUnavailable))
         updateWorkspaceCreation()
+        modals.update()
 
         // Quick Session takes the screen: the content under it neither takes
         // touches nor reads to VoiceOver.
@@ -119,6 +131,8 @@ final class AppRootViewController: UIViewController {
     private func applyTheme() {
         // Observation tracking re-runs `updateProperties` when the theme changes.
         root.themeStore.applyToWindow(of: self)
+        // Behind the content: what shows if a layout change leaves a gap.
+        view.backgroundColor = root.themeStore.backgroundColor
     }
 
     // MARK: Content
@@ -130,7 +144,7 @@ final class AppRootViewController: UIViewController {
             unembed(content)
         }
         let next: UIViewController = switch kind {
-        case .launching: HostFactory.content(AppRootLayer.launchBackdrop, root: root)
+        case .launching: LaunchBackdropViewController(themeStore: root.themeStore)
         case .pairedServersUnavailable: Self.pairedServersUnavailableScreen { [weak app] in
             app?.retryPairedServerLoad()
         }
@@ -138,7 +152,7 @@ final class AppRootViewController: UIViewController {
         case .shell: WorkspaceShellController(root: root)
         }
         content = next
-        embed(next, above: layer)
+        embed(next, at: contentIndex)
         setNeedsStatusBarAppearanceUpdate()
     }
 
@@ -184,9 +198,13 @@ final class AppRootViewController: UIViewController {
         child.didMove(toParent: self)
     }
 
-    private func embed(_ child: UIViewController, above sibling: UIViewController) {
-        let index = view.subviews.firstIndex(of: sibling.view).map { $0 + 1 } ?? view.subviews.count
-        embed(child, at: index)
+    /// The content sits at the bottom, above only the E2E diagnostics.
+    private var contentIndex: Int {
+#if DEBUG
+        e2eDiagnostics == nil ? 0 : 1
+#else
+        0
+#endif
     }
 
     private func unembed(_ child: UIViewController) {

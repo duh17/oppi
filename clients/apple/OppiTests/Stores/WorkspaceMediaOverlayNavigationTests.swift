@@ -2,7 +2,8 @@ import SwiftUI
 import Testing
 @testable import Oppi
 
-@Suite("Workspace media overlay navigation")
+// Serialized: the observer tests post process-wide notifications.
+@Suite("Workspace media overlay navigation", .serialized)
 @MainActor
 struct WorkspaceMediaOverlayNavigationTests {
     @Test func overlayDepthRefcountsAndClears() {
@@ -462,6 +463,69 @@ struct WorkspaceMediaOverlayNavigationTests {
         // The late end must not put server-b back under server-a's chat.
         #expect(navigation.endMediaOverlay(currentServerId: "server-a") == nil)
         #expect(navigation.splitDetailTarget == .session(otherServerChat))
+    }
+
+    // MARK: The app root's observer
+
+    private func makeRoot(serverNames: [String]) throws -> (root: AppRootEnvironment, servers: [PairedServer]) {
+        let servers = try serverNames.map { name in
+            try #require(PairedServer(from: ServerCredentials(
+                host: "\(name).overlay.test",
+                port: 7749,
+                token: "sk_test",
+                name: name,
+                scheme: .https,
+                serverFingerprint: "sha256:overlay-\(name)",
+                tlsCertFingerprint: "sha256:overlay-\(name)-leaf"
+            )))
+        }
+        let serverStore = ServerStore()
+        serverStore.replaceServersForPreview(servers)
+        let coordinator = ConnectionCoordinator(serverStore: serverStore)
+        #expect(coordinator.restoreActiveServer(servers[0].id))
+        let root = makeTestAppRoot(coordinator: coordinator)
+        root.navigation.launchPhase = .ready
+        root.navigation.showOnboarding = false
+        return (root, servers)
+    }
+
+    @Test func fullscreenNotificationsFreezeAndReleaseTheRootNavigation() async throws {
+        let (root, servers) = try makeRoot(serverNames: ["alpha"])
+        let observer = WorkspaceMediaOverlayObserver(root: root)
+        withExtendedLifetime(observer) {}
+
+        WorkspaceMediaOverlayPost.begin()
+        #expect(await waitForMainActorCondition { root.navigation.isMediaOverlayActive })
+
+        WorkspaceMediaOverlayPost.end()
+        #expect(await waitForMainActorCondition { !root.navigation.isMediaOverlayActive })
+        #expect(root.coordinator.activeServerId == servers[0].id)
+    }
+
+    @Test func fullscreenEndBringsBackTheServerTheOverlayBegan() async throws {
+        let (root, servers) = try makeRoot(serverNames: ["alpha", "beta"])
+        let observer = WorkspaceMediaOverlayObserver(root: root)
+        withExtendedLifetime(observer) {}
+
+        WorkspaceMediaOverlayPost.begin()
+        #expect(await waitForMainActorCondition { root.navigation.isMediaOverlayActive })
+        // Something switched the active server while AVKit covered the app.
+        #expect(root.coordinator.restoreActiveServer(servers[1].id))
+        #expect(root.coordinator.activeServerId == servers[1].id)
+
+        WorkspaceMediaOverlayPost.end()
+        #expect(await waitForMainActorCondition { root.coordinator.activeServerId == servers[0].id })
+        #expect(!root.navigation.isMediaOverlayActive)
+    }
+
+    @Test func aReleasedObserverIgnoresFullscreen() async throws {
+        let (root, _) = try makeRoot(serverNames: ["alpha"])
+        var observer: WorkspaceMediaOverlayObserver? = WorkspaceMediaOverlayObserver(root: root)
+        withExtendedLifetime(observer) {}
+        observer = nil
+
+        WorkspaceMediaOverlayPost.begin()
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(150)) { !root.navigation.isMediaOverlayActive })
     }
 
     private func readyNavigation() -> AppNavigation {

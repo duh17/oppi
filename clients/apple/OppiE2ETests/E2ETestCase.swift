@@ -694,7 +694,7 @@ class E2ETestCase: XCTestCase {
 
     private func dismissExtensionSurfaceIfNeeded(in application: XCUIApplication, timeout: TimeInterval) {
         // Only the real extension-dialog cancel control. Generic Done/Cancel also
-        // match ExtensionToastSheet (navigation title "Extension"), including the
+        // match ExtensionNoticeViewController (navigation title "Notice"), including the
         // E2E pairing-failure toast.
         let button = application.buttons["extension.dialog.cancel"]
         let deadline = Date().addingTimeInterval(timeout)

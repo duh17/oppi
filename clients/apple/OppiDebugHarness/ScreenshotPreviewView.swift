@@ -603,7 +603,8 @@ private struct RouterModalSitesPreview: View {
     private var page: some View {
         switch site {
         case "root":
-            RouterModalSitesRootPage(root: root)
+            RouterModalSitesRootHost(root: root)
+                .ignoresSafeArea()
         case "inbox-now-playing":
             RouterPreviewControllerStack(root: root) { SessionInboxViewController(root: root) }
                 .ignoresSafeArea()
@@ -788,52 +789,113 @@ extension AppRootEnvironment {
     }
 }
 
-/// The app root layer over a fixture connection. The dialog's responses go
+/// The window root's app-wide modals (`AppRootModals`, which `AppRootViewController`
+/// owns) over the fixture server's active connection. The dialog's responses go
 /// to the connection's send hook, and the page shows the last one.
-private struct RouterModalSitesRootPage: View {
+private struct RouterModalSitesRootHost: UIViewControllerRepresentable {
     let root: AppRootEnvironment
-    @State private var connection: ServerConnection
-    @State private var navigation = AppNavigation()
-    @State private var lastResponse = RouterModalSitesResponse()
+
+    func makeUIViewController(context: Context) -> RouterModalSitesRootViewController {
+        RouterModalSitesRootViewController(root: root)
+    }
+
+    func updateUIViewController(_ controller: RouterModalSitesRootViewController, context: Context) {}
+}
+
+/// The last answer the connection's send hook saw.
+@MainActor @Observable
+private final class RouterModalSitesResponse {
+    var summary = "none"
+}
+
+@MainActor
+private final class RouterModalSitesRootViewController: UIViewController {
+    private let root: AppRootEnvironment
+    private let response = RouterModalSitesResponse()
+    private lazy var modals = AppRootModals(root: root, anchor: self)
+    private let lastResponseLabel = UILabel()
+    private let noticeStateLabel = UILabel()
+    private let whatsNewStateLabel = UILabel()
+    private var connection: ServerConnection { root.coordinator.activeConnection }
 
     init(root: AppRootEnvironment) {
         self.root = root
-        let connection = ServerConnection()
-        connection.setPreviewServerId("router-modal-sites")
-        _ = connection.focusedSessionStore.focus(sessionId: "router-modal-sites-session")
-        _connection = State(initialValue: connection)
+        super.init(nibName: nil, bundle: nil)
+        traitOverrides.appRootEnvironment = root
     }
 
-    var body: some View {
-        AppRootLayer(root: root)
-            .overlay(alignment: .top) {
-                VStack(spacing: 12) {
-                    Button("Extension Dialog") { showDialog(method: "custom", title: "Pick a Plan") }
-                        .accessibilityIdentifier("routerModalSites.dialog")
-                    Button("Extension Editor") { showDialog(method: "editor", title: "Commit Message") }
-                        .accessibilityIdentifier("routerModalSites.editor")
-                    Button("Notice") { connection.extensionToast = "Extension finished.\nDocs https://example.com/docs" }
-                        .accessibilityIdentifier("routerModalSites.notice")
-                    Button("What's New") { navigation.showWhatsNew = true }
-                        .accessibilityIdentifier("routerModalSites.whatsNew")
-                    Text(lastResponse.summary)
-                        .accessibilityIdentifier("routerModalSites.lastResponse")
-                    Text(connection.extensionToast == nil ? "Notice cleared" : "Notice shown")
-                        .accessibilityIdentifier("routerModalSites.noticeState")
-                    Text(navigation.showWhatsNew ? "What's New shown" : "What's New cleared")
-                        .accessibilityIdentifier("routerModalSites.whatsNewState")
-                }
-                .padding(.top, 80)
-            }
-            .withServerScopedEnvironment(connection)
-            .environment(navigation)
-            .task {
-                let response = lastResponse
-                connection._sendMessageForTesting = { @MainActor message in
-                    guard case .extensionUIResponse(_, let value, _, let cancelled, _) = message else { return }
-                    response.summary = cancelled == true ? "cancelled" : "value=\(value ?? "")"
-                }
-            }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let connection = connection
+        _ = connection.focusedSessionStore.focus(sessionId: "router-modal-sites-session")
+        let response = response
+        connection._sendMessageForTesting = { @MainActor message in
+            guard case .extensionUIResponse(_, let value, _, let cancelled, _) = message else { return }
+            response.summary = cancelled == true ? "cancelled" : "value=\(value ?? "")"
+        }
+
+        let buttons = [
+            button("Extension Dialog", id: "routerModalSites.dialog") { [weak self] in
+                self?.showDialog(method: "custom", title: "Pick a Plan")
+            },
+            button("Extension Editor", id: "routerModalSites.editor") { [weak self] in
+                self?.showDialog(method: "editor", title: "Commit Message")
+            },
+            button("Notice", id: "routerModalSites.notice") { [weak self] in
+                self?.connection.extensionToast = "Extension finished.\nDocs https://example.com/docs"
+            },
+            button("What's New", id: "routerModalSites.whatsNew") { [weak self] in
+                self?.root.navigation.showWhatsNew = true
+            },
+        ]
+        for (label, id) in [
+            (lastResponseLabel, "routerModalSites.lastResponse"),
+            (noticeStateLabel, "routerModalSites.noticeState"),
+            (whatsNewStateLabel, "routerModalSites.whatsNewState"),
+        ] {
+            label.accessibilityIdentifier = id
+            label.font = .preferredFont(forTextStyle: .body)
+        }
+        let stack = UIStackView(arrangedSubviews: buttons + [lastResponseLabel, noticeStateLabel, whatsNewStateLabel])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 80),
+            stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+        ])
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        modals.anchorDidAppear()
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        let themeStore = root.themeStore
+        view.backgroundColor = themeStore.backgroundColor
+        view.overrideUserInterfaceStyle = themeStore.userInterfaceStyle
+        let palette = themeStore.activeThemeID.palette
+        for label in [lastResponseLabel, noticeStateLabel, whatsNewStateLabel] {
+            label.textColor = UIColor(palette.fg)
+        }
+        lastResponseLabel.text = response.summary
+        noticeStateLabel.text = connection.extensionToast == nil ? "Notice cleared" : "Notice shown"
+        whatsNewStateLabel.text = root.navigation.showWhatsNew ? "What's New shown" : "What's New cleared"
+        modals.update()
+    }
+
+    private func button(_ title: String, id: String, action: @escaping () -> Void) -> UIButton {
+        let button = UIButton(configuration: .plain(), primaryAction: UIAction { _ in action() })
+        button.configuration?.title = title
+        button.accessibilityIdentifier = id
+        return button
     }
 
     private func showDialog(method: String, title: String) {
@@ -845,11 +907,6 @@ private struct RouterModalSitesRootPage: View {
             message: "The extension is waiting for an answer."
         )
     }
-}
-
-@MainActor @Observable
-private final class RouterModalSitesResponse {
-    var summary = "none"
 }
 
 /// A fixture server whose stub answers models, worktrees, and Agents.

@@ -4,9 +4,6 @@
     "clients/apple/Oppi/App/AppRootEnvironment.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/AppRootLayer.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/AppRootViewController.swift": {
       "UIAlertController(": 1
     },
