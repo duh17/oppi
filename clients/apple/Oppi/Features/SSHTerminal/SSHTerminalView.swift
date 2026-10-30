@@ -23,11 +23,11 @@ enum SSHTerminalFloatingControls {
         keyboardUp ? 0 : SSHTerminalBottomBar.reserve
     }
 
-    /// Dot on the Back pill: Herdr waiting, or a blocked program. Same
-    /// signals as the Herdr attention tint and the waiting-program card.
-    /// OSC 9 notifications are not this.
-    static func attentionPending(herdrWaiting: Int, blockedProgram: Bool) -> Bool {
-        herdrWaiting > 0 || blockedProgram
+    /// Dot on the Back pill: a pane waiting in Herdr or Rex, or a blocked
+    /// program. Same signals as the multiplexer buttons' attention tint and the
+    /// waiting-program card. OSC 9 notifications are not this.
+    static func attentionPending(multiplexersWaiting: Int, blockedProgram: Bool) -> Bool {
+        multiplexersWaiting > 0 || blockedProgram
     }
 }
 

@@ -40,7 +40,9 @@ enum SSHTerminalScreenshotGhosttyTheme: String {
 /// The real terminal surface over an in-memory connection: a Herdr-like
 /// screen in the grid, and `herdr api snapshot` answered with one blocked agent
 /// so the toolbar overview and its badge render, beside two saved machines:
-/// `mac-mini` with a working agent and `build box`, which cannot be reached. Status variants also feed
+/// `mac-mini` with a working agent and `build box`, which cannot be reached.
+/// The host runs Rex too, with a pane waiting on a permission, so the Rex
+/// Sessions button and its sheet render beside Herdr's. Status variants also feed
 /// real OSC 7501 bytes through libghostty.
 struct SSHTerminalScreenshotPreview: View {
     var status: SSHTerminalScreenshotStatus = .none
@@ -478,6 +480,16 @@ private actor PreviewConnection: SSHTerminalConnection {
         }
         if command == HerdrRemote.snapshotCommand(machine: "bb22") {
             return SSHExecResult(output: Data(), errorOutput: Data("ssh: connect to host build port 22: Operation timed out".utf8), exitStatus: 255)
+        }
+        if command == RexRemote.command {
+            // A focus answers `{}`; the snapshot script gets two sessions: a
+            // Claude waiting on a permission and a working pi in one, a shell
+            // that never reported in a second window.
+            guard String(decoding: input, as: UTF8.self) == RexRemote.snapshotScript else {
+                return SSHExecResult(output: Data("{}".utf8), errorOutput: Data(), exitStatus: 0)
+            }
+            let json = #"{"sessions":[{"session_id":"session:01a18a26-6620-76be-b529-4d9ad2b36c63","label":"oppi","active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","windows":[{"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","label":"agents","focused_block_id":"block:01a18a26-6620-78ba-80d4-4e8caa018b37","blocks":[{"block_id":"block:01a18a26-6620-78ba-80d4-4e8caa018b37","label":"shell","title":"Fixing the build","program_status":[{"effective_app":"claude","state":"working"},{"id":"bash","effective_app":"claude","state":"blocked","kind":"permission","msg":"Run rm -rf build?"}]},{"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62ca","label":"shell","title":"Adding skill frontmatter","program_status":[{"effective_app":"pi","state":"working"}]}]},{"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c830","label":"logs","focused_block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cb","blocks":[{"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cb","label":"shell","title":"tail -f server.log","program_status":{}}]}]},{"session_id":"session:01a18a26-6620-76be-b529-4d9ad2b36c64","label":"dotfiles","active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c831","windows":[{"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c831","label":"main","focused_block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cc","blocks":[{"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cc","label":"shell","title":"Ready","program_status":[{"effective_app":"codex","state":"idle"}]}]}]}]}"#
+            return SSHExecResult(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0)
         }
         let json = #"{"result":{"snapshot":{"workspaces":[{"workspace_id":"w1","label":"dotfiles","focused":true},{"workspace_id":"w2","label":"oppi","focused":false}],"tabs":[{"tab_id":"w1:t1","workspace_id":"w1","label":"1"},{"tab_id":"w2:t1","workspace_id":"w2","label":"1"}],"agents":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1","agent":"pi","agent_status":"blocked","focused":true,"terminal_title_stripped":"Allow running rg?"},{"pane_id":"w2:p1","workspace_id":"w2","tab_id":"w2:t1","agent":"claude","agent_status":"working","focused":false,"terminal_title_stripped":"Fixing the build"},{"pane_id":"w2:p2","workspace_id":"w2","tab_id":"w2:t1","agent":"grok","agent_status":"done","focused":false,"terminal_title_stripped":"Summarized the diff"},{"pane_id":"w2:p3","workspace_id":"w2","tab_id":"w2:t1","agent":"codex","agent_status":"idle","focused":false,"terminal_title_stripped":"Ready"}]}}}"#
         return SSHExecResult(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0)

@@ -1,0 +1,132 @@
+import Foundation
+
+/// One OSC 7501 record a multiplexer passes on for a pane's program: Herdr's
+/// `program_status` and Rex's `com.superlogical.terminal.program_status` both
+/// carry the record tree the terminal itself keeps from libghostty. The empty
+/// id is the program itself; `/` separates a child record from its parent.
+struct SSHTerminalPaneRecord: Decodable, Equatable, Hashable, Sendable {
+    let id: String
+    let state: ProgramStatusState
+    let kind: ProgramStatusKind?
+    let message: String?
+    /// The program the record belongs to, when the multiplexer names it (Rex's
+    /// `effective_app`, inherited from a parent record, else the record's `app`).
+    let app: String?
+
+    /// Herdr names the line `message` and always sends `id`; Rex names it `msg`
+    /// and leaves `id` out for the root record.
+    private enum CodingKeys: String, CodingKey {
+        case id, state, kind, message, msg, app, effectiveApp = "effective_app"
+    }
+
+    init(id: String, state: ProgramStatusState, kind: ProgramStatusKind? = nil, message: String? = nil, app: String? = nil) {
+        self.id = id
+        self.state = state
+        self.kind = kind
+        self.message = message
+        self.app = app
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+        state = try container.decode(ProgramStatusState.self, forKey: .state)
+        kind = try container.decodeIfPresent(ProgramStatusKind.self, forKey: .kind)
+        message = try container.decodeIfPresent(String.self, forKey: .message)
+            ?? container.decodeIfPresent(String.self, forKey: .msg)
+        app = try container.decodeIfPresent(String.self, forKey: .effectiveApp)
+            ?? container.decodeIfPresent(String.self, forKey: .app)
+    }
+
+    /// A multiplexer keeps its own seen ledger, which Oppi cannot read: a done
+    /// or error it still reports is one nobody has looked at, so every outcome
+    /// counts as unseen. An unknown future state is nil.
+    static func status(state: ProgramStatusState, kind: ProgramStatusKind?) -> SessionStatusKind? {
+        SessionStatusKind.resolve(state: state, kind: kind, since: .distantFuture, seenAt: nil)
+    }
+
+    /// A pane's status from its records, rolled up the way the terminal rolls
+    /// up its own, so a blocked kind survives the multiplexer. Nil when the
+    /// pane's program reported nothing.
+    static func headline(of records: [Self]) -> SessionStatusKind? {
+        let root = records.first { $0.id.isEmpty }.flatMap { status(state: $0.state, kind: $0.kind) }
+        let others = records.filter { !$0.id.isEmpty }.compactMap { status(state: $0.state, kind: $0.kind) }
+        return SessionStatusRollup(root: root, others: others).headline
+    }
+}
+
+/// What a tap on an overview row asks its multiplexer to focus: a group (a
+/// Herdr workspace) or an item (a Herdr agent, a Rex pane) by the multiplexer's
+/// own ID, within `scope` (a Herdr machine, a Rex session), because those IDs
+/// are only unique there.
+struct SSHTerminalOverviewFocus: Hashable, Sendable {
+    let scope: String?
+    let id: String
+    let isGroup: Bool
+}
+
+/// One row of a multiplexer overview: the sheet the terminal's bar opens for
+/// Herdr or Rex. The source decides the rows; the sheet only draws them, so
+/// both multiplexers look and behave the same.
+struct SSHTerminalOverviewRow: Hashable, Sendable {
+    enum Kind: Hashable, Sendable {
+        /// A machine heading, with why it cannot be read or what waits there.
+        case header(note: String?, failed: Bool)
+        case failure
+        /// Loading, or an empty list, as plain secondary text.
+        case placeholder
+        /// A workspace or session. Bold while the multiplexer has it in focus.
+        case group(focused: Bool)
+        /// An agent or pane under its group.
+        case item(subtitle: String?, focused: Bool, status: Status)
+    }
+
+    enum Status: Hashable, Sendable {
+        /// The multiplexer has no reading for this row: no mark, no label.
+        case none
+        /// It has one Oppi does not know: no mark, labelled Unknown.
+        case unknown
+        case known(SessionStatusKind)
+    }
+
+    /// Unique within the overview; the diffable snapshot's identity.
+    let id: String
+    let title: String
+    let kind: Kind
+    /// Nil for a row a tap cannot act on.
+    let focus: SSHTerminalOverviewFocus?
+}
+
+struct SSHTerminalOverviewSection: Hashable, Sendable {
+    let id: String
+    var rows: [SSHTerminalOverviewRow]
+}
+
+/// A multiplexer the terminal can read over its SSH side channel and show in
+/// an overview sheet (`SSHTerminalOverviewViewController`). Herdr and Rex each
+/// conform with their own poll; the bar button, badge, attention dot, and
+/// sheet treat them alike.
+@MainActor
+protocol SSHTerminalOverviewSource: AnyObject {
+    /// The sheet's title, the multiplexer's name.
+    var title: String { get }
+    /// Prefix of the sheet rows' accessibility identifiers, such as `sshTerminal.rex`.
+    var identifierPrefix: String { get }
+    var sections: [SSHTerminalOverviewSection] { get }
+    /// Why the last tap could not focus its row; the next tap, or closing the
+    /// sheet, clears it.
+    var focusFailure: String? { get }
+    /// The sheet is open: refresh faster.
+    var watching: Bool { get set }
+    /// The host has answered at least once, so the bar offers the sheet.
+    var available: Bool { get }
+    /// Rows waiting at an approval, question, or sign-in.
+    var needsAttention: Int { get }
+    /// Polls until the task is cancelled, the channel disconnects, or the host
+    /// turns out not to have the multiplexer.
+    func run(on channel: SSHTerminalChannel) async
+    func refresh(on channel: SSHTerminalChannel) async
+    /// Focuses the row's target. False, with `focusFailure` set, when the
+    /// multiplexer refused.
+    func focus(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool
+}

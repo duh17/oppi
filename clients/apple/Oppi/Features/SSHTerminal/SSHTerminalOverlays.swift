@@ -132,8 +132,8 @@ final class SSHTerminalPillButton: UIButton {
     }
 }
 
-/// Back, bottom leading. It carries the attention dot while Herdr or a blocked
-/// program wants you.
+/// Back, bottom leading. It carries the attention dot while Herdr, Rex, or a
+/// blocked program wants you.
 final class SSHTerminalBackPill: UIView {
     let pill = SSHTerminalGlassPill()
     /// A circle: the glass is as wide as it is tall.
@@ -187,14 +187,19 @@ final class SSHTerminalBackPill: UIView {
 
 /// Bottom trailing: the program-status symbol (while a program has reported),
 /// then the trailing bar actions the layout shows and the screen can offer
-/// (Herdr when the host has it, the switcher with more than one terminal
-/// open), in the layout's order, then the … menu, which is always last.
+/// (Herdr or Rex when the host has it, the switcher with more than one
+/// terminal open), in the layout's order, then the … menu, which is always last.
 final class SSHTerminalMorePill: SSHTerminalGlassPill {
     let status: SSHTerminalStatusGlyphButton
-    let herdr = SSHTerminalPillButton(
-        systemName: SSHTerminalBarAction.herdr.symbol(),
-        label: SSHTerminalBarAction.herdr.accessibilityLabel,
-        identifier: SSHTerminalBarAction.herdr.accessibilityIdentifier
+    /// One button per multiplexer overview (`SSHTerminalBarAction.overviews`).
+    let overviews: [SSHTerminalBarAction: SSHTerminalPillButton] = Dictionary(
+        uniqueKeysWithValues: SSHTerminalBarAction.overviews.map { action in
+            (action, SSHTerminalPillButton(
+                systemName: action.symbol(),
+                label: action.accessibilityLabel,
+                identifier: action.accessibilityIdentifier
+            ))
+        }
     )
     /// Opens a menu of every open terminal.
     let switcher = SSHTerminalPillButton(
@@ -210,10 +215,13 @@ final class SSHTerminalMorePill: SSHTerminalGlassPill {
         more.showsMenuAsPrimaryAction = true
         switcher.showsMenuAsPrimaryAction = true
         status.isHidden = true
-        herdr.isHidden = true
         switcher.isHidden = true
         stack.addArrangedSubview(status)
-        stack.addArrangedSubview(herdr)
+        for action in SSHTerminalBarAction.overviews {
+            guard let button = overviews[action] else { continue }
+            button.isHidden = true
+            stack.addArrangedSubview(button)
+        }
         stack.addArrangedSubview(switcher)
         stack.addArrangedSubview(more)
     }
@@ -221,37 +229,43 @@ final class SSHTerminalMorePill: SSHTerminalGlassPill {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    func button(for action: SSHTerminalBarAction) -> SSHTerminalPillButton? {
+        action == .switcher ? switcher : overviews[action]
+    }
+
     /// `trailing` is what the layout draws here, in order (`SSHTerminalBarPlacement.trailing`).
+    /// `waiting` holds each available multiplexer's count of panes that need
+    /// you; one it does not name has not answered.
     func apply(
         themeID: ThemeID,
         trailing: [SSHTerminalBarAction],
-        herdrWaiting: Int?,
+        waiting: [SSHTerminalBarAction: Int],
         showsStatus: Bool,
         openTerminals: Int = 0,
         foreground: UIColor? = nil
     ) {
         let fg = foreground ?? UIColor(themeID.palette.fg)
         status.isHidden = !showsStatus
-        let ordered = trailing.compactMap { action -> UIView? in
-            switch action {
-            case .herdr: herdr
-            case .switcher: switcher
-            default: nil
-            }
-        }
-        // Herdr and the switcher in the layout's order, between status and the menu.
-        let order: [UIView] = [status] + ordered + [herdr, switcher].filter { !ordered.contains($0) } + [more]
+        let trailingButtons = (SSHTerminalBarAction.overviews + [.switcher]).compactMap { button(for: $0) }
+        let ordered: [UIView] = trailing.compactMap { button(for: $0) }
+        // The trailing actions in the layout's order, between status and the menu.
+        let order: [UIView] = [status] + ordered + trailingButtons.filter { !ordered.contains($0) } + [more]
         if stack.arrangedSubviews != order {
             for view in order { stack.addArrangedSubview(view) }
         }
         switcher.isHidden = !trailing.contains(.switcher)
         switcher.accessibilityValue = "\(openTerminals) open"
         switcher.apply(tint: fg)
-        herdr.isHidden = !trailing.contains(.herdr)
-        let waiting = herdrWaiting ?? 0
-        herdr.apply(tint: waiting > 0 ? UIColor(themeID.palette.orange) : fg)
-        herdr.accessibilityValue = herdrWaiting.map { "\($0) need you" } ?? ""
-        herdr.largeContentTitle = waiting > 0 ? "Herdr agents (\(waiting))" : "Herdr agents"
+        for action in SSHTerminalBarAction.overviews {
+            guard let button = overviews[action] else { continue }
+            let count = waiting[action]
+            let waitingCount = count ?? 0
+            button.isHidden = !trailing.contains(action)
+            button.apply(tint: waitingCount > 0 ? UIColor(themeID.palette.orange) : fg)
+            button.accessibilityValue = count.map { "\($0) need you" } ?? ""
+            button.largeContentTitle = waitingCount > 0
+                ? "\(action.accessibilityLabel) (\(waitingCount))" : action.accessibilityLabel
+        }
         more.apply(tint: fg)
     }
 }

@@ -114,8 +114,8 @@ const settingsThemingExceptions: { file: string; reason: string }[] = [
     reason: "The icon picker: a list for the chooser and search field above a grid of SF Symbols, laid out by its own compositional layout.",
   },
   {
-    file: "clients/apple/Oppi/Features/SSHTerminal/HerdrAgentsView.swift",
-    reason: "The terminal's list of Herdr agents: a picker over a live terminal, not a settings page.",
+    file: "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalOverviewViewController.swift",
+    reason: "The terminal's list of Herdr agents or Rex panes: a picker over a live terminal, not a settings page.",
   },
   {
     file: "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalPasswordViewController.swift",

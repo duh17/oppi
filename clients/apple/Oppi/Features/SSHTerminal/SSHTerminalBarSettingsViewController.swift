@@ -3,7 +3,7 @@ import UIKit
 /// Settings > SSH Terminal > Bottom Bar: which buttons the terminal's bottom
 /// bar shows, and in what order. Middle holds the customizable middle pill
 /// (Type in Terminal, Chat Bar, keys, Paste, Browse Files Here); Right holds
-/// Herdr and the switcher, which sit beside … at the trailing end. A row's
+/// Herdr, Rex, and the switcher, which sit beside … at the trailing end. A row's
 /// switch shows or hides its button; a hidden one moves into the … menu,
 /// except keys and Paste, which the keyboard bars and the grid's hold menu
 /// already offer. Rows reorder with their handles inside their section, so
@@ -77,7 +77,7 @@ final class SSHTerminalBarSettingsViewController: SettingsListViewController<
             SettingsSectionModel(
                 .trailing,
                 header: String(localized: "Right"),
-                footer: String(localized: "Herdr shows when the host runs it, and Switch Terminal when more than one terminal is open."),
+                footer: String(localized: "Herdr and Rex show when the host runs them, and Switch Terminal when more than one terminal is open."),
                 items: items(.trailing)
             ),
         ]

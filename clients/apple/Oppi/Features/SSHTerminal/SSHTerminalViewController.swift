@@ -3,7 +3,7 @@ import UIKit
 /// Live SSH terminal: UIKit owns the screen, floating controls, grid,
 /// notices, lists, and chat bar (`ComposerBarController` in a terminal
 /// configuration). The navigation bar stays hidden while this screen is on
-/// top; Back, status, Herdr, and the … menu sit in a glass bar at the bottom
+/// top; Back, status, Herdr or Rex, and the … menu sit in a glass bar at the bottom
 /// edge, below the grid, so they never cover a terminal row.
 @MainActor
 final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBar {
@@ -21,8 +21,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     private(set) var gridView: SSHTerminalGridView?
     private let overlay = SSHTerminalPassthroughView()
-    /// The bottom bar's container: Back at the leading edge, status, Herdr,
-    /// and … at the trailing one. It ends at the keyboard layout guide, so
+    /// The bottom bar's container: Back at the leading edge, status, Herdr
+    /// or Rex, and … at the trailing one. It ends at the keyboard layout guide, so
     /// with a docked keyboard up (and a broken connection, the one case that
     /// keeps the bar) it floats just above the keyboard.
     private let bottomBar = SSHTerminalPassthroughView()
@@ -110,6 +110,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var cursorShiftHeld = false
     private var rawKeyboard = false
     private var herdr = HerdrMonitor()
+    private var rex = RexMonitor()
     private var keymap = SSHTerminalKeymapLoader()
     private var modeOverride: SSHTerminalInputMode?
     private var lastDetectedMode: SSHTerminalInputMode?
@@ -127,7 +128,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var attention = SSHTerminalAttention()
     private let attentionFeedback = SSHTerminalAttentionFeedback()
     private var shownNoticeKey: SSHTerminalNotice.Key?
-    private var herdrTask: Task<Void, Never>?
+    /// Each multiplexer's poll, keyed by the bar action that opens its overview.
+    private var overviewTasks: [SSHTerminalBarAction: Task<Void, Never>] = [:]
     private var keymapTask: Task<Void, Never>?
     private var keymapToken: String?
     /// The host's Ghostty colors, or the app theme where it has none.
@@ -141,7 +143,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var isOnScreen = false
     /// Leaving was asked for since the session last showed a terminal.
     private var requestedFinish = false
-    private var presentingHerdr = false
+    private var presentingOverview = false
     private var presentingStatusDetail = false
     private var reduceMotion = UIAccessibility.isReduceMotionEnabled
     private var lastThemeID: ThemeID?
@@ -297,8 +299,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         pairedHomeTask = nil
         openTask?.cancel()
         openTask = nil
-        herdrTask?.cancel()
-        herdrTask = nil
+        stopOverviewPolls()
         keymapTask?.cancel()
         keymapTask = nil
         keymapToken = nil
@@ -353,7 +354,10 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         _ = channel.workingDirectory
         _ = channel.alerts.notification
         _ = channel.alerts.bell
-        _ = herdr.machines
+        for action in SSHTerminalBarAction.overviews {
+            _ = overview(action)?.available
+            _ = overview(action)?.needsAttention
+        }
         _ = keymap.actions
         _ = keymap.profile
         _ = keymap.userFile
@@ -455,7 +459,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         topStack.translatesAutoresizingMaskIntoConstraints = false
 
         backPill.button.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .touchUpInside)
-        morePill.herdr.addAction(UIAction { [weak self] _ in self?.showHerdr() }, for: .touchUpInside)
+        for action in SSHTerminalBarAction.overviews {
+            morePill.button(for: action)?.addAction(UIAction { [weak self] _ in self?.showOverview(action) }, for: .touchUpInside)
+        }
         middlePill.perform = { [weak self] action in self?.perform(action) }
         middlePill.deliverPaste = { [weak self] items in self?.gridView?.paste(itemProviders: items) }
         connectionBanner.onReconnect = { [weak self] in self?.reconnect() }
@@ -621,10 +627,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         // longer in front, so its remote clipboard writes are dropped.
         channel.isViewed = false
         channel.cancelPendingResize()
-        herdrTask?.cancel()
+        stopOverviewPolls()
         keymapTask?.cancel()
         colorTask?.cancel()
-        herdrTask = nil
         keymapTask = nil
         keymapToken = nil
         colorTask = nil
@@ -637,6 +642,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             colorLoader = SSHTerminalColorLoader(profileID: hostID, choice: colorChoice, dark: appIsDark)
         }
         herdr = HerdrMonitor()
+        rex = RexMonitor()
         keymap = SSHTerminalKeymapLoader()
         modeOverride = nil
         lastDetectedMode = nil
@@ -809,7 +815,9 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     /// neither drawn nor in the menu.
     private func availableBarActions(openTerminals: Int) -> Set<SSHTerminalBarAction> {
         var available = Set(SSHTerminalBarAction.allCases)
-        if !herdr.available { available.remove(.herdr) }
+        for action in SSHTerminalBarAction.overviews where overview(action)?.available != true {
+            available.remove(action)
+        }
         if openTerminals < 2 { available.remove(.switcher) }
         // The Files browser over this terminal's folder needs the host to
         // report one and to be a paired Oppi server.
@@ -834,7 +842,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             channel.keys(action.strokes)
         case .paste: break // The system paste control delivers through middlePill.deliverPaste.
         case .browseFiles: browseFilesHere()
-        case .herdr: showHerdr()
+        case .herdr, .rex: showOverview(action)
         case .switcher: break // A menu, not an action.
         }
     }
@@ -868,7 +876,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         morePill.apply(
             themeID: themeID,
             trailing: trailing,
-            herdrWaiting: herdr.available ? herdr.needsAttention : nil,
+            waiting: overviewsWaiting,
             showsStatus: showsStatus,
             openTerminals: openTerminals,
             foreground: foreground
@@ -955,7 +963,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     private func attentionPending() -> Bool {
         SSHTerminalFloatingControls.attentionPending(
-            herdrWaiting: herdr.needsAttention,
+            multiplexersWaiting: overviewsWaiting.values.reduce(0, +),
             blockedProgram: SSHTerminalProgramStatusPresentation.blockedNotice(
                 store: channel.programStatus,
                 isStopped: programIsStopped
@@ -1626,17 +1634,35 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     // MARK: - Presentations
 
-    private func showHerdr() {
-        guard !presentingHerdr else { return }
-        presentingHerdr = true
-        herdr.watching = true
+    /// The multiplexer a trailing bar action opens the overview of.
+    private func overview(_ action: SSHTerminalBarAction) -> (any SSHTerminalOverviewSource)? {
+        switch action {
+        case .herdr: herdr
+        case .rex: rex
+        default: nil
+        }
+    }
+
+    /// Panes that need you, per multiplexer that has answered.
+    private var overviewsWaiting: [SSHTerminalBarAction: Int] {
+        var waiting: [SSHTerminalBarAction: Int] = [:]
+        for action in SSHTerminalBarAction.overviews {
+            if let source = overview(action), source.available { waiting[action] = source.needsAttention }
+        }
+        return waiting
+    }
+
+    private func showOverview(_ action: SSHTerminalBarAction) {
+        guard !presentingOverview, let source = overview(action) else { return }
+        presentingOverview = true
+        source.watching = true
         Router.present(
-            HerdrAgentsViewController(monitor: herdr, channel: channel),
+            SSHTerminalOverviewViewController(source: source, channel: channel),
             presentation: .sheet.detents([.medium(), .large()]).inNavigation(),
             from: self,
             onDismiss: { [weak self] in
-                self?.presentingHerdr = false
-                self?.herdr.watching = false
+                self?.presentingOverview = false
+                source.watching = false
             }
         )
     }
@@ -2000,11 +2026,15 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         return "\(reason) \(target.folderName) did not open in \(multiplexer.name)."
     }
 
+    private func stopOverviewPolls() {
+        overviewTasks.values.forEach { $0.cancel() }
+        overviewTasks = [:]
+    }
+
     private func updatePolling() {
-        // Herdr and keymaps load again when you return; they do not run off screen.
+        // Herdr, Rex, and keymaps load again when you return; they do not run off screen.
         guard isOnScreen else {
-            herdrTask?.cancel()
-            herdrTask = nil
+            stopOverviewPolls()
             keymapTask?.cancel()
             keymapTask = nil
             keymapToken = nil
@@ -2015,15 +2045,13 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         }
         if channel.connected {
             openMultiplexerFolderIfNeeded()
-            if herdrTask == nil {
-                herdrTask = Task { [weak self] in
-                    guard let self else { return }
-                    await self.herdr.run(on: self.channel)
-                }
+            for action in SSHTerminalBarAction.overviews where overviewTasks[action] == nil {
+                guard let source = overview(action) else { continue }
+                let channel = channel
+                overviewTasks[action] = Task { await source.run(on: channel) }
             }
         } else {
-            herdrTask?.cancel()
-            herdrTask = nil
+            stopOverviewPolls()
         }
         let dark = appIsDark
         let colorKey = channel.connected && colorChoice != .oppi ? "\(colorChoice)|\(dark)" : nil

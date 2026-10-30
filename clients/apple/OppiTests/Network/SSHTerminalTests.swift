@@ -1556,6 +1556,123 @@ struct SSHTerminalTests {
         #expect(listed == 1, "a Herdr without saved machines is asked once")
     }
 
+    /// Shaped like `rex do -` answers on a real host: Lua writes an empty list
+    /// as `{}`. One session has two windows (the second not active) with a
+    /// reporting pi, a plain shell, and a Claude whose tool waits on a
+    /// permission; another has no windows.
+    private static let rexSession = "session:01a18a26-6620-76be-b529-4d9ad2b36c63"
+    private static let rexBlocked = "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"
+    private static let rexJSON = #"""
+    {"sessions":[{"session_id":"session:01a18a26-6620-76be-b529-4d9ad2b36c63","label":"shy-cedar",
+      "active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","windows":[
+      {"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","label":"Window 1",
+       "focused_block_id":"block:01a18a26-6620-78ba-80d4-4e8caa018b37","blocks":[
+        {"block_id":"block:01a18a26-6620-78ba-80d4-4e8caa018b37","label":"shell","title":"\u03c0 - dotfiles",
+         "pwd":"file://Mac-Studio.local/Users/duh/.config/dotfiles",
+         "program_status":[{"app":"pi","effective_app":"pi","state":"idle","updated_at":"2026-10-29T18:48:48-07:00"}]},
+        {"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62cb","label":"shell","title":"~/.c/dotfiles","program_status":{}}]},
+      {"window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c830","label":"Window 2",
+       "focused_block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62ca","blocks":[
+        {"block_id":"block:01a18a7e-911a-721b-a50b-14dfc0cc62ca","label":"shell","title":"claude","program_status":[
+          {"app":"claude","effective_app":"claude","state":"working"},
+          {"id":"bash","effective_app":"claude","state":"blocked","kind":"permission","msg":"Run rm -rf build?"}]}]}]},
+     {"session_id":"session:01a18a26-6620-76be-b529-4d9ad2b36c64","label":"empty","windows":{}}]}
+    """#
+
+    /// The sheet shows each session with its panes in window order: the
+    /// program that reported names a pane, a blocked child record wins over a
+    /// working root (Rex passes OSC 7501 through, so the kind survives), a pane
+    /// that never reported has no status, and only the active window's focused
+    /// pane reads as focused. Exit 127 is a host without rex, 4 a Rex that is
+    /// not running, and another program's JSON is not a Rex answer.
+    @Test func rexSnapshotListsSessionsAndPanesWithTheirStatus() async throws {
+        let fixture = TerminalConnectionFixture()
+        await fixture.setRunResult(.init(output: Data(Self.rexJSON.utf8), errorOutput: Data(), exitStatus: 0), for: RexRemote.command)
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        defer { channel.close(reason: "done") }
+        let monitor = RexMonitor()
+        await monitor.refresh(on: channel)
+
+        #expect(monitor.available)
+        #expect(monitor.needsAttention == 1)
+        let input = try #require(await fixture.runs.last?.input)
+        #expect(String(decoding: input, as: UTF8.self) == RexRemote.snapshotScript, "the script travels on stdin")
+
+        let sessions = monitor.sections
+        #expect(sessions.map(\.rows.first?.title) == ["shy-cedar", "empty"])
+        #expect(sessions[1].rows.count == 1, "a session without windows lists no panes")
+        let panes = sessions[0].rows.dropFirst().map { row -> (String, SSHTerminalOverviewRow.Kind) in (row.title, row.kind) }
+        #expect(panes.map(\.0) == ["pi", "~/.c/dotfiles", "claude"])
+        #expect(panes.map(\.1) == [
+            .item(subtitle: "\u{03C0} - dotfiles \u{00B7} Window 1", focused: true, status: .known(.idle)),
+            .item(subtitle: "Window 1", focused: false, status: .none),
+            .item(subtitle: "Window 2", focused: false, status: .known(.needsApproval)),
+        ])
+        #expect(sessions[0].rows.first?.focus == nil, "a session row has nothing to focus")
+        #expect(sessions[0].rows.last?.focus == .init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false))
+
+        func failed(_ status: Int, _ error: String) -> SSHExecResult {
+            .init(output: Data(), errorOutput: Data(error.utf8), exitStatus: status)
+        }
+        #expect(throws: RexRemoteError.notInstalled) { try RexRemote.snapshot(from: failed(127, "")) }
+        #expect(throws: RexRemoteError.notRunning) {
+            try RexRemote.snapshot(from: failed(4, "Error: no Rex server is running at /tmp/rex.sock, and autostart is disabled"))
+        }
+        #expect(throws: RexRemoteError.rejected("stdin:3: attempt to index a nil value")) {
+            try RexRemote.snapshot(from: failed(1, "Error: stdin:3: attempt to index a nil value\n"))
+        }
+        let herdr = #"{"result":{"snapshot":{"workspaces":[],"tabs":[],"agents":[]}}}"#
+        #expect(throws: RexRemoteError.unreadable) {
+            try RexRemote.snapshot(from: .init(output: Data(herdr.utf8), errorOutput: Data(), exitStatus: 0))
+        }
+    }
+
+    /// A tap focuses the pane through the same side command, and the list is
+    /// read again. IDs from the snapshot go into the Lua script only in Rex's
+    /// own form. A Rex that stops keeps its last list under the failure without
+    /// lighting the badge; a host without rex is asked once and never polled.
+    @Test func rexFocusesAPaneAndStopsPollingAHostWithoutRex() async throws {
+        let fixture = TerminalConnectionFixture()
+        await fixture.setRunResult(.init(output: Data(Self.rexJSON.utf8), errorOutput: Data(), exitStatus: 0), for: RexRemote.command)
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        defer { channel.close(reason: "done") }
+        let monitor = RexMonitor()
+        await monitor.refresh(on: channel)
+
+        #expect(await monitor.focus(.init(scope: Self.rexSession, id: Self.rexBlocked, isGroup: false), on: channel))
+        let runs = await fixture.runs
+        let focus = String(decoding: try #require(runs.dropLast().last?.input), as: UTF8.self)
+        #expect(focus.contains(#"session.focus_block", { session_id = "\#(Self.rexSession)", block_id = "\#(Self.rexBlocked)" }"#))
+        #expect(runs.last.map { String(decoding: $0.input, as: UTF8.self) } == RexRemote.snapshotScript, "read again after the focus")
+
+        let hostile = #"block:x" }) os.execute("touch /tmp/pwned") --"#
+        #expect(!(await monitor.focus(.init(scope: Self.rexSession, id: hostile, isGroup: false), on: channel)))
+        #expect(monitor.focusFailure == RexRemoteError.unusableID.localizedDescription)
+        #expect(await fixture.runs.count == runs.count, "a refused ID never reaches the host")
+
+        await fixture.setRunResult(
+            .init(output: Data(), errorOutput: Data("Error: no Rex server is running".utf8), exitStatus: RexRemote.notRunningStatus),
+            for: RexRemote.command
+        )
+        await monitor.refresh(on: channel)
+        #expect(monitor.failure == "Rex is not running on this host.")
+        #expect(monitor.sections.first?.rows.first?.kind == .failure)
+        #expect(monitor.sections.count == 3, "the last list stays under the failure")
+        #expect(monitor.needsAttention == 0)
+
+        let bare = TerminalConnectionFixture()
+        await bare.setRunResult(.init(output: Data(), errorOutput: Data("sh: rex: not found".utf8), exitStatus: 127), for: RexRemote.command)
+        let bareChannel = try SSHTerminalChannel()
+        bareChannel.opened(bare)
+        defer { bareChannel.close(reason: "done") }
+        let bareMonitor = RexMonitor()
+        await bareMonitor.run(on: bareChannel)
+        #expect(bareMonitor.unavailable && !bareMonitor.available)
+        #expect(await bare.runs.count == 1)
+    }
+
     /// A saved machine that stops answering (a laptop asleep) must not slow
     /// Local: the poll waits for Local only, and the hung machine is not asked
     /// again while its read is still out.

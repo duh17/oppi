@@ -16,24 +16,15 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
         /// resolver as sessions and terminal records. Herdr reports no blocked
         /// kind, so `blocked` is a question; an unknown state stays nil.
         var sessionStatus: SessionStatusKind? {
-            HerdrSnapshot.resolve(state: ProgramStatusState(rawValue: rawValue), kind: nil)
+            SSHTerminalPaneRecord.status(state: ProgramStatusState(rawValue: rawValue), kind: nil)
         }
-    }
-
-    /// One OSC 7501 record Herdr passes on, unverified, for a pane's program
-    /// (`program_status`, proposed in herdrdev/herdr#5172): the same record
-    /// tree the terminal keeps from libghostty. The empty id is the program
-    /// itself; `/` separates a child record from its parent.
-    struct ProgramRecord: Decodable, Equatable, Hashable, Sendable {
-        let id: String
-        let state: ProgramStatusState
-        let kind: ProgramStatusKind?
-        let message: String?
     }
 
     struct Pane: Decodable, Equatable, Sendable {
         let paneID: String
-        let programStatus: [ProgramRecord]
+        /// The OSC 7501 records Herdr passes on, unverified, for the pane's
+        /// program (`program_status`, proposed in herdrdev/herdr#5172).
+        let programStatus: [SSHTerminalPaneRecord]
         /// The workspace this pane belongs to, and the folder its shell is in.
         /// "Open Terminal here" matches a Herdr workspace by this folder, so an
         /// older Herdr that omits them leaves the folder to be created instead.
@@ -50,7 +41,7 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             paneID = try container.decode(String.self, forKey: .paneID)
-            programStatus = try container.decodeIfPresent([ProgramRecord].self, forKey: .programStatus) ?? []
+            programStatus = try container.decodeIfPresent([SSHTerminalPaneRecord].self, forKey: .programStatus) ?? []
             workspaceID = try container.decodeIfPresent(String.self, forKey: .workspaceID)
             cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
             foregroundCwd = try container.decodeIfPresent(String.self, forKey: .foregroundCwd)
@@ -157,20 +148,12 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
         return folder.map(HerdrLocalFolder.folder) ?? .unknown
     }
 
-    /// Herdr keeps its own seen ledger: a done or error it still reports is
-    /// one nobody has looked at, so every outcome counts as unseen.
-    private static func resolve(state: ProgramStatusState, kind: ProgramStatusKind?) -> SessionStatusKind? {
-        SessionStatusKind.resolve(state: state, kind: kind, since: .distantFuture, seenAt: nil)
-    }
-
-    /// An agent's status. The pane's own OSC 7501 records lead, rolled up the
-    /// way the terminal rolls up its records, so a blocked kind survives
-    /// Herdr; Herdr's detected state covers panes that do not report.
+    /// An agent's status. The pane's own OSC 7501 records lead, so a blocked
+    /// kind survives Herdr; Herdr's detected state covers panes that do not
+    /// report.
     func status(of agent: Agent) -> SessionStatusKind? {
         let records = panes.first { $0.paneID == agent.paneID }?.programStatus ?? []
-        let root = records.first { $0.id.isEmpty }.flatMap { Self.resolve(state: $0.state, kind: $0.kind) }
-        let others = records.filter { !$0.id.isEmpty }.compactMap { Self.resolve(state: $0.state, kind: $0.kind) }
-        return SessionStatusRollup(root: root, others: others).headline ?? agent.status.sessionStatus
+        return SSHTerminalPaneRecord.headline(of: records) ?? agent.status.sessionStatus
     }
 
     /// Agents waiting at an approval, question, or sign-in.
@@ -359,14 +342,13 @@ struct HerdrMachineState: Equatable, Identifiable {
 /// connection. Each machine is read in its own side command, so a saved
 /// machine that is down reports its own failure and Local still updates.
 @MainActor @Observable
-final class HerdrMonitor {
+final class HerdrMonitor: SSHTerminalOverviewSource {
+    let title = "Herdr"
+    let identifierPrefix = "sshTerminal.herdr"
     /// Local first, then the host's saved machines in Herdr's order.
     private(set) var machines: [HerdrMachineState] = [.local()]
     private(set) var unavailable = false
-    /// Why the last tap could not focus its row; the next tap, or closing the
-    /// sheet, clears it.
     private(set) var focusFailure: String?
-    /// The overview sheet is open: refresh faster.
     var watching = false {
         didSet { if !watching { focusFailure = nil } }
     }
@@ -492,7 +474,11 @@ final class HerdrMonitor {
         }
     }
 
-    func focus(_ target: HerdrRemote.FocusTarget, machine: String?, on channel: SSHTerminalChannel) async -> Bool {
+    /// A workspace row focuses the workspace, an agent row its pane, on the
+    /// machine that owns the ID.
+    func focus(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool {
+        let machine = focus.scope
+        let target: HerdrRemote.FocusTarget = focus.isGroup ? .workspace(focus.id) : .agent(focus.id)
         focusFailure = nil
         if let command = HerdrRemote.focusCommand(target, machine: machine) {
             do {
@@ -509,5 +495,70 @@ final class HerdrMonitor {
         await readers[machine]?.value
         await reading(machine, on: channel).value
         return true
+    }
+
+    /// Each machine's workspaces and their agents. With no saved machines the
+    /// sheet is Local's alone and needs no machine headers; otherwise every
+    /// machine leads its own workspaces with its state, so a machine that is
+    /// down or disabled still shows. Workspace and pane IDs are only unique
+    /// within one machine, so every row and focus carries its machine.
+    var sections: [SSHTerminalOverviewSection] {
+        let headed = machines.count > 1
+        var sections: [SSHTerminalOverviewSection] = []
+        for machine in machines {
+            let key = "machine|\(machine.id)|"
+            if headed {
+                sections.append(.init(id: key, rows: [.init(
+                    id: key, title: machine.label,
+                    kind: .header(note: Self.note(machine), failed: machine.failure != nil), focus: nil
+                )]))
+            } else if let failure = machine.failure {
+                sections.append(.init(id: "failure", rows: [.init(id: "failure", title: failure, kind: .failure, focus: nil)]))
+            }
+            guard let snapshot = machine.snapshot else {
+                if !headed, machine.failure == nil {
+                    sections.append(.init(id: "loading", rows: [.init(id: "loading", title: "Loading…", kind: .placeholder, focus: nil)]))
+                }
+                continue
+            }
+            if !headed, snapshot.workspaces.isEmpty {
+                sections.append(.init(id: "empty", rows: [
+                    .init(id: "empty", title: "No Herdr workspaces.", kind: .placeholder, focus: nil),
+                ]))
+            }
+            for workspace in snapshot.workspaces {
+                let section = key + workspace.id
+                var rows: [SSHTerminalOverviewRow] = [.init(
+                    id: section, title: workspace.label, kind: .group(focused: workspace.focused),
+                    focus: .init(scope: machine.machineID, id: workspace.workspaceID, isGroup: true)
+                )]
+                for agent in snapshot.agents(in: workspace) {
+                    let tab = snapshot.tabLabel(agent.tabID)
+                    rows.append(.init(
+                        id: section + "|" + agent.paneID,
+                        title: agent.displayName,
+                        kind: .item(
+                            subtitle: [agent.subtitle, tab.map { "tab \($0)" }].compactMap { $0 }.joined(separator: " · "),
+                            focused: agent.focused,
+                            status: snapshot.status(of: agent).map { .known($0) } ?? .unknown
+                        ),
+                        focus: .init(scope: machine.machineID, id: agent.paneID, isGroup: false)
+                    ))
+                }
+                sections.append(.init(id: section, rows: rows))
+            }
+        }
+        return sections
+    }
+
+    /// A machine header's second line: why it cannot be read (its rows, if
+    /// any, are what it last reported), else its count of agents that need you.
+    private static func note(_ machine: HerdrMachineState) -> String? {
+        if let failure = machine.failure { return failure }
+        if !machine.enabled { return "Disabled in Herdr" }
+        guard let snapshot = machine.snapshot else { return "Loading…" }
+        if snapshot.workspaces.isEmpty { return "No workspaces" }
+        let waiting = snapshot.needsAttention
+        return waiting > 0 ? "\(waiting) waiting" : nil
     }
 }

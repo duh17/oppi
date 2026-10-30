@@ -120,7 +120,8 @@ struct SSHTerminalFloatingPillTests {
     @Test func eachPillButtonAnswersA44By44PointTouch() throws {
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], herdrWaiting: 0, showsStatus: true)
+        let herdr = try #require(pill.button(for: .herdr))
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], waiting: [.herdr: 0], showsStatus: true)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -159,15 +160,15 @@ struct SSHTerminalFloatingPillTests {
             #expect(button.accessibilityIdentifier == id)
         }
         expect44PointTouch(back.button, "sshTerminal.back")
-        for (button, id) in [(pill.status as UIView, "sshTerminal.programStatus"), (pill.herdr, "sshTerminal.herdr"), (pill.more, "sshTerminal.more")] {
+        for (button, id) in [(pill.status as UIView, "sshTerminal.programStatus"), (herdr, "sshTerminal.herdr"), (pill.more, "sshTerminal.more")] {
             expect44PointTouch(button, id)
         }
 
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [], herdrWaiting: nil, showsStatus: false)
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [], waiting: [:], showsStatus: false)
         host.layoutIfNeeded()
         #expect(
             pill.bounds.width == SSHTerminalGlassPill.itemWidth,
-            "only \u{2026} without status or Herdr: status \(pill.status.frame.width), herdr \(pill.herdr.frame.width)"
+            "only \u{2026} without status or Herdr: status \(pill.status.frame.width), herdr \(herdr.frame.width)"
         )
         expect44PointTouch(pill.more, "sshTerminal.more")
     }
@@ -190,7 +191,7 @@ struct SSHTerminalFloatingPillTests {
         let host = root.view!
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], herdrWaiting: 0, showsStatus: true)
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], waiting: [.herdr: 0], showsStatus: true)
         host.addSubview(back)
         host.addSubview(pill)
         NSLayoutConstraint.activate([
@@ -235,7 +236,8 @@ struct SSHTerminalFloatingPillTests {
         bar.translatesAutoresizingMaskIntoConstraints = false
         let back = SSHTerminalBackPill()
         let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], herdrWaiting: 0, showsStatus: true)
+        let herdr = try #require(pill.button(for: .herdr))
+        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], waiting: [.herdr: 0], showsStatus: true)
         bar.addSubview(back)
         bar.addSubview(pill)
         // A grid above the bar, ending its own rows short of it.
@@ -263,7 +265,7 @@ struct SSHTerminalFloatingPillTests {
         for (button, id) in [
             (back.button as UIView, "sshTerminal.back"),
             (pill.status as UIView, "sshTerminal.programStatus"),
-            (pill.herdr, "sshTerminal.herdr"),
+            (herdr, "sshTerminal.herdr"),
             (pill.more, "sshTerminal.more"),
         ] {
             let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: host)
@@ -329,7 +331,7 @@ struct SSHTerminalBarPlacementTests {
     @Test func theDefaultBarIsTodaysPlusTypeInTerminalAndChatBar() {
         let placement = SSHTerminalBarLayout.defaultValue.placement(available: everything, middleCapacity: 4)
         #expect(placement.middle == [.keyboard, .chatBar])
-        #expect(placement.trailing == [.herdr, .switcher])
+        #expect(placement.trailing == [.herdr, .rex, .switcher])
         // Turned-off keys and Paste stay out of the menu; Browse Files Here,
         // which the menu always had, stays in it.
         #expect(placement.menu == [.browseFiles])
@@ -343,7 +345,7 @@ struct SSHTerminalBarPlacementTests {
         let placement = layout.placement(available: everything, middleCapacity: 2)
         #expect(placement.middle == [.escape, .paste])
         // A shown key with no room is offered; a hidden one is not.
-        #expect(placement.menu == [.keyboard, .interrupt, .chatBar, .browseFiles, .herdr])
+        #expect(placement.menu == [.keyboard, .interrupt, .chatBar, .browseFiles, .herdr, .rex])
         #expect(placement.trailing == [.switcher])
 
         let none = layout.placement(available: everything, middleCapacity: 0)
@@ -352,7 +354,7 @@ struct SSHTerminalBarPlacementTests {
     }
 
     @Test func anActionTheTerminalCannotOfferIsNeitherDrawnNorInTheMenu() {
-        let available = everything.subtracting([.herdr, .switcher, .browseFiles])
+        let available = everything.subtracting([.herdr, .rex, .switcher, .browseFiles])
         let placement = SSHTerminalBarLayout.defaultValue.placement(available: available, middleCapacity: 4)
         #expect(placement.trailing.isEmpty)
         #expect(placement.menu.isEmpty)

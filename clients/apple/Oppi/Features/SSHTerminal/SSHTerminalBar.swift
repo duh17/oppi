@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 ///
 /// Back and the … menu are fixed (the bar's leading and trailing ends) and the
 /// program-status symbol is a readout, so none of them is here. A middle
-/// action sits in the middle pill; Herdr and the switcher stay in the trailing
-/// pill beside …, where they always were.
+/// action sits in the middle pill; Herdr, Rex, and the switcher stay in the
+/// trailing pill beside ….
 enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
     case keyboard
     case chatBar
@@ -22,14 +22,18 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
     case paste
     case browseFiles
     case herdr
+    case rex
     case switcher
 
     var id: String { rawValue }
 
     /// Today's bar plus the two input buttons: Type in Terminal and Chat Bar in
-    /// the middle, Herdr and the switcher on the right (each only where the
-    /// screen can offer it). Keys, Paste, and Browse Files Here start off.
-    static let defaultShown: Set<SSHTerminalBarAction> = [.keyboard, .chatBar, .herdr, .switcher]
+    /// the middle, Herdr, Rex, and the switcher on the right (each only where
+    /// the screen can offer it). Keys, Paste, and Browse Files Here start off.
+    static let defaultShown: Set<SSHTerminalBarAction> = [.keyboard, .chatBar, .herdr, .rex, .switcher]
+
+    /// The multiplexers whose overview sheet a trailing button opens.
+    static let overviews: [SSHTerminalBarAction] = [.herdr, .rex]
 
     enum Group: Hashable, Sendable {
         case middle
@@ -38,7 +42,7 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
 
     var group: Group {
         switch self {
-        case .herdr, .switcher: .trailing
+        case .herdr, .rex, .switcher: .trailing
         default: .middle
         }
     }
@@ -67,6 +71,7 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
         case .paste: String(localized: "Paste")
         case .browseFiles: String(localized: "Browse Files Here")
         case .herdr: String(localized: "Herdr Agents")
+        case .rex: String(localized: "Rex Sessions")
         case .switcher: String(localized: "Switch Terminal")
         }
     }
@@ -91,6 +96,7 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
         case .keyboard: String(localized: "Type in terminal")
         case .chatBar: String(localized: "Use chat bar")
         case .herdr: String(localized: "Herdr agents")
+        case .rex: String(localized: "Rex sessions")
         case .switcher: String(localized: "Switch terminal")
         default: menuTitle
         }
@@ -123,6 +129,7 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
         case .paste: "doc.on.clipboard"
         case .browseFiles: "folder"
         case .herdr: "square.grid.2x2"
+        case .rex: "rectangle.split.2x1"
         case .switcher: "rectangle.stack"
         }
     }
@@ -132,6 +139,7 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
     var accessibilityIdentifier: String {
         switch self {
         case .herdr: "sshTerminal.herdr"
+        case .rex: "sshTerminal.rex"
         case .switcher: "sshTerminal.switcher"
         default: "sshTerminal.bar.\(rawValue)"
         }
