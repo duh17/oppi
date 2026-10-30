@@ -82,12 +82,15 @@ final class AppRootModals {
             clear: { [weak connection] in connection?.activeExtensionDialog = nil },
             screen: {
                 guard let request else { return .controller({ UIViewController() }) }
-                return .controller({
-                    if request.nativePresentation == .editorSheet {
-                        ExtensionEditorComposer.make(request: request, connection: connection)
-                    } else {
-                        ExtensionDialogFallbackViewController(request: request, connection: connection, root: root)
-                    }
+                // The editor keeps what the person typed; the fallback shows the
+                // request, so a replacement under the same id redraws it.
+                if request.nativePresentation == .editorSheet {
+                    return .controller({ ExtensionEditorComposer.make(request: request, connection: connection) })
+                }
+                return .liveController({
+                    ExtensionDialogFallbackViewController(request: request, connection: connection, root: root)
+                }, update: { screen in
+                    screen.update(request: request)
                 })
             }
         )

@@ -15,7 +15,7 @@ final class ExtensionDialogFallbackViewController: SettingsListViewController<
     enum Section: Hashable, Sendable { case message, unsupported, timeout }
     enum Item: Hashable, Sendable { case message, unsupported, timeout }
 
-    private let request: ExtensionUIRequest
+    private(set) var request: ExtensionUIRequest
     private let connection: ServerConnection
     private var isSubmitting = false
     /// A response that lands after the server already closed the dialog must
@@ -41,6 +41,15 @@ final class ExtensionDialogFallbackViewController: SettingsListViewController<
         traitOverrides.appRootEnvironment = root
         navigationItem.leftBarButtonItem = cancelItem
         isModalInPresentation = true
+    }
+
+    /// The same request, replaced by the server with new content (a queued
+    /// request that came back under its id): title, message, and timeout redraw.
+    func update(request next: ExtensionUIRequest) {
+        guard next.id == request.id, next != request else { return }
+        request = next
+        title = Self.title(of: next)
+        setNeedsUpdateProperties()
     }
 
     /// The request's title, or "Extension" when it has none.

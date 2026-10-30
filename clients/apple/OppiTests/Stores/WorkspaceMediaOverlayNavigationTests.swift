@@ -492,7 +492,9 @@ struct WorkspaceMediaOverlayNavigationTests {
     @Test func fullscreenNotificationsFreezeAndReleaseTheRootNavigation() async throws {
         let (root, servers) = try makeRoot(serverNames: ["alpha"])
         let observer = WorkspaceMediaOverlayObserver(root: root)
-        withExtendedLifetime(observer) {}
+        // The observer lives for the whole body, whatever the build's codegen does with `observer`
+        // (`withExtendedLifetime` has no async form, so the scope's end holds it).
+        defer { withExtendedLifetime(observer) {} }
 
         WorkspaceMediaOverlayPost.begin()
         #expect(await waitForMainActorCondition { root.navigation.isMediaOverlayActive })
@@ -505,7 +507,7 @@ struct WorkspaceMediaOverlayNavigationTests {
     @Test func fullscreenEndBringsBackTheServerTheOverlayBegan() async throws {
         let (root, servers) = try makeRoot(serverNames: ["alpha", "beta"])
         let observer = WorkspaceMediaOverlayObserver(root: root)
-        withExtendedLifetime(observer) {}
+        defer { withExtendedLifetime(observer) {} }
 
         WorkspaceMediaOverlayPost.begin()
         #expect(await waitForMainActorCondition { root.navigation.isMediaOverlayActive })

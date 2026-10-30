@@ -6,9 +6,10 @@ import UIKit
 /// every 100 ms while the view is in a window. Only an E2E launch shows it
 /// (`PI_E2E_INVITE_URL`, or `OPPI_E2E_DIAGNOSTICS=1`).
 ///
-/// The view is 1 pt square at 1% opacity and takes no touches: invisible, but
+/// The view is 1 pt square at 2% opacity and takes no touches: invisible, but
 /// not hidden, so the labels stay in the accessibility tree (UIKit drops an
-/// element from it at alpha 0, and a view below 0.01 from hit testing).
+/// element from it at alpha 0, and a view below 0.01 from hit testing; the
+/// alpha is a Float, so 0.01 itself rounds under that threshold).
 @MainActor
 final class E2EDiagnosticsView: UIView {
     static var isEnabled: Bool {
@@ -24,7 +25,7 @@ final class E2EDiagnosticsView: UIView {
     init(coordinator: ConnectionCoordinator) {
         self.coordinator = coordinator
         super.init(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
-        alpha = 0.01
+        alpha = 0.02
         isUserInteractionEnabled = false
         stack.axis = .vertical
         stack.translatesAutoresizingMaskIntoConstraints = false

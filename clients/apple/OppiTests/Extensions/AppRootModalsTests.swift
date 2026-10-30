@@ -102,6 +102,36 @@ struct AppRootModalsTests {
         #expect(connection.activeExtensionDialog == nil)
     }
 
+    @Test("a fallback dialog redraws when its request is replaced under the same id")
+    func fallbackDialogRedrawsOnReplacement() async throws {
+        let root = try makeRoot(servers: ["alpha"])
+        let connection = root.coordinator.activeConnection
+        _ = connection.focusedSessionStore.focus(sessionId: "s")
+        let (host, window) = try show(root)
+        defer { hide(window) }
+
+        connection.activeExtensionDialog = ExtensionUIRequest(
+            id: "replaced", sessionId: "s", method: "custom", title: "Old title", message: "Old message"
+        )
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { isSettled(host.presentedViewController) })
+        let navigation = try #require(host.presentedViewController as? UINavigationController)
+        let dialog = try #require(navigation.topViewController as? ExtensionDialogFallbackViewController)
+        dialog.view.layoutIfNeeded()
+        #expect(await waitForMainActorCondition { labelTexts(in: dialog.view).contains("Old message") })
+
+        connection.activeExtensionDialog = ExtensionUIRequest(
+            id: "replaced", sessionId: "s", method: "custom", title: "New title",
+            message: "New message", timeout: 30_000
+        )
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            let texts = labelTexts(in: dialog.view)
+            return texts.contains("New message") && texts.contains("Expires in about 30 seconds")
+        }, "the dialog kept its old content: \(labelTexts(in: dialog.view))")
+        #expect(dialog.title == "New title")
+        #expect(!labelTexts(in: dialog.view).contains("Old message"))
+        #expect(host.presentedViewController === navigation, "a replacement must not present again")
+    }
+
     @Test("a dialog left up on a server that stops being active closes unanswered; the new active server's dialog opens")
     func serverSwitchClosesTheOtherServersDialog() async throws {
         let root = try makeRoot(servers: ["alpha", "beta"])
@@ -265,9 +295,15 @@ struct AppRootModalsTests {
         return !presented.isBeingPresented && presented.viewIfLoaded?.window != nil
     }
 
+    /// The text of every label under `view`, after the pending layout.
     private func labelTexts(in view: UIView) -> [String] {
+        view.layoutIfNeeded()
+        return collectLabelTexts(in: view)
+    }
+
+    private func collectLabelTexts(in view: UIView) -> [String] {
         let own = (view as? UILabel).flatMap(\.text).map { [$0] } ?? []
-        return own + view.subviews.flatMap { labelTexts(in: $0) }
+        return own + view.subviews.flatMap { collectLabelTexts(in: $0) }
     }
 
     private func buttonIdentifiers(in view: UIView) -> [String] {
