@@ -39,10 +39,12 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
         /// older Herdr that omits them leaves the folder to be created instead.
         let workspaceID: String?
         let cwd: String?
+        /// The folder of the pane's foreground process, when Herdr reports it.
+        let foregroundCwd: String?
 
         enum CodingKeys: String, CodingKey {
             case paneID = "pane_id", programStatus = "program_status"
-            case workspaceID = "workspace_id", cwd
+            case workspaceID = "workspace_id", cwd, foregroundCwd = "foreground_cwd"
         }
 
         init(from decoder: any Decoder) throws {
@@ -51,6 +53,7 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
             programStatus = try container.decodeIfPresent([ProgramRecord].self, forKey: .programStatus) ?? []
             workspaceID = try container.decodeIfPresent(String.self, forKey: .workspaceID)
             cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+            foregroundCwd = try container.decodeIfPresent(String.self, forKey: .foregroundCwd)
         }
     }
 
@@ -87,6 +90,8 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
         let agent: String?
         let title: String?
         let terminalTitle: String?
+        let cwd: String?
+        let foregroundCwd: String?
         var id: String { paneID }
 
         /// Herdr's own display order: a live name, then the detected agent.
@@ -97,6 +102,24 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
             case paneID = "pane_id", workspaceID = "workspace_id", tabID = "tab_id"
             case status = "agent_status", focused, name, displayAgent = "display_agent", agent, title
             case terminalTitle = "terminal_title_stripped"
+            case cwd, foregroundCwd = "foreground_cwd"
+        }
+
+        // Herdr may omit the folders (an older Herdr), so they decode as optional.
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            paneID = try container.decode(String.self, forKey: .paneID)
+            workspaceID = try container.decode(String.self, forKey: .workspaceID)
+            tabID = try container.decode(String.self, forKey: .tabID)
+            status = try container.decode(Status.self, forKey: .status)
+            focused = try container.decode(Bool.self, forKey: .focused)
+            name = try container.decodeIfPresent(String.self, forKey: .name)
+            displayAgent = try container.decodeIfPresent(String.self, forKey: .displayAgent)
+            agent = try container.decodeIfPresent(String.self, forKey: .agent)
+            title = try container.decodeIfPresent(String.self, forKey: .title)
+            terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
+            cwd = try container.decodeIfPresent(String.self, forKey: .cwd)
+            foregroundCwd = try container.decodeIfPresent(String.self, forKey: .foregroundCwd)
         }
     }
 
@@ -106,9 +129,11 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
     /// Only panes whose program reported OSC 7501 matter here; Herdr
     /// versions without the records leave every list empty.
     let panes: [Pane]
+    /// The pane that has focus, when Herdr says (`focused_pane_id`).
+    let focusedPaneID: String?
 
     enum CodingKeys: String, CodingKey {
-        case workspaces, tabs, agents, panes
+        case workspaces, tabs, agents, panes, focusedPaneID = "focused_pane_id"
     }
 
     init(from decoder: any Decoder) throws {
@@ -117,6 +142,19 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
         tabs = try container.decode([Tab].self, forKey: .tabs)
         agents = try container.decode([Agent].self, forKey: .agents)
         panes = try container.decodeIfPresent([Pane].self, forKey: .panes) ?? []
+        focusedPaneID = try container.decodeIfPresent(String.self, forKey: .focusedPaneID)
+    }
+
+    /// The focused pane's folder on this Herdr's machine: its foreground
+    /// process's, else the pane's own, from the pane list or else the agent
+    /// entry. Only an absolute path counts, normalized as an OSC 7 folder is.
+    var focusedPaneFolder: HerdrLocalFolder {
+        guard let focusedPaneID else { return .unknown }
+        let pane = panes.first { $0.paneID == focusedPaneID }
+        let agent = agents.first { $0.paneID == focusedPaneID }
+        let folder = [pane?.foregroundCwd, pane?.cwd, agent?.foregroundCwd, agent?.cwd]
+            .lazy.compactMap { $0.flatMap(SSHTerminalWorkingDirectory.normalize) }.first
+        return folder.map(HerdrLocalFolder.folder) ?? .unknown
     }
 
     /// Herdr keeps its own seen ledger: a done or error it still reports is
@@ -168,6 +206,15 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
         while value.count > 1 && value.hasSuffix("/") { value.removeLast() }
         return value
     }
+}
+
+/// What the host's own Herdr says about the terminal's folder.
+enum HerdrLocalFolder: Equatable, Sendable {
+    /// No answer: Herdr is absent, stopped, or failed its last read.
+    case notReading
+    /// It answers, but names no usable folder for its focused pane.
+    case unknown
+    case folder(String)
 }
 
 enum HerdrRemoteError: Error, Equatable, LocalizedError {
@@ -385,7 +432,7 @@ final class HerdrMonitor {
         let reader = Task { [weak self] in
             let result = await Self.read(machine, on: channel)
             self?.readers[machine] = nil
-            self?.apply(result, to: machine)
+            self?.apply(result, to: machine, on: channel)
         }
         readers[machine] = reader
         return reader
@@ -400,7 +447,16 @@ final class HerdrMonitor {
         }
     }
 
-    private func apply(_ result: Result<HerdrSnapshot, any Error>, to machine: String?) {
+    private func apply(_ result: Result<HerdrSnapshot, any Error>, to machine: String?, on channel: SSHTerminalChannel) {
+        // Only Local's panes are on this terminal's host; a saved machine's are
+        // other hosts' and never name the shell's folder.
+        if machine == nil {
+            switch result {
+            case .success(let snapshot): channel.setHerdrFolder(snapshot.focusedPaneFolder)
+            case .failure(is CancellationError): break
+            case .failure: channel.setHerdrFolder(.notReading)
+            }
+        }
         if machine == nil, case .failure(HerdrRemoteError.notInstalled) = result {
             unavailable = true
             machines = [.local()]

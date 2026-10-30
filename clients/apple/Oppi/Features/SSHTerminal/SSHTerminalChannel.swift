@@ -199,9 +199,13 @@ final class SSHTerminalChannel {
     private(set) var inputNotice = ""
     /// Display-only; published only when the remote sets a different title.
     private(set) var title = ""
-    /// The shell's working directory from OSC 7, as a local path.
-    /// Empty when the shell has not reported one we can use.
+    /// The shell's working directory as a local path: its OSC 7 report, or the
+    /// focused pane of the host's Herdr while Herdr is on screen
+    /// (`SSHTerminalShellFolder`). Empty when neither gives one we can use.
     private(set) var workingDirectory = ""
+    /// What the host's own Herdr says its focused pane's folder is; the Herdr
+    /// poll sets it.
+    private(set) var herdrFolder = HerdrLocalFolder.notReading
     /// True while a network path change is being checked.
     private(set) var networkChanged = false
     /// Bumped each time a remote program put text on this device's clipboard.
@@ -416,7 +420,23 @@ final class SSHTerminalChannel {
         guard connected, !bytes.isEmpty else { return }
         engine.receive(bytes)
         if engine.title != title { title = engine.title }
-        if engine.workingDirectory != workingDirectory { workingDirectory = engine.workingDirectory }
+        refreshWorkingDirectory()
+    }
+
+    func setHerdrFolder(_ folder: HerdrLocalFolder) {
+        guard folder != herdrFolder else { return }
+        herdrFolder = folder
+        refreshWorkingDirectory()
+    }
+
+    private func refreshWorkingDirectory() {
+        let next = SSHTerminalShellFolder.resolve(
+            reported: engine.workingDirectory,
+            reportedFromFullScreen: engine.workingDirectoryFromFullScreen,
+            fullScreenPointer: engine.fullScreenPointer,
+            herdr: herdrFolder
+        )
+        if next != workingDirectory { workingDirectory = next }
     }
 
     private func closeInput() {

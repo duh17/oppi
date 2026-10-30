@@ -222,6 +222,10 @@ final class SSHTerminalEngine {
     /// different host) leaves the folder unknown instead of resolving this
     /// server's paths against it.
     private var workingDirectoryHost: String?
+    /// The latest OSC 7 report arrived while a full-screen program had mouse
+    /// reporting on (`fullScreenPointer`): it came from inside that program, not
+    /// from the shell that ran it.
+    private(set) var workingDirectoryFromFullScreen = false
     /// OSC 7501 records for this terminal. Outlives `close()` so `done`/`error`
     /// records can still be shown after the program exits.
     let programStatus = SSHTerminalProgramStatusStore()
@@ -387,8 +391,10 @@ final class SSHTerminalEngine {
                     workingDirectoryHost = report.host
                 }
                 workingDirectory = report.folder(firstHost: workingDirectoryHost) ?? ""
+                workingDirectoryFromFullScreen = !workingDirectory.isEmpty && fullScreenPointer
             } else {
                 workingDirectory = ""
+                workingDirectoryFromFullScreen = false
             }
             pwdChanged = false
         }
@@ -487,6 +493,11 @@ final class SSHTerminalEngine {
         ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen)
         return screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE
     }
+
+    /// A full-screen program that asked for mouse reports: the alternate screen
+    /// with mouse tracking on, which is how Herdr (and tmux with `mouse on`, vim
+    /// with `mouse=a`) shows. The only terminal-side sign that Herdr is in front.
+    var fullScreenPointer: Bool { alternateScreen && mouseTracking }
 
     func mode(_ mode: GhosttyMode) -> Bool {
         var config = GhosttyTerminalModeConfig(mode: mode, value: false)
@@ -1504,6 +1515,7 @@ final class SSHTerminalEngine {
                 owner.title = ""
                 owner.titleChanged = false
                 owner.workingDirectory = ""
+                owner.workingDirectoryFromFullScreen = false
                 owner.workingDirectoryHost = nil
                 owner.pwdChanged = false
             }

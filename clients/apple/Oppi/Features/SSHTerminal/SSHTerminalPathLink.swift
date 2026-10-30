@@ -58,6 +58,35 @@ enum SSHTerminalWorkingDirectory {
     }
 }
 
+/// The folder the terminal calls the shell's. OSC 7 is the shell's own report,
+/// but Herdr does not pass its panes' reports through: while Herdr is on screen
+/// the OSC 7 the outer shell made before `herdr` started is stale, and the
+/// host's Herdr knows the real folder (its focused pane's).
+enum SSHTerminalShellFolder {
+    /// - `reported`: the engine's OSC 7 folder, empty when none.
+    /// - `reportedFromFullScreen`: that report arrived while the full-screen
+    ///   program was up, so it came from inside it.
+    /// - `fullScreenPointer`: the alternate screen with mouse reporting is
+    ///   showing (Herdr's sign).
+    /// - `herdr`: the host's own Herdr, once it has answered a snapshot.
+    ///
+    /// Herdr counts as in front only when both its sign shows and it answers, so
+    /// a full-screen program on a host without Herdr (vim) keeps the shell's
+    /// folder. In front, a report from inside wins; else the focused pane's
+    /// folder; else unknown, never the stale report from before it started.
+    static func resolve(
+        reported: String,
+        reportedFromFullScreen: Bool,
+        fullScreenPointer: Bool,
+        herdr: HerdrLocalFolder
+    ) -> String {
+        guard fullScreenPointer, herdr != .notReading else { return reported }
+        if reportedFromFullScreen { return reported }
+        if case .folder(let folder) = herdr { return folder }
+        return ""
+    }
+}
+
 /// What a held cell offers: the word the double tap would copy, and the OSC 8
 /// link the cell carries, if any.
 struct SSHTerminalHeldCell: Equatable {
