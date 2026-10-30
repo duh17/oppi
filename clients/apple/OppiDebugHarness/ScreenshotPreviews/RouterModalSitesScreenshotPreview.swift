@@ -6,13 +6,13 @@ import UIKit
 /// `SCREENSHOT_MODAL_SITE` picks the presenter: `root` (the app root's
 /// extension dialog, notice, and What's New, with trigger buttons and what the
 /// dialog sent), `inbox-now-playing` and `workspace-now-playing` (the
-/// full-screen player over active playback), `inbox-threads` and
-/// `workspace-threads` (the session lists over a launch tree that spans two
-/// workspaces; tap `thread.nav.thread-root` to open it), and `quick-session`
-/// (its pickers, model sheet, and expanded composer). The presenters and their
-/// modals share one app root over the fixture server, in the dark theme. Quick
-/// Session starts on plain Pi: an Agent an earlier run remembered would load
-/// its default from the stub server, which fails.
+/// full-screen player over active playback), `inbox-threads` (the session list
+/// over a launch tree that spans two workspaces; tap `thread.nav.thread-root`
+/// to open it), and `quick-session` (its pickers, model sheet, and expanded
+/// composer). The presenters and their modals share one app root over the
+/// fixture server, in the dark theme. Quick Session starts on plain Pi: an
+/// Agent an earlier run remembered would load its default from the stub server,
+/// which fails.
 final class RouterModalSitesPreviewController: PreviewRootController {
     init() {
         let environment = ProcessInfo.processInfo.environment
@@ -34,7 +34,7 @@ final class RouterModalSitesPreviewController: PreviewRootController {
         let root = AppRootEnvironment(
             coordinator: RouterModalSitesFixtures.makeCoordinator(
                 playing: site.hasSuffix("now-playing"),
-                threads: site.hasSuffix("-threads")
+                threads: site == "inbox-threads"
             ),
             navigation: navigation,
             themeStore: ThemeStore(),
@@ -58,7 +58,7 @@ final class RouterModalSitesPreviewController: PreviewRootController {
             return RouterModalSitesRootViewController(root: root)
         case "inbox-now-playing", "inbox-threads":
             return PreviewHost.screenStack(root: root) { SessionInboxViewController(root: root) }
-        case "workspace-now-playing", "workspace-threads":
+        case "workspace-now-playing":
             return PreviewHost.screenStack(root: root) {
                 WorkspaceDetailViewController(
                     root: root,

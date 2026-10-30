@@ -18,19 +18,10 @@ final class RouterRoutesUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testHostedRootShowsItsBottomBar() {
-        launch(colorScheme: "dark")
-        XCTAssertTrue(app.navigationBars["Router Routes"].exists)
-        let bottomBarItem = app.staticTexts["routerRoutes.dismissedModals"]
-        XCTAssertTrue(bottomBarItem.waitForExistence(timeout: 5), "A .bottomBar item needs the toolbar shown")
-        XCTAssertEqual(bottomBarItem.label, "Dismissed 0")
-        attachScreenshot("root-large-title-bottom-bar")
-        assertRunning()
-    }
-
     /// Light theme: the sheet and popover chrome follow the theme store.
     func testPushedScreenOpensSheetAndPopoverThenFinishes() {
         launch(colorScheme: "light")
+        XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 0")
         app.buttons["routerRoutes.quickComments"].tap()
         let quickComments = app.navigationBars["Quick Comments"]
         XCTAssertTrue(quickComments.waitForExistence(timeout: 5), "Quick Comments was not pushed")

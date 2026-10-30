@@ -3,7 +3,7 @@ import UIKit
 
 /// The UIKit router with real screens and fixture services, no network
 /// (`SCREENSHOT_SCREEN=router-routes`): a `RouterNavigationController` whose
-/// root is the route list (large title, bottom bar). Quick Comments is pushed
+/// root is the route list. Quick Comments is pushed
 /// and opens its editor sheet (detents, navigation) and the icon popover; Edit
 /// Agent is a full-screen modal that pushes its Tools page; Edit Schedule opens
 /// the time zone search sheet; both editors open the model picker. The editors
@@ -43,13 +43,12 @@ final class RouterRoutesPreviewController: PreviewRootController {
 }
 
 /// The routes the router owns, as a list screen: a push through `Router.push`,
-/// and the two editors in their own `RouterModalPresenter` slots. The SwiftUI
-/// list's `.bottomBar` text ("Dismissed 0") is the toolbar's own label, and its
-/// "Last save sent" section reads the stub server's last write; both keep the
-/// identifiers `RouterRoutesUITests` reads.
+/// and the two editors in their own `RouterModalPresenter` slots. The two rows
+/// under "Last save sent" show what the stub server received and how many
+/// modals closed, with the identifiers `RouterRoutesUITests` reads.
 final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMenuViewController.Section, RouterRoutesMenuViewController.Item> {
     enum Section: Hashable, Sendable { case routes, lastSave }
-    enum Item: Hashable, Sendable { case quickComments, editAgent, editSchedule, lastSave }
+    enum Item: Hashable, Sendable { case quickComments, editAgent, editSchedule, lastSave, dismissedModals }
 
     private let root: AppRootEnvironment
     private let agentEditor = RouterModalPresenter()
@@ -59,20 +58,12 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
     /// What the modals closed: the SwiftUI `routerModal` slots bumped it on
     /// every dismissal, swipe-down included.
     private var dismissedModals = 0
-    private let dismissedLabel = UILabel()
 
     init(root: AppRootEnvironment) {
         self.root = root
         super.init(title: "Router Routes", listIdentifier: "routerRoutes.list", headers: true, largeTitle: true)
         traitOverrides.appRootEnvironment = root
         for presenter in [agentEditor, scheduleEditor] { presenter.anchor = self }
-        dismissedLabel.accessibilityIdentifier = "routerRoutes.dismissedModals"
-        dismissedLabel.font = .preferredFont(forTextStyle: .body)
-        setToolbarItems([
-            UIBarButtonItem(systemItem: .flexibleSpace),
-            UIBarButtonItem(customView: dismissedLabel),
-            UIBarButtonItem(systemItem: .flexibleSpace),
-        ], animated: false)
     }
 
     @available(*, unavailable)
@@ -82,14 +73,6 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
 
     // MARK: - Lifecycle
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        applyTitleDisplayMode()
-        // The SwiftUI bar's `.showsToolbar` kept the toolbar up for the menu;
-        // a screen pushed above it takes it back.
-        navigationController?.setToolbarHidden(false, animated: animated)
-    }
-
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         for presenter in [agentEditor, scheduleEditor] { presenter.sync() }
@@ -97,28 +80,7 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
 
     override func updateProperties() {
         super.updateProperties()
-        applyTitleDisplayMode()
-        let dismissed = "Dismissed \(dismissedModals)"
-        if dismissedLabel.text != dismissed {
-            dismissedLabel.text = dismissed
-            dismissedLabel.accessibilityLabel = dismissed
-            dismissedLabel.sizeToFit()
-        }
-        dismissedLabel.textColor = UIColor(palette.fg)
         updateEditors()
-    }
-
-    /// Same rule as `HostedScreenController.applyTitleDisplayMode`: a large
-    /// title shows nothing where the system puts the bar on a vertical edge,
-    /// so the title stays inline there.
-    private func applyTitleDisplayMode() {
-        let large = !SystemVerticalBar.traitIsActive(traitCollection)
-        // The bar's own flag, not the item's mode, is what makes a large title
-        // draw.
-        if large { navigationController?.navigationBar.prefersLargeTitles = true }
-        let mode: UINavigationItem.LargeTitleDisplayMode = large ? .always : .never
-        guard navigationItem.largeTitleDisplayMode != mode else { return }
-        navigationItem.largeTitleDisplayMode = mode
     }
 
     // MARK: - Rows
@@ -126,7 +88,7 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
     override func sections() -> [ListSection<Section, Item>] {
         [
             ListSection(.routes, items: [.quickComments, .editAgent, .editSchedule]),
-            ListSection(.lastSave, header: "Last save sent", items: [.lastSave]),
+            ListSection(.lastSave, header: "Last save sent", items: [.lastSave, .dismissedModals]),
         ]
     }
 
@@ -139,57 +101,72 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .lastSave: AnyHashable(RouterRoutesSaves.shared.lastSave)
+        case .dismissedModals: AnyHashable(dismissedModals)
         case .quickComments, .editAgent, .editSchedule: AnyHashable(0)
         }
     }
 
-    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+    private lazy var actionRow = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
         self?.configure(cell, item: item)
     }
 
     override func prepareRegistrations() {
-        _ = row
+        _ = actionRow
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
+        switch item {
+        case .quickComments, .editAgent, .editSchedule:
+            collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
+        case .lastSave, .dismissedModals:
+            super.dequeue(item, at: indexPath)
+        }
     }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
-        let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
+    /// The route rows act; the two under "Last save sent" only show a value.
+    private func configure(_ cell: SettingsActionRowCell, item: Item) {
         switch item {
         case .quickComments:
-            action(cell, item: item, title: "Quick Comments", identifier: "routerRoutes.quickComments")
-        case .editAgent:
-            action(cell, item: item, title: "Edit Agent", identifier: "routerRoutes.editAgent")
-        case .editSchedule:
-            action(cell, item: item, title: "Edit Schedule", identifier: "routerRoutes.editSchedule")
-        case .lastSave:
-            ListScreen.staticRow(cell)
-            // The value the stub server last received, under the identifier a
-            // capture reads: the SwiftUI `Text` it replaces was a static text.
-            let value = RouterRoutesSaves.shared.lastSave
-            cell.contentConfiguration = ControlViewContent { [palette] in
-                let label = UILabel()
-                label.text = value
-                label.font = .preferredFont(forTextStyle: .body)
-                label.textColor = UIColor(palette.fg)
-                label.numberOfLines = 0
-                label.accessibilityIdentifier = "routerRoutes.lastSave"
-                return label
+            cell.configure(title: "Quick Comments", identifier: "routerRoutes.quickComments") { [weak self] in
+                self?.run(item)
             }
+        case .editAgent:
+            cell.configure(title: "Edit Agent", identifier: "routerRoutes.editAgent") { [weak self] in
+                self?.run(item)
+            }
+        case .editSchedule:
+            cell.configure(title: "Edit Schedule", identifier: "routerRoutes.editSchedule") { [weak self] in
+                self?.run(item)
+            }
+        case .lastSave, .dismissedModals:
+            break
         }
     }
 
-    private func action(_ cell: SidebarListCell, item: Item, title: String, identifier: String) {
-        ListScreen.buttonRow(cell, identifier: identifier, label: title) { [weak self] in
-            self?.run(item)
+    override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        switch item {
+        case .lastSave:
+            statusRow(cell, text: RouterRoutesSaves.shared.lastSave, identifier: "routerRoutes.lastSave")
+        case .dismissedModals:
+            statusRow(cell, text: "Dismissed \(dismissedModals)", identifier: "routerRoutes.dismissedModals")
+        case .quickComments, .editAgent, .editSchedule:
+            break
         }
-        var content = UIListContentConfiguration.cell()
-        content.text = title
-        content.textProperties.color = UIColor(palette.blue)
-        cell.contentConfiguration = content
+    }
+
+    /// A value the harness saw, under the identifier a capture reads: the
+    /// SwiftUI `Text` rows it replaces were static texts.
+    private func statusRow(_ cell: UICollectionViewListCell, text: String, identifier: String) {
+        let palette = palette
+        cell.contentConfiguration = ControlViewContent {
+            let label = UILabel()
+            label.text = text
+            label.font = .preferredFont(forTextStyle: .body)
+            label.textColor = UIColor(palette.fg)
+            label.numberOfLines = 0
+            label.accessibilityIdentifier = identifier
+            return label
+        }
     }
 
     // MARK: - Routes
@@ -204,7 +181,7 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
         case .editSchedule:
             editsSchedule = true
             setNeedsUpdateProperties()
-        case .lastSave:
+        case .lastSave, .dismissedModals:
             break
         }
     }
