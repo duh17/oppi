@@ -167,7 +167,7 @@ Two shared pieces in `Oppi/Core/Views` own every error alert and confirmation; `
 - **`routerModal` presents a run-loop turn late** (enforced in `RouterModalPresenter`) and only while the declaring view is in the window: declare it on a pushed page too. Pass a stored binding.
 - **A router presentation ignores SwiftUI presentation modifiers.** Pass a `ModalPresentation` (`ModalPresentation.iconPicker`); `interactiveDismissDisabled` still reaches UIKit.
 - **Search bars outlive their modal** unless ended: `Router.endSearch` runs on `finish()`, swipe-down, and trailing-column removal.
-- **A preview nothing launches is deleted, not converted.** Previews use `RouterPreviewStack` or `RouterPreviewNavigation`; `scripts/screenshot-screen-guard.ts` fails when a test launches a screen no case serves.
+- **A preview nothing launches is deleted, not converted.** Previews use `RouterPreviewControllerStack` (a UIKit screen) or `RouterPreviewNavigation` (a SwiftUI screen); `scripts/screenshot-screen-guard.ts` fails when a test launches a screen no case serves.
 
 ### Chat composer
 
