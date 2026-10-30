@@ -283,4 +283,83 @@ struct TimelineReducerTests {
         }
         #expect(compactionItems.count == 1)
     }
+
+    // MARK: - Durable: the live tail owns the compaction row
+    //
+    // A durable conversation stream sends no compaction_start/compaction_end, so the manual
+    // Compact action's optimistic row has nothing to resolve it, and `pi.live` adds its own.
+
+    private func compactionRows(_ reducer: TimelineReducer) -> [(id: String, message: String)] {
+        reducer.items.compactMap { item in
+            guard case .systemEvent(let id, let message) = item,
+                  message.contains("ompact") else { return nil }
+            return (id, message)
+        }
+    }
+
+    private func traceEvent(_ id: String, _ type: TraceEventType, _ text: String) -> TraceEvent {
+        TraceEvent(id: id, type: type, timestamp: "2025-01-01T00:00:0\(id.prefix(1)).000Z", text: text)
+    }
+
+    @Test func durableManualCompactionShowsOneRowFromClickToCommittedEntry() {
+        let reducer = TimelineReducer()
+        reducer.applyConversationCommitted([traceEvent("1", .user, "Hello"), traceEvent("2", .assistant, "Hi")])
+        reducer.applyLiveTail(TimelineLiveTail())
+
+        // Click: instant feedback.
+        reducer.process(.compactionStart(sessionId: "s1", reason: "manual"))
+        #expect(compactionRows(reducer).map(\.message) == ["Compacting context..."])
+
+        // The stream reports the compaction in `pi.live.compactions`.
+        var compacting = TimelineLiveTail()
+        compacting.isRunning = true
+        compacting.isCompacting = true
+        reducer.applyLiveTail(compacting)
+        #expect(compactionRows(reducer).map(\.message) == ["Compacting context..."])
+        reducer.applyLiveTail(compacting)
+        #expect(compactionRows(reducer).map(\.message) == ["Compacting context..."])
+
+        // The compaction entry becomes the head: a fresh snapshot, then the tail clears.
+        reducer.applyConversationCommitted([
+            traceEvent("3", .compaction, "Context compacted (50,000 tokens): Summary"),
+            traceEvent("2", .assistant, "Hi"),
+        ])
+        reducer.applyLiveTail(TimelineLiveTail())
+        #expect(compactionRows(reducer).map(\.message) == ["Context compacted (50,000 tokens): Summary"])
+    }
+
+    @Test func durableSecondCompactionKeepsTheFirstCommittedRow() {
+        let reducer = TimelineReducer()
+        reducer.applyConversationCommitted([
+            traceEvent("3", .compaction, "Context compacted: First"),
+            traceEvent("4", .assistant, "Hi"),
+        ])
+        reducer.applyLiveTail(TimelineLiveTail())
+
+        reducer.process(.compactionStart(sessionId: "s1", reason: "manual"))
+        #expect(compactionRows(reducer).map(\.message) == ["Context compacted: First", "Compacting context..."])
+
+        var compacting = TimelineLiveTail()
+        compacting.isCompacting = true
+        reducer.applyLiveTail(compacting)
+        #expect(compactionRows(reducer).map(\.message) == ["Context compacted: First", "Compacting context..."])
+    }
+
+    @Test func durableCompactionEntryLandingBeforeTailReportsItDropsTheOptimisticRow() {
+        let reducer = TimelineReducer()
+        reducer.applyConversationCommitted([traceEvent("1", .user, "Hello"), traceEvent("2", .assistant, "Hi")])
+        reducer.applyLiveTail(TimelineLiveTail())
+        reducer.process(.compactionStart(sessionId: "s1", reason: "manual"))
+
+        // Appended entries only (no head change): the incremental path.
+        reducer.applyConversationCommitted(
+            [
+                traceEvent("1", .user, "Hello"), traceEvent("2", .assistant, "Hi"),
+                traceEvent("3", .compaction, "Context compacted: Summary"),
+            ],
+            appendStart: 2
+        )
+        reducer.applyLiveTail(TimelineLiveTail())
+        #expect(compactionRows(reducer).map(\.message) == ["Context compacted: Summary"])
+    }
 }

@@ -139,6 +139,15 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// they upsert the trace-derived item instead of appending duplicates.
     private var currentCompactionItemID: String?
 
+    /// The in-progress compaction row a `compactionStart` action wrote (the manual Compact
+    /// button's instant feedback; classic sessions then upsert it from compaction_start/end).
+    ///
+    /// A durable conversation stream sends no compaction events, so nothing ends this row.
+    /// The stream owns the compaction row there: `pi.live.compactions` (`applyLiveTail`) and
+    /// the compaction entry (`applyConversationCommitted`) both take this row out. Cleared on
+    /// `compactionEnd` and `reset`.
+    private var optimisticCompactionRowID: String?
+
     /// Expansion state — external from ChatItem payload to avoid Equatable cost.
     var expandedItemIDs: Set<String> = []
     private var extensionToolsExpanded: Bool?
@@ -367,6 +376,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         messageRegionStart = 0
         lastMessageEndAnchorID = nil
         currentCompactionItemID = nil
+        optimisticCompactionRowID = nil
         liveEventReplayBuffer = nil
         itemsMutationSeq = 0
         toolOutputStore.clearAll()
@@ -821,6 +831,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             restored = true
         }
         if restored { bumpItemsMutationSeq() }
+        // The stream sends no compaction_start/end to upsert a loaded compaction row, so a
+        // later compactionStart must not reuse that committed row's id.
+        currentCompactionItemID = nil
         liveTailNeedsTerminalPass = true
     }
 
@@ -832,6 +845,22 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     ) {
         if !landingRows.isEmpty { adoptLandedAnswer(landingRows, newEvents: newEvents, above: newestBefore) }
         removeErrorRowsRestated(by: newEvents, clientRows: &clientRows)
+        // The compaction entry landed: its committed row replaces the optimistic one.
+        if newEvents.contains(where: { $0.type == .compaction && (Self.entryNumber(of: $0) ?? 0) > newestBefore }) {
+            clientRows.removeAll { $0.row.id == optimisticCompactionRowID }
+            removeOptimisticCompactionRow()
+        }
+    }
+
+    /// Take out the row the Compact action showed before the stream reported the compaction.
+    private func removeOptimisticCompactionRow() {
+        guard let id = optimisticCompactionRowID else { return }
+        optimisticCompactionRowID = nil
+        if currentCompactionItemID == id { currentCompactionItemID = nil }
+        guard indexForID(id) != nil else { return }
+        items.removeAll { $0.id == id }
+        rebuildIndex()
+        bumpItemsMutationSeq()
     }
 
     /// A durable run failure shows live as an error frame, then commits as a card with the
@@ -922,6 +951,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     func applyLiveTail(_ tail: TimelineLiveTail) {
         let before = renderMutationCheckpoint()
         var changed = false
+        // The tail's compaction row replaces the optimistic one: one row, not two.
+        if tail.isCompacting { removeOptimisticCompactionRow() }
 
         var rows: [ChatItem] = []
         var answerRowIDs: [String: String] = [:]
@@ -2168,6 +2199,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         let label = reason == "overflow" ? String(localized: "Context overflow — compacting...") : String(localized: "Compacting context...")
         let id = currentCompactionItemID ?? UUID().uuidString
         currentCompactionItemID = id
+        optimisticCompactionRowID = id
         let item = ChatItem.systemEvent(id: id, message: label)
         if let idx = indexForID(id) {
             items[idx] = item
@@ -2212,6 +2244,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             indexAppend(item)
         }
         currentCompactionItemID = nil
+        optimisticCompactionRowID = nil
         return true
     }
 
