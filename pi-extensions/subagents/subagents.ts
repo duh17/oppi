@@ -114,8 +114,21 @@ export function subagentFromCreate(command: string, text: string, parentId?: str
 	};
 }
 
-export function refreshLaunched(launched: Subagent[], gets: unknown[]): Subagent[] {
+/** A get that failed because the session is gone (deleted), as `oppi session get` reports it. */
+export function isMissingSession(payload: unknown): boolean {
+	const record = asRecord(payload);
+	return record?.ok === false && /session_not_found|not found/i.test(JSON.stringify(record));
+}
+
+/** The Oppi session that launched the child a get describes: the thread its pill row opens. */
+export function launcherFromGet(payload: unknown): string | undefined {
+	return childStatusFromGet(payload)?.parentId;
+}
+
+/** `missing` are launched ids whose session is gone; they leave the set. */
+export function refreshLaunched(launched: Subagent[], gets: unknown[], missing: string[] = []): Subagent[] {
 	const byId = new Map(launched.map((item) => [item.id, item]));
+	for (const id of missing) byId.delete(id);
 	for (const payload of gets) {
 		for (const [id, known] of byId) {
 			const session = sessionRecord(payload);
@@ -220,13 +233,13 @@ export function renderSubagentTerminal(
 }
 
 /**
- * The children the pill draws as rows, from every child, newest first: the ones that need you,
- * then the working ones, then the newest done ones, up to `max`. A working or blocked child
- * never gives its place to a newer finished one, however long ago it started.
+ * The children the pill draws as rows, from every child, newest first: the ones that need you
+ * (asking), then the working ones, then the finished ones (done or errored), up to `max`. A
+ * working or asking child never gives its place to a newer finished one, however long ago it
+ * started; an errored child is finished, and ranks with the done ones by age.
  */
 export function selectPillRows(subagents: Subagent[], max = MAX_PILL_ROWS): Subagent[] {
-	const rank = (row: Subagent): number =>
-		row.state === "warning" || row.state === "error" ? 0 : row.state === "running" ? 1 : 2;
+	const rank = (row: Subagent): number => (row.state === "warning" ? 0 : row.state === "running" ? 1 : 2);
 	// Array.prototype.sort is stable: newest stays first within a rank.
 	return subagents
 		.slice()
@@ -319,9 +332,12 @@ function panelSummary(rows: Subagent[], max: number): string | undefined {
 	if (attention > 0) parts.push(attention === 1 ? "1 needs you" : `${attention} need you`);
 	if (errors > 0) parts.push(errors === 1 ? "1 error" : `${errors} errors`);
 	if (parts.length === 0) return "All done";
-	// Live children past the rows the pill has room for.
-	const unseen = attention + working + errors - max;
-	if (unseen > 0) parts.push(`+${unseen} more working`);
+	// Live children past the rows the pill has room for; the rows take those that need you first.
+	// Errors are finished and never count here.
+	const unseenAttention = Math.max(0, attention - max);
+	const unseenWorking = Math.max(0, working - Math.max(0, max - attention));
+	if (unseenAttention > 0) parts.push(`+${unseenAttention} more need you`);
+	if (unseenWorking > 0) parts.push(`+${unseenWorking} more working`);
 	return parts.join(" \u00b7 ");
 }
 

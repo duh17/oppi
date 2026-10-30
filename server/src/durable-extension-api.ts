@@ -43,6 +43,9 @@ export {
   type UIState,
 } from "../extensions/durable/durable-ui.js";
 
+/** The Oppi Session a conversation belongs to: `snapshot(DurableSessionDoc, id)`, for a hook or task with no env. */
+export { DurableSessionDoc } from "./durable-session-doc.js";
+
 // ---------------------------------------------------------------------------------------------
 // The host: server internals Oppi's own built-ins need. The server binds it before it loads any
 // package; extension code reads it with `oppiHost()`.

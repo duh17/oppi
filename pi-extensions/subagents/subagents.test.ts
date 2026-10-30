@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
 	applyGet,
 	applyWaitReading,
+	isMissingSession,
+	launcherFromGet,
 	pillRows,
 	refreshLaunched,
 	renderSubagentTerminal,
@@ -216,20 +218,22 @@ describe("subagents", () => {
 			state: states[index] ?? "success",
 		}));
 
-	test("the pill keeps old working and blocked children, then the newest done ones", () => {
-		// 110 children; the oldest is blocked, the second oldest still working.
+	test("the pill keeps old asking and working children, then the newest finished ones, errors among them", () => {
+		// 110 children; the oldest is asking, the second oldest still working, a recent one errored.
 		const all = many(110, { 109: "warning", 108: "running", 50: "running", 1: "error" });
 		const shown = selectPillRows(all);
 		expect(shown.map((row) => row.id)).toEqual([
-			"child-109", // needs attention first, newest first: the error
-			"child-1", // and the oldest, blocked
-			"child-60", // then working
+			"child-1", // asking first, however old
+			"child-60", // then working, newest first
 			"child-2",
-			"child-110", // then the newest done
+			"child-110", // then finished by age: an error is finished, not above working
+			"child-109", // (the error)
 			"child-108",
 			"child-107",
 			"child-106",
 		]);
+		// An old error does not keep a row over newer done children.
+		expect(selectPillRows(many(30, { 29: "error" })).map((row) => row.id)).not.toContain("child-1");
 	});
 
 	test("title counts every child and the subtitle its states, with the live ones past the rows", () => {
@@ -241,6 +245,31 @@ describe("subagents", () => {
 		expect(widgetChrome(busy).subtitle).toBe("11 working \u00b7 +3 more working");
 		expect(selectPillRows(busy)).toHaveLength(8);
 		expect(selectPillRows(busy).every((row) => row.state === "running")).toBe(true);
+	});
+
+	test("the overflow counts only live children, asking ones before working ones", () => {
+		// Errors are finished: twelve of them past the rows add no overflow.
+		const errored = many(30, Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i, "error" as const])));
+		expect(widgetChrome(errored).subtitle).toBe("12 errors");
+		// Ten asking children fill the eight rows; two of them and every working child are behind.
+		const crowded = many(
+			30,
+			Object.fromEntries([
+				...Array.from({ length: 10 }, (_, i) => [i, "warning" as const]),
+				...Array.from({ length: 5 }, (_, i) => [10 + i, "running" as const]),
+			]),
+		);
+		expect(selectPillRows(crowded).every((row) => row.state === "warning")).toBe(true);
+		expect(widgetChrome(crowded).subtitle).toBe(
+			"5 working \u00b7 10 need you \u00b7 +2 more need you \u00b7 +5 more working",
+		);
+		// Some working children fit beside the asking ones, the rest are behind.
+		const mixed = many(30, {
+			0: "warning",
+			1: "warning",
+			...Object.fromEntries(Array.from({ length: 9 }, (_, i) => [2 + i, "running" as const])),
+		});
+		expect(widgetChrome(mixed).subtitle).toBe("9 working \u00b7 2 need you \u00b7 +3 more working");
 	});
 
 	test("a last row opens the whole thread, only when children are hidden", () => {
@@ -269,6 +298,19 @@ describe("subagents", () => {
 		expect(lines).toHaveLength(9);
 		expect(lines[0]).toContain("30 subagents");
 		expect(lines[1]).toContain("child 1");
+	});
+
+	test("a deleted session leaves the set, and the launcher's Oppi id is the thread", () => {
+		const gone = { ok: false, error: { code: "session_not_found", message: "Session not found: child-2" } };
+		expect(isMissingSession(gone)).toBe(true);
+		expect(isMissingSession({ ok: false, error: { code: "unauthorized" } })).toBe(false);
+		expect(isMissingSession({ ok: true, data: { session: { id: "child-2" } } })).toBe(false);
+		const all = many(12);
+		expect(refreshLaunched(all, [gone], ["child-2"]).map((row) => row.id)).not.toContain("child-2");
+		expect(refreshLaunched(all, [gone], ["child-2"])).toHaveLength(11);
+		const get = { ok: true, data: { session: { id: "child-1", launch: { parentSessionId: "oppi-parent" } } } };
+		expect(launcherFromGet(get)).toBe("oppi-parent");
+		expect(launcherFromGet(gone)).toBeUndefined();
 	});
 
 	test("a get payload puts model and context on the expanded row", () => {

@@ -14,6 +14,8 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
 import {
 	applyWaitReading,
+	isMissingSession,
+	launcherFromGet,
 	pillRows,
 	refreshLaunched,
 	selectPillRows,
@@ -123,14 +125,34 @@ function runOppi(
 	});
 }
 
-export async function refreshLaunchedFromCli(launched: Subagent[]): Promise<Subagent[]> {
-	// Only the children the pill draws as rows need their model and context.
-	const gets = await Promise.all(
-		selectPillRows(launched).map((item) => runOppi(["session", "get", item.id, "--json"])),
+/** Hidden children looked at per refresh, so a deleted one leaves the count without a get for every child. */
+const HIDDEN_CHECKS = 3;
+let hiddenCursor = 0;
+
+/**
+ * Snapshot the children the pill draws as rows, and a few of the others in turn (a deleted
+ * session leaves the set). `onLauncher` gets the Oppi session that launched them: the thread.
+ */
+export async function refreshLaunchedFromCli(
+	launched: Subagent[],
+	onLauncher?: (sessionId: string) => void,
+): Promise<Subagent[]> {
+	const rows = selectPillRows(launched);
+	const hidden = launched.filter((item) => !rows.includes(item));
+	const checked = Array.from(
+		{ length: Math.min(HIDDEN_CHECKS, hidden.length) },
+		(_, index) => hidden[(hiddenCursor + index) % hidden.length]!,
 	);
+	hiddenCursor += HIDDEN_CHECKS;
+	const ids = [...rows, ...checked].map((item) => item.id);
+	const results = await Promise.all(ids.map((id) => runOppi(["session", "get", id, "--json"])));
+	const gets = results.map((result) => parseJson(result.stdout));
+	const launcher = gets.map(launcherFromGet).find((id) => id !== undefined);
+	if (launcher) onLauncher?.(launcher);
 	return refreshLaunched(
 		launched,
-		gets.map((result) => parseJson(result.stdout)),
+		gets,
+		ids.filter((_, index) => isMissingSession(gets[index])),
 	);
 }
 
@@ -168,6 +190,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	let settledIds = new Set<string>();
 	let latestUi: ExtensionUIContext | undefined;
 	let parentId: string | undefined;
+	// The Oppi session the children were launched from, read from their `get`s; the pill's thread
+	// row waits for it, since Pi's own session id is not necessarily Oppi's.
+	let threadId: string | undefined;
 	let closed = false;
 	let waitGeneration = 0;
 	let eitherChild: ReturnType<typeof spawn> | undefined;
@@ -204,7 +229,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 			return;
 		}
 		const agents = shown;
-		const rows = pillRows(agents, parentId);
+		const rows = pillRows(agents, threadId);
 		const chrome = widgetChrome(agents);
 		ui.setStatus(WIDGET_KEY, chrome.subtitle);
 		ui.setWidget(WIDGET_KEY, (_tui, theme) => ({
@@ -247,7 +272,9 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		refreshInFlight = true;
 		const generation = refreshGeneration;
 		const requested = seen;
-		void refreshLaunchedFromCli(requested)
+		void refreshLaunchedFromCli(requested, (id) => {
+			threadId = id;
+		})
 			.then((next) => {
 				if (closed || generation !== refreshGeneration) return;
 				if (seen === requested) {
@@ -255,7 +282,10 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				} else {
 					// A wait result owns status; a late get can still fill in metadata.
 					const snapshots = new Map(next.map((row) => [row.id, row]));
-					shown = seen.map((row) => {
+					const asked = new Set(requested.map((row) => row.id));
+					// Rows the refresh dropped (a deleted session) leave; later launches stay.
+					const kept = seen.filter((row) => !asked.has(row.id) || snapshots.has(row.id));
+					shown = kept.map((row) => {
 						const snapshot = snapshots.get(row.id);
 						if (!snapshot) return row;
 						return {

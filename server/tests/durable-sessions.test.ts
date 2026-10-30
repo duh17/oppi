@@ -14,6 +14,7 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import {
   AgentDoc,
   InboxDoc,
@@ -697,6 +698,130 @@ describe("durable-native threads", () => {
     againGate.open();
     await until(async () => (await pill())?.presentation.subtitle === "All done", "all done");
     expect(await rows()).toHaveLength(9);
+  });
+
+  it("restarts its watch invocation without scanning the children's answers again", async () => {
+    const names = Array.from({ length: 6 }, (_, index) => `D${index}`);
+    const againGate = gate();
+    const f = await fixture(
+      model(async ({ last, text, signal }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate many"))
+          return fauxAssistantMessage(
+            names.map((name) =>
+              fauxToolCall("subagent", { action: "spawn", name, task: `CHILD_TASK ${name}` }),
+            ),
+            { stopReason: "toolUse" },
+          );
+        if (text.includes("Once more")) await againGate.wait(signal);
+        return fauxAssistantMessage("CHILD_OK");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate many");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const pill = async () =>
+      (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+        "widget:subagents"
+      ]?.nativeSurface as
+        | {
+            presentation: { title: string; subtitle?: string };
+            blocks: Array<{ rows: Array<{ id: string; state: string }> }>;
+          }
+        | undefined;
+    const byName = (name: string) =>
+      f.storage.listSessions().find((session) => session.name === name)!;
+    await until(async () => (await pill())?.presentation.title === "6 subagents", "six children");
+    await until(async () => (await pill())?.presentation.subtitle === "All done", "all done");
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+    const watcher = async () => {
+      const id = (await harness.snapshot(Subagents, parentConversation, context))?.widget;
+      return (await harness.inspect(context)).tasks.find(({ record }) => record.id === id)?.record;
+    };
+    const first = (await watcher())?.id;
+
+    const again = byName("D0");
+    const answerScans = vi.spyOn(SqliteStorage.prototype, "scanEntries");
+    const others = new Set(names.slice(1).map((name) => conversationOf(f.storage, byName(name))));
+    // The invocation has run its length: the next pass (the child's run starting) ends it.
+    const now = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => now() + WATCH_INVOCATION_MS);
+    await f.manager.startSession(again.id, f.workspace);
+    await f.manager.sendPrompt(again.id, "Once more");
+    const row = async () => (await pill())?.blocks[0]?.rows.find((r) => r.id === again.id);
+    await until(async () => (await row())?.state === "running", "the child working");
+    againGate.open();
+    await until(async () => (await row())?.state === "success", "the child done again");
+    await until(async () => (await watcher())?.id === first, "the same watcher");
+
+    // The new invocation read none of the other children's answers.
+    const scanned = answerScans.mock.calls.filter(
+      ([query, limit]) => limit === 50 && others.has(query.conversationId as ConversationId),
+    );
+    expect(scanned).toHaveLength(0);
+    expect((await pill())?.presentation).toMatchObject({
+      title: "6 subagents",
+      subtitle: "All done",
+    });
+    // What the watcher derived is in its checkpoint, to start the next invocation from.
+    const checkpoint = (await watcher())?.state as {
+      checkpoint?: { children?: Record<string, { busy: boolean; answer?: { provider: string } }> };
+    };
+    expect(Object.keys(checkpoint.checkpoint?.children ?? {})).toHaveLength(6);
+    expect(
+      Object.values(checkpoint.checkpoint?.children ?? {}).map((c) => c.answer?.provider),
+    ).toEqual(Array(6).fill("faux"));
+  });
+
+  it("does not look again at every pass for the documents of an idle child that has none", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate")) return spawnCall({ task: "CHILD_TASK real", name: "Real" });
+        return fauxAssistantMessage("CHILD_OK");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate in the background");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await until(
+      async () =>
+        (await harness.snapshot(Subagents, parentConversation, context))?.children.Real
+          ?.sessionId !== undefined,
+      "the child",
+    );
+    // A child with a Session but no run yet and nothing starting it: it has no `pi.live`.
+    const ghost = await harness.commit(async (tx) => {
+      const created = await tx.createConversation({ ownership: { kind: "ownerless" } });
+      (await tx.doc(Subagents, parentConversation)).children.Ghost = {
+        conversationId: created.id,
+        sessionId: "ghost-session",
+        background: true,
+      };
+      return created.id;
+    }, context);
+    const lookups = vi.spyOn(SqliteStorage.prototype, "findDocument");
+    const dialogLookups = () =>
+      lookups.mock.calls.filter(([address]) => {
+        const where = address as { kind?: string; scope?: { conversationId?: number } };
+        return where.kind === "oppi.extension-ui" && where.scope?.conversationId === ghost;
+      }).length;
+    const pill = async () =>
+      (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+        "widget:subagents"
+      ]?.nativeSurface as { presentation: { title: string } } | undefined;
+    await until(async () => (await pill())?.presentation.title === "2 subagents", "both children");
+    // Passes the pill makes for other reasons.
+    for (let index = 0; index < 6; index += 1) {
+      await harness.commit(async (tx) => {
+        (await tx.doc(Subagents, parentConversation)).calls[`noise-${index}`] = "Real";
+      }, context);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    expect(dialogLookups()).toBeLessThanOrEqual(2);
   });
 
   it("lets its tickers release an uninstalled extension once their invocations ran their length, and keeps following the child", async () => {

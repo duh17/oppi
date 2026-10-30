@@ -13,9 +13,9 @@ import {
   type Tx,
 } from "@earendil-works/pi-durable";
 import {
+  DurableSessionDoc,
   DurableUI,
   SESSION_REPORTER_TASK,
-  oppiHost,
   wakingTasks,
   type UINotification,
   type UIState,
@@ -40,7 +40,8 @@ import {
 // `oppi://thread/<this session>`, the whole thread, when children are not shown as rows.
 //
 // The title and subtitle count every child, and the rows are the ones that matter (`selectPillRows`):
-// those that need attention, the working ones, then the newest done ones, up to `MAX_PILL_ROWS`.
+// those that need you (a dialog), the working ones, then the newest finished ones (done, or
+// errored), up to `MAX_PILL_ROWS`.
 // So every child's state is followed, not only the shown ones: a child that was done and starts
 // again, or opens a dialog, takes a row at once. Each child's `pi.live` (busy, and its current
 // activity) and `oppi.extension-ui` (an open dialog: needs attention) are watched in process; a
@@ -64,13 +65,27 @@ import {
 // keeps the registry snapshot an invocation was reserved with until the invocation ends, and that
 // snapshot holds every extension installed then, including those of sessions stopped since. The
 // last pass commits a sleep that is already due, so the scheduler reserves the task again with the
-// current registry. The new phase watches from scratch, as at first sight:
-// it reads each child's newest answer again, so a busy child's row can take that answer's usage.
+// current registry. The checkpoint carries what each child's rows were derived from (`Carried`:
+// whether it had run, its newest answer, its configured model, its pending wakers, and whether it
+// was busy), so the new phase scans no answers and reads no job lists for a child whose `pi.live`
+// still agrees on busy or idle with the checkpoint: it only watches the child's two documents. A
+// child whose busy state changed since, or that had not run yet, is read as at first sight. The
+// checkpoint is written when what it carries changes (a run ended and its answer was read), and
+// at every invocation end; it holds about a hundred bytes per child, so a pill of 500 children
+// writes some 50 kB when a run ends.
+//
+// A child without `pi.live` or `oppi.extension-ui` (not started yet, or never asked anything) is
+// looked for again with a backoff, from `DOCS_RETRY_MIN_MS` doubling to `DOCS_RETRY_MAX_MS`, not at
+// every pass. A child that is starting, or busy, is looked for at every pass: its first run and its
+// dialogs are what the watch is for.
 
 /** While a child waits for its first input, how often to look for its run. */
 const STARTING_RETRY_MS = 1_000;
 /** Entries read back for a child's newest assistant message. */
 const ANSWER_SCAN = 50;
+/** How soon a child without a watched document is looked for again, doubling up to the maximum. */
+const DOCS_RETRY_MIN_MS = 1_000;
+const DOCS_RETRY_MAX_MS = 60_000;
 /** Least time between writes that change only rows' current activity. */
 export const ACTIVITY_INTERVAL_MS = 2_000;
 /** Longest activity line, in characters. */
@@ -94,7 +109,34 @@ type Answer = {
   failed: boolean;
 };
 
+/**
+ * What a child's row was derived from, carried in the watcher's checkpoint across invocations.
+ * Only a child that had `pi.live` is carried: its first run's answer was read.
+ */
+type Carried = {
+  busy: boolean;
+  answer?: Answer;
+  /** Configured model, for a child that has no answer. */
+  model?: string;
+  /** Its live pending wakers when last read. */
+  wakers: TaskId[];
+};
+
+type WatchCheckpoint = { phase: "watch"; children?: Record<string, Carried> };
+
+/** The carried state without `busy`, which changes with every run and decides nothing by itself. */
+function carryKey(children: Readonly<Record<string, Carried>>): string {
+  return JSON.stringify(
+    Object.entries(children).map(([id, { busy: _busy, ...rest }]) => [id, rest]),
+  );
+}
+
 type Watched = {
+  /** Carried by the checkpoint until the child's `pi.live` is first seen and agrees on busy. */
+  carried?: Carried;
+  /** The next time a missing document is looked for, and the delay after it, while idle. */
+  retryAt: number;
+  retryDelay: number;
   live?: DocumentWatch<LiveState>;
   ui?: DocumentWatch<UIState>;
   busy: boolean;
@@ -257,7 +299,7 @@ function notifications(
   return { [`status:${WIDGET_KEY}`]: status, [`widget:${WIDGET_KEY}`]: widget };
 }
 
-export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
+export const SubagentWidget = defineTask<null, WatchCheckpoint, null>({
   name: SUBAGENT_WIDGET_TASK,
   version: 1,
   initial: () => ({ phase: "watch" }),
@@ -271,7 +313,11 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
       const list = await runtime.watchDoc(Subagents, parent, context);
       if (!list) throw new Error("The subagent pill needs oppi.subagents");
       // Where the pill's last row opens the whole thread; none for a conversation without a Session.
-      const threadSessionId = (await oppiHost().sessionName(runtime, context))?.sessionId;
+      const threadSessionId = (await runtime.snapshot(DurableSessionDoc, parent, context))
+        ?.sessionId;
+      const carriedAtStart = task.state.checkpoint.children ?? {};
+      // What the checkpoint holds now, to write another only when it changes.
+      let writtenKey = carryKey(carriedAtStart);
       const watched = new Map<ConversationId, Watched>();
       let dirty = true;
       let wake: (() => void) | undefined;
@@ -298,17 +344,26 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
       };
       list.start(async () => mark());
 
-      /** Watch what is missing of a shown child. `pi.live` exists only once its first run starts. */
+      /** Watch what is missing of a child. `pi.live` exists only once its first run starts. */
       const acquire = async (id: ConversationId, entry: Watched): Promise<void> => {
+        if (entry.live && entry.ui) return;
+        // A child that is idle and has no such document is looked for on a backoff; one that is
+        // starting or busy, at every pass.
+        if (!entry.starting && !entry.busy && Date.now() < entry.retryAt) return;
         if (!entry.live) {
           const live = await runtime.watchDoc(LiveDoc, id, context);
           if (live) {
             entry.live = live;
             entry.busy = live.value?.run !== undefined;
             entry.activity = currentActivity(live.value);
-            // A first run that started and ended before this watch has an answer to read.
-            entry.stale = true;
-            entry.wakersStale = true;
+            // The checkpoint's answer and wakers hold while busy or idle is what it saw; a first
+            // run that started and ended before this watch has an answer to read.
+            if (entry.carried?.busy !== entry.busy) {
+              entry.stale = true;
+              entry.wakersStale = true;
+              entry.wakers = new Set();
+            }
+            entry.carried = undefined;
             live.start(async (value) => {
               const busy = value?.run !== undefined;
               const activity = currentActivity(value);
@@ -323,6 +378,8 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
                 entry.stale = true;
                 entry.wakersStale = true;
               }
+              // Its documents (a dialog's) may have appeared with the run.
+              entry.retryAt = 0;
               entry.busy = busy;
               entry.activity = activity;
               mark();
@@ -340,9 +397,20 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
               // `pi.live` again.
               if (next === entry.asking && entry.live) return;
               entry.asking = next;
+              entry.retryAt = 0;
               mark();
             });
           }
+        }
+        if (entry.live && entry.ui) {
+          entry.retryDelay = 0;
+          entry.retryAt = 0;
+        } else {
+          entry.retryDelay = Math.min(
+            DOCS_RETRY_MAX_MS,
+            Math.max(DOCS_RETRY_MIN_MS, entry.retryDelay * 2),
+          );
+          entry.retryAt = Date.now() + entry.retryDelay;
         }
       };
       const release = async (entry: Watched): Promise<void> => {
@@ -392,20 +460,43 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
             const id = child.conversationId;
             let entry = watched.get(id);
             if (!entry) {
-              const configured = (await runtime.snapshot(AgentDoc, id, context))?.model;
+              // A child the checkpoint carries is not read again: not its answer, its model, or its
+              // wakers (`acquire` drops them if its `pi.live` disagrees on busy).
+              const carried = carriedAtStart[String(id)];
+              const configured = carried
+                ? undefined
+                : (await runtime.snapshot(AgentDoc, id, context))?.model;
               entry = {
                 busy: false,
                 asking: false,
                 starting: false,
-                stale: true,
-                ...(configured ? { model: `${configured.provider}/${configured.modelId}` } : {}),
-                wakersStale: true,
-                wakers: new Set(),
+                retryAt: 0,
+                retryDelay: 0,
+                ...(carried
+                  ? {
+                      carried,
+                      stale: false,
+                      read: true,
+                      ...(carried.answer ? { answer: carried.answer } : {}),
+                      ...(carried.model ? { model: carried.model } : {}),
+                      wakersStale: false,
+                      wakers: new Set(carried.wakers),
+                    }
+                  : {
+                      stale: true,
+                      ...(configured
+                        ? { model: `${configured.provider}/${configured.modelId}` }
+                        : {}),
+                      wakersStale: true,
+                      wakers: new Set(),
+                    }),
                 waiting: new Set(),
                 waiters: withCancel(context),
               };
               watched.set(id, entry);
             }
+            // A row about to be written may carry this child's activity: its changes count from now.
+            entry.visible = true;
             await acquire(id, entry);
             // A busy child's wakers do not decide its row; its run's end reads them.
             if (entry.wakersStale && !entry.busy) {
@@ -417,6 +508,7 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
           }
 
           let shownIds = new Set<string>();
+          let carry: Record<string, Carried> = {};
           await runtime.commit(async (tx) => {
             const rows: Subagent[] = [];
             for (const { name, child, entry } of rowsOf) {
@@ -462,6 +554,15 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
               });
             }
             shownIds = new Set(selectPillRows(rows).map((row) => row.id));
+            carry = {};
+            for (const { child, entry } of rowsOf)
+              if (entry.live && entry.read)
+                carry[String(child.conversationId)] = {
+                  busy: entry.busy,
+                  ...(entry.answer ? { answer: entry.answer } : {}),
+                  ...(entry.model ? { model: entry.model } : {}),
+                  wakers: [...entry.wakers],
+                };
             const ui = await tx.doc(DurableUI, parent);
             for (const [slot, next] of Object.entries(notifications(rows, threadSessionId))) {
               const current = ui.notifications[slot];
@@ -471,14 +572,21 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
             }
             // A sleep that is already due, not a running checkpoint: only a new invocation takes
             // a new snapshot (one that goes on to the next phase keeps the one it was reserved with).
-            return ending
-              ? {
-                  status: "sleeping" as const,
-                  until: runtime.now(),
-                  checkpoint: task.state.checkpoint,
-                }
-              : undefined;
+            if (ending)
+              return {
+                status: "sleeping" as const,
+                until: runtime.now(),
+                checkpoint: { phase: "watch" as const, children: carry },
+              };
+            // Otherwise the checkpoint is rewritten only when what it carries changed.
+            return carryKey(carry) === writtenKey
+              ? undefined
+              : {
+                  status: "running" as const,
+                  checkpoint: { phase: "watch" as const, children: carry },
+                };
           }, context);
+          writtenKey = carryKey(carry);
           for (const { child, entry } of rowsOf) entry.visible = shownIds.has(child.sessionId);
           if (ending) return;
           // After the commit that read them live: one that ended since resolves at once.
@@ -508,7 +616,17 @@ export const SubagentWidget = defineTask<null, { phase: "watch" }, null>({
               const retry = rowsOf.some(({ entry }) => entry.starting)
                 ? STARTING_RETRY_MS
                 : Number.POSITIVE_INFINITY;
-              timer = setTimeout(finish, Math.max(0, Math.min(retry, invocationEnds - Date.now())));
+              // The next backoff of an idle child still missing a document.
+              const docs = Math.min(
+                Number.POSITIVE_INFINITY,
+                ...rowsOf
+                  .filter(({ entry }) => !(entry.live && entry.ui) && !entry.starting)
+                  .map(({ entry }) => entry.retryAt - Date.now()),
+              );
+              timer = setTimeout(
+                finish,
+                Math.max(0, Math.min(retry, docs, invocationEnds - Date.now())),
+              );
             }
           });
         }
