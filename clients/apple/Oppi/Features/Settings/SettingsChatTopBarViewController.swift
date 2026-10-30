@@ -33,7 +33,7 @@ final class SettingsChatTopBarViewController: ListScreenController<SettingsChatT
         dataSource?.reorderingHandlers.didReorder = { [weak self] transaction in
             guard let self else { return }
             // Every action has a row here, so the dragged order is the order.
-            let order = transaction.finalSnapshot.itemIdentifiers(inSection: .buttons)
+            let order = transaction.finalSnapshot.itemIdentifiers(inSection: .buttons).compactMap(\.pageItem)
             AppPreferences.ChatTopBar.setLayout(ChatTopBarLayout(order: order, shown: layout.shown), in: defaults)
             // The bar's order now matches; redraw so the snapshot and the
             // preference cannot drift after a drag.

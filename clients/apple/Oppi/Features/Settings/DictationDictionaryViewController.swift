@@ -344,7 +344,7 @@ final class DictationDictionaryViewController: ListScreenController<DictationDic
         setNeedsUpdateProperties()
         updatePropertiesIfNeeded()
         view.layoutIfNeeded()
-        guard let indexPath = dataSource?.indexPath(for: .field),
+        guard let indexPath = dataSource?.indexPath(for: .item(.field)),
               let cell = collectionView.cellForItem(at: indexPath) as? SSHTerminalTextFieldCell else { return }
         cell.textField.becomeFirstResponder()
     }

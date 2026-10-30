@@ -118,10 +118,9 @@ struct ServerAboutPageTests {
         let window = try present(page)
         defer { window.isHidden = true; window.rootViewController = nil }
 
-        let snapshot = try #require(page.dataSource?.snapshot())
-        #expect(snapshot.itemIdentifiers(inSection: .status) == [.connection, .uptime, .piSDK, .piTUI, .oppiServer])
-        #expect(snapshot.itemIdentifiers(inSection: .update) == [.updateAvailable, .updateButton])
-        #expect(snapshot.itemIdentifiers(inSection: .voice) == [.voice("dictation"), .voice("readAloud"), .voice("liveVoice")])
+        #expect(page.items(in: .status) == [.connection, .uptime, .piSDK, .piTUI, .oppiServer])
+        #expect(page.items(in: .update) == [.updateAvailable, .updateButton])
+        #expect(page.items(in: .voice) == [.voice("dictation"), .voice("readAloud"), .voice("liveVoice")])
         #expect(page.title == "About This Server")
         #expect(page.collectionView.accessibilityIdentifier == "server.about.list")
         // The "Server" row is "Oppi Server".

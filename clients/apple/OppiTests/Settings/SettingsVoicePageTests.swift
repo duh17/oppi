@@ -44,7 +44,7 @@ struct SettingsVoicePageTests {
 
     private func button(_ item: SettingsVoiceViewController.Item, in page: SettingsVoiceViewController) -> UIButton? {
         page.view.layoutIfNeeded()
-        return page.dataSource?.indexPath(for: item)
+        return page.indexPath(for: item)
             .flatMap { page.collectionView.cellForItem(at: $0) }?
             .accessibilityElements?.first as? UIButton
     }

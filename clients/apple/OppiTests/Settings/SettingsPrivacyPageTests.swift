@@ -136,7 +136,7 @@ struct SettingsPrivacyPageTests {
 
     private static func appLockButton(in page: SettingsPrivacyViewController) -> UIButton? {
         page.view.layoutIfNeeded()
-        return page.dataSource?.indexPath(for: .appLock)
+        return page.indexPath(for: .appLock)
             .flatMap { page.collectionView.cellForItem(at: $0) }?
             .accessibilityElements?.first as? UIButton
     }

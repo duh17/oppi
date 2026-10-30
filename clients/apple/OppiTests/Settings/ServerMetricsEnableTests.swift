@@ -267,7 +267,7 @@ struct ServerMetricsEnableTests {
         let metrics = SettingsCatalog.serverMetricsEnabled
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             settings.view.layoutIfNeeded()
-            return settings.dataSource?.snapshot().itemIdentifiers.contains(.settingFailure(metrics.id)) == true
+            return settings.shownItems.contains(.settingFailure(metrics.id))
                 && Self.metricsSwitch(in: settings.view)?.isOn == false
         })
         #expect(h.root.coordinator.settings(for: serverId).failureReason(id: metrics.id) == "The server said no.")

@@ -130,7 +130,7 @@ struct ScheduleEditorRowsTests {
             for _ in 0..<150 {
                 page.view.layoutIfNeeded()
                 let cells = rows.compactMap { row in
-                    page.dataSource?.indexPath(for: row).flatMap { page.collectionView.cellForItem(at: $0) }.map { (row, $0.bounds.height) }
+                    page.indexPath(for: row).flatMap { page.collectionView.cellForItem(at: $0) }.map { (row, $0.bounds.height) }
                 }
                 if cells.count == rows.count { return Dictionary(uniqueKeysWithValues: cells) }
                 try? await Task.sleep(for: .milliseconds(20))
@@ -153,7 +153,7 @@ struct ScheduleEditorRowsTests {
 
         page.view.layoutIfNeeded()
         for row in rows {
-            guard let indexPath = page.dataSource?.indexPath(for: row), let cell = page.collectionView.cellForItem(at: indexPath) else {
+            guard let indexPath = page.indexPath(for: row), let cell = page.collectionView.cellForItem(at: indexPath) else {
                 Issue.record("\(row) has no cell")
                 continue
             }

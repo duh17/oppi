@@ -145,7 +145,7 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
         let revoke = UIContextualAction(style: .destructive, title: String(localized: "Revoke")) { [weak self] _, _, done in
             guard let self else { return done(false) }
             // The sheet asks; nothing is revoked until it is confirmed.
-            confirmRevoke(row, from: dataSource?.indexPath(for: item).flatMap { collectionView.cellForItem(at: $0) })
+            confirmRevoke(row, from: indexPath(for: item).flatMap { collectionView.cellForItem(at: $0) })
             done(false)
         }
         revoke.accessibilityLabel = String(localized: "Revoke \(row.title)")

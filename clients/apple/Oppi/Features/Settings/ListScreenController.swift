@@ -13,20 +13,59 @@ struct ListSection<Section: Hashable & Sendable, Item: Hashable & Sendable> {
     var footer: String?
     var scope: SettingsScope?
     var items: [Item]
+    /// The list's own state where the section's rows would be: loading, empty,
+    /// nothing matched, or failed with one Retry. The base draws it as the
+    /// section's first row, from `LoadState` (`SettingsStateRowCell`'s shape),
+    /// so a section whose only row is the state shows what the whole screen
+    /// used to: the same words, and `identifier` on its text or its Retry.
+    var state: ListStateRow?
 
-    init(_ id: Section, header: String? = nil, footer: String? = nil, scope: SettingsScope? = nil, items: [Item]) {
+    init(
+        _ id: Section,
+        header: String? = nil,
+        footer: String? = nil,
+        scope: SettingsScope? = nil,
+        items: [Item],
+        state: ListStateRow? = nil
+    ) {
         self.id = id
         self.header = header
         self.footer = footer
         self.scope = scope
         self.items = items
+        self.state = state
+    }
+}
+
+/// A section's state row: the list's own state (`LoadState`, the type every
+/// screen's whole-screen state is) and the identifier that finds it.
+struct ListStateRow {
+    var state: LoadState
+    /// `app.staticTexts[identifier]`, or `app.buttons[identifier]` when the
+    /// state has a Retry. One per page: two sections cannot share a row.
+    var identifier: String
+}
+
+/// A row of the list: one of the page's items, or the base's own state row for
+/// a section that declared one. The state is not an `Item` because a page has
+/// no case for it and no cell to fill: the base draws it from `LoadState`.
+/// A page that reorders or finds a row (`dataSource`) reads its own out with
+/// `pageItem`.
+enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable {
+    case item(Item)
+    case state(Section)
+
+    /// The page's row, when this slot is one; nil for a state row.
+    var pageItem: Item? {
+        if case .item(let item) = self { return item }
+        return nil
     }
 }
 
 /// The base of a list screen: a themed inset-grouped list with section headers
-/// and footers, rows redrawn only when their inputs change, and a refresh each
-/// time the page comes back on screen. The list's own background is clear, so
-/// the theme's `bg` shows behind the cards.
+/// and footers, rows redrawn only when their inputs change, pull to refresh,
+/// and a refresh each time the page comes back on screen. The list's own
+/// background is clear, so the theme's `bg` shows behind the cards.
 ///
 /// A page subclasses it, names its `Section` and `Item` types, says its scope
 /// (where the page's settings are kept, if it has settings), and overrides:
@@ -35,6 +74,17 @@ struct ListSection<Section: Hashable & Sendable, Item: Hashable & Sendable> {
 ///   page when it changes. Preferences that are not observable call
 ///   `setNeedsUpdateProperties()` after writing; `viewWillAppear` does the
 ///   same when the page comes back from a pushed page.
+/// - `showsHeader(for:)`: which sections show a header. A page whose sections
+///   carry headings only on some (a catalog's groups) narrows the `headers:`
+///   it was built with.
+/// - `refresh()`: the page's load. The base runs it when the page appears and
+///   on pull to refresh, ends the refresh control when it returns, and cancels
+///   it when the page leaves; `setNeedsRefresh()` runs it again on demand
+///   (another server became active), and `isShowing` says whether the page can
+///   be seen.
+/// - `ListSection.state`: the list's own loading, empty, or failed state
+///   (`LoadState`) where the section's rows would be; the base draws it, with
+///   its identifier, so a page owns no state row, cell, or identifier map.
 /// - `inputs(of:)`: the values a row is drawn from. Only rows whose inputs
 ///   changed are reconfigured, so a pass triggered by an open pop-up menu or by
 ///   another row leaves that menu alone. The theme is added for every row.
@@ -58,14 +108,37 @@ struct ListSection<Section: Hashable & Sendable, Item: Hashable & Sendable> {
 @MainActor
 class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendable>: UIViewController, UICollectionViewDelegate {
     private(set) lazy var collectionView: UICollectionView = {
-        var config = SettingsListStyle.layoutConfiguration(headers: showsHeaders, footers: showsFooters)
-        config.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
-            guard let self, let item = dataSource?.itemIdentifier(for: indexPath) else { return nil }
-            return trailingSwipeActions(for: item)
+        // One section at a time, because the page says which of them show a
+        // header (`showsHeader(for:)`) and which of a catalog's groups have a
+        // heading. Everything else is the kit's list: a clear background so the
+        // theme's `bg` shows behind the cards, and the page's swipe actions.
+        let layout = UICollectionViewCompositionalLayout { [weak self] index, environment in
+            var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+            config.backgroundColor = .clear
+            let section = self?.dataSource?.sectionIdentifier(for: index)
+            let headers = section.map { self?.showsHeader(for: $0) ?? false } ?? self?.showsHeaders ?? false
+            config.headerMode = headers ? .supplementary : .none
+            config.footerMode = self?.showsFooters == true ? .supplementary : .none
+            config.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
+                guard let item = self?.pageItem(at: indexPath) else { return nil }
+                return self?.trailingSwipeActions(for: item)
+            }
+            return NSCollectionLayoutSection.list(using: config, layoutEnvironment: environment)
         }
-        return UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
+        return UICollectionView(frame: .zero, collectionViewLayout: layout)
     }()
-    private(set) var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
+    private(set) var dataSource: UICollectionViewDiffableDataSource<Section, ListSlot<Section, Item>>?
+    /// Whether the page is on screen: set when it appears and leaves. A page
+    /// that loads its content when its subject changes asks this before
+    /// starting a load, so a covered list stays still. (Named `isShowing`
+    /// because most pages keep a private `isOnScreen` of their own.)
+    private(set) var isShowing = false
+    /// The load `refresh()` is running: the base's, cancelled when the page
+    /// leaves and before another starts.
+    private var refreshTask: Task<Void, Never>?
+    /// The list's pull to refresh. Only the base touches it: it starts the
+    /// page's `refresh()` and ends the control when that returns.
+    private lazy var pullToRefreshControl = UIRefreshControl()
     /// Where the page's settings are kept; `nil` for a page that has none. A
     /// section says its scope only when it differs from this.
     let pageScope: SettingsScope?
@@ -75,7 +148,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     private let showsFooters: Bool
     private let listEndsAtKeyboard: Bool
     private var appliedThemeID: ThemeID?
-    private var changedRows = ChangedRows<Item>()
+    private var changedRows = ChangedRows<ListSlot<Section, Item>>()
     private var models: [Section: ListSection<Section, Item>] = [:]
 
     /// - Parameters:
@@ -123,6 +196,24 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// The sections and rows the page shows now.
     func sections() -> [ListSection<Section, Item>] { [] }
 
+    /// Whether `section` shows its header. The default is the `headers:` the
+    /// page was built with; a page whose sections carry a heading only on some
+    /// (a catalog's groups) answers for each.
+    func showsHeader(for section: Section) -> Bool { showsHeaders }
+
+    /// Loads the page's content: the base runs it each time the page appears
+    /// and on pull to refresh, cancelling a run already going and ending the
+    /// refresh control when it returns. A page with nothing to load leaves it
+    /// empty.
+    func refresh() async {}
+
+    /// Runs `refresh()` now, cancelling one already running: a page calls it
+    /// when what it loads changed (another server became active).
+    func setNeedsRefresh() {
+        refreshTask?.cancel()
+        refreshTask = Task { [weak self] in await self?.refresh() }
+    }
+
     /// The values `item` is drawn from; the row redraws when they change.
     func inputs(of item: Item) -> AnyHashable { AnyHashable(0) }
 
@@ -142,6 +233,23 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
 
     /// Whether tapping `item` does something.
     func isSelectable(_ item: Item) -> Bool { false }
+
+    /// The row of the page's `item`, when the list shows it: for a page that
+    /// anchors something to a row (a confirmation) or focuses it.
+    func indexPath(for item: Item) -> IndexPath? {
+        dataSource?.indexPath(for: .item(item))
+    }
+
+    /// The page's items the list shows now, in order. A section's state row is
+    /// the base's, not one of them.
+    var shownItems: [Item] {
+        dataSource?.snapshot().itemIdentifiers.compactMap(\.pageItem) ?? []
+    }
+
+    /// The page's items in `section`, in the order the list shows them.
+    func items(in section: Section) -> [Item] {
+        dataSource?.snapshot().itemIdentifiers(inSection: section).compactMap(\.pageItem) ?? []
+    }
 
     /// Runs when a selectable row is tapped or activated.
     func select(_ item: Item) {}
@@ -192,6 +300,15 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         super.viewDidLoad()
         collectionView.delegate = self
         SettingsListStyle.pin(collectionView, in: view, endsAtKeyboard: listEndsAtKeyboard)
+        collectionView.refreshControl = pullToRefreshControl
+        pullToRefreshControl.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            refreshTask?.cancel()
+            refreshTask = Task { [weak self] in
+                await self?.refresh()
+                self?.pullToRefreshControl.endRefreshing()
+            }
+        }, for: .valueChanged)
         installDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         setNeedsUpdateProperties()
@@ -202,6 +319,21 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         // A pushed page writes straight to preferences, so what this page
         // shows is read again on the way back.
         setNeedsUpdateProperties()
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        // A page that loads its content loads it again each time it shows, as
+        // the SwiftUI `.task` it replaces did.
+        isShowing = true
+        setNeedsRefresh()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        isShowing = false
+        refreshTask?.cancel()
+        refreshTask = nil
     }
 
     @objc private func themeDidChange() { setNeedsUpdateProperties() }
@@ -221,16 +353,18 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     private func applySnapshot(_ sections: [ListSection<Section, Item>], themeID: ThemeID) {
         guard let dataSource else { return }
         models = Dictionary(uniqueKeysWithValues: sections.map { ($0.id, $0) })
-        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+        var snapshot = NSDiffableDataSourceSnapshot<Section, ListSlot<Section, Item>>()
         for section in sections {
             snapshot.appendSections([section.id])
-            snapshot.appendItems(section.items, toSection: section.id)
+            var slots: [ListSlot<Section, Item>] = section.state.map { _ in [.state(section.id)] } ?? []
+            slots += section.items.map { .item($0) }
+            snapshot.appendItems(slots, toSection: section.id)
         }
         let shown = Set(dataSource.snapshot().itemIdentifiers)
         // The theme is in the key: a light/dark or theme change repaints every
         // row, which otherwise keeps the colors it was configured with.
-        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { item in
-            AnyHashable([AnyHashable(themeID), inputs(of: item)])
+        let changed = changedRows.changed(in: snapshot.itemIdentifiers) { slot in
+            AnyHashable([AnyHashable(themeID), inputs(of: slot)])
         }
         snapshot.reconfigureItems(changed.filter(shown.contains))
         dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
@@ -240,6 +374,26 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         SetupListSupplementaries.refresh(collectionView) { [weak self] view, kind, indexPath in
             self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
+    }
+
+    /// The values a row is drawn from. A state row's are its own words: the
+    /// base draws it, so the page's `inputs(of:)` never sees it.
+    private func inputs(of slot: ListSlot<Section, Item>) -> AnyHashable {
+        switch slot {
+        case .item(let item):
+            return inputs(of: item)
+        case .state(let section):
+            guard let row = models[section]?.state else { return AnyHashable(0) }
+            return AnyHashable([
+                AnyHashable(row.identifier), AnyHashable(row.state.rowText), AnyHashable(row.state.rowRetry != nil),
+            ])
+        }
+    }
+
+    /// The page's item at `indexPath`, for the swipe actions and the rows that
+    /// act.
+    private func pageItem(at indexPath: IndexPath) -> Item? {
+        dataSource?.itemIdentifier(for: indexPath)?.pageItem
     }
 
     /// The failure line under a declared setting that failed: the reason and
@@ -261,8 +415,15 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         if isSelectable(item) { cell.accessibilityTraits.insert(.button) }
     }
 
+    /// The section's state row: `LoadState`'s words, and its Retry when it has
+    /// one, under the identifier the page gave it.
+    private lazy var stateCell = UICollectionView.CellRegistration<SettingsStateRowCell, ListSlot<Section, Item>> { [weak self] cell, _, slot in
+        guard let self, case .state(let section) = slot, let row = models[section]?.state else { return }
+        cell.configure(SettingsStateRowCell.State(row.state), identifier: row.identifier)
+    }
+
     private func installDataSource() {
-        _ = (plainCell, settingFailureCell)
+        _ = (plainCell, settingFailureCell, stateCell)
         prepareRegistrations()
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, kind, indexPath in
             self?.configureSupplementary(view, kind: kind, at: indexPath)
@@ -270,8 +431,14 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] view, kind, indexPath in
             self?.configureSupplementary(view, kind: kind, at: indexPath)
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { [weak self] _, indexPath, item in
-            self?.dequeue(item, at: indexPath)
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { [weak self] collectionView, indexPath, slot in
+            guard let self else { return nil }
+            switch slot {
+            case .item(let item):
+                return dequeue(item, at: indexPath)
+            case .state:
+                return collectionView.dequeueConfiguredReusableCell(using: stateCell, for: indexPath, item: slot)
+            }
         })
         dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
             kind == UICollectionView.elementKindSectionHeader
@@ -302,12 +469,12 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     // MARK: - UICollectionViewDelegate
 
     func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
-        dataSource?.itemIdentifier(for: indexPath).map(isSelectable) ?? false
+        pageItem(at: indexPath).map(isSelectable) ?? false
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
-        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
+        guard let item = pageItem(at: indexPath) else { return }
         select(item)
     }
 
@@ -318,7 +485,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
         guard let indexPath = indexPaths.first,
-              let item = dataSource?.itemIdentifier(for: indexPath),
+              let item = pageItem(at: indexPath),
               let text = copyText(of: item), !text.isEmpty else { return nil }
         return UIContextMenuConfiguration(actionProvider: { _ in
             UIMenu(children: [UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { _ in

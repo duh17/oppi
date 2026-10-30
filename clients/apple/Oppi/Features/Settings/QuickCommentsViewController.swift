@@ -34,7 +34,8 @@ final class QuickCommentsViewController: ListScreenController<QuickCommentsViewC
         super.viewDidLoad()
         navigationItem.rightBarButtonItem = editButtonItem
         editButtonItem.accessibilityIdentifier = "settings.quickComments.edit"
-        dataSource?.reorderingHandlers.canReorderItem = { item in
+        dataSource?.reorderingHandlers.canReorderItem = { slot in
+            guard let item = slot.pageItem else { return false }
             if case .template = item { return true }
             return false
         }
@@ -172,13 +173,15 @@ final class QuickCommentsViewController: ListScreenController<QuickCommentsViewC
 
     /// The one move a drag made, as `QuickCommentTemplateStore.move` takes it:
     /// the source index and the destination before the source is removed.
-    static func move(of difference: CollectionDifference<Item>) -> (from: Int, to: Int)? {
+    static func move(of difference: CollectionDifference<ListSlot<Section, Item>>) -> (from: Int, to: Int)? {
         var removal: (offset: Int, item: Item)?
         var insertion: (offset: Int, item: Item)?
         for change in difference {
             switch change {
-            case .remove(let offset, let element, _): removal = (offset, element)
-            case .insert(let offset, let element, _): insertion = (offset, element)
+            case .remove(let offset, let slot, _):
+                removal = slot.pageItem.map { (offset, $0) }
+            case .insert(let offset, let slot, _):
+                insertion = slot.pageItem.map { (offset, $0) }
             }
         }
         guard let removal, let insertion, removal.item == insertion.item else { return nil }

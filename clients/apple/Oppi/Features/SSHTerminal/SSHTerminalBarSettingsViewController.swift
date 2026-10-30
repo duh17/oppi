@@ -36,7 +36,8 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.isEditing = true
-        dataSource?.reorderingHandlers.canReorderItem = { item in
+        dataSource?.reorderingHandlers.canReorderItem = { slot in
+            guard let item = slot.pageItem else { return false }
             if case .action = item { return true }
             return false
         }
@@ -46,7 +47,7 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
             // order are the order.
             let snapshot = transaction.finalSnapshot
             let order = [Section.middle, .trailing].flatMap { section in
-                snapshot.itemIdentifiers(inSection: section).compactMap { item -> SSHTerminalBarAction? in
+                snapshot.itemIdentifiers(inSection: section).compactMap(\.pageItem).compactMap { item -> SSHTerminalBarAction? in
                     if case .action(let action) = item { return action }
                     return nil
                 }

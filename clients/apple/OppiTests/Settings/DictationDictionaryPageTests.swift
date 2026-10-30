@@ -34,7 +34,7 @@ struct DictationDictionaryPageTests {
 
     private func button(_ item: Item, in page: DictationDictionaryViewController) -> UIButton? {
         page.view.layoutIfNeeded()
-        return page.dataSource?.indexPath(for: item)
+        return page.indexPath(for: item)
             .flatMap { page.collectionView.cellForItem(at: $0) }?
             .accessibilityElements?.first as? UIButton
     }

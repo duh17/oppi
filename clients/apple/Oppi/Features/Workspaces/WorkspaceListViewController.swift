@@ -229,7 +229,7 @@ final class WorkspaceListViewController: ListScreenController<
     @discardableResult
     private func confirmDelete(_ workspace: Workspace) -> Bool {
         guard !isDeleting, deleteSheet == nil else { return false }
-        let row = dataSource?.indexPath(for: .workspace(workspace.id)).flatMap(collectionView.cellForItem(at:))
+        let row = indexPath(for: .workspace(workspace.id)).flatMap(collectionView.cellForItem(at:))
         deleteSheet = Confirmation.deleteWorkspace(workspace).present(from: self, anchor: row) { [weak self] in
             self?.startDelete(workspace)
         }

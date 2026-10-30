@@ -188,11 +188,14 @@ final class SettingsEditorKeyBarViewController: ListScreenController<SettingsEdi
         })
         reset.accessibilityIdentifier = "settings.editor.keyBar.reset"
         navigationItem.rightBarButtonItem = reset
-        dataSource?.reorderingHandlers.canReorderItem = { [weak self] id in
-            self?.preferences.keyBarKeys.contains { $0.id == id } ?? false
+        dataSource?.reorderingHandlers.canReorderItem = { [weak self] slot in
+            guard let id = slot.pageItem else { return false }
+            return self?.preferences.keyBarKeys.contains { $0.id == id } ?? false
         }
         dataSource?.reorderingHandlers.didReorder = { [weak self] transaction in
-            self?.preferences.keyBarKeys = transaction.finalSnapshot.itemIdentifiers(inSection: .shown).compactMap(CodeEditorBarKey.init(id:))
+            self?.preferences.keyBarKeys = transaction.finalSnapshot.itemIdentifiers(inSection: .shown)
+                .compactMap(\.pageItem)
+                .compactMap(CodeEditorBarKey.init(id:))
         }
     }
 

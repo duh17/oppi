@@ -29,8 +29,9 @@ struct QuickCommentsPageTests {
     @Test("One drag is one move for the store: down lands after the row it passed, up before")
     func dragBecomesOneStoreMove() {
         let ids = (0..<4).map { _ in UUID() }
+        func slot(_ id: UUID) -> ListSlot<QuickCommentsViewController.Section, Item> { .item(.template(id)) }
         func move(_ from: [UUID], _ to: [UUID]) -> (from: Int, to: Int)? {
-            QuickCommentsViewController.move(of: to.map(Item.template).difference(from: from.map(Item.template)))
+            QuickCommentsViewController.move(of: to.map(slot).difference(from: from.map(slot)))
         }
         // Row 0 dragged below row 2.
         let down = move(ids, [ids[1], ids[2], ids[0], ids[3]])
@@ -56,9 +57,9 @@ struct QuickCommentsPageTests {
         let id = try #require(store.templates.first?.id)
         #expect(await waitForMainActorCondition {
             page.view.layoutIfNeeded()
-            return page.dataSource?.indexPath(for: .template(id)).flatMap { page.collectionView.cellForItem(at: $0) } != nil
+            return page.indexPath(for: .template(id)).flatMap { page.collectionView.cellForItem(at: $0) } != nil
         })
-        let cell = try #require(page.dataSource?.indexPath(for: .template(id)).flatMap { page.collectionView.cellForItem(at: $0) })
+        let cell = try #require(page.indexPath(for: .template(id)).flatMap { page.collectionView.cellForItem(at: $0) })
         let button = try #require(cell.accessibilityElements?.first as? UIButton)
         #expect(button.accessibilityLabel == "Explain")
         #expect(button.accessibilityValue == "Explain this.")

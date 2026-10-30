@@ -633,7 +633,7 @@ struct WorkspaceDetailsAndListTests {
             animated: false
         )
         window.layoutIfNeeded()
-        let row = try #require(list.dataSource?.indexPath(for: .workspace("w0")))
+        let row = try #require(list.indexPath(for: .workspace("w0")))
         try #require(list.collectionView.cellForItem(at: row) == nil, "the first row is offscreen")
 
         try #require(swipe.actions.first).handler(try #require(swipe.actions.first), list.view) { _ in }

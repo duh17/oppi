@@ -155,6 +155,19 @@ final class SettingsStateRowCell: UICollectionViewListCell {
         case message(String)
         /// The work failed. `retry` runs it again and adds the Retry label.
         case failure(String, retry: (() -> Void)?)
+
+        /// A list's whole-content `LoadState` as this row: its words, and its
+        /// Retry when it has one.
+        init(_ loadState: LoadState) {
+            switch loadState {
+            case .connecting, .loading:
+                self = .loading(loadState.rowText)
+            case .empty, .noResults:
+                self = .message(loadState.rowText)
+            case .failed:
+                self = .failure(loadState.rowText, retry: loadState.rowRetry)
+            }
+        }
     }
 
     static let retryTitle = String(localized: "Retry")

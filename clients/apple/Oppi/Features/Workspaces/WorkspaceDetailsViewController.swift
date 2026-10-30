@@ -239,7 +239,7 @@ final class WorkspaceDetailsViewController: ListScreenController<
 
     /// Return moves on to the next field.
     private func focus(_ item: Item) {
-        guard let path = dataSource?.indexPath(for: item) else { return }
+        guard let path = indexPath(for: item) else { return }
         (collectionView.cellForItem(at: path) as? WorkspaceTextEditorCell)?.textView.becomeFirstResponder()
     }
 

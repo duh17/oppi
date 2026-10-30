@@ -27,6 +27,32 @@ extension LoadState {
             message: String(localized: "This paired server is no longer available.")
         )
     }
+
+    /// The same words as one line of text, for a list that shows its state in a
+    /// row instead of over the whole screen: a catalog that is loading, has
+    /// nothing, matched nothing, or failed. A title and a message join into the
+    /// one sentence a row can say.
+    var rowText: String {
+        switch self {
+        case .connecting:
+            String(localized: "Connecting…")
+        case .loading(let caption):
+            caption ?? ""
+        case .empty(let title, _, let message):
+            [title, message].compactMap { $0 }.joined(separator: " ")
+        case .noResults(let query):
+            String(localized: "No results for “\(query)”.")
+        case .failed(let title, let message, _):
+            [title, message].compactMap { $0 }.joined(separator: " ")
+        }
+    }
+
+    /// The Retry a row shows under the state, for the states that have one. The
+    /// row's button runs it on the main thread; `rowAction` says so.
+    var rowRetry: (() -> Void)? {
+        guard case .failed(_, _, let retry) = self else { return nil }
+        return retry?.rowAction
+    }
 }
 
 /// What the Retry button does: one `@MainActor` closure the state's view runs
@@ -36,6 +62,13 @@ struct RetryAction {
 
     init(run: @escaping @MainActor () -> Void) {
         self.run = run
+    }
+
+    /// The same action as a plain closure, for a tap handler that does not say
+    /// what actor it runs on (a list row's button): the button runs on the main
+    /// thread, so the hop is the assertion.
+    var rowAction: () -> Void {
+        { MainActor.assumeIsolated { self.run() } }
     }
 }
 

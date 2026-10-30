@@ -145,6 +145,115 @@ struct SettingsKitTests {
         #expect(SettingsStyle(palette: white, isDark: false).card == UIColor(white.bgHighlight))
     }
 
+    @Test("A section's state row is the list's LoadState, with its identifier and its Retry")
+    func sectionStateRow() async throws {
+        let page = StateRowsPage()
+        page.state = .failed(
+            title: "Could not load.", message: nil, retry: RetryAction { [weak page] in page?.retry() }
+        )
+        let window = try show(page)
+        defer { hideTestWindow(window); window.rootViewController = nil }
+
+        // The failed state: one button whose label is the state's words, under the
+        // page's identifier, and a tap runs the Retry.
+        var retry: UIButton?
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            retry = Self.button(withIdentifier: "test.state", in: page.collectionView)
+            return retry != nil
+        })
+        let button = try #require(retry)
+        #expect(button.accessibilityLabel == "Could not load.")
+        #expect(button.accessibilityTraits.contains(.button))
+        button.sendActions(for: .touchUpInside)
+        #expect(page.retries == 1)
+
+        // The empty state is a line of text with nothing to press; the loading
+        // state keeps the spinner's row.
+        page.state = .empty(title: "Nothing here.", systemImage: "tray")
+        page.setNeedsUpdateProperties()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            let row = Self.button(withIdentifier: "test.state", in: page.collectionView)
+            return row?.accessibilityLabel == "Nothing here." && row?.isUserInteractionEnabled == false
+        })
+        page.state = .loading("Loading things…")
+        page.setNeedsUpdateProperties()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return Self.button(withIdentifier: "test.state", in: page.collectionView)?.accessibilityLabel
+                == "Loading things…"
+        })
+    }
+
+    @Test("The list loads when the page appears, and again on pull to refresh")
+    func refreshOnAppearanceAndPull() async throws {
+        let page = RefreshPage()
+        let window = try show(page)
+        defer { hideTestWindow(window); window.rootViewController = nil }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.refreshes == 1 }, "appearing loads")
+        #expect(page.isShowing)
+
+        page.collectionView.refreshControl?.sendActions(for: .valueChanged)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.refreshes == 2 }, "pull to refresh loads")
+
+        // Leaving says the page is not showing, so a covered list keeps still.
+        window.rootViewController = UIViewController()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
+    }
+
+    @Test("A page shows a header only on the sections it names")
+    func headerPerSection() async throws {
+        let page = HeaderPage()
+        let window = try show(page)
+        defer { hideTestWindow(window); window.rootViewController = nil }
+
+        #expect(page.showsHeader(for: .titled))
+        #expect(!page.showsHeader(for: .plain))
+
+        var headers: [String?] = []
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            headers = Self.headerTexts(in: page.collectionView)
+            return headers.compactMap { $0 } == ["With Heading"]
+        })
+        #expect(headers.compactMap { $0 } == ["With Heading"], "the section the page does not name has no header at all")
+    }
+
+    private static func headerTexts(in collectionView: UICollectionView) -> [String?] {
+        let kind = UICollectionView.elementKindSectionHeader
+        return collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind).compactMap { indexPath in
+            guard let view = collectionView.supplementaryView(forElementKind: kind, at: indexPath)
+                as? UICollectionViewListCell else { return nil }
+            return (view.contentConfiguration as? UIListContentConfiguration)?.text
+        }
+    }
+
+    private static func button(withIdentifier identifier: String, in list: UICollectionView) -> UIButton? {
+        for cell in list.visibleCells {
+            if let button = button(withIdentifier: identifier, inside: cell) { return button }
+        }
+        return nil
+    }
+
+    private static func button(withIdentifier identifier: String, inside view: UIView) -> UIButton? {
+        if let button = view as? UIButton, button.accessibilityIdentifier == identifier { return button }
+        for subview in view.subviews {
+            if let found = button(withIdentifier: identifier, inside: subview) { return found }
+        }
+        return nil
+    }
+
+    private func show(_ page: UIViewController) throws -> UIWindow {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
+        window.rootViewController = page
+        window.makeKeyAndVisible()
+        return window
+    }
+
     private static func footerTexts(in collectionView: UICollectionView) -> [String] {
         let kind = UICollectionView.elementKindSectionFooter
         return collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind).compactMap { indexPath in
@@ -167,6 +276,58 @@ private final class ScopedPage: ListScreenController<ScopedPage.Section, Int> {
             ListSection(.local, footer: "Kept here.", items: [1]),
             ListSection(.remote, footer: "Kept on the server.", scope: .server("mac-studio"), items: [2]),
         ]
+    }
+}
+
+/// A page whose whole content is a state: the base draws it from `LoadState`.
+private final class StateRowsPage: ListScreenController<StateRowsPage.Section, Int> {
+    enum Section: Hashable, Sendable { case only }
+
+    var state: LoadState = .loading("Loading things…")
+    /// How often the state's Retry ran.
+    private(set) var retries = 0
+
+    init() {
+        super.init(title: "States", listIdentifier: "test.state.list")
+    }
+
+    func retry() { retries += 1 }
+
+    override func sections() -> [ListSection<Section, Int>] {
+        [ListSection(.only, items: [], state: ListStateRow(state: state, identifier: "test.state"))]
+    }
+}
+
+/// A page that counts its loads.
+private final class RefreshPage: ListScreenController<RefreshPage.Section, Int> {
+    enum Section: Hashable, Sendable { case only }
+
+    private(set) var refreshes = 0
+
+    init() {
+        super.init(title: "Refresh", listIdentifier: "test.refresh.list")
+    }
+
+    override func sections() -> [ListSection<Section, Int>] { [ListSection(.only, items: [1])] }
+
+    override func refresh() async { refreshes += 1 }
+}
+
+/// A page with two sections, only one of which carries a heading.
+private final class HeaderPage: ListScreenController<HeaderPage.Section, Int> {
+    enum Section: Hashable, Sendable { case titled, plain }
+
+    init() {
+        super.init(title: "Headers", listIdentifier: "test.headers.list", headers: true)
+    }
+
+    override func sections() -> [ListSection<Section, Int>] {
+        [ListSection(.titled, header: "With Heading", items: [1]), ListSection(.plain, items: [2])]
+    }
+
+    override func showsHeader(for section: Section) -> Bool {
+        if case .titled = section { return true }
+        return false
     }
 }
 
@@ -194,7 +355,7 @@ extension SettingsKitTests {
             for _ in 0..<150 {
                 page.view.layoutIfNeeded()
                 let cells = rows.compactMap { row in
-                    page.dataSource?.indexPath(for: row).flatMap { page.collectionView.cellForItem(at: $0) }.map { (row, $0.bounds.height) }
+                    page.indexPath(for: row).flatMap { page.collectionView.cellForItem(at: $0) }.map { (row, $0.bounds.height) }
                 }
                 if cells.count == rows.count { return Dictionary(uniqueKeysWithValues: cells) }
                 try? await Task.sleep(for: .milliseconds(20))
@@ -253,7 +414,7 @@ extension SettingsKitTests {
         page.view.layoutIfNeeded()
         for row in rows {
             var checked = 0
-            guard let indexPath = page.dataSource?.indexPath(for: row), let cell = page.collectionView.cellForItem(at: indexPath) else {
+            guard let indexPath = page.indexPath(for: row), let cell = page.collectionView.cellForItem(at: indexPath) else {
                 Issue.record("\(row) has no cell")
                 continue
             }
@@ -273,7 +434,7 @@ extension SettingsKitTests {
     /// The index row's title and value label frames, in the cell's space.
     private static func indexRowLines(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, value: CGRect) {
         page.view.layoutIfNeeded()
-        let indexPath = try #require(page.dataSource?.indexPath(for: .index))
+        let indexPath = try #require(page.indexPath(for: .index))
         let cell = try #require(page.collectionView.cellForItem(at: indexPath))
         let labels = Self.labels(in: cell)
         let title = try #require(labels.first { $0.text == "Terminal Colors" })
@@ -284,7 +445,7 @@ extension SettingsKitTests {
     /// The menu row's title and choice label frames in the cell's space, and the cell's width.
     private static func menuRowLines(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, value: CGRect, cellWidth: CGFloat) {
         page.view.layoutIfNeeded()
-        let indexPath = try #require(page.dataSource?.indexPath(for: .menu))
+        let indexPath = try #require(page.indexPath(for: .menu))
         let cell = try #require(page.collectionView.cellForItem(at: indexPath))
         let labels = Self.labels(in: cell)
         let title = try #require(labels.first { $0.text == "Voice Replies" })
@@ -295,7 +456,7 @@ extension SettingsKitTests {
     /// The Style row's title and control frames in the cell's space, and the cell's size.
     private static func segmentedRowFrames(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, control: CGRect, cellWidth: CGFloat, cellHeight: CGFloat) {
         page.view.layoutIfNeeded()
-        let indexPath = try #require(page.dataSource?.indexPath(for: .segmented))
+        let indexPath = try #require(page.indexPath(for: .segmented))
         let cell = try #require(page.collectionView.cellForItem(at: indexPath))
         let title = try #require(Self.labels(in: cell).first { $0.text == "Style" })
         let control = try #require(Self.views(of: UISegmentedControl.self, in: cell).first)
@@ -305,7 +466,7 @@ extension SettingsKitTests {
     /// The preview pill's frame and the frames of the text drawn on it, in the cell's space.
     private static func workPreviewFrames(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (pill: CGRect, texts: [CGRect], cellHeight: CGFloat) {
         page.view.layoutIfNeeded()
-        let indexPath = try #require(page.dataSource?.indexPath(for: .work))
+        let indexPath = try #require(page.indexPath(for: .work))
         let cell = try #require(page.collectionView.cellForItem(at: indexPath))
         let pill = try #require(Self.views(of: TimelineChromeSurfaceView.self, in: cell).first)
         let texts = Self.labels(in: cell)

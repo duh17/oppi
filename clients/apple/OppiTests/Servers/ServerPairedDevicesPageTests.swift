@@ -165,7 +165,7 @@ struct ServerPairedDevicesPageTests {
         #expect(error == "Not allowed.")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             h.page.view.layoutIfNeeded()
-            return h.page.dataSource?.snapshot().itemIdentifiers.contains(.error) == true
+            return h.page.shownItems.contains(.error)
         })
     }
 

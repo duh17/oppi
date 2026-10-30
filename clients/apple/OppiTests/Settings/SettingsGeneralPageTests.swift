@@ -46,7 +46,7 @@ struct SettingsGeneralPageTests {
 
     private func cell(_ item: Item, in page: SettingsGeneralViewController) -> UICollectionViewCell? {
         page.view.layoutIfNeeded()
-        return page.dataSource?.indexPath(for: item).flatMap { page.collectionView.cellForItem(at: $0) }
+        return page.indexPath(for: item).flatMap { page.collectionView.cellForItem(at: $0) }
     }
 
     private func button(_ item: Item, in page: SettingsGeneralViewController) -> UIButton? {

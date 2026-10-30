@@ -104,7 +104,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in
             Task { [weak self] in
-                await self?.refresh()
+                await self?.reload()
                 self?.refreshControl.endRefreshing()
             }
         }, for: .valueChanged)
@@ -123,7 +123,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         let status = attempt?.flow.status
         if status != observedFlowStatus {
             observedFlowStatus = status
-            if status == .completed { Task { [weak self] in await self?.refresh() } }
+            if status == .completed { Task { [weak self] in await self?.reload() } }
         }
         signInPresenter.sync(owner: signIn, root: root, from: self)
         super.updateProperties()
@@ -424,7 +424,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
 
     /// The cell of the row that asked, where an action sheet points on iPad.
     private func row(for item: Item) -> UIView? {
-        dataSource?.indexPath(for: item).flatMap(collectionView.cellForItem(at:))
+        indexPath(for: item).flatMap(collectionView.cellForItem(at:))
     }
 
     private func remove() {
@@ -444,7 +444,10 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         }
     }
 
-    private func refresh() async {
+    /// Reads this server again, on pull to refresh and after a change saves.
+    /// The page keeps its own refresh control (a sign-in's state decides what
+    /// reloads), so this is its own reload, not the base's `refresh()`.
+    private func reload() async {
         guard attempt?.isSettled != false else { return }
         do {
             let currentScope = try await client.listMcpServers(scopeId: scope.id).scope
@@ -464,7 +467,7 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         Task { [weak self] in
             do {
                 try await action()
-                await self?.refresh()
+                await self?.reload()
             } catch {
                 self?.error = error.localizedDescription
             }

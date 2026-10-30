@@ -37,7 +37,7 @@ struct SettingsTextPageTests {
 
     private func cell(_ item: SettingsTextViewController.Item, in page: SettingsTextViewController) -> UICollectionViewCell? {
         page.view.layoutIfNeeded()
-        return page.dataSource?.indexPath(for: item).flatMap { page.collectionView.cellForItem(at: $0) }
+        return page.indexPath(for: item).flatMap { page.collectionView.cellForItem(at: $0) }
     }
 
     private func slider(_ item: SettingsTextViewController.Item, in page: SettingsTextViewController) -> UISlider? {
