@@ -194,25 +194,6 @@ struct SessionThreadsTests {
         #expect(SessionThreadGrouping.isBlocked(rollup, attention: attentionFree))
     }
 
-    @Test func lanesTakeEachMembersStatus() {
-        var members = orchestration
-        members[3].status = .ready
-        members[3].programStatus = ProgramStatus(state: .blocked, kind: .question, since: Date(timeIntervalSince1970: 60))
-        members[1].programStatus = ProgramStatus(state: .done, since: Date(timeIntervalSince1970: 30))
-
-        func status(_ member: Session) -> SessionStatusKind {
-            SessionStatusKind.resolve(session: member, seenAt: nil)
-        }
-        let graph = SessionThreadLaneGraph.layout(
-            members: members, rootId: "root", now: Date(timeIntervalSince1970: 100), status: status
-        )
-
-        #expect(graph.segments.first { $0.id == "review" }?.status == .question)
-        #expect(graph.segments.first { $0.id == "master" }?.status == .working)
-        // Done, still unseen, and stopped lifecycle: the outcome shows until seen.
-        #expect(graph.segments.first { $0.id == "fix" }?.status == .done)
-    }
-
     // MARK: Expanded threads
 
     /// Live statuses by the kinds the list sorts on, from lifecycle and program status.
@@ -465,75 +446,6 @@ struct SessionThreadsTests {
         #expect(Set(listing.stopped.map(\.session.id)) == ["a", "b", "c"])
         #expect(listing.stopped.count == 3)
         #expect(listing.stopped.first { $0.session.id == "c" }?.depth == 1, "An absent parent hangs the member off the root")
-    }
-
-    // MARK: Lanes
-
-    private var orchestration: [Session] {
-        [
-            session("root", status: .ready, created: 0, last: 50),
-            session("fix", parent: "root", created: 10, last: 30),
-            session("master", parent: "root", status: .busy, created: 20, last: 90),
-            session("review", parent: "root", created: 40, last: 60),
-            session("worker", parent: "master", created: 70, last: 80),
-        ]
-    }
-
-    @Test func lanesReuseSlotsOfStoppedSessions() {
-        let members = orchestration
-        let lanes = SessionThreadLanes.assign(root: members[0], others: Array(members.dropFirst()))
-
-        #expect(lanes.laneBySessionId == ["root": 0, "fix": 1, "master": 2, "review": 1, "worker": 1])
-        #expect(lanes.laneCount == 3)
-    }
-
-    // MARK: Lane graph
-
-    @Test func laneGraphBranchesFromParentsAndFoldsExtraLanes() {
-        let now = Date(timeIntervalSince1970: 100)
-        let members = [
-            session("root", status: .ready, created: 0, last: 50),
-            session("a", parent: "root", created: 10, last: 90),
-            session("b", parent: "root", status: .busy, created: 20, last: 100),
-            session("c", parent: "a", created: 30, last: 60),
-            session("d", parent: "root", created: 40, last: 70),
-        ]
-
-        let graph = SessionThreadLaneGraph.layout(members: members, rootId: "root", now: now, maxLanes: 3)
-        let byId = Dictionary(uniqueKeysWithValues: graph.segments.map { ($0.id, $0) })
-
-        #expect(graph.laneCount == 3)
-        #expect(graph.hiddenLaneCount == 2)
-        // Nine distinct event times, so each is one eighth of the width.
-        #expect(byId["root"]?.parentLane == nil)
-        #expect(byId["root"]?.idleFrom == 5.0 / 8)
-        #expect(byId["a"]?.parentLane == 0)
-        #expect(byId["a"]?.start == 1.0 / 8)
-        #expect(byId["a"]?.end == 1)
-        // Lanes 3 and 4 fold into the last visible lane, and branch from the right parent.
-        #expect(byId["c"]?.lane == 2)
-        #expect(byId["c"]?.parentLane == byId["a"]?.lane)
-        #expect(byId["d"]?.lane == 2)
-        #expect(byId["b"]?.isWorking == true)
-        #expect(byId["b"]?.end == 1)
-    }
-
-    @Test func laneGraphGivesShortSessionsTheSameWidthAsLongOnes() {
-        // A 2-second child and a 2-hour child, hours after the thread went quiet.
-        let members = [
-            session("root", created: 0, last: 9_000),
-            session("short", parent: "root", created: 10, last: 12),
-            session("long", parent: "root", created: 20, last: 7_220),
-        ]
-
-        let graph = SessionThreadLaneGraph.layout(members: members, rootId: "root", now: Date(timeIntervalSince1970: 90_000))
-        let byId = Dictionary(uniqueKeysWithValues: graph.segments.map { ($0.id, $0) })
-        let short = try? #require(byId["short"])
-        let long = try? #require(byId["long"])
-
-        #expect(byId["root"]?.end == 1)
-        #expect(short.map { abs(($0.end - $0.start) - 1.0 / 5) < 1e-9 } == true)
-        #expect(long.map { abs(($0.end - $0.start) - 1.0 / 5) < 1e-9 } == true)
     }
 
     // MARK: Agents and waterfall

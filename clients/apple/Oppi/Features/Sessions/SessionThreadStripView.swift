@@ -2,24 +2,26 @@ import UIKit
 
 // MARK: - Inbox thread strip
 
-/// Thread control under a thread root row: who is working, optional lane
-/// graph and Agent summary, and totals. The list makes it the tap target
-/// that folds the thread's child rows open or closed; the root row above it
-/// opens the root chat. The chevron turns down while the thread is open.
+/// Thread control under a thread root row: who is working, a dot for each
+/// member still going, the Agent summary, and the status counts with the
+/// cost. The list makes it the tap target that folds the thread's child rows
+/// open or closed; the root row above it opens the root chat. The chevron
+/// turns down while the thread is open.
 ///
-/// Agent summary and totals count every member, root included, so they agree
-/// with the lane graph. The status counts and the working line cover the
-/// children only: the root row above already shows its own status.
+/// The Agent summary and the VoiceOver member count include the root. The
+/// status counts, the dots, and the working line cover the children only: the
+/// root row above already shows its own status.
 ///
-/// Display choices only hide the lane graph, the Agent summary, and the cost
-/// total. The chevron, a blocked child, who is working, and the status
-/// counts always stay.
+/// Display choices only hide the Agent summary and the cost total. The
+/// chevron, a blocked child, who is working, the dots, and the status counts
+/// always stay. The dot line keeps its height whether or not any member is
+/// active, so a member changing state never moves the rows below.
 final class SessionThreadStripView: UIControl {
     struct Content: Equatable {
         let rollup: SessionThreadRollup
         /// This device's status for each member: its seen state and pending asks applied.
         let statuses: [String: SessionStatusKind]
-        /// Locked root: names and counts only, no lane graph, Agents, or cost.
+        /// Locked root: names and counts only, no dots, Agents, or cost.
         var hidesDetails = false
         /// A locked member: its cost stays out of the total.
         var hidesCost = false
@@ -41,12 +43,11 @@ final class SessionThreadStripView: UIControl {
 
     private let stack = UIStackView()
     private let headline = UILabel()
-    private let graphRow = UIStackView()
-    private let graph = SessionThreadLaneGraphUIView()
-    private let hiddenLanesLabel = UILabel()
-    private let footer = UIStackView()
+    private let statusRow = UIStackView()
+    private let dots = SessionThreadStatusDotsView()
     private let agents = SessionThreadAgentClusterView()
-    private let summaryLabel = UILabel()
+    private let footer = UIStackView()
+    private let summaryLabel = SessionThreadSummaryLabel()
     private let chevron = UIImageView()
     private var verticalPadding: [NSLayoutConstraint] = []
     private var summary = ""
@@ -59,16 +60,10 @@ final class SessionThreadStripView: UIControl {
         layer.cornerCurve = .continuous
 
         headline.adjustsFontForContentSizeCategory = true
-        hiddenLanesLabel.font = UIFont.scaled(.caption2, monospacedDigits: true)
-        hiddenLanesLabel.setContentHuggingPriority(.required, for: .horizontal)
-        graphRow.axis = .horizontal
-        graphRow.alignment = .center
-        graphRow.spacing = 4
-        graphRow.addArrangedSubview(graph)
-        graphRow.addArrangedSubview(hiddenLanesLabel)
-        let graphWidth = graphRow.widthAnchor.constraint(lessThanOrEqualToConstant: 260)
-        let graphFill = graphRow.widthAnchor.constraint(equalToConstant: 260)
-        graphFill.priority = .defaultHigh
+        statusRow.axis = .horizontal
+        statusRow.alignment = .center
+        statusRow.spacing = 8
+        [dots, SessionRowSpacer(minWidth: 4), agents].forEach(statusRow.addArrangedSubview)
 
         summaryLabel.font = UIFont.scaled(.caption1)
         summaryLabel.adjustsFontForContentSizeCategory = true
@@ -80,13 +75,13 @@ final class SessionThreadStripView: UIControl {
         footer.axis = .horizontal
         footer.alignment = .center
         footer.spacing = 8
-        [agents, summaryLabel, SessionRowSpacer(minWidth: 4), chevron].forEach(footer.addArrangedSubview)
+        [summaryLabel, SessionRowSpacer(minWidth: 4), chevron].forEach(footer.addArrangedSubview)
 
         stack.axis = .vertical
         stack.alignment = .leading
         stack.isUserInteractionEnabled = false
         stack.translatesAutoresizingMaskIntoConstraints = false
-        [headline, graphRow, footer].forEach(stack.addArrangedSubview)
+        [headline, statusRow, footer].forEach(stack.addArrangedSubview)
         addSubview(stack)
         let top = stack.topAnchor.constraint(equalTo: topAnchor, constant: 6)
         let bottom = bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 6)
@@ -95,10 +90,9 @@ final class SessionThreadStripView: UIControl {
             top, bottom,
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            statusRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
             headline.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
-            graphWidth,
-            graphFill,
         ])
     }
 
@@ -132,20 +126,10 @@ final class SessionThreadStripView: UIControl {
             headline.setHiddenIfChanged(true)
         }
 
-        let showsGraph = display.showsThreadLaneGraph && !content.hidesDetails
-        graphRow.setHiddenIfChanged(!showsGraph)
-        if showsGraph {
-            let layout = SessionThreadLaneGraph.layout(
-                members: rollup.members,
-                rootId: rollup.root.id,
-                now: Date(),
-                status: content.status
-            )
-            graph.apply(layout, style: style)
-            hiddenLanesLabel.setHiddenIfChanged(layout.hiddenLaneCount == 0)
-            hiddenLanesLabel.text = "+\(layout.hiddenLaneCount)"
-            hiddenLanesLabel.textColor = colors.comment
-        }
+        let statusSummary = SessionThreadStripSummary(rollup: rollup, status: content.status)
+        // The dots stay laid out, empty, when no member is active: the line keeps its height.
+        statusRow.setHiddenIfChanged(content.hidesDetails)
+        dots.apply(statusSummary.dots, hiddenCount: statusSummary.hiddenDotCount, style: style)
 
         let showsAgents = display.showsThreadAgentSummary && !content.hidesDetails
         agents.setHiddenIfChanged(!showsAgents)
@@ -154,8 +138,7 @@ final class SessionThreadStripView: UIControl {
         }
 
         let statusRollup = rollup.statusRollup(status: content.status)
-        var parts: [String] = []
-        if !statusRollup.summaryText.isEmpty { parts.append(statusRollup.summaryText) }
+        var parts: [String] = [statusSummary.text]
         // Same rule as a row: unknown or zero cost is absent, never "$0.00".
         if display.showsCost, !content.hidesDetails, !content.hidesCost, rollup.totalCost > 0 {
             parts.append(String(format: "$%.2f", rollup.totalCost))
@@ -164,7 +147,7 @@ final class SessionThreadStripView: UIControl {
             parts.append("\(rollup.workspaceCount) workspaces")
         }
         summary = parts.joined(separator: " · ")
-        summaryLabel.text = summary
+        summaryLabel.setParts(parts)
         summaryLabel.textColor = colors.comment
         chevron.tintColor = colors.comment
         let chevronTransform = CGAffineTransform(rotationAngle: content.isExpanded ? .pi / 2 : 0)
@@ -253,120 +236,157 @@ final class SessionThreadAgentClusterView: UIStackView {
     }
 }
 
-// MARK: - Horizontal lane graph
+// MARK: - Status dots
 
-/// Git-graph style thread overview: event order runs left to right, each
-/// session has a lane from its launch to its last recorded activity, and
-/// children branch from their parent's lane and merge back there. This
-/// summarizes the thread; it is not an exact execution span. Working sessions
-/// end in a pulsing dot at the right edge.
-final class SessionThreadLaneGraphUIView: UIView {
-    static let laneSpacing: CGFloat = 6
-    static let inset: CGFloat = 4
+/// One dot per active thread member (working, needs you, error) in its status
+/// tint, then "+N" for the members past the cap. Working dots pulse. The view
+/// is always `height` tall, with or without dots, so the strip never changes
+/// height as members start and stop. Dot layers are reused across `apply`s.
+final class SessionThreadStatusDotsView: UIView {
+    static let dotSize: CGFloat = 7
+    static let dotSpacing: CGFloat = 4
+    static let height: CGFloat = 14
+    private static let overflowGap: CGFloat = 4
+    private static let pulseKey = "pulse"
 
-    private var layout = SessionThreadLaneGraph(laneCount: 0, hiddenLaneCount: 0, segments: [])
-    private var style = SessionRowStyle.for(ThemeRuntimeState.currentThemeID())
-    private var pulses: [CALayer] = []
-    private lazy var heightConstraint = heightAnchor.constraint(equalToConstant: Self.inset * 2)
+    private var dotLayers: [CALayer] = []
+    private var shownCount = 0
+    private let overflow = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isOpaque = false
         isAccessibilityElement = false
-        contentMode = .redraw
-        translatesAutoresizingMaskIntoConstraints = false
-        heightConstraint.isActive = true
-        setContentHuggingPriority(.fittingSizeLevel, for: .horizontal)
-        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        accessibilityElementsHidden = true
+        overflow.font = UIFont.scaled(.caption2, monospacedDigits: true)
+        overflow.adjustsFontForContentSizeCategory = true
+        overflow.isHidden = true
+        addSubview(overflow)
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(_ layout: SessionThreadLaneGraph, style: SessionRowStyle) {
-        self.layout = layout
-        self.style = style
-        heightConstraint.constant = CGFloat(max(layout.laneCount, 1) - 1) * Self.laneSpacing + Self.inset * 2
-        setNeedsDisplay()
+    func apply(_ buckets: [SessionThreadStripSummary.Bucket], hiddenCount: Int, style: SessionRowStyle) {
+        shownCount = buckets.count
+        while dotLayers.count < buckets.count {
+            let dot = CALayer()
+            dot.bounds = CGRect(x: 0, y: 0, width: Self.dotSize, height: Self.dotSize)
+            dot.cornerRadius = Self.dotSize / 2
+            layer.addSublayer(dot)
+            dotLayers.append(dot)
+        }
+        let pulses = !UIAccessibility.isReduceMotionEnabled
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, dot) in dotLayers.enumerated() {
+            guard index < buckets.count else {
+                dot.isHidden = true
+                dot.removeAnimation(forKey: Self.pulseKey)
+                continue
+            }
+            dot.isHidden = false
+            dot.backgroundColor = style.tint(buckets[index].kind).cgColor
+            if pulses, buckets[index] == .working {
+                if dot.animation(forKey: Self.pulseKey) == nil {
+                    let pulse = CABasicAnimation(keyPath: "opacity")
+                    pulse.fromValue = 1.0
+                    pulse.toValue = 0.35
+                    pulse.duration = 0.6
+                    pulse.autoreverses = true
+                    pulse.repeatCount = .infinity
+                    pulse.isRemovedOnCompletion = false
+                    dot.add(pulse, forKey: Self.pulseKey)
+                }
+            } else {
+                dot.removeAnimation(forKey: Self.pulseKey)
+            }
+        }
+        CATransaction.commit()
+        overflow.isHidden = hiddenCount == 0
+        overflow.text = "+\(hiddenCount)"
+        overflow.textColor = style.colors.comment
+        invalidateIntrinsicContentSize()
         setNeedsLayout()
-        updatePulses()
     }
 
-    private func updatePulses() {
-        pulses.forEach { $0.removeFromSuperlayer() }
-        pulses = layout.segments.filter(\.isWorking).map { segment in
-            let dot = CALayer()
-            dot.bounds = CGRect(x: 0, y: 0, width: 5, height: 5)
-            dot.cornerRadius = 2.5
-            dot.backgroundColor = style.tint(segment.status).cgColor
-            dot.setValue(segment.lane, forKey: "lane")
-            if !UIAccessibility.isReduceMotionEnabled {
-                let pulse = CABasicAnimation(keyPath: "opacity")
-                pulse.fromValue = 1.0
-                pulse.toValue = 0.35
-                pulse.duration = 0.6
-                pulse.autoreverses = true
-                pulse.repeatCount = .infinity
-                pulse.isRemovedOnCompletion = false
-                dot.add(pulse, forKey: "pulse")
-            }
-            layer.addSublayer(dot)
-            return dot
-        }
-        setNeedsLayout()
+    private var dotsWidth: CGFloat {
+        shownCount == 0 ? 0 : CGFloat(shownCount) * Self.dotSize + CGFloat(shownCount - 1) * Self.dotSpacing
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let overflowWidth = overflow.isHidden ? 0 : Self.overflowGap + overflow.intrinsicContentSize.width
+        return CGSize(width: dotsWidth + overflowWidth, height: Self.height)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        for dot in pulses {
-            let lane = dot.value(forKey: "lane") as? Int ?? 0
-            dot.position = CGPoint(x: bounds.width - Self.inset, y: Self.inset + CGFloat(lane) * Self.laneSpacing)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for index in 0..<shownCount {
+            dotLayers[index].position = CGPoint(
+                x: CGFloat(index) * (Self.dotSize + Self.dotSpacing) + Self.dotSize / 2,
+                y: bounds.midY
+            )
         }
+        CATransaction.commit()
+        let size = overflow.intrinsicContentSize
+        overflow.frame = CGRect(
+            x: dotsWidth + (shownCount == 0 ? 0 : Self.overflowGap),
+            y: (bounds.height - size.height) / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+}
+
+// MARK: - Summary line
+
+/// The strip's one-line summary: the status counts first, then the cost and
+/// the cross-workspace note, each kept only while the whole of it fits. The
+/// counts are never dropped; past the width they truncate like any label.
+final class SessionThreadSummaryLabel: UILabel {
+    private var parts: [String] = []
+
+    func setParts(_ parts: [String]) {
+        self.parts = parts
+        fit()
+        invalidateIntrinsicContentSize()
     }
 
-    override func draw(_ rect: CGRect) {
-        guard let context = UIGraphicsGetCurrentContext() else { return }
-        let usable = max(bounds.width - Self.inset * 2, 1)
-        func x(_ value: Double) -> CGFloat { Self.inset + CGFloat(value) * usable }
-        func y(_ lane: Int) -> CGFloat { Self.inset + CGFloat(lane) * Self.laneSpacing }
-        let bend: CGFloat = 5
-        context.setLineWidth(1.6)
-        context.setLineCap(.round)
+    /// The full line, so the label asks for what it would like; layout decides what fits.
+    override var intrinsicContentSize: CGSize {
+        let size = Self.width(of: parts.joined(separator: Self.separator), font: font)
+        return CGSize(width: size, height: super.intrinsicContentSize.height)
+    }
 
-        for segment in layout.segments {
-            let color = style.tint(segment.status)
-            let startX = x(segment.start)
-            let endX = max(x(segment.end), startX + 2)
-            let laneY = y(segment.lane)
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        fit()
+    }
 
-            guard let parentLane = segment.parentLane else {
-                // Root lane: solid while it works, dashed while it waits on children.
-                let idleX = segment.idleFrom.map { max(x($0), startX) } ?? endX
-                context.setStrokeColor(color.cgColor)
-                context.setLineDash(phase: 0, lengths: [])
-                context.strokeLineSegments(between: [CGPoint(x: startX, y: laneY), CGPoint(x: idleX, y: laneY)])
-                if idleX < endX {
-                    context.setLineDash(phase: 0, lengths: [1.5, 3])
-                    context.strokeLineSegments(between: [CGPoint(x: idleX, y: laneY), CGPoint(x: endX, y: laneY)])
-                    context.setLineDash(phase: 0, lengths: [])
-                }
-                continue
-            }
+    private static let separator = " \u{00B7} "
 
-            let parentY = y(parentLane)
-            let path = UIBezierPath()
-            path.move(to: CGPoint(x: startX, y: parentY))
-            if parentY != laneY {
-                path.addQuadCurve(to: CGPoint(x: startX + bend, y: laneY), controlPoint: CGPoint(x: startX, y: laneY))
-            }
-            path.addLine(to: CGPoint(x: endX, y: laneY))
-            if segment.isStopped, parentY != laneY {
-                path.addQuadCurve(to: CGPoint(x: endX + bend, y: parentY), controlPoint: CGPoint(x: endX + bend, y: laneY))
-            }
-            context.setLineDash(phase: 0, lengths: [])
-            context.setStrokeColor(color.withAlphaComponent(segment.isStopped ? 0.55 : 1).cgColor)
-            context.addPath(path.cgPath)
-            context.strokePath()
+    private static func width(of text: String, font: UIFont) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    private func fit() {
+        guard let first = parts.first else {
+            if text != nil { text = nil }
+            return
         }
+        var shown = first
+        if bounds.width > 0 {
+            for part in parts.dropFirst() {
+                let candidate = shown + Self.separator + part
+                guard Self.width(of: candidate, font: font) <= bounds.width else { break }
+                shown = candidate
+            }
+        } else {
+            shown = parts.joined(separator: Self.separator)
+        }
+        if text != shown { text = shown }
     }
 }

@@ -33,7 +33,6 @@ struct SessionRowDisplay: Equatable, Codable, Sendable {
     var showsCompactions = true
 
     var showsThreadAgentSummary = true
-    var showsThreadLaneGraph = true
 
     /// Today's rich appearance.
     static let standard = Self()

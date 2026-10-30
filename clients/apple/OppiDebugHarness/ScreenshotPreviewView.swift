@@ -948,6 +948,8 @@ private enum RouterModalSitesFixtures {
     /// `SCREENSHOT_THREAD_STOPPED_COUNT` adds that many day-old stopped workers to the tree, the
     /// shape of a big thread whose live members sit among stopped ones. `SCREENSHOT_LIST_FILLER`
     /// adds that many plain idle sessions, which list above the thread.
+    /// `SCREENSHOT_THREAD_WORKING_COUNT` and `SCREENSHOT_THREAD_BLOCKED_COUNT` add that many more working
+    /// children and children waiting on a question, so the strip's status dots have a crowd to draw.
     /// `SCREENSHOT_THREAD_FOCUS=<root id>` (the inbox site) opens that thread as a thread link does.
     private static var threadSessions: [Session] {
         let now = Date()
@@ -978,11 +980,25 @@ private enum RouterModalSitesFixtures {
                 status: .stopped, minutesAgo: 1_600 + Double(index), cost: 0.05
             )
         }
+        let extraWorking = (0..<(Int(ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_WORKING_COUNT"] ?? "") ?? 0)).map { index in
+            session(
+                "extra-working-\(index)", "Working agent \(index + 1)", parent: "thread-root",
+                status: .busy, minutesAgo: 20 + Double(index), cost: 0.1
+            )
+        }
+        let extraBlocked = (0..<(Int(ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_BLOCKED_COUNT"] ?? "") ?? 0)).map { index -> Session in
+            var blocked = session(
+                "extra-blocked-\(index)", "Waiting agent \(index + 1)", parent: "thread-root",
+                status: .ready, minutesAgo: 22 + Double(index), cost: 0.1
+            )
+            blocked.programStatus = ProgramStatus(state: .blocked, kind: .question, since: Date().addingTimeInterval(-120))
+            return blocked
+        }
         let fillerCount = Int(ProcessInfo.processInfo.environment["SCREENSHOT_LIST_FILLER"] ?? "") ?? 0
         let filler = (0..<fillerCount).map { index in
             session("filler-\(index)", "Filler session \(index + 1)", status: .ready, minutesAgo: 5 + Double(index), cost: 0.01)
         }
-        return filler + oldWorkers + [
+        return filler + oldWorkers + extraWorking + extraBlocked + [
             session("thread-root", "Plan the router migration", status: .ready, minutesAgo: 60, cost: 1.42),
             session("child-working", "Migrate the chat routes", parent: "thread-root", status: .busy, minutesAgo: 40, cost: 0.61),
             session("child-done", "Audit the old routes", parent: "thread-root", status: .stopped, minutesAgo: 35, cost: 0.33),

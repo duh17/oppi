@@ -111,6 +111,30 @@ final class SessionThreadListUITests: XCTestCase {
         XCTAssertFalse(app.buttons["session.nav.thread-root"].exists, "The root should be below the first screen")
     }
 
+    /// The strip says how many members are in each state, in the list's words and the strip's order,
+    /// with the root left out and zero counts omitted; "Stopped" replaces the old "finished".
+    func testStripCountsMembersInTheListsWords() {
+        launch()
+        let small = app.buttons["thread.nav.thread-root"]
+        XCTAssertTrue(small.waitForExistence(timeout: 15), "Thread strip missing")
+        XCTAssertTrue(small.label.contains("Thread with 5 sessions, 1 working \u{00B7} 1 idle \u{00B7} 2 stopped"), small.label)
+        XCTAssertFalse(small.label.contains("finished"), small.label)
+        app.terminate()
+
+        launch(environment: [
+            "SCREENSHOT_THREAD_STOPPED_COUNT": "100",
+            "SCREENSHOT_THREAD_WORKING_COUNT": "14",
+            "SCREENSHOT_THREAD_BLOCKED_COUNT": "2",
+        ])
+        let big = app.buttons["thread.nav.thread-root"]
+        XCTAssertTrue(big.waitForExistence(timeout: 15), "Thread strip missing")
+        XCTAssertTrue(
+            big.label.contains("Thread with 121 sessions, 15 working \u{00B7} 2 need you \u{00B7} 1 idle \u{00B7} 102 stopped"),
+            big.label
+        )
+        XCTAssertEqual(big.value as? String, "Collapsed")
+    }
+
     /// The reported case: 100 day-old stopped workers no longer push the live members off the first screen.
     func testBigThreadKeepsItsLiveMembersOnTheFirstScreen() {
         launch(environment: ["SCREENSHOT_THREAD_STOPPED_COUNT": "100"])

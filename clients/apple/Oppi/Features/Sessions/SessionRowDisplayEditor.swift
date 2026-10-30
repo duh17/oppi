@@ -153,7 +153,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
     }
 
     private enum Toggle: String, CaseIterable {
-        case model, time, context, cost, files, compactions, agentSummary, laneGraph
+        case model, time, context, cost, files, compactions, agentSummary
 
         var title: String {
             switch self {
@@ -164,7 +164,6 @@ final class SessionRowDisplayEditorViewController: UIViewController {
             case .files: "Files Touched"
             case .compactions: "Compactions"
             case .agentSummary: "Agent Summary"
-            case .laneGraph: "Lane Graph"
             }
         }
 
@@ -177,7 +176,6 @@ final class SessionRowDisplayEditorViewController: UIViewController {
             case .files: \.showsFilesTouched
             case .compactions: \.showsCompactions
             case .agentSummary: \.showsThreadAgentSummary
-            case .laneGraph: \.showsThreadLaneGraph
             }
         }
     }
@@ -418,7 +416,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         snapshot.appendItems([.density], toSection: .density)
         snapshot.appendItems([.model, .time, .context, .cost, .files, .compactions].map(Item.toggle), toSection: .details)
         snapshot.appendSections([.thread])
-        snapshot.appendItems([.agentSummary, .laneGraph].map(Item.toggle), toSection: .thread)
+        snapshot.appendItems([.agentSummary].map(Item.toggle), toSection: .thread)
         snapshot.appendSections([.restore])
         snapshot.appendItems([.restore], toSection: .restore)
         // Every control and the density footer follow the draft.
@@ -456,7 +454,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         case .details:
             String(localized: "Details keep this order. Title, status, questions, Incognito, workspace, and search matches always show.")
         case .thread:
-            String(localized: "The Thread control, a child's question, and who is working always show. Cost in the Thread row follows Cost above.")
+            String(localized: "The Thread control, a child's question, who is working, the status dots, and the status counts always show. Cost in the Thread row follows Cost above.")
         case .restore:
             nil
         }

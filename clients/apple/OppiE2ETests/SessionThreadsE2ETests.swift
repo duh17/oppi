@@ -382,12 +382,13 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(previewFact("48%").exists, "Cost toggle must not hide other facts")
         setToggle("cost", on: true)
         XCTAssertTrue(previewFact("$3.14").waitForExistence(timeout: 5))
-        setToggle("laneGraph", on: false)
-        XCTAssertTrue(
-            waitForFrameHeight(previewStrip, below: standardStripHeight),
-            "Lane graph off should shrink the strip"
-        )
-        setToggle("laneGraph", on: true)
+        // The strip counts its members in the list's words: the sample has a working child, one that
+        // needs an answer, and a settled one. The dot line keeps the strip's height with Agents hidden.
+        XCTAssertTrue(previewStrip.label.contains("1 working \u{00B7} 1 needs you"), previewStrip.label)
+        XCTAssertFalse(previewStrip.label.contains("finished"), previewStrip.label)
+        setToggle("agentSummary", on: false)
+        XCTAssertEqual(previewStrip.frame.height, standardStripHeight, accuracy: 0.5, "Hiding Agents must not resize the strip")
+        setToggle("agentSummary", on: true)
         setDensity("Compact")
         XCTAssertTrue(waitForFrameHeight(previewBox, below: standardHeight), "Compact should be denser")
         XCTAssertEqual(previewFact("Refactor checkout flow").frame.height, titleHeight, accuracy: 0.5, "Compact must not shrink the title")
@@ -399,7 +400,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertLessThanOrEqual(previewFact("Done").frame.maxX, previewBox.frame.maxX + 1, "Status must stay inside the row")
 
         // Every optional detail off: safety facts, the Thread control, and a child's question stay.
-        for control in ["model", "time", "context", "cost", "files", "compactions", "agentSummary", "laneGraph"] {
+        for control in ["model", "time", "context", "cost", "files", "compactions", "agentSummary"] {
             setToggle(control, on: false)
         }
         for (name, element) in facts { XCTAssertTrue(waitForNonExistence(element, timeout: 5), "\(name) should be hidden") }
@@ -429,7 +430,6 @@ final class SessionThreadsE2ETests: E2ETestCase {
 
         // Leaving the page keeps exactly what the preview showed and applies to the mounted inbox.
         setToggle("cost", on: false)
-        setToggle("laneGraph", on: false)
         setDensity("Compact")
         try closeRowEditor()
         XCTAssertTrue(reveal(rootBody, in: inbox))
@@ -531,7 +531,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         XCTAssertTrue(inbox.waitForExistence(timeout: 20), "Inbox missing")
 
         try openRowEditor()
-        revealInForm(toggle("laneGraph"))
+        revealInForm(toggle("agentSummary"))
         XCTAssertTrue(toggle("agentSummary").exists, "Thread options missing from Session Rows")
         try closeRowEditor()
     }

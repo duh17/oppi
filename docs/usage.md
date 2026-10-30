@@ -24,7 +24,7 @@ Open a session to see the chat timeline. Tap a tool row to inspect its command, 
 
 ### Session Threads
 
-A session that other sessions launched shows as one row, with a **Thread strip** under it. The strip shows the children that need you or are working, a lane graph, the saved Agents in the thread, and totals. A thread with work in progress stays in **Working**, and one with a blocked session sits in **Your Turn**.
+A session that other sessions launched shows as one row, with a **Thread strip** under it. The strip names the child that needs you or the children that are working, then shows one dot for each child still going (blue and pulsing while it works, orange when it needs you, red when it ended in an error; at most 12, then **+N**), the saved Agents in the thread, and a count line in the list's words, such as "3 working · 1 needs you · 23 done · 101 stopped". Counts cover the children, not the root, and a state with none is left out. Done and stopped children get no dot. The line also shows the thread's cost and a cross-workspace note when they fit. A locked root shows names and counts only. A thread with work in progress stays in **Working**, and one with a blocked session sits in **Your Turn**.
 
 Tap the session row to open its chat. Tap the strip to open the thread in place: its sessions, children and grandchildren, appear as indented rows under the root, with their own status. Tap the strip again to close it. Each row is an ordinary session row: tap it to open that session, swipe or long-press it to stop, resume, lock, or delete it. The strip's chevron turns down while the thread is open, and VoiceOver reads **Expanded** or **Collapsed**.
 
@@ -36,7 +36,7 @@ A thread lists every session in it, even one that runs in another workspace; tha
 
 ### Session rows
 
-**Settings → Session Rows** (the row shows Standard or Compact) sets **Standard** or **Compact** rows and turns optional details on or off: model, time, context usage, cost, files touched, and compactions. **Agent Summary** and **Lane Graph** control the Thread strip. Changes save for this device. **Restore Defaults** resets them. A session gets a name from you, or from the optional [`auto-name` extension](extensions.md#auto-name). The title, status, questions, Incognito, workspace context, search matches, and Thread control always show.
+**Settings → Session Rows** (the row shows Standard or Compact) sets **Standard** or **Compact** rows and turns optional details on or off: model, time, context usage, cost, files touched, and compactions. **Agent Summary** controls the Thread strip. Changes save for this device. **Restore Defaults** resets them. A session gets a name from you, or from the optional [`auto-name` extension](extensions.md#auto-name). The title, status, questions, Incognito, workspace context, search matches, and Thread control always show.
 
 ## Prompt, steer, follow-up, and stop
 
