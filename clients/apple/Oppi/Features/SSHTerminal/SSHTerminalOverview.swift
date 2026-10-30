@@ -101,22 +101,27 @@ struct SSHTerminalOverviewSection: Hashable, Sendable {
     var rows: [SSHTerminalOverviewRow]
 }
 
-/// A multiplexer the terminal can read over its SSH side channel and show in
-/// an overview sheet (`SSHTerminalOverviewViewController`). Herdr and Rex each
-/// conform with their own poll; the bar button, badge, attention dot, and
-/// sheet treat them alike.
+/// What an overview list draws (`SSHTerminalOverviewViewController`): the
+/// terminal's sheet, or a Rex host's sessions screen.
 @MainActor
-protocol SSHTerminalOverviewSource: AnyObject {
-    /// The sheet's title, the multiplexer's name.
+protocol SSHTerminalOverviewContent: AnyObject {
+    /// The list's title, the multiplexer's name.
     var title: String { get }
-    /// Prefix of the sheet rows' accessibility identifiers, such as `sshTerminal.rex`.
+    /// Prefix of the rows' accessibility identifiers, such as `sshTerminal.rex`.
     var identifierPrefix: String { get }
     var sections: [SSHTerminalOverviewSection] { get }
     /// Why the last tap could not act on its row; the next tap, or closing the
-    /// sheet, clears it.
+    /// list, clears it.
     var focusFailure: String? { get }
-    /// The sheet is open: refresh faster.
+    /// The list is on screen: refresh faster.
     var watching: Bool { get set }
+}
+
+/// A multiplexer the terminal can read over its SSH side channel and show in
+/// an overview sheet. Herdr and Rex each conform with their own poll; the bar
+/// button, badge, attention dot, and sheet treat them alike.
+@MainActor
+protocol SSHTerminalOverviewSource: SSHTerminalOverviewContent {
     /// The host has answered at least once, so the bar offers the sheet.
     var available: Bool { get }
     /// Rows waiting at an approval, question, or sign-in.

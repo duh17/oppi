@@ -1,0 +1,19 @@
+The SSH Terminal's Herdr and Rex buttons (bottom bar, menu, and Bottom Bar
+settings) draw these marks as single-color template images.
+
+# Herdr
+Assets.xcassets/herdr-logo.imageset is Herdr's logo, cropped to the head and
+horn, with its background tile removed, and converted from SVG to PDF.
+Herdr is licensed under the Apache License 2.0, which grants no rights to its
+marks; the logo remains Herdr's and names the program the button opens.
+
+Source: https://github.com/ogulcancelik/herdr/blob/main/assets/logo.svg
+Project: https://herdr.dev
+
+# Rex
+Assets.xcassets/rex-logo.imageset is an original glyph made for Oppi, after
+the dinosaur of Rex's app icon: generated with Qwen-Image 2512 on this
+project's own hardware, then traced to vector. It is not Superlogical's
+artwork. Rex is a product of Superlogical, which does not endorse Oppi.
+
+Project: https://www.superlogical.com/rex/docs/

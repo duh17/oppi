@@ -796,7 +796,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func menuElement(for action: SSHTerminalBarAction) -> UIMenuElement {
-        let image = UIImage(systemName: action.symbol())
+        let image = action.image()
         if action == .switcher {
             let menu = UIMenu(title: action.menuTitle, image: image, children: [switcherElements()])
             menu.accessibilityIdentifier = action.menuIdentifier
@@ -1658,8 +1658,14 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         source.watching = true
         // A Rex pane opens here, in a terminal of its own over the same host.
         rex.openPane = { [weak self] pane in self?.session?.openRexPane(pane) }
+        let channel = channel
         Router.present(
-            SSHTerminalOverviewViewController(source: source, channel: channel),
+            SSHTerminalOverviewViewController(
+                content: source,
+                isSheet: true,
+                refresh: { await source.refresh(on: channel) },
+                activate: { await source.activate($0, on: channel) }
+            ),
             presentation: .sheet.detents([.medium(), .large()]).inNavigation(),
             from: self,
             onDismiss: { [weak self] in

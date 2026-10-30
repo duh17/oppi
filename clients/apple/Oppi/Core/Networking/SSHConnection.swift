@@ -176,6 +176,23 @@ struct SSHConnection: Sendable {
         return SSHConnection(channel: channel)
     }
 
+    /// Signs in with the credential `prepareAuthentication` returns, over the
+    /// socket `dial` opens after it: no socket exists while device presence is
+    /// pending, and cancellation cannot dial.
+    static func open(
+        username: String,
+        savedHostKey: SSHHostKey?,
+        prepareAuthentication: @Sendable () async throws -> SSHAuthentication,
+        dial: @Sendable () async throws -> Int32
+    ) async throws -> SSHConnection {
+        try Task.checkCancellation()
+        let authentication = try await prepareAuthentication()
+        try Task.checkCancellation()
+        let socket = try await dial()
+        if Task.isCancelled { Darwin.close(socket); throw CancellationError() }
+        return try await open(username: username, authentication: authentication, savedHostKey: savedHostKey, socket: socket)
+    }
+
     /// Runs one command in its own exec channel, without a PTY and without new
     /// authentication, and collects its output. `input` is written to the
     /// command's stdin, which then closes. Stdout and stderr together may not

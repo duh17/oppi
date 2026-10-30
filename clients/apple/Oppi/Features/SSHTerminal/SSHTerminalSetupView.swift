@@ -28,10 +28,10 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var lastThemeID: ThemeID?
 
-    private enum Section: Hashable { case host, startup, colors, identity, actions, delete }
+    private enum Section: Hashable { case host, multiplexer, startup, colors, identity, actions, delete }
     private enum Item: Hashable {
         case host, port, username, authentication, savePassword, sudoPassword, removeSudoPassword
-        case startup, colors
+        case multiplexer, startup, colors
         case publicKey, copyKey, backing, identityStatus, replaceKey
         case connecting, connect, saveHost, failure, trustUnknown, trustMismatch
         case deleteHost
@@ -137,8 +137,8 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         let action = UICollectionView.CellRegistration<SettingsActionRowCell, Item> { [weak self] cell, _, item in
             self?.configureAction(cell, item: item)
         }
-        let menu = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
-            self?.configureAuthentication(cell)
+        let menu = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, item in
+            if item == .multiplexer { self?.configureMultiplexer(cell) } else { self?.configureAuthentication(cell) }
         }
         let index = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
             guard let self else { return }
@@ -167,7 +167,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             switch item {
             case .host, .port, .username, .startup, .sudoPassword:
                 collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            case .authentication:
+            case .authentication, .multiplexer:
                 collectionView.dequeueConfiguredReusableCell(using: menu, for: indexPath, item: item)
             case .colors:
                 collectionView.dequeueConfiguredReusableCell(using: index, for: indexPath, item: item)
@@ -232,10 +232,34 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
                 monospaced: true, textColor: UIColor(palette.fg), enabled: enabled
             ) { [weak self] in
                 self?.profile.startupCommand = $0
+                self?.reconfigure(.multiplexer)
             }
         default:
             break
         }
+    }
+
+    /// Herdr and tmux write the Run on Connect command below; Rex hides it.
+    private func configureMultiplexer(_ cell: SettingsMenuRowCell) {
+        let current = profile.multiplexerChoice
+        cell.configure(
+            title: "Multiplexer",
+            identifier: "sshTerminal.multiplexer",
+            isEnabled: !session.connecting,
+            options: SSHTerminalMultiplexerChoice.allCases.map { choice in
+                (choice.label, choice == current, { [weak self] in
+                    self?.profile.choose(choice)
+                    self?.applySnapshot()
+                })
+            }
+        )
+    }
+
+    /// Redraws one row in place, leaving the field being typed in alone.
+    private func reconfigure(_ item: Item) {
+        guard var snapshot = dataSource?.snapshot(), snapshot.itemIdentifiers.contains(item) else { return }
+        snapshot.reconfigureItems([item])
+        dataSource?.apply(snapshot, animatingDifferences: false)
     }
 
     private func configureAuthentication(_ cell: SettingsMenuRowCell) {
@@ -399,8 +423,12 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         }
         snapshot.appendItems(hostItems, toSection: .host)
 
-        snapshot.appendSections([.startup])
-        snapshot.appendItems([.startup], toSection: .startup)
+        snapshot.appendSections([.multiplexer])
+        snapshot.appendItems([.multiplexer], toSection: .multiplexer)
+        if !profile.opensRexSessions {
+            snapshot.appendSections([.startup])
+            snapshot.appendItems([.startup], toSection: .startup)
+        }
 
         snapshot.appendSections([.colors])
         snapshot.appendItems([.colors], toSection: .colors)
@@ -514,6 +542,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         guard let section = dataSource?.snapshot().sectionIdentifiers[safe: indexPath.section] else { return nil }
         switch section {
         case .host: return "Host"
+        case .multiplexer: return "Multiplexer"
         case .startup: return "Run on Connect"
         case .colors: return "Colors"
         case .identity: return "This Device’s SSH Identity"
@@ -530,11 +559,13 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
                 text += "\n\nA sudo password is optional. It stays in this device’s private Keychain, and at a terminal password prompt Fill Password types it after Face ID, Touch ID, or your passcode, without pressing Return. It goes to whatever program on that terminal shows the prompt. Changing the host, port, or user removes it."
             }
             return text
+        case .multiplexer:
+            return "Herdr and tmux run in this host’s terminal: choosing one sets Run on Connect. With Rex, Connect opens the host’s Rex sessions instead of a terminal; tap a pane to open it here, or Shell for the login shell."
         case .startup:
             if folderTerminal != nil {
-                return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. Enter `herdr` to attach your Herdr session. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see.\n\nTerminal from a workspace or chat starts its own login shell in that folder and ignores this command."
+                return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see.\n\nTerminal from a workspace or chat starts its own login shell in that folder and ignores this command."
             }
-            return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. Enter `herdr` to attach your Herdr session. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see."
+            return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see."
         case .identity:
             var text = "Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you."
             if deviceKey.identityNeedsReplacement {
@@ -646,6 +677,21 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         // multiplexer terminal, a folder terminal running its attach command, or
         // the plain login shell in the folder.
         let profile = normalizedProfile()
+        // A Rex host opens its sessions screen, which signs in on its own.
+        if profile.opensRexSessions, folderTerminal == nil {
+            session.saveHost(profile: profile, suppliedPassword: password, sudoPassword: suppliedSudoPassword) { [weak self] saved in
+                guard let self else { return }
+                self.applySaved(saved)
+                // Edit Host from that host's sessions screen goes back to it.
+                if let below = self.navigationController?.viewControllers.dropLast().last as? SSHTerminalRexSessionsViewController,
+                   below.profileID == saved.id {
+                    Router.finish(self)
+                } else {
+                    Router.push(SSHTerminalRexSessionsViewController(profile: saved, suppliedPassword: password), from: self)
+                }
+            }
+            return
+        }
         SSHTerminalFolderEntry.prepare(session: session, profile: profile, target: folderTerminal)
         session.connect(
             profile: profile,

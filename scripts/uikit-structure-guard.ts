@@ -115,7 +115,7 @@ const settingsThemingExceptions: { file: string; reason: string }[] = [
   },
   {
     file: "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalOverviewViewController.swift",
-    reason: "The terminal's list of Herdr agents or Rex panes: a picker over a live terminal, not a settings page.",
+    reason: "The list of Herdr agents or Rex panes: a picker over a live terminal, or a Rex host's sessions screen; not a settings page.",
   },
   {
     file: "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalPasswordViewController.swift",

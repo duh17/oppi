@@ -266,12 +266,18 @@ final class RexMonitor: SSHTerminalOverviewSource {
     }
 
     func refresh(on channel: SSHTerminalChannel) async {
+        await refresh { try await channel.run($0, input: $1) }
+    }
+
+    /// One read through `run`, a side command on any connection to the host:
+    /// a terminal's, or the Rex sessions screen's own.
+    func refresh(using run: @escaping @MainActor (String, Data) async throws -> SSHExecResult) async {
         if let reader { return await reader.value }
         let reader = Task { [weak self] in
             let result: Result<RexSnapshot, any Error>
             do {
                 result = .success(try RexRemote.snapshot(
-                    from: try await channel.run(RexRemote.command, input: Data(RexRemote.snapshotScript.utf8))
+                    from: try await run(RexRemote.command, Data(RexRemote.snapshotScript.utf8))
                 ))
             } catch {
                 result = .failure(error)
@@ -288,6 +294,8 @@ final class RexMonitor: SSHTerminalOverviewSource {
         case .success(let snapshot):
             self.snapshot = snapshot
             failure = nil
+            // `rex` installed since a read found none.
+            unavailable = false
         case .failure(is CancellationError):
             break
         case .failure(RexRemoteError.notInstalled):
@@ -299,8 +307,13 @@ final class RexMonitor: SSHTerminalOverviewSource {
         }
     }
 
-    /// A pane row opens that pane on this device. Session rows offer nothing.
     func activate(_ focus: SSHTerminalOverviewFocus, on channel: SSHTerminalChannel) async -> Bool {
+        open(focus)
+    }
+
+    /// A pane row opens that pane on this device (`openPane`). Session rows
+    /// offer nothing.
+    func open(_ focus: SSHTerminalOverviewFocus) -> Bool {
         focusFailure = nil
         guard let sessionID = focus.scope, !focus.isGroup,
               let pane = snapshot?.pane(session: sessionID, block: focus.id), let openPane else {
@@ -316,6 +329,12 @@ final class RexMonitor: SSHTerminalOverviewSource {
     /// session with several windows names each pane's window.
     var sections: [SSHTerminalOverviewSection] {
         var sections: [SSHTerminalOverviewSection] = []
+        // The terminal's bar never offers a host without `rex`; a Rex host's
+        // sessions screen says so.
+        if unavailable {
+            let reason = RexRemoteError.notInstalled.localizedDescription
+            return [.init(id: "failure", rows: [.init(id: "failure", title: reason, kind: .failure, focus: nil)])]
+        }
         if let failure {
             sections.append(.init(id: "failure", rows: [.init(id: "failure", title: failure, kind: .failure, focus: nil)]))
         }

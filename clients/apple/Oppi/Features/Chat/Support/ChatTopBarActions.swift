@@ -90,9 +90,8 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
 /// so it takes the size SF Symbols gives its own solid diamond (`diamond.fill`)
 /// at that style: the size the symbol set balances against the folder, list,
 /// and pie beside it (about 20 pt for `.subheadline`). Sized from the font's
-/// point size instead, it read as a small blot next to them. A vector asset
-/// does not take a symbol configuration, so each size is rendered once, as a
-/// template.
+/// point size instead, it read as a small blot next to them
+/// (`SymbolSizedLogo`).
 ///
 /// A menu draws a plain image at its own size but resizes its symbols; an
 /// unconfigured symbol there measures as body text at the small symbol scale
@@ -100,22 +99,14 @@ enum ChatTopBarAction: String, CaseIterable, Identifiable, Hashable {
 /// `diamond.fill` at that configuration. What's New draws it at `.title3`.
 @MainActor
 enum GitLogoImage {
-    private static var cache: [CGFloat: UIImage] = [:]
-
     static func image(textStyle: UIFont.TextStyle?) -> UIImage? {
-        let configuration = textStyle.map { UIImage.SymbolConfiguration(textStyle: $0) }
-            ?? UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
-        let reference = UIImage(systemName: "diamond.fill", withConfiguration: configuration)
-        let fallback = UIFont.preferredFont(forTextStyle: textStyle ?? .body).pointSize
-        let side = (reference?.size.width ?? fallback).rounded()
-        if let cached = cache[side] { return cached }
-        guard let logo = UIImage(named: "git-logo") else { return nil }
-        let size = CGSize(width: side, height: side)
-        let image = UIGraphicsImageRenderer(size: size).image { _ in
-            logo.draw(in: CGRect(origin: .zero, size: size))
-        }.withRenderingMode(.alwaysTemplate)
-        cache[side] = image
-        return image
+        SymbolSizedLogo.image(
+            named: "git-logo",
+            reference: "diamond.fill",
+            configuration: textStyle.map { UIImage.SymbolConfiguration(textStyle: $0) }
+                ?? UIImage.SymbolConfiguration(textStyle: .body, scale: .small),
+            fallbackSide: UIFont.preferredFont(forTextStyle: textStyle ?? .body).pointSize
+        )
     }
 }
 

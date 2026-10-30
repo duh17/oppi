@@ -21,6 +21,9 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
     /// Optional command run on the PTY instead of a login shell, like
     /// `ssh -t host 'command'`. Optional so older saved profiles still decode.
     var startupCommand: String?
+    /// Connecting opens the host's Rex sessions instead of a terminal; the
+    /// login shell opens from there. Such a host runs no Run on Connect command.
+    var opensRexSessions = false
 
     init(
         id: UUID = UUID(),
@@ -30,7 +33,8 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
         authentication: Authentication = .password,
         savesPassword: Bool = false,
         savesSudoPassword: Bool = false,
-        startupCommand: String? = nil
+        startupCommand: String? = nil,
+        opensRexSessions: Bool = false
     ) {
         self.id = id
         self.host = host
@@ -40,9 +44,10 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
         self.savesPassword = savesPassword
         self.savesSudoPassword = savesSudoPassword
         self.startupCommand = startupCommand
+        self.opensRexSessions = opensRexSessions
     }
 
-    /// Catalogs saved before the sudo password existed have no such key.
+    /// Catalogs saved before the sudo password or Rex existed have no such key.
     init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
@@ -53,6 +58,7 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
         savesPassword = try values.decode(Bool.self, forKey: .savesPassword)
         savesSudoPassword = try values.decodeIfPresent(Bool.self, forKey: .savesSudoPassword) ?? false
         startupCommand = try values.decodeIfPresent(String.self, forKey: .startupCommand)
+        opensRexSessions = try values.decodeIfPresent(Bool.self, forKey: .opensRexSessions) ?? false
     }
 
     var isConfigured: Bool {
@@ -117,8 +123,36 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
     var portLabel: String? { port == 22 ? nil : "Port \(port)" }
 
     var startupLabel: String {
+        if opensRexSessions { return "Rex sessions" }
         let command = startupCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return command.isEmpty ? "Login shell" : command
+    }
+
+    /// The multiplexer the host's form shows: Rex, else the one its Run on
+    /// Connect command starts, else none.
+    var multiplexerChoice: SSHTerminalMultiplexerChoice {
+        if opensRexSessions { return .rex }
+        switch SSHTerminalMultiplexerKind.detected(in: startupCommand) {
+        case .herdr: return .herdr
+        case .tmux: return .tmux
+        case nil: return .none
+        }
+    }
+
+    /// Chooses the host's multiplexer. Herdr and tmux are what Run on Connect
+    /// runs, so choosing one writes its command (keeping one that already starts
+    /// it, flags and all); Rex runs no command; None clears a multiplexer's
+    /// command and keeps any other.
+    mutating func choose(_ choice: SSHTerminalMultiplexerChoice) {
+        guard choice != multiplexerChoice else { return }
+        let runsMultiplexer = SSHTerminalMultiplexerKind.detected(in: startupCommand) != nil
+        opensRexSessions = choice == .rex
+        switch choice {
+        case .herdr: startupCommand = "herdr"
+        case .tmux: startupCommand = "tmux new -A -s main"
+        case .rex: startupCommand = nil
+        case .none: if runsMultiplexer { startupCommand = nil }
+        }
     }
 
     func normalized() -> Self {
@@ -126,10 +160,26 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
         result.host = host.trimmingCharacters(in: .whitespacesAndNewlines)
         result.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let command = startupCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        result.startupCommand = command.isEmpty ? nil : command
+        result.startupCommand = command.isEmpty || opensRexSessions ? nil : command
         if result.authentication == .deviceKey { result.savesPassword = false }
         if result.authentication == .password { result.savesSudoPassword = false }
         return result
+    }
+}
+
+/// The Multiplexer a host's form offers. Herdr and tmux run in the host's
+/// terminal (its Run on Connect command); Rex is reached beside it, so a Rex
+/// host opens its session list instead.
+enum SSHTerminalMultiplexerChoice: CaseIterable, Equatable, Sendable {
+    case none, herdr, tmux, rex
+
+    var label: String {
+        switch self {
+        case .none: "None"
+        case .herdr: "Herdr"
+        case .tmux: "tmux"
+        case .rex: "Rex"
+        }
     }
 }
 

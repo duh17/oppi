@@ -59,6 +59,13 @@ final class SSHTerminalConnectSession {
     /// The Rex pane this session's terminal shows instead of a shell, over the
     /// same saved host. Part of the terminal's identity, like `folder`.
     var rexPane: RexPaneTarget?
+    /// Set before `connect` to open the host's Rex sessions instead of a
+    /// terminal: a signed-in connection with no PTY, whose side commands read
+    /// Rex (`rexSessions`). Nothing joins the registry.
+    var listsRexSessions = false
+    /// The connection the Rex sessions screen reads over, once signed in. Its
+    /// screen closes it (`closeRexSessions`).
+    private(set) var rexSessions: SSHConnection?
     var devicePasscodeChanged = false
     private var task: Task<Void, Never>?
     private var runID = UUID()
@@ -88,7 +95,8 @@ final class SSHTerminalConnectSession {
         // show it. No dial, no sign-in. A form that also changed which
         // passwords are saved, or typed one, saves them first (and the
         // registry updates the live terminal) rather than dialing a replacement.
-        if let live = registry.terminal(for: value.id, folder: folder, rexPane: rexPane), live.profile.sameConnection(as: value) {
+        if !listsRexSessions, let live = registry.terminal(for: value.id, folder: folder, rexPane: rexPane),
+           live.profile.sameConnection(as: value) {
             if live.profile == value && sudoPassword == nil {
                 show(live)
             } else if value.authentication == .password && value.savesPassword && suppliedPassword == nil
@@ -124,6 +132,12 @@ final class SSHTerminalConnectSession {
         }
         begin(value, savingHostOnly: false)
         let attempt = runID
+        // What this attempt opens, as asked now: a screen may set these for
+        // its next connect while this one still waits on the save below.
+        let listsRexSessions = self.listsRexSessions
+        let rexPane = self.rexPane
+        let folder = self.folder
+        let folderCommand = self.folderTerminalCommand
         task = Task {
             defer { registry.untrack(attempt: attempt) }
             do {
@@ -133,7 +147,32 @@ final class SSHTerminalConnectSession {
                 onSaved?(value)
                 connectedProfile = value
                 let savedKey = try SSHKnownHosts().savedKey(host: value.host, port: value.port)
-                let rexPane = self.rexPane
+                let authenticate: @Sendable () async throws -> SSHAuthentication = {
+                    switch value.authentication {
+                    case .password:
+                        if let suppliedPassword { return .password(suppliedPassword) }
+                        let stored = try await makeStore().approvedPassword(for: value)
+                        guard let stored else { throw SSHKeychainError.passwordRequired }
+                        return .password(stored)
+                    case .deviceKey:
+                        return .deviceKey(try await SSHIdentityKeyStore.authenticatedIdentity())
+                    }
+                }
+                let dial: @Sendable () async throws -> Int32 = {
+                    try await SSHDial.socket(host: value.host, port: value.port, whenNodeStopped: .direct)
+                }
+                if listsRexSessions {
+                    let connection = try await SSHConnection.open(
+                        username: value.username, savedHostKey: savedKey,
+                        prepareAuthentication: authenticate, dial: dial
+                    )
+                    guard !Task.isCancelled, runID == self.runID else { connection.close(); return }
+                    rexSessions?.close()
+                    rexSessions = connection
+                    task = nil
+                    connecting = false
+                    return
+                }
                 // A Rex pane's program got its query answers from Rex's own terminal.
                 let owner = try SSHTerminalChannel(answersTerminalQueries: rexPane == nil)
                 channel = owner
@@ -145,8 +184,6 @@ final class SSHTerminalConnectSession {
                 // no shell: the connection's main channel is Rex's control
                 // connection, with no PTY, and the pane's output comes on a
                 // second channel (`RexPaneConnection`).
-                let folder = self.folder
-                let folderCommand = self.folderTerminalCommand
                 let command: String?
                 let control = RexControl()
                 if rexPane != nil {
@@ -162,19 +199,9 @@ final class SSHTerminalConnectSession {
                         inboundFlow: rexPane == nil ? queue.flow : nil,
                         command: command,
                         requestsPTY: rexPane == nil,
-                        prepareAuthentication: {
-                            switch value.authentication {
-                            case .password:
-                                if let suppliedPassword { return .password(suppliedPassword) }
-                                let stored = try await makeStore().approvedPassword(for: value)
-                                guard let stored else { throw SSHKeychainError.passwordRequired }
-                                return .password(stored)
-                            case .deviceKey:
-                                return .deviceKey(try await SSHIdentityKeyStore.authenticatedIdentity())
-                            }
-                        }, dial: {
-                            try await SSHDial.socket(host: value.host, port: value.port, whenNodeStopped: .direct)
-                        }, sink: { event in
+                        prepareAuthentication: authenticate,
+                        dial: dial,
+                        sink: { event in
                             guard rexPane != nil else { return queue.push(event) }
                             // Typing travels on the control channel, so its
                             // writability is what lets the input pump resume.
@@ -295,8 +322,16 @@ final class SSHTerminalConnectSession {
         folder = nil
         folderTerminalCommand = nil
         multiplexerFolder = nil
+        listsRexSessions = false
         rexPane = pane
         connect(profile: profile)
+    }
+
+    /// Ends the Rex sessions connection; its screen has closed or Oppi left
+    /// the foreground.
+    func closeRexSessions() {
+        rexSessions?.close()
+        rexSessions = nil
     }
 
     /// Opens the terminal this session stands for again: its host, folder, and

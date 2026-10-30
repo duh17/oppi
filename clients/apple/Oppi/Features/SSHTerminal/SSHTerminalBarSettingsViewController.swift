@@ -119,10 +119,7 @@ final class SSHTerminalBarSettingsViewController: SettingsListViewController<
         guard case .action(let action) = item else { return }
         var content = content(.plain)
         content.text = action.label
-        content.image = UIImage(
-            systemName: action.symbol(),
-            withConfiguration: UIImage.SymbolConfiguration(textStyle: .body)
-        )
+        content.image = action.image(configuration: UIImage.SymbolConfiguration(textStyle: .body))
         content.imageProperties.reservedLayoutSize.width = UIListContentConfiguration.ImageProperties.standardDimension
         cell.contentConfiguration = content
         cell.accessibilityIdentifier = "settings.sshTerminal.bar.row.\(action.rawValue)"

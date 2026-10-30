@@ -276,12 +276,13 @@ enum SSHTerminalFolderEntry {
         profile: SSHTerminalProfile,
         target: SSHTerminalFolderTarget?
     ) {
-        // A session outlives its screens' connects: a folder, or a Rex pane the
-        // terminal screen opened on it, must not carry into this one.
+        // A session outlives its screens' connects: a folder, or a Rex pane or
+        // session list opened on it, must not carry into this one.
         session.folder = nil
         session.folderTerminalCommand = nil
         session.multiplexerFolder = nil
         session.rexPane = nil
+        session.listsRexSessions = false
         guard let target else { return }
         // No multiplexer: the plain login shell in the folder.
         guard let multiplexer = SSHTerminalMultiplexerKind.detected(in: profile.startupCommand)?.multiplexer else {

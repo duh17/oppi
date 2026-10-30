@@ -13,11 +13,13 @@ SSH Terminal opens an interactive shell on a host saved on this iPhone or iPad. 
 
 For a Mac with an Ed25519 host key, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` prints the fingerprint.
 
-The host list leads with **Add Host** when none is saved. A row shows `user@host`, the port when it is not 22, the Run on Connect command or **Login shell**, and each folder a terminal is open in. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that host and its saved passwords only. **Edit Host** in a live terminal opens the form for the connected host. **Tailscale → Set Up a Mac or Linux Computer** is a separate screen.
+The host list leads with **Add Host** when none is saved. A row shows `user@host`, the port when it is not 22, the Run on Connect command, **Login shell**, or **Rex sessions** for a [Rex host](#a-rex-host), and each folder a terminal is open in. Two rows can use the same machine with different Run on Connect commands. Swipe **Delete Host** removes that host and its saved passwords only. **Edit Host** in a live terminal opens the form for the connected host. **Tailscale → Set Up a Mac or Linux Computer** is a separate screen.
 
 ## Run on Connect
 
-**Run on Connect** runs one command instead of a login shell, as `ssh -t host 'command'` does. Enter `herdr` to attach Herdr, or `tmux new -A -s main` for tmux. The connection ends when the command exits, and **Reconnect** runs it again. The command must be on the `PATH` that non-interactive SSH commands see. Leave it empty for a login shell.
+**Run on Connect** runs one command instead of a login shell, as `ssh -t host 'command'` does. The connection ends when the command exits, and **Reconnect** runs it again. The command must be on the `PATH` that non-interactive SSH commands see. Leave it empty for a login shell.
+
+**Multiplexer**, above it, picks one for you: **Herdr** sets Run on Connect to `herdr` and **tmux** to `tmux new -A -s main` (a command that already starts that multiplexer, flags and all, is kept), and **None** clears a multiplexer's command but keeps any other program. Typing a command updates the choice. **Rex** is different: Rex is not run in the host's terminal, so Run on Connect is hidden and cleared, and connecting opens the host's [Rex sessions](#a-rex-host) instead of a terminal.
 
 ## Open Terminal here
 
@@ -171,7 +173,7 @@ A touch-and-hold menu depends on the cell: on an OSC 8 hyperlink, a URL, or a pa
 
 ## Herdr
 
-When `herdr` is on the host, the terminal checks Herdr's API (`herdr api snapshot`) every few seconds over the same connection, in a separate command channel. A button beside **…** at the bottom right turns orange while agents wait at an approval or question. It lists workspaces and agents, each with the status symbol and label of the program-status glyph: Working (animated), Question, Done, or Idle. Each machine's focused workspace and agent are bold. An unrecognized state shows as Unknown.
+When `herdr` is on the host, the terminal checks Herdr's API (`herdr api snapshot`) every few seconds over the same connection, in a separate command channel. A button beside **…** at the bottom right, drawn with Herdr's own ram-head mark, turns orange while agents wait at an approval or question. It lists workspaces and agents, each with the status symbol and label of the program-status glyph: Working (animated), Question, Done, or Idle. Each machine's focused workspace and agent are bold. An unrecognized state shows as Unknown.
 
 **The shell's folder.** Herdr's snapshot names each pane's folder (`foreground_cwd`, else `cwd`) and the focused pane (`focused_pane_id`). In a terminal Oppi started in Herdr, Local's focused pane is the shell's folder, because Herdr does not pass its panes' OSC 7 through; [Links, paths, and the shell's folder](#links-paths-and-the-shells-folder) has the rules, the 25-second grace after a failed read, and the limits (the focused pane is server-wide, and it is the host's own, whatever machine the sidebar shows). A Herdr that omits these fields leaves the folder unknown. Saved machines never set it.
 
@@ -181,12 +183,20 @@ Herdr decides the state from the agent's screen or its integration and does not 
 
 ## Rex
 
-When the host runs [Rex](https://www.superlogical.com/rex/docs/), the terminal reads its sessions every few seconds over the same connection, in a separate command channel, as it does for Herdr. A **Rex Sessions** button beside **…** at the bottom right opens the list and turns orange while a pane waits at an approval, question, or sign-in. Each session lists its panes in window order, named by the program that reported its status (such as `pi`), else the terminal's title, with that title and, for a session with more than one window, the window's name underneath. The pane Rex types into (the focused pane of the session's active window) is bold.
+When the host runs [Rex](https://www.superlogical.com/rex/docs/), the terminal reads its sessions every few seconds over the same connection, in a separate command channel, as it does for Herdr. A **Rex Sessions** button beside **…** at the bottom right, drawn with a dinosaur glyph after Rex's app icon (Oppi's own drawing, not Superlogical's), opens the list and turns orange while a pane waits at an approval, question, or sign-in. Each session lists its panes in window order, named by the program that reported its status (such as `pi`), else the terminal's title, with that title and, for a session with more than one window, the window's name underneath. The pane Rex types into (the focused pane of the session's active window) is bold.
 
 Rex passes each pane's [OSC 7501](#program-status-osc-7501) reports through, so a pane's status is its program's own, rolled up the way this terminal rolls up its records, including the blocked kind (Needs approval, Sign-in, Question). A pane whose program never reported shows no status.
 
 - **How it reads:** each read pipes a Lua script into `rex do -` on the host, so the phone needs no route to Rex itself, and Rex's own Tailscale serving can stay off. On macOS Oppi uses the `rex` inside the Rex app (`~/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex`), since it is not on the `PATH` an SSH command sees; elsewhere it uses `rex` from that `PATH`. It never starts a Rex server: a host whose Rex is not running shows **Rex is not running on this host.** and is asked again. A host without `rex` is checked once per connection and then left alone.
 - **If Rex stops answering,** the list keeps what it last reported under the reason, and its panes leave the orange count. Session rows do nothing when tapped.
+
+### A Rex host
+
+With **Multiplexer** set to **Rex** in the host's form, tapping the host (or **Connect** in its form) opens its Rex sessions as a screen of their own instead of a terminal: the same rows as the **Rex Sessions** list, read every 2 seconds while the screen shows. Pull down to read now, or to connect again after a failure. Tap a pane to open it ([Opening a Rex pane](#opening-a-rex-pane)); **Back** returns to the sessions. **Shell** (top right) opens the host's login shell, the one already open if it still is. No shell is opened until you ask.
+
+- **How it connects:** the screen signs in a connection of its own with the host's sign-in, asking for a password, Face ID, or host trust over the screen as the host list does. It runs no shell or PTY; each read is a side command, as in a terminal. It closes when you leave the screen or Oppi goes to the background, and signs in again when the screen shows again; a connection that drops while the screen shows signs in again by itself.
+- **A host without `rex`** says **rex is not on this host.**; one whose Rex is not running says so and is asked again.
+- **Open Terminal here** on a Rex host opens a login shell in the folder, as for a host without a multiplexer.
 
 ### Opening a Rex pane
 

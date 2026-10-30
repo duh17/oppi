@@ -203,6 +203,39 @@ struct SSHTerminalSwitcherTests {
         #expect(session.rexPane == nil)
     }
 
+    /// A Rex host's sessions screen signs in a connection of its own: it never
+    /// shows the host's open shell instead. A tapped pane, and the host row
+    /// after it, leave the list behind.
+    @Test func aRexSessionsListNeverShowsTheShellAndAPaneLeavesIt() throws {
+        let registry = makeRegistry()
+        defer { closeEverything(registry) }
+        let session = SSHTerminalConnectSession(registry: registry, profileStore: IsolatedProfiles().make)
+        let rexHost = SSHTerminalProfile(host: "mac-studio", username: "chen", opensRexSessions: true)
+        let shell = try open(registry, rexHost)
+
+        SSHTerminalFolderEntry.prepare(session: session, profile: rexHost, target: nil)
+        session.listsRexSessions = true
+        session.connect(profile: rexHost)
+        #expect(!session.showsTerminal && session.channel == nil, "the list is not the shell")
+        #expect(session.connecting || session.passwordPrompt, "it signs in on its own")
+        session.cancel()
+
+        let pane = RexPaneTarget(sessionID: "session:a", blockID: "block:b", label: "claude")
+        let paneChannel = try SSHTerminalChannel(answersTerminalQueries: false)
+        paneChannel.opened(QuietConnection())
+        registry.adopt(paneChannel, profile: rexHost, rexPane: pane, queue: SSHTerminalEventQueue())
+        session.connectedProfile = rexHost
+        session.openRexPane(pane)
+        #expect(session.channel === paneChannel && session.showsTerminal)
+        #expect(!session.listsRexSessions)
+
+        session.showsTerminal = false
+        session.listsRexSessions = true
+        SSHTerminalFolderEntry.prepare(session: session, profile: rexHost, target: nil)
+        session.connect(profile: rexHost)
+        #expect(session.channel === shell, "Shell opens the host's own terminal")
+    }
+
     @Test func aTerminalThatEndedMeanwhileIsNotShown() throws {
         let registry = makeRegistry()
         let session = SSHTerminalConnectSession(registry: registry)

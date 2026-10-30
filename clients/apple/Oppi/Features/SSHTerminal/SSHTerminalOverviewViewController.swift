@@ -2,20 +2,32 @@ import UIKit
 
 /// Native overview of a multiplexer the terminal's host runs: Herdr's machines,
 /// workspaces, and agents, or Rex's sessions and panes, each with its live
-/// program status. The source decides the rows (`SSHTerminalOverviewSource`);
-/// this sheet draws them the same way for every multiplexer. Selecting a row
+/// program status. The content decides the rows (`SSHTerminalOverviewContent`);
+/// this list draws them the same way for every multiplexer. Selecting a row
 /// acts on it: Herdr focuses it on the host, Rex opens the pane on this device.
+/// It is the terminal's sheet, or the body of a Rex host's sessions screen.
 final class SSHTerminalOverviewViewController: UIViewController, UICollectionViewDelegate {
-    private let source: any SSHTerminalOverviewSource
-    private let channel: SSHTerminalChannel
+    private let source: any SSHTerminalOverviewContent
+    /// A sheet has Done and closes once a tap has acted.
+    private let isSheet: Bool
+    private let reload: () async -> Void
+    /// True when the tap acted; false leaves the list up with `focusFailure`.
+    private let activate: (SSHTerminalOverviewFocus) async -> Bool
     private let collectionView: UICollectionView
     private var dataSource: UICollectionViewDiffableDataSource<String, SSHTerminalOverviewRow>?
     private var isVisible = false
     private var themeID: ThemeID { AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID() }
 
-    init(source: any SSHTerminalOverviewSource, channel: SSHTerminalChannel) {
-        self.source = source
-        self.channel = channel
+    init(
+        content: any SSHTerminalOverviewContent,
+        isSheet: Bool,
+        refresh: @escaping () async -> Void,
+        activate: @escaping (SSHTerminalOverviewFocus) async -> Bool
+    ) {
+        self.source = content
+        self.isSheet = isSheet
+        self.reload = refresh
+        self.activate = activate
         var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
         config.headerMode = .none
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
@@ -31,7 +43,9 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
         navigationItem.largeTitleDisplayMode = .inline
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
         view.backgroundColor = UIColor(themeID.palette.bg)
-        navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(close))
+        if isSheet {
+            navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done, target: self, action: #selector(close))
+        }
 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
         collectionView.delegate = self
@@ -66,7 +80,9 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        if isMovingFromParent || isBeingDismissed {
+        // A sheet stops watching once it goes; a screen also while covered
+        // (by the pane it opened).
+        if !isSheet || isMovingFromParent || isBeingDismissed {
             isVisible = false
             source.watching = false
         }
@@ -84,7 +100,7 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
     }
 
     private func refresh() async {
-        await source.refresh(on: channel)
+        await reload()
         collectionView.refreshControl?.endRefreshing()
         applySnapshot()
     }
@@ -192,8 +208,8 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
         collectionView.deselectItem(at: indexPath, animated: true)
         guard let focus = dataSource?.itemIdentifier(for: indexPath)?.focus else { return }
         Task {
-            let focused = await source.activate(focus, on: channel)
-            if focused, isVisible { Router.finish(self) } else { applySnapshot() }
+            let focused = await activate(focus)
+            if focused, isSheet, isVisible { Router.finish(self) } else { applySnapshot() }
         }
     }
 }

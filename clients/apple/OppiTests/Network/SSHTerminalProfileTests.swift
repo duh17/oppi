@@ -193,6 +193,54 @@ struct SSHTerminalProfileTests {
         #expect(shell.startupLabel == "Login shell")
     }
 
+    /// Herdr and tmux are what Run on Connect runs, so the Multiplexer choice
+    /// writes the command (and keeps one that already starts it, flags and
+    /// all); Rex runs none, saved or not; None drops only a multiplexer's
+    /// command, never another program the person typed.
+    @Test func theMultiplexerChoiceIsRunOnConnectForHerdrAndTmuxAndNoCommandForRex() throws {
+        var host = SSHTerminalProfile(host: "mac-studio", username: "chen", startupCommand: "herdr --session work")
+        #expect(host.multiplexerChoice == .herdr)
+        host.choose(.herdr)
+        #expect(host.startupCommand == "herdr --session work")
+
+        host.choose(.tmux)
+        #expect(host.multiplexerChoice == .tmux)
+        #expect(SSHTerminalMultiplexerKind.detected(in: host.startupCommand) == .tmux)
+
+        host.choose(.rex)
+        #expect(host.multiplexerChoice == .rex && host.opensRexSessions)
+        #expect(host.startupCommand == nil)
+
+        host.choose(.none)
+        #expect(host.multiplexerChoice == .none && !host.opensRexSessions)
+
+        host.startupCommand = "htop"
+        host.choose(.none)
+        #expect(host.startupCommand == "htop")
+
+        // A command left on a Rex host (typed before Rex was chosen) never runs.
+        var rex = SSHTerminalProfile(host: "mac-studio", username: "chen", startupCommand: "htop", opensRexSessions: true)
+        #expect(rex.normalized().startupCommand == nil)
+        rex.choose(.herdr)
+        #expect(!rex.opensRexSessions && rex.startupCommand == "herdr")
+    }
+
+    /// Hosts saved before Rex decode as before, and a Rex host stays one.
+    @Test func aRexHostSurvivesSavingAndOlderCatalogsAreNotRex() throws {
+        let name = "SSHTerminalProfileTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = SSHTerminalProfileStore(defaults: defaults, keychain: SSHKeychain(service: name))
+        let rex = SSHTerminalProfile(host: "mac-studio", username: "chen", opensRexSessions: true)
+        try store.save(rex)
+        #expect(store.profile(id: rex.id)?.opensRexSessions == true)
+
+        let older = #"{"id":"\#(UUID().uuidString)","host":"mac-mini","port":22,"username":"chen","authentication":"deviceKey","savesPassword":false,"startupCommand":"herdr"}"#
+        let decoded = try JSONDecoder().decode(SSHTerminalProfile.self, from: Data(older.utf8))
+        #expect(!decoded.opensRexSessions)
+        #expect(decoded.multiplexerChoice == .herdr)
+    }
+
     /// Terminal is a regular destination: the sidebar offers it below MCP
     /// Servers, with no saved host.
     @Test @MainActor func theSidebarOffersTerminalBelowMCPServers() {

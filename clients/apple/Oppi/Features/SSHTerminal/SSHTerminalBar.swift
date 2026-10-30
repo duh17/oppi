@@ -113,9 +113,36 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
         }
     }
 
+    /// The multiplexer's own mark, drawn instead of `symbol` wherever the
+    /// action shows an icon: a template vector asset, credited in
+    /// `Resources/MultiplexerLogos-NOTICE.txt`.
+    var logo: String? {
+        switch self {
+        case .herdr: "herdr-logo"
+        case .rex: "rex-logo"
+        default: nil
+        }
+    }
+
+    /// The action's icon under `configuration` (nil: a menu's own symbol
+    /// size): its logo sized like a symbol there, else `symbol(selected:)`.
+    @MainActor
+    func image(selected: Bool = false, configuration: UIImage.SymbolConfiguration? = nil) -> UIImage? {
+        if let logo, let image = SymbolSizedLogo.image(
+            named: logo,
+            reference: "circle.fill",
+            // A menu sizes an unconfigured symbol as body text at the small scale.
+            configuration: configuration ?? UIImage.SymbolConfiguration(textStyle: .body, scale: .small),
+            fallbackSide: 17
+        ) {
+            return image
+        }
+        return UIImage(systemName: symbol(selected: selected), withConfiguration: configuration)
+    }
+
     /// The SF Symbol for the bar (unless `keyCap` is set), the menu, and the
-    /// settings row. `selected` is the filled form an input button shows while
-    /// typing goes there.
+    /// settings row, where the action has no `logo`. `selected` is the
+    /// filled form an input button shows while typing goes there.
     func symbol(selected: Bool = false) -> String {
         switch self {
         case .keyboard: selected ? "keyboard.fill" : "keyboard"
@@ -243,7 +270,7 @@ final class SSHTerminalBarMiddlePill: SSHTerminalGlassPill {
                 continue
             }
             let button = SSHTerminalPillButton(
-                systemName: action.symbol(),
+                image: action.image(configuration: SSHTerminalPillButton.symbolConfiguration),
                 label: action.accessibilityLabel,
                 identifier: action.accessibilityIdentifier
             )

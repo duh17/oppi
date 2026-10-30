@@ -137,7 +137,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 folderTerminals: folderTerminals,
                 palette: self.sshTerminalThemeID.palette,
                 enabled: !self.session.connecting && !self.session.passwordPrompt,
-                onConnect: { [weak self] in self?.connect(profile) },
+                onConnect: { [weak self] in self?.open(profile) },
                 onEdit: { [weak self] in self?.openEditor(profileID: profile.id) }
             )
         }
@@ -291,7 +291,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         case .host(let id):
             guard !session.connecting, !session.passwordPrompt,
                   let profile = profiles.first(where: { $0.id == id }) else { return }
-            connect(profile)
+            open(profile)
         case .reset:
             confirmReset()
         case .trustUnknown, .trustMismatch:
@@ -303,6 +303,12 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
 
     private func openEditor(profileID: UUID?) {
         Router.push(SSHTerminalSetupViewController(profileID: profileID), from: self)
+    }
+
+    /// A row opens its host: a Rex host's sessions screen, else its own terminal.
+    private func open(_ profile: SSHTerminalProfile) {
+        guard profile.opensRexSessions else { return connect(profile) }
+        Router.push(SSHTerminalRexSessionsViewController(profile: profile), from: self)
     }
 
     private func connect(_ profile: SSHTerminalProfile, password: String? = nil) {

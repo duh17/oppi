@@ -84,19 +84,26 @@ class SSHTerminalGlassPill: UIView {
 /// One symbol in a glass pill. Large Content Viewer shows it at accessibility
 /// text sizes, as bar buttons do.
 final class SSHTerminalPillButton: UIButton {
-    init(systemName: String, label: String, identifier: String, width: CGFloat = SSHTerminalGlassPill.itemWidth) {
+    /// Every pill symbol's size; a logo is drawn to match it.
+    static let symbolConfiguration = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+
+    convenience init(systemName: String, label: String, identifier: String, width: CGFloat = SSHTerminalGlassPill.itemWidth) {
+        self.init(image: UIImage(systemName: systemName), label: label, identifier: identifier, width: width)
+    }
+
+    init(image: UIImage?, label: String, identifier: String, width: CGFloat = SSHTerminalGlassPill.itemWidth) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         var config = UIButton.Configuration.plain()
-        config.image = UIImage(systemName: systemName)
-        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        config.image = image
+        config.preferredSymbolConfigurationForImage = Self.symbolConfiguration
         config.contentInsets = .zero
         configuration = config
         accessibilityLabel = label
         accessibilityIdentifier = identifier
         showsLargeContentViewer = true
         largeContentTitle = label
-        largeContentImage = UIImage(systemName: systemName)
+        largeContentImage = image
         scalesLargeContentImage = true
         // Below required: a hidden item in the pill's stack collapses to zero.
         let fixedWidth = widthAnchor.constraint(equalToConstant: width)
@@ -195,7 +202,7 @@ final class SSHTerminalMorePill: SSHTerminalGlassPill {
     let overviews: [SSHTerminalBarAction: SSHTerminalPillButton] = Dictionary(
         uniqueKeysWithValues: SSHTerminalBarAction.overviews.map { action in
             (action, SSHTerminalPillButton(
-                systemName: action.symbol(),
+                image: action.image(configuration: SSHTerminalPillButton.symbolConfiguration),
                 label: action.accessibilityLabel,
                 identifier: action.accessibilityIdentifier
             ))
