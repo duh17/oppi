@@ -279,6 +279,10 @@ enum CommitGraphView {
         /// The dot sits level with the subject line.
         override func layoutSubviews() {
             super.layoutSubviews()
+            // The stack places `firstLine` in its own layout pass, which has
+            // not run yet: without it the line reads as zero height and the
+            // dot (and the HEAD ring, clipped at the row's top) sits too high.
+            textStack.layoutIfNeeded()
             lanes.dotY = textStack.frame.minY + firstLine.frame.midY
         }
 
