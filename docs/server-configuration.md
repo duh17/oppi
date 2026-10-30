@@ -33,7 +33,7 @@ Do not put these in config: owner tokens and pairing secrets (use `oppi pair` an
 | `publicUrl` | Phone-facing HTTPS origin, independent of the listener (restart) |
 | `proxy.trustedPeers` | Immediate proxy peer CIDRs as Oppi sees them; rate-limit identity, including TLS origins (restart) |
 | `asr.provider` / `asr.sttEndpoint` / `asr.sttModel` | Dictation backend (restart; see [Dictation](#dictation-asr--stt)) |
-| `asr.liveVoiceBackend` | Live Voice: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`) or `grok-voice` (Grok uses the xAI `tts.voice`, else `eve`). No restart: each call reads `asr` and `tts` from disk. The app offers Live Voice only while this backend is ready ([Voice backend health](#voice-backend-health)) |
+| `asr.liveVoiceBackend` | Live Voice: `yuwp` (local ASR from `asr.sttEndpoint`, speech from `tts`), `grok-voice` (Grok uses the xAI `tts.voice`, else `eve`), or `openrouter` (OpenRouter transcription and speech with the server's OpenRouter credential; see [OpenRouter Live Voice](../server/docs/asr.md#live-voice-openrouter)). No restart: each call reads `asr` and `tts` from disk. The app offers Live Voice only while this backend is ready ([Voice backend health](#voice-backend-health)) |
 | `tts.provider` / `endpoint` / `model` / `voice` / `language` | Read aloud (restart; see [Read aloud](#read-aloud)) |
 | `runtimeEnv.<NAME>` | Host runtime env, including TTS URLs (restart) |
 | `extensions.voice.defaultVoiceId` | Default voice id for a voice extension |
@@ -111,15 +111,15 @@ The app shows a voice feature only while its backend can serve it. `GET /server/
 | State | Meaning |
 | --- | --- |
 | `not_configured` | Config names no backend. |
-| `needs_credentials` | An xAI backend has no sign-in, stored API key, or `XAI_API_KEY`. |
+| `needs_credentials` | An xAI backend has no sign-in, stored API key, or `XAI_API_KEY`; OpenRouter Live Voice has no stored OpenRouter API key or `OPENROUTER_API_KEY`. |
 | `checking` | An HTTP backend has no reachability result yet. |
 | `unreachable` | An HTTP backend did not answer: connection refused, DNS failure, no answer within 1.5 s, or the last real request could not connect. |
 | `ready` | Configured, credentialed, and (for HTTP) answering. |
 
-- **xAI** backends are cloud services: a credential makes them `ready` and the server does not probe them.
+- **xAI** and **OpenRouter** backends are cloud services: a credential makes them `ready` and the server does not probe them, so a revoked key or empty credit balance still reads `ready` until a call fails.
 - **HTTP** backends get one `GET` to the endpoint origin, and any HTTP response counts as reachable, so a wrong path (404) looks `ready` and a wrong port reads `unreachable`. Results are cached per origin for 15 seconds. `/server/info` never waits for a probe: it answers from the cache and starts one background probe when a result is missing or stale. The server also probes every configured origin once at start.
 - A failed request reports back: one that cannot connect marks its origin `unreachable` at once, and a success marks it `ready`. An HTTP error from a backend that answered keeps it `ready` and sets `detail` to the status (for example `Last request failed: TTS backend returned 404`) until a request succeeds.
-- Local Live Voice (`yuwp`, the default) needs `asr.sttEndpoint` reachable and, when `tts` is configured, a ready voice. Without `tts`, a call runs silent. `grok-voice` needs an xAI credential.
+- Local Live Voice (`yuwp`, the default) needs `asr.sttEndpoint` reachable and, when `tts` is configured, a ready voice. Without `tts`, a call runs silent. `grok-voice` needs an xAI credential, and `openrouter` the OpenRouter credential models use (it ignores `asr.sttEndpoint` and `tts`).
 - An endpoint that is not an `http` or `https` URL reads `unreachable` with no `target`, so a string with credentials in it is never shown.
 
 The app reads `/server/info` when it connects, on each return to the foreground, and after a failed read aloud. If any entry says `checking` or `unreachable`, it reads once more 2 seconds later, after the probe settles. The speaker disappears after a failure, and the failed reply keeps the reason until the next read aloud or until it scrolls away. The mic always works: with Engine set to Server, a take uses server dictation only while `dictationStream` is advertised and otherwise records on-device. **Server Settings → About This Server → Voice** lists each entry with its state, target, and detail. A server that omits a capability (one older than 0.53.0, for example) shows no matching control.

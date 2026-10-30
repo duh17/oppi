@@ -4,8 +4,8 @@
  * `/server/info` maps each feature's state to `capabilities.<feature>` (present only when
  * `ready`) and lists every feature in `voiceBackends` for About This Server → Voice.
  *
- * - xAI backends are cloud services: a credential (sign-in, stored key, `XAI_API_KEY`) is
- *   `ready`, with no network probe.
+ * - xAI and OpenRouter backends are cloud services: a credential (xAI sign-in, stored key,
+ *   `XAI_API_KEY` or `OPENROUTER_API_KEY`) is `ready`, with no network probe.
  * - HTTP backends are probed with one request to the endpoint origin. Any HTTP response is
  *   reachable (a 404 from a wrong path still answers); a network error or timeout is
  *   `unreachable`. Results are cached per origin, so dictation and local Live Voice share the
@@ -72,6 +72,7 @@ const LABELS: Record<VoiceFeature, string> = {
   liveVoice: "Live Voice",
 };
 const XAI_TARGET = "xAI";
+const OPENROUTER_TARGET = "OpenRouter";
 
 interface Reachability {
   reachable: boolean;
@@ -181,13 +182,14 @@ export class VoiceBackendHealth implements SpeechBackendObserver {
   }
 
   /**
-   * `grok-voice` needs an xAI credential. `yuwp` (the default) needs its ASR endpoint
+   * `grok-voice` needs an xAI credential, `openrouter` an OpenRouter one. `yuwp` (the default) needs its ASR endpoint
    * reachable and, when `tts` is configured, the voice too; without `tts` a call runs
    * silent, so the voice is not required.
    */
   private async liveVoiceHealth({ asr, tts }: VoiceConfig): Promise<BackendHealth> {
     const backend = asr?.liveVoiceBackend ?? "yuwp";
     if (backend === "grok-voice") return this.xaiHealth();
+    if (backend === "openrouter") return this.openRouterHealth();
     if (backend !== "yuwp") {
       return { state: "not_configured", detail: `Unknown Live Voice backend "${String(backend)}"` };
     }
@@ -216,6 +218,17 @@ export class VoiceBackendHealth implements SpeechBackendObserver {
           state: "needs_credentials",
           target: XAI_TARGET,
           detail: "Sign in to xAI or set an API key",
+        };
+  }
+
+  private async openRouterHealth(): Promise<BackendHealth> {
+    const credentialed = await hasVoiceProviderCredential("openrouter", this.deps.getAuth);
+    return credentialed
+      ? { state: "ready", target: OPENROUTER_TARGET }
+      : {
+          state: "needs_credentials",
+          target: OPENROUTER_TARGET,
+          detail: "Set an OpenRouter API key",
         };
   }
 

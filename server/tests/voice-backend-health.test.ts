@@ -361,6 +361,48 @@ describe("voice backend health in GET /server/info", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it("offers OpenRouter Live Voice exactly while an OpenRouter credential exists", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    const requested: string[] = [];
+    let auth: VoiceBackendHealthDeps["getAuth"] = signedOut;
+    const fetchFn = vi.fn<typeof fetch>(() => Promise.reject(new Error("no network")));
+    // The App Review box: an OpenRouter model credential and nothing else voice-related.
+    const owner = health(
+      { loaded: {}, voice: { asr: { liveVoiceBackend: "openrouter" } } },
+      {
+        getAuth: (id) => {
+          requested.push(id);
+          return auth!(id);
+        },
+        fetchFn,
+      },
+    );
+
+    const out = await serverInfo(owner);
+    expect(feature(out, "liveVoice")).toMatchObject({
+      state: "needs_credentials",
+      target: "OpenRouter",
+    });
+    expect(out.capabilities).toEqual({});
+
+    auth = async () => ({ auth: { apiKey: "sk-or-test" } });
+    const ready = await serverInfo(owner);
+    expect(feature(ready, "liveVoice")).toMatchObject({ state: "ready", target: "OpenRouter" });
+    // Dictation and read aloud stay off: Live Voice alone uses OpenRouter.
+    expect(ready.capabilities).toEqual({ liveVoice: { version: 1 } });
+    expect(new Set(requested)).toEqual(new Set(["openrouter"]));
+
+    auth = signedOut;
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-env");
+    expect((await serverInfo(owner)).capabilities).toEqual({ liveVoice: { version: 1 } });
+    // An xAI key is not an OpenRouter one.
+    vi.stubEnv("OPENROUTER_API_KEY", "");
+    vi.stubEnv("XAI_API_KEY", "xai-env-key");
+    expect((await serverInfo(owner)).capabilities).toEqual({});
+    await owner.refresh();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   it("keeps local Live Voice unavailable while its configured voice is down", async () => {
     const asr = await backend();
     const voice = await deadEndpoint();

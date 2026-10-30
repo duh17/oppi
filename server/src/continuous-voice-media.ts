@@ -23,8 +23,8 @@ export type VoiceMediaEvent =
 export type VoiceMediaEventHandler = (event: VoiceMediaEvent) => void | Promise<void>;
 
 /**
- * A call's voice: hears the caller and says what the session's agent speaks. Local Yuwp and
- * Grok Voice swap here; VoiceCallController stays provider-neutral.
+ * A call's voice: hears the caller and says what the session's agent speaks. Local Yuwp,
+ * OpenRouter, and Grok Voice swap here; VoiceCallController stays provider-neutral.
  */
 export interface VoiceMediaAdapter {
   start(handler: VoiceMediaEventHandler): void | Promise<void>;
@@ -65,6 +65,8 @@ export function selectLiveVoiceMediaAdapter(input: {
   createTranscription?: () => LiveTranscription;
   tts?: LiveVoiceTtsPort;
   createGrokVoice?: () => VoiceMediaAdapter;
+  /** OpenRouter transcription in, OpenRouter speech out. */
+  createOpenRouterVoice?: () => VoiceMediaAdapter;
   /** The call this adapter serves; local-route telemetry is tagged with it. */
   callId?: string;
 }): VoiceMediaAdapter {
@@ -73,13 +75,17 @@ export function selectLiveVoiceMediaAdapter(input: {
     if (!input.createGrokVoice) throw new Error("Grok Voice is unavailable");
     return input.createGrokVoice();
   }
+  if (backend === "openrouter") {
+    if (!input.createOpenRouterVoice) throw new Error("OpenRouter Live Voice is unavailable");
+    return input.createOpenRouterVoice();
+  }
   if (backend !== "yuwp") {
     throw new Error(`Unknown Live Voice media backend: ${String(input.liveVoiceBackend)}`);
   }
   if (!input.createTranscription) {
     throw new Error("Live Voice ASR is unavailable");
   }
-  return new YuwpVoiceMediaAdapter(input.createTranscription(), {
+  return new TranscriptionVoiceMediaAdapter(input.createTranscription(), {
     tts: input.tts,
     callId: input.callId,
   });
@@ -136,19 +142,20 @@ function percentile(values: readonly number[], fraction: number): number | undef
 }
 
 /**
- * Local Live Voice: streaming ASR in, read-aloud TTS out, the session's agent does the work.
+ * Turn-based Live Voice: transcription in, TTS out, the session's agent does the work. Yuwp
+ * (realtime ASR, read-aloud TTS) and OpenRouter (HTTP transcription and speech) both run here.
  *
- * The ASR server decides when the user's turn is over. `LiveTranscription` (Yuwp's realtime
- * transcription socket) cuts the caller's audio on its own VAD and delivers each item's
- * punctuated final text, in order; this adapter hands every non-empty one to the session as a
- * turn. It runs no pause timers of its own, so a mid-sentence pause the server's VAD rides
- * out stays one turn.
+ * The `LiveTranscription` decides when the user's turn is over. Yuwp's realtime transcription
+ * socket cuts the caller's audio on its own VAD; OpenRouter's client cuts it on a pause. Either
+ * delivers each item's final text, in order; this adapter hands every non-empty one to the
+ * session as a turn. It runs no pause timers of its own, so a mid-sentence pause the
+ * transcription rides out stays one turn.
  *
  * The user can talk over the assistant: the server's `speech_started` (or, failing that, the
  * first new words) stops the sentence playing, drops queued ones, and tells the phone to
  * drop the audio it has buffered.
  */
-export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
+export class TranscriptionVoiceMediaAdapter implements VoiceMediaAdapter {
   readonly streamsReplies = true;
   private handler: VoiceMediaEventHandler | undefined;
   /** The caption last sent to the phone (the caller's words not yet handed over); "" when none. */

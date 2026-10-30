@@ -94,7 +94,27 @@ Local Live Voice (`asr.liveVoiceBackend: yuwp`) does not use the HTTP session AP
 5. At the end of the call Oppi sends `input_audio_buffer.commit` to cut what the VAD had not, waits for the items in flight, and closes the socket.
 6. Oppi pings the socket every 60 s (Yuwp closes one that receives nothing for 15 minutes). When the phone stops sending audio while an item is open (mute, hold), Yuwp's VAD cannot see the pause, so after `silence_duration_ms` without a frame Oppi sends one `input_audio_buffer.commit` for that item; `input_audio_buffer_commit_empty` in answer means it had already ended.
 
-Oppi has no silence timers of its own for Live Voice: Yuwp's turn detection decides when a turn ends. A Yuwp without `/v1/realtime`, or one that refuses the session, fails the call's start; a socket that closes or errors mid-call ends the call.
+Oppi has no silence timers of its own for Yuwp Live Voice: Yuwp's turn detection decides when a turn ends. A Yuwp without `/v1/realtime`, or one that refuses the session, fails the call's start; a socket that closes or errors mid-call ends the call.
+
+## Live Voice (OpenRouter)
+
+`asr.liveVoiceBackend: openrouter` runs Live Voice on a server whose only credential is an OpenRouter API key: the key models use, stored through **Model Providers** or set as `OPENROUTER_API_KEY`. It ignores `asr.sttEndpoint` and `tts`. OpenRouter offers speech only as plain HTTP requests: [`POST /api/v1/audio/transcriptions`](https://openrouter.ai/docs/api/api-reference/stt/create-transcription.md) "transcribes audio into text" from a whole clip, and [`POST /api/v1/audio/speech`](https://openrouter.ai/docs/api/api-reference/tts/create-speech.md) "returns a raw audio bytestream in the requested format". Its docs list no realtime or streaming transcription, so the Oppi server does the turn-taking:
+
+1. The call fails to start without an OpenRouter credential. `voiceBackends` reads `needs_credentials` then, and the app does not offer Live Voice.
+2. The server measures the level of each 20 ms of the phone's 16 kHz audio against a running noise floor. 200 ms of continuous speech opens an utterance, with 400 ms of audio from before it. Clicks and quiet room noise do not.
+3. A 2-second pause ends the utterance (`LIVE_VOICE_TURN_SILENCE_MS`, the same pause a Yuwp without `semantic_vad` uses). So does 30 seconds of continuous speech (`max_duration`), when the phone stops sending audio for 2 seconds (mute, hold: `audio_stalled`), or when the call ends (`call_stop`).
+4. Each utterance goes to OpenRouter as one WAV (`input_audio.format: "wav"`) with model `openai/whisper-large-v3-turbo`, which Groq and DeepInfra serve. The returned `text` goes to the session as one message. Turns go to the session in the order spoken, even when a later transcription finishes first. A failed request (HTTP error, 30 s timeout) logs `openrouter_live_voice.transcription_failed` with OpenRouter's error message, and that utterance is dropped. The call goes on.
+5. The agent's reply is spoken sentence by sentence, as with Yuwp. Each sentence is one `/audio/speech` request: model `microsoft/mai-voice-2.1-flash`, voice `en-US-Harper:MAI-Voice-2.1-Flash`, `response_format: "pcm"`. OpenRouter's [TTS guide](https://openrouter.ai/docs/guides/overview/multimodal/tts.md) documents Azure MAI-Voice `pcm` as 24 kHz mono, the phone's playback format, so the audio streams to the phone as it arrives. Talking over the agent stops it, the same as on Yuwp.
+
+Limits:
+
+- **Latency.** A reply cannot start until the 2-second pause, one transcription request, the agent's first sentence, and one speech request have all finished. A mid-sentence pause of 2 seconds or more splits what you say into two messages.
+- **No live captions.** The input bar shows nothing while you talk. The words appear only after the utterance is transcribed.
+- **Energy detection.** Steady background noise that is loud enough to count as speech can hold an utterance open until the 30-second cap, and Whisper may then turn the noise into words. Use the call somewhere quiet.
+- **Fixed models and voice.** The model ids and the voice are constants in `server/src/openrouter-live-voice.ts`. The speech model must return 24 kHz PCM; OpenRouter does not document other models' PCM rates. If OpenRouter retires a model, calls go silent or drop every utterance until the constant is changed. The `tts_failed` and `transcription_failed` log lines show OpenRouter's reason.
+- **No Dictation Dictionary.** Phrases are not sent. OpenRouter's `keyterms` field returns a 400 on models that do not support it.
+- **Health is credential-only**, as with xAI. A revoked key or an empty credit balance still reads `ready` until a request fails.
+- **Cost.** About $0.012 per hour of speech for Whisper and $15 per million characters spoken (OpenRouter's listed prices on 2026-10-30), plus the agent's model.
 
 ## Local Yuwp ASR setup
 

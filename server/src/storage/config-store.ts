@@ -897,10 +897,14 @@ function normalizeConfig(
       changed = true;
     }
     if (asr.liveVoiceBackend !== undefined) {
-      if (asr.liveVoiceBackend === "yuwp" || asr.liveVoiceBackend === "grok-voice") {
+      if (
+        asr.liveVoiceBackend === "yuwp" ||
+        asr.liveVoiceBackend === "grok-voice" ||
+        asr.liveVoiceBackend === "openrouter"
+      ) {
         asrConfig.liveVoiceBackend = asr.liveVoiceBackend;
       } else {
-        errors.push("config.asr.liveVoiceBackend: expected yuwp or grok-voice");
+        errors.push("config.asr.liveVoiceBackend: expected yuwp, grok-voice, or openrouter");
       }
     }
     // An invalid explicit provider must not silently become the HTTP backend.

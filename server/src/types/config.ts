@@ -217,8 +217,11 @@ export interface ServerConfig {
     sttEndpoint?: string;
     /** Model id for the HTTP/Yuwp backend. */
     sttModel?: string;
-    /** Live Voice media: local Yuwp ASR + TTS, or Grok Voice (xAI realtime speech). */
-    liveVoiceBackend?: "yuwp" | "grok-voice";
+    /**
+     * Live Voice media: local Yuwp ASR + TTS, Grok Voice (xAI realtime speech), or
+     * OpenRouter (HTTP transcription and speech with the OpenRouter model credential).
+     */
+    liveVoiceBackend?: "yuwp" | "grok-voice" | "openrouter";
   };
 
   /** Image attachment preprocessing performed by clients before upload. */

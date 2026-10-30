@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { VoiceCallController, type VoiceDelegation } from "../src/continuous-voice-call.js";
 import {
   VoiceCallMediaCoordinator,
-  YuwpVoiceMediaAdapter,
+  TranscriptionVoiceMediaAdapter,
   type LiveVoiceTtsPort,
 } from "../src/continuous-voice-media.js";
 import {
@@ -600,7 +600,7 @@ describe("LiveVoiceSessionLink", () => {
     const stt = new ScriptedTranscription();
     let delegationSequence = 0;
     const media = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt, { tts: echoTts }),
+      createAdapter: () => new TranscriptionVoiceMediaAdapter(stt, { tts: echoTts }),
       calls,
       nextDelegationId: () => `delegation-${++delegationSequence}`,
       onSessionMediaChanged: (sessionId, attached) => link.sessionMediaChanged(sessionId, attached),

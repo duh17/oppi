@@ -338,6 +338,15 @@ describe("Storage config validation", () => {
     expect(result.config?.asr?.liveVoiceBackend).toBe("grok-voice");
   });
 
+  it("accepts asr.liveVoiceBackend openrouter with no STT endpoint", () => {
+    // An OpenRouter-only server: Live Voice without local ASR or server dictation.
+    const raw = { ...Storage.getDefaultConfig(dir), asr: { liveVoiceBackend: "openrouter" } };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.asr).toEqual({ liveVoiceBackend: "openrouter" });
+  });
+
   it("rejects an unknown asr.liveVoiceBackend in strict mode", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),
@@ -349,7 +358,9 @@ describe("Storage config validation", () => {
 
     const result = Storage.validateConfig(raw, dir, true);
     expect(result.valid).toBe(false);
-    expect(result.errors).toContain("config.asr.liveVoiceBackend: expected yuwp or grok-voice");
+    expect(result.errors).toContain(
+      "config.asr.liveVoiceBackend: expected yuwp, grok-voice, or openrouter",
+    );
   });
 
   it("rejects retired asr preserveAudio in strict mode", () => {

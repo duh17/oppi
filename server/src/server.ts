@@ -51,6 +51,7 @@ import {
   LIVE_VOICE_TURN_SILENCE_MS,
   ReadAloudLiveVoiceTts,
   selectLiveVoiceMediaAdapter,
+  TranscriptionVoiceMediaAdapter,
   VoiceCallMediaCoordinator,
   type VoiceMediaAdapter,
 } from "./continuous-voice-media.js";
@@ -146,6 +147,7 @@ import {
   type SttGetAuth,
 } from "./create-stt-provider.js";
 import { GrokVoiceMediaAdapter, grokVoiceFromTts } from "./grok-live-voice.js";
+import { OpenRouterLiveTranscription, OpenRouterLiveVoiceTts } from "./openrouter-live-voice.js";
 import { VoiceBackendHealth } from "./voice-backend-health.js";
 import { RealtimeTranscriptionClient, realtimeTranscriptionUrl } from "./realtime-transcription.js";
 import { DictationDictionaryStore } from "./storage/dictation-dictionary-store.js";
@@ -1450,6 +1452,18 @@ export class Server {
           voice: grokVoiceFromTts(tts),
           resolveApiKey: () => resolveSttBearerToken("xai", { getAuth }),
         }),
+      // The OpenRouter credential models use; this server detects the pauses that end turns.
+      createOpenRouterVoice: () => {
+        const resolveApiKey = (): Promise<string | undefined> =>
+          resolveSttBearerToken("openrouter", { getAuth });
+        return new TranscriptionVoiceMediaAdapter(
+          new OpenRouterLiveTranscription({
+            resolveApiKey,
+            silenceDurationMs: LIVE_VOICE_TURN_SILENCE_MS,
+          }),
+          { tts: new OpenRouterLiveVoiceTts({ resolveApiKey }), callId },
+        );
+      },
     });
   }
 

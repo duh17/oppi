@@ -14,7 +14,7 @@ import {
   VoiceCallMediaCoordinator,
   type VoiceMediaAdapter,
   type VoiceMediaEvent,
-  YuwpVoiceMediaAdapter,
+  TranscriptionVoiceMediaAdapter,
 } from "../src/continuous-voice-media.js";
 import { VoiceCallController } from "../src/continuous-voice-call.js";
 import { WsMessageHandler, type WsMessageHandlerDeps } from "../src/ws-message-handler.js";
@@ -24,9 +24,9 @@ import { ScriptedTranscription } from "./helpers/scripted-transcription.js";
 
 function localAdapter(
   stt: ScriptedTranscription,
-  options: ConstructorParameters<typeof YuwpVoiceMediaAdapter>[1] = {},
-): YuwpVoiceMediaAdapter {
-  return new YuwpVoiceMediaAdapter(stt, options);
+  options: ConstructorParameters<typeof TranscriptionVoiceMediaAdapter>[1] = {},
+): TranscriptionVoiceMediaAdapter {
+  return new TranscriptionVoiceMediaAdapter(stt, options);
 }
 
 /** Let a handed-over turn finish, so the next one is judged on its own. */
@@ -397,7 +397,7 @@ describe("continuous voice media", () => {
     const stt = new ScriptedTranscription();
     const yuwp = { createTranscription: () => stt };
     expect(selectLiveVoiceMediaAdapter({ liveVoiceBackend: undefined, ...yuwp })).toBeInstanceOf(
-      YuwpVoiceMediaAdapter,
+      TranscriptionVoiceMediaAdapter,
     );
     expect(() => selectLiveVoiceMediaAdapter({ liveVoiceBackend: "yuwp" })).toThrow(
       "Live Voice ASR is unavailable",
@@ -690,7 +690,7 @@ describe("continuous voice media", () => {
     ["the server's VAD", (stt: ScriptedTranscription) => stt.speechStarted()],
     [
       "the phone",
-      (_stt: ScriptedTranscription, adapter: YuwpVoiceMediaAdapter) => adapter.bargeIn(),
+      (_stt: ScriptedTranscription, adapter: TranscriptionVoiceMediaAdapter) => adapter.bargeIn(),
     ],
     ["the transcript", (stt: ScriptedTranscription) => stt.partial("wait")],
   ])(

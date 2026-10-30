@@ -369,7 +369,7 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "tts.language", summary: "string; xai language (BCP-47 or auto)" },
       {
         name: "asr.liveVoiceBackend",
-        summary: "string; Live Voice media: yuwp or grok-voice",
+        summary: "string; Live Voice media: yuwp, grok-voice, or openrouter",
       },
       { name: "images.autoResize", summary: "boolean; resize large image uploads" },
       { name: "extensions.voice.defaultVoiceId", summary: "string; saved voice id" },

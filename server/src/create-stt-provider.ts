@@ -15,7 +15,14 @@ import {
   type SttWebSocketFactory,
 } from "./xai-stt-provider.js";
 
-export type SttAuthProviderId = "xai";
+/** Voice providers that authenticate with the server's model-provider credentials. */
+export type SttAuthProviderId = "xai" | "openrouter";
+
+/** Each provider's environment-variable key, as Pi reads it for models. */
+const ENV_API_KEYS: Record<SttAuthProviderId, string> = {
+  xai: "XAI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+};
 
 export type SttGetAuth = (
   providerId: SttAuthProviderId,
@@ -47,7 +54,7 @@ function storedBearer(providerId: string): string | undefined {
 export function resolveSttProviderApiKey(providerId: SttAuthProviderId): string | undefined {
   const primary = storedBearer(providerId);
   if (primary) return primary;
-  return process.env.XAI_API_KEY?.trim() || undefined;
+  return process.env[ENV_API_KEYS[providerId]]?.trim() || undefined;
 }
 
 /** Pi/Oppi provider auth first (API key or refreshed OAuth access token), then stored/env fallback. */
@@ -72,16 +79,17 @@ export async function resolveSttBearerToken(
 
 /**
  * Whether a configured voice provider has its credentials: xAI needs a sign-in,
- * stored key, or XAI_API_KEY; an HTTP backend needs only its endpoint.
- * `VoiceBackendHealth` reports an xAI backend without one as `needs_credentials`, so the
- * app never shows a voice control that would fail for a missing login.
+ * stored key, or XAI_API_KEY; OpenRouter a stored key or OPENROUTER_API_KEY; an HTTP backend
+ * needs only its endpoint. `VoiceBackendHealth` reports a cloud backend without one as
+ * `needs_credentials`, so the app never shows a voice control that would fail for a missing
+ * login.
  */
 export async function hasVoiceProviderCredential(
-  provider: "http" | "xai",
+  provider: "http" | SttAuthProviderId,
   getAuth?: SttGetAuth,
 ): Promise<boolean> {
-  if (provider !== "xai") return true;
-  return (await resolveSttBearerToken("xai", { getAuth })) !== undefined;
+  if (provider === "http") return true;
+  return (await resolveSttBearerToken(provider, { getAuth })) !== undefined;
 }
 
 export function createSttProvider(

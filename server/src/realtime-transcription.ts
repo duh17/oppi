@@ -64,12 +64,14 @@ export function vocabularyPrompt(phrases: readonly string[]): string | undefined
 
 /** What ended a user turn. Telemetry only. */
 export type LiveTurnEndReason =
-  /** The server's VAD committed the item after the caller's pause. */
+  /** Voice detection (the ASR server's, or Oppi's for OpenRouter) ended the item after the caller's pause. */
   | "server_vad"
   /** The call ended and this client cut the audio the VAD had not. */
   | "call_stop"
   /** The phone stopped sending audio mid-item (mute, hold), so this client cut the item. */
-  | "audio_stalled";
+  | "audio_stalled"
+  /** OpenRouter only: the item reached its length cap and was cut mid-speech. */
+  | "max_duration";
 
 /** Why the listening socket ended while the call was still running. */
 export type LiveTranscriptionClosedReason = "socket_closed" | "socket_error";
