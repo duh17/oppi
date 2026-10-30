@@ -356,6 +356,17 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
     private var liveTaskIds: Set<Int> = []
     private var networkLifetime: AuthenticatedMediaResourceLoader?
 #if DEBUG
+    /// Runs on the authorization task just before it creates a data task, so
+    /// tests can land teardown in the window after the authorization await.
+    /// Signalled when URLSession reports the session invalidated. Invalidation
+    /// is asynchronous; tests wait on this so a task created afterwards hits
+    /// the "session has been invalidated" exception deterministically.
+    let debugSessionInvalidated = DispatchSemaphore(value: 0)
+    private var debugBeforeDataTaskCreationStorage: (@Sendable (AuthenticatedMediaResourceLoader) -> Void)?
+    var debugBeforeDataTaskCreation: (@Sendable (AuthenticatedMediaResourceLoader) -> Void)? {
+        get { lock.withLock { debugBeforeDataTaskCreationStorage } }
+        set { lock.withLock { debugBeforeDataTaskCreationStorage = newValue } }
+    }
     /// Outlives the loader so tests can await its real lifetime events.
     let lifetimeRecord = AuthenticatedMediaResourceLoaderLifetimeRecord()
 #endif
@@ -485,21 +496,8 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
                 request.setValue(rangeHeader, forHTTPHeaderField: "Range")
             }
 
-            let task = self.session.dataTask(with: request)
             let context = LoadingContext(loadingRequest: loadingRequest, requestedRange: requestedRange)
-            let shouldStart = self.lock.withLock { () -> Bool in
-                if self.isInvalidated {
-                    return false
-                }
-                self.contextsByTaskId[task.taskIdentifier] = context
-                self.tasksByRequestId[requestId] = task
-                self.liveTaskIds.insert(task.taskIdentifier)
-                return true
-            }
-            if shouldStart {
-                task.resume()
-            } else {
-                task.cancel()
+            if !self.startDataTask(request: request, context: context) {
                 self.failIfOutstanding(loadingRequest)
             }
         }
@@ -682,6 +680,9 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
         lock.lock()
         networkLifetime = nil
         lock.unlock()
+#if DEBUG
+        debugSessionInvalidated.signal()
+#endif
     }
 
     private func startNextChunk(context: LoadingContext, offset: Int64) {
@@ -699,7 +700,6 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
         let continueToEnd = context.continueToEnd
         let requestedEnd = context.requestedEnd
         let totalLength = context.totalLength
-        let requestId = ObjectIdentifier(loadingRequest)
         let authorizationProvider = source.authorizationProvider
         Task { [weak self] in
             guard let self else { return }
@@ -729,20 +729,8 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
             nextContext.continueToEnd = continueToEnd
             nextContext.requestedEnd = requestedEnd
             nextContext.totalLength = totalLength
-            let task = self.session.dataTask(with: request)
-            let shouldStart = self.lock.withLock { () -> Bool in
-                if self.isInvalidated {
-                    return false
-                }
-                self.contextsByTaskId[task.taskIdentifier] = nextContext
-                self.tasksByRequestId[requestId] = task
-                self.liveTaskIds.insert(task.taskIdentifier)
-                return true
-            }
-            if shouldStart {
-                task.resume()
-            } else {
-                task.cancel()
+            if !self.startDataTask(request: request, context: nextContext) {
+                self.failIfOutstanding(loadingRequest)
             }
         }
     }
@@ -812,6 +800,35 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
             return nil
         }
         return mediaError(message)
+    }
+
+    /// Creates, registers, and resumes the data task for `context`.
+    ///
+    /// `URLSession.dataTask(with:)` raises NSGenericException on an invalidated
+    /// session, and `cancelAll()` invalidates the session while authorization
+    /// awaits are still in flight. The invalidation check and the task creation
+    /// therefore share one critical section: `cancelAll()` either runs first and
+    /// we never create a task, or runs after and finds the registered task to
+    /// cancel. Returns false, having created nothing, when the loader was
+    /// invalidated or AVFoundation already cancelled/finished the request.
+    private func startDataTask(request: URLRequest, context: LoadingContext) -> Bool {
+#if DEBUG
+        debugBeforeDataTaskCreation?(self)
+#endif
+        let loadingRequest = context.loadingRequest
+        let task: URLSessionDataTask? = lock.withLock {
+            guard !isInvalidated, !loadingRequest.isCancelled, !loadingRequest.isFinished else {
+                return nil
+            }
+            let task = session.dataTask(with: request)
+            contextsByTaskId[task.taskIdentifier] = context
+            tasksByRequestId[ObjectIdentifier(loadingRequest)] = task
+            liveTaskIds.insert(task.taskIdentifier)
+            return task
+        }
+        guard let task else { return false }
+        task.resume()
+        return true
     }
 
     private func isAbandoned(_ loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
@@ -2291,16 +2308,31 @@ final class AuthenticatedMediaResourceLoaderLifetimeProbe: @unchecked Sendable {
 
 extension AuthenticatedMediaResourceLoader {
     func debugStartInFlightDataTask(url: URL) {
-        let task = session.dataTask(with: url)
-        lock.lock()
-        liveTaskIds.insert(task.taskIdentifier)
-        tasksByRequestId[ObjectIdentifier(task)] = task
-        lock.unlock()
-        task.resume()
+        let task: URLSessionDataTask? = lock.withLock {
+            guard !isInvalidated else { return nil }
+            let task = session.dataTask(with: url)
+            liveTaskIds.insert(task.taskIdentifier)
+            tasksByRequestId[ObjectIdentifier(task)] = task
+            return task
+        }
+        task?.resume()
     }
 }
 
 extension AuthenticatedMediaPlaybackSession {
+    /// Hook runs after the authorization await, immediately before the loader
+    /// creates its next data task. The closure receives a handle that tears the
+    /// loader down exactly as `teardown()` does, then blocks until the URLSession
+    /// has actually reported itself invalidated.
+    func debugSetBeforeDataTaskCreationHook(_ hook: @escaping @Sendable (_ cancelLoader: @Sendable () -> Void) -> Void) {
+        loader.debugBeforeDataTaskCreation = { loader in
+            hook {
+                loader.cancelAll()
+                _ = loader.debugSessionInvalidated.wait(timeout: .now() + 5)
+            }
+        }
+    }
+
     func debugStartInFlightResourceRequest(url: URL) {
         loader.debugStartInFlightDataTask(url: url)
     }

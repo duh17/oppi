@@ -239,6 +239,85 @@ struct AuthenticatedMediaLoaderBoundaryTests {
             "GET started after cancel during later authorization. before=\(getsBeforeCancel) after=\(server.snapshotRanges())"
         )
     }
+
+    @MainActor
+    @Test("teardown landing between authorization and task creation fails the request without a GET")
+    func teardownAfterAuthorizationBeforeTaskCreationFailsRequest() async throws {
+        let body = try Data(contentsOf: try knownGoodH264URL())
+        let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer race-first")
+        defer { server.stop() }
+
+        let gate = AuthorizationGate(token: "Bearer race-first")
+        let session = AuthenticatedMediaPlaybackSession(
+            source: try mediaSource(url: server.url, authorizationProvider: gate.provider)
+        )
+        defer { session.teardown() }
+
+        let started = await waitForMainActorCondition(timeout: .seconds(5)) { gate.hasStarted }
+        #expect(started, "loader never asked for authorization")
+
+        // Teardown arrives after the authorization await and the abandonment
+        // check, right where the loader creates its URLSession task. Creating
+        // a task on the invalidated session raises NSGenericException.
+        let fired = HookFlag()
+        session.debugSetBeforeDataTaskCreationHook { cancelLoader in
+            if fired.claim() { cancelLoader() }
+        }
+        gate.release()
+
+        let failed = await waitForMainActorCondition(timeout: .seconds(8)) {
+            session.player.currentItem?.status == .failed
+        }
+        #expect(fired.isClaimed, "hook never ran, so the race was not exercised")
+        #expect(failed, "request was not failed after teardown mid-authorization")
+        #expect(server.snapshotRanges().isEmpty, "GET issued after teardown: \(server.snapshotRanges())")
+    }
+
+    @MainActor
+    @Test("teardown landing between a later authorization and task creation starts no further GET")
+    func teardownAfterLaterAuthorizationBeforeTaskCreationStartsNoGet() async throws {
+        let body = try Data(contentsOf: try knownGoodH264URL())
+        let gate = AuthorizationGate(token: "Bearer race-later", blockAfterCount: 2)
+        let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer race-later")
+        defer { server.stop() }
+
+        let session = AuthenticatedMediaPlaybackSession(
+            source: try mediaSource(url: server.url, authorizationProvider: gate.provider)
+        )
+        defer { session.teardown() }
+
+        let gated = await waitForMainActorCondition(timeout: .seconds(8)) { gate.isBlocked }
+        #expect(gated, "later authorization never blocked count=\(gate.count)")
+        let getsBefore = server.snapshotRanges().count
+
+        let fired = HookFlag()
+        session.debugSetBeforeDataTaskCreationHook { cancelLoader in
+            if fired.claim() { cancelLoader() }
+        }
+        gate.release()
+
+        let reached = await waitForMainActorCondition(timeout: .seconds(8)) { fired.isClaimed }
+        #expect(reached, "hook never ran, so the race was not exercised")
+        let noExtra = await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) {
+            server.snapshotRanges().count == getsBefore
+        }
+        #expect(noExtra, "GET started after teardown. before=\(getsBefore) after=\(server.snapshotRanges())")
+    }
+}
+
+private final class HookFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    var isClaimed: Bool { lock.withLock { claimed } }
+
+    /// True for the first caller only.
+    func claim() -> Bool {
+        lock.withLock {
+            defer { claimed = true }
+            return !claimed
+        }
+    }
 }
 
 @MainActor
