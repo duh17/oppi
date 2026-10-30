@@ -1,4 +1,4 @@
-import SwiftUI
+import Foundation
 import Testing
 
 @testable import Oppi
