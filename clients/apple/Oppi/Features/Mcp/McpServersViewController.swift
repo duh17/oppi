@@ -70,7 +70,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         self.scopeId = scopeId
         self.root = root
         self.showsSidebarToggle = showsSidebarToggle
-        super.init(title: "MCP Servers", listIdentifier: "mcp.list", headers: true, footers: true)
+        super.init(title: "MCP Servers", listIdentifier: "mcp.list", headers: true, footers: true, pullsToRefresh: true)
         traitOverrides.appRootEnvironment = root
     }
 
@@ -156,6 +156,9 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         }
         signInPresenter.sync(owner: signIn, root: root, from: self)
     }
+
+    /// A probe swaps the host's sections; the rows should not slide.
+    override var animatesUpdates: Bool { false }
 
     /// The sidebar toggle at the split detail root.
     private func sidebarItems() -> [UIBarButtonItem] {
@@ -345,7 +348,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         switch item {
         case .host:
             break

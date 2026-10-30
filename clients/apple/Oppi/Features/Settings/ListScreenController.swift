@@ -77,11 +77,14 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 /// - `showsHeader(for:)`: which sections show a header. A page whose sections
 ///   carry headings only on some (a catalog's groups) narrows the `headers:`
 ///   it was built with.
-/// - `refresh()`: the page's load. The base runs it when the page appears and
-///   on pull to refresh, ends the refresh control when it returns, and cancels
-///   it when the page leaves; `setNeedsRefresh()` runs it again on demand
-///   (another server became active), and `isShowing` says whether the page can
-///   be seen.
+/// - `refresh()`: the page's load, for a page that opts in with
+///   `pullsToRefresh:`. The base gives it the list's refresh control, runs it
+///   when the page appears and on pull to refresh, ends the control when it
+///   returns, and cancels it when the page leaves; `setNeedsRefresh()` runs it
+///   again on demand (another server became active), and `isShowing` says
+///   whether the page can be seen.
+/// - `animatesUpdates`: whether a snapshot change animates its rows. A catalog
+///   list that swaps whole sections answers false.
 /// - `ListSection.state`: the list's own loading, empty, or failed state
 ///   (`LoadState`) where the section's rows would be; the base draws it, with
 ///   its identifier, so a page owns no state row, cell, or identifier map.
@@ -136,9 +139,16 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// The load `refresh()` is running: the base's, cancelled when the page
     /// leaves and before another starts.
     private var refreshTask: Task<Void, Never>?
-    /// The list's pull to refresh. Only the base touches it: it starts the
-    /// page's `refresh()` and ends the control when that returns.
+    /// The list's pull to refresh. `nil` unless the page opted in
+    /// (`pullsToRefresh:`): only the base touches it, starting the page's
+    /// `refresh()` and ending the control when that returns.
     private lazy var pullToRefreshControl = UIRefreshControl()
+    /// Whether this page loads its own content: it pulls to refresh and runs
+    /// `refresh()` each time it appears. The seven older pages that pull (Tailnet
+    /// Settings, Theme Import, Server Settings, Paired Devices, About This
+    /// Server, the workspace list, MCP server detail) own their control and
+    /// load until they move onto it.
+    private let pullsToRefresh: Bool
     /// Where the page's settings are kept; `nil` for a page that has none. A
     /// section says its scope only when it differs from this.
     let pageScope: SettingsScope?
@@ -163,6 +173,10 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     ///   - largeTitle: a page that roots its stack keeps the large title.
     ///   - endsAtKeyboard: a page that edits text in place ends its list at the
     ///     keyboard (`SettingsListStyle.pin`), so the field scrolls above it.
+    ///   - pullsToRefresh: whether the page loads its own content. It gets the
+    ///     list's refresh control and has `refresh()` run on every appearance.
+    ///     Off by default, so a page that loads nothing never shows a spinner
+    ///     that pulls to nothing.
     init(
         title: String,
         listIdentifier: String,
@@ -171,13 +185,15 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         headers: Bool = false,
         footers: Bool = false,
         largeTitle: Bool = false,
-        endsAtKeyboard: Bool = false
+        endsAtKeyboard: Bool = false,
+        pullsToRefresh: Bool = false
     ) {
         pageScope = scope
         self.settings = settings
         showsHeaders = headers
         showsFooters = footers
         listEndsAtKeyboard = endsAtKeyboard
+        self.pullsToRefresh = pullsToRefresh
         super.init(nibName: nil, bundle: nil)
         self.title = title
         navigationItem.largeTitleDisplayMode = largeTitle ? .always : .inline
@@ -201,10 +217,10 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// (a catalog's groups) answers for each.
     func showsHeader(for section: Section) -> Bool { showsHeaders }
 
-    /// Loads the page's content: the base runs it each time the page appears
-    /// and on pull to refresh, cancelling a run already going and ending the
-    /// refresh control when it returns. A page with nothing to load leaves it
-    /// empty.
+    /// Loads the page's content: for a page that opted in (`pullsToRefresh:`)
+    /// the base runs it each time the page appears and on pull to refresh,
+    /// cancelling a run already going and ending the refresh control when it
+    /// returns. A page with nothing to load leaves it empty.
     func refresh() async {}
 
     /// Runs `refresh()` now, cancelling one already running: a page calls it
@@ -212,6 +228,14 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     func setNeedsRefresh() {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in await self?.refresh() }
+    }
+
+    /// Whether a snapshot change animates its rows. The default animates once
+    /// the list has rows, so a page's first rows appear in place; a catalog
+    /// list that swaps whole sections answers false, so a reload does not slide
+    /// them around.
+    var animatesUpdates: Bool {
+        (dataSource?.snapshot().numberOfItems ?? 0) > 0
     }
 
     /// The values `item` is drawn from; the row redraws when they change.
@@ -300,15 +324,17 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         super.viewDidLoad()
         collectionView.delegate = self
         SettingsListStyle.pin(collectionView, in: view, endsAtKeyboard: listEndsAtKeyboard)
-        collectionView.refreshControl = pullToRefreshControl
-        pullToRefreshControl.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            refreshTask?.cancel()
-            refreshTask = Task { [weak self] in
-                await self?.refresh()
-                self?.pullToRefreshControl.endRefreshing()
-            }
-        }, for: .valueChanged)
+        collectionView.refreshControl = pullsToRefresh ? pullToRefreshControl : nil
+        if pullsToRefresh {
+            pullToRefreshControl.addAction(UIAction { [weak self] _ in
+                guard let self else { return }
+                refreshTask?.cancel()
+                refreshTask = Task { [weak self] in
+                    await self?.refresh()
+                    self?.pullToRefreshControl.endRefreshing()
+                }
+            }, for: .valueChanged)
+        }
         installDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
         setNeedsUpdateProperties()
@@ -323,10 +349,11 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
 
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
-        // A page that loads its content loads it again each time it shows, as
-        // the SwiftUI `.task` it replaces did.
         isShowing = true
-        setNeedsRefresh()
+        // A page that loads its content loads it again each time it shows, as
+        // the SwiftUI `.task` it replaces did. A page that does not pull to
+        // refresh has nothing to load, so no task is scheduled for it.
+        if pullsToRefresh { setNeedsRefresh() }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -367,7 +394,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
             AnyHashable([AnyHashable(themeID), inputs(of: slot)])
         }
         snapshot.reconfigureItems(changed.filter(shown.contains))
-        dataSource.apply(snapshot, animatingDifferences: dataSource.snapshot().numberOfItems > 0)
+        dataSource.apply(snapshot, animatingDifferences: animatesUpdates)
         // Headings are not rows, so a reconfigure does not reach them. They are
         // redrawn in place: reloading the section would rebuild its rows and
         // move VoiceOver focus off the one the person is on.

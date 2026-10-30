@@ -100,8 +100,34 @@ struct McpServersModelTests {
         #expect(model.error == nil)
     }
 
-    @Test func cancelledFlowKeepsAskingUntilTheHostSettlesWithoutAnError() async {
-        let sleeps = Counter()
+    /// A probe the page cancels (it left the screen) is control flow, not a
+    /// failure: the list shows no error row and no Retry for it when it comes
+    /// back, and it keeps whatever it had.
+    @Test func aCancelledProbeLeavesNoErrorBehind() async {
+        let model = McpServersModel()
+        await model.refresh(hostId: "host", hostName: "Studio", flowClient: IdleFlowClient()) {
+            response(flow: nil)
+        }
+        let good = model.snapshot
+
+        let (started, startedContinuation) = AsyncStream<Void>.makeStream()
+        let probe = Task { @MainActor in
+            await model.refresh(hostId: "host", hostName: "Studio", flowClient: IdleFlowClient()) {
+                startedContinuation.yield()
+                try await Task.sleep(for: .seconds(30))
+                return response(flow: nil)
+            }
+        }
+        for await _ in started { break }
+        probe.cancel()
+        _ = await probe.result
+
+        #expect(model.error == nil, "a cancelled probe is not a failure to show")
+        #expect(model.snapshot == good, "the list keeps what it had")
+        #expect(!model.loading)
+    }
+
+    @Test func cancelledFlowKeepsAskingUntilTheHostSettlesWithoutAnError() async {        let sleeps = Counter()
         let model = McpServersModel(sleep: { _ in await sleeps.increment() })
         let lists = Counter()
         await model.refresh(hostId: "host", hostName: "Studio", flowClient: IdleFlowClient()) {

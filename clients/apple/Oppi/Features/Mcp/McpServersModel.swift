@@ -69,6 +69,11 @@ final class McpServersModel {
                 guard token == generation else { return }
             } catch {
                 guard token == generation else { return }
+                // A probe the page cancelled (it left the screen, or another
+                // host became active) is control flow, not a failure: the list
+                // keeps what it showed and offers no error row or Retry for it
+                // when it comes back.
+                guard !error.isLoadCancellation else { return }
                 self.error = error.localizedDescription
                 return
             }

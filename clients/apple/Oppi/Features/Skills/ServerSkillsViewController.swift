@@ -54,7 +54,7 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
     init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
         self.root = root
         self.showsSidebarToggle = showsSidebarToggle
-        super.init(title: String(localized: "Skills"), listIdentifier: "skills.list", headers: true)
+        super.init(title: String(localized: "Skills"), listIdentifier: "skills.list", headers: true, pullsToRefresh: true)
         traitOverrides.appRootEnvironment = root
     }
 
@@ -78,6 +78,14 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        // The load the appearance starts is this server's: marking it before the
+        // base schedules it keeps `updateProperties` from asking for the same
+        // server again and cancelling the load that just started.
+        requestedServerId = coordinator.activeServerId
+        super.viewIsAppearing(animated)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -179,6 +187,9 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         }
         return sections
     }
+
+    /// A reload swaps the catalog's sections; the rows should not slide.
+    override var animatesUpdates: Bool { false }
 
     /// The catalog's groups carry a heading; the server, warning, and state
     /// rows do not.
@@ -312,7 +323,7 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         guard let state, case .skill(let id) = item, let skill = state.skills[id] else { return }
-        ListScreen.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         ListScreen.buttonRow(
             cell,
             identifier: "skills.row.\(skill.id)",

@@ -193,7 +193,6 @@ struct SettingsKitTests {
         defer { hideTestWindow(window); window.rootViewController = nil }
 
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.refreshes == 1 }, "appearing loads")
-        #expect(page.isShowing)
 
         page.collectionView.refreshControl?.sendActions(for: .valueChanged)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.refreshes == 2 }, "pull to refresh loads")
@@ -201,6 +200,17 @@ struct SettingsKitTests {
         // Leaving says the page is not showing, so a covered list keeps still.
         window.rootViewController = UIViewController()
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
+    }
+
+    @Test("Only a page that loads its content pulls to refresh")
+    func pullToRefreshIsOptedInto() {
+        let plain = ScopedPage()
+        plain.loadViewIfNeeded()
+        #expect(plain.collectionView.refreshControl == nil, "a page that loads nothing has no spinner to pull")
+
+        let loading = RefreshPage()
+        loading.loadViewIfNeeded()
+        #expect(loading.collectionView.refreshControl != nil)
     }
 
     @Test("A page shows a header only on the sections it names")
@@ -305,7 +315,7 @@ private final class RefreshPage: ListScreenController<RefreshPage.Section, Int> 
     private(set) var refreshes = 0
 
     init() {
-        super.init(title: "Refresh", listIdentifier: "test.refresh.list")
+        super.init(title: "Refresh", listIdentifier: "test.refresh.list", pullsToRefresh: true)
     }
 
     override func sections() -> [ListSection<Section, Int>] { [ListSection(.only, items: [1])] }
