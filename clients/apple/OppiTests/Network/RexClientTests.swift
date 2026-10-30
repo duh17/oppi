@@ -382,6 +382,67 @@ struct RexPaneEngineTests {
         #expect(channel.reason.contains("could not be read"))
     }
 
+    /// A pane that showed an image, as Rex itself encodes it: Rex 1642 writes
+    /// Kitty graphics records (storage, pixels) into the snapshot. Captured
+    /// from a Rex session whose program printed a line, a 1x1 red image with
+    /// id 7, and another line. The pane opens with its text and its image.
+    @Test func aRexSnapshotWithAnImageRestoresTheGridAndTheImage() async throws {
+        let snapshot = try Data(contentsOf: TestFixtures.url("rex-kitty-image-snapshot.bin"))
+        let (channel, rows) = try await Self.restore(snapshot)
+        #expect(channel.reason == "stream over", "the snapshot restored; it did not end the terminal: \(channel.reason)")
+        #expect(rows.contains("rex kitty fixture") && rows.contains("after image"))
+        let kitty = try #require(channel.engine.frame().kitty, "the image came with the snapshot")
+        #expect(kitty.placements.map(\.imageID) == [7])
+    }
+
+    /// A newer Rex may add kinds of snapshot records this Oppi does not know.
+    /// They are skipped, wherever they appear, and the pane still opens.
+    @Test func aSnapshotRecordOfAnUnknownKindIsSkipped() async throws {
+        let snapshot = try Self.withUnknownRecord(try Self.snapshot(of: "first line\r\n$ "))
+        let (channel, rows) = try await Self.restore(snapshot)
+        #expect(channel.reason == "stream over", "the snapshot restored; it did not end the terminal: \(channel.reason)")
+        #expect(rows.prefix(2) == ["first line", "$"])
+    }
+
+    /// Restores `snapshot` the way a Rex pane's stream delivers it, then ends
+    /// the stream with "stream over". Returns the channel and its grid's rows.
+    private static func restore(_ snapshot: Data) async throws -> (SSHTerminalChannel, [String]) {
+        let channel = try SSHTerminalChannel(answersTerminalQueries: false)
+        channel.opened(RecordingConnection())
+        let queue = SSHTerminalEventQueue()
+        queue.pushSnapshot(snapshot)
+        queue.end("stream over")
+        await channel.consume(queue)
+        let rows = channel.engine.frame().rows.map { $0.map(\.text).joined().trimmingCharacters(in: .whitespaces) }
+        return (channel, rows)
+    }
+
+    /// `snapshot` with a record of a kind no Ghostty defines (tag 0x7FFF)
+    /// right before READY, with the CRC32C the format requires of every
+    /// record: over the tag and payload length, then the payload.
+    private static func withUnknownRecord(_ snapshot: Data) throws -> Data {
+        let bytes = [UInt8](snapshot)
+        func integer(at offset: Int, size: Int) -> Int {
+            (0..<size).reduce(0) { $0 | Int(bytes[offset + $1]) << ($1 * 8) }
+        }
+        func littleEndian(_ value: some FixedWidthInteger) -> Data { withUnsafeBytes(of: value.littleEndian) { Data($0) } }
+        let readyTag = 5
+        var offset = 10 // The "GHOSTSNP" magic and the version.
+        while integer(at: offset, size: 2) != readyTag {
+            offset += 10 + integer(at: offset + 2, size: 4)
+            try #require(offset + 10 <= bytes.count, "the snapshot has a READY record")
+        }
+        let payload = Data("a record from a newer Rex".utf8)
+        let prefix = littleEndian(UInt16(0x7FFF)) + littleEndian(UInt32(payload.count))
+        var crc: UInt32 = 0xFFFF_FFFF
+        for byte in prefix + payload {
+            crc ^= UInt32(byte)
+            for _ in 0..<8 { crc = crc & 1 == 1 ? (crc >> 1) ^ 0x82F6_3B78 : crc >> 1 }
+        }
+        let record = prefix + littleEndian(~crc) + payload
+        return Data(bytes[..<offset]) + record + Data(bytes[offset...])
+    }
+
     private static func snapshot(of text: String) throws -> Data {
         var terminal: GhosttyTerminal?
         try #require(ghostty_terminal_new(nil, &terminal, 80, 24) == GHOSTTY_SUCCESS)

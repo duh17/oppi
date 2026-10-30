@@ -1340,10 +1340,9 @@ final class SSHTerminalEngine {
         text.utf8CString.withUnsafeBufferPointer { ghostty_paste_is_safe($0.baseAddress, $0.count - 1) }
     }
 
-    /// `ghostty_paste_is_safe` rejects only LF and the bracketed-paste
-    /// terminator. A CR also submits a command when bracketed paste is off, and
-    /// other C0 bytes are silently blanked, so those need consent too. Tab is the
-    /// only control character that is ordinary pasted text.
+    /// `ghostty_paste_is_safe` rejects only LF, CR, and the bracketed-paste
+    /// terminator. Other C0 bytes are silently blanked, so those need consent
+    /// too. Tab is the only control character that is ordinary pasted text.
     static func pasteNeedsConfirmation(_ text: String) -> Bool {
         !pasteIsSafe(text) || text.unicodeScalars.contains { ($0.value < 32 && $0 != "\t") || $0.value == 127 }
     }

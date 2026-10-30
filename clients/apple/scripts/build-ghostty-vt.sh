@@ -5,9 +5,13 @@
 # PATH Zig only at exactly ZIG_VERSION, else the checksummed official release.
 set -euo pipefail
 
-# main as of 2026-10-13: OSC 7501 program status at spec revision 0.4, whose
-# support reply lists the accepted states and kinds (b7207b2ef).
-COMMIT="7597e85fd0c9c46716632c1a744f13690c1a3572"
+# The ghostty revision Rex 1642 encodes its pane snapshots with (main as of
+# 2026-10-21, pinned by go.mitchellh.com/libghostty df1957cbff56). It writes
+# Kitty graphics records (tags 8-10) for a pane that showed an image, and
+# decoders from 781c58e96 on skip record tags they do not know, so a newer
+# Rex's optional records no longer fail the whole restore. Also carries OSC
+# 7501 program status at spec revision 0.4 (b7207b2ef).
+COMMIT="f54340ad77814fe319d136e5e915d6a48de8dd23"
 # ReleaseFast with SIMD, as Ghostty ships it: both Release modes drop Zig's
 # runtime safety checks, so Fast only trades library size for speed, and the
 # vendored simdutf/highway build without libc++ into the static archive. On
@@ -16,7 +20,7 @@ COMMIT="7597e85fd0c9c46716632c1a744f13690c1a3572"
 # Kitty graphics is compiled in. PNG decode is an embedder callback, and
 # file, temporary-file, and shared-memory loads stay off unless a terminal
 # sets those options. Direct and zlib payloads do not need a PNG decoder.
-ZIG_VERSION="0.16.0"
+ZIG_VERSION="0.17.0"
 BUILD_ID="$COMMIT-zig$ZIG_VERSION-fast-simd-kitty-v1"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/Vendor/GhosttyVt"
@@ -61,8 +65,8 @@ pinned_zig() {
     fi
     local arch sha dir tmp
     case "$(uname -m)" in
-        arm64) arch=aarch64 sha=b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489 ;;
-        x86_64) arch=x86_64 sha=0387557ed1877bc6a2e1802c8391953baddba76081876301c522f52977b52ba7 ;;
+        arm64) arch=aarch64 sha=b607e9b9234790a008116ae5bdb71c6243b84b9fb42a53a9e70fde41c06c536a ;;
+        x86_64) arch=x86_64 sha=4f9a1c5269aa17ebda5e6d3c2b89d6cbf36f7d2b22a0306e9ab98f25f95529c6 ;;
         *) echo "error: no Zig $ZIG_VERSION download for $(uname -m)" >&2; return 1 ;;
     esac
     dir="$CACHE_ROOT/zig-$arch-macos-$ZIG_VERSION"

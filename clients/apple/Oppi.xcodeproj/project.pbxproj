@@ -783,6 +783,7 @@
 		543E26D526DBB446AF78D342 /* QuickSessionModelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76EDC243034FF18BF55765A5 /* QuickSessionModelPicker.swift */; };
 		544F423D65BF1D698A0B78E2 /* VoiceInputError.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5ADACAB6BD406DA001130B7 /* VoiceInputError.swift */; };
 		5455B873A52BFA1164480430 /* McpRowContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B44D9EE51735E94211197ED7 /* McpRowContent.swift */; };
+		545A96A05E21FFC97C2BACC2 /* rex-kitty-image-snapshot.bin in Resources */ = {isa = PBXBuildFile; fileRef = 72DB23CDA5E1BC3D6397EC6C /* rex-kitty-image-snapshot.bin */; };
 		547A95690AFC7838C20098F1 /* NavigationSwipeGesturePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6698289848C2AE90BD46FBA3 /* NavigationSwipeGesturePolicyTests.swift */; };
 		549ACF8D290F92AE23863BCC /* MessageQueueComposerRestoreContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9E771F88E8BBFCB93D157FE /* MessageQueueComposerRestoreContent.swift */; };
 		54DA3561FCC6D84F38C04ED9 /* ToolOutputSidecar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5D599D59063ADF624DDFA8 /* ToolOutputSidecar.swift */; };
@@ -3434,6 +3435,7 @@
 		728367337213199138DC6B69 /* OrbMetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrbMetalRenderer.swift; sourceTree = "<group>"; };
 		7288AA21C5EA628F50504445 /* ToolTimelineRowLayoutPerformance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTimelineRowLayoutPerformance.swift; sourceTree = "<group>"; };
 		72A5E67A4BF2CBC123584FD0 /* TurnSendTracking.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TurnSendTracking.swift; sourceTree = "<group>"; };
+		72DB23CDA5E1BC3D6397EC6C /* rex-kitty-image-snapshot.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = "rex-kitty-image-snapshot.bin"; sourceTree = "<group>"; };
 		72E2180FABF6409D30AF3EB4 /* ExtensionSurfaceState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSurfaceState.swift; sourceTree = "<group>"; };
 		7302EC96FA719436130D3A75 /* ServerInfoGitStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerInfoGitStatusTests.swift; sourceTree = "<group>"; };
 		731B79B1082AA5B7395C7AC2 /* SessionStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStats.swift; sourceTree = "<group>"; };
@@ -6468,6 +6470,7 @@
 				C52A7A25435385872BD3EDB0 /* known-good-h264.mp4 */,
 				F5922FB5923BE3BFAAEE9E4A /* mermaid-rendering-gallery.md */,
 				776FDBD7D6EB1C0D4603C712 /* mixed-markdown-stress-corpus.md */,
+				72DB23CDA5E1BC3D6397EC6C /* rex-kitty-image-snapshot.bin */,
 				6B4E8D2C6F1DC6232912DE51 /* suzanne-garden.usdz */,
 				096B1F033E9DFE4A1A7F02F8 /* synthetic-long-markdown.md */,
 			);
@@ -8373,6 +8376,7 @@
 				BFC5A1E291D0C798583FFA4C /* mermaid-rendering-gallery.md in Resources */,
 				C0BB27F2808CFAAECD6B8DBA /* mixed-markdown-stress-corpus.md in Resources */,
 				26ABC078A55D4E1BA09C2CC1 /* protocol in Resources */,
+				545A96A05E21FFC97C2BACC2 /* rex-kitty-image-snapshot.bin in Resources */,
 				0319F9323EC77505AB007F32 /* suzanne-garden.usdz in Resources */,
 				FD3FED6CD03AE53F9499AE61 /* synthetic-long-markdown.md in Resources */,
 			);

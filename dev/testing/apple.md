@@ -40,7 +40,7 @@ SIMD; simdutf and highway are built without libc++ into the archive). Kitty
 graphics is compiled in; PNG decode is an embedder callback, and file image
 loads are not enabled. The framework is untracked. A cache miss needs network
 access and Xcode with the iOS device and simulator SDKs. Ghostty requires
-exactly Zig 0.16.0: the script uses a PATH `zig` at that version, else
+exactly Zig 0.17.0: the script uses a PATH `zig` at that version, else
 downloads the official release into the cache and checks its SHA-256:
 
 ```bash
@@ -50,6 +50,10 @@ clients/apple/scripts/build-ghostty-vt.sh
 `ensure-prebuilt-frameworks.sh` runs this before xcodebuild; the Oppi pre-build phase runs it again to catch pin bumps. Other checkouts reuse
 `~/Library/Caches/oppi-ghostty-vt/<build-id>/` without Zig or network access.
 The source revision and build options live in the script; update both deliberately.
+The revision is the one Rex encodes pane snapshots with (see the script's
+comment). Moving below it would drop the image records Rex writes, and anything
+older than ghostty `781c58e96` fails a whole snapshot on a record kind it does
+not know, so check a Rex pane that shows an image after a bump.
 `Oppi/Resources/GhosttyVt-LICENSE.txt` carries the distributed notices.
 Only the iOS app links this library; OppiMac does not.
 
