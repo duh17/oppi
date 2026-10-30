@@ -461,8 +461,14 @@ final class ServerConnection {
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest? {
         get {
+            // Read the queue before the focus guard. The window root observes this
+            // from its `updateProperties()`, and a getter that returns early while
+            // nothing is focused registers no dependency on the queue: the first
+            // dialog to arrive then never invalidates the root, so its sheet never
+            // presents and the extension waits for an answer that cannot be given.
+            let queues = pendingExtensionDialogQueues
             guard let focusedSessionId else { return nil }
-            return pendingExtensionDialogQueues[focusedSessionId]?.first
+            return queues[focusedSessionId]?.first
         }
         set {
             if let newValue {

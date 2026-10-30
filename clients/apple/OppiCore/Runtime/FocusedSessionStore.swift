@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Focused-session routing target. `generation` doubles as the ownership claim
 /// a chat runtime holds: only the holder of the current context may release it.
@@ -16,7 +17,13 @@ struct FocusClaimHolder {
     let regain: @MainActor () -> Void
 }
 
+/// `@Observable`: the window root reads `focusedSessionId` from its
+/// `updateProperties()`, and focus is one of the two inputs to what it presents
+/// (the other is the queue `activeExtensionDialog` reads). Without it, a
+/// request queued for a session nobody was looking at reached the root only
+/// when something unrelated re-ran it.
 @MainActor
+@Observable
 final class FocusedSessionStore {
     private struct HeldClaim {
         let claim: FocusedSessionContext

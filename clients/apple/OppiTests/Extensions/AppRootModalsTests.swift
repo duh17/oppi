@@ -306,6 +306,85 @@ struct AppRootModalsTests {
         return own + view.subviews.flatMap { collectLabelTexts(in: $0) }
     }
 
+    @Test("an editor request opens the expanded composer with the request's prefill")
+    func editorDialogPresentsThePrefill() async throws {
+        let root = try makeRoot(servers: ["alpha"])
+        let connection = root.coordinator.activeConnection
+        _ = connection.focusedSessionStore.focus(sessionId: "s")
+        let (host, window) = try show(root)
+        defer { hide(window) }
+
+        connection.activeExtensionDialog = ExtensionUIRequest(
+            id: "editor-1", sessionId: "s", method: "editor",
+            title: "Edit some text", prefill: "Line 1\nLine 2\nLine 3"
+        )
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { isSettled(host.presentedViewController) })
+        let navigation = try #require(host.presentedViewController as? UINavigationController)
+        let composer = try #require(navigation.topViewController as? ExpandedComposerViewController)
+        composer.view.layoutIfNeeded()
+
+        let editor = try #require(
+            firstView(in: composer.view, where: { $0.accessibilityIdentifier == "extension.dialog.editor" }),
+            "the editor sheet has no text view: \(viewIdentifiers(in: composer.view))"
+        )
+        #expect((editor as? UITextView)?.text == "Line 1\nLine 2\nLine 3")
+        #expect(composer.navigationItem.leftBarButtonItem?.accessibilityIdentifier == "extension.dialog.cancel")
+    }
+
+    @Test("a dialog queued after the chat takes focus still presents its sheet")
+    func editorDialogPresentsWhenTheQueueArrivesAfterFocus() async throws {
+        // The app's order: the root's `updateProperties()` runs before any chat is
+        // focused, and the dialog arrives later. Reading the queue only behind the
+        // focus guard registered no dependency, so the first dialog never
+        // invalidated the root and its sheet never appeared.
+        let root = try makeRoot(servers: ["alpha"])
+        let connection = root.coordinator.activeConnection
+        let (host, window) = try show(root)
+        defer { hide(window) }
+
+        _ = connection.focusedSessionStore.focus(sessionId: "later")
+        connection.activeExtensionDialog = ExtensionUIRequest(
+            id: "editor-later", sessionId: "later", method: "editor", prefill: "after focus"
+        )
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { isSettled(host.presentedViewController) })
+        let navigation = try #require(host.presentedViewController as? UINavigationController)
+        #expect(navigation.topViewController is ExpandedComposerViewController)
+    }
+
+    @Test("a dialog queued before its chat takes focus presents once it does")
+    func editorDialogPresentsWhenFocusArrivesAfterTheQueue() async throws {
+        // The other order: the request is already queued for a session nobody is
+        // looking at (the queue changes, focus does not), and the sheet must
+        // appear when that session takes focus.
+        let root = try makeRoot(servers: ["alpha"])
+        let connection = root.coordinator.activeConnection
+        let (host, window) = try show(root)
+        defer { hide(window) }
+
+        connection.pendingExtensionDialogQueues["waiting"] = [
+            ExtensionUIRequest(id: "editor-waiting", sessionId: "waiting", method: "editor", prefill: "queued first"),
+        ]
+        #expect(host.presentedViewController == nil, "an unfocused session's dialog must stay queued")
+
+        _ = connection.focusedSessionStore.focus(sessionId: "waiting")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { isSettled(host.presentedViewController) })
+        let navigation = try #require(host.presentedViewController as? UINavigationController)
+        #expect(navigation.topViewController is ExpandedComposerViewController)
+    }
+
+    private func firstView(in view: UIView, where matches: (UIView) -> Bool) -> UIView? {
+        if matches(view) { return view }
+        for subview in view.subviews {
+            if let match = firstView(in: subview, where: matches) { return match }
+        }
+        return nil
+    }
+
+    private func viewIdentifiers(in view: UIView) -> [String] {
+        let own = view.accessibilityIdentifier.map { [$0] } ?? []
+        return own + view.subviews.flatMap { viewIdentifiers(in: $0) }
+    }
+
     private func buttonIdentifiers(in view: UIView) -> [String] {
         let own = (view as? UIButton)?.accessibilityIdentifier.map { [$0] } ?? []
         return own + view.subviews.flatMap { buttonIdentifiers(in: $0) }
