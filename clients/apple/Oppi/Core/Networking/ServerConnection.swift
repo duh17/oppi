@@ -2719,12 +2719,12 @@ final class ServerConnection {
     }
 
     /// The network half of `prepareExternalSessionOpen` for an open that
-    /// `beginExternalSessionOpen` already routed: warm the timeline cache and
-    /// hydrate pending dialogs, binding again when they name a new workspace.
-    /// It does not re-assert the active session: the route is up, and the
-    /// person may have moved on while the reads ran.
+    /// `beginExternalSessionOpen` already routed: hydrate pending dialogs,
+    /// binding again when they name a new workspace. The chat on screen loads
+    /// its own timeline, so this does not prefetch one: a late prefetch could
+    /// overwrite a newer cache. It does not re-assert the active session: the
+    /// route is up, and the person may have moved on while the read ran.
     func completeExternalSessionOpen(sessionId: String, workspaceIdHint: String? = nil) async {
-        await prefetchSessionTimelineIfPossible(sessionId: sessionId)
         let initialWorkspaceId = sessionReentryWorkspaceId(for: sessionId, workspaceIdHint: workspaceIdHint)
         await hydrateSessionDialogs(sessionId: sessionId)
         let resolvedWorkspaceId = sessionReentryWorkspaceId(for: sessionId, workspaceIdHint: initialWorkspaceId)

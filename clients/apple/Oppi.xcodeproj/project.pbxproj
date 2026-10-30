@@ -2086,6 +2086,7 @@
 		E09128A1527E1294D213F222 /* FileShareService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD7ADD0C6492EF1E8C9DA32E /* FileShareService.swift */; };
 		E0A4890B095EB7606C7F8463 /* TimelineCopyFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 092FC69A0DFD4B5496F54F5B /* TimelineCopyFeedback.swift */; };
 		E0B83DCB6DBB32347D163BCC /* QuickSessionControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 132682218D7EF18B477FF353 /* QuickSessionControl.swift */; };
+		E0C5B64B9819C33285D9F914 /* ChatRouteLockGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D03B01E81E766B94B1D9B4 /* ChatRouteLockGateTests.swift */; };
 		E0DA38DC11881B1F5B482808 /* MacAppCommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8680A155C564F21546AA448C /* MacAppCommandTests.swift */; };
 		E0EE285FFEEB660234E9489C /* MacServerLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F4C89E3C0D8C01188014E81 /* MacServerLifecycle.swift */; };
 		E11B250DF8FDD63501F3B03D /* MermaidClassRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E14A4BC931984D4A4464CDB /* MermaidClassRenderer.swift */; };
@@ -4171,6 +4172,7 @@
 		D45C82E55D60BBDCD27F8401 /* MacMarkdownVideoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMarkdownVideoView.swift; sourceTree = "<group>"; };
 		D4608403F218D90CBEFE78F5 /* ToolTimelineRowFullScreenActivationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTimelineRowFullScreenActivationTests.swift; sourceTree = "<group>"; };
 		D47F98CBBB2A00B8928A9C82 /* USDZLocalFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = USDZLocalFileStore.swift; sourceTree = "<group>"; };
+		D4D03B01E81E766B94B1D9B4 /* ChatRouteLockGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatRouteLockGateTests.swift; sourceTree = "<group>"; };
 		D4D0B81C970A4542B6ADD773 /* ComposerBarController+Keyboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ComposerBarController+Keyboard.swift"; sourceTree = "<group>"; };
 		D4F38C5E17E9B83BD0C806EA /* ScrollToBottomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollToBottomTests.swift; sourceTree = "<group>"; };
 		D56C8D20F1190AD14276C717 /* MacToolAudioPlaybackControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacToolAudioPlaybackControllerTests.swift; sourceTree = "<group>"; };
@@ -6585,6 +6587,7 @@
 		96D54D89853CC9E56AF03917 /* Workspaces */ = {
 			isa = PBXGroup;
 			children = (
+				D4D03B01E81E766B94B1D9B4 /* ChatRouteLockGateTests.swift */,
 				7F54ED7A5B2FB1CB02A99B67 /* ServerListRepeatedIdTests.swift */,
 				C85F1AFB4916830FE3F5B125 /* SessionInboxComposeChromeTests.swift */,
 				595795F1D374DED3DF91AE31 /* SessionListSearchNavigationPersistenceTests.swift */,
@@ -9225,6 +9228,7 @@
 				C92662C28B6E66F349E4D687 /* ChatFocusOwnershipTests.swift in Sources */,
 				BAD93BAA7D60DBA30A79E93C /* ChatReaderOpenLookupDestinationTests.swift in Sources */,
 				52CCAEA420017D7B6B5BEFFE /* ChatReaderViewControllerTests.swift in Sources */,
+				E0C5B64B9819C33285D9F914 /* ChatRouteLockGateTests.swift in Sources */,
 				9A2C90D8883016C437AE4850 /* ChatScrollControllerTests.swift in Sources */,
 				0041EAD726F59A965356EACF /* ChatSessionLoadTelemetryTests.swift in Sources */,
 				A5A3C75DB6EC7AD9244A9E88 /* ChatSessionManagerTests.swift in Sources */,

@@ -637,6 +637,16 @@ struct AppOpenerTests {
             await withCheckedContinuation { release = $0 }
             return makeTestSession(id: id, workspaceId: "w1", status: .stopped)
         }
+        var traceReads = 0
+        var dialogReads = 0
+        connection._getSessionTraceForTesting = { id in
+            traceReads += 1
+            return (makeTestSession(id: id, workspaceId: "w1", status: .busy), [])
+        }
+        connection._getSessionDialogsForTesting = { _ in
+            dialogReads += 1
+            return APIClient.SessionDialogsResponse(dialogs: [], serverNow: 1)
+        }
         var logged: [String: String] = [:]
         harness.opener._linkOpenedForTesting = { logged = $0 }
 
@@ -645,6 +655,7 @@ struct AppOpenerTests {
 
         harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
         #expect(release != nil, "The refresh is still out when the route is up")
+        #expect(dialogReads == 0)
         #expect(connection.sessionStore.session(id: "child")?.status == .busy, "The chat opens from the cached record")
         #expect(logged["path"] == "cached")
         #expect(logged["recordRefreshMs"] == nil)
@@ -652,6 +663,8 @@ struct AppOpenerTests {
         release?.resume()
         await harness.settle()
         #expect(connection.sessionStore.session(id: "child")?.status == .stopped, "The refresh still lands")
+        #expect(dialogReads == 1, "Pending dialogs still hydrate behind the route")
+        #expect(traceReads == 0, "The chat loads its own timeline; a late prefetch could overwrite its cache")
     }
 
     /// Only a record that names its workspace gives the lock scope; any other session still waits for
@@ -729,39 +742,136 @@ struct AppOpenerTests {
         await harness.settle()
     }
 
-    /// The lock scope only the refreshed record knows (it moved to a locked workspace): the route is
-    /// taken back off screen when the prompt is cancelled, before anything else about it loads.
+    /// A refreshed record can move the session (a re-import into another workspace, a terminal
+    /// takeover) into a locked workspace the cache did not know. The route is taken off the stack when
+    /// the prompt is cancelled, the server the open switched away from comes back, and nothing else
+    /// about the session loads.
     @Test func aLockDiscoveredOnlyByTheRefreshTakesTheOpenedSessionBackOffScreen() async throws {
-        let harness = OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.cancelled])
-        harness.addSession("child", workspaceId: "w1", to: "server-a")
-        let connection = harness.connection("server-a")
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a"), makeServer("server-b")],
+            authOutcomes: [.cancelled]
+        )
+        harness.addSession("child", workspaceId: "w1", to: "server-b")
+        let connection = harness.connection("server-b")
         var release: CheckedContinuation<Void, Never>?
-        var traceReads = 0
+        var dialogReads = 0
         connection._getSessionRecordForTesting = { id in
             await withCheckedContinuation { release = $0 }
             return makeTestSession(id: id, workspaceId: "w2", status: .busy)
         }
-        let defaultTrace = connection._getSessionTraceForTesting
-        connection._getSessionTraceForTesting = { id in
-            traceReads += 1
-            return try await defaultTrace!(id)
+        connection._getSessionDialogsForTesting = { _ in
+            dialogReads += 1
+            return APIClient.SessionDialogsResponse(dialogs: [], serverNow: 1)
         }
-        harness.scopedLock.sessionLookup = { [weak harness] serverId, sessionId in
-            harness?.connection(serverId).sessionStore.session(id: sessionId)
-        }
-        harness.scopedLock.lock(.workspace(serverId: "server-a", workspaceId: "w2"))
+        harness.lockWorkspace("w2", on: "server-b")
 
-        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "child", origin: .externalURL)))
+        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .externalURL)))
         for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
-        harness.expectSessionRoute(serverId: "server-a", sessionId: "child")
+        harness.expectSessionRoute(serverId: "server-b", sessionId: "child")
 
         release?.resume()
         await harness.settle()
 
         #expect(harness.lastSessionRoute == nil, "The locked workspace's session is not left on screen")
-        #expect(traceReads == 0, "Nothing else about the session loads after the cancel")
+        #expect(harness.coordinator.activeServerId == "server-a")
+        #expect(dialogReads == 0, "Nothing else about the session loads after the cancel")
         #expect(connection.sessionStore.activeSessionId == nil)
         #expect(!connection.externalSessionOpenClaimBlocks("other"))
+    }
+
+    /// An open a newer one replaced asks nobody: the route's own gate covers the moved session.
+    @Test func aSupersededLoadedOpenDoesNotPromptForALockTheRefreshDiscovered() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")], authOutcomes: [.cancelled])
+        harness.addSession("child", workspaceId: "w1", to: "server-a")
+        harness.addSession("other", workspaceId: "w1", to: "server-a")
+        let connection = harness.connection("server-a")
+        var release: CheckedContinuation<Void, Never>?
+        connection._getSessionRecordForTesting = { id in
+            if id == "child" { await withCheckedContinuation { release = $0 } }
+            return makeTestSession(id: id, workspaceId: id == "child" ? "w2" : "w1", status: .busy)
+        }
+        harness.lockWorkspace("w2", on: "server-a")
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "child", origin: .inAppHyperlink)))
+        for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
+        harness.opener.open(.session(SessionOpen(serverId: "server-a", sessionId: "other", origin: .inAppHyperlink)))
+        for _ in 0..<500 where harness.lastSessionRoute?.sessionId != "other" { await Task.yield() }
+        harness.expectSessionRoute(serverId: "server-a", sessionId: "other")
+
+        release?.resume()
+        for _ in 0..<500 where connection.sessionStore.session(id: "child")?.workspaceId != "w2" { await Task.yield() }
+        for _ in 0..<50 { await Task.yield() }
+
+        #expect(connection.sessionStore.session(id: "child")?.workspaceId == "w2")
+        #expect(harness.authenticator.prompts == 0, "A replaced open must not prompt")
+        #expect(harness.stackSessionIds == ["child", "other"], "The newer open's screen is untouched")
+    }
+
+    /// The prompt is already up when a newer open replaces this one. A refusal still takes the locked
+    /// session's route off the stack, so Back from the newer screen never reaches its chat, and it
+    /// leaves the newer screen (and the server it is on) alone.
+    @Test func aRefusedLockTakesTheSessionOffTheStackEvenIfAnotherOpenReplacedItWhileAsking() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a"), makeServer("server-b")],
+            authOutcomes: [.cancelled]
+        )
+        harness.addSession("child", workspaceId: "w1", to: "server-b")
+        harness.addSession("other", workspaceId: "w1", to: "server-b")
+        let connection = harness.connection("server-b")
+        var release: CheckedContinuation<Void, Never>?
+        connection._getSessionRecordForTesting = { id in
+            if id == "child" { await withCheckedContinuation { release = $0 } }
+            return makeTestSession(id: id, workspaceId: id == "child" ? "w2" : "w1", status: .busy)
+        }
+        harness.lockWorkspace("w2", on: "server-b")
+        harness.authenticator.holdsPrompts = true
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .inAppHyperlink)))
+        for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
+        release?.resume()
+        for _ in 0..<500 where !harness.authenticator.isAsking { await Task.yield() }
+        #expect(harness.authenticator.isAsking, "The refreshed lock scope asks")
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "other", origin: .inAppHyperlink)))
+        for _ in 0..<500 where harness.lastSessionRoute?.sessionId != "other" { await Task.yield() }
+        harness.expectSessionRoute(serverId: "server-b", sessionId: "other")
+
+        harness.authenticator.answer(.cancelled)
+        for _ in 0..<500 where harness.stackSessionIds.contains("child") { await Task.yield() }
+
+        #expect(harness.stackSessionIds == ["other"], "Back must not reach the locked session")
+        #expect(harness.coordinator.activeServerId == "server-b", "The newer open owns the server")
+    }
+
+    /// The person tapped another screen themselves (the opener never heard of it) before the refused
+    /// prompt: the locked session's route goes, the screen they chose and its server stay.
+    @Test func aRefusedLockAfterTheUserNavigatedOnLeavesTheirScreenAndServerAlone() async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a"), makeServer("server-b")],
+            authOutcomes: [.cancelled]
+        )
+        harness.addSession("child", workspaceId: "w1", to: "server-b")
+        let connection = harness.connection("server-b")
+        var release: CheckedContinuation<Void, Never>?
+        connection._getSessionRecordForTesting = { id in
+            await withCheckedContinuation { release = $0 }
+            return makeTestSession(id: id, workspaceId: "w2", status: .busy)
+        }
+        harness.lockWorkspace("w2", on: "server-b")
+
+        harness.opener.open(.session(SessionOpen(serverId: "server-b", sessionId: "child", origin: .inAppHyperlink)))
+        for _ in 0..<500 where release == nil || harness.lastSessionRoute == nil { await Task.yield() }
+        harness.navigation.openReferencedSession(WorkspaceSessionNavTarget(
+            serverId: "server-b",
+            sessionId: "manual",
+            workspaceId: "w1"
+        ))
+
+        release?.resume()
+        await harness.settle()
+
+        #expect(harness.stackSessionIds == ["manual"])
+        #expect(harness.coordinator.activeServerId == "server-b", "Only a session still on screen restores the server")
     }
 
     @Test func aLoadedThreadLinkOpensBeforeTheRecordRefreshReturns() async throws {
@@ -784,6 +894,58 @@ struct AppOpenerTests {
         #expect(release != nil, "The refresh is still out when the thread is open")
         release?.resume()
         await harness.settle()
+    }
+
+    /// The thread is already open when the refresh says the session is gone: a notice, not a silent miss.
+    @Test func aLoadedThreadLinkToASessionTheRefreshSaysIsGoneToastsAfterOpening() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("root", workspaceId: "w1", to: "server-a")
+        harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-a")
+        harness.connection("server-a")._getSessionRecordForTesting = { _ in
+            throw APIError.server(status: 404, message: "Not found")
+        }
+
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "child", origin: .externalURL)))
+        await harness.settle()
+
+        #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
+        #expect(harness.connection("server-a").extensionToast == "Session not found for this thread link")
+    }
+
+    /// The refresh moves a thread's session into a locked workspace and the prompt is refused: while
+    /// the list the link opened is still showing, the server comes back; once the person has gone on
+    /// to another screen, nothing of theirs moves.
+    @Test(arguments: [false, true])
+    func aRefusedLockAfterAThreadOpensRestoresTheServerOnlyWhileTheListIsShowing(navigatedOn: Bool) async throws {
+        let harness = OpenerHarness(
+            servers: [makeServer("server-a"), makeServer("server-b")],
+            authOutcomes: [.cancelled]
+        )
+        harness.addSession("root", workspaceId: "w1", to: "server-b")
+        harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-b")
+        var release: CheckedContinuation<Void, Never>?
+        harness.connection("server-b")._getSessionRecordForTesting = { id in
+            await withCheckedContinuation { release = $0 }
+            var session = makeTestSession(id: id, workspaceId: "w2", status: .busy)
+            session.parentSessionId = id == "child" ? "root" : nil
+            return session
+        }
+        harness.lockWorkspace("w2", on: "server-b")
+
+        harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "child", origin: .externalURL)))
+        for _ in 0..<500 where release == nil || harness.navigation.pendingThreadFocus == nil { await Task.yield() }
+        if navigatedOn {
+            harness.navigation.openReferencedSession(WorkspaceSessionNavTarget(
+                serverId: "server-b",
+                sessionId: "manual",
+                workspaceId: "w1"
+            ))
+        }
+        release?.resume()
+        await harness.settle()
+
+        #expect(harness.coordinator.activeServerId == (navigatedOn ? "server-b" : "server-a"))
+        #expect(harness.stackSessionIds == (navigatedOn ? ["manual"] : []))
     }
 
     @Test func unreachableServerKeepsTheRequestAndRetriesOnTheNextForeground() async throws {
@@ -1782,13 +1944,28 @@ private final class LinkRecorder {
 @MainActor
 private final class StubAuthenticator {
     private var outcomes: [DeviceOwnerAuthentication.Outcome]
+    private(set) var prompts = 0
+    /// While true a prompt stays up until `answer(_:)`, so a test can change the app under it.
+    var holdsPrompts = false
+    private var pending: CheckedContinuation<DeviceOwnerAuthentication.Outcome, Never>?
 
     init(outcomes: [DeviceOwnerAuthentication.Outcome]) {
         self.outcomes = outcomes
     }
 
-    func authenticate() -> DeviceOwnerAuthentication.Outcome {
-        outcomes.isEmpty ? .failed : outcomes.removeFirst()
+    var isAsking: Bool { pending != nil }
+
+    func authenticate() async -> DeviceOwnerAuthentication.Outcome {
+        prompts += 1
+        if holdsPrompts {
+            return await withCheckedContinuation { pending = $0 }
+        }
+        return outcomes.isEmpty ? .failed : outcomes.removeFirst()
+    }
+
+    func answer(_ outcome: DeviceOwnerAuthentication.Outcome) {
+        pending?.resume(returning: outcome)
+        pending = nil
     }
 }
 
@@ -1803,6 +1980,7 @@ private final class OpenerHarness {
     let intentTrigger: IntentSessionOpenTrigger
     let recorder: LinkRecorder
     let opener: AppOpener
+    let authenticator: StubAuthenticator
     var unreachableServers: Set<String> = []
     private var connections: [String: ServerConnection] = [:]
 
@@ -1819,12 +1997,13 @@ private final class OpenerHarness {
         let lockDefaults = UserDefaults(suiteName: "AppOpenerTests-lock-\(UUID().uuidString)")!
         AppLockSettings.setTimeout(appLockTimeout, in: lockDefaults)
         let authenticator = StubAuthenticator(outcomes: authOutcomes)
+        self.authenticator = authenticator
         let appLock = AppLockService(
             defaults: lockDefaults,
             monotonicNow: { 10_000 },
             availability: { .available },
             method: { .faceID },
-            authenticator: { _ in authenticator.authenticate() },
+            authenticator: { _ in await authenticator.authenticate() },
             didTurnOn: {}
         )
         self.appLock = appLock
@@ -1907,6 +2086,21 @@ private final class OpenerHarness {
                 ],
                 serverNow: 1
             )
+        }
+    }
+
+    /// `workspaceId` is locked, and sessions are looked up in the fixture's stores.
+    func lockWorkspace(_ workspaceId: String, on serverId: String) {
+        scopedLock.sessionLookup = { [weak self] serverId, sessionId in
+            self?.connection(serverId).sessionStore.session(id: sessionId)
+        }
+        scopedLock.lock(.workspace(serverId: serverId, workspaceId: workspaceId))
+    }
+
+    var stackSessionIds: [String] {
+        navigation.workspaceStackRouteElements.compactMap {
+            if case .session(let target) = $0 { return target.sessionId }
+            return nil
         }
     }
 

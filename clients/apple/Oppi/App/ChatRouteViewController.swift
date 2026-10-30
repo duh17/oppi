@@ -90,10 +90,13 @@ final class ChatRouteViewController: UIViewController {
     private func updateContent() {
         view.backgroundColor = root.themeStore.backgroundColor
         let locks = ScopedLockService.shared
+        // The session's workspace comes from the store, read live: a refreshed
+        // record can move a session into a locked workspace after this route
+        // was pushed, and the pushed target only holds what was known then.
         let lockTarget = locks.sessionTarget(
             serverId: target.serverId,
             sessionId: target.sessionId,
-            workspaceId: target.workspaceId
+            workspaceId: locks.sessionLookup(target.serverId, target.sessionId)?.workspaceId ?? target.workspaceId
         )
         // A notification or deep-link open already awaited
         // `switchToServerReady`: reuse that connection at once so the chat
@@ -149,8 +152,11 @@ final class ChatRouteViewController: UIViewController {
             connection: connection,
             navigation: root.navigation,
             serverIdHint: target.serverId,
-            workspaceIdHint: target.workspaceId,
-            routeScope: target.routeScope
+            workspaceIdHint: connection.sessionReentryWorkspaceId(
+                for: target.sessionId,
+                workspaceIdHint: target.workspaceId
+            ),
+            routeScope: connection.sessionStore.routeScope(for: target.sessionId) ?? target.routeScope
         )
         embed(chat)
         self.chat = chat

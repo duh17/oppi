@@ -1234,6 +1234,64 @@ final class AppNavigation {
         workspaceStackRouteElements.removeLast(workspaceStackRouteElements.count - depth)
     }
 
+    /// The all-sessions list with nothing pushed over it (compact stack or split detail).
+    var showsAllSessionsRoot: Bool {
+        switch workspaceNavigationPresentation {
+        case .stack:
+            selectedWorkspaceFilter == nil && workspaceStackRouteElements.isEmpty
+        case .split:
+            splitSelectedWorkspace == nil && splitDetailTarget == nil && splitDetailPathElements.isEmpty
+        }
+    }
+
+    /// Takes the session's routes off the compact stack or the split detail,
+    /// for a session whose lock was refused after its route was pushed, so Back
+    /// never reaches its chat. Every other screen stays where it is, except
+    /// that the split detail column clears when the session is its root: the
+    /// screens pushed over a root go with it. Returns true when the session was
+    /// the visible destination.
+    @discardableResult
+    func removeSessionRoute(serverId: String, sessionId: String) -> Bool {
+        func matches(_ target: WorkspaceSessionNavTarget) -> Bool {
+            target.serverId == serverId && target.sessionId == sessionId
+        }
+        var wasVisible = false
+        switch workspaceNavigationPresentation {
+        case .stack:
+            if case .session(let top)? = workspaceStackRouteElements.last { wasVisible = matches(top) }
+            let remaining = workspaceStackRouteElements.filter {
+                if case .session(let target) = $0 { return !matches(target) }
+                return true
+            }
+            if remaining.count != workspaceStackRouteElements.count {
+                mediaOverlayYieldsToUserNavigation()
+                workspaceStackRouteElements = remaining
+            }
+        case .split:
+            switch splitDetailPathElements.last {
+            case .session(let top)?: wasVisible = matches(top)
+            case nil:
+                if case .session(let root)? = splitDetailTarget { wasVisible = matches(root) }
+            default: break
+            }
+            let remaining = splitDetailPathElements.filter {
+                if case .session(let target) = $0 { return !matches(target) }
+                return true
+            }
+            if remaining.count != splitDetailPathElements.count {
+                mediaOverlayYieldsToUserNavigation()
+                splitDetailPathElements = remaining
+            }
+            if case .session(let root)? = splitDetailTarget, matches(root) {
+                mediaOverlayYieldsToUserNavigation()
+                splitDetailTarget = nil
+                splitDetailPathElements = []
+                splitColumnVisibility = .all
+            }
+        }
+        return wasVisible
+    }
+
     /// The user popped the split detail column back to `depth` pushed screens.
     func popSplitDetail(toDepth depth: Int) {
         guard splitDetailPathElements.count > depth else { return }

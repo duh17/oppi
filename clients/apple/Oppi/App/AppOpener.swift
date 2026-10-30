@@ -277,9 +277,9 @@ final class AppOpener {
     /// checks it so a superseded open cannot navigate.
     @ObservationIgnored var generation: UInt64 = 0
     @ObservationIgnored var currentTask: Task<Void, Never>?
-    /// What a loaded session or thread open still reads after its route is
-    /// up (record refresh, prefetch, dialogs). It is not the open: a newer open
-    /// does not cancel it, but it stops acting once it is superseded.
+    /// What a loaded session or thread open still does after its route is up
+    /// (record refresh, lock re-check, dialogs). A newer open cancels it, and
+    /// it asks and loads nothing once superseded.
     @ObservationIgnored private var postOpenTask: Task<Void, Never>?
     @ObservationIgnored var invitePairingGate = InvitePairingGate()
     @ObservationIgnored var invitePairingTask: Task<Void, Never>?
@@ -435,6 +435,8 @@ final class AppOpener {
         pendingResourceReferenceChoice = nil
         currentTask?.cancel()
         currentTask = nil
+        postOpenTask?.cancel()
+        postOpenTask = nil
     }
 
     private func abandonIntentReceipt(for request: AppOpenRequest?) {
@@ -458,6 +460,8 @@ final class AppOpener {
     private func run(_ request: AppOpenRequest, generation: UInt64) {
         guard generation == self.generation else { return }
         currentTask?.cancel()
+        postOpenTask?.cancel()
+        postOpenTask = nil
         activeRequest = request
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -865,9 +869,11 @@ final class AppOpener {
         return .finished
     }
 
-    /// True when the session's record is loaded and names its workspace. A
-    /// session's workspace never changes, so that record already says which
-    /// lock scopes the session is in: the open need not wait for the network.
+    /// True when the session's record is loaded and names its workspace, so
+    /// the open can ask for its lock from that record without the network. The
+    /// record can be out of date (a re-import or a terminal takeover moves a
+    /// session to another workspace): the chat route's gate reads the store live,
+    /// and the refresh that follows the push asks again when the lock scope moved.
     private func hasLoadedWorkspace(_ sessionId: String, on connection: ServerConnection) -> Bool {
         guard let workspaceId = connection.sessionStore.session(id: sessionId)?.workspaceId else { return false }
         return !workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -875,9 +881,10 @@ final class AppOpener {
 
     /// `openPreparedSession` for a session whose record is loaded: ask for its
     /// lock from that record, claim and focus it, and push at once. The
-    /// record refresh, timeline prefetch and dialog hydration follow in the
-    /// background (`finishLoadedSessionOpen`); the chat shows what is cached
-    /// meanwhile. The route's own lock gate still covers the screen.
+    /// record refresh and dialog hydration follow in the background; the chat
+    /// shows what is cached meanwhile and loads its own timeline. The route's
+    /// own lock gate reads the session's workspace live, so a refresh that
+    /// moves the session into a locked workspace covers the chat at once.
     private func openLoadedSession(
         serverId: String,
         sessionId: String,
@@ -920,31 +927,57 @@ final class AppOpener {
         postOpenTask = Task { @MainActor [weak self, weak connection] in
             guard let self, let connection else { return }
             await connection.refreshSessionRecordIfPossible(sessionId: sessionId)
-            // The refreshed record may name a different lock scope than the
-            // cached one did; ask again before anything else loads. Cancel
-            // takes the session off screen, as a cancel before the push would.
             let refreshed = scopedLock.sessionTarget(
                 serverId: serverId,
                 sessionId: sessionId,
                 workspaceId: connection.sessionReentryWorkspaceId(for: sessionId)
             )
-            if refreshed != lockTarget, await scopedLock.authorize(refreshed) == false {
+            switch await reauthorizeAfterRefresh(from: lockTarget, to: refreshed, generation: generation) {
+            case .superseded:
+                return
+            case .denied:
                 connection.abandonExternalSessionOpen(
                     sessionId: sessionId,
                     restoringActiveSessionId: previousActiveSessionId,
                     restoringFocusedSessionId: previousFocusedSessionId
                 )
-                if generation == self.generation {
+                // The session's route leaves the stack whatever else happened
+                // meanwhile, so Back never reaches a locked chat. Only a
+                // session still on screen sends the person back to the server
+                // they came from; one they already left is not theirs to move.
+                let wasVisible = navigation.removeSessionRoute(serverId: serverId, sessionId: sessionId)
+                if wasVisible, isCurrent(generation) {
                     restoreServer(previousServerId, after: serverId)
-                    showWorkspaceRoot()
                 }
-                return
+            case .proceed:
+                await connection.completeExternalSessionOpen(sessionId: sessionId, workspaceIdHint: workspaceIdHint)
             }
-            // A newer open owns focus now.
-            guard generation == self.generation else { return }
-            await connection.completeExternalSessionOpen(sessionId: sessionId, workspaceIdHint: workspaceIdHint)
         }
         return .finished
+    }
+
+    private enum Reauthorization {
+        /// The lock scope is unchanged or unlocked, and this open is still the latest.
+        case proceed
+        /// A newer open replaced this one before (or while) it asked.
+        case superseded
+        /// The refreshed record's lock scope was refused.
+        case denied
+    }
+
+    /// The ask after a loaded open's refresh. The route's own gate already
+    /// covers a session that moved into a locked workspace, so an open that a
+    /// newer one replaced asks nobody; an ask that is refused is `denied` even
+    /// if the open was replaced while the prompt was up.
+    private func reauthorizeAfterRefresh(
+        from cached: ScopedLockTarget,
+        to refreshed: ScopedLockTarget,
+        generation: UInt64
+    ) async -> Reauthorization {
+        guard isCurrent(generation) else { return .superseded }
+        guard refreshed != cached else { return .proceed }
+        guard await scopedLock.authorize(refreshed) else { return .denied }
+        return isCurrent(generation) ? .proceed : .superseded
     }
 
     // MARK: - Threads
@@ -994,8 +1027,8 @@ final class AppOpener {
         }
         guard isCurrent(generation) else { return .finished }
 
-        // A session whose record and ancestors are loaded already names its root and its lock scope:
-        // open the thread now and refresh the record behind it.
+        // A session whose record and ancestors are loaded already names its root and a lock scope:
+        // open the thread now and refresh the record behind it, asking again if the scope moved.
         if hasLoadedWorkspace(open.sessionId, on: connection),
            SessionThreadGrouping.missingAncestorId(of: open.sessionId, in: connection.sessionStore.sessions) == nil,
            let rootId = SessionThreadGrouping.rootId(of: open.sessionId, in: connection.sessionStore.sessions) {
@@ -1016,17 +1049,23 @@ final class AppOpener {
             logLinkOpened(timer)
             postOpenTask = Task { @MainActor [weak self, weak connection] in
                 guard let self, let connection else { return }
-                _ = await connection.loadSessionRecord(sessionId: open.sessionId)
+                let load = await connection.loadSessionRecord(sessionId: open.sessionId)
+                guard isCurrent(generation) else { return }
+                if load == .notFound {
+                    // The thread is already open; the session it was opened for is gone.
+                    toast("Session not found for this thread link")
+                    return
+                }
                 let refreshed = scopedLock.sessionTarget(
                     serverId: serverId,
                     sessionId: open.sessionId,
                     workspaceId: connection.sessionReentryWorkspaceId(for: open.sessionId)
                 )
-                if refreshed != lockTarget, await scopedLock.authorize(refreshed) == false,
-                   generation == self.generation {
-                    restoreServer(previousServerId, after: serverId)
-                    showWorkspaceRoot()
-                }
+                guard await reauthorizeAfterRefresh(from: lockTarget, to: refreshed, generation: generation) == .denied,
+                      isCurrent(generation), navigation.showsAllSessionsRoot else { return }
+                // Still on the list the link opened: back to where the person came from.
+                restoreServer(previousServerId, after: serverId)
+                showWorkspaceRoot()
             }
             return .finished
         }

@@ -206,6 +206,44 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspaceStackDiagnosticContext.sessionId == "source")
     }
 
+    /// A refused lock takes the session's route off the compact stack, leaves every other screen, and
+    /// says whether the session was the one on top. A session of another server with the same id is not it.
+    @Test func removingASessionRouteFromTheStackLeavesOtherScreensAndReportsWhetherItWasVisible() {
+        let navigation = AppNavigation()
+        let locked = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "locked", workspaceId: "w1")
+        let other = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "w1")
+        navigation.openWorkspaceSession(locked)
+        navigation.openReferencedSession(other)
+
+        #expect(!navigation.removeSessionRoute(serverId: "server-2", sessionId: "locked"))
+        #expect(navigation.workspaceStackRouteElements == [.session(locked), .session(other)])
+
+        #expect(!navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"), "Another screen was on top")
+        #expect(navigation.workspaceStackRouteElements == [.session(other)])
+
+        #expect(navigation.removeSessionRoute(serverId: "server-1", sessionId: "other"), "It was on top")
+        #expect(navigation.workspaceStackRouteElements.isEmpty)
+    }
+
+    /// The split detail's root is the session itself: removing it clears the detail column, and the
+    /// screens pushed over it go with their root.
+    @Test func removingTheSplitDetailSessionClearsTheColumn() {
+        let navigation = AppNavigation()
+        navigation.setWorkspaceNavigationPresentation(.split)
+        let locked = WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "locked", workspaceId: "w1")
+        navigation.openWorkspaceSession(locked)
+        #expect(navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"))
+        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailPathElements.isEmpty)
+        #expect(navigation.showsAllSessionsRoot)
+
+        navigation.openWorkspaceSession(locked)
+        navigation.openReferencedSession(WorkspaceSessionNavTarget(serverId: "server-1", sessionId: "other", workspaceId: "w1"))
+        #expect(!navigation.removeSessionRoute(serverId: "server-1", sessionId: "locked"), "Another screen was on top")
+        #expect(navigation.splitDetailTarget == nil)
+        #expect(navigation.splitDetailPathElements.isEmpty)
+    }
+
     @Test func referencedSessionPushesFromSplitChatAndSelfLinkIsNoOp() {
         let navigation = AppNavigation()
         let source = WorkspaceSessionNavTarget(
