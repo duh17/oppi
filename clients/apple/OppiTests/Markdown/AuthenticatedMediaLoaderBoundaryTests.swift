@@ -260,8 +260,8 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         // check, right where the loader creates its URLSession task. Creating
         // a task on the invalidated session raises NSGenericException.
         let fired = HookFlag()
-        session.debugSetBeforeDataTaskCreationHook { cancelLoader in
-            if fired.claim() { cancelLoader() }
+        session.debugSetBeforeDataTaskCreationHook { _, cancelLoader in
+            if fired.claim() { _ = cancelLoader() }
         }
         gate.release()
 
@@ -274,34 +274,140 @@ struct AuthenticatedMediaLoaderBoundaryTests {
     }
 
     @MainActor
-    @Test("teardown landing between a later authorization and task creation starts no further GET")
-    func teardownAfterLaterAuthorizationBeforeTaskCreationStartsNoGet() async throws {
-        let body = try Data(contentsOf: try knownGoodH264URL())
-        let gate = AuthorizationGate(token: "Bearer race-later", blockAfterCount: 2)
-        let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer race-later")
+    @Test("teardown landing between a continuation's authorization and task creation fails the request")
+    func teardownBeforeContinuationTaskCreationFailsRequest() async throws {
+        let artifact = try await GeneratedH264Fixture.makeLargerThan(
+            Int(AuthenticatedMediaRequestedRange.maxChunkLength)
+        )
+        defer { try? FileManager.default.removeItem(at: artifact.url) }
+        let server = try AuthenticatedRangeHTTPServer(body: artifact.data, token: "Bearer race-chunk")
         defer { server.stop() }
 
+        let auth = AuthorizationProbe(token: "Bearer race-chunk")
         let session = AuthenticatedMediaPlaybackSession(
-            source: try mediaSource(url: server.url, authorizationProvider: gate.provider)
+            source: try mediaSource(url: server.url, authorizationProvider: auth.provider)
         )
         defer { session.teardown() }
 
-        let gated = await waitForMainActorCondition(timeout: .seconds(8)) { gate.isBlocked }
-        #expect(gated, "later authorization never blocked count=\(gate.count)")
-        let getsBefore = server.snapshotRanges().count
-
+        // Only the range continuation (a chunk that starts past the first
+        // 1 MiB) reaches this hook with a start >= maxChunkLength.
         let fired = HookFlag()
-        session.debugSetBeforeDataTaskCreationHook { cancelLoader in
-            if fired.claim() { cancelLoader() }
+        let failedByCancellation = CountBox()
+        session.debugSetBeforeDataTaskCreationHook { rangeHeader, cancelLoader in
+            guard let start = rangeStart(rangeHeader),
+                  start >= AuthenticatedMediaRequestedRange.maxChunkLength,
+                  fired.claim() else { return }
+            failedByCancellation.set(cancelLoader())
         }
+        session.player.play()
+
+        let reached = await waitForMainActorCondition(timeout: .seconds(12)) { fired.isClaimed }
+        #expect(reached, "continuation never reached task creation. ranges=\(server.snapshotRanges())")
+        // The continuation's loading request has no context for cancelAll() to
+        // fail; the loader must end it itself instead of leaving it pending.
+        let failed = await waitForMainActorCondition(timeout: .seconds(8)) {
+            session.debugFailedRequestCount > failedByCancellation.value
+        }
+        #expect(failed, "continuation request was not failed after teardown")
+        let continuationGets = server.snapshotParsedRanges().filter {
+            $0.method == "GET" && ($0.start ?? 0) >= AuthenticatedMediaRequestedRange.maxChunkLength
+        }
+        #expect(continuationGets.isEmpty, "continuation GET issued after teardown: \(continuationGets)")
+    }
+
+    @MainActor
+    @Test(
+        "teardown during a continuation's authorization fails the request instead of leaving it pending",
+        arguments: [false, true]
+    )
+    func teardownDuringContinuationAuthorizationFailsRequest(authorizationThrows: Bool) async throws {
+        let artifact = try await GeneratedH264Fixture.makeLargerThan(
+            Int(AuthenticatedMediaRequestedRange.maxChunkLength)
+        )
+        defer { try? FileManager.default.removeItem(at: artifact.url) }
+        let server = try AuthenticatedRangeHTTPServer(body: artifact.data, token: "Bearer await-chunk")
+        defer { server.stop() }
+
+        // AVFoundation issues many other requests too, so only range
+        // continuations get the suspended provider; the rest authorize normally.
+        let gate = ContinuationAuthorizationGate(token: "Bearer await-chunk", throwsAfterRelease: authorizationThrows)
+        let session = AuthenticatedMediaPlaybackSession(
+            source: try mediaSource(url: server.url, authorizationProvider: AuthorizationProbe(token: "Bearer await-chunk").provider)
+        )
+        defer { session.teardown() }
+        session.debugSetContinuationAuthorizationProvider(gate.provider)
+        session.player.play()
+
+        let blocked = await waitForMainActorCondition(timeout: .seconds(12)) { gate.isBlocked }
+        #expect(blocked, "continuation authorization never blocked. ranges=\(server.snapshotRanges())")
+        // Teardown while the continuation awaits. Its previous chunk's context is
+        // already gone, so only the continuation itself can end the request.
+        session.debugCancelLoader()
+        let failedByCancellation = session.debugFailedRequestCount
         gate.release()
 
-        let reached = await waitForMainActorCondition(timeout: .seconds(8)) { fired.isClaimed }
-        #expect(reached, "hook never ran, so the race was not exercised")
-        let noExtra = await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) {
-            server.snapshotRanges().count == getsBefore
+        let failed = await waitForMainActorCondition(timeout: .seconds(8)) {
+            session.debugFailedRequestCount > failedByCancellation
         }
-        #expect(noExtra, "GET started after teardown. before=\(getsBefore) after=\(server.snapshotRanges())")
+        #expect(failed, "continuation request stayed pending after teardown (authorizationThrows=\(authorizationThrows))")
+    }
+}
+
+private final class CountBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = 0
+    var value: Int { lock.withLock { storage } }
+    func set(_ newValue: Int) { lock.withLock { storage = newValue } }
+}
+
+private func rangeStart(_ header: String?) -> Int64? {
+    guard let header, header.hasPrefix("bytes=") else { return nil }
+    return Int64(header.dropFirst("bytes=".count).prefix { $0.isNumber })
+}
+
+/// Authorization that suspends until `release()`, then either succeeds or throws.
+private final class ContinuationAuthorizationGate: @unchecked Sendable {
+    private struct Failure: Error {}
+
+    private let lock = NSLock()
+    private let token: String
+    private let throwsAfterRelease: Bool
+    private var blocked = false
+    private var released = false
+    private var waiters: [CheckedContinuation<Bool, Never>] = []
+
+    init(token: String, throwsAfterRelease: Bool) {
+        self.token = token
+        self.throwsAfterRelease = throwsAfterRelease
+    }
+
+    var isBlocked: Bool { lock.withLock { blocked } }
+
+    var provider: @Sendable () async throws -> String {
+        { [self] in
+            let wasSuspended = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                lock.lock()
+                if released {
+                    lock.unlock()
+                    continuation.resume(returning: false)
+                    return
+                }
+                blocked = true
+                waiters.append(continuation)
+                lock.unlock()
+            }
+            if wasSuspended && throwsAfterRelease { throw Failure() }
+            return token
+        }
+    }
+
+    func release() {
+        lock.lock()
+        released = true
+        let pending = waiters
+        waiters.removeAll()
+        lock.unlock()
+        pending.forEach { $0.resume(returning: true) }
     }
 }
 

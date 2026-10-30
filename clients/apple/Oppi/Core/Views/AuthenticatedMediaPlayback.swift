@@ -362,8 +362,19 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
     /// is asynchronous; tests wait on this so a task created afterwards hits
     /// the "session has been invalidated" exception deterministically.
     let debugSessionInvalidated = DispatchSemaphore(value: 0)
-    private var debugBeforeDataTaskCreationStorage: (@Sendable (AuthenticatedMediaResourceLoader) -> Void)?
-    var debugBeforeDataTaskCreation: (@Sendable (AuthenticatedMediaResourceLoader) -> Void)? {
+    /// Loading requests this loader ended with its cancellation error. AVPlayerItem
+    /// does not fail when a trailing chunk request does, so tests count these.
+    private var debugFailedRequestCountStorage = 0
+    var debugFailedRequestCount: Int { lock.withLock { debugFailedRequestCountStorage } }
+    /// Replaces the authorization provider for range continuations only. AVFoundation
+    /// issues many other requests, so a provider-level gate cannot pick the continuation.
+    private var debugContinuationAuthorizationProviderStorage: (@Sendable () async throws -> String)?
+    var debugContinuationAuthorizationProvider: (@Sendable () async throws -> String)? {
+        get { lock.withLock { debugContinuationAuthorizationProviderStorage } }
+        set { lock.withLock { debugContinuationAuthorizationProviderStorage = newValue } }
+    }
+    private var debugBeforeDataTaskCreationStorage: (@Sendable (AuthenticatedMediaResourceLoader, URLRequest) -> Void)?
+    var debugBeforeDataTaskCreation: (@Sendable (AuthenticatedMediaResourceLoader, URLRequest) -> Void)? {
         get { lock.withLock { debugBeforeDataTaskCreationStorage } }
         set { lock.withLock { debugBeforeDataTaskCreationStorage = newValue } }
     }
@@ -463,7 +474,6 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
             rangeHeader = nil
         }
 
-        let requestId = ObjectIdentifier(loadingRequest)
         let url = source.url
         let authorizationProvider = source.authorizationProvider
         Task { [weak self] in
@@ -700,7 +710,11 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
         let continueToEnd = context.continueToEnd
         let requestedEnd = context.requestedEnd
         let totalLength = context.totalLength
+#if DEBUG
+        let authorizationProvider = debugContinuationAuthorizationProvider ?? source.authorizationProvider
+#else
         let authorizationProvider = source.authorizationProvider
+#endif
         Task { [weak self] in
             guard let self else { return }
             let authorization: String
@@ -719,7 +733,10 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
             request.setValue(authorization, forHTTPHeaderField: "Authorization")
             request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
             request.setValue(nextRange.headerValue, forHTTPHeaderField: "Range")
+            // The previous chunk's context is already gone, so cancelAll() cannot
+            // see this request. Fail it here or the caller waits forever.
             if self.isAbandoned(loadingRequest) {
+                self.failIfOutstanding(loadingRequest)
                 return
             }
             let nextContext = LoadingContext(
@@ -813,7 +830,7 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
     /// invalidated or AVFoundation already cancelled/finished the request.
     private func startDataTask(request: URLRequest, context: LoadingContext) -> Bool {
 #if DEBUG
-        debugBeforeDataTaskCreation?(self)
+        debugBeforeDataTaskCreation?(self, request)
 #endif
         let loadingRequest = context.loadingRequest
         let task: URLSessionDataTask? = lock.withLock {
@@ -842,12 +859,22 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
     /// `AVAsset.load` or image request errors out instead of waiting indefinitely.
     private func failIfOutstanding(_ loadingRequest: AVAssetResourceLoadingRequest) {
         guard !loadingRequest.isCancelled, !loadingRequest.isFinished else { return }
+#if DEBUG
+        lock.withLock { debugFailedRequestCountStorage += 1 }
+#endif
         loadingRequest.finishLoading(with: mediaError("Media loading cancelled"))
     }
 
+    /// Report an authorization failure on a request AVFoundation still waits on.
+    /// After invalidation the failure reason no longer matters, but the request
+    /// must still end; `cancelAll()` cannot reach a request that has no context.
     private func finishLoadingIfActive(_ loadingRequest: AVAssetResourceLoadingRequest, error: Error) {
-        guard !isAbandoned(loadingRequest) else { return }
-        loadingRequest.finishLoading(with: error)
+        guard !loadingRequest.isCancelled, !loadingRequest.isFinished else { return }
+        if lock.withLock({ isInvalidated }) {
+            failIfOutstanding(loadingRequest)
+        } else {
+            loadingRequest.finishLoading(with: error)
+        }
     }
 
     private func context(for task: URLSessionTask) -> LoadingContext? {
@@ -2323,14 +2350,33 @@ extension AuthenticatedMediaPlaybackSession {
     /// Hook runs after the authorization await, immediately before the loader
     /// creates its next data task. The closure receives a handle that tears the
     /// loader down exactly as `teardown()` does, then blocks until the URLSession
-    /// has actually reported itself invalidated.
-    func debugSetBeforeDataTaskCreationHook(_ hook: @escaping @Sendable (_ cancelLoader: @Sendable () -> Void) -> Void) {
-        loader.debugBeforeDataTaskCreation = { loader in
-            hook {
+    /// has actually reported itself invalidated and returns `debugFailedRequestCount`.
+    func debugSetBeforeDataTaskCreationHook(
+        _ hook: @escaping @Sendable (_ rangeHeader: String?, _ cancelLoader: @Sendable () -> Int) -> Void
+    ) {
+        loader.debugBeforeDataTaskCreation = { loader, request in
+            hook(request.value(forHTTPHeaderField: "Range")) {
                 loader.cancelAll()
                 _ = loader.debugSessionInvalidated.wait(timeout: .now() + 5)
+                // Requests the cancellation itself already failed; anything
+                // counted later was failed by the code under test.
+                return loader.debugFailedRequestCount
             }
         }
+    }
+
+    /// Tears down the loader the way `teardown()` does, leaving the player item
+    /// in place so tests can observe how its pending requests end.
+    func debugCancelLoader() {
+        loader.cancelAll()
+    }
+
+    var debugFailedRequestCount: Int { loader.debugFailedRequestCount }
+
+    /// Authorization used only by range continuations, so a test can suspend that
+    /// exact await.
+    func debugSetContinuationAuthorizationProvider(_ provider: @escaping @Sendable () async throws -> String) {
+        loader.debugContinuationAuthorizationProvider = provider
     }
 
     func debugStartInFlightResourceRequest(url: URL) {

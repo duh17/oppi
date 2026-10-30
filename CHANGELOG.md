@@ -120,7 +120,7 @@ Example:
 ### Fixed
 
 - **Client:** SSH Terminal: in a terminal Oppi started in Herdr (Run on Connect `herdr`), **Browse Files Here**, relative-path **Open**, and the **…** menu's folder use the focused pane's folder and follow focus, instead of staying missing. Herdr does not pass its panes' folders through, so Oppi reads them from the host's own Herdr. A `herdr` you type yourself, tmux, and other programs keep using the shell's reported folder.
-- **Client:** The app could crash when audio or video playback was closed while a media request was still waiting for authorization; the request now fails cleanly.
+- **Client:** The app could crash when audio or video playback was closed while a media request was still waiting for authorization, and a long file's follow-up request could be left pending forever; both now fail cleanly.
 - **Server:** The server no longer leaves an `oppi-provider-catalog-*` and an `oppi-mcp-*` folder in the temp folder on every start; it removes both when it stops.
 - **Client:** Error alerts no longer lose errors, on every screen that shows one: a second error while an alert is up replaces its message, an error that arrives while the screen is covered (by a pushed page or a sheet that is not its own) shows when you come back to it, and tapping OK no longer clears an error you have not read yet.
 - **Client:** On iPad, the **Delete Workspace?** sheet (and the other action sheets that point at a row) points at its row, or at the middle of the screen when the row has scrolled out of view, instead of opening with no anchor.
