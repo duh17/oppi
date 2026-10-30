@@ -3,7 +3,7 @@ import UIKit
 
 /// The app root's SwiftUI layer, under the UIKit content
 /// (`AppRootViewController`): app-wide modals (extension dialogs and notices,
-/// What's New, workspace creation the shell starts) and
+/// What's New) and
 /// app-wide event handlers.
 struct AppRootLayer: View {
     let root: AppRootEnvironment
@@ -18,12 +18,6 @@ struct AppRootLayer: View {
 
         Color.clear
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background {
-                // Only the shell starts workspace creation by itself.
-                if navigation.launchPhase == .ready, !navigation.showOnboarding {
-                    Color.clear.modifier(WorkspaceCreationIntakeModifier(root: root))
-                }
-            }
             .routerModal(
                 item: Binding<ExtensionUIRequest?>(
                     get: { ExtensionSheetLayout.sheetRequest(liveConnection.activeExtensionDialog) },

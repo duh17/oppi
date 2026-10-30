@@ -13,9 +13,6 @@
     "clients/apple/Oppi/App/HostFactory.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/WorkspaceShellRoutes.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Extensions/Color+Theme.swift": {
       "import SwiftUI": 1
     },

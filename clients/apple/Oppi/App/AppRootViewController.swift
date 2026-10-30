@@ -25,6 +25,9 @@ final class AppRootViewController: UIViewController {
     private var pairingWaitExpiresAt: Int64?
     private weak var resourceChoiceAlert: UIAlertController?
     private var resourceChoiceShown: [String]?
+    /// Workspace creation the shell starts (`oppi://workspace`, the guided first workspace):
+    /// exists while the shell shows, so its state starts over with the next shell.
+    private(set) var workspaceCreation: WorkspaceCreationIntake?
     private lazy var quickSession = QuickSessionPresentation(root: root, host: self)
     /// The pairing approval sheet, over whatever the window shows.
     private lazy var pairingApprovals = PairingApprovalPresentation(
@@ -63,6 +66,7 @@ final class AppRootViewController: UIViewController {
         super.viewDidAppear(animated)
         // A request that came in before the window was up presents now.
         pairingApprovals.anchorDidAppear()
+        workspaceCreation?.anchorDidAppear()
     }
 
     override func viewIsAppearing(_ animated: Bool) {
@@ -74,6 +78,7 @@ final class AppRootViewController: UIViewController {
         super.updateProperties()
         applyTheme()
         showContent(Self.content(for: navigation, pairedServersUnavailable: app.pairedServersUnavailable))
+        updateWorkspaceCreation()
 
         // Quick Session takes the screen: the content under it neither takes
         // touches nor reads to VoiceOver.
@@ -95,6 +100,18 @@ final class AppRootViewController: UIViewController {
         // The App Lock cover sits in its own window above this one.
         view.accessibilityElementsHidden = AppLockService.shared.isLocked
         showResourceChoice(root.opener.pendingResourceReferenceChoice)
+    }
+
+    /// Only the shell starts workspace creation by itself.
+    private func updateWorkspaceCreation() {
+        guard contentKind == .shell else {
+            workspaceCreation?.stop()
+            workspaceCreation = nil
+            return
+        }
+        let intake = workspaceCreation ?? WorkspaceCreationIntake(root: root, anchor: self)
+        workspaceCreation = intake
+        intake.update()
     }
 
     private static func content(for navigation: AppNavigation, pairedServersUnavailable: Bool) -> Content {

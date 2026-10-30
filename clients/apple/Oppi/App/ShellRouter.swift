@@ -9,7 +9,7 @@ import UIKit
 // when the user leaves one (Back, swipe, a screen's own `finish()` or
 // `dismiss()`) it reports the pop so `AppNavigation` follows.
 //
-// Each route's SwiftUI content is `ShellRouteView` (`WorkspaceShellRoutes.swift`).
+// Each route's screen is a UIKit controller built by `ShellRouteScreens` (`ShellRouteScreens.swift`).
 
 /// One screen of the workspace shell.
 enum ShellRoute: Hashable {
@@ -30,12 +30,6 @@ enum ShellRoute: Hashable {
     case serverResourceDetail(ServerResourceDetailNavTarget)
     case serverSkillBrowser(ServerSkillBrowserNavTarget)
     case serverSkillFile(ServerSkillFileNavTarget)
-
-    /// Bars the router applies. No route asks for a large title: App Settings
-    /// is `SettingsRootViewController`, which sets its own.
-    var bars: ScreenBars {
-        ScreenBars(showsToolbar: true)
-    }
 
     /// The screen a route shows. A workspace route whose workspace was
     /// refreshed is the same screen with newer content.
