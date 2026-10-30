@@ -42,6 +42,7 @@ final class QuickSessionE2ETests: E2ETestCase {
         let marker = "E2E_QUICK_SESSION_SEND_OK"
         typeIntoTextView(input, text: marker)
         tap(app.buttons["chat.send"], named: "quick session send button", timeout: 5)
+        allowAISharingIfAsked()
 
         let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(waitForElementToExist(chatInput, timeout: 30), "Created chat did not open")
@@ -229,6 +230,7 @@ final class QuickSessionE2ETests: E2ETestCase {
         let marker = "E2E_QS_INCOGNITO \(UUID().uuidString.prefix(8))"
         replaceText(in: app.textViews["chat.input"], with: marker)
         tap(app.buttons["chat.send"], named: "quick session send", timeout: 5)
+        allowAISharingIfAsked()
         let sessionId = waitForFocusedSessionId(timeout: 30)
         XCTAssertTrue(waitForTimelineTextContaining(marker, timeout: 30), "Incognito prompt did not reach the new chat")
         XCTAssertEqual(try e2eSession(sessionId: sessionId)["ephemeral"] as? Bool, true, "Session was not created incognito")
@@ -261,6 +263,7 @@ final class QuickSessionE2ETests: E2ETestCase {
         let input = app.textViews["chat.input"]
         replaceText(in: input, with: text)
         tap(app.buttons["chat.send"], named: "quick session send", timeout: 5)
+        allowAISharingIfAsked()
         _ = waitForFocusedSessionId(timeout: 30)
         XCTAssertTrue(waitForTimelineTextContaining(text, timeout: 30), "Sent prompt did not reach the new chat")
 

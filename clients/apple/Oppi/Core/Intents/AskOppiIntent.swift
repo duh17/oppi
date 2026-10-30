@@ -96,6 +96,10 @@ struct AskOppiIntent: AppIntent {
             return AppLockIntentGate.scopeLockedDialog
         }
 
+        if let refusal = await IntentAISharingGate.refusal(api: api, serverId: serverId, modelId: model) {
+            return refusal
+        }
+
         let telemetryStartedAtMs = ChatSessionTelemetry.nowMs()
         let hasMessage = !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         func recordCreate(status: AppQuickSessionCreate.Status, errorKind: TelemetryTag.ErrorKind?) {

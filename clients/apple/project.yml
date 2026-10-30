@@ -504,6 +504,11 @@ targets:
         type: group
       - path: Shared/AppLock
         type: group
+      # A share is refused unless this device allowed the server's model provider.
+      - path: Shared/AIConsent
+        type: group
+      - path: Shared/Models/ProviderDisplayName.swift
+        type: file
       - path: OppiCore/Client/Base64URL.swift
         type: file
       - path: OppiCore/Client/DeviceKey.swift

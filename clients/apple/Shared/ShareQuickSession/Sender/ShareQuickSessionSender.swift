@@ -333,6 +333,14 @@ actor ShareQuickSessionSender {
         }
     }
 
+    /// The server's model catalog (`GET /models`): a share starts a session on the server's
+    /// default model, whose provider this device must have allowed (`AISharingConsent`).
+    func fetchModelCatalog(server: ShareQuickSessionServer) async throws -> [AISharingConsent.CatalogModel] {
+        struct Response: Decodable { let models: [AISharingConsent.CatalogModel] }
+        let data = try await request(server: server, method: "GET", path: ["models"])
+        return try JSONDecoder().decode(Response.self, from: data).models
+    }
+
     func send(
         payloadID: String,
         text: String,

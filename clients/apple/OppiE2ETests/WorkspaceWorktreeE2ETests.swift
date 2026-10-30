@@ -95,6 +95,7 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
         tap(input, named: "quick session input", timeout: 5)
         input.typeText("E2E_WORKTREE_QUICK_SESSION")
         tap(app.buttons["chat.send"], named: "quick session send button", timeout: 5)
+        allowAISharingIfAsked()
         XCTAssertTrue(
             app.buttons["chat.toolbar.files"].waitForExistence(timeout: 30),
             "Chat session did not open after sending from the worktree-preselected Quick Session"

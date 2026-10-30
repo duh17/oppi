@@ -26,6 +26,7 @@ final class UserMessageFilePillE2ETests: E2ETestCase {
         """
         typeIntoChatInput(prompt)
         tap(app.buttons["chat.send"], named: "file pill regression prompt send button", timeout: 5)
+        allowAISharingIfAsked()
 
         XCTAssertTrue(
             waitForTimelineTextContaining("Do not commit unless explicitly asked.", timeout: 20),

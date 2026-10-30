@@ -1175,6 +1175,8 @@ final class ConnectionCoordinator {
               serverStore.server(for: id) == nil else { return }
         // Device-local lock flags for the server, its workspaces, and sessions.
         ScopedLockService.shared.forgetServer(id)
+        // A re-paired server asks again before content goes to its AI services.
+        AISharingConsent.device.withdrawAll(serverId: id)
         // End the server's card while this phone still drives it: once push is off below, no
         // server can end it, and it would show its last counts until iOS ends it hours later.
         // After the guard, so a re-pair during shutdown keeps its card setting.

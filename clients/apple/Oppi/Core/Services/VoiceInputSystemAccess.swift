@@ -14,6 +14,10 @@ protocol VoiceInputSystemAccessing {
     func activateAudioSession(inAppPlaybackActive: Bool) throws
     func activateBuiltInAudioSession(inAppPlaybackActive: Bool) throws
     func deactivateAudioSession()
+    /// Whether server dictation may stream the microphone to the server's speech backend:
+    /// this device's AI sharing consent for `recipient` on `serverId`, asking in-app when it
+    /// has none. Nil `serverId` (no paired server for the take) is refused.
+    func allowServerDictation(to recipient: AISharingConsent.Recipient, serverId: String?) async -> Bool
 }
 
 @MainActor
@@ -50,6 +54,11 @@ struct VoiceInputSystemAccess: VoiceInputSystemAccessing {
 
     func requestMicPermission() async -> Bool {
         await Self.requestMicPermission()
+    }
+
+    func allowServerDictation(to recipient: AISharingConsent.Recipient, serverId: String?) async -> Bool {
+        guard let serverId else { return false }
+        return await AISharingConsentPrompt.request([recipient], serverId: serverId, from: nil)
     }
 
     func activateAudioSession(inAppPlaybackActive: Bool) throws {

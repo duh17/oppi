@@ -87,6 +87,20 @@ struct StartOppiSessionIntent: AppIntent {
             return .result(dialog: IntentDialog(stringLiteral: AppLockIntentGate.scopeLockedDialog))
         }
 
+        // Before the confirmation: a send this device has not allowed is refused, not asked.
+        let sharingRefusal: String?
+        do {
+            sharingRefusal = try await ServerTransportAPIClient.withClient(for: paired) { api in
+                await IntentAISharingGate.refusal(api: api, serverId: target.serverId, modelId: nil)
+            }
+        } catch {
+            logger.error("Start-session transport failed before consent check: \(error.localizedDescription, privacy: .public)")
+            return .result(dialog: IntentDialog(stringLiteral: StartOppiSessionDialog.cannotConnect))
+        }
+        if let sharingRefusal {
+            return .result(dialog: IntentDialog(stringLiteral: sharingRefusal))
+        }
+
         let outcome: CreateOutcome?
         do {
             outcome = try await StartOppiSessionConfirmation.run(

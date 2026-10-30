@@ -47,6 +47,14 @@ final class MockVoiceInputSystemAccess: VoiceInputSystemAccessing {
     func deactivateAudioSession() {
         deactivateAudioSessionCallCount += 1
     }
+
+    var allowServerDictationResult = true
+    var allowServerDictationRequests: [(recipient: AISharingConsent.Recipient, serverId: String?)] = []
+
+    func allowServerDictation(to recipient: AISharingConsent.Recipient, serverId: String?) async -> Bool {
+        allowServerDictationRequests.append((recipient, serverId))
+        return allowServerDictationResult
+    }
 }
 
 @MainActor

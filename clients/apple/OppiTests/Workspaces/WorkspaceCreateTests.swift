@@ -214,6 +214,11 @@ struct WorkspaceCreateTests {
         #expect(model.selectedWorkspace == nil)
         #expect(model.acceptsInput)
         model.request = "A workspace for my notes"
+        // This device already allowed the server's default model provider, so Send goes out.
+        let consentServerId = try #require(fixture.coordinator.connection(for: fixture.second.id)?.currentServerId)
+        let provider = try #require(AISharingConsent.Recipient.modelProvider("anthropic"))
+        AISharingConsent.device.grant(provider, serverId: consentServerId)
+        defer { AISharingConsent.device.withdraw(provider, serverId: consentServerId) }
         model.send()
 
         let target = WorkspaceSessionNavTarget(serverId: fixture.second.id, sessionId: "control-1", routeScope: .control)
@@ -444,6 +449,8 @@ final class WorkspaceCreateURLProtocol: URLProtocol, @unchecked Sendable {
                 : #"{"completions":[]}"#
         case "/skills":
             body = #"{"skills":[]}"#
+        case "/models":
+            body = #"{"models":[{"id":"claude","name":"Claude","provider":"anthropic","contextWindow":200000,"isDefault":true}]}"#
         case "/control-sessions":
             body = #"{"session":{"id":"control-1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"engine":"durable","serverDurable":{"role":"control"}},"prompted":true}"#
         case "/workspaces":

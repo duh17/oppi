@@ -143,6 +143,7 @@ final class ReleaseGateE2ETests: E2ETestCase {
         waitForKeyboardFocus(inlineComposer, name: "inline composer before attachment send")
 
         tap(app.buttons["chat.send"], named: "attachment prompt send button", timeout: 5)
+        allowAISharingIfAsked()
         XCTAssertTrue(
             waitForTimelineTextContaining(marker, timeout: 20),
             "Sent attachment prompt did not appear in the timeline"

@@ -1391,5 +1391,14 @@ class E2ETestCase: XCTestCase {
 
         let sendButton = app.buttons["chat.send"]
         tap(sendButton, named: "send button", timeout: 3)
+        allowAISharingIfAsked()
+    }
+
+    /// A fresh launch has allowed no model provider, so the first send on it shows the AI
+    /// sharing consent sheet and sends only after Allow. Later sends go straight out.
+    func allowAISharingIfAsked(timeout: TimeInterval = 2) {
+        let allow = app.buttons["aiConsent.allow"]
+        guard allow.waitForExistence(timeout: timeout) else { return }
+        allow.tap()
     }
 }

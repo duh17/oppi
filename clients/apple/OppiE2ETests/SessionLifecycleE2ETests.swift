@@ -18,6 +18,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
 
         let sendButton = app.buttons["chat.send"]
         tap(sendButton, named: "send button", timeout: 3)
+        allowAISharingIfAsked()
 
         // Wait for streaming to start
         let stopButton = app.buttons["chat.stop"]
@@ -50,6 +51,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         let chatInput = focusChatInput()
         chatInput.typeText("Write a detailed 500 word essay about the history of computing")
         tap(app.buttons["chat.send"], named: "send button", timeout: 3)
+        allowAISharingIfAsked()
 
         let stopButton = app.buttons["chat.stop"]
         XCTAssertTrue(
@@ -92,6 +94,7 @@ final class SessionLifecycleE2ETests: E2ETestCase {
         let chatInput = focusChatInput()
         chatInput.typeText("Write a detailed 500 word essay about the history of computing")
         tap(app.buttons["chat.send"], named: "send button", timeout: 3)
+        allowAISharingIfAsked()
 
         let stopButton = app.buttons["chat.stop"]
         XCTAssertTrue(

@@ -269,6 +269,9 @@ final class ServerConnection {
     /// Last capabilities snapshot from `/server/info`; nil until loaded and after a transport reset.
     /// The `*Available` flags below read it.
     private(set) var serverCapabilities: ServerInfo.Capabilities?
+    /// Each voice feature's backend from the same snapshot; the AI sharing consent names
+    /// where dictation and Live Voice audio goes from it.
+    private(set) var voiceBackends: [ServerInfo.VoiceBackend]?
     /// Set when the dictation stream endpoint answered 404/405/426/501. Overrides the snapshot's
     /// dictation flag until the next capabilities load or transport reset.
     private var dictationStreamUnsupportedByEndpoint = false
@@ -1044,6 +1047,7 @@ final class ServerConnection {
         self.endpointSelection = endpointSelection
         self.connectedServerVersion = nil
         self.serverCapabilities = nil
+        self.voiceBackends = nil
         self.dictationStreamUnsupportedByEndpoint = false
         self.appEventStreamTransportState = .disconnected
         self.missingRequiredSplitStreamCapabilities = []
@@ -1490,6 +1494,7 @@ final class ServerConnection {
         let capabilities = info.capabilities
         let previousRelay = pushRelay
         serverCapabilities = capabilities
+        voiceBackends = info.voiceBackends
         dictationStreamUnsupportedByEndpoint = false
         // Only a server that pushes, and that the user opted in for, gets this device's push
         // key, once per configuration. Otherwise the app never registers with APNs or the

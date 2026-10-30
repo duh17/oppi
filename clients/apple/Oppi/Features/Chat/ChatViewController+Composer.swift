@@ -192,8 +192,45 @@ extension ChatViewController {
         if model.activeReviewCommentRequest != nil {
             sendActiveReviewComment()
         } else {
+            // The draft stays in the composer until the person allows the provider.
+            guard aiSharingAllowed(then: { [weak self] in
+                self?.sendComposerAction(draftClearance: draftClearance)
+            }) else { return }
             sendPrompt(draftClearance: draftClearance)
         }
+    }
+
+    /// The model provider this session's prompts reach: its model, or with none yet the
+    /// server's default.
+    private var modelSharingRecipient: AISharingConsent.Recipient? {
+        .modelProvider(modelId: session?.model, catalog: chatState.cachedModels)
+    }
+
+    /// True when this device already allowed every AI service the next send reaches (and
+    /// `liveVoice`'s backend for a call), so the send goes on now. Otherwise it asks, sends
+    /// nothing, keeps the draft, and runs `retry` only after Allow.
+    func aiSharingAllowed(liveVoice: Bool = false, then retry: @escaping @MainActor () -> Void) -> Bool {
+        guard let serverId = resolvedServerId else { return false }
+        let recipients: () -> [AISharingConsent.Recipient?] = { [weak self] in
+            guard let self else { return [nil] }
+            return liveVoice
+                ? [modelSharingRecipient, .voice(.liveVoice, backends: connection.voiceBackends)]
+                : [modelSharingRecipient]
+        }
+        if AISharingConsent.device.decide(recipients(), serverId: serverId, canAsk: true) == .send {
+            return true
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // A session with no model yet needs the server's default to name its provider.
+            if modelSharingRecipient == nil, let api = connection.apiClient {
+                await chatState.refreshModelCache(api: api)
+            }
+            if await AISharingConsentPrompt.request(recipients(), serverId: serverId, from: self) {
+                retry()
+            }
+        }
+        return false
     }
 
     func stopTurn() {
@@ -396,7 +433,8 @@ extension ChatViewController {
     /// The entry's tap: start here, or first ask to end the call another session has. Decided
     /// on the tap, since that call may have ended since the composer drew the entry.
     func requestLiveVoice() {
-        guard let calls = root?.liveVoiceCalls, let serverId = resolvedServerId else { return }
+        guard let calls = root?.liveVoiceCalls, let serverId = resolvedServerId,
+              aiSharingAllowed(liveVoice: true, then: { [weak self] in self?.requestLiveVoice() }) else { return }
         switch calls.callStart(serverId: serverId, sessionId: sessionId) {
         case .available:
             startLiveVoice()
@@ -464,6 +502,9 @@ extension ChatViewController {
     /// The app holds the call, so it keeps running when this chat leaves the screen, and the
     /// system shows it as a call (`LiveVoiceCallCenter.startCall`).
     func startLiveVoice() {
+        // The call sends the caller's voice to the server's voice backend and their words to
+        // the session's model provider.
+        guard aiSharingAllowed(liveVoice: true, then: { [weak self] in self?.requestLiveVoice() }) else { return }
         guard let routeScope = focusedRouteScope, let serverId = resolvedServerId,
               root?.liveVoiceCalls.startCall(
                   serverId: serverId,

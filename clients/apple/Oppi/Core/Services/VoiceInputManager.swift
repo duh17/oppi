@@ -1110,6 +1110,23 @@ final class VoiceInputManager {
             ownsOperation = false
             throw CancellationError()
         }
+        // Server dictation streams the microphone to the server's speech backend: nothing is
+        // recorded until this device allows it. Not Now ends the take like a cancel.
+        if engine == .serverDictation {
+            let allowed = await systemAccess.allowServerDictation(
+                to: .voice(.dictation, backends: frozenTake.connection?.voiceBackends),
+                serverId: frozenTake.connection?.currentServerId
+            )
+            guard activeStartRequestID == requestID, state == .preparingModel else {
+                ownsOperation = false
+                throw CancellationError()
+            }
+            guard allowed else {
+                await cancelRecording()
+                ownsOperation = false
+                throw CancellationError()
+            }
+        }
         dictationSessionStart = startTime
         activeEngine = engine
         beginPlaybackCaptureInterruptionIfNeeded()

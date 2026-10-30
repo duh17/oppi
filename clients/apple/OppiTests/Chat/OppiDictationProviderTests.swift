@@ -528,6 +528,7 @@ private struct MockSystemAccess: VoiceInputSystemAccessing {
     func activateAudioSession(inAppPlaybackActive _: Bool) throws {}
     func activateBuiltInAudioSession(inAppPlaybackActive _: Bool) throws {}
     func deactivateAudioSession() {}
+    func allowServerDictation(to _: AISharingConsent.Recipient, serverId _: String?) async -> Bool { true }
 }
 
 // MARK: - Provider Lifecycle Tests

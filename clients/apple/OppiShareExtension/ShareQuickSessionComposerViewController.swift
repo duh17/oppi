@@ -363,6 +363,17 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
             guard let self else { return }
             do {
                 let sender = ShareQuickSessionSender.live(server: selectedWorkspace.server)
+                // The Share sheet cannot ask for AI sharing consent: a server whose model
+                // provider this device has not allowed in Oppi gets nothing, and the draft stays.
+                if let refusal = await Self.sharingRefusal(sender: sender, server: selectedWorkspace.server) {
+                    guard !Task.isCancelled else { return }
+                    self.sendTask = nil
+                    self.setSending(false)
+                    self.statusLabel.textColor = .systemRed
+                    self.statusLabel.text = refusal
+                    UIAccessibility.post(notification: .announcement, argument: refusal)
+                    return
+                }
                 _ = try await sender.send(
                     payloadID: payload.id,
                     text: textView.text,
@@ -382,6 +393,20 @@ final class ShareQuickSessionComposerViewController: UIViewController, UITextVie
                 UIAccessibility.post(notification: .announcement, argument: self.statusLabel.text)
             }
         }
+    }
+
+    /// The message refusing this share, or nil when this device allowed the provider of the
+    /// server's default model. A catalog that does not load leaves the provider unnamed, which
+    /// is refused too.
+    private static func sharingRefusal(sender: ShareQuickSessionSender, server: ShareQuickSessionServer) async -> String? {
+        let catalog = (try? await sender.fetchModelCatalog(server: server)) ?? []
+        let recipient = AISharingConsent.Recipient.modelProvider(
+            AISharingConsent.modelProviderKey(modelId: nil, catalog: catalog)
+        )
+        if case .refuse(let message) = AISharingConsent.device.decide([recipient], serverId: server.id, canAsk: false) {
+            return message
+        }
+        return nil
     }
 
     private func setSending(_ sending: Bool) {

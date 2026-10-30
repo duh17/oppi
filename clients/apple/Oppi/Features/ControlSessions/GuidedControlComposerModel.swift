@@ -310,8 +310,22 @@ final class GuidedControlComposerModel {
 
     // MARK: - Launch
 
+    /// Send starts the session only once this device allows the model provider it reaches;
+    /// Not Now keeps the request in the bar.
     func send() {
-        Task { await createControlSession() }
+        let connection = connection
+        Task { @MainActor [weak self] in
+            guard let self, let serverId = connection.currentServerId else { return }
+            var recipient = AISharingConsent.Recipient.modelProvider(
+                modelId: effectiveModelId, catalog: connection.chatState.cachedModels
+            )
+            if recipient == nil, let api = connection.apiClient {
+                await connection.chatState.refreshModelCache(api: api)
+                recipient = .modelProvider(modelId: effectiveModelId, catalog: connection.chatState.cachedModels)
+            }
+            guard await AISharingConsentPrompt.request([recipient], serverId: serverId, from: nil) else { return }
+            await createControlSession()
+        }
     }
 
     func createControlSession() async {

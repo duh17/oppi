@@ -7,6 +7,11 @@ final class ShareSheetQuickSessionE2ETests: E2ETestCase {
     func testURLShareComposesAndSendsQuickSessionInsideExtension() throws {
         let marker = "oppi-share-send-e2e-8D14C2"
         let sharedURL = try XCTUnwrap(URL(string: "https://example.com/?share=\(marker)"))
+        // The Share sheet cannot show the AI sharing consent sheet and refuses a provider
+        // this device has not allowed, so allow it in Oppi first, as a person would by
+        // sending there once.
+        createAndEnterSession()
+        sendMessage("Allow sharing before the share extension test")
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         safari.launch()
         safari.open(sharedURL)

@@ -47,6 +47,7 @@ final class RecoveryE2ETests: E2ETestCase {
         )
 
         tap(app.buttons["chat.send"], named: "draft send button", timeout: 5)
+        allowAISharingIfAsked()
         XCTAssertTrue(
             waitForTextValueToDiffer(restoredInput, from: draft, timeout: 10),
             "Composer did not clear after dispatch"

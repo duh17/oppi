@@ -470,6 +470,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         composer.tap()
         composer.typeText("Create a release reviewer")
         tap(app.buttons["chat.send"], named: "Agent guided prompt send")
+        allowAISharingIfAsked()
 
         XCTAssertTrue(
             app.navigationBars["Agent: Create a release reviewer"].waitForExistence(timeout: 15),
@@ -552,6 +553,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         replaceText(in: composer, with: "Start from the saved Agent")
         try saveLabScreenshot(name: "iphone-agent-preselected-quick-session-e2e")
         tap(app.buttons["chat.send"], named: "Agent Quick Session send")
+        allowAISharingIfAsked()
         XCTAssertTrue(
             app.collectionViews["chat.timeline"].waitForExistence(timeout: 20),
             "Agent Quick Session did not open the ordinary timeline"
@@ -729,6 +731,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         composer.tap()
         composer.typeText("Brief me on coaching trends every Monday morning")
         tap(app.buttons["chat.send"], named: "schedule prompt send")
+        allowAISharingIfAsked()
 
         XCTAssertTrue(
             app.navigationBars["Schedule: Brief me on coaching trends every Monday morning"].waitForExistence(timeout: 15),

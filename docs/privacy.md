@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-10-22_
+_Last updated: 2026-10-30_
 
 This policy describes the current Oppi Apple client and the Oppi server that you run yourself. Oppi is a native client for a paired, self-hosted Oppi server. That server runs Pi through its SDK; Pi does not ship a server mode. Oppi provides no hosted account service, central session store, or Oppi-operated external analytics service. Its only hosted service is the optional push relay described under [Push notifications](#push-notifications). Pi may collect its own install or update telemetry outside this policy; see Pi's documentation.
 
@@ -14,6 +14,7 @@ You choose the server, workspace, model providers, speech-to-text service, and t
 - Dictation uses Apple's on-device speech by default. If you choose **Server** in Settings, dictation audio goes through the paired server to its configured speech-to-text backend.
 - Live Voice (an experiment, off by default) streams your voice during a call through the paired server to the voice backend the server sets: speech services the server operator chooses, or xAI's Grok Voice, which also receives the text of what the agent says aloud. See [Live Voice](#live-voice).
 - Model, speech, and voice providers can receive the content needed for the operation you choose. Their privacy policies and retention rules apply.
+- Before your content first goes to one of those services, the app names it, says what is sent, and asks; nothing is sent until you tap **Allow**. See [AI sharing consent](#ai-sharing-consent).
 - Public builds upload diagnostics only after you enable **Settings → Privacy & Security → Send Diagnostics**, and they go to your paired server, not a hosted Oppi service.
 - Push notifications and Live Activities are off until you turn them on for a server, and a server operator can turn push off for that server. When on, alert content is encrypted on your server to a key only your device holds; a push relay and Apple carry it without being able to read it. See [Push notifications](#push-notifications).
 - Remote connections use authenticated HTTPS/WSS, including LAN and Tailscale HTTPS. The network path can see ordinary connection metadata such as IP addresses, hostnames, timing, and traffic volume.
@@ -95,6 +96,16 @@ When you select a photo, video, or file, the app holds it while preparing the tu
 ## Model providers and server extensions
 
 Oppi operates no hosted model service. The paired server uses Pi's configured providers and credentials. The Model Providers screen sends API-key entry to the server over the existing Oppi connection and the server saves the credential through its provider runtime; OAuth flows can open a provider authorization page in a browser. Depending on your settings and session, Pi or a provider can receive prompt text, conversation context, tool results, selected files, images, and other content needed to respond, and can process or retain it under its own terms. Check the provider's privacy policy before sending sensitive content.
+
+### AI sharing consent
+
+Your server, not Oppi, sends your content to the model provider, speech service, or voice service it is configured with. Because the app is where you type, attach, and speak, it asks before any of that content first leaves the device for such a service:
+
+- **Model providers.** Before the first prompt to a session whose model belongs to a provider this device has not allowed on that server, the app shows a sheet naming the provider (for example Anthropic or OpenRouter) and what is sent: your prompts, the conversation so far, files and photos you attach, and tool results, which your server forwards with its own account under that provider's terms. This covers the chat composer, Quick Session, and the Oppi bar on settings pages. The provider is the selected model's, or the server's default model's when none is chosen; if Oppi cannot tell which provider that is, it sends nothing and asks you to choose a model.
+- **Server dictation and Live Voice.** Before the first server dictation, and before the first Live Voice call, the app names the server's speech or voice backend from what the server reports: a third-party service such as xAI, a speech service at a named host, or a speech service on the server's own computer. A Live Voice call also needs the session's model provider allowed, since what you say becomes messages to the agent.
+- **Allow** keeps the answer on this device; **Not Now** or swiping the sheet away sends nothing and leaves your draft as it was. Siri and Shortcuts (Ask Pi, Start Session) and the Share sheet cannot show the sheet, so for a provider you have not allowed they create and send nothing and say to open Oppi.
+
+Answers are kept per device and per paired server: a provider name belongs to that server's Pi configuration and is sent with that server's credentials, so allowing Anthropic on one server does not allow it on another, and a changed voice backend asks again. They are stored in the app's shared preferences (so the Share extension and Siri read them) and are never sent anywhere. **Settings → Privacy & Security → AI Services** lists each allowed service with its server; withdraw one and the app asks again before it next sends there. Withdrawing does not delete what the service already received. Removing a server removes its answers.
 
 Automatic session titles come from the optional `auto-name` Pi extension, which runs on the paired server (or in terminal Pi) and sends the first message to a model through Pi's providers, the same boundary as other model calls. Oppi has no setting for it and the app generates no titles itself.
 
@@ -184,6 +195,7 @@ You control whether to:
 
 - Pair a server and keep or remove its device credential.
 - Choose on-device or server dictation.
+- Allow, or withdraw, sending your content to each model provider and speech or voice service, per server.
 - Select, send, or cancel a prompt attachment.
 - Connect or disconnect a model-provider credential on the paired server.
 - Enable or disable public-build diagnostics upload.
