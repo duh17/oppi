@@ -134,6 +134,9 @@ extension ServerConnection {
 /// `Row`, drawn by `configureRow`. The list builds a `Snapshot` in
 /// `updateProperties()` and applies it; only items whose values changed
 /// reconfigure, and a theme or row-appearance change reconfigures them all.
+/// A thread folding open or closed is followed by one check of iOS's top scroll
+/// edge effect (`SessionListEdgeEffectGuard`), which relays the list out only when
+/// that effect has grown into a band over the rows.
 @MainActor
 final class SessionListCollection<
     Section: Hashable & Sendable,
@@ -240,6 +243,11 @@ final class SessionListCollection<
     private var display = SessionRowDisplay.standard
     private var themeID: ThemeID?
     private var hasApplied = false
+    /// Keeps iOS's top scroll edge effect its own height after a thread folds (`SessionListEdgeEffectGuard`).
+    /// Nil until `init` builds one; a test replaces the measure and relayout to force a band.
+    var edgeEffectGuard: SessionListEdgeEffectGuard?
+    /// A relayout is running as the guard's remedy, so its own apply does not check again.
+    private var isRemeasuringEdgeEffect = false
 
     /// `iconAssetCache` is the list's server's, for saved-Agent Genmoji.
     /// `configureRow` draws a non-session row on a cell already given the
@@ -259,6 +267,10 @@ final class SessionListCollection<
         self.onToggle = onToggle
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewFlowLayout())
         super.init()
+        edgeEffectGuard = SessionListEdgeEffectGuard.standard { [weak self] in
+            guard let self else { return }
+            self.remeasureTopEdgeEffect()
+        }
         collectionView.setCollectionViewLayout(makeLayout(appearance), animated: false)
         collectionView.delegate = self
         // A row's height follows its content: Compact rejoins its details at a
@@ -301,6 +313,9 @@ final class SessionListCollection<
             return current.rows[item] != next.rows[item]
         }
         let headersChanged = reconfigureAll || current.headers != next.headers
+        // A thread folding open or closed is the one change the edge effect guard runs after. The
+        // remedy's own re-apply is not checked again: it is the relayout that fixes the effect.
+        let keepEdgeEffectHonest = foldsThreads(from: current, to: next) && !isRemeasuringEdgeEffect
         current = next
         items.reconfigureItems(changed)
 
@@ -308,6 +323,7 @@ final class SessionListCollection<
         hasApplied = true
         dataSource.apply(items, animatingDifferences: animated) { [weak self] in
             if headersChanged { self?.refreshVisibleHeaders() }
+            if keepEdgeEffectHonest { self?.checkTopEdgeEffect(wasAnimated: animated) }
         }
     }
 
@@ -316,6 +332,74 @@ final class SessionListCollection<
         current = Snapshot()
         hasApplied = false
         dataSource?.apply(NSDiffableDataSourceSnapshot<Section, Item>(), animatingDifferences: false)
+    }
+
+    // MARK: Top scroll edge effect
+
+    /// Whether `next` lists a thread open that `previous` listed closed, or the reverse: a root row's
+    /// `isExpanded` flipping is what a fold changes, whatever else moves with it.
+    func foldsThreads(from previous: Snapshot, to next: Snapshot) -> Bool {
+        next.sessions.contains { item, row in
+            row.entry.isExpanded != (previous.sessions[item]?.entry.isExpanded ?? false)
+        }
+    }
+
+    /// iOS grows its top scroll edge effect to cover the rows an animated diff inserted and keeps that
+    /// height until the next relayout, leaving a blurred band over the list (`ed866aa9f` fixed the same
+    /// thing for a server switch). Measure the effect once a fold's apply finishes; only a band does
+    /// anything, and then the list relays out and leaves one breadcrumb.
+    ///
+    /// Runs from the fold's apply completion. Tests call it after an apply of their own: a hosted unit
+    /// test's window has no scene, so UIKit never finishes the animated update and never calls the
+    /// completion.
+    func checkTopEdgeEffect(wasAnimated: Bool) {
+        guard collectionView.window != nil, let guardrail = edgeEffectGuard else { return }
+        let inset = collectionView.adjustedContentInset
+        guard let band = guardrail.measure(collectionView),
+              SessionListEdgeEffectGuard.isBand(band, over: inset.top)
+        else { return }
+        guardrail.report(SessionListEdgeEffectReport(
+            band: band,
+            expected: inset.top,
+            adjustedContentInset: inset,
+            pinnedHeader: pinnedHeaderFrame(),
+            headerModes: visibleHeaderModes(),
+            wasAnimated: wasAnimated
+        ))
+        isRemeasuringEdgeEffect = true
+        guardrail.relayout()
+        isRemeasuringEdgeEffect = false
+    }
+
+    /// The remedy, the one `ed866aa9f` found for the server switch: empty the list so its snapshot
+    /// applies without animation. That relayout is what makes iOS measure its edge effect again.
+    private func remeasureTopEdgeEffect() {
+        let snapshot = current
+        removeAll()
+        apply(snapshot)
+    }
+
+    /// The pinned section header the effect sits over, in the collection view's coordinates.
+    private func pinnedHeaderFrame() -> CGRect? {
+        let kind = SessionListSectionHeaderView.elementKind
+        return collectionView.indexPathsForVisibleSupplementaryElements(ofKind: kind)
+            .compactMap { collectionView.supplementaryView(forElementKind: kind, at: $0) }
+            .map { $0.convert($0.bounds, to: collectionView) }
+            .min { $0.minY < $1.minY }
+    }
+
+    /// `headerMode` per visible section, as `makeLayout` set it: a section has a header exactly when
+    /// the snapshot gave it one.
+    private func visibleHeaderModes() -> [String] {
+        let rows = collectionView.indexPathsForVisibleItems.map(\.section)
+        let headers = collectionView.indexPathsForVisibleSupplementaryElements(
+            ofKind: SessionListSectionHeaderView.elementKind
+        ).map(\.section)
+        return Set(rows + headers).sorted().map { section in
+            let hasHeader = dataSource?.sectionIdentifier(for: section)
+                .flatMap { current.headers[$0] } != nil
+            return "\(section):\(hasHeader ? "supplementary" : "none")"
+        }
     }
 
     /// Scrolls the first of `items` that the list holds to the top. False when it holds none.
