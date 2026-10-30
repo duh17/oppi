@@ -1232,12 +1232,19 @@ private struct RouterModalSitesPreview: View {
         UserDefaults.standard.removeObject(forKey: "\(AppIdentifiers.subsystem).quickSession.lastAgentId")
         let site = ProcessInfo.processInfo.environment["SCREENSHOT_MODAL_SITE"] ?? "quick-session"
         self.site = site
+        let navigation = AppNavigation()
+        // A thread link's handoff, as the opener leaves it: the list opens this thread root in place.
+        if let rootId = ProcessInfo.processInfo.environment["SCREENSHOT_THREAD_FOCUS"] {
+            navigation.pendingThreadFocus = AppNavigation.ThreadFocus(
+                serverId: RouterModalSitesFixtures.serverId, rootId: rootId
+            )
+        }
         _root = State(initialValue: AppRootEnvironment(
             coordinator: RouterModalSitesFixtures.makeCoordinator(
                 playing: site.hasSuffix("now-playing"),
                 threads: site.hasSuffix("-threads")
             ),
-            navigation: AppNavigation(),
+            navigation: navigation,
             themeStore: ThemeStore(),
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),
@@ -1591,7 +1598,9 @@ private enum RouterModalSitesFixtures {
     /// One launch tree across two workspaces: an idle root with a working child, a finished
     /// child with its own child, and a child that runs in kypu, plus a plain session.
     /// `SCREENSHOT_THREAD_STOPPED_COUNT` adds that many day-old stopped workers to the tree, the
-    /// shape of a big thread whose live members sit among stopped ones.
+    /// shape of a big thread whose live members sit among stopped ones. `SCREENSHOT_LIST_FILLER`
+    /// adds that many plain idle sessions, which list above the thread.
+    /// `SCREENSHOT_THREAD_FOCUS=<root id>` (the inbox site) opens that thread as a thread link does.
     private static var threadSessions: [Session] {
         let now = Date()
         func session(
@@ -1621,7 +1630,11 @@ private enum RouterModalSitesFixtures {
                 status: .stopped, minutesAgo: 1_600 + Double(index), cost: 0.05
             )
         }
-        return oldWorkers + [
+        let fillerCount = Int(ProcessInfo.processInfo.environment["SCREENSHOT_LIST_FILLER"] ?? "") ?? 0
+        let filler = (0..<fillerCount).map { index in
+            session("filler-\(index)", "Filler session \(index + 1)", status: .ready, minutesAgo: 5 + Double(index), cost: 0.01)
+        }
+        return filler + oldWorkers + [
             session("thread-root", "Plan the router migration", status: .ready, minutesAgo: 60, cost: 1.42),
             session("child-working", "Migrate the chat routes", parent: "thread-root", status: .busy, minutesAgo: 40, cost: 0.61),
             session("child-done", "Audit the old routes", parent: "thread-root", status: .stopped, minutesAgo: 35, cost: 0.33),

@@ -86,6 +86,31 @@ final class SessionThreadListUITests: XCTestCase {
         XCTAssertTrue(working.exists, "Closing the fold keeps the live members")
     }
 
+    /// A thread link (the handoff `oppi://thread/<id>` leaves for All Sessions) opens the thread in place
+    /// and scrolls its root into view in a list that has 25 other sessions above it.
+    func testThreadLinkOpensTheThreadInPlaceAndScrollsToItsRoot() {
+        launch(environment: ["SCREENSHOT_THREAD_FOCUS": "thread-root", "SCREENSHOT_LIST_FILLER": "25"])
+        let strip = app.buttons["thread.nav.thread-root"]
+        XCTAssertTrue(strip.waitForExistence(timeout: 15), "Thread strip missing")
+        XCTAssertTrue(waitForValue(strip, "Expanded"), "The link should open the thread in place")
+
+        let root = app.buttons["session.nav.thread-root"]
+        let window = app.windows.firstMatch
+        XCTAssertTrue(root.exists && window.frame.contains(root.frame), "The root row should be on screen")
+        // The thread is the last thing in the list, so the list stops where the thread ends; it has
+        // scrolled past the sessions above it.
+        XCTAssertFalse(app.buttons["session.nav.filler-24"].exists, "The list should have scrolled to the thread")
+        XCTAssertTrue(app.buttons["session.nav.child-working"].exists, "The thread's live members list under the root")
+        XCTAssertTrue(app.buttons["thread.stopped.thread-root"].exists, "Stopped members are folded behind one row")
+    }
+
+    /// The control for the scroll: without a link the same list leaves the thread root below the filler.
+    func testWithoutAThreadLinkTheRootStaysBelowTheOtherSessions() {
+        launch(environment: ["SCREENSHOT_LIST_FILLER": "25"])
+        XCTAssertTrue(app.buttons["session.nav.filler-24"].waitForExistence(timeout: 15), "Filler sessions missing")
+        XCTAssertFalse(app.buttons["session.nav.thread-root"].exists, "The root should be below the first screen")
+    }
+
     /// The reported case: 100 day-old stopped workers no longer push the live members off the first screen.
     func testBigThreadKeepsItsLiveMembersOnTheFirstScreen() {
         launch(environment: ["SCREENSHOT_THREAD_STOPPED_COUNT": "100"])

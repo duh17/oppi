@@ -57,6 +57,8 @@ final class SessionInboxViewController: UIViewController {
     private var threadStoppedFolds: [String: Bool] = [:] {
         didSet { setNeedsUpdateProperties() }
     }
+    /// A thread link's root row to bring to the top once the list holds it; given up at `expires`.
+    private var pendingThreadScroll: (rootId: String, expires: Date)?
     private var providerSetupState: ProviderSetupState = .unknown {
         didSet { setNeedsUpdateProperties() }
     }
@@ -236,6 +238,7 @@ final class SessionInboxViewController: UIViewController {
         guard isOnScreen else { return }
 
         reactToChanges()
+        consumeThreadFocus()
 
         let themeID = themeStore.activeThemeID
         if lastThemeID != themeID {
@@ -248,6 +251,7 @@ final class SessionInboxViewController: UIViewController {
         let state = readState()
         search.show(state.search, toolbar: state.toolbar)
         applySnapshot(state)
+        scrollToPendingThreadRoot()
         syncBars(state)
     }
 
@@ -482,6 +486,26 @@ final class SessionInboxViewController: UIViewController {
         }
     }
 
+    /// A thread link (`oppi://thread/<id>`) names a root: its thread opens in place and the list
+    /// scrolls to it. It runs after `reactToChanges()`, so a server switch's reset has already
+    /// cleared the open threads. A search lists sessions flat, so it is cleared. A link for
+    /// another server than the one shown is stale and dropped.
+    private func consumeThreadFocus() {
+        guard let focus = navigation.pendingThreadFocus else { return }
+        navigation.pendingThreadFocus = nil
+        guard focus.serverId == coordinator.activeServerId else { return }
+        applySearchNavigation(.reset)
+        expandedThreadRoots.insert(focus.rootId)
+        pendingThreadScroll = (focus.rootId, Date().addingTimeInterval(10))
+    }
+
+    private func scrollToPendingThreadRoot() {
+        guard let pending = pendingThreadScroll else { return }
+        if Date() > pending.expires || list.scrollToTop(ofFirstOf: [.session(pending.rootId), .stoppedSession(pending.rootId)]) {
+            pendingThreadScroll = nil
+        }
+    }
+
     private func startServerTask(for serverId: String?) {
         if serverTask != nil, serverTaskServerId == .some(serverId) { return }
         serverTask?.cancel()
@@ -618,6 +642,12 @@ final class SessionInboxViewController: UIViewController {
     private func applySnapshot(_ state: InboxState) {
         let data = viewData(state)
         itemsById = data.itemsById
+        // A thread link's root that sits in a collapsed stopped day would stay out of sight.
+        if let rootId = pendingThreadScroll?.rootId,
+           let group = data.stoppedGroups.first(where: { $0.items.contains { $0.id == rootId } }),
+           !isStoppedDayExpanded(group.id, day: group.day) {
+            toggleStoppedDayExpansion(group.id, day: group.day)
+        }
         var next = List.Snapshot()
         func appendSessions(_ entries: [SessionListEntry], to section: Section, item: (String) -> Item) {
             let rows = SessionListEntries.expanding(

@@ -75,6 +75,8 @@ enum ExtensionSurfaceLinkRouting {
             switch request {
             case .session:
                 return "Opens the related session"
+            case .thread:
+                return "Opens the session's thread"
             case .webLink:
                 return "Opens the web page"
             case .fileLink, .resourceReference, .sessionFile:

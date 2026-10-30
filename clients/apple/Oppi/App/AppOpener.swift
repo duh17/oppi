@@ -10,6 +10,9 @@ private let openerLog = Logger(subsystem: AppIdentifiers.subsystem, category: "A
 /// links, and SwiftUI `openURL`.
 enum AppOpenRequest: Equatable, Sendable {
     case session(SessionOpen)
+    /// `oppi://thread/<sessionId>`: All Sessions with the session's thread open in place.
+    /// The `SessionOpen` names the session; the thread is the launch tree it belongs to.
+    case thread(SessionOpen)
     /// Pairing-approval notification. `.deny` skips App Lock and launch: the
     /// system action already authenticated, and the server forgets the
     /// approval in two minutes.
@@ -45,6 +48,12 @@ enum AppOpenRequest: Equatable, Sendable {
             sourceServerID: sourceServerID
         ) {
             self = .session(session)
+        } else if let thread = SessionOpen(
+            threadURL: url,
+            origin: origin,
+            sourceServerID: sourceServerID
+        ) {
+            self = .thread(thread)
         } else if scheme == "oppi", let payload = WorkspaceDeepLink.payload(from: url) {
             self = .createWorkspace(payload)
         } else if scheme == "oppi" {
@@ -93,8 +102,17 @@ struct SessionOpen: Equatable, Sendable {
     /// ignored: a URL must never choose the session's workspace (or its lock
     /// scope); only server-provided payloads carry one.
     init?(url: URL, origin: SessionNavigationSource, sourceServerID: String? = nil) {
+        self.init(url: url, host: "session", origin: origin, sourceServerID: sourceServerID)
+    }
+
+    /// Nil unless `url` is `oppi://thread/<id>`: the same validation as a session link.
+    init?(threadURL url: URL, origin: SessionNavigationSource, sourceServerID: String? = nil) {
+        self.init(url: url, host: "thread", origin: origin, sourceServerID: sourceServerID)
+    }
+
+    private init?(url: URL, host: String, origin: SessionNavigationSource, sourceServerID: String?) {
         guard url.scheme?.lowercased() == "oppi",
-              url.host?.lowercased() == "session" else {
+              url.host?.lowercased() == host else {
             return nil
         }
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -489,7 +507,7 @@ final class AppOpener {
     /// resolve their server later are cleared by the destination's own lookup.
     private func serverIdReferenced(by request: AppOpenRequest) -> String? {
         switch request {
-        case .session(let open):
+        case .session(let open), .thread(let open):
             return open.serverId
         case .pairing(let serverId, _, _):
             return serverId
@@ -561,6 +579,8 @@ final class AppOpener {
         switch request {
         case .session(let open):
             outcome = await performSession(open, generation: generation)
+        case .thread(let open):
+            outcome = await performThread(open, generation: generation)
         case .createWorkspace(let payload):
             outcome = await performCreateWorkspace(payload, generation: generation)
         case .quickSession(let start):
@@ -609,17 +629,27 @@ final class AppOpener {
 
     // MARK: - Sessions
 
-    private func performSession(
-        _ open: SessionOpen,
+    /// The server a session or thread link resolves to, or why it does not.
+    private enum LinkServer {
+        case server(String)
+        /// No paired server knows the session.
+        case notFound
+        /// The link ends here with this outcome.
+        case done(AppOpenOutcome)
+    }
+
+    /// `link` names the kind of link in the toast of a server that is not paired ("session", "thread").
+    private func resolveLinkServer(
+        for open: SessionOpen,
+        link: String,
         generation: UInt64
-    ) async -> AppOpenOutcome {
-        let serverId: String
+    ) async -> LinkServer {
         switch open.origin {
         case .inAppHyperlink:
             // A link inside Oppi knows its source server; a stale link that
             // server does not have is dropped rather than guessed.
-            guard let resolved = inAppSessionServerId(for: open) else { return .finished }
-            serverId = resolved
+            guard let resolved = inAppSessionServerId(for: open) else { return .done(.finished) }
+            return .server(resolved)
         case .externalURL:
             if let named = open.serverId {
                 guard serverStore.server(for: named) != nil else {
@@ -628,27 +658,41 @@ final class AppOpener {
                         // keep the request (and its Siri receipt) for a
                         // later foreground instead of forgetting it.
                         toastIfFirstAttempt("Can\u{2019}t read this server\u{2019}s saved pairing right now")
-                        return .unreachable
+                        return .done(.unreachable)
                     }
                     // A receipt for a removed server would otherwise toast
                     // again at every launch.
                     if let requestID = open.startedSessionRequestID {
                         intentSessionOpenTrigger.abandon(requestID: requestID)
                     }
-                    toast("Server not found for this session link")
-                    return .finished
+                    toast("Server not found for this \(link) link")
+                    return .done(.finished)
                 }
-                serverId = named
-            } else {
-                guard let found = await coordinator.findOrFetchSession(id: open.sessionId) else {
-                    // No paired server knows this session: the workspace root,
-                    // the same landing a missing deep link always had.
-                    showWorkspaceRoot()
-                    return .finished
-                }
-                guard isCurrent(generation) else { return .finished }
-                serverId = found.serverId
+                return .server(named)
             }
+            guard let found = await coordinator.findOrFetchSession(id: open.sessionId) else {
+                return .notFound
+            }
+            guard isCurrent(generation) else { return .done(.finished) }
+            return .server(found.serverId)
+        }
+    }
+
+    private func performSession(
+        _ open: SessionOpen,
+        generation: UInt64
+    ) async -> AppOpenOutcome {
+        let serverId: String
+        switch await resolveLinkServer(for: open, link: "session", generation: generation) {
+        case .server(let resolved):
+            serverId = resolved
+        case .notFound:
+            // No paired server knows this session: the workspace root,
+            // the same landing a missing deep link always had.
+            showWorkspaceRoot()
+            return .finished
+        case .done(let outcome):
+            return outcome
         }
 
         // A self-link to the chat on screen changes nothing and runs no
@@ -769,6 +813,75 @@ final class AppOpener {
             source: origin
         )
         return .finished
+    }
+
+    // MARK: - Threads
+
+    /// `oppi://thread/<id>`: All Sessions with the thread open in place and scrolled to its root.
+    /// The server resolves and locks exactly as a session link does; the session's own record
+    /// and its ancestors' are read when they are not loaded, so a descendant finds its root.
+    private func performThread(_ open: SessionOpen, generation: UInt64) async -> AppOpenOutcome {
+        let serverId: String
+        switch await resolveLinkServer(for: open, link: "thread", generation: generation) {
+        case .server(let resolved):
+            serverId = resolved
+        case .notFound:
+            showThreadNotFound()
+            return .finished
+        case .done(let outcome):
+            return outcome
+        }
+
+        // A locked session asks before Oppi switches servers, so cancel leaves everything where it was.
+        guard await scopedLock.authorize(scopedLock.sessionTarget(
+            serverId: serverId,
+            sessionId: open.sessionId
+        )), isCurrent(generation) else { return .finished }
+
+        let switched = await openServer(serverId, generation: generation)
+        guard isCurrent(generation) else { return .finished }
+        guard switched, let connection = coordinator.connection(for: serverId) else {
+            toastUnreachableIfFirstAttempt(serverId)
+            return .unreachable
+        }
+        await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
+            shouldNavigate: { [weak self] in self?.isCurrent(generation) ?? false },
+            navigate: {}
+        )
+        guard isCurrent(generation) else { return .finished }
+
+        guard let rootId = await threadRootId(of: open.sessionId, on: connection, generation: generation) else {
+            guard isCurrent(generation) else { return .finished }
+            showThreadNotFound()
+            return .finished
+        }
+        navigation.showThread(serverId: serverId, rootId: rootId)
+        return .finished
+    }
+
+    /// The root of the thread `sessionId` belongs to on `connection`, reading the session and
+    /// each missing ancestor from the server first. Nil when the server has no such session.
+    private func threadRootId(
+        of sessionId: String,
+        on connection: ServerConnection,
+        generation: UInt64
+    ) async -> String? {
+        if connection.sessionStore.session(id: sessionId) == nil {
+            await connection.refreshSessionRecordIfPossible(sessionId: sessionId)
+        }
+        var asked: Set<String> = []
+        while let missing = SessionThreadGrouping.missingAncestorId(of: sessionId, in: connection.sessionStore.sessions),
+              asked.insert(missing).inserted {
+            await connection.refreshSessionRecordIfPossible(sessionId: missing)
+            guard isCurrent(generation) else { return nil }
+        }
+        return SessionThreadGrouping.rootId(of: sessionId, in: connection.sessionStore.sessions)
+    }
+
+    /// The list, with the notice a thread link to an unknown session shows.
+    private func showThreadNotFound() {
+        navigation.showAllWorkspaceSessions()
+        toast("Session not found for this thread link")
     }
 
     /// A cancelled lock prompt goes back to the server this open switched away from.

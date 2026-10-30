@@ -45,6 +45,39 @@ struct SessionThreadsTests {
         #expect(rollups[1].members.map(\.id) == ["orphan"])
     }
 
+    // MARK: Thread links
+
+    @Test func aSessionsThreadRootIsTheTopOfItsLoadedChain() {
+        let loaded = [
+            session("grandchild", parent: "child", created: 30),
+            session("root", status: .ready, created: 10),
+            session("child", parent: "root", created: 20),
+            session("other", status: .ready, created: 5),
+        ]
+
+        #expect(SessionThreadGrouping.rootId(of: "grandchild", in: loaded) == "root")
+        #expect(SessionThreadGrouping.rootId(of: "root", in: loaded) == "root")
+        #expect(SessionThreadGrouping.rootId(of: "other", in: loaded) == "other", "A session with no children is its own root")
+        #expect(SessionThreadGrouping.rootId(of: "missing", in: loaded) == nil)
+        // With the parent not loaded, the loaded top of the chain stands in for the root.
+        #expect(SessionThreadGrouping.rootId(of: "grandchild", in: [loaded[0], loaded[2]]) == "child")
+    }
+
+    @Test func theMissingAncestorIsTheFirstUnloadedParentOnTheChain() {
+        let grandchild = session("grandchild", parent: "child", created: 30)
+        let child = session("child", parent: "root", created: 20)
+        let root = session("root", status: .ready, created: 10)
+
+        #expect(SessionThreadGrouping.missingAncestorId(of: "grandchild", in: [grandchild]) == "child")
+        #expect(SessionThreadGrouping.missingAncestorId(of: "grandchild", in: [grandchild, child]) == "root")
+        #expect(SessionThreadGrouping.missingAncestorId(of: "grandchild", in: [grandchild, child, root]) == nil)
+        #expect(SessionThreadGrouping.missingAncestorId(of: "absent", in: [root]) == nil)
+        // A parent cycle has no end to load.
+        let a = session("a", parent: "b", created: 1)
+        let b = session("b", parent: "a", created: 2)
+        #expect(SessionThreadGrouping.missingAncestorId(of: "a", in: [a, b]) == nil)
+    }
+
     // MARK: List entries
 
     /// A workspace list: its own sessions are listed, every loaded session feeds the trees.

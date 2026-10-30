@@ -30,6 +30,8 @@ Tap the session row to open its chat. Tap the strip to open the thread in place:
 
 An open thread lists the sessions that matter first: ones waiting on you, then working, then error, then done and idle, most recent first within each. Stopped sessions fold behind one **N Stopped** row at the end of the thread, closed until you tap it; open, it lists them newest first. A thread whose sessions have all stopped opens that row for you, and you can close it. A session listed under its parent keeps its indent, and a session whose parent sits in the other group indents under its nearest listed ancestor, or sits at the first level when it has none. A branch sorts by its most urgent session, so a session that needs you keeps its parent directly above it and moves the pair up the list. The **N Stopped** row has its own Expanded or Collapsed state for each thread, and resets when you switch servers or worktrees.
 
+A link `oppi://thread/<session-id>` opens All Sessions with that session's thread open in place and scrolled to its root; for a session inside a thread it opens the root's thread. See [Deep links](deeplinks.md).
+
 A thread lists every session in it, even one that runs in another workspace; that row names its workspace. In that other workspace's own list the session is a row with an **In thread** link under it, and tapping the link opens the root session's chat.
 
 ### Session rows

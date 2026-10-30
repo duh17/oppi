@@ -1160,6 +1160,22 @@ final class AppNavigation {
     /// The workspace navigation shell consumes this once and clears it.
     var pendingWorkspaceDeepLink: WorkspaceDeepLink.Payload?
 
+    /// A thread link's target: All Sessions opens this thread in place and scrolls to its root,
+    /// once. The list consumes it and clears it.
+    struct ThreadFocus: Equatable, Sendable {
+        let serverId: String
+        /// The thread's root session, which the list shows as a row.
+        let rootId: String
+    }
+
+    var pendingThreadFocus: ThreadFocus?
+
+    /// Shows All Sessions (the matching list in a split layout) with the thread of `rootId` open.
+    func showThread(serverId: String, rootId: String) {
+        showAllWorkspaceSessions()
+        pendingThreadFocus = ThreadFocus(serverId: serverId, rootId: rootId)
+    }
+
     // MARK: - Quick Session Handoff
     //
     // These properties form a produce-once / consume-once handoff between

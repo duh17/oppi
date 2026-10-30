@@ -464,6 +464,93 @@ struct AppOpenerTests {
         #expect(harness.opener._parkedRequestForTesting == nil)
     }
 
+    // MARK: - Thread links
+
+    @Test func threadURLsMapToAThreadRequestWithTheSessionLinksValidation() throws {
+        func request(_ raw: String, origin: SessionNavigationSource = .externalURL, server: String? = nil) throws -> AppOpenRequest {
+            AppOpenRequest(url: try #require(URL(string: raw)), origin: origin, sourceServerID: server)
+        }
+
+        #expect(try request("oppi://thread/root-1") == .thread(SessionOpen(sessionId: "root-1", origin: .externalURL)))
+        #expect(try request("oppi://thread/a%20b") == .thread(SessionOpen(sessionId: "a b", origin: .externalURL)))
+        // A URL must not choose the session's workspace (or its lock scope).
+        #expect(try request("oppi://thread/child?workspaceId=w1") == .thread(SessionOpen(sessionId: "child", origin: .externalURL)))
+        // A link inside Oppi carries its source server.
+        #expect(try request("oppi://thread/child", origin: .inAppHyperlink, server: "server-a") == .thread(SessionOpen(
+            serverId: "server-a", sessionId: "child", origin: .inAppHyperlink
+        )))
+        for raw in ["oppi://thread", "oppi://thread/", "oppi://thread/a/b"] {
+            let url = try #require(URL(string: raw))
+            #expect(AppOpenRequest(url: url, origin: .externalURL) == .invite(url), Comment(rawValue: raw))
+        }
+    }
+
+    @Test func aThreadLinkToADescendantOpensItsRootsThreadInTheList() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("root", workspaceId: "w1", to: "server-a")
+        harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-a")
+        harness.addSession("grandchild", parent: "child", workspaceId: "w1", to: "server-a")
+
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "grandchild", origin: .externalURL)))
+        await harness.settle()
+
+        #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty, "The link lands on the list, not a chat")
+        #expect(harness.connection("server-a").extensionToast == nil)
+
+        // The root's own link opens its own thread.
+        harness.navigation.pendingThreadFocus = nil
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "root", origin: .externalURL)))
+        await harness.settle()
+        #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
+    }
+
+    @Test func aThreadLinkReadsAncestorsThatAreNotLoadedToFindTheRoot() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.addSession("grandchild", parent: "child", workspaceId: "w1", to: "server-a")
+        harness.connection("server-a")._getSessionRecordForTesting = { id in
+            var session = makeTestSession(id: id, workspaceId: "w1", status: .stopped)
+            session.parentSessionId = id == "child" ? "root" : nil
+            return session
+        }
+
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "grandchild", origin: .externalURL)))
+        await harness.settle()
+
+        #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-a", rootId: "root"))
+    }
+
+    @Test func aThreadLinkSwitchesToTheServerThatHasTheSession() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a"), makeServer("server-b")])
+        harness.addSession("root", workspaceId: "w1", to: "server-b")
+        harness.addSession("child", parent: "root", workspaceId: "w1", to: "server-b")
+
+        harness.opener.open(.thread(SessionOpen(serverId: "server-b", sessionId: "child", origin: .externalURL)))
+        await harness.settle()
+
+        #expect(harness.coordinator.activeServerId == "server-b")
+        #expect(harness.navigation.pendingThreadFocus == .init(serverId: "server-b", rootId: "root"))
+    }
+
+    @Test func aThreadLinkToAnUnknownSessionShowsTheListAndANotice() async throws {
+        let harness = OpenerHarness(servers: [makeServer("server-a")])
+        harness.connection("server-a")._getSessionRecordForTesting = { _ in throw URLError(.fileDoesNotExist) }
+        harness.coordinator._getSessionRecordForTesting = { _, _ in throw URLError(.fileDoesNotExist) }
+
+        // Named server, and a link that names none.
+        harness.opener.open(.thread(SessionOpen(serverId: "server-a", sessionId: "gone", origin: .externalURL)))
+        await harness.settle()
+        #expect(harness.navigation.pendingThreadFocus == nil)
+        #expect(harness.navigation.workspaceStackRouteElements.isEmpty)
+        #expect(harness.connection("server-a").extensionToast == "Session not found for this thread link")
+
+        harness.connection("server-a").extensionToast = nil
+        harness.opener.open(.thread(SessionOpen(sessionId: "gone", origin: .externalURL)))
+        await harness.settle()
+        #expect(harness.navigation.pendingThreadFocus == nil)
+        #expect(harness.connection("server-a").extensionToast == "Session not found for this thread link")
+    }
+
     @Test func unreachableServerKeepsTheRequestAndRetriesOnTheNextForeground() async throws {
         let harness = OpenerHarness(servers: [makeServer("server-a")])
         harness.addSession("child", workspaceId: "w1", to: "server-a")
@@ -1563,12 +1650,10 @@ private final class OpenerHarness {
         installConnection(for: serverId)
     }
 
-    func addSession(_ sessionId: String, workspaceId: String, to serverId: String) {
-        connection(serverId).sessionStore.upsert(makeTestSession(
-            id: sessionId,
-            workspaceId: workspaceId,
-            status: .busy
-        ))
+    func addSession(_ sessionId: String, parent: String? = nil, workspaceId: String, to serverId: String) {
+        var session = makeTestSession(id: sessionId, workspaceId: workspaceId, status: .busy)
+        session.parentSessionId = parent
+        connection(serverId).sessionStore.upsert(session)
     }
 
     func setAskDialog(sessionId: String, on serverId: String) {

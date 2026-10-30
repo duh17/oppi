@@ -196,6 +196,19 @@ enum SessionThreadGrouping {
         rollups(from: sessions).first { rollup in rollup.members.contains { $0.id == sessionId } }?.root.id
     }
 
+    /// The first parent on `sessionId`'s chain that is not among `sessions`, so a caller can load
+    /// it and find the whole chain. Nil when the chain is complete or `sessionId` is not among them.
+    static func missingAncestorId(of sessionId: String, in sessions: [Session]) -> String? {
+        let byId = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var current = byId[sessionId]
+        var visited: Set<String> = [sessionId]
+        while let parentId = current?.parentSessionId, visited.insert(parentId).inserted {
+            guard let parent = byId[parentId] else { return parentId }
+            current = parent
+        }
+        return nil
+    }
+
     /// Thread section: a blocked member anywhere > any member working > any member
     /// idle > stopped. A root that is idle or stopped while a child works still
     /// lists the thread as Working, so detached hand-offs stay visible.

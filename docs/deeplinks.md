@@ -6,6 +6,7 @@ Use `oppi://` links to pair a server or open a place in the Apple app. The app r
 oppi://connect?v=3&invite=<base64url-signed-invite>
 oppi://workspace?path=/Users/example/workspace/oppi&name=Oppi&server=sha256:<server-fingerprint>
 oppi://session/<session-id>
+oppi://thread/<session-id>
 ```
 
 Test in the Simulator:
@@ -21,8 +22,9 @@ xcrun simctl openurl booted 'oppi://workspace?path=/Users/example/workspace/oppi
 | `oppi://connect?v=3&invite=<payload>` (or `pair`) | Signed pairing invite | Pairs or re-pairs a server, validates trust, switches to it, and opens Workspaces |
 | `oppi://workspace?path=<path>&name=<name>&server=<fingerprint>` | `path`; `name` and `server` optional | Opens Create Workspace with the path and name prefilled; you confirm |
 | `oppi://session/<session-id>` | Session ID | Opens the session if known locally or found by server lookup; otherwise opens Workspaces |
+| `oppi://thread/<session-id>` | ID of any session in the thread | Opens All Sessions (the matching list on iPad) with the session's thread open in place and scrolled to its root; if the session is a descendant, its root's thread opens. A session the server does not have opens the list with a "Session not found for this thread link" notice |
 
-Invite and workspace links accept `oppi://workspace?...` and `oppi:///workspace?...`. Session links use `oppi://session/<id>`. Use lowercase parameter names; route names are case-insensitive.
+Invite and workspace links accept `oppi://workspace?...` and `oppi:///workspace?...`. Session links use `oppi://session/<id>` and thread links `oppi://thread/<id>`, with the same ID validation and server lookup (a `?workspaceId=` query is ignored). Use lowercase parameter names; route names are case-insensitive.
 
 If a link needs a server that is not reachable yet, Oppi says so once, keeps the request, and opens it when Oppi returns to the foreground and the server connects. A newer link replaces the kept one, and a kept link is dropped after 10 minutes or when its server is removed.
 
