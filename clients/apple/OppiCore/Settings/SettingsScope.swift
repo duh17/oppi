@@ -25,8 +25,10 @@ enum SettingsScope: Hashable, Sendable {
     }
 
     /// The footer a section shows: the scope sentence when the section's scope
-    /// differs from the page's, then the section's own footer.
-    static func footer(_ footer: String?, scope: SettingsScope?, pageScope: SettingsScope) -> String? {
+    /// differs from the page's, then the section's own footer. A page with no
+    /// scope of its own (`pageScope` nil) differs from every scope a section
+    /// declares.
+    static func footer(_ footer: String?, scope: SettingsScope?, pageScope: SettingsScope?) -> String? {
         guard let scope, scope != pageScope else { return footer }
         guard let footer, !footer.isEmpty else { return scope.sentence }
         return scope.sentence + " " + footer

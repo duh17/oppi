@@ -5,7 +5,7 @@ import UIKit
 /// new one in the guided composer, as Agents and Schedules do. An import is a
 /// copy saved on this device.
 @MainActor
-final class ThemeImportViewController: SettingsListViewController<ThemeImportViewController.Section, ThemeImportViewController.Item> {
+final class ThemeImportViewController: ListScreenController<ThemeImportViewController.Section, ThemeImportViewController.Item> {
     enum Section: Hashable, Sendable { case state, themes }
     enum Item: Hashable, Sendable {
         case loading
@@ -117,12 +117,12 @@ final class ThemeImportViewController: SettingsListViewController<ThemeImportVie
 
     // MARK: - List
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         guard !remoteThemes.isEmpty else {
             let state: Item = isLoading ? .loading : (error != nil ? .failed : .empty)
-            return [SettingsSectionModel(.state, items: [state])]
+            return [ListSection(.state, items: [state])]
         }
-        return [SettingsSectionModel(
+        return [ListSection(
             .themes,
             footer: "Tap a theme to import and apply it. Swipe or touch and hold to edit it with Oppi.",
             items: remoteThemes.map { .theme($0.filename) }
@@ -181,7 +181,7 @@ final class ThemeImportViewController: SettingsListViewController<ThemeImportVie
         case .theme(let filename):
             guard let summary = remoteThemes.first(where: { $0.filename == filename }) else { return }
             let isImported = CustomThemeStore.load(name: summary.name) != nil
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "themes.row.\(summary.filename)",
                 label: summary.name,
@@ -205,7 +205,7 @@ final class ThemeImportViewController: SettingsListViewController<ThemeImportVie
                 check.tintColor = UIColor(palette.green)
                 cell.accessories = [.customView(configuration: .init(customView: check, placement: .trailing()))]
             }
-            ControlScreenList.background(cell, grouped: true, palette: palette, settingsCard: true)
+            ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         }
     }
 

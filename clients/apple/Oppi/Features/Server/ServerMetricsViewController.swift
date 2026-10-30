@@ -204,7 +204,7 @@ final class ServerMetricsViewController: UIViewController {
             WorkspaceSplitSidebarToggle.sync(toggle, root: root)
             leading = [toggle]
         }
-        ControlScreenList.setBarItems(trailing: trailing, leading: leading, on: navigationItem)
+        ListScreen.setBarItems(trailing: trailing, leading: leading, on: navigationItem)
     }
 
     private func cachedEnabled(_ serverId: String) -> Bool? {

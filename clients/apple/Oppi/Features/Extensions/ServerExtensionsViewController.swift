@@ -48,7 +48,7 @@ final class ServerExtensionsViewController: UIViewController, UICollectionViewDe
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private let refreshControl = UIRefreshControl()
     private let search = ScreenSearchController(prompt: "Search extensions")
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
@@ -128,8 +128,8 @@ final class ServerExtensionsViewController: UIViewController, UICollectionViewDe
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
-        ControlScreenList.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
 
         let activeServerId = coordinator.activeServerId
         let servers = coordinator.serverStore.servers

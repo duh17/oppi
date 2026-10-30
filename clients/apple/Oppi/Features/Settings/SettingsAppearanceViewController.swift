@@ -4,7 +4,7 @@ import UIKit
 /// are chosen, and Custom Themes. Choosing a theme opens the theme gallery.
 /// The values are `ThemeStore`, which is observable, so a change from the
 /// gallery or from the system's light/dark switch redraws the page.
-final class SettingsAppearanceViewController: SettingsListViewController<SettingsAppearanceViewController.Section, SettingsAppearanceViewController.Item> {
+final class SettingsAppearanceViewController: ListScreenController<SettingsAppearanceViewController.Section, SettingsAppearanceViewController.Item> {
     enum Section: Hashable, Sendable { case source, themes, custom }
     enum Item: Hashable, Sendable {
         case source
@@ -21,7 +21,7 @@ final class SettingsAppearanceViewController: SettingsListViewController<Setting
         traitOverrides.appRootEnvironment = root
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         let manual = themeStore.mode == .manual
         let themesFooter: String? = if manual {
             themeStore.manualThemeID.detail.isEmpty ? nil : themeStore.manualThemeID.detail
@@ -29,13 +29,13 @@ final class SettingsAppearanceViewController: SettingsListViewController<Setting
             String(localized: "Uses your iOS Display & Brightness setting, including Apple's automatic schedule.")
         }
         return [
-            SettingsSectionModel(.source, footer: themeStore.mode.detail, items: [.source]),
-            SettingsSectionModel(
+            ListSection(.source, footer: themeStore.mode.detail, items: [.source]),
+            ListSection(
                 .themes,
                 footer: themesFooter,
                 items: manual ? [.theme(.manual)] : [.theme(.light), .theme(.dark)]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .custom,
                 footer: String(localized: "Import themes from your server, or describe a new one and Oppi writes it. Themes are JSON files in the Oppi data directory (usually ~/.config/oppi/themes); Pi TUI themes in ~/.pi/agent/themes are converted automatically."),
                 items: [.customThemes]

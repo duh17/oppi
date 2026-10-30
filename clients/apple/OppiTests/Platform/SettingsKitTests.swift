@@ -13,6 +13,10 @@ struct SettingsKitTests {
         #expect(SettingsScope.footer("Footer.", scope: nil, pageScope: page) == "Footer.")
         #expect(SettingsScope.footer("Footer.", scope: .device, pageScope: page) == "Footer.")
         #expect(SettingsScope.footer(nil, scope: nil, pageScope: page) == nil)
+        // A page with no scope of its own says nothing of its own; a section that
+        // declares one still does.
+        #expect(SettingsScope.footer("Footer.", scope: nil, pageScope: nil) == "Footer.")
+        #expect(SettingsScope.footer("Footer.", scope: .device, pageScope: nil) == "Saved on this device. Footer.")
         // A differing scope puts its sentence in front, or stands alone.
         #expect(
             SettingsScope.footer("Footer.", scope: .server("mac-studio"), pageScope: page)
@@ -151,17 +155,17 @@ struct SettingsKitTests {
 }
 
 /// A page on the device whose second section lives on a server.
-private final class ScopedPage: SettingsListViewController<ScopedPage.Section, Int> {
+private final class ScopedPage: ListScreenController<ScopedPage.Section, Int> {
     enum Section: Hashable, Sendable { case local, remote }
 
     init() {
         super.init(title: "Scoped", listIdentifier: "test.scoped.list", scope: .device, footers: true)
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Int>] {
+    override func sections() -> [ListSection<Section, Int>] {
         [
-            SettingsSectionModel(.local, footer: "Kept here.", items: [1]),
-            SettingsSectionModel(.remote, footer: "Kept on the server.", scope: .server("mac-studio"), items: [2]),
+            ListSection(.local, footer: "Kept here.", items: [1]),
+            ListSection(.remote, footer: "Kept on the server.", scope: .server("mac-studio"), items: [2]),
         ]
     }
 }
@@ -267,7 +271,7 @@ extension SettingsKitTests {
     }
 
     /// The index row's title and value label frames, in the cell's space.
-    private static func indexRowLines(in page: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, value: CGRect) {
+    private static func indexRowLines(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, value: CGRect) {
         page.view.layoutIfNeeded()
         let indexPath = try #require(page.dataSource?.indexPath(for: .index))
         let cell = try #require(page.collectionView.cellForItem(at: indexPath))
@@ -278,7 +282,7 @@ extension SettingsKitTests {
     }
 
     /// The menu row's title and choice label frames in the cell's space, and the cell's width.
-    private static func menuRowLines(in page: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, value: CGRect, cellWidth: CGFloat) {
+    private static func menuRowLines(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, value: CGRect, cellWidth: CGFloat) {
         page.view.layoutIfNeeded()
         let indexPath = try #require(page.dataSource?.indexPath(for: .menu))
         let cell = try #require(page.collectionView.cellForItem(at: indexPath))
@@ -289,7 +293,7 @@ extension SettingsKitTests {
     }
 
     /// The Style row's title and control frames in the cell's space, and the cell's size.
-    private static func segmentedRowFrames(in page: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, control: CGRect, cellWidth: CGFloat, cellHeight: CGFloat) {
+    private static func segmentedRowFrames(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (title: CGRect, control: CGRect, cellWidth: CGFloat, cellHeight: CGFloat) {
         page.view.layoutIfNeeded()
         let indexPath = try #require(page.dataSource?.indexPath(for: .segmented))
         let cell = try #require(page.collectionView.cellForItem(at: indexPath))
@@ -299,7 +303,7 @@ extension SettingsKitTests {
     }
 
     /// The preview pill's frame and the frames of the text drawn on it, in the cell's space.
-    private static func workPreviewFrames(in page: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (pill: CGRect, texts: [CGRect], cellHeight: CGFloat) {
+    private static func workPreviewFrames(in page: ListScreenController<KitRowsPage.Section, KitRowsPage.Row>) throws -> (pill: CGRect, texts: [CGRect], cellHeight: CGFloat) {
         page.view.layoutIfNeeded()
         let indexPath = try #require(page.dataSource?.indexPath(for: .work))
         let cell = try #require(page.collectionView.cellForItem(at: indexPath))
@@ -326,7 +330,7 @@ extension SettingsKitTests {
 }
 
 /// One of each kit row, with text long enough to wrap at the largest sizes.
-private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section, KitRowsPage.Row> {
+private final class KitRowsPage: ListScreenController<KitRowsPage.Section, KitRowsPage.Row> {
     enum Section: Hashable, Sendable { case rows }
     enum Row: CaseIterable, Hashable, Sendable { case index, menu, menuLong, action, state, slider, entry, segmented, work, toggle, info }
 
@@ -334,8 +338,8 @@ private final class KitRowsPage: SettingsListViewController<KitRowsPage.Section,
         super.init(title: "Kit", listIdentifier: "test.kit.list", scope: .device)
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Row>] {
-        [SettingsSectionModel(.rows, items: Row.allCases)]
+    override func sections() -> [ListSection<Section, Row>] {
+        [ListSection(.rows, items: Row.allCases)]
     }
 
     private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Row> { cell, _, _ in

@@ -175,7 +175,7 @@ struct ScheduleEditorRowsTests {
     }
 }
 
-private final class ScheduleRowsPage: SettingsListViewController<ScheduleRowsPage.Section, ScheduleRowsPage.Row> {
+private final class ScheduleRowsPage: ListScreenController<ScheduleRowsPage.Section, ScheduleRowsPage.Row> {
     enum Section: Hashable, Sendable { case rows }
     enum Row: CaseIterable, Hashable, Sendable { case date, cron }
 
@@ -183,8 +183,8 @@ private final class ScheduleRowsPage: SettingsListViewController<ScheduleRowsPag
         super.init(title: "Rows", listIdentifier: "test.schedule.rows", scope: .device)
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Row>] {
-        [SettingsSectionModel(.rows, items: Row.allCases)]
+    override func sections() -> [ListSection<Section, Row>] {
+        [ListSection(.rows, items: Row.allCases)]
     }
 
     private lazy var dateRow = UICollectionView.CellRegistration<ScheduleDateRowCell, Row> { cell, _, _ in

@@ -1,13 +1,13 @@
 import UIKit
 
-/// One section of a settings page: its rows, and the header and footer text
-/// the section shows. A page returns these from `sections()` and the base list
-/// owns the snapshot, the headings, and the redraw.
+/// One section of a list screen: its rows, and the header and footer text the
+/// section shows. A page returns these from `sections()` and the base list owns
+/// the snapshot, the headings, and the redraw.
 ///
-/// `scope` is where the section's settings are kept, when that differs from
-/// the page's own scope. The base puts one sentence about it in front of the
+/// `scope` is where the section's settings are kept, when that differs from the
+/// page's own scope. The base puts one sentence about it in front of the
 /// footer, so a page that mixes scopes says which rows are which.
-struct SettingsSectionModel<Section: Hashable & Sendable, Item: Hashable & Sendable> {
+struct ListSection<Section: Hashable & Sendable, Item: Hashable & Sendable> {
     var id: Section
     var header: String?
     var footer: String?
@@ -23,13 +23,13 @@ struct SettingsSectionModel<Section: Hashable & Sendable, Item: Hashable & Senda
     }
 }
 
-/// The base of a settings page: a themed inset-grouped list with section
-/// headers and footers, rows redrawn only when their inputs change, and a
-/// refresh each time the page comes back on screen. The list's own background
-/// is clear, so the theme's `bg` shows behind the cards.
+/// The base of a list screen: a themed inset-grouped list with section headers
+/// and footers, rows redrawn only when their inputs change, and a refresh each
+/// time the page comes back on screen. The list's own background is clear, so
+/// the theme's `bg` shows behind the cards.
 ///
-/// A page subclasses it, names its `Section` and `Item` types, says its
-/// scope (where the page's settings are kept), and overrides:
+/// A page subclasses it, names its `Section` and `Item` types, says its scope
+/// (where the page's settings are kept, if it has settings), and overrides:
 /// - `sections()`: the sections and rows now. It runs inside
 ///   `updateProperties()`, so every `@Observable` store it reads re-runs the
 ///   page when it changes. Preferences that are not observable call
@@ -56,7 +56,7 @@ struct SettingsSectionModel<Section: Hashable & Sendable, Item: Hashable & Senda
 /// by `settingToggleRow` and `settingChoiceRow` (`SettingsDeclaredRows.swift`),
 /// which draw their state, scope, and failures from the declaration.
 @MainActor
-class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & Sendable>: UIViewController, UICollectionViewDelegate {
+class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendable>: UIViewController, UICollectionViewDelegate {
     private(set) lazy var collectionView: UICollectionView = {
         var config = SettingsListStyle.layoutConfiguration(headers: showsHeaders, footers: showsFooters)
         config.trailingSwipeActionsConfigurationProvider = { [weak self] indexPath in
@@ -66,9 +66,9 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
         return UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
     }()
     private(set) var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
-    /// Where the page's settings are kept. A section says its scope only when
-    /// it differs from this.
-    let pageScope: SettingsScope
+    /// Where the page's settings are kept; `nil` for a page that has none. A
+    /// section says its scope only when it differs from this.
+    let pageScope: SettingsScope?
     /// The store behind the page's declared settings (`SettingsCatalog`).
     let settings: SettingsStore?
     private let showsHeaders: Bool
@@ -76,12 +76,13 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     private let listEndsAtKeyboard: Bool
     private var appliedThemeID: ThemeID?
     private var changedRows = ChangedRows<Item>()
-    private var models: [Section: SettingsSectionModel<Section, Item>] = [:]
+    private var models: [Section: ListSection<Section, Item>] = [:]
 
     /// - Parameters:
     ///   - listIdentifier: the list's accessibility identifier, `settings.<page>.list`.
-    ///   - scope: where the page's settings are kept. Every page says it; a page
-    ///     of declared settings takes it from their `SettingStorage`.
+    ///   - scope: where the page's settings are kept. A page of declared
+    ///     settings takes it from their `SettingStorage`; a page that has no
+    ///     settings leaves it nil.
     ///   - settings: the store a page with declared settings reads and writes.
     ///   - headers: whether sections can show a header.
     ///   - footers: whether sections can show a footer. A page with a section
@@ -92,7 +93,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     init(
         title: String,
         listIdentifier: String,
-        scope: SettingsScope,
+        scope: SettingsScope? = nil,
         settings: SettingsStore? = nil,
         headers: Bool = false,
         footers: Bool = false,
@@ -120,7 +121,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
     // MARK: - Page hooks
 
     /// The sections and rows the page shows now.
-    func sections() -> [SettingsSectionModel<Section, Item>] { [] }
+    func sections() -> [ListSection<Section, Item>] { [] }
 
     /// The values `item` is drawn from; the row redraws when they change.
     func inputs(of item: Item) -> AnyHashable { AnyHashable(0) }
@@ -217,7 +218,7 @@ class SettingsListViewController<Section: Hashable & Sendable, Item: Hashable & 
 
     // MARK: - Snapshot
 
-    private func applySnapshot(_ sections: [SettingsSectionModel<Section, Item>], themeID: ThemeID) {
+    private func applySnapshot(_ sections: [ListSection<Section, Item>], themeID: ThemeID) {
         guard let dataSource else { return }
         models = Dictionary(uniqueKeysWithValues: sections.map { ($0.id, $0) })
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()

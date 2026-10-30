@@ -22,7 +22,7 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *  - `SettingsListStyle.pin(`, `SettingsListStyle.applyTheme(`, and a hand-built
  *    `UICollectionLayoutListConfiguration(appearance: .insetGrouped)` are a
  *    ratchet of the same kind: a settings list that pins, themes, or lays
- *    itself out carries its own copy of what `SettingsListViewController` (the
+ *    itself out carries its own copy of what `ListScreenController` (the
  *    settings kit's base) does. The base and `SettingsListStyle.swift` are
  *    exempt, and so are the screens in `settingsThemingExceptions`, which never
  *    subclass the base. A new settings page subclasses the base and calls
@@ -106,7 +106,7 @@ const navigationBarGuide = "dev/architecture-client.md, section \"Navigation bar
 const loadStateGuide = "dev/architecture-client.md, section \"Load states\"";
 const alertsGuide = "dev/architecture-client.md, section \"Alerts and confirmations\"";
 const settingsGuide = "dev/architecture-client.md, section \"Settings pages\"";
-const settingsBase = "clients/apple/Oppi/Features/Settings/SettingsListViewController.swift";
+const settingsBase = "clients/apple/Oppi/Features/Settings/ListScreenController.swift";
 const settingsStyle = "clients/apple/Oppi/Features/Settings/SettingsListStyle.swift";
 
 /**
@@ -420,7 +420,7 @@ baseline diff only moves entries.
 SettingsListStyle.pin(, SettingsListStyle.applyTheme(, and a hand-built
 UICollectionLayoutListConfiguration(appearance: .insetGrouped) outside the
 settings base mean a settings list is theming or laying itself out. Subclass
-SettingsListViewController instead (or, for a list that cannot, use
+ListScreenController instead (or, for a list that cannot, use
 SettingsListStyle.layoutConfiguration); see ${settingsGuide}. A screen that
 will never be a settings page goes in settingsThemingExceptions with a reason.
 

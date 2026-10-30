@@ -44,7 +44,7 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private let refreshControl = UIRefreshControl()
     private let search = ScreenSearchController(prompt: String(localized: "Search skills"))
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
@@ -84,7 +84,7 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true),
             animated: false
         )
         collectionView.delegate = self
@@ -132,8 +132,8 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
-        ControlScreenList.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
 
         let servers = coordinator.serverStore.servers
         let activeServerId = coordinator.activeServerId
@@ -380,8 +380,8 @@ final class ServerSkillsViewController: UIViewController, UICollectionViewDelega
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         guard let state, case .skill(let id) = item, let skill = state.skills[id] else { return }
-        ControlScreenList.background(cell, grouped: true, palette: palette)
-        ControlScreenList.buttonRow(
+        ListScreen.background(cell, grouped: true, palette: palette)
+        ListScreen.buttonRow(
             cell,
             identifier: "skills.row.\(skill.id)",
             label: ServerSkillListPresentation.accessibilityLabel(for: skill)

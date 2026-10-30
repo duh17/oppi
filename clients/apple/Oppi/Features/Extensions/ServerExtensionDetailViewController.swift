@@ -56,7 +56,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
     /// The route makes the extension's server the active one on every appearance.
     private let switchesServer: Bool
     private let loader: ServerResourceDetailLoader<ServerExtensionDetail>
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     /// The compact Oppi bar, made once the screen has its server and an
     /// editable extension.
@@ -109,12 +109,12 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "server.extension.list"
-        ControlScreenList.pinFullWidth(collectionView, in: view)
+        ListScreen.pinFullWidth(collectionView, in: view)
         installDataSource()
     }
 
@@ -148,7 +148,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         let store = connection?.serverResourceStore
         let summary = resolvedServerExtensionDetailSummary(
             catalogSummary: store?.extensions(forServer: target.serverId).first { $0.id == target.resourceId },
@@ -323,12 +323,12 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         guard let state else { return }
         let summary = state.summary
         switch item {
         case .title:
-            ControlScreenList.staticRow(cell, identifier: "server.extension.title")
+            ListScreen.staticRow(cell, identifier: "server.extension.title")
             let description = summary.description.flatMap { $0.isEmpty ? nil : $0 }
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 12, leading: 0, bottom: 12, trailing: 0)) {
                 var views = [ControlRowViews.label(
@@ -340,7 +340,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
                 return ControlRowViews.stack(views, spacing: 6)
             }
         case .enabled:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = "Enabled"
             content.textProperties.color = UIColor(palette.fg)
@@ -373,7 +373,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
             accessories.append(.customView(configuration: .init(customView: toggle, placement: .trailing())))
             cell.accessories = accessories
         case .mutationError:
-            ControlScreenList.staticRow(cell, identifier: "server.extension.mutationError")
+            ListScreen.staticRow(cell, identifier: "server.extension.mutationError")
             let message = "Couldn’t \(mutationVerb ?? "update") \(summary.name) on \(state.serverName). \(state.mutationError ?? "")"
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.symbolLabel(
@@ -384,7 +384,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
                 )
             }
         case .detail(let title):
-            ControlScreenList.staticRow(cell, identifier: "server.extension.source.\(title.lowercased())")
+            ListScreen.staticRow(cell, identifier: "server.extension.source.\(title.lowercased())")
             let value = switch title {
             case "Package": summary.packageName ?? ""
             case "Provenance": summary.provenance.label
@@ -395,7 +395,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
                 ControlRowViews.valueRow(title, value, palette: palette, style: .body)
             }
         case .status:
-            ControlScreenList.staticRow(cell, identifier: "server.extension.status")
+            ListScreen.staticRow(cell, identifier: "server.extension.status")
             let isIssue = summary.state == .error || summary.state == .unknown
             let icon = isIssue ? "exclamationmark.triangle.fill" : (summary.state == .on ? "checkmark.circle" : "minus.circle")
             let label = ServerExtensionListPresentation.stateLabel(for: summary.state)
@@ -405,13 +405,13 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
                 return row
             }
         case .loadError:
-            ControlScreenList.staticRow(cell, identifier: "server.extension.loadError")
+            ListScreen.staticRow(cell, identifier: "server.extension.loadError")
             let error = summary.loadError ?? state.loadError ?? ""
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(error, style: .footnote, color: UIColor(palette.orange))
             }
         case .warning(let warning):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.symbolLabel(
                     warning,
@@ -421,7 +421,7 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
                 )
             }
         case .retry:
-            ControlScreenList.buttonRow(cell, identifier: "server.extension.retry", label: "Retry") { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "server.extension.retry", label: "Retry") { [weak self] in
                 self?.startLoad()
             }
             var content = UIListContentConfiguration.cell()
@@ -429,14 +429,14 @@ final class ServerExtensionDetailViewController: UIViewController, UICollectionV
             content.textProperties.color = UIColor(palette.blue)
             cell.contentConfiguration = content
         case .loadingContributions:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .loading(String(localized: "Loading contributions…")),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         case .tool(let name), .command(let name):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
                 ControlRowViews.selectableText(name, style: .body, color: UIColor(palette.fg))
             }

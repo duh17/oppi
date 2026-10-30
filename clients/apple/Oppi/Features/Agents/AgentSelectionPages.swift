@@ -4,7 +4,7 @@ import UIKit
 /// catalog. Each row is one selection row; saved selections the server no
 /// longer lists stay in their own section so they can be deselected. Edits go
 /// to the editor's draft, so the editor's Save sends them.
-final class AgentResourceSelectionViewController: SettingsListViewController<
+final class AgentResourceSelectionViewController: ListScreenController<
     AgentResourceSelectionViewController.Section, AgentResourceSelectionViewController.Item
 > {
     enum Kind {
@@ -135,11 +135,11 @@ final class AgentResourceSelectionViewController: SettingsListViewController<
 
     // MARK: - Page
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         let state = draft.catalogState(kind)
         let rows = discovered
         let unavailable = unavailableIds(discovered: rows)
-        var sections: [SettingsSectionModel<Section, Item>] = []
+        var sections: [ListSection<Section, Item>] = []
         switch state {
         case .empty, .content:
             break
@@ -231,7 +231,7 @@ private extension AgentNativeEditDraft {
 
 /// The Agent editor's Allowed Workspaces page: the server's workspaces whose
 /// runtime fits the editor's required runtime, plus any already chosen.
-final class AgentWorkspaceSelectionViewController: SettingsListViewController<
+final class AgentWorkspaceSelectionViewController: ListScreenController<
     AgentWorkspaceSelectionViewController.Section, AgentWorkspaceSelectionViewController.Item
 > {
     enum Section: Hashable, Sendable { case workspaces }
@@ -264,9 +264,9 @@ final class AgentWorkspaceSelectionViewController: SettingsListViewController<
         draft.requiredRuntime.map { $0 == (workspace.runtime ?? .host) } ?? true
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         let workspaces = displayed
-        return [SettingsSectionModel(
+        return [ListSection(
             .workspaces,
             items: workspaces.isEmpty ? [.empty] : workspaces.map { .workspace($0.id) }
         )]

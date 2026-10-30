@@ -181,7 +181,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
 
     private let previewPane = UIStackView()
@@ -227,7 +227,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         super.viewDidLoad()
         buildPreviewPane()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.accessibilityIdentifier = "sessionRows.form"
@@ -254,7 +254,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
     override func updateProperties() {
         super.updateProperties()
         let themeStore = root.themeStore
-        ControlScreenList.applyTheme(themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(themeStore, to: self, collectionView: collectionView)
         let themeID = themeStore.activeThemeID
         let colors = SessionRowStyle.for(themeID).colors
         previewPane.backgroundColor = themeStore.backgroundColor
@@ -363,7 +363,7 @@ final class SessionRowDisplayEditorViewController: UIViewController {
         let restoreCell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, _ in
             guard let self else { return }
             let enabled = draft != .standard
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "sessionRows.restore",
                 label: String(localized: "Restore Defaults"),

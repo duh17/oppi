@@ -85,7 +85,7 @@ struct SettingsStyle {
         /// A title, and what a switch or menu in the accessory says.
         case plain
         /// A read-only fact: the title and its value on one line. Long press
-        /// copies the value (`SettingsListViewController.copyText(of:)`).
+        /// copies the value (`ListScreenController.copyText(of:)`).
         case info
         /// A title with a second line under it.
         case subtitle

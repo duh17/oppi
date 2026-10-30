@@ -3,7 +3,7 @@ import UIKit
 /// Settings > Experiments: opt-in features, each off by default and saved on
 /// this device: `AppPreferences.Experiments` defaults the features read when
 /// they start.
-final class SettingsExperimentsViewController: SettingsListViewController<SettingsExperimentsViewController.Section, SettingsExperimentsViewController.Item> {
+final class SettingsExperimentsViewController: ListScreenController<SettingsExperimentsViewController.Section, SettingsExperimentsViewController.Item> {
     enum Section: Hashable, Sendable { case liveVoice, durableSessions }
     enum Item: Hashable, Sendable {
         case liveVoice, durableSessions, durableSessionsDefault
@@ -30,14 +30,14 @@ final class SettingsExperimentsViewController: SettingsListViewController<Settin
         ].filter { $0 }.count
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         [
-            SettingsSectionModel(
+            ListSection(
                 .liveVoice,
                 footer: String(localized: "Adds Live Voice to the composer's mic menu and Quick Session, to talk to a session hands-free. Needs a server with a voice backend."),
                 items: [.liveVoice]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .durableSessions,
                 footer: String(localized: "On servers that offer durable sessions, the new-session composer shows a Classic / Durable switch. New sessions start Classic unless Start Sessions as Durable is on. Durable sessions are a development playground: they don't run your Pi extensions yet and don't match terminal coding agents feature for feature."),
                 items: [.durableSessions] + (isOn(AppPreferences.Experiments.durableSessionsKey) ? [.durableSessionsDefault] : [])

@@ -7,7 +7,7 @@ import UIKit
 /// Pushed from Workspace Settings, which already made the workspace's server
 /// the active one and bound `model` to it; this page only reads the model.
 @MainActor
-final class WorkspaceSandboxMcpViewController: SettingsListViewController<
+final class WorkspaceSandboxMcpViewController: ListScreenController<
     WorkspaceSandboxMcpViewController.Section,
     WorkspaceSandboxMcpViewController.Item
 > {
@@ -75,7 +75,7 @@ final class WorkspaceSandboxMcpViewController: SettingsListViewController<
         model.sandboxMcpSelection.subtracting(servers.map(\.name)).sorted()
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
         var items: [Item] = []
@@ -92,7 +92,7 @@ final class WorkspaceSandboxMcpViewController: SettingsListViewController<
         if model.sandboxMcpError != nil { items.append(.error) }
         let serverName = model.serverName(in: root.coordinator.serverStore) ?? String(localized: "your server")
         let footer = String(localized: "Only servers you turn on load in this workspace. Web servers are called from \(serverName), and only to Allowed Hosts; their sign-in stays there. Command servers run inside the sandbox, where the agent can read their settings; servers that use \(serverName)\u{2019}s secrets are blocked.")
-        return [SettingsSectionModel(.servers, footer: footer, items: items)]
+        return [ListSection(.servers, footer: footer, items: items)]
     }
 
     override func inputs(of item: Item) -> AnyHashable {

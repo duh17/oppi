@@ -50,7 +50,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
 
     private let root: AppRootEnvironment
     private let model = McpServersModel()
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private let refreshControl = UIRefreshControl()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var changedRows = ChangedRows<Item>()
@@ -103,7 +103,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.delegate = self
@@ -151,7 +151,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
 
         let server = server
         // Rows and errors show only for the host that produced them: the active
@@ -171,7 +171,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
             liveAttempt: signIn.hasActive ? attempt : nil
         )
         addItem.isEnabled = !(snapshot == nil || state.loading || signIn.hasActive)
-        ControlScreenList.setBarItems(trailing: [addItem], leading: sidebarItems(), on: navigationItem)
+        ListScreen.setBarItems(trailing: [addItem], leading: sidebarItems(), on: navigationItem)
 
         // `.task(id: activeServerId)`: a switched server is probed again.
         let activeId = coordinator.activeServerId
@@ -421,24 +421,24 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .host, .loading, .unavailable:
             break
         case .signInProvider:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = state.liveAttempt?.providerName
             content.textProperties.color = UIColor(palette.fg)
             cell.contentConfiguration = content
         case .signInContinue:
-            ControlScreenList.buttonRow(cell, identifier: "mcp.auth.continue", label: "Continue Sign-In") { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "mcp.auth.continue", label: "Continue Sign-In") { [weak self] in
                 self?.signIn.resume()
             }
             cell.contentConfiguration = Self.actionContent("Continue Sign-In", color: UIColor(palette.blue))
         case .signInCancel:
             let cancelling = state.liveAttempt?.isCancelling == true
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell, identifier: "mcp.auth.cancel", label: "Cancel Sign-In", enabled: !cancelling
             ) { [weak self] in
                 guard let owner = self?.signIn else { return }
@@ -448,30 +448,30 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
                 "Cancel Sign-In", color: UIColor(cancelling ? palette.comment : palette.red)
             )
         case .signInError:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             let message = state.liveAttempt?.actionError
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
             }
         case .error:
-            ControlScreenList.staticRow(cell, identifier: "mcp.error")
+            ListScreen.staticRow(cell, identifier: "mcp.error")
             let message = state.error
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
             }
         case .retry:
-            ControlScreenList.buttonRow(cell, identifier: "mcp.retry", label: "Retry") { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "mcp.retry", label: "Retry") { [weak self] in
                 Task { [weak self] in await self?.refresh() }
             }
             cell.contentConfiguration = Self.actionContent("Retry", color: UIColor(palette.blue))
         case .scopeError(let index):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             let message = scopeError(at: index)
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
             }
         case .noServers:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = "No MCP servers configured"
             content.textProperties.color = UIColor(palette.comment)
@@ -479,7 +479,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
         case .server(let name):
             guard let scope = state.snapshot?.scope,
                   let entry = scope.servers.first(where: { $0.name == name }) else { return }
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "mcp.server.\(scope.id).\(entry.name)",
                 label: entry.name,
@@ -492,10 +492,10 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
         case .inherited(let name):
             guard let scope = state.snapshot?.scope,
                   let entry = scope.inherited?.first(where: { $0.name == name }) else { return }
-            ControlScreenList.staticRow(cell, identifier: "mcp.inherited.\(scope.id).\(entry.name)")
+            ListScreen.staticRow(cell, identifier: "mcp.inherited.\(scope.id).\(entry.name)")
             cell.contentConfiguration = Self.serverContent(entry, palette: palette)
         case .note:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(
                     "Refresh probes Pi's configured servers, not running sessions. Configuration changes apply to new sessions or /reload.",
@@ -503,7 +503,7 @@ final class McpServersViewController: UIViewController, UICollectionViewDelegate
                     color: UIColor(palette.comment)
                 )
             }
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         }
     }
 

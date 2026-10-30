@@ -6,7 +6,7 @@ import UIKit
 /// dictionary is the active server's, so its row says which server, and is
 /// disabled with the reason while no server is paired.
 @MainActor
-final class SettingsVoiceViewController: SettingsListViewController<SettingsVoiceViewController.Section, SettingsVoiceViewController.Item> {
+final class SettingsVoiceViewController: ListScreenController<SettingsVoiceViewController.Section, SettingsVoiceViewController.Item> {
     enum Section: Hashable, Sendable { case replies, dictation, dictionary }
     enum Item: Hashable, Sendable { case replies, engine, animation, micPreview, dictionary }
 
@@ -27,22 +27,22 @@ final class SettingsVoiceViewController: SettingsListViewController<SettingsVoic
         root.coordinator.activeServerId.flatMap { root.coordinator.serverStore.server(for: $0) }
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         let replyMode = AppPreferences.Voice.replyMode
         let server = dictionaryServer
         return [
-            SettingsSectionModel(
+            ListSection(
                 .replies,
                 footer: String(localized: "\(replyMode.detail) Session-specific changes still happen in chat."),
                 items: [.replies]
             ),
             // One footer for the engine, the animation, and its preview.
-            SettingsSectionModel(
+            ListSection(
                 .dictation,
                 footer: Self.dictationFooter(engine: AppPreferences.Voice.engineMode),
                 items: [.engine, .animation, .micPreview]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .dictionary,
                 footer: Self.dictionaryFooter(serverName: server?.name),
                 scope: server.map { .server($0.name) },

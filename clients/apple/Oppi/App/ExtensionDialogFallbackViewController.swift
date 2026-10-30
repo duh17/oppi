@@ -8,7 +8,7 @@ import UIKit
 ///
 /// `AppRootModals` presents it for `ServerConnection.activeExtensionDialog`.
 @MainActor
-final class ExtensionDialogFallbackViewController: SettingsListViewController<
+final class ExtensionDialogFallbackViewController: ListScreenController<
     ExtensionDialogFallbackViewController.Section,
     ExtensionDialogFallbackViewController.Item
 > {
@@ -90,14 +90,14 @@ final class ExtensionDialogFallbackViewController: SettingsListViewController<
 
     // MARK: Rows
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
-        var sections: [SettingsSectionModel<Section, Item>] = []
+    override func sections() -> [ListSection<Section, Item>] {
+        var sections: [ListSection<Section, Item>] = []
         if let message = request.message, !message.isEmpty {
-            sections.append(SettingsSectionModel(.message, items: [.message]))
+            sections.append(ListSection(.message, items: [.message]))
         }
-        sections.append(SettingsSectionModel(.unsupported, items: [.unsupported]))
+        sections.append(ListSection(.unsupported, items: [.unsupported]))
         if Self.timeoutSummary(of: request) != nil {
-            sections.append(SettingsSectionModel(.timeout, items: [.timeout]))
+            sections.append(ListSection(.timeout, items: [.timeout]))
         }
         return sections
     }

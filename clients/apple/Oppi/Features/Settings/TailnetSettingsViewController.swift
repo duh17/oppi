@@ -6,7 +6,7 @@ import UIKit
 /// Each online machine that can host Oppi is probed for Oppi's `/health`
 /// while the screen is visible. A visit starts the probes over, so a result
 /// never outlives the visit that produced it; there is no polling timer.
-final class TailnetSettingsViewController: SettingsListViewController<TailnetSettingsViewController.Section, TailnetSettingsViewController.Item> {
+final class TailnetSettingsViewController: ListScreenController<TailnetSettingsViewController.Section, TailnetSettingsViewController.Item> {
     enum Section: Hashable, Sendable { case status, peers, setup, disconnect }
 
     enum Item: Hashable, Sendable {
@@ -185,7 +185,7 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
 
     // MARK: - Rows
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         let state = tailnet.state
         var statusItems: [Item] = [.status]
         if state == .running, tailnet.snapshot?.selfDNSName != nil { statusItems.append(.thisDevice) }
@@ -196,7 +196,7 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
         case .needsMachineAuth, .running: break
         case .failed: statusItems.append(.tryAgain)
         }
-        var sections: [SettingsSectionModel<Section, Item>] = [SettingsSectionModel(.status, header: String(localized: "Tailscale"), footer: footer(.status), items: statusItems)]
+        var sections: [ListSection<Section, Item>] = [ListSection(.status, header: String(localized: "Tailscale"), footer: footer(.status), items: statusItems)]
         if state == .running {
             let peers = visiblePeers
             var items: [Item] = []
@@ -204,16 +204,16 @@ final class TailnetSettingsViewController: SettingsListViewController<TailnetSet
                 items.append(.peer(peer.id))
                 if pairingPeerID == peer.id, pairingWaitExpiresAt != nil { items.append(.pairingWait(peer.id)) }
             }
-            sections.append(SettingsSectionModel(
+            sections.append(ListSection(
                 .peers,
                 header: String(localized: "Online Machines"),
                 footer: footer(.peers),
                 items: peers.isEmpty ? [.noPeers] : items
             ))
         }
-        sections.append(SettingsSectionModel(.setup, footer: footer(.setup), items: [.setUpMachine]))
+        sections.append(ListSection(.setup, footer: footer(.setup), items: [.setUpMachine]))
         if state != .off {
-            sections.append(SettingsSectionModel(.disconnect, items: [.disconnect]))
+            sections.append(ListSection(.disconnect, items: [.disconnect]))
         }
         return sections
     }

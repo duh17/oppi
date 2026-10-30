@@ -7,7 +7,7 @@ import UIKit
 /// the active one and bound `model` to it; this page only reads the model. Its
 /// loading, empty, and failed states read like the workspace Skills page's.
 @MainActor
-final class WorkspaceExtensionsViewController: SettingsListViewController<
+final class WorkspaceExtensionsViewController: ListScreenController<
     WorkspaceExtensionsViewController.Section,
     WorkspaceExtensionsViewController.Item
 > {
@@ -66,17 +66,17 @@ final class WorkspaceExtensionsViewController: SettingsListViewController<
 
     // MARK: - Rows
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
         if model.isLoadingExtensions && model.extensions.isEmpty {
-            return [SettingsSectionModel(.loading, items: [.loading])]
+            return [ListSection(.loading, items: [.loading])]
         }
-        var sections: [SettingsSectionModel<Section, Item>] = []
+        var sections: [ListSection<Section, Item>] = []
         let oppi = model.extensions.filter(\.isOppi)
         let pi = model.extensions.filter { !$0.isOppi }
         if !oppi.isEmpty {
-            sections.append(SettingsSectionModel(
+            sections.append(ListSection(
                 .oppi,
                 header: String(localized: "Oppi Extensions"),
                 items: oppi.map { .ext($0.name) }
@@ -85,7 +85,7 @@ final class WorkspaceExtensionsViewController: SettingsListViewController<
         var piItems: [Item] = pi.isEmpty ? [.empty] : pi.map { .ext($0.name) }
         if model.extensionsError != nil { piItems.append(.error) }
         let serverName = model.serverName(in: root.coordinator.serverStore)
-        sections.append(SettingsSectionModel(
+        sections.append(ListSection(
             .pi,
             header: String(localized: "Pi Extensions"),
             footer: model.piResourceFooter(serverName: serverName),

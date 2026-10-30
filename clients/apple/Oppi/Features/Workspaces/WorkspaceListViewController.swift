@@ -20,7 +20,7 @@ extension Confirmation {
 /// trailing swipe that deletes after a confirmation, a New Workspace button,
 /// and pull to refresh.
 @MainActor
-final class WorkspaceListViewController: SettingsListViewController<
+final class WorkspaceListViewController: ListScreenController<
     WorkspaceListViewController.Section,
     WorkspaceListViewController.Item
 > {
@@ -105,7 +105,7 @@ final class WorkspaceListViewController: SettingsListViewController<
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.setBarItems(trailing: [createItem], leading: [], on: navigationItem)
+        ListScreen.setBarItems(trailing: [createItem], leading: [], on: navigationItem)
         if workspaces.isEmpty {
             contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
                 .empty(
@@ -128,10 +128,10 @@ final class WorkspaceListViewController: SettingsListViewController<
 
     // MARK: - Rows
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
-        return [SettingsSectionModel(.workspaces, items: Self.unique(workspaces.map(\.id)).map(Item.workspace))]
+        return [ListSection(.workspaces, items: Self.unique(workspaces.map(\.id)).map(Item.workspace))]
     }
 
     /// A snapshot traps on a repeated item identifier, so a response that

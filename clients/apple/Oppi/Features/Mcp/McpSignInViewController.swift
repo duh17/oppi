@@ -22,7 +22,7 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
     let attempt: ProviderAuthFlowAttempt
     private let owner: McpSignInOwner
     private let root: AppRootEnvironment
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var changedRows = ChangedRows<Item>()
     /// Above the keyboard while the callback field has it.
@@ -61,7 +61,7 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.delegate = self
@@ -72,7 +72,7 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         // A cancel in flight must finish before the sheet can go.
         isModalInPresentation = attempt.isCancelling
         keyboardSubmit.isEnabled = owner.canSubmitCallback
@@ -195,32 +195,32 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .host:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = McpRowContent.value("Host", attempt.serverName)
         case .status:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = McpRowContent.value(
                 "Status", ProviderAuthFlowPresentation.statusText(attempt.flow.status)
             )
         case .finishing:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .loading(String(localized: "Finishing sign-in on the host…")),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         case .preparing:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .loading(String(localized: "Preparing sign-in…")),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         case .openLink:
-            ControlScreenList.buttonRow(cell, identifier: "mcp.auth.open", label: "Open Sign-In Page") { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "mcp.auth.open", label: "Open Sign-In Page") { [weak self] in
                 self?.openSignInPage()
             }
             cell.contentConfiguration = Self.actionContent("Open Sign-In Page", color: UIColor(palette.blue))
@@ -228,7 +228,7 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
             break
         case .submit:
             let enabled = owner.canSubmitCallback
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell, identifier: "mcp.auth.submit", label: "Submit Callback", enabled: enabled
             ) { [weak self] in
                 self?.submit()
@@ -246,13 +246,13 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
             notice(cell, "The host no longer has this flow. Start a new sign-in.", style: .body, color: UIColor(palette.fg))
         case .finish:
             if attempt.isSettled {
-                ControlScreenList.buttonRow(cell, identifier: "mcp.auth.sheet.done", label: "Done") { [weak self] in
+                ListScreen.buttonRow(cell, identifier: "mcp.auth.sheet.done", label: "Done") { [weak self] in
                     self?.owner.showingSheet = false
                 }
                 cell.contentConfiguration = Self.actionContent("Done", color: UIColor(palette.blue))
             } else {
                 let cancelling = attempt.isCancelling
-                ControlScreenList.buttonRow(
+                ListScreen.buttonRow(
                     cell, identifier: "mcp.auth.sheet.cancel", label: "Cancel Sign-In", enabled: !cancelling
                 ) { [weak self] in
                     guard let owner = self?.owner else { return }
@@ -266,7 +266,7 @@ final class McpSignInViewController: UIViewController, UICollectionViewDelegate 
     }
 
     private func notice(_ cell: SidebarListCell, _ text: String?, style: UIFont.TextStyle, color: UIColor) {
-        ControlScreenList.staticRow(cell)
+        ListScreen.staticRow(cell)
         cell.contentConfiguration = ControlViewContent {
             ControlRowViews.selectableText(text ?? "", style: style, color: color)
         }

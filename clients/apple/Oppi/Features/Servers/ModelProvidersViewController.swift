@@ -27,7 +27,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private let refreshControl = UIRefreshControl()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var changedRows = ChangedRows<Item>()
@@ -119,7 +119,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.delegate = self
@@ -164,7 +164,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         guard let server else {
             loadedServerId = nil
             installSwitcher(nil)
@@ -196,7 +196,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
     private func installSwitcher(_ server: PairedServer?) {
         guard let server else {
             switcher = nil
-            ControlScreenList.setBarItems(trailing: [], leading: [], on: navigationItem)
+            ListScreen.setBarItems(trailing: [], leading: [], on: navigationItem)
             return
         }
         let joinsRail = SessionListBarItems.joinsRail(traitCollection)
@@ -213,7 +213,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
             let made = SessionListServerSwitcher(model: model, joinsRail: joinsRail)
             switcher = made
             let item = joinsRail ? SessionListBarItems.railItem(made.item, priority: .keep) : made.item
-            ControlScreenList.setBarItems(trailing: [item], leading: [], on: navigationItem)
+            ListScreen.setBarItems(trailing: [item], leading: [], on: navigationItem)
         }
         if switcherServerId != server.id {
             switcherServerId = server.id
@@ -430,19 +430,19 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .signInAttempt:
             configureAttemptRow(cell, palette: palette)
         case .loading:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .loading(String(localized: "Loading providers…")),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         case .onboarding:
-            ControlScreenList.staticRow(cell, identifier: "server.modelProviders.onboarding")
+            ListScreen.staticRow(cell, identifier: "server.modelProviders.onboarding")
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 12, leading: 0, bottom: 12, trailing: 0)) {
                 ControlRowViews.stack([
                     ControlRowViews.symbolLabel(
@@ -459,7 +459,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
                 ], spacing: 8)
             }
         case .provider(let id):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             guard let provider = statuses.first(where: { $0.id == id }) else { return }
             cell.contentConfiguration = ProviderRowConfiguration(
                 provider: provider,
@@ -469,13 +469,13 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
                 now: Date()
             )
         case .allConnected:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = "All providers are currently connected"
             content.textProperties.color = UIColor(palette.comment)
             cell.contentConfiguration = content
         case .error:
-            ControlScreenList.staticRow(cell, identifier: "server.modelProviders.error")
+            ListScreen.staticRow(cell, identifier: "server.modelProviders.error")
             let message = errorMessage
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
@@ -491,7 +491,7 @@ final class ModelProvidersViewController: UIViewController, UICollectionViewDele
         let summary = attempt.serverId == loadedServerId ? status : "\(status) \u{00B7} \(attempt.serverName)"
         let title = "Sign in to \(attempt.providerName)"
         let trailing = attempt.isSettled ? "View" : "Return"
-        ControlScreenList.buttonRow(
+        ListScreen.buttonRow(
             cell,
             identifier: "server.modelProviders.signInAttempt",
             label: title,

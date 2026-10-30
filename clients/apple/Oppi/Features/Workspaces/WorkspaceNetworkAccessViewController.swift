@@ -31,7 +31,7 @@ struct WorkspaceAllowedHostsDraft: Equatable {
 /// Pushed from Workspace Settings, which already made the workspace's server
 /// the active one and bound `model` to it.
 @MainActor
-final class WorkspaceNetworkAccessViewController: SettingsListViewController<
+final class WorkspaceNetworkAccessViewController: ListScreenController<
     WorkspaceNetworkAccessViewController.Section,
     WorkspaceNetworkAccessViewController.Item
 > {
@@ -97,21 +97,21 @@ final class WorkspaceNetworkAccessViewController: SettingsListViewController<
     override func updateProperties() {
         super.updateProperties()
         saveItem.isEnabled = draft.isDirty(against: model.workspace.sandboxConfig?.allowedHosts) && !model.isWritingSandboxConfig
-        ControlScreenList.setBarItems(trailing: [saveItem], leading: [], on: navigationItem)
+        ListScreen.setBarItems(trailing: [saveItem], leading: [], on: navigationItem)
     }
 
     // MARK: - Rows
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
-        var sections = [SettingsSectionModel<Section, Item>(
+        var sections = [ListSection<Section, Item>(
             .hosts,
             header: String(localized: "Allowed Hosts"),
             footer: Self.footer,
             items: [.editor]
         )]
-        if error != nil { sections.append(SettingsSectionModel(.error, items: [.error])) }
+        if error != nil { sections.append(ListSection(.error, items: [.error])) }
         return sections
     }
 

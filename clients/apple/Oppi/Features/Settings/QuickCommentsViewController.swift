@@ -6,7 +6,7 @@ import UIKit
 /// one, and Reset to Defaults (behind a confirmation) for the built-in set.
 /// The templates live on this device (`QuickCommentTemplateStore`).
 @MainActor
-final class QuickCommentsViewController: SettingsListViewController<QuickCommentsViewController.Section, QuickCommentsViewController.Item> {
+final class QuickCommentsViewController: ListScreenController<QuickCommentsViewController.Section, QuickCommentsViewController.Item> {
     enum Section: Hashable, Sendable { case templates, add, reset }
     enum Item: Hashable, Sendable {
         case template(UUID)
@@ -53,16 +53,16 @@ final class QuickCommentsViewController: SettingsListViewController<QuickComment
 
     // MARK: - Sections
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         [
-            SettingsSectionModel(
+            ListSection(
                 .templates,
                 header: String(localized: "Templates"),
                 footer: String(localized: "Quick comments appear after selecting text and choosing Comment."),
                 items: store.templates.map { .template($0.id) }
             ),
-            SettingsSectionModel(.add, items: [.add]),
-            SettingsSectionModel(.reset, items: [.reset]),
+            ListSection(.add, items: [.add]),
+            ListSection(.reset, items: [.reset]),
         ]
     }
 

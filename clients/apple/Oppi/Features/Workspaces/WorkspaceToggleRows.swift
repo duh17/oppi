@@ -17,7 +17,7 @@ struct WorkspaceToggleRow {
     var identifier: String
 }
 
-extension SettingsListViewController {
+extension ListScreenController {
     /// The kit's switch row (`toggleRow`) with a detail line: a `.subtitle`
     /// content configuration over the kit's switch, and the spinner while a
     /// write runs. These switches write Pi's settings (or a sandbox's MCP picks)

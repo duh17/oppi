@@ -185,7 +185,7 @@ final class WorkspaceInstructionsViewController: UIViewController, UITextViewDel
         countLabel.textColor = style.value
         countBackground.backgroundColor = style.card
         saveItem.isEnabled = isDirty && !isSaving
-        ControlScreenList.setBarItems(trailing: [saveItem], leading: [], on: navigationItem)
+        ListScreen.setBarItems(trailing: [saveItem], leading: [], on: navigationItem)
     }
 
     func textViewDidChange(_ textView: UITextView) {

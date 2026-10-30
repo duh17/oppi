@@ -5,7 +5,7 @@ import UIKit
 /// `AppPreferences.ChatDisplay` / `.ChatTopBar`, which open chats observe, so a
 /// change reaches them without reopening the chat. Everything here is saved on
 /// this device.
-final class SettingsChatViewController: SettingsListViewController<SettingsChatViewController.Section, SettingsChatViewController.Item> {
+final class SettingsChatViewController: ListScreenController<SettingsChatViewController.Section, SettingsChatViewController.Item> {
     enum Section: Hashable, Sendable { case busy, style, topBar, comments }
     enum Item: Hashable, Sendable {
         case spinnerStyle, spinnerPreview
@@ -55,7 +55,7 @@ final class SettingsChatViewController: SettingsListViewController<SettingsChatV
 
     // MARK: - Rows
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         // Read every value so any change re-runs this pass.
         _ = (AppPreferences.Appearance.spinnerStyle, AppPreferences.ChatDisplay.style)
         _ = (AppPreferences.ChatDisplay.workStripStyle, AppPreferences.ChatTopBar.layout)
@@ -66,18 +66,18 @@ final class SettingsChatViewController: SettingsListViewController<SettingsChatV
         case .chat: style.append(.conversationPreview)
         }
         return [
-            SettingsSectionModel(
+            ListSection(
                 .busy,
                 footer: String(localized: "The spinner shown while a turn is running."),
                 items: [.spinnerStyle, .spinnerPreview]
             ),
-            SettingsSectionModel(.style, header: String(localized: "Style"), footer: Self.styleFooter(chatStyle), items: style),
-            SettingsSectionModel(
+            ListSection(.style, header: String(localized: "Style"), footer: Self.styleFooter(chatStyle), items: style),
+            ListSection(
                 .topBar,
                 footer: String(localized: "The buttons a chat shows beside the session title. A button turned off moves into the … menu."),
                 items: [.topBar]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .comments,
                 footer: String(localized: "Edit the quick comments shown after selecting text and choosing Comment."),
                 items: [.quickComments]

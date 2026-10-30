@@ -6,7 +6,7 @@ import UIKit
 /// a navigation controller; the pages that choose tools, Skills, Extensions,
 /// and workspaces are pushed above it and edit the same draft, and the model
 /// picker is a sheet over it.
-final class AgentNativeEditViewController: SettingsListViewController<
+final class AgentNativeEditViewController: ListScreenController<
     AgentNativeEditViewController.Section, AgentNativeEditViewController.Item
 > {
     enum Section: Hashable, Sendable { case identity, prompt, defaults, chat, resources, constraints, error }
@@ -145,7 +145,7 @@ final class AgentNativeEditViewController: SettingsListViewController<
 
     // MARK: - Sections
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         var resources: [Item] = [.skillMode]
         if draft.skillSelectionMode == .exact { resources.append(.skills) }
         resources.append(.extensionMode)
@@ -154,7 +154,7 @@ final class AgentNativeEditViewController: SettingsListViewController<
         if draft.skillCatalogState.statusMessage(for: "Skills") != nil { resources.append(.skillStatus) }
         if draft.extensionCatalogState.statusMessage(for: "Extensions") != nil { resources.append(.extensionStatus) }
 
-        var sections: [SettingsSectionModel<Section, Item>] = [
+        var sections: [ListSection<Section, Item>] = [
             .init(.identity, header: "Identity", items: [.name, .description]),
             .init(
                 .prompt,

@@ -8,7 +8,7 @@ import UIKit
 /// shows what that model loaded and never refetches for another server. The page
 /// scope is the server: every row is a fact about it, or an action on it.
 @MainActor
-final class ServerAboutViewController: SettingsListViewController<ServerAboutViewController.Section, ServerAboutViewController.Item> {
+final class ServerAboutViewController: ListScreenController<ServerAboutViewController.Section, ServerAboutViewController.Item> {
     enum Section: Hashable, Sendable { case status, voice, update }
 
     enum Item: Hashable, Sendable {
@@ -98,21 +98,21 @@ final class ServerAboutViewController: SettingsListViewController<ServerAboutVie
         return items
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         var statusItems: [Item] = [.connection]
         if let info = model.info {
             statusItems.append(contentsOf: [.uptime, .piSDK])
             if let cli = info.piCliVersion, !cli.isEmpty { statusItems.append(.piTUI) }
             statusItems.append(.oppiServer)
         }
-        var sections = [SettingsSectionModel<Section, Item>(
+        var sections = [ListSection<Section, Item>(
             .status,
             header: String(localized: "Status"),
             footer: String(localized: "Pi SDK is the embedded Pi coding-agent package that runs Oppi sessions. Pi TUI is the pi command-line app installed on this server."),
             items: statusItems
         )]
         if let backends = model.info?.voiceBackends, !backends.isEmpty {
-            sections.append(SettingsSectionModel(
+            sections.append(ListSection(
                 .voice,
                 header: String(localized: "Voice"),
                 footer: String(localized: "A voice feature shows in chats only while its backend is ready."),
@@ -127,7 +127,7 @@ final class ServerAboutViewController: SettingsListViewController<ServerAboutVie
                 didNotReturn: model.updateDidNotReturn
             )
             if !updateRows.isEmpty {
-                sections.append(SettingsSectionModel(
+                sections.append(ListSection(
                     .update,
                     header: String(localized: "Update"),
                     footer: ServerUpdatePresentation.footer(info.update),

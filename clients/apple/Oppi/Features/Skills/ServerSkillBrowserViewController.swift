@@ -22,7 +22,7 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
     private let root: AppRootEnvironment
     /// The route makes the Skill's server the active one on every appearance.
     private let switchesServer: Bool
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
     private var nodes: [String: ServerSkillFileTreeNode] = [:]
     /// The file list the tree was built from, so a redraw keeps open folders.
@@ -79,7 +79,7 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, footers: true),
             animated: false
         )
         collectionView.delegate = self
@@ -116,7 +116,7 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         guard let connection else {
             title = String(localized: "Skill Files")
             show(.connecting)
@@ -253,7 +253,7 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
 
     private func configure(_ cell: SidebarListCell, id: String) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         guard let node = nodes[id] else { return }
         var content = UIListContentConfiguration.cell()
         content.text = node.name
@@ -262,7 +262,7 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
         switch node.kind {
         case .directory:
             let isOpen = dataSource?.snapshot(for: 0).isExpanded(id) ?? false
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "skills.dir.\(node.path)",
                 label: node.name,
@@ -274,7 +274,7 @@ final class ServerSkillBrowserViewController: UIViewController, UICollectionView
             cell.contentConfiguration = content
             cell.accessories = [.outlineDisclosure(options: .init(style: .cell))]
         case .file:
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "skills.file.\(node.path)",
                 label: "Open \(node.path)"

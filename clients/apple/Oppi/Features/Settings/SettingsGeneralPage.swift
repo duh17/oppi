@@ -6,7 +6,7 @@ import UIKit
 /// through the app's `SettingsStore`; the page draws them with the kit's declared
 /// rows, so a refused or failed write shows under its row. A choice is a
 /// `SettingsMenuRowCell`: its menu is the one way to change it, at every text size.
-final class SettingsGeneralViewController: SettingsListViewController<SettingsGeneralViewController.Section, SettingsGeneralViewController.Item> {
+final class SettingsGeneralViewController: ListScreenController<SettingsGeneralViewController.Section, SettingsGeneralViewController.Item> {
     enum Section: Hashable, Sendable { case haptics, screenAwake, links }
     enum Item: Hashable, Sendable {
         case haptics, keepAwake, openLinks
@@ -25,25 +25,25 @@ final class SettingsGeneralViewController: SettingsListViewController<SettingsGe
         )
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         let haptics = SettingsCatalog.hapticFeedback
         let keepAwake = SettingsCatalog.keepAwakeAfterActivity
         let openLinks = SettingsCatalog.openLinks
         let mode = settings?.read(openLinks).current ?? openLinks.default
         return [
-            SettingsSectionModel(
+            ListSection(
                 .haptics,
                 footer: haptics.copy.footer,
                 items: settingRows(haptics, .haptics) { .failure($0) }
             ),
             // Matches `ScreenAwakeController`: voice capture and running agents
             // hold the screen on; the preset only adds time after they stop.
-            SettingsSectionModel(
+            ListSection(
                 .screenAwake,
                 footer: keepAwake.copy.footer,
                 items: settingRows(keepAwake, .keepAwake) { .failure($0) }
             ),
-            SettingsSectionModel(
+            ListSection(
                 .links,
                 footer: mode.detail,
                 items: settingRows(openLinks, .openLinks) { .failure($0) }

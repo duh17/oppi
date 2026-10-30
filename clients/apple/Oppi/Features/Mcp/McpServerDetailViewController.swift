@@ -9,7 +9,7 @@ import UIKit
 /// cannot lose its Continue / Cancel handle. A sign-in started here presents
 /// its sheet from this page, which covers the list.
 @MainActor
-final class McpServerDetailViewController: SettingsListViewController<McpServerDetailViewController.Section, McpServerDetailViewController.Item> {
+final class McpServerDetailViewController: ListScreenController<McpServerDetailViewController.Section, McpServerDetailViewController.Item> {
     enum Section: Hashable, Sendable {
         case info, config, oauth, headers, environment, connectionError, scopeErrors, tools, busy, error, remove
     }
@@ -131,46 +131,46 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
 
     // MARK: - List
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
-        var result: [SettingsSectionModel<Section, Item>] = []
+    override func sections() -> [ListSection<Section, Item>] {
+        var result: [ListSection<Section, Item>] = []
         var info: [Item] = [.status, .transport]
         if entry.config.url != nil { info.append(.url) }
         if entry.config.command != nil { info.append(.command) }
         if entry.config.cwd != nil { info.append(.cwd) }
         if trustNote != nil { info.append(.trustNote) }
-        result.append(SettingsSectionModel(.info, header: "\(scope.title) · \(serverName)", items: info))
-        result.append(SettingsSectionModel(
+        result.append(ListSection(.info, header: "\(scope.title) · \(serverName)", items: info))
+        result.append(ListSection(
             .config,
             footer: "\(entry.exposure.explanation) Saved in this scope's mcp.json. New sessions or /reload pick up configuration changes.",
             items: [.enabled, .exposure]
         ))
         if entry.supportsOAuth {
             let live = attempt.map { !$0.isSettled } ?? false
-            result.append(SettingsSectionModel(
+            result.append(ListSection(
                 .oauth, header: "OAuth", items: live ? [.continueSignIn] : [.signIn, .signOut]
             ))
         }
         if let headers = entry.config.headers, !headers.isEmpty {
-            result.append(SettingsSectionModel(.headers, header: "Headers", items: headers.keys.sorted().map(Item.header)))
+            result.append(ListSection(.headers, header: "Headers", items: headers.keys.sorted().map(Item.header)))
         }
         if let env = entry.config.env, !env.isEmpty {
-            result.append(SettingsSectionModel(.environment, header: "Environment", items: env.keys.sorted().map(Item.env)))
+            result.append(ListSection(.environment, header: "Environment", items: env.keys.sorted().map(Item.env)))
         }
         if entry.error != nil {
-            result.append(SettingsSectionModel(.connectionError, header: "Connection Error", items: [.connectionError]))
+            result.append(ListSection(.connectionError, header: "Connection Error", items: [.connectionError]))
         }
         if !scope.errors.isEmpty {
-            result.append(SettingsSectionModel(.scopeErrors, items: scope.errors.indices.map(Item.scopeError)))
+            result.append(ListSection(.scopeErrors, items: scope.errors.indices.map(Item.scopeError)))
         }
         // A diffable list traps on a repeated item; a repeated tool shows once.
         var seen = Set<String>()
         let tools: [Item] = entry.tools.isEmpty
             ? [.noTools]
             : entry.tools.filter { seen.insert($0).inserted }.map(Item.tool)
-        result.append(SettingsSectionModel(.tools, header: "Tools (\(entry.tools.count))", items: tools))
-        if busy { result.append(SettingsSectionModel(.busy, items: [.busy])) }
-        if error != nil { result.append(SettingsSectionModel(.error, items: [.error])) }
-        result.append(SettingsSectionModel(.remove, items: [.remove]))
+        result.append(ListSection(.tools, header: "Tools (\(entry.tools.count))", items: tools))
+        if busy { result.append(ListSection(.busy, items: [.busy])) }
+        if error != nil { result.append(ListSection(.error, items: [.error])) }
+        result.append(ListSection(.remove, items: [.remove]))
         return result
     }
 
@@ -335,29 +335,29 @@ final class McpServerDetailViewController: SettingsListViewController<McpServerD
     /// only accessibility element, so `app.buttons[id]` finds it.
     private func configureButton(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         let locked = locked
         switch item {
         case .continueSignIn:
-            ControlScreenList.buttonRow(cell, identifier: "mcp.detail.auth.continue", label: "Continue Sign-In") { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "mcp.detail.auth.continue", label: "Continue Sign-In") { [weak self] in
                 self?.signIn.resume()
             }
             cell.contentConfiguration = Self.rowText("Continue Sign-In", color: UIColor(palette.blue))
         case .signIn:
             let enabled = !(locked || needsRememberedTrust)
             let title = entry.state == "needs-auth" ? "Sign In" : "Sign In Again"
-            ControlScreenList.buttonRow(cell, identifier: "mcp.login", label: title, enabled: enabled) { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "mcp.login", label: title, enabled: enabled) { [weak self] in
                 self?.startLogin()
             }
             cell.contentConfiguration = Self.rowText(title, color: UIColor(enabled ? palette.blue : palette.comment))
         case .signOut:
             let enabled = !(locked || needsRememberedTrust)
-            ControlScreenList.buttonRow(cell, identifier: "mcp.logout", label: "Sign Out", enabled: enabled) { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "mcp.logout", label: "Sign Out", enabled: enabled) { [weak self] in
                 self?.confirmLogout()
             }
             cell.contentConfiguration = Self.rowText("Sign Out", color: UIColor(enabled ? palette.red : palette.comment))
         case .remove:
-            ControlScreenList.buttonRow(cell, identifier: "mcp.remove", label: "Remove Server", enabled: !locked) { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "mcp.remove", label: "Remove Server", enabled: !locked) { [weak self] in
                 self?.confirmRemove()
             }
             cell.contentConfiguration = Self.rowText("Remove Server", color: UIColor(locked ? palette.comment : palette.red))

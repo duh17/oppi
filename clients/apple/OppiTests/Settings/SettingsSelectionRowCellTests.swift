@@ -101,7 +101,7 @@ struct SettingsSelectionRowCellTests {
 }
 
 /// One of each selection row, with text long enough to wrap at the largest sizes.
-private final class SelectionRowsPage: SettingsListViewController<SelectionRowsPage.Section, SelectionRowsPage.Row> {
+private final class SelectionRowsPage: ListScreenController<SelectionRowsPage.Section, SelectionRowsPage.Row> {
     enum Section: Hashable, Sendable { case rows }
     enum Row: CaseIterable, Hashable, Sendable { case chosen, blocked, check }
 
@@ -109,8 +109,8 @@ private final class SelectionRowsPage: SettingsListViewController<SelectionRowsP
         super.init(title: "Selection", listIdentifier: "test.selection.list", scope: .device)
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Row>] {
-        [SettingsSectionModel(.rows, items: Row.allCases)]
+    override func sections() -> [ListSection<Section, Row>] {
+        [ListSection(.rows, items: Row.allCases)]
     }
 
     private lazy var row = UICollectionView.CellRegistration<SettingsSelectionRowCell, Row> { cell, _, row in

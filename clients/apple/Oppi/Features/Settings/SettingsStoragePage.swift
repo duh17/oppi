@@ -3,7 +3,7 @@ import UIKit
 /// Settings > Storage & About: the app version, the Support & Contact link, the
 /// size of what Oppi caches from servers on this device, and Clear Local Cache
 /// behind a confirmation. The cache itself is `LocalCache`.
-final class SettingsStorageViewController: SettingsListViewController<SettingsStorageViewController.Section, SettingsStorageViewController.Item> {
+final class SettingsStorageViewController: ListScreenController<SettingsStorageViewController.Section, SettingsStorageViewController.Item> {
     enum Section: Hashable, Sendable { case about, support, cache }
     enum Item: Hashable, Sendable { case version, support, cacheSize, clearCache }
 
@@ -30,15 +30,15 @@ final class SettingsStorageViewController: SettingsListViewController<SettingsSt
         setNeedsUpdateProperties()
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         [
-            SettingsSectionModel(.about, items: [.version]),
-            SettingsSectionModel(
+            ListSection(.about, items: [.version]),
+            ListSection(
                 .support,
                 footer: String(localized: "Where to report a problem or ask for help. Opens using your Open Links setting."),
                 items: [.support]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .cache,
                 footer: String(localized: "Session history, server details, and file lists Oppi keeps on this device so screens open quickly."),
                 items: [.cacheSize, .clearCache]

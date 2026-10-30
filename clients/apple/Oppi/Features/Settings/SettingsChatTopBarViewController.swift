@@ -8,7 +8,7 @@ import UIKit
 /// The order holds every action, hidden ones included, so a hidden button
 /// returns to the place it left. Terminal keeps its row in every chat: a chat
 /// without a workspace folder only leaves it out of that chat's bar.
-final class SettingsChatTopBarViewController: SettingsListViewController<SettingsChatTopBarViewController.Section, ChatTopBarAction> {
+final class SettingsChatTopBarViewController: ListScreenController<SettingsChatTopBarViewController.Section, ChatTopBarAction> {
     enum Section: Hashable, Sendable { case buttons }
 
     private let defaults: UserDefaults
@@ -43,8 +43,8 @@ final class SettingsChatTopBarViewController: SettingsListViewController<Setting
 
     private var layout: ChatTopBarLayout { AppPreferences.ChatTopBar.layout(in: defaults) }
 
-    override func sections() -> [SettingsSectionModel<Section, ChatTopBarAction>] {
-        [SettingsSectionModel(
+    override func sections() -> [ListSection<Section, ChatTopBarAction>] {
+        [ListSection(
             .buttons,
             footer: String(localized: "A button turned off moves into the … menu, which always stays last. Terminal also needs a workspace folder on the server."),
             items: layout.order

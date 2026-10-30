@@ -4,7 +4,7 @@ import UIKit
 /// draft form on the settings base: its edits live in `ScheduleEditDraft`, Save
 /// sends them and Cancel drops them. Presented in a navigation controller; the
 /// time zone list and the model picker are sheets over it.
-final class ScheduleNativeEditViewController: SettingsListViewController<
+final class ScheduleNativeEditViewController: ListScreenController<
     ScheduleNativeEditViewController.Section, ScheduleNativeEditViewController.Item
 > {
     enum Section: Hashable, Sendable { case schedule, instructions, target, error }
@@ -133,7 +133,7 @@ final class ScheduleNativeEditViewController: SettingsListViewController<
 
     // MARK: - Sections
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         var schedule: [Item] = [.name, .cadence]
         switch draft.triggerDraft.cadence {
         case .oneTime: schedule.append(.runAt)
@@ -147,7 +147,7 @@ final class ScheduleNativeEditViewController: SettingsListViewController<
         let target: [Item] = draft.isNewSessionAction
             ? [.workspace, .agent, .model] + (draft.model.isEmpty ? [] : [.useDefaultModel]) + [.thinking, .sessionName]
             : [.workspace, .session, .delivery]
-        var sections: [SettingsSectionModel<Section, Item>] = [
+        var sections: [ListSection<Section, Item>] = [
             .init(.schedule, header: "Schedule", items: schedule),
             .init(.instructions, header: "Instructions", items: [.prompt]),
             .init(.target, header: draft.isNewSessionAction ? "Start New Session" : "Existing Session", items: target),
@@ -410,7 +410,7 @@ final class ScheduleNativeEditViewController: SettingsListViewController<
 
 /// The time zones a schedule can run in, filtered by the search bar in the
 /// navigation bar. Choosing one reports it and closes the sheet.
-final class ScheduleTimeZonePickerViewController: SettingsListViewController<
+final class ScheduleTimeZonePickerViewController: ListScreenController<
     ScheduleTimeZonePickerViewController.Section, String
 > {
     enum Section: Hashable, Sendable { case zones }
@@ -456,11 +456,11 @@ final class ScheduleTimeZonePickerViewController: SettingsListViewController<
     }
 
     /// `_` is a word separator for the matcher, so "new york" finds America/New_York.
-    override func sections() -> [SettingsSectionModel<Section, String>] {
+    override func sections() -> [ListSection<Section, String>] {
         let identifiers = searchText.isEmpty
             ? TimeZone.knownTimeZoneIdentifiers
             : TimeZone.knownTimeZoneIdentifiers.filter { FuzzyMatch.matchesAny(query: searchText, fields: [$0]) }
-        return [SettingsSectionModel(.zones, items: identifiers)]
+        return [ListSection(.zones, items: identifiers)]
     }
 
     override func inputs(of item: String) -> AnyHashable {

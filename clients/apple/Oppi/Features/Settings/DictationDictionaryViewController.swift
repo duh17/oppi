@@ -13,7 +13,7 @@ import UIKit
 /// Phrases are drafts until Save in the bar writes them: a failed save keeps
 /// the drafts, and Retry reloads the lists and discards them.
 @MainActor
-final class DictationDictionaryViewController: SettingsListViewController<DictationDictionaryViewController.Section, DictationDictionaryViewController.Item> {
+final class DictationDictionaryViewController: ListScreenController<DictationDictionaryViewController.Section, DictationDictionaryViewController.Item> {
     enum Section: Hashable, Sendable { case status, global, workspace, add, consent, delete }
     enum PhraseScope: String, Hashable, Sendable { case global, workspace }
     enum Item: Hashable, Sendable {
@@ -83,27 +83,27 @@ final class DictationDictionaryViewController: SettingsListViewController<Dictat
 
     private var provider: String? { model.global?.provider }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         switch model.loadState {
         case .loading:
-            return [SettingsSectionModel(.status, items: [.loading])]
+            return [ListSection(.status, items: [.loading])]
         case .failed:
-            return [SettingsSectionModel(.status, items: [.failed])]
+            return [ListSection(.status, items: [.failed])]
         case .loaded:
             break
         }
-        var sections: [SettingsSectionModel<Section, Item>] = []
+        var sections: [ListSection<Section, Item>] = []
         if model.notice != nil {
-            sections.append(SettingsSectionModel(.status, items: [.notice]))
+            sections.append(ListSection(.status, items: [.notice]))
         }
-        sections.append(SettingsSectionModel(
+        sections.append(ListSection(
             .global,
             header: String(localized: "All Workspaces"),
             footer: DictationDictionaryCopy.globalFooter(serverName: model.serverName, workspaceName: model.workspaceName),
             items: phraseItems(model.globalDraft, scope: .global)
         ))
         if model.workspaceId != nil {
-            sections.append(SettingsSectionModel(
+            sections.append(ListSection(
                 .workspace,
                 header: String(localized: "This Workspace"),
                 footer: DictationDictionaryCopy.workspaceFooter(serverName: model.serverName),
@@ -111,7 +111,7 @@ final class DictationDictionaryViewController: SettingsListViewController<Dictat
                 items: phraseItems(model.workspaceDraft, scope: .workspace)
             ))
         }
-        sections.append(SettingsSectionModel(
+        sections.append(ListSection(
             .add,
             footer: String(localized: "Saved phrases are hints, not guaranteed transcriptions. Entries marked excluded will not be selected for the next take."),
             items: [.addPhrase] + (model.isComposing
@@ -119,7 +119,7 @@ final class DictationDictionaryViewController: SettingsListViewController<Dictat
                 : [])
         ))
         if let provider {
-            sections.append(SettingsSectionModel(
+            sections.append(ListSection(
                 .consent,
                 footer: DictationDictionaryCopy.consentFooter(serverName: model.serverName, provider: provider),
                 scope: .deviceOnServer(model.serverName),
@@ -127,7 +127,7 @@ final class DictationDictionaryViewController: SettingsListViewController<Dictat
             ))
         }
         if model.workspaceId != nil {
-            sections.append(SettingsSectionModel(.delete, items: [.delete]))
+            sections.append(ListSection(.delete, items: [.delete]))
         }
         return sections
     }

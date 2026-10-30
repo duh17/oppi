@@ -346,7 +346,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             doneItem = item
             leading.append(item)
         }
-        ControlScreenList.setBarItems(trailing: [], leading: leading, on: navigationItem)
+        ListScreen.setBarItems(trailing: [], leading: leading, on: navigationItem)
     }
 
     // MARK: - Snapshot

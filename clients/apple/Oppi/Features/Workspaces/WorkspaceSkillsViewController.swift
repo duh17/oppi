@@ -7,7 +7,7 @@ import UIKit
 /// Pushed from Workspace Settings, which already made the workspace's server
 /// the active one and bound `model` to it; this page only reads the model.
 @MainActor
-final class WorkspaceSkillsViewController: SettingsListViewController<
+final class WorkspaceSkillsViewController: ListScreenController<
     WorkspaceSkillsViewController.Section,
     WorkspaceSkillsViewController.Item
 > {
@@ -67,7 +67,7 @@ final class WorkspaceSkillsViewController: SettingsListViewController<
 
     // MARK: - Rows
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
         var items: [Item] = []
@@ -80,7 +80,7 @@ final class WorkspaceSkillsViewController: SettingsListViewController<
         }
         if model.skillsError != nil { items.append(.error) }
         let serverName = model.serverName(in: root.coordinator.serverStore)
-        return [SettingsSectionModel(.skills, footer: model.piResourceFooter(serverName: serverName), items: items)]
+        return [ListSection(.skills, footer: model.piResourceFooter(serverName: serverName), items: items)]
     }
 
     override func inputs(of item: Item) -> AnyHashable {

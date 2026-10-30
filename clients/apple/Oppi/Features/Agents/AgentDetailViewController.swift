@@ -28,7 +28,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     private let root: AppRootEnvironment
     private let agentId: String
     private let onUpdated: (StoredAgentDefinition) -> Void
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private let refreshControl = UIRefreshControl()
     private let editItem = UIBarButtonItem()
@@ -113,14 +113,14 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true),
             animated: false
         )
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "agents.detail.list"
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ControlScreenList.pinFullWidth(collectionView, in: view)
+        ListScreen.pinFullWidth(collectionView, in: view)
         installDataSource()
         composer.install(in: self)
         for presenter in presenters { presenter.anchor = self }
@@ -165,7 +165,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         title = agent?.name ?? "Agent"
         updateBarItems()
         updateComposer()
@@ -186,7 +186,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     private func updateBarItems() {
         guard let agent, agent.status == .active else {
-            ControlScreenList.setBarItems(trailing: [], leading: [], on: navigationItem)
+            ListScreen.setBarItems(trailing: [], leading: [], on: navigationItem)
             return
         }
         let archive = UIAction(
@@ -198,7 +198,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
         }
         archive.accessibilityIdentifier = "agents.detail.archive"
         actionsItem.menu = UIMenu(children: [archive])
-        ControlScreenList.setBarItems(trailing: [actionsItem, editItem], leading: [], on: navigationItem)
+        ListScreen.setBarItems(trailing: [actionsItem, editItem], leading: [], on: navigationItem)
     }
 
     // MARK: - List
@@ -329,18 +329,18 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         let rowInsets = NSDirectionalEdgeInsets(top: 11, leading: 0, bottom: 11, trailing: 0)
         switch item {
         case .loading:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .loading(String(localized: "Loading agent…")),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         case .notFound:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .empty(
                     title: String(localized: "Agent Not Found"),
@@ -348,10 +348,10 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
                 ),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         case .icon:
             guard let agent else { return }
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "agents.detail.icon",
                 label: "Icon",
@@ -375,12 +375,12 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             }
             cell.accessories = [.disclosureIndicator()]
         case .value(let title, let value):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: rowInsets) {
                 ControlRowViews.valueRow(title, value, palette: palette)
             }
         case .block(let title, let value):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: rowInsets) {
                 let block = ControlRowViews.stack([
                     ControlRowViews.label(title, style: .subheadline, color: UIColor(palette.comment)),
@@ -392,7 +392,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
                 return block
             }
         case .resourceList(let title, let value):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: rowInsets) {
                 let block = ControlRowViews.stack([
                     ControlRowViews.label(title, style: .subheadline, weight: .medium, color: UIColor(palette.fg)),
@@ -405,7 +405,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             }
         case .prompt:
             guard let instructions = agent?.definition.instructions else { return }
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "agents.detail.definition",
                 label: "Read and comment on Agent definition"
@@ -425,7 +425,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
                 ], spacing: 10, alignment: .leading)
             }
         case .notice(let text, let systemImage, let warning):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: rowInsets) {
                 ControlRowViews.symbolLabel(
                     text,
@@ -436,7 +436,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             }
         case .schedule:
             let enabled = !connection.workspaceStore.workspaces.isEmpty
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "agents.detail.schedule",
                 label: "Schedule Recurring Run",
@@ -453,7 +453,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             cell.contentConfiguration = content
         case .startSession:
             let enabled = !connection.workspaceStore.workspaces.isEmpty && connection.currentServerId != nil
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "agents.detail.launch",
                 label: "Start Session with \(agent?.name ?? "Agent")",
@@ -469,7 +469,7 @@ final class AgentDetailViewController: UIViewController, UICollectionViewDelegat
             content.imageProperties.tintColor = tint
             cell.contentConfiguration = content
         case .caption(let text):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(text, style: .caption1, color: UIColor(palette.comment))
             }

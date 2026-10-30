@@ -6,7 +6,7 @@ import UIKit
 /// sheet; Cancel closes it. A new template's preview shows "Untitled" and
 /// "Comment text required" until they are filled in.
 @MainActor
-final class QuickCommentEditorViewController: SettingsListViewController<QuickCommentEditorViewController.Section, QuickCommentEditorViewController.Item> {
+final class QuickCommentEditorViewController: ListScreenController<QuickCommentEditorViewController.Section, QuickCommentEditorViewController.Item> {
     enum Section: Hashable, Sendable { case basics, text, preview }
     enum Item: Hashable, Sendable { case title, icon, text, preview }
 
@@ -100,16 +100,16 @@ final class QuickCommentEditorViewController: SettingsListViewController<QuickCo
 
     // MARK: - Sections
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         [
-            SettingsSectionModel(.basics, header: String(localized: "Basics"), items: [.title, .icon]),
-            SettingsSectionModel(
+            ListSection(.basics, header: String(localized: "Basics"), items: [.title, .icon]),
+            ListSection(
                 .text,
                 header: String(localized: "Inserted Text"),
                 footer: String(localized: "Inserted into the comment composer when you tap the quick comment."),
                 items: [.text]
             ),
-            SettingsSectionModel(.preview, header: String(localized: "Preview"), items: [.preview]),
+            ListSection(.preview, header: String(localized: "Preview"), items: [.preview]),
         ]
     }
 

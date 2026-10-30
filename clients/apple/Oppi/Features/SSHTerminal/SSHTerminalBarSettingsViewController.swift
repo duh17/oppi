@@ -11,7 +11,7 @@ import UIKit
 ///
 /// The terminal can push this page from its … menu (Customize Bar…), so the
 /// bar being changed is one Back away.
-final class SSHTerminalBarSettingsViewController: SettingsListViewController<
+final class SSHTerminalBarSettingsViewController: ListScreenController<
     SSHTerminalBarSettingsViewController.Section, SSHTerminalBarSettingsViewController.Item
 > {
     enum Section: Hashable, Sendable { case middle, trailing, reset }
@@ -62,19 +62,19 @@ final class SSHTerminalBarSettingsViewController: SettingsListViewController<
         setNeedsUpdateProperties()
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         let layout = layout
         func items(_ group: SSHTerminalBarAction.Group) -> [Item] {
             layout.order.filter { $0.group == group }.map(Item.action)
         }
-        var sections: [SettingsSectionModel<Section, Item>] = [
-            SettingsSectionModel(
+        var sections: [ListSection<Section, Item>] = [
+            ListSection(
                 .middle,
                 header: String(localized: "Middle"),
                 footer: String(localized: "A button turned off moves into the \u{2026} menu, except keys and Paste, which the keyboard bars have. A button that doesn't fit the screen moves into the menu too, except Paste, which is left out."),
                 items: items(.middle)
             ),
-            SettingsSectionModel(
+            ListSection(
                 .trailing,
                 header: String(localized: "Right"),
                 footer: String(localized: "Herdr and Rex show when the host runs them, and Switch Terminal when more than one terminal is open."),
@@ -82,7 +82,7 @@ final class SSHTerminalBarSettingsViewController: SettingsListViewController<
             ),
         ]
         if !layout.isDefault {
-            sections.append(SettingsSectionModel(.reset, items: [.reset]))
+            sections.append(ListSection(.reset, items: [.reset]))
         }
         return sections
     }

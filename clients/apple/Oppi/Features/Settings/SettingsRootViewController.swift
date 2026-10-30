@@ -8,9 +8,9 @@ import UIKit
 /// the row's own push. The index reads its summaries in `updateProperties()`,
 /// which Observation re-runs when a store it read changes, and again whenever
 /// this screen comes back from a page that wrote a preference
-/// (`SettingsListViewController`).
+/// (`ListScreenController`).
 @MainActor
-final class SettingsRootViewController: SettingsListViewController<SettingsRootViewController.Section, SettingsRootViewController.Item> {
+final class SettingsRootViewController: ListScreenController<SettingsRootViewController.Section, SettingsRootViewController.Item> {
     private let root: AppRootEnvironment
 
     private var coordinator: ConnectionCoordinator { root.coordinator }
@@ -92,14 +92,14 @@ final class SettingsRootViewController: SettingsListViewController<SettingsRootV
 
     // MARK: - Snapshot
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         [
-            SettingsSectionModel(
+            ListSection(
                 .servers,
                 header: String(localized: "Servers"),
                 items: serverStore.servers.map { .server($0.id) } + [.addServer]
             ),
-            SettingsSectionModel(.pages, items: Self.pages),
+            ListSection(.pages, items: Self.pages),
         ]
     }
 

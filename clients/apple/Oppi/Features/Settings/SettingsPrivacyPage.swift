@@ -8,7 +8,7 @@ import UIKit
 /// ask for device authentication first, so someone holding the unlocked app
 /// cannot quietly weaken them. A cancelled prompt leaves the control where it was.
 @MainActor
-final class SettingsPrivacyViewController: SettingsListViewController<SettingsPrivacyViewController.Section, SettingsPrivacyViewController.Item> {
+final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyViewController.Section, SettingsPrivacyViewController.Item> {
     enum Section: Hashable, Sendable { case appLock, confirmNewServers, diagnostics, privacyPolicy }
     enum Item: Hashable, Sendable { case appLock, confirmNewServers, diagnostics, privacyPolicy }
 
@@ -34,9 +34,9 @@ final class SettingsPrivacyViewController: SettingsListViewController<SettingsPr
 
     // MARK: - Sections
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         [
-            SettingsSectionModel(
+            ListSection(
                 .appLock,
                 footer: SettingsPrivacyCopy.appLockFooter(
                     timeout: appLock.timeout,
@@ -46,7 +46,7 @@ final class SettingsPrivacyViewController: SettingsListViewController<SettingsPr
                 ),
                 items: [.appLock]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .confirmNewServers,
                 footer: SettingsPrivacyCopy.confirmNewServersFooter(
                     isOn: BiometricService.shared.isEnabled,
@@ -55,14 +55,14 @@ final class SettingsPrivacyViewController: SettingsListViewController<SettingsPr
                 ),
                 items: [.confirmNewServers]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .diagnostics,
                 footer: AppPreferences.Telemetry.isEnabled
                     ? String(localized: "Diagnostics are sent only to your server.")
                     : String(localized: "Diagnostics uploads are off."),
                 items: [.diagnostics]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .privacyPolicy,
                 footer: String(localized: "Explains where Oppi data goes. Opens using your Open Links setting."),
                 items: [.privacyPolicy]

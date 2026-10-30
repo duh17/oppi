@@ -24,7 +24,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
     private let root: AppRootEnvironment
     private let scheduleId: String
     private let onChanged: (AgentScheduleSummary) -> Void
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private let refreshControl = UIRefreshControl()
     private let editItem = UIBarButtonItem()
@@ -102,14 +102,14 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true),
             animated: false
         )
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "schedule.detail.list"
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ControlScreenList.pinFullWidth(collectionView, in: view)
+        ListScreen.pinFullWidth(collectionView, in: view)
         installDataSource()
         composer.install(in: self)
         for presenter in [nativeEditor, promptReader] { presenter.anchor = self }
@@ -145,7 +145,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         title = schedule?.name ?? "Schedule"
         updateBarItems()
         updateComposer()
@@ -167,13 +167,13 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
 
     private func updateBarItems() {
         guard let schedule else {
-            ControlScreenList.setBarItems(trailing: [], leading: [], on: navigationItem)
+            ListScreen.setBarItems(trailing: [], leading: [], on: navigationItem)
             return
         }
         editItem.isEnabled = !isMutating
         // An archived schedule has only Restore (a row) and the Oppi bar.
         guard schedule.status != .archived else {
-            ControlScreenList.setBarItems(trailing: [], leading: [], on: navigationItem)
+            ListScreen.setBarItems(trailing: [], leading: [], on: navigationItem)
             return
         }
         let archive = UIAction(
@@ -186,7 +186,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         archive.accessibilityIdentifier = "schedule.detail.archive"
         actionsItem.menu = UIMenu(children: [archive])
         // Native Edit beside the actions menu, as on an Agent's detail.
-        ControlScreenList.setBarItems(trailing: [actionsItem, editItem], leading: [], on: navigationItem)
+        ListScreen.setBarItems(trailing: [actionsItem, editItem], leading: [], on: navigationItem)
     }
 
     // MARK: - List
@@ -286,17 +286,17 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .loading:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .loading(String(localized: "Loading schedule…")),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         case .notFound:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .empty(
                     title: String(localized: "Schedule Not Found"),
@@ -304,9 +304,9 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
                 ),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         case .summary:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             guard let schedule else { return }
             cell.contentConfiguration = ControlViewContent { [palette] in
                 Self.summaryView(schedule, palette: palette)
@@ -314,7 +314,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         case .prompt:
             guard let schedule else { return }
             let prompt = SchedulePresentation.prompt(in: schedule.action)
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "schedule.detail.prompt",
                 label: "What it does. \(prompt). Show full schedule instructions",
@@ -332,12 +332,12 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
                 return ControlRowViews.stack([heading, body], spacing: 8)
             }
         case .detail(let title, let value):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) { [palette] in
                 ControlRowViews.valueRow(title, value, palette: palette)
             }
         case .caption(let text):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent { [palette] in
                 ControlRowViews.label(text, style: .caption1, color: UIColor(palette.comment))
             }
@@ -357,7 +357,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
                 self?.mutate(.restore)
             }
         case .enabled:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = "Enabled"
             content.textProperties.color = UIColor(palette.fg)
@@ -372,7 +372,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
             }, for: .valueChanged)
             cell.accessories = [.customView(configuration: .init(customView: toggle, placement: .trailing()))]
         case .noRuns:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .empty(
                     title: String(localized: "No Runs Yet"),
@@ -395,7 +395,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         enabled: Bool,
         action: @escaping () -> Void
     ) {
-        ControlScreenList.buttonRow(cell, identifier: identifier, label: title, enabled: enabled, action: action)
+        ListScreen.buttonRow(cell, identifier: identifier, label: title, enabled: enabled, action: action)
         var content = UIListContentConfiguration.cell()
         content.text = title
         content.image = UIImage(systemName: systemImage)
@@ -411,7 +411,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
         let errorSummary = SchedulePresentation.runErrorSummary(run.error)
         let label = [status, detail, errorSummary].compactMap { $0 }.joined(separator: ", ")
         if run.sessionId != nil {
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "schedule.run.\(run.id)",
                 label: label,
@@ -420,7 +420,7 @@ final class ScheduleDetailViewController: UIViewController, UICollectionViewDele
                 self?.openRunSession(run)
             }
         } else {
-            ControlScreenList.staticRow(cell, identifier: "schedule.run.\(run.id)")
+            ListScreen.staticRow(cell, identifier: "schedule.run.\(run.id)")
             cell.isAccessibilityElement = true
             cell.accessibilityLabel = label
         }

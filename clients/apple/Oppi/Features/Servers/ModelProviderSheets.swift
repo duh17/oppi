@@ -32,7 +32,7 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
     private let visibleServerId: () -> String?
     private let onDone: () -> Void
     private let onCancel: () -> Void
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var changedRows = ChangedRows<Item>()
 
@@ -62,7 +62,7 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true),
             animated: false
         )
         collectionView.delegate = self
@@ -73,7 +73,7 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         // A cancel in flight must finish before the sheet can go.
         isModalInPresentation = attempt.isCancelling
         applySnapshot()
@@ -242,10 +242,10 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         let flow = attempt.flow
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .value(let title):
-            ControlScreenList.staticRow(cell, identifier: "server.modelProviders.signIn.\(title.lowercased())")
+            ListScreen.staticRow(cell, identifier: "server.modelProviders.signIn.\(title.lowercased())")
             let value = switch title {
             case "Provider": attempt.providerName
             case "Status": statusText
@@ -255,7 +255,7 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
                 ControlRowViews.valueRow(title, value, palette: palette, style: .body)
             }
         case .openLink:
-            ControlScreenList.buttonRow(cell, identifier: "server.modelProviders.signIn.open", label: "Open sign-in page on iPhone") { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "server.modelProviders.signIn.open", label: "Open sign-in page on iPhone") { [weak self] in
                 self?.openSignInPage()
             }
             cell.contentConfiguration = Self.actionContent("Open sign-in page on iPhone", systemImage: "safari", color: UIColor(palette.blue))
@@ -263,40 +263,40 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
             // The text field row (`configureInput`).
             break
         case .linkUnavailable:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label("This sign-in link cannot be opened on iPhone.", style: .footnote, color: UIColor(palette.comment))
             }
         case .instructions:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.selectableText(flow.auth?.instructions ?? "", style: .footnote, color: UIColor(palette.fg))
             }
         case .option(let id):
             let label = flow.prompt?.options?.first { $0.id == id }?.label ?? id
-            ControlScreenList.buttonRow(cell, identifier: "server.modelProviders.signIn.option.\(id)", label: label, enabled: !isBusy) { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "server.modelProviders.signIn.option.\(id)", label: label, enabled: !isBusy) { [weak self] in
                 guard let attempt = self?.attempt else { return }
                 Task { await attempt.submitPromptResponse(id) }
             }
             cell.contentConfiguration = Self.actionContent(label, color: UIColor(isBusy ? palette.comment : palette.blue))
         case .submit:
             let enabled = canSubmit
-            ControlScreenList.buttonRow(cell, identifier: "server.modelProviders.signIn.submit", label: "Submit", enabled: enabled) { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "server.modelProviders.signIn.submit", label: "Submit", enabled: enabled) { [weak self] in
                 self?.submit()
             }
             cell.contentConfiguration = Self.actionContent("Submit", color: UIColor(enabled ? palette.blue : palette.comment))
         case .progress:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.selectableText(flow.lastProgress ?? "", style: .footnote, color: UIColor(palette.fg))
             }
         case .error:
-            ControlScreenList.staticRow(cell, identifier: "server.modelProviders.signIn.error")
+            ListScreen.staticRow(cell, identifier: "server.modelProviders.signIn.error")
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.selectableText(flow.error ?? "", style: .body, color: UIColor(palette.red))
             }
         case .gone:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(
                     "The server no longer has this sign-in attempt. It may have expired or the server restarted.",
@@ -305,25 +305,25 @@ final class ProviderSignInViewController: UIViewController, UICollectionViewDele
                 )
             }
         case .refreshError:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(self.attempt.refreshError, style: .footnote, color: UIColor(palette.orange))
             }
         case .actionError:
-            ControlScreenList.staticRow(cell, identifier: "server.modelProviders.signIn.actionError")
+            ListScreen.staticRow(cell, identifier: "server.modelProviders.signIn.actionError")
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(self.attempt.actionError, style: .body, color: UIColor(palette.red))
             }
         case .finish:
             if attempt.isSettled {
-                ControlScreenList.buttonRow(cell, identifier: "server.modelProviders.signIn.done", label: "Done") { [weak self] in
+                ListScreen.buttonRow(cell, identifier: "server.modelProviders.signIn.done", label: "Done") { [weak self] in
                     self?.onDone()
                 }
                 cell.contentConfiguration = Self.actionContent("Done", color: UIColor(palette.blue))
             } else {
                 let cancelling = attempt.isCancelling
                 let title = cancelling ? "Cancelling…" : "Cancel Sign-In"
-                ControlScreenList.buttonRow(cell, identifier: "server.modelProviders.signIn.cancel", label: title, enabled: !cancelling) { [weak self] in
+                ListScreen.buttonRow(cell, identifier: "server.modelProviders.signIn.cancel", label: title, enabled: !cancelling) { [weak self] in
                     self?.onCancel()
                 }
                 cell.contentConfiguration = Self.actionContent(title, color: UIColor(cancelling ? palette.comment : palette.red))
@@ -378,7 +378,7 @@ final class ProviderAPIKeyViewController: UIViewController, UICollectionViewDele
     let provider: ProviderAuthProviderStatus
     private let root: AppRootEnvironment
     private let onSave: (String) -> Void
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private let saveItem = UIBarButtonItem()
     private let savingItem: UIBarButtonItem = {
@@ -420,7 +420,7 @@ final class ProviderAPIKeyViewController: UIViewController, UICollectionViewDele
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.delegate = self
@@ -438,7 +438,7 @@ final class ProviderAPIKeyViewController: UIViewController, UICollectionViewDele
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         saveItem.isEnabled = !trimmedDraft.isEmpty
         let trailing = isSaving ? savingItem : saveItem
         if navigationItem.rightBarButtonItem !== trailing {
@@ -473,8 +473,8 @@ final class ProviderAPIKeyViewController: UIViewController, UICollectionViewDele
         let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
             guard let self else { return }
             let palette = palette
-            ControlScreenList.background(cell, grouped: true, palette: palette)
-            ControlScreenList.staticRow(cell)
+            ListScreen.background(cell, grouped: true, palette: palette)
+            ListScreen.staticRow(cell)
             if item == .provider {
                 var content = UIListContentConfiguration.cell()
                 content.text = provider.name

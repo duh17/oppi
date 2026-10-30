@@ -15,7 +15,7 @@ import UIKit
 /// Notifications (this device's, kept for this server), Badge Icon, Lock, and
 /// Remove Server (this device only). Each says so in its footer.
 @MainActor
-final class ServerSettingsViewController: SettingsListViewController<ServerSettingsViewController.Section, ServerSettingsViewController.Item> {
+final class ServerSettingsViewController: ListScreenController<ServerSettingsViewController.Section, ServerSettingsViewController.Item> {
     enum Section: Hashable, Sendable {
         case summary, pages, badge, mobileOutputGuide, serverMetrics, notifications, lock, remove
     }
@@ -140,7 +140,7 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
 
     // MARK: - Snapshot
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         let name = current.name
         var summary: [Item] = [.summary]
         if model.error != nil { summary.append(.summaryError) }
@@ -161,25 +161,25 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
         }
 
         return [
-            SettingsSectionModel(.summary, items: summary),
-            SettingsSectionModel(.pages, items: [.modelProviders, .workspaces, .dictionary, .pairedDevices, .about]),
-            SettingsSectionModel(
+            ListSection(.summary, items: summary),
+            ListSection(.pages, items: [.modelProviders, .workspaces, .dictionary, .pairedDevices, .about]),
+            ListSection(
                 .badge,
                 footer: String(localized: "The badge color shows the connection: green connected, blue connecting, orange recovering, red offline."),
                 scope: .device,
                 items: [.badge]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .mobileOutputGuide,
                 footer: SettingsCatalog.mobileOutputGuideEnabled.copy.footer,
                 items: settingRows(SettingsCatalog.mobileOutputGuideEnabled, .mobileOutputGuide) { .settingFailure($0) }
             ),
-            SettingsSectionModel(
+            ListSection(
                 .serverMetrics,
                 footer: String(localized: "Off by default. When on, this server samples its CPU, memory, and disk every 30 seconds for the Server Metrics page, and keeps the samples for 30 days."),
                 items: settingRows(SettingsCatalog.serverMetricsEnabled, .serverMetrics) { .settingFailure($0) }
             ),
-            SettingsSectionModel(
+            ListSection(
                 .notifications,
                 header: String(localized: "Notifications"),
                 footer: ServerNotificationsSection.footer(
@@ -190,13 +190,13 @@ final class ServerSettingsViewController: SettingsListViewController<ServerSetti
                 scope: .deviceOnServer(name),
                 items: notificationItems
             ),
-            SettingsSectionModel(
+            ListSection(
                 .lock,
                 footer: ScopedLockToggleRow.footer(for: "this server and its workspaces and sessions"),
                 scope: .device,
                 items: [.lock]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .remove,
                 footer: String(localized: "Removing a server only unpairs this device. It does not delete the server or its data."),
                 scope: .device,

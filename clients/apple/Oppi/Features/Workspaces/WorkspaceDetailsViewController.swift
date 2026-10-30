@@ -8,7 +8,7 @@ import UIKit
 /// Pushed from Workspace Settings, which already made the workspace's server
 /// the active one and bound `settings` to it.
 @MainActor
-final class WorkspaceDetailsViewController: SettingsListViewController<
+final class WorkspaceDetailsViewController: ListScreenController<
     WorkspaceDetailsViewController.Section,
     WorkspaceDetailsViewController.Item
 > {
@@ -96,7 +96,7 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
     override func updateProperties() {
         super.updateProperties()
         saveItem.isEnabled = model.canSave
-        ControlScreenList.setBarItems(trailing: [saveItem], leading: [], on: navigationItem)
+        ListScreen.setBarItems(trailing: [saveItem], leading: [], on: navigationItem)
         updateIconPicker()
     }
 
@@ -110,21 +110,21 @@ final class WorkspaceDetailsViewController: SettingsListViewController<
     static let folderPlaceholder = "~/workspace/project"
     static let folderFooter = String(localized: "Leave empty to let Oppi create a folder. If the folder doesn\u{2019}t exist, use Create This Folder; Oppi asks before creating one directory.")
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
         var folder: [Item] = [.folder]
         if model.folderCheck != .none { folder.append(.folderCheck) }
         var sections = [
-            SettingsSectionModel<Section, Item>(.identity, items: [.name, .description, .icon]),
-            SettingsSectionModel<Section, Item>(
+            ListSection<Section, Item>(.identity, items: [.name, .description, .icon]),
+            ListSection<Section, Item>(
                 .folder,
                 header: String(localized: "Workspace Folder"),
                 footer: Self.folderFooter,
                 items: folder
             ),
         ]
-        if model.error != nil { sections.append(SettingsSectionModel(.error, items: [.error])) }
+        if model.error != nil { sections.append(ListSection(.error, items: [.error])) }
         return sections
     }
 

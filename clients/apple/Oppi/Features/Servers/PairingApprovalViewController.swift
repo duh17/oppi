@@ -14,7 +14,7 @@ import UIKit
 /// server; the controller authenticates the owner before anything is signed, and refuses a
 /// request that has expired.
 @MainActor
-final class PairingApprovalViewController: SettingsListViewController<PairingApprovalViewController.Section, PairingApprovalViewController.Item> {
+final class PairingApprovalViewController: ListScreenController<PairingApprovalViewController.Section, PairingApprovalViewController.Item> {
     enum Section: Hashable, Sendable { case header, facts }
     enum Item: Hashable, Sendable { case header, method, source, requested, expires }
 
@@ -142,13 +142,13 @@ final class PairingApprovalViewController: SettingsListViewController<PairingApp
 
     // MARK: - Rows
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         var facts: [Item] = [.method]
         if PairingApprovalPromptFormatting.source(presented.approval.source) != nil { facts.append(.source) }
         facts.append(contentsOf: [.requested, .expires])
         return [
-            SettingsSectionModel(.header, items: [.header]),
-            SettingsSectionModel(.facts, items: facts),
+            ListSection(.header, items: [.header]),
+            ListSection(.facts, items: facts),
         ]
     }
 

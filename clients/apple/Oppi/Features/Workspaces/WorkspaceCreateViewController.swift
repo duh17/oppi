@@ -155,7 +155,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
         view.backgroundColor = theme.backgroundColor
         collectionView.backgroundColor = theme.backgroundColor
         title = model.navigationTitle
-        ControlScreenList.setBarItems(trailing: trailingItems(), leading: [cancelItem], on: navigationItem)
+        ListScreen.setBarItems(trailing: trailingItems(), leading: [cancelItem], on: navigationItem)
         createItem.isEnabled = model.canCreate
         applySnapshot()
         updateIconPicker()
@@ -582,7 +582,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             break
         }
         content.textProperties.numberOfLines = 0
-        ControlScreenList.buttonRow(
+        ListScreen.buttonRow(
             cell,
             identifier: identifier,
             label: label,
@@ -591,7 +591,7 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             enabled: enabled,
             action: action
         )
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         cell.accessories = accessories
         cell.contentConfiguration = content
     }

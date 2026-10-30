@@ -6,7 +6,7 @@ import UIKit
 /// applies at once to chats, code, and terminals (`FontPreferences` rebuilds
 /// `AppFont` before the page redraws).
 @MainActor
-final class SettingsTextViewController: SettingsListViewController<SettingsTextViewController.Section, SettingsTextViewController.Item> {
+final class SettingsTextViewController: ListScreenController<SettingsTextViewController.Section, SettingsTextViewController.Item> {
     enum Section: Hashable, Sendable { case codeFont, codeSize, messages, preview }
     enum Item: Hashable, Sendable { case codeFont, codeSize, messageSize, monospacedMessages, preview }
 
@@ -33,24 +33,24 @@ final class SettingsTextViewController: SettingsListViewController<SettingsTextV
 
     @objc private func fontsDidRebuild() { setNeedsUpdateProperties() }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         [
-            SettingsSectionModel(
+            ListSection(
                 .codeFont,
                 footer: String(localized: "Nerd Font icons add prompt and file icons in the terminal and tool output, with any code font."),
                 items: [.codeFont]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .codeSize,
                 footer: String(localized: "Code blocks, diffs, terminals, and tool output."),
                 items: [.codeSize]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .messages,
                 footer: String(localized: "Assistant and user chat messages. Monospaced Messages sets them in your code font."),
                 items: [.messageSize, .monospacedMessages]
             ),
-            SettingsSectionModel(.preview, items: [.preview]),
+            ListSection(.preview, items: [.preview]),
         ]
     }
 

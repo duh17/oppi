@@ -53,7 +53,7 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
     /// The route makes the Skill's server the active one on every appearance.
     private let switchesServer: Bool
     private let loader: ServerResourceDetailLoader<ServerSkillDetail>
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
 
     /// The Skill's server once it is ready.
@@ -102,7 +102,7 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.delegate = self
@@ -136,7 +136,7 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         let store = connection?.serverResourceStore
         let summary = resolvedServerSkillDetailSummary(
             catalogSummary: store?.skills(forServer: target.serverId).first { $0.id == target.resourceId },
@@ -315,12 +315,12 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         guard let state else { return }
         let summary = state.summary
         switch item {
         case .title:
-            ControlScreenList.staticRow(cell, identifier: "skills.detail.title")
+            ListScreen.staticRow(cell, identifier: "skills.detail.title")
             var content = UIListContentConfiguration.subtitleCell()
             content.text = summary.name
             // Bold title2, still a text style, so it scales with the setting.
@@ -335,7 +335,7 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             }
             cell.contentConfiguration = content
         case .enabled:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             var content = UIListContentConfiguration.cell()
             content.text = "Enabled"
             content.textProperties.color = UIColor(palette.fg)
@@ -368,14 +368,14 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             accessories.append(.customView(configuration: .init(customView: toggle, placement: .trailing())))
             cell.accessories = accessories
         case .mutationError:
-            ControlScreenList.staticRow(cell, identifier: "skills.detail.mutationError")
+            ListScreen.staticRow(cell, identifier: "skills.detail.mutationError")
             let message = "Couldn’t \(mutationVerb ?? "update") \(summary.name) on \(state.serverName). \(state.mutationError ?? "")"
             cell.contentConfiguration = Self.noteContent(
                 message, systemImage: "exclamationmark.triangle.fill",
                 color: UIColor(palette.orange), imageColor: UIColor(palette.orange)
             )
         case .detail(let title):
-            ControlScreenList.staticRow(cell, identifier: "skills.detail.source.\(title.lowercased())")
+            ListScreen.staticRow(cell, identifier: "skills.detail.source.\(title.lowercased())")
             let value = switch title {
             case "Package": summary.packageName ?? ""
             case "Provenance": summary.provenance.label
@@ -393,7 +393,7 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             cell.accessibilityLabel = title
             cell.accessibilityValue = value
         case .status:
-            ControlScreenList.staticRow(cell, identifier: "skills.detail.status")
+            ListScreen.staticRow(cell, identifier: "skills.detail.status")
             let hasError = summary.state == .error || summary.state == .unknown
             let label = hasError ? "Error" : "Loaded"
             var content = UIListContentConfiguration.cell()
@@ -403,7 +403,7 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             content.imageProperties.tintColor = UIColor(palette.fg)
             cell.contentConfiguration = content
         case .loadError:
-            ControlScreenList.staticRow(cell, identifier: "skills.detail.loadError")
+            ListScreen.staticRow(cell, identifier: "skills.detail.loadError")
             let error = summary.loadError ?? state.loadError ?? ""
             var content = UIListContentConfiguration.cell()
             content.text = error
@@ -411,13 +411,13 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             content.textProperties.color = UIColor(palette.orange)
             cell.contentConfiguration = content
         case .warning(let warning):
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = Self.noteContent(
                 warning, systemImage: "exclamationmark.circle",
                 color: UIColor(palette.fg), imageColor: UIColor(palette.fg)
             )
         case .retry:
-            ControlScreenList.buttonRow(cell, identifier: "skills.detail.retry", label: "Retry") { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "skills.detail.retry", label: "Retry") { [weak self] in
                 self?.startLoad()
             }
             var content = UIListContentConfiguration.cell()
@@ -425,16 +425,16 @@ final class ServerSkillDetailViewController: UIViewController, UICollectionViewD
             content.textProperties.color = UIColor(palette.blue)
             cell.contentConfiguration = content
         case .loadingContents:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .loading(String(localized: "Loading skill contents…")),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         case .browse:
             let count = state.detail?.files.count ?? 0
             let countLabel = count == 1 ? "1 file" : "\(count) files"
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "skills.files.open",
                 label: "Browse \(summary.name) files",

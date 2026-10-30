@@ -1,8 +1,13 @@
 import UIKit
 
-/// List pieces the UIKit control-definition screens share (Agents, Schedules,
-/// Custom Themes): rows whose one accessibility element is a button, the
-/// loading and empty states, theme colors, and bar items.
+/// The kit's list chrome and row builders, for a screen that is not on
+/// `ListScreenController` yet: its collection view and layout, the full-width
+/// pin, the theme, the bar's items, and rows whose one accessibility element is
+/// a button.
+///
+/// The Agents, Schedules, MCP, Skills, Extensions, and detail screens, and the
+/// workspace forms, still build their own list with these; a page on the base
+/// takes its look from `SettingsListStyle` instead.
 ///
 /// A row that opens or acts is a `SidebarListCell`: its `SidebarRowElement`
 /// takes the tap and is the row's accessibility element, a button, because
@@ -10,7 +15,7 @@ import UIKit
 /// actions belong to the collection view; a row's long-press menu is its
 /// button's (the button takes the touch, so the list's own menu never sees it).
 @MainActor
-enum ControlScreenList {
+enum ListScreen {
     /// The screen's list. It gets its layout in `viewDidLoad()`
     /// (`layout(...)`), where the swipe provider can capture the screen.
     static func makeCollectionView() -> UICollectionView {

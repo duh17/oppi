@@ -105,7 +105,7 @@ struct AgentToolSelection {
 /// optional tools Pi extensions register off. A pushed page of the Agent editor
 /// (so edits stay in its draft until Save) and of Pi's page (edits save as
 /// they are made). Selecting "Choose tools" starts the list from the defaults.
-final class AgentToolSelectionViewController: SettingsListViewController<
+final class AgentToolSelectionViewController: ListScreenController<
     AgentToolSelectionViewController.Section, AgentToolSelectionViewController.Item
 > {
     enum Section: Hashable, Sendable {
@@ -153,9 +153,9 @@ final class AgentToolSelectionViewController: SettingsListViewController<
 
     // MARK: - Page
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         let state = selection.state()
-        var sections = [SettingsSectionModel<Section, Item>(.mode, footer: modeFooter(state), items: [.mode])]
+        var sections = [ListSection<Section, Item>(.mode, footer: modeFooter(state), items: [.mode])]
         if state.mode == .exact {
             if state.builtInTools.isEmpty {
                 sections.append(.init(

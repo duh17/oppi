@@ -10,7 +10,7 @@ import UIKit
 /// offers Revoke as a swipe and as a visible button with the same owner; this
 /// device's row offers none.
 @MainActor
-final class ServerPairedDevicesViewController: SettingsListViewController<ServerPairedDevicesViewController.Section, ServerPairedDevicesViewController.Item> {
+final class ServerPairedDevicesViewController: ListScreenController<ServerPairedDevicesViewController.Section, ServerPairedDevicesViewController.Item> {
     enum Section: Hashable, Sendable { case devices }
 
     enum Item: Hashable, Sendable {
@@ -58,7 +58,7 @@ final class ServerPairedDevicesViewController: SettingsListViewController<Server
 
     // MARK: - Sections
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         var items: [Item] = []
         switch state {
         case .loading:
@@ -69,7 +69,7 @@ final class ServerPairedDevicesViewController: SettingsListViewController<Server
         case .failed:
             items = [.failed]
         }
-        return [SettingsSectionModel(
+        return [ListSection(
             .devices,
             footer: String(localized: "Every paired device can see this list. Revoking disconnects that device immediately."),
             items: items

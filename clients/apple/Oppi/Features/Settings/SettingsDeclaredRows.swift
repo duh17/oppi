@@ -17,7 +17,7 @@ struct SettingChoice<Value: Equatable & Sendable> {
 ///   to change, and says "Unavailable" when the setting cannot be reached.
 /// - A failed load or write adds a failure row under it with the reason and
 ///   Retry (`settingRows`), and the value rolls back to the last stored one.
-extension SettingsListViewController {
+extension ListScreenController {
     /// The page's items for one declared setting: its row, then a failure row
     /// when its last load or write failed. `failure` makes the page's item for
     /// the failure row from the setting's id.

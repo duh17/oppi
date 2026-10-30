@@ -10,7 +10,7 @@ import UIKit
 /// answer, so a save that fails (the Keychain write throws, or the store has not loaded the
 /// pairing list) leaves the old icon marked and says why in an alert.
 @MainActor
-final class ServerBadgeViewController: SettingsListViewController<ServerBadgeViewController.Section, ServerBadgeViewController.Item> {
+final class ServerBadgeViewController: ListScreenController<ServerBadgeViewController.Section, ServerBadgeViewController.Item> {
     enum Section: Hashable, Sendable { case preview, icons }
     enum Item: Hashable, Sendable { case preview, icons }
 
@@ -34,10 +34,10 @@ final class ServerBadgeViewController: SettingsListViewController<ServerBadgeVie
     /// The pinned server as the pairing list has it now.
     private var current: PairedServer { coordinator.serverStore.server(for: server.id) ?? server }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         [
-            SettingsSectionModel(.preview, items: [.preview]),
-            SettingsSectionModel(
+            ListSection(.preview, items: [.preview]),
+            ListSection(
                 .icons,
                 footer: Self.footer,
                 items: [.icons]

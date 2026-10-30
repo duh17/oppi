@@ -4,7 +4,7 @@ import UIKit
 /// keyboard bar. Values are `CodeEditorPreferences.shared`, which an open
 /// editor observes, so changes apply without reopening the file. Everything
 /// here is saved on this device.
-final class SettingsEditorViewController: SettingsListViewController<SettingsEditorViewController.Section, SettingsEditorViewController.Item> {
+final class SettingsEditorViewController: ListScreenController<SettingsEditorViewController.Section, SettingsEditorViewController.Item> {
     enum Section: Hashable, Sendable { case keyboard, display, indentation, typing }
     enum Item: Hashable, Sendable {
         case keybindings, keyBar, customizeKeyBar
@@ -26,31 +26,31 @@ final class SettingsEditorViewController: SettingsListViewController<SettingsEdi
         )
     }
 
-    override func sections() -> [SettingsSectionModel<Section, Item>] {
+    override func sections() -> [ListSection<Section, Item>] {
         // Read every value so any change re-runs this pass.
         _ = (preferences.keybindings, preferences.showsKeyBar, preferences.keyBarKeys, preferences.highlightsSyntax)
         _ = (preferences.showsLineNumbers, preferences.highlightsCurrentLine, preferences.wrapsText, preferences.wrapsCode)
         _ = (preferences.detectsIndentation, preferences.indentsWithTabs, preferences.tabWidth, preferences.closesBrackets)
         return [
-            SettingsSectionModel(
+            ListSection(
                 .keyboard,
                 header: String(localized: "Keyboard"),
                 footer: String(localized: "Vim starts in Normal mode: type commands, press i to insert, and Esc (or the esc key in the bar) to go back. ⌘ shortcuts work in both. Hold ⌘ on a hardware keyboard to see them."),
                 items: [.keybindings, .keyBar] + (preferences.showsKeyBar ? [.customizeKeyBar] : [])
             ),
-            SettingsSectionModel(
+            ListSection(
                 .display,
                 header: String(localized: "Display"),
                 footer: String(localized: "The editor uses your code font and size from Text."),
                 items: [.syntax, .lineNumbers, .currentLine, .wrapText, .wrapCode]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .indentation,
                 header: String(localized: "Indentation"),
                 footer: String(localized: "With Detect From File, Tab and Return follow the tabs or spaces the file already uses."),
                 items: [.detectIndentation, .indentWith, .tabWidth]
             ),
-            SettingsSectionModel(
+            ListSection(
                 .typing,
                 header: String(localized: "Typing"),
                 footer: String(localized: "Typing an opening bracket or quote adds its closer, and Backspace removes an empty pair."),
@@ -165,7 +165,7 @@ final class SettingsEditorViewController: SettingsListViewController<SettingsEdi
 
 /// Choose and order the keyboard bar's keys. Shown keys reorder with their
 /// handles and leave with the remove control; More Keys adds one.
-final class SettingsEditorKeyBarViewController: SettingsListViewController<SettingsEditorKeyBarViewController.Section, String> {
+final class SettingsEditorKeyBarViewController: ListScreenController<SettingsEditorKeyBarViewController.Section, String> {
     enum Section: Hashable, Sendable { case shown, more }
 
     private let preferences: CodeEditorPreferences
@@ -196,11 +196,11 @@ final class SettingsEditorKeyBarViewController: SettingsListViewController<Setti
         }
     }
 
-    override func sections() -> [SettingsSectionModel<Section, String>] {
+    override func sections() -> [ListSection<Section, String>] {
         let shown = preferences.keyBarKeys
         return [
-            SettingsSectionModel(.shown, header: String(localized: "In the Bar"), items: shown.map(\.id)),
-            SettingsSectionModel(
+            ListSection(.shown, header: String(localized: "In the Bar"), items: shown.map(\.id)),
+            ListSection(
                 .more,
                 header: String(localized: "More Keys"),
                 items: CodeEditorBarKey.catalog.filter { !shown.contains($0) }.map(\.id)

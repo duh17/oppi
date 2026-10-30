@@ -18,7 +18,7 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Int, Item>?
     private let refreshControl = UIRefreshControl()
     private let composer: GuidedControlComposerController
@@ -81,14 +81,14 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "agents.list"
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ControlScreenList.pinFullWidth(collectionView, in: view)
+        ListScreen.pinFullWidth(collectionView, in: view)
         installDataSource()
         composer.install(in: self)
     }
@@ -118,8 +118,8 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
-        ControlScreenList.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.setBarItems(trailing: [], leading: sidebarItems(), on: navigationItem)
         // The connection or the server changed under the screen: load again.
         if isOnScreen, currentSource != loadedSource { startLoad() }
         applySnapshot()
@@ -198,10 +198,10 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .pi:
-            ControlScreenList.buttonRow(cell, identifier: "agents.row.pi", label: "Pi", value: "Global Pi configuration") { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "agents.row.pi", label: "Pi", value: "Global Pi configuration") { [weak self] in
                 self?.openPi()
             }
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
@@ -218,7 +218,7 @@ final class AgentListViewController: UIViewController, UICollectionViewDelegate 
         case .saved(let id):
             guard let agent = agents.first(where: { $0.id == id }) else { return }
             let description = agent.description.flatMap { $0.isEmpty ? nil : $0 } ?? "No description"
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "agents.row.\(agent.id)",
                 label: "\(agent.name), v\(agent.version)",

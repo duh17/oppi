@@ -16,7 +16,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
     }
 
     private let root: AppRootEnvironment
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Int, Item>?
     private let refreshControl = UIRefreshControl()
     private let composer: GuidedControlComposerController
@@ -66,7 +66,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        collectionView.setCollectionViewLayout(ControlScreenList.layout(
+        collectionView.setCollectionViewLayout(ListScreen.layout(
             appearance: .plain,
             trailingSwipe: { [weak self] in self?.swipeActions(at: $0) }
         ), animated: false)
@@ -74,7 +74,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         collectionView.accessibilityIdentifier = "schedules.list"
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ControlScreenList.pinFullWidth(collectionView, in: view)
+        ListScreen.pinFullWidth(collectionView, in: view)
         installDataSource()
         composer.install(in: self)
     }
@@ -103,7 +103,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         updateBarItems()
         composer.setScreenError(error, identifier: "schedules.error")
         applySnapshot()
@@ -116,7 +116,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
                 self?.selectedStatus = status
             }
         })
-        ControlScreenList.setBarItems(trailing: [filterItem], leading: sidebarItems(), on: navigationItem)
+        ListScreen.setBarItems(trailing: [filterItem], leading: sidebarItems(), on: navigationItem)
     }
 
     /// The sidebar toggle at the split detail root.
@@ -159,16 +159,16 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: false, palette: palette)
+        ListScreen.background(cell, grouped: false, palette: palette)
         let cardInsets = NSDirectionalEdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
         switch item {
         case .placeholder:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: cardInsets, followsLayoutMargins: false) {
                 ScheduleCardView.placeholder(palette: palette)
             }
         case .empty:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .empty(
                     title: selectedStatus.emptyTitle,
@@ -180,7 +180,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         case .schedule(let id):
             guard let schedule = visibleSchedules.first(where: { $0.id == id }) else { return }
             let timing = schedule.trigger.scheduleScreenTiming()
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "schedules.row.\(schedule.id)",
                 label: "\(schedule.name), \(timing), \(schedule.status.rawValue)"

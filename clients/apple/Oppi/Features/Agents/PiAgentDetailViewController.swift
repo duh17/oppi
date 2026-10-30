@@ -9,7 +9,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     private enum Item: Hashable { case identity, state, file, prompt, tools }
 
     private let root: AppRootEnvironment
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private let refreshControl = UIRefreshControl()
     private let tools = PiToolsEditor()
@@ -66,14 +66,14 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.delegate = self
         collectionView.accessibilityIdentifier = "agents.pi.list"
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ControlScreenList.pinFullWidth(collectionView, in: view)
+        ListScreen.pinFullWidth(collectionView, in: view)
         installDataSource()
         composer.install(in: self)
         for presenter in [fileReview, defaultPromptViewer] { presenter.anchor = self }
@@ -110,7 +110,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         // Only a SYSTEM.md that exists is a host file to name.
         composer.model.updateTarget(id: nil, name: "Pi global configuration", path: prompt?.resolvedPath)
         _ = tools.defaultTools
@@ -186,12 +186,12 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .state:
             break // drawn by the state registration, never by this cell
         case .identity:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
                 let identity = ControlRowViews.stack([
                     AgentListViewController.tile(PiAvatarRenderer.render(size: 44, themeID: nil), size: 44, padding: 6, radius: 14, palette: palette),
@@ -203,7 +203,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
                 return identity
             }
         case .file:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {
                 let row = ControlRowViews.valueRow("File", AgentManagementPresentation.globalSystemPromptPath, palette: palette, style: .body)
                 row.accessibilityIdentifier = "agents.pi.systemPromptPath"
@@ -211,7 +211,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             }
         case .prompt:
             let source = source
-            ControlScreenList.buttonRow(
+            ListScreen.buttonRow(
                 cell,
                 identifier: "agents.pi.systemPrompt",
                 label: AgentManagementPresentation.piSystemPromptAccessibilityLabel(source: source),
@@ -252,7 +252,7 @@ final class PiAgentDetailViewController: UIViewController, UICollectionViewDeleg
             }
         case .tools:
             let summary = AgentManagementPresentation.piToolsSummary(defaultTools: tools.defaultTools)
-            ControlScreenList.buttonRow(cell, identifier: "agents.pi.tools", label: "Tools", value: summary) { [weak self] in
+            ListScreen.buttonRow(cell, identifier: "agents.pi.tools", label: "Tools", value: summary) { [weak self] in
                 self?.openTools()
             }
             var content = UIListContentConfiguration.valueCell()

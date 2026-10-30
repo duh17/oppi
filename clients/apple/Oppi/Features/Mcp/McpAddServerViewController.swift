@@ -29,7 +29,7 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
     private let serverName: String
     private let root: AppRootEnvironment
     private let onAdded: () -> Void
-    private let collectionView = ControlScreenList.makeCollectionView()
+    private let collectionView = ListScreen.makeCollectionView()
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
     private var changedRows = ChangedRows<Item>()
     private let addItem = UIBarButtonItem()
@@ -98,7 +98,7 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
     override func viewDidLoad() {
         super.viewDidLoad()
         collectionView.setCollectionViewLayout(
-            ControlScreenList.layout(appearance: .insetGrouped, headers: true, footers: true),
+            ListScreen.layout(appearance: .insetGrouped, headers: true, footers: true),
             animated: false
         )
         collectionView.delegate = self
@@ -122,7 +122,7 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
 
     override func updateProperties() {
         super.updateProperties()
-        ControlScreenList.applyTheme(root.themeStore, to: self, collectionView: collectionView)
+        ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         addItem.isEnabled = canAdd
         cancelItem.isEnabled = !saving
         // A save in flight keeps the sheet up, as a swipe-down would lose it.
@@ -290,29 +290,29 @@ final class McpAddServerViewController: UIViewController, UICollectionViewDelega
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ControlScreenList.background(cell, grouped: true, palette: palette)
+        ListScreen.background(cell, grouped: true, palette: palette)
         switch item {
         case .host:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = McpRowContent.value("Host", serverName)
         case .scope:
-            ControlScreenList.staticRow(cell, identifier: "mcp.add.scope")
+            ListScreen.staticRow(cell, identifier: "mcp.add.scope")
             cell.contentConfiguration = McpRowContent.value("Scope", scope.title)
         case .exposure:
             break
         case .error:
-            ControlScreenList.staticRow(cell, identifier: "mcp.add.error")
+            ListScreen.staticRow(cell, identifier: "mcp.add.error")
             let message = error
             cell.contentConfiguration = ControlViewContent {
                 ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
             }
         case .saving:
-            ControlScreenList.staticRow(cell)
+            ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
                 .loading(String(localized: "Adding server…")),
                 palette: palette
             )
-            ControlScreenList.background(cell, grouped: false, palette: palette)
+            ListScreen.background(cell, grouped: false, palette: palette)
         default:
             break
         }
