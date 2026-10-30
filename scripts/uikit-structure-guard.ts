@@ -408,8 +408,9 @@ for (const line of failures) console.log(line);
 console.log(`
 UIKit owns iOS app structure, modal presentation, and new views, previews and
 harnesses included. Present and push through the router (routerModal,
-ScreenNavigator push/finish; previews host with RouterPreviewControllerStack or
-RouterPreviewNavigation) and host SwiftUI only through HostFactory. See ${guide}.
+ScreenNavigator push/finish; previews that are their own window root host
+through PreviewHost.screenStack, the rest with RouterPreviewNavigation) and
+host SwiftUI only through HostFactory. See ${guide}.
 NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
 .sheet(, .fullScreenCover(, .popover(, .inspector(, UIHostingController(, and
 UIHostingController< (a subclass or stored type) have no baseline: an exception needs Chen's approval and a commented entry in

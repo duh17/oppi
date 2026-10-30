@@ -179,9 +179,6 @@
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/WorkspaceShellScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/OppiDebugHarness/StreamingFlickerPreviewView.swift": {
       "import SwiftUI": 1
     },

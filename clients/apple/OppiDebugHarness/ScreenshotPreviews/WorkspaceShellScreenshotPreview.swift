@@ -1,18 +1,23 @@
 #if DEBUG
-import SwiftUI
+import UIKit
 
 /// Production All Sessions chrome in the real workspace shell, with in-memory
 /// sessions so the rail can be captured without a paired server
 /// (`SCREENSHOT_SCREEN=workspace-shell`; the router's navigation smoke test
 /// drives it). `SCREENSHOT_ORIENTATION` poses the Duo.
-struct WorkspaceShellScreenshotPreview: View {
-    @State private var root: AppRootEnvironment = .preview(coordinator: Self.makeCoordinator())
+final class WorkspaceShellPreviewController: PreviewRootController {
+    init() {
+        let root = AppRootEnvironment.preview(coordinator: Self.makeCoordinator())
+        super.init(root: root, themeStore: root.themeStore, content: WorkspaceShellController(root: root))
+    }
 
-    var body: some View {
-        WorkspaceShellPreview(root: root)
-            .ignoresSafeArea()
-            .preferredColorScheme(root.themeStore.preferredColorScheme)
-            .onAppear { ScreenshotPreviewOrientation.applyRequested() }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // The SwiftUI preview posed the scene in `.onAppear`.
+        ScreenshotPreviewOrientation.applyRequested()
     }
 
     private static let server = pairedServer()

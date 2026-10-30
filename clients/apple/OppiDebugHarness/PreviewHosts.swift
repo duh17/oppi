@@ -4,7 +4,7 @@ import UIKit
 /// UIKit hosts shared by the previews that are their own window root: the router
 /// stack a preview's screen sits in, the `screenshot.ready` marker a capture or
 /// UI test waits on, and the window's fixture app root. They replace what a
-/// preview got from modifiers on its SwiftUI body (`RouterPreviewControllerStack`,
+/// preview got from modifiers on its SwiftUI body (`RouterPreviewNavigation`,
 /// `.accessibilityIdentifier("screenshot.ready")`,
 /// `.publishesAppRootToWindow(_:)`); the previews still dispatched as SwiftUI
 /// views keep using those.

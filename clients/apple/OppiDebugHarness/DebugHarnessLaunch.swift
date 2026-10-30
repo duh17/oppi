@@ -97,6 +97,17 @@ enum DebugHarnessLaunch {
                     themeStore: root.themeStore
                 )
             }
+            // The router family: its routes, the modal sites behind it, and the
+            // shell those routes are drawn in.
+            if ScreenshotPreviewConfig.screen == "router-routes" {
+                return RouterRoutesPreviewController()
+            }
+            if ScreenshotPreviewConfig.screen == "router-modal-sites" {
+                return RouterModalSitesPreviewController()
+            }
+            if ScreenshotPreviewConfig.screen == "workspace-shell" {
+                return WorkspaceShellPreviewController()
+            }
         }
         return nil
     }
