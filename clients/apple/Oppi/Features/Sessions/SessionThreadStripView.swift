@@ -137,16 +137,25 @@ final class SessionThreadStripView: UIControl {
         }
 
         var parts: [String] = [statusSummary.text]
-        // Same rule as a row: unknown or zero cost is absent, never "$0.00".
-        if display.showsCost, !content.hidesDetails, !content.hidesCost, rollup.totalCost > 0 {
-            parts.append(String(format: "$%.2f", rollup.totalCost))
-        }
         if rollup.workspaceCount > 1 {
             parts.append("\(rollup.workspaceCount) workspaces")
         }
+        // Same rule as a row: unknown or zero cost is absent, never "$0.00". It comes last, where the line
+        // draws it, beside the chevron.
+        let cost = display.showsCost && !content.hidesDetails && !content.hidesCost && rollup.totalCost > 0
+            ? String(format: "$%.2f", rollup.totalCost)
+            : nil
+        if let cost { parts.append(cost) }
         summary = parts.joined(separator: " · ")
-        summaryLabel.setParts(parts)
+        // The cost keeps its own room next to the counts, so the counts shorten beside it rather than
+        // pushing it out; the cross-workspace note is what leaves first.
+        summaryLabel.setParts(
+            [statusSummary.text] + (rollup.workspaceCount > 1 ? ["\(rollup.workspaceCount) workspaces"] : [])
+        )
         summaryLabel.textColor = colors.comment
+        footer.cost.text = cost
+        footer.cost.setHiddenIfChanged(cost == nil)
+        footer.cost.textColor = colors.comment
         chevron.tintColor = colors.comment
         let chevronTransform = CGAffineTransform(rotationAngle: content.isExpanded ? .pi / 2 : 0)
         if chevron.transform != chevronTransform {
@@ -224,27 +233,36 @@ final class SessionThreadStatusRow: UIStackView {
 
 // MARK: - Counts line
 
-/// The strip's counts line: the status counts, the chevron, and, while the thread is settled, the Agents.
-/// The counts are never dropped, so the Agents fold into the room they leave and the line never overflows.
+/// The strip's counts line: the status counts, the thread's cost, the chevron, and, while the thread is
+/// settled, the Agents. The cost keeps its room and the Agents fold into what the counts leave, so the line
+/// never overflows and never loses the cost.
 final class SessionThreadCountsLine: UIStackView {
     /// The least room kept between the counts and what follows, as the dot line keeps.
     private static let spacerMinWidth: CGFloat = 4
 
     let summary = SessionThreadSummaryLabel()
+    /// The cost is its own label so the counts can truncate beside it: the line drops the cross-workspace
+    /// note, then shortens the counts, never the cost.
+    let cost = UILabel()
     let chevron = UIImageView()
 
     init() {
         super.init(frame: .zero)
         summary.font = UIFont.scaled(.caption1)
         summary.adjustsFontForContentSizeCategory = true
+        summary.lineBreakMode = .byTruncatingTail
         summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        cost.font = UIFont.scaled(.caption1, monospacedDigits: true)
+        cost.adjustsFontForContentSizeCategory = true
+        cost.setContentHuggingPriority(.required, for: .horizontal)
+        cost.setContentCompressionResistancePriority(.required, for: .horizontal)
         chevron.image = UIImage.scaledSymbol("chevron.right", style: .caption1, weight: .semibold)
         chevron.setContentHuggingPriority(.required, for: .horizontal)
         chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         axis = .horizontal
         alignment = .center
         spacing = 8
-        [summary, SessionRowSpacer(minWidth: Self.spacerMinWidth), chevron].forEach(addArrangedSubview)
+        [summary, cost, SessionRowSpacer(minWidth: Self.spacerMinWidth), chevron].forEach(addArrangedSubview)
     }
 
     @available(*, unavailable)
@@ -254,8 +272,9 @@ final class SessionThreadCountsLine: UIStackView {
         // Fit before `super`, for the reason the dot line does it: a settled strip draws the Agents here.
         if let agents = arrangedSubviews.compactMap({ $0 as? SessionThreadAgentClusterView }).first,
            !agents.isHidden {
-            let reserved = summary.minimumWidth + chevron.intrinsicContentSize.width
-                + spacing * 3 + Self.spacerMinWidth
+            let gaps = CGFloat(max(0, arrangedSubviews.count - 1))
+            let reserved = summary.minimumWidth + (cost.isHidden ? 0 : cost.intrinsicContentSize.width)
+                + chevron.intrinsicContentSize.width + spacing * gaps + Self.spacerMinWidth
             agents.fit(maxWidth: bounds.width - reserved)
         }
         super.layoutSubviews()
@@ -498,9 +517,9 @@ final class SessionThreadStatusDotsView: UIView {
 
 // MARK: - Summary line
 
-/// The strip's one-line summary: the status counts first, then the cost and
-/// the cross-workspace note, each kept only while the whole of it fits. The
-/// counts are never dropped; past the width they truncate like any label.
+/// The strip's counts label: the status counts, then the cross-workspace note, each kept only while the whole
+/// of it fits. The counts are never dropped and the cost never joins them: past the width the note goes and
+/// the counts truncate at the tail, beside the cost's own room on the same line.
 final class SessionThreadSummaryLabel: UILabel {
     private var parts: [String] = []
 

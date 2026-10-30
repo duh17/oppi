@@ -41,11 +41,19 @@ struct SessionThreadStripViewTests {
         return session
     }
 
-    /// A root and one child per state. `agents` gives the children those saved Agents in turn.
-    private func members(_ children: [SessionStatusKind], agents: [String] = []) -> SessionThreadRollup {
+    /// A root and one child per state. `agents` gives the children those saved Agents in turn, each child
+    /// costs `cost`, and the children run in `workspaces` in turn.
+    private func members(
+        _ children: [SessionStatusKind],
+        agents: [String] = [],
+        cost: Double = 0,
+        workspaces: [String] = ["ws"]
+    ) -> SessionThreadRollup {
         var all = [session("root", parent: nil, .idle)]
         for (index, kind) in children.enumerated() {
             var child = session("child-\(index)", parent: "root", kind)
+            child.cost = cost
+            child.workspaceId = workspaces[index % workspaces.count]
             if !agents.isEmpty {
                 child.launch = SessionLaunchMetadata(agentId: agents[index % agents.count], agentIcon: .emoji("\u{1F6E0}\u{FE0F}"))
             }
@@ -58,9 +66,11 @@ struct SessionThreadStripViewTests {
         _ children: [SessionStatusKind],
         agents: [String] = [],
         width: CGFloat = 330,
+        cost: Double = 0,
+        workspaces: [String] = ["ws"],
         display: SessionRowDisplay = .standard
     ) -> (SessionThreadStripView, CGFloat) {
-        let rollup = members(children, agents: agents)
+        let rollup = members(children, agents: agents, cost: cost, workspaces: workspaces)
         let view = SessionThreadStripView()
         view.apply(
             SessionThreadStripView.Content(rollup: rollup),
@@ -234,6 +244,33 @@ struct SessionThreadStripViewTests {
                 Comment(rawValue: "\(state): \(lines)")
             )
         }
+    }
+
+    /// The strip keeps the thread's cost when its counts are too wide for the line: the cost holds its own
+    /// room, the cross-workspace note leaves first, and the counts truncate at the tail instead.
+    @Test func theCostStaysWhenTheCountsDoNotFit() {
+        // The crowded thread of the capture: 15 working, one waiting, one idle, 102 stopped.
+        let children = Array(repeating: SessionStatusKind.working, count: 15) + [.question, .idle]
+            + Array(repeating: .stopped, count: 102)
+        let (view, _) = strip(
+            children,
+            agents: ["worker", "reviewer", "scout"],
+            width: 330,
+            cost: 0.1,
+            workspaces: ["ws", "kypu"]
+        )
+
+        let lines = shownLabels(view)
+        #expect(lines.filter { $0.hasPrefix("$") } == ["$11.90"], Comment(rawValue: lines.description))
+        #expect(!lines.contains { $0.contains("workspaces") }, "2 workspaces should go before the cost")
+        // The counts keep their place and truncate: the label asks for more room than it has.
+        let counts = descendants(of: view, SessionThreadSummaryLabel.self)[0]
+        #expect(
+            counts.frame.width < counts.intrinsicContentSize.width,
+            "frame \(counts.frame.width) intrinsic \(counts.intrinsicContentSize.width) text \(counts.text ?? "nil")"
+        )
+        // Only the drawing drops the note: VoiceOver still hears the thread's reach.
+        #expect(view.accessibilityLabel?.contains("2 workspaces") == true, Comment(rawValue: view.accessibilityLabel ?? "nil"))
     }
 
     /// The Agents sit on the dot line while a member is active, where they have the whole width, and join
