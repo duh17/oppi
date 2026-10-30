@@ -124,6 +124,7 @@ Example:
 
 ### Fixed
 
+- **Client:** SSH Terminal: a Rex host whose `nc` cannot open Unix sockets (Debian's `netcat-traditional`, BusyBox) says to install one that can, such as `netcat-openbsd`, instead of "The connection to Rex closed".
 - **Client:** Compacting a Durable session shows one "Compacting context..." row, not two stacked ones, then the compaction summary when it completes. A second compaction no longer overwrites the first one's row, and a failed Compact leaves no "Compacting context..." row behind.
 - **Client:** Tapping a link to a session or thread the app already has (a row in the Subagents list, a `[[session]]` reference, a notification) opens it at once instead of waiting on the server, which took seconds over a slow route such as the in-app Tailscale connection. The session's record and pending questions refresh behind the open, and a locked session or workspace still asks first. Each open logs a `Link opened` breadcrumb with its phase timings ([telemetry](dev/telemetry.md#navigation-breadcrumbs)).
 - **Server:** The Subagents pill counts every child (for example "111 subagents · 2 working · 1 needs you") instead of the newest eight. Its rows (up to eight) are the children that need you, then the working ones, then the newest finished ones (rows sort by state, then newest first, so they no longer keep spawn order), so an older child that is still working no longer drops out; a last row, "All 111 in thread", links to `oppi://thread/<session id>`.

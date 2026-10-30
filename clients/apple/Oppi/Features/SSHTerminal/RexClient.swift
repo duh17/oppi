@@ -22,12 +22,14 @@ enum RexBridge {
     /// With no socket the command says why, in its exit status, from the same
     /// one exec (nothing extra is asked while Rex runs): 5 when `rex` is not on
     /// the host either (the CLI inside the macOS app bundle, else on the
-    /// `PATH`), 4 when it is installed but no Rex server is listening. A host without `nc` exits 127 when it gets as far
-    /// as running it.
+    /// `PATH`), 4 when it is installed but no Rex server is listening. With a
+    /// socket it exits 126 when `nc` is missing or cannot speak Unix sockets:
+    /// Debian's `netcat-traditional` and BusyBox reject `-U` with exit 1, which
+    /// would read as a closed connection, so `nc -h` must list `-U` first.
     static let command = SSHTerminalRemoteShell.word(
         "for s in \"$HOME/Library/Application Support/rex/server.sock\" "
             + "\"${XDG_RUNTIME_DIR:-/nonexistent}/rex/server.sock\" \"$HOME/.local/state/rex/run/server.sock\"; do "
-            + "[ -S \"$s\" ] && exec nc -U \"$s\"; done; "
+            + "[ -S \"$s\" ] && { nc -h 2>&1 | grep -q -e -U || exit 126; exec nc -U \"$s\"; }; done; "
             + "[ -x \"$HOME/Library/Application Support/com.superlogical.rex/RexServer/Versions/Current/Rex Server.app/Contents/MacOS/rex\" ] "
             + "|| command -v rex >/dev/null || exit 5; exit 4"
     )
@@ -36,7 +38,7 @@ enum RexBridge {
         switch exitStatus {
         case 4: .notRunning
         case 5: .notInstalled
-        case 127: .bridgeMissing
+        case 126: .bridgeMissing
         default: .connectionClosed
         }
     }
@@ -56,7 +58,7 @@ enum RexClientError: Error, Equatable, LocalizedError {
         switch self {
         case .notRunning: "Rex is not running on this host."
         case .notInstalled: "Rex is not installed on this host."
-        case .bridgeMissing: "The host has no nc command to reach Rex's socket."
+        case .bridgeMissing: "The host has no nc that can reach Rex's socket (nc -U)."
         case .connectionClosed: "The connection to Rex closed."
         case .timedOut: "Rex did not answer in time."
         case .refused(_, let message): "Rex refused: \(message)"

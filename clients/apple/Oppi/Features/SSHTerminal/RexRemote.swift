@@ -453,7 +453,7 @@ extension SSHConnection: RexStreamHost {
 /// exists only to show Rex) answers with different advice. The bridge's own
 /// exit status says which (`RexBridge`), at no cost beyond the one exec.
 enum RexAbsence: Equatable, Sendable {
-    /// The host has no `nc` (exit 127).
+    /// The host has no `nc`, or one without Unix sockets (`-U`) (exit 126).
     case noNc
     /// `rex` is not on the host (exit 5).
     case notInstalled
@@ -468,7 +468,7 @@ enum RexAbsence: Equatable, Sendable {
     var advice: String {
         switch self {
         case .noNc:
-            "This host has no nc command, which Oppi uses to reach Rex. Install a netcat that supports Unix sockets (nc -U), then pull down to try again."
+            "This host has no nc that supports Unix sockets (nc -U), which Oppi uses to reach Rex. Install one, such as netcat-openbsd, then pull down to try again."
         case .notInstalled:
             "Rex is not installed on this host. Install it, then pull down to try again."
         case .notRunning:

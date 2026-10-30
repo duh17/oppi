@@ -1896,12 +1896,12 @@ struct SSHTerminalTests {
     }
 
     /// The sessions screen exists only to show Rex, so a host that cannot be
-    /// read says why, in the bridge's exit status: no `nc` (127) and no Rex
+    /// read says why, in the bridge's exit status: no usable `nc` (126) and no Rex
     /// (5) are not asked again until `retry()` (a pull to refresh); a Rex
     /// that is installed but not running (4) keeps being asked, with backoff.
     @Test func rexTellsNoNcNoRexAndRexNotRunningApart() async throws {
         let cases: [(status: Int, absence: RexAbsence, gaveUp: Bool)] = [
-            (127, .noNc, true), (5, .notInstalled, true), (4, .notRunning, false),
+            (126, .noNc, true), (5, .notInstalled, true), (4, .notRunning, false),
         ]
         for expected in cases {
             let host = RexFakeHost { _ in .hold }
