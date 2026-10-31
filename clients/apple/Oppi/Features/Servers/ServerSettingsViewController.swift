@@ -155,7 +155,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         let summaryState = stateRow(
             hasContent: model.info != nil,
             isLoading: isLoading,
-            failure: failureReport(reason: model.error)
+            failure: failureReport(reason: model.loadError)
         )
         var summary: [Item] = [.summary]
 
@@ -262,7 +262,6 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
                 AnyHashable(String(describing: state)),
                 AnyHashable(Self.connectionStatusTitle(for: current, coordinator: coordinator)),
                 AnyHashable(String(describing: locks.badge(.server(server.id)))),
-                AnyHashable(model.isLoading),
                 AnyHashable(ThemeRuntimeState.currentThemeID()),
             ])
         case .modelProviders:
@@ -336,9 +335,9 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         configureIndex(cell, item: item)
     }
 
-    /// The failures a setting or a switch reports: the kit's state row, under each
-    /// one's identifier.
-    private lazy var failureRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
+    /// The failures a setting or a switch reports, and nothing the load says: the
+    /// kit's state row, under each one's identifier.
+    private lazy var noticeRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
         configureState(cell, item: item)
     }
@@ -357,13 +356,12 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             state: state,
             icon: current.resolvedBadgeIcon,
             lock: locks.badge(.server(server.id)),
-            isLoading: model.isLoading,
             identifier: "server.summary"
         )
     }
 
     override func prepareRegistrations() {
-        _ = (indexRow, failureRow, actionRow, summaryRow)
+        _ = (indexRow, noticeRow, actionRow, summaryRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -374,7 +372,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             collectionView.dequeueConfiguredReusableCell(using: indexRow, for: indexPath, item: item)
         case .settingFailure, .pushWorking, .pushError,
              .liveActivityWorking, .liveActivityError, .liveActivitySystemOff:
-            collectionView.dequeueConfiguredReusableCell(using: failureRow, for: indexPath, item: item)
+            collectionView.dequeueConfiguredReusableCell(using: noticeRow, for: indexPath, item: item)
         case .remove:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
         case .mobileOutputGuide, .serverMetrics, .durableSessions, .startDurable, .pushSwitch, .liveActivitySwitch, .lock:
@@ -710,18 +708,17 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
 // MARK: - Summary cell
 
 /// The server's badge in its connection state's tint, its name with a lock badge, the
-/// connection line under it, and a spinner while the page loads. Read-only: one
+/// connection line under it. Read-only: one
 /// accessibility element that reads the name, the state, and the lock.
 final class ServerSettingsSummaryCell: UICollectionViewListCell {
     private let badge = SettingsServerBadgeView()
     private let nameLabel = UILabel()
     private let lockView = UIImageView()
     private let statusLabel = UILabel()
-    private let spinner = UIActivityIndicatorView(style: .medium)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        for view in [badge, nameLabel, lockView, statusLabel, spinner] {
+        for view in [badge, nameLabel, lockView, statusLabel] {
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
         }
@@ -736,8 +733,6 @@ final class ServerSettingsSummaryCell: UICollectionViewListCell {
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.numberOfLines = 0
-        spinner.hidesWhenStopped = true
-        spinner.setContentHuggingPriority(.required, for: .horizontal)
         isAccessibilityElement = true
         accessibilityTraits = .staticText
         NSLayoutConstraint.activate([
@@ -752,10 +747,8 @@ final class ServerSettingsSummaryCell: UICollectionViewListCell {
             statusLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             statusLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
             statusLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
-            spinner.trailingAnchor.constraint(equalTo: contentView.layoutMarginsGuide.trailingAnchor),
-            spinner.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            lockView.trailingAnchor.constraint(lessThanOrEqualTo: spinner.leadingAnchor, constant: -8),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: spinner.leadingAnchor, constant: -8),
+            lockView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.layoutMarginsGuide.trailingAnchor),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.layoutMarginsGuide.trailingAnchor),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             separatorLayoutGuide.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
         ])
@@ -770,7 +763,6 @@ final class ServerSettingsSummaryCell: UICollectionViewListCell {
         state: ServerBadgeConnectionState,
         icon: ServerBadgeIcon,
         lock: ScopedLockState,
-        isLoading: Bool,
         identifier: String
     ) {
         let palette = ThemeRuntimeState.currentPalette()
@@ -791,7 +783,6 @@ final class ServerSettingsSummaryCell: UICollectionViewListCell {
             value += ", " + String(localized: "Unlocked")
         }
         lockView.tintColor = palette.ui.comment
-        if isLoading { spinner.startAnimating() } else { spinner.stopAnimating() }
         accessibilityIdentifier = identifier
         accessibilityLabel = name
         accessibilityValue = value
@@ -802,7 +793,6 @@ final class ServerSettingsSummaryCell: UICollectionViewListCell {
         nameLabel.text = nil
         statusLabel.text = nil
         lockView.image = nil
-        spinner.stopAnimating()
         accessibilityIdentifier = nil
         accessibilityLabel = nil
         accessibilityValue = nil

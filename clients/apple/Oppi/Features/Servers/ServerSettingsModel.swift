@@ -19,6 +19,11 @@ final class ServerSettingsModel {
 
     private(set) var info: ServerInfo?
     private(set) var isLoading = true
+    /// Why the last load failed. Only a load writes it, so About This Server's
+    /// Retry retries the load and an update's own failure keeps its own row.
+    private(set) var loadError: String?
+    /// Anything else this server's actions failed at: an update that could not
+    /// start, and nothing the page's load row shows.
     private(set) var error: String?
 
     private(set) var providerSetupState: ProviderSetupState = .unknown
@@ -74,14 +79,20 @@ final class ServerSettingsModel {
 
     // MARK: - Loading
 
+    /// The one reason every page of this server gives for a read that could not
+    /// start, so the words never differ by page.
+    static let offlineReason = String(localized: "Server is offline")
+
     func load() async {
         #if DEBUG
         if isFixture { return }
         #endif
+        defer { isLoading = false }
         guard let client = await prepareClient() else {
-            error = "Unable to prepare server transport"
-            pairedDevicesError = "Unable to prepare server transport"
-            isLoading = false
+            // A load this page cancelled on its way out is nobody's failure.
+            guard !Task.isCancelled else { return }
+            loadError = Self.offlineReason
+            pairedDevicesError = Self.offlineReason
             return
         }
 
@@ -90,6 +101,7 @@ final class ServerSettingsModel {
             let next = try await client.api.serverInfo()
             info = next
             error = nil
+            loadError = nil
             // The host answered, so a stale "did not come back" no longer applies;
             // its real update status is shown instead.
             if updateDidNotReturn {
@@ -104,14 +116,13 @@ final class ServerSettingsModel {
                 startUpdatePolling(client: client, previousVersion: next.version)
             }
         } catch {
-            guard !(error is CancellationError) else { return }
-            self.error = error.localizedDescription
+            guard !error.isLoadCancellation else { return }
+            loadError = error.localizedDescription
         }
 
         async let providers: () = loadProviderSummary(client)
         async let devices: () = loadPairedDevices(client)
         _ = await (providers, devices)
-        isLoading = false
     }
 
     private func loadProviderSummary(_ client: Client) async {
@@ -120,7 +131,7 @@ final class ServerSettingsModel {
             providerSetupState = ProviderSetupState(providerStatuses: statuses)
             connectedProviderCount = statuses.filter(\.authenticated).count
         } catch {
-            guard !(error is CancellationError) else { return }
+            guard !error.isLoadCancellation else { return }
             providerSetupState = .unavailable
             connectedProviderCount = 0
         }
@@ -129,7 +140,8 @@ final class ServerSettingsModel {
     /// Retry for the Paired Devices page.
     func reloadPairedDevices() async {
         guard let client = await prepareClient() else {
-            pairedDevicesError = "Unable to prepare server transport"
+            guard !Task.isCancelled else { return }
+            pairedDevicesError = Self.offlineReason
             return
         }
         await loadPairedDevices(client)
@@ -144,7 +156,7 @@ final class ServerSettingsModel {
             pairedDevices = devices
             pairedDevicesError = nil
         } catch {
-            guard !(error is CancellationError) else { return }
+            guard !error.isLoadCancellation else { return }
             pairedDevicesError = error.localizedDescription
         }
     }
@@ -154,7 +166,8 @@ final class ServerSettingsModel {
         // Resolve the client once: a host switch while this runs must not
         // send the DELETE to a different server.
         guard let client = await prepareClient() else {
-            pairedDevicesError = "Unable to prepare server transport"
+            guard !Task.isCancelled else { return }
+            pairedDevicesError = Self.offlineReason
             return
         }
         isRevokingDevice = true
@@ -165,7 +178,7 @@ final class ServerSettingsModel {
             pairedDevicesError = nil
             await loadPairedDevices(client)
         } catch {
-            guard !(error is CancellationError) else { return }
+            guard !error.isLoadCancellation else { return }
             // Another device may have revoked it first; refresh so no stale row stays.
             await loadPairedDevices(client)
             pairedDevicesError = error.localizedDescription
@@ -178,7 +191,8 @@ final class ServerSettingsModel {
         guard let version = info?.update?.latestVersion, !version.isEmpty,
               !updateInFlight else { return }
         guard let client = await prepareClient() else {
-            error = "Unable to prepare server transport"
+            guard !Task.isCancelled else { return }
+            error = Self.offlineReason
             return
         }
         let previousVersion = info?.version

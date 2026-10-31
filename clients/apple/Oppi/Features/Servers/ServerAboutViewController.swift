@@ -113,7 +113,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
             state: stateRow(
                 hasContent: model.info != nil,
                 isLoading: isLoading,
-                failure: failureReport(reason: model.error)
+                failure: failureReport(reason: model.loadError)
             )
         )]
         if let backends = model.info?.voiceBackends, !backends.isEmpty {
@@ -197,7 +197,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
 
     /// The load's own state rows (the update's progress, a failure it reported), and
     /// the failures a switch reported over the facts.
-    private lazy var statusRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
+    private lazy var noticeRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
         guard let self else { return }
         configureState(cell, item: item)
     }
@@ -208,7 +208,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
     }
 
     override func prepareRegistrations() {
-        _ = (voiceRow, statusRow, actionRow)
+        _ = (voiceRow, noticeRow, actionRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -216,7 +216,7 @@ final class ServerAboutViewController: ListScreenController<ServerAboutViewContr
         case .voice:
             collectionView.dequeueConfiguredReusableCell(using: voiceRow, for: indexPath, item: item)
         case .updateDidNotReturn, .updateProgress, .updateRestartNeeded, .updateError:
-            collectionView.dequeueConfiguredReusableCell(using: statusRow, for: indexPath, item: item)
+            collectionView.dequeueConfiguredReusableCell(using: noticeRow, for: indexPath, item: item)
         case .updateButton, .manualCopy:
             collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
         case .connection, .uptime, .piSDK, .piTUI, .oppiServer, .minimumVersion, .updateAvailable, .manualCommand:

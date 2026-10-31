@@ -50,9 +50,9 @@ final class WorkspaceSkillsViewController: ListScreenController<
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
     override func load() async throws {
-        // A read or a write that failed is what a Retry is for: it reads the list
-        // again rather than keeping what the server last said.
-        if model.skillsError != nil { model.startPiResourceReload() }
+        // An ask (a pull, a Retry) reads the lists again; appearing again is the
+        // same page showing again.
+        if loadTrigger == .ask { model.startPiResourceReload() }
         await model.loadPiResourcesIfNeeded()
     }
 

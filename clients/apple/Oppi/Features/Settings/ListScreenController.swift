@@ -62,6 +62,16 @@ enum ListRowStyle {
     case card
 }
 
+/// Why the base is running the page's load now. A page whose store caches its own
+/// read (Skills and Extensions, the workspace list, a Tailnet probe) reads it again
+/// only for an ask: appearing again is the same page showing again.
+enum LoadTrigger {
+    /// The page appeared, or its subject changed.
+    case appearance
+    /// Something asked for a load: a pull to refresh, a Retry, `setNeedsLoad()`.
+    case ask
+}
+
 /// What a page loads, and what starts its load. The kit runs one load at a
 /// time (`load()`), cancels it when the page leaves and when its subject
 /// changes, and keeps the outcome (`isLoading`, `loadFailure`); a page says
@@ -126,7 +136,9 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 ///   page loads, when, and what it is for. One task: started on appearance (per
 ///   the policy), on pull to refresh, on a subject change, and on
 ///   `setNeedsLoad()`; cancelled when the page leaves; a cancelled load is never
-///   a failure. `isLoading` and `loadFailure` are what the rows read.
+///   a failure. `loadTrigger` says whether the load running now was the page
+///   appearing or an ask for it (a pull, a Retry), for a page whose store caches
+///   its own read. `isLoading` and `loadFailure` are what the rows read.
 /// - `animatesUpdates`: whether a snapshot change animates its rows.
 /// - `stateSection()` with `emptyState()`, `hasContent()`, `loadingCaption()`
 ///   and `failureTitle()`: the list's one state row (the compact loading row, a
@@ -190,6 +202,11 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     private var hasLoadedSubject = false
     /// Whether a load succeeded here: a page that loads once keeps it.
     private var hasLoadedOnce = false
+    /// Why the load running now was started: the page appearing, or something
+    /// asking for it (a pull to refresh, a Retry, `setNeedsLoad()`). Set before
+    /// `load()` runs, so a page whose store caches its own read forces it only
+    /// for an ask.
+    private(set) var loadTrigger: LoadTrigger = .appearance
     /// Whether the page is loading its content now.
     private(set) var isLoading = false {
         didSet { if isLoading != oldValue { setNeedsUpdateProperties() } }
@@ -299,7 +316,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// Runs the page's `load()` now, cancelling one already running: a Retry, a
     /// foreground return, a settled sign-in.
     func setNeedsLoad() {
-        startLoad()
+        startLoad(.ask)
     }
 
     /// Takes the failure back, for a page that says a load failed another way:
@@ -307,7 +324,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     func clearLoadFailure() { loadFailure = nil }
 
     /// Runs `load()` for the page's subject now, replacing a load in flight.
-    private func startLoad() {
+    private func startLoad(_ trigger: LoadTrigger = .appearance) {
         guard loadPolicy != .none else { return }
         // A subject that changed while the page was covered ran no pass to drop
         // its rows, so the load that starts here does it.
@@ -319,6 +336,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         loadTask?.cancel()
         loadedSubject = subject
         hasLoadedSubject = true
+        loadTrigger = trigger
         isLoading = true
         loadTask = Task { [weak self] in
             guard let self else { return }
@@ -574,7 +592,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         collectionView.refreshControl = loadPolicy == .none ? nil : pullToRefreshControl
         if loadPolicy != .none {
             pullToRefreshControl.addAction(UIAction { [weak self] _ in
-                self?.setNeedsLoad()
+                self?.startLoad(.ask)
             }, for: .valueChanged)
         }
         installDataSource()
@@ -637,12 +655,16 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     }
 
     /// The page's sections with the base's own state row in the section that
-    /// carries it (`stateSection()`).
+    /// carries it (`stateSection()`). A section that comes out with nothing in it
+    /// — no rows, no state, no heading, no footer — is dropped: an empty card is a
+    /// gap between the rows, not information.
     private func stateSections() -> [ListSection<Section, Item>] {
         var sections = sections()
-        guard let stateSection = stateSection(),
-              let index = sections.firstIndex(where: { $0.id == stateSection }) else { return sections }
-        sections[index].state = stateRow(hasContent: hasContent(), isLoading: isLoading, failure: loadFailure)
+        if let stateSection = stateSection(),
+           let index = sections.firstIndex(where: { $0.id == stateSection }) {
+            sections[index].state = stateRow(hasContent: hasContent(), isLoading: isLoading, failure: loadFailure)
+        }
+        sections.removeAll { $0.items.isEmpty && $0.state == nil && $0.header == nil && $0.footer == nil }
         return sections
     }
 

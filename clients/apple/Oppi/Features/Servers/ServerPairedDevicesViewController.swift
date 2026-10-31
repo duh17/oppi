@@ -15,9 +15,6 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
 
     enum Item: Hashable, Sendable {
         case device(String)
-        /// A Revoke, or a read, that the server refused: said over the devices
-        /// the page already had.
-        case error
     }
 
     let server: PairedServer
@@ -72,18 +69,16 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
     // MARK: - Sections
 
     override func sections() -> [ListSection<Section, Item>] {
-        var items = rows.map { Item.device($0.id) }
-        if model.pairedDevicesError != nil { items.append(.error) }
-        return [ListSection(
+        // The load's one row says a read that failed, whether or not the devices it
+        // already had are still here; no second row repeats it.
+        [ListSection(
             .devices,
             footer: String(localized: "Every paired device can see this list. Revoking disconnects that device immediately."),
-            items: items,
+            items: rows.map { Item.device($0.id) },
             state: stateRow(
                 hasContent: !rows.isEmpty,
-                isLoading: model.isLoadingPairedDevices,
-                // A read that failed with the devices already here is the page's
-                // own row under them, not the list's state.
-                failure: rows.isEmpty ? failureReport(reason: model.pairedDevicesError) : nil
+                isLoading: isLoading || model.isLoadingPairedDevices,
+                failure: failureReport(reason: model.pairedDevicesError)
             )
         )]
     }
@@ -93,13 +88,8 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
     }
 
     override func inputs(of item: Item) -> AnyHashable {
-        switch item {
-        case .device(let id):
-            guard let row = row(id) else { return AnyHashable(0) }
-            return AnyHashable([row.title, row.caption, String(row.isThisDevice), String(row.canRevoke), String(model.isRevokingDevice)])
-        case .error:
-            return AnyHashable(model.pairedDevicesError ?? "")
-        }
+        guard case .device(let id) = item, let row = row(id) else { return AnyHashable(0) }
+        return AnyHashable([row.title, row.caption, String(row.isThisDevice), String(row.canRevoke), String(model.isRevokingDevice)])
     }
 
     // MARK: - Cells
@@ -111,28 +101,12 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
         }
     }
 
-    /// A Revoke that was refused, over the devices the page already had.
-    private lazy var errorRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
-        guard let self else { return }
-        cell.configure(
-            .failure(
-                title: String(localized: "Couldn't Load Devices"),
-                reason: model.pairedDevicesError ?? "",
-                retry: { [weak self] in self?.setNeedsLoad() }
-            ),
-            identifier: "server.pairedDevices.error"
-        )
-    }
-
     override func prepareRegistrations() {
-        _ = (deviceRow, errorRow)
+        _ = deviceRow
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        switch item {
-        case .device: collectionView.dequeueConfiguredReusableCell(using: deviceRow, for: indexPath, item: item)
-        case .error: collectionView.dequeueConfiguredReusableCell(using: errorRow, for: indexPath, item: item)
-        }
+        collectionView.dequeueConfiguredReusableCell(using: deviceRow, for: indexPath, item: item)
     }
 
     // MARK: - Revoke

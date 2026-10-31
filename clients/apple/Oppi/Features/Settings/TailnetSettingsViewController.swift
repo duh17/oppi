@@ -91,7 +91,9 @@ final class TailnetSettingsViewController: ListScreenController<TailnetSettingsV
     override func load() async throws {
         await tailnet.refresh()
         guard !Task.isCancelled else { return }
-        reprobe()
+        // An ask re-probes; appearing again is the same page showing again, and a
+        // visit already starts the probes over.
+        if loadTrigger == .ask { reprobe() }
     }
 
     override func viewWillAppear(_ animated: Bool) {

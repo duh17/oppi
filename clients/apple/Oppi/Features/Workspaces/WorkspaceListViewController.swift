@@ -31,10 +31,6 @@ final class WorkspaceListViewController: ListScreenController<
     private let root: AppRootEnvironment
     private let locks: ScopedLockService
     private var deleteTask: Task<Void, Never>?
-    /// Whether the load now running was asked for (a pull, a Retry) rather than
-    /// started by the page appearing: an ask reads the catalog even when the
-    /// connection synced it moments ago.
-    private var forcesRefresh = false
     private var isDeleting = false {
         didSet { setNeedsUpdateProperties() }
     }
@@ -81,32 +77,27 @@ final class WorkspaceListViewController: ListScreenController<
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        forcesRefresh = false
-    }
-
     // MARK: - Load
 
     /// The server's workspaces, each time the page shows: another device can
     /// add, rename, or delete one.
     override var loadPolicy: LoadPolicy { .eachAppearance }
 
-    /// A pull to refresh and a Retry are an ask: they read the catalog even
-    /// when the connection synced it a moment ago.
-    override func setNeedsLoad() {
-        forcesRefresh = true
-        super.setNeedsLoad()
-    }
-
+    /// An ask — a pull, a Retry — reads the catalog even when the connection
+    /// synced it moments ago; the page appearing takes the connection's own
+    /// two-minute window.
     override func load() async throws {
-        let force = forcesRefresh
-        forcesRefresh = false
         guard await root.coordinator.apiClientReady(for: server.id) != nil,
               let connection else {
             throw LoadFailure(String(localized: "Server is offline"))
         }
-        await connection.refreshWorkspaceCatalog(force: force)
+        await connection.refreshWorkspaceCatalog(force: loadTrigger == .ask)
+        guard !Task.isCancelled else { return }
+        // A sync that failed is the list's failure, not an empty server: saying
+        // "No Workspaces" over a catalog nobody could read is a lie.
+        if connection.workspaceStore.lastSyncFailed {
+            throw LoadFailure(String(localized: "Server is offline"))
+        }
     }
 
     // MARK: - List state

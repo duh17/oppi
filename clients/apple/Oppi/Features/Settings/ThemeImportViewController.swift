@@ -103,7 +103,7 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
 
     override func load() async throws {
         guard let api = root.coordinator.activeConnection.apiClient else {
-            throw LoadFailure(String(localized: "Not connected"))
+            throw LoadFailure(String(localized: "Server is offline"))
         }
         let themes = try await api.listThemes()
         guard !Task.isCancelled else { return }

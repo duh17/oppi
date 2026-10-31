@@ -198,17 +198,10 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     override func load() async throws {
         guard let serverId = server?.id else { return }
         guard let client = await coordinator.apiClientReady(for: serverId) else {
-            throw LoadFailure(String(localized: "Unable to prepare the server connection"))
+            throw LoadFailure(String(localized: "Server is offline"))
         }
         async let fetchedQuotas = try? await client.fetchProviderQuotas()
-        let loaded: [ProviderAuthProviderStatus]
-        do {
-            loaded = try await client.listProviderAuthStatus()
-        } catch {
-            // A load this page cancelled shows no failure and drops nothing.
-            guard !Task.isCancelled else { return }
-            throw error
-        }
+        let loaded = try await client.listProviderAuthStatus()
         guard !Task.isCancelled else { return }
         statuses = loaded
         setupState = ProviderSetupState(providerStatuses: loaded)

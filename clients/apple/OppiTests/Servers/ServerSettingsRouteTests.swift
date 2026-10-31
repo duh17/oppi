@@ -56,11 +56,13 @@ struct ServerSettingsRouteTests {
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         window.rootViewController = navigation
+        // Nothing answers before the pages ask: a host decided held or answered by an
+        // earlier test must not decide this one's requests.
+        HeldRequestProtocol.reset()
         // The route builds its page as it loads, so the window shows that page: its
         // appearance — and the load the kit starts there — begins with the route's.
         route.loadViewIfNeeded()
         window.makeKeyAndVisible()
-        HeldRequestProtocol.reset()
         return Harness(root: root, route: route, navigation: navigation, window: window)
     }
 
@@ -290,8 +292,8 @@ struct ServerSettingsRouteTests {
         #expect(h.route.pinnedServerId == "server-a")
     }
 
-    @Test("A load that settles after the switch lands in the page that asked, never the new one")
-    func lateLoadSettlesIntoItsOwnModel() async throws {
+    @Test("A switch cancels the page it replaced, and the new page's load is its own")
+    func switchCancelsTheReplacedPagesLoad() async throws {
         let h = try makeHarness()
         defer { hide(h) }
         h.route.loadViewIfNeeded()
@@ -300,27 +302,59 @@ struct ServerSettingsRouteTests {
         // The page the route shows is the page that appears, so it is the page whose
         // load the kit starts.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { pageA.isShowing })
-        #expect(modelA.isLoading)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            HeldRequestProtocol.heldHosts.contains("server-a.held.test")
+        }, "the page's load asked A")
 
         _ = h.root.coordinator.restoreActiveServer("server-b")
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { h.route.pinnedServerId == "server-b" })
         let pageB = try #require(h.route.page)
         let modelB = pageB.model
-        // The page the route replaced A with appears in its place.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { pageB.isShowing })
-        // A left with the switch, so the load the kit started for it is cancelled and
-        // settles where it started: A's own model, which nothing shows.
+
+        // A left with the switch, so the kit cancelled its load: a cancel is not the
+        // model's failure, and A's facts stay as they were.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !modelA.isLoading })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            modelA.error == nil && modelA.loadError == nil
+        }, "a cancelled load is not a failure")
 
+        // B asked for its own facts; answering A changes nothing in B.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            HeldRequestProtocol.heldHosts.contains("server-b.held.test")
+        }, "the new page's load asked B")
         HeldRequestProtocol.answer(host: "server-a.held.test")
-
-        // B's model never heard of A's answer: it waits on its own load, with nothing
-        // of A's in it.
-        #expect(modelB.isLoading)
-        #expect(modelB.error == nil)
-        #expect(modelB.info == nil)
-        #expect(modelB.pairedDevices == nil)
+        HeldRequestProtocol.answer(host: "server-b.held.test")
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !modelB.isLoading })
         #expect(h.route.page === pageB)
+        #expect(modelB.error != nil || modelB.loadError != nil, "B settled on its own answer")
+    }
+
+    @Test("A load the page cancels on its way out leaves the model's facts alone")
+    func cancelledLoadLeavesTheModelsOwnFactsAlone() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        h.route.loadViewIfNeeded()
+        let page = try #require(h.route.page)
+        let model = page.model
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.isShowing })
+
+        // About This Server loads the same model; every request is held, so its load
+        // is in flight when the page is popped.
+        let about = ServerAboutViewController(model: model, server: page.server, root: h.root)
+        h.navigation.pushViewController(about, animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { about.isShowing })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            HeldRequestProtocol.heldHosts.contains("server-a.held.test")
+        })
+        h.navigation.popViewController(animated: false)
+
+        // Leaving cancels its load: no error is written, and what the model had stays.
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !about.isShowing })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(500)) {
+            !model.isLoading && model.loadError == nil && model.error == nil
+                && model.providerSetupState == .unknown
+        }, "a cancelled load wrote nothing")
     }
 }
 
@@ -359,6 +393,12 @@ private final class HeldRequestProtocol: URLProtocol, @unchecked Sendable {
         if let response { client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
         client?.urlProtocol(self, didLoad: Data(#"{"error":"held"}"#.utf8))
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    /// The hosts whose requests are waiting now, so a test can tell a load that
+    /// asked from one that did not.
+    static var heldHosts: Set<String> {
+        lock.withLock { Set(held.compactMap { $0.request.url?.host }) }
     }
 
     static func answer(host: String) {

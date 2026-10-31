@@ -75,6 +75,11 @@ final class WorkspaceDetailsModel {
         startFolderCheck()
     }
 
+    /// Checks the folder the draft starts with, as the page appears.
+    func start() {
+        startFolderCheck()
+    }
+
     // MARK: - Folder check
 
     private func startFolderCheck() {
@@ -106,6 +111,11 @@ final class WorkspaceDetailsModel {
 
         isCheckingHostMount = true
         hostMountValidationMessage = nil
+        // A check that is cancelled (a newer keystroke, the page leaving) leaves no
+        // spinner behind: the field it described is not being checked.
+        defer {
+            if current == trimmedHostMount, !isCreatingHostDirectory { isCheckingHostMount = false }
+        }
         // Debounce typing; a newer keystroke cancels this task.
         do {
             try await Task.sleep(for: debounce)
@@ -126,9 +136,6 @@ final class WorkspaceDetailsModel {
             hostMountValidationMessage = "Could not check path: \(error.localizedDescription)"
         }
 
-        if current == trimmedHostMount {
-            isCheckingHostMount = false
-        }
     }
 
     /// Creates the folder the person confirmed. The server answers with the

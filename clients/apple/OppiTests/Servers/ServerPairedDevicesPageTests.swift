@@ -32,8 +32,8 @@ struct ServerPairedDevicesPageTests {
     }
 
     /// Two paired servers; the page is for `server-a`, whose own device is `dev-me`.
-    private func makeHarness(failRevokes: Bool = false) async throws -> Harness {
-        let roster = DeviceRosterAnswers(failRevokes: failRevokes)
+    private func makeHarness(failRevokes: Bool = false, failReads: Bool = false) async throws -> Harness {
+        let roster = DeviceRosterAnswers(failRevokes: failRevokes, failReads: failReads)
         let routes = TestURLProtocol.routeScope(mockPageRoutes { request in
             try roster.answer(for: request)
         })
@@ -66,9 +66,29 @@ struct ServerPairedDevicesPageTests {
         harness.routes.end()
     }
 
+    private struct TestFailure: Error { let message: String; init(_ message: String) { self.message = message } }
+
     private func row(_ id: String, in h: Harness) throws -> PairedDeviceRoster.Row {
         let rows = PairedDeviceRoster.rows(from: h.model.pairedDevices ?? [], currentDeviceId: "dev-me")
         return try #require(rows.first { $0.id == id })
+    }
+
+    @Test("A device list that cannot be read says so once, in the list's own row")
+    func offlineSaysItOnce() async throws {
+        let h = try await makeHarness(failReads: true)
+        defer { hide(h) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !h.page.isLoading })
+        #expect(h.page.collectionView.numberOfItems(inSection: 0) == 1, "one row: the list's state")
+        #expect(h.page.shownItems.isEmpty, "the failure is not a page item")
+        let state = try #require(h.page.sections().first?.state)
+        guard case .failed(let title, let reason, let retry) = state.state else {
+            throw TestFailure("the offline list is not the failed row")
+        }
+        #expect(title == "Couldn't Load Devices")
+        #expect(reason == "Server is offline")
+        #expect(retry != nil)
+        #expect(state.identifier == "server.pairedDevices.state")
     }
 
     @Test("This device is marked and offers no Revoke; every other device does")
@@ -157,10 +177,19 @@ struct ServerPairedDevicesPageTests {
         let rows = PairedDeviceRoster.rows(from: h.model.pairedDevices ?? [], currentDeviceId: "dev-me")
         #expect(rows.map(\.id).contains("dev-1"))
         #expect(h.model.pairedDevicesError == "Not allowed.")
+        // A load still in flight would show its loading row instead, so the page has
+        // to have settled before its row says why.
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            h.page.view.layoutIfNeeded()
-            return h.page.shownItems.contains(.error)
+            !h.page.isLoading && !h.model.isLoadingPairedDevices
         })
+        // The refusal is the list's own failed row, over the devices it kept.
+        let state = try #require(h.page.sections().first?.state)
+        guard case .failed(let title, let reason, let retry) = state.state else {
+            throw TestFailure("the refusal is not the failed row")
+        }
+        #expect(title == "Couldn't Load Devices")
+        #expect(reason == "Not allowed.")
+        #expect(retry != nil, "the row offers a Retry")
     }
 
     private static func buttonIdentifiers(in view: UIView) -> Set<String> {
@@ -179,11 +208,13 @@ struct ServerPairedDevicesPageTests {
 private final class DeviceRosterAnswers: @unchecked Sendable {
     private let lock = NSLock()
     private let failing: Bool
+    private let failsReads: Bool
     private var log: [String] = []
     private var deleted: Set<String> = []
 
-    init(failRevokes: Bool) {
+    init(failRevokes: Bool, failReads: Bool) {
         failing = failRevokes
+        failsReads = failReads
     }
 
     var revokes: [String] { lock.withLock { log } }
@@ -191,6 +222,9 @@ private final class DeviceRosterAnswers: @unchecked Sendable {
     func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
         let url = request.url ?? URL(fileURLWithPath: "/")
         guard request.httpMethod == "DELETE" else {
+            guard !failsReads else {
+                return try mockJSONResponse(status: 500, json: #"{"error":"Server is offline"}"#, for: request)
+            }
             let gone = lock.withLock { deleted }
             let now = Int64(Date().timeIntervalSince1970 * 1_000)
             let rows = [

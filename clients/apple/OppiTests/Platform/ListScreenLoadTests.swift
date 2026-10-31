@@ -69,6 +69,26 @@ struct ListScreenLoadTests {
                 "a new subject's failed first load is retried on the next appearance")
     }
 
+    @Test("A page learns whether its load was an ask or an appearance")
+    func theTriggerSeparatesAnAskFromAnAppearance() async throws {
+        let page = TriggerPage()
+        let window = try show(page)
+        defer { hide(window) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.triggers == [.appearance] },
+                "appearing is an appearance")
+
+        page.collectionView.refreshControl?.sendActions(for: .valueChanged)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.triggers.count == 2 && page.triggers.last == .ask
+        }, "a pull is an ask")
+
+        page.setNeedsLoad()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.triggers.count == 3 && page.triggers.last == .ask
+        }, "a Retry is an ask")
+    }
+
     @Test("A page that loads nothing has no task and no pull to refresh")
     func noPolicyLoadsNothing() async throws {
         let page = LoadPage(policy: .none)
@@ -361,6 +381,28 @@ private final class LoadPage: ListScreenController<LoadPage.Section, String> {
     func releaseHoldingLoad() {
         guard !gates.isEmpty else { return }
         gates.removeFirst().resume()
+    }
+}
+
+/// A page that records why each load ran.
+private final class TriggerPage: ListScreenController<TriggerPage.Section, String> {
+    enum Section: Hashable, Sendable { case only }
+
+    private(set) var triggers: [LoadTrigger] = []
+
+    init() {
+        super.init(title: "Trigger", listIdentifier: "test.trigger.list")
+    }
+
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    override func load() async throws {
+        triggers.append(loadTrigger)
+        setNeedsUpdateProperties()
+    }
+
+    override func sections() -> [ListSection<Section, String>] {
+        [ListSection(.only, items: triggers.isEmpty ? [] : ["loaded"])]
     }
 }
 
