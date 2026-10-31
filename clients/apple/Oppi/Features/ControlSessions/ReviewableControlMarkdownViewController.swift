@@ -190,7 +190,8 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     /// A file at `hostFilePath` on the server, read directly from the host
     /// like any other host file: images, PDFs, and relative Markdown images
     /// work. Host files keep the stack's bar, so Edit is a bar item there;
-    /// with `skillFile` it offers the editor beside Edit with Oppi.
+    /// with `skillFile` the pencil opens the editor and the "…" holds Edit with
+    /// Session.
     init(
         hostFilePath: String,
         serverId: String,
@@ -263,7 +264,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         subject: .snapshot,
         placement: .readerBar,
         agentAction: DocumentAgentEditAction { [weak self] in self?.presentGuidedRevision() },
-        source: .none,
+        backend: { nil },
         onChange: { [weak self] in self?.setNeedsUpdateProperties() }
     )
 

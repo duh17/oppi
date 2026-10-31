@@ -10,7 +10,6 @@ enum DocumentEditLabels {
     /// An Oppi session revises the document.
     static let editWithSession = String(localized: "Edit with Session")
     static let editWithSessionImage = "text.bubble"
-    static let startingSession = String(localized: "Starting…")
     /// The overflow control beside the pencil; its menu holds Edit with Session.
     static let moreImage = "ellipsis.circle"
     static let more = String(localized: "Document Actions")
@@ -18,7 +17,5 @@ enum DocumentEditLabels {
 
 /// Editing a document through an Oppi session instead of the editor.
 struct DocumentAgentEditAction {
-    /// The session is being created; the action waits.
-    var isStarting = false
     let start: @MainActor () -> Void
 }

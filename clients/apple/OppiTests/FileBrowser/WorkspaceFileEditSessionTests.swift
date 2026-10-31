@@ -174,6 +174,36 @@ struct WorkspaceFileEditSessionTests {
         #expect(store.loadResult(skill) == .draft(draft))
     }
 
+    /// The key format existing drafts are stored under. A change here strands
+    /// every draft on every device, so the digests are pinned.
+    @Test func draftKeysAreTheOnesExistingDraftsUse() throws {
+        let workspace = WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md")
+        let worktree = WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: "wt-1", path: "notes.md")
+        let skill = WorkspaceFileEditIdentity(serverId: "srv", skillId: "skill_1", path: "refs/a.md")
+
+        #expect(workspace.storageKey == "38fbdc66ee984456cb9e2cc52148ab18fb2bda8ffc9918d4bfbded4f5831342f")
+        #expect(worktree.storageKey == "54f0fc06518331abc3d6b3490901a7e8f860d429a790e43352d8dcc4ebe72e7d")
+        #expect(skill.storageKey == "25c4e2c6e5078f8f2016d6f49243ec27fc5d99657e061dc2d0023ec925a86691")
+
+        // The file an earlier build left behind, read back through today's store.
+        let store = WorkspaceFileDraftStore(
+            directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("edit-tests-\(UUID().uuidString)", isDirectory: true)
+        )
+        try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
+        let draft = WorkspaceFileDraft(
+            identity: workspace,
+            baseEtag: tag("a"),
+            bytes: Data("kept words".utf8),
+            updatedAt: Date()
+        )
+        try JSONEncoder().encode(draft).write(
+            to: store.directory
+                .appendingPathComponent("38fbdc66ee984456cb9e2cc52148ab18fb2bda8ffc9918d4bfbded4f5831342f.draft")
+        )
+        #expect(store.loadResult(workspace) == .draft(draft), "an existing workspace draft still loads")
+    }
+
     // MARK: Autosave and generations
 
     @Test func idleAutosaveSendsOneTaggedWriteAndClearsDraft() async {

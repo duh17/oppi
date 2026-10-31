@@ -3,31 +3,42 @@ import UIKit
 /// The open editor under its header: the checkout the file writes to, the
 /// conflict banner, a notice line, and `WorkspaceFileEditorViewController`.
 ///
-/// The page owns the editor and its bar items, because the editor outlives
-/// every reader pass of the file it edits: Preview, Use Disk Version, and the
-/// conflict banner are the page's own state, and whoever shows the page only
-/// hosts it.
+/// The page owns the editor, its bar items, and the sheets the banner opens
+/// (the conflict review and the Use Disk confirmation), because they are all
+/// about the editor on screen: it is a view controller and presents them
+/// itself. Whoever shows the page only hosts it.
 @MainActor
 final class DocumentEditEditorPage: UIViewController {
     let editor: WorkspaceFileEditorViewController
-    private let session: WorkspaceFileEditSession
     let barItems: WorkspaceFileEditBarItems
+    private let session: WorkspaceFileEditSession
+    private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
+    /// Applies Use Disk Version to the owner's state, whichever sheet asked.
+    private let onUseDisk: @MainActor () -> Void
     private let checkoutLabel = UILabel()
-    private let banner: WorkspaceFileEditBannerView
+    /// The banner's two controls are the page's own sheets.
+    private lazy var banner = WorkspaceFileEditBannerView(
+        session: session,
+        onReview: { [weak self] in self?.presentConflictReview() },
+        onUseDisk: { [weak self] in self?.confirmUseDiskVersion() }
+    )
     private let noticeLabel = UILabel()
     private var appliedReplacementID: UUID?
+    private weak var conflictReview: WorkspaceFileConflictReviewViewController?
     private(set) var isShowingPreview = false
 
     init(
         session: WorkspaceFileEditSession,
         checkoutSubtitle: String?,
+        reviewCommentSelectionScope: ReviewCommentSelectionScope?,
         onDone: @escaping @MainActor () -> Void,
         onTogglePreview: @escaping @MainActor () -> Void,
         makePreview: @escaping (String) -> UIViewController,
-        onReviewConflict: @escaping @MainActor () -> Void,
         onUseDisk: @escaping @MainActor () -> Void
     ) {
         self.session = session
+        self.reviewCommentSelectionScope = reviewCommentSelectionScope
+        self.onUseDisk = onUseDisk
         editor = WorkspaceFileEditorViewController(
             session: session,
             onDone: onDone,
@@ -38,11 +49,6 @@ final class DocumentEditEditorPage: UIViewController {
             wrapKind: { CodeEditorWrapKind(grammar: grammar) },
             onTogglePreview: onTogglePreview,
             onDone: onDone
-        )
-        banner = WorkspaceFileEditBannerView(
-            session: session,
-            onReview: onReviewConflict,
-            onUseDisk: onUseDisk
         )
         super.init(nibName: nil, bundle: nil)
         checkoutLabel.text = checkoutSubtitle
@@ -93,12 +99,18 @@ final class DocumentEditEditorPage: UIViewController {
         editor.didMove(toParent: self)
     }
 
-    /// Repaints the header for the theme and applies a draft the owner replaced
-    /// (Use Disk Version) once.
-    func apply(palette: ThemePalette, replacement: WorkspaceFileEditorReplacement?, notice: String?) {
+    /// Repaints the header for the theme, refreshes the checkout line, and
+    /// applies a draft the owner replaced (Use Disk Version) once.
+    func apply(
+        palette: ThemePalette,
+        checkoutSubtitle: String?,
+        replacement: WorkspaceFileEditorReplacement?,
+        notice: String?
+    ) {
         banner.update(palette: palette)
+        checkoutLabel.text = checkoutSubtitle
         checkoutLabel.textColor = UIColor(palette.comment)
-        checkoutLabel.superview?.isHidden = (checkoutLabel.text ?? "").isEmpty
+        checkoutLabel.superview?.isHidden = (checkoutSubtitle ?? "").isEmpty
         noticeLabel.textColor = UIColor(palette.comment)
         noticeLabel.text = notice
         noticeLabel.superview?.isHidden = notice == nil
@@ -118,6 +130,51 @@ final class DocumentEditEditorPage: UIViewController {
     /// Hands the editor's live buffer to the session before the page goes away.
     func finishEditing() {
         editor.finishEditing()
+    }
+
+    // MARK: The banner's sheets
+
+    func presentConflictReview() {
+        guard conflictReview == nil else { return }
+        let review = WorkspaceFileConflictReviewViewController(
+            session: session,
+            filePath: session.identity.path,
+            reviewCommentSelectionScope: reviewCommentSelectionScope,
+            onUseDisk: { [weak self] in
+                self?.closeConflictReview()
+                self?.onUseDisk()
+            },
+            onReplace: { [weak self] in
+                self?.session.replaceDiskVersion()
+                self?.closeConflictReview()
+            },
+            onClose: { [weak self] in self?.closeConflictReview() }
+        )
+        conflictReview = review
+        Router.present(
+            review,
+            presentation: .sheet.inNavigation(),
+            from: self,
+            onDismiss: { [weak self] in self?.conflictReview = nil }
+        )
+    }
+
+    func confirmUseDiskVersion() {
+        Confirmation(
+            title: String(localized: "Use Disk Version?"),
+            message: String(localized: "Your unsaved edits to this file will be discarded."),
+            actionTitle: String(localized: "Discard My Edits"),
+            style: .alert,
+            actionIdentifier: "workspace-file-editor.use-disk.confirm"
+        ).present(from: self, anchor: nil) { [weak self] in self?.onUseDisk() }
+    }
+
+    private func closeConflictReview() {
+        guard let conflictReview else { return }
+        self.conflictReview = nil
+        if conflictReview.presentingViewController != nil {
+            Router.finish(conflictReview)
+        }
     }
 
     private static func padded(_ label: UILabel, horizontal: CGFloat, vertical: CGFloat) -> UIView {

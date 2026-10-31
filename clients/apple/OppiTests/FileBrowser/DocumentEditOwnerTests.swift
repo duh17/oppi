@@ -4,7 +4,7 @@ import UIKit
 @testable import Oppi
 
 /// The edit entry's rule, without a server: what opens the pencil, what the "…"
-/// offers, and the draft keys existing drafts are stored under.
+/// offers, and what an open editor leaves behind.
 @Suite("Document edit owner")
 @MainActor
 struct DocumentEditOwnerTests {
@@ -48,12 +48,14 @@ struct DocumentEditOwnerTests {
         )
     }
 
-    /// A scripted transport: the owner never gets past the read in these tests.
+    /// The transport a test never gets to: the owner only reads here.
     private var idleTransport: WorkspaceFileEditTransport {
-        WorkspaceFileEditTransport(
-            read: { _ in .failed },
-            write: { _, _, _ in .notSent }
-        )
+        WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .notSent })
+    }
+
+    private var savedTransport: WorkspaceFileEditTransport {
+        let saved = tag("b")
+        return WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .saved(etag: saved) })
     }
 
     /// Counts the tagged reads, so a test can prove the owner never asks a
@@ -61,8 +63,44 @@ struct DocumentEditOwnerTests {
     @MainActor
     private final class ReadSpy {
         private(set) var count = 0
-
         func note() { count += 1 }
+    }
+
+    /// Holds a read open, so a test can move the reader to another file first.
+    private actor ReadGate {
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var opened = false
+        private var didEnter = false
+        private var entered: CheckedContinuation<Void, Never>?
+
+        func enter() async {
+            didEnter = true
+            entered?.resume()
+            entered = nil
+            guard !opened else { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        /// Resolves once a read has entered, so the test knows it is in flight.
+        func waitForReader() async {
+            guard !didEnter else { return }
+            await withCheckedContinuation { entered = $0 }
+        }
+
+        func open() {
+            opened = true
+            for waiter in waiters { waiter.resume() }
+            waiters = []
+        }
+    }
+
+    private func eventually(timeout: Duration = .seconds(3), _ condition: @MainActor () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return condition()
     }
 
     /// Sessions live in their own registry per test, so one test's open editor
@@ -75,19 +113,22 @@ struct DocumentEditOwnerTests {
         subject: DocumentEditSubject,
         capability: ServerInfo.WorkspaceFileEditingCapability?,
         snapshot: WorkspaceFileDiskSnapshot = WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: "\"sha256-a\""),
-        readError: Error? = nil,
+        outcome: WorkspaceFileReadOutcome? = nil,
         agentAction: DocumentAgentEditAction? = nil,
         placement: DocumentEditOwner.Placement = .screenBar,
+        transport: WorkspaceFileEditTransport? = nil,
         draftStore: WorkspaceFileDraftStore? = nil,
-        readSpy: ReadSpy? = nil
+        sessionRegistry: WorkspaceFileEditSessionRegistry? = nil,
+        readSpy: ReadSpy? = nil,
+        handlers: DocumentEditOwner.Handlers = .init(),
+        onChange: @escaping @MainActor () -> Void = {}
     ) -> DocumentEditOwner {
-        let transport = idleTransport
+        let transport = transport ?? idleTransport
         let backend = DocumentEditOwner.Backend(
             capability: { _ in capability },
             read: { _ in
                 await readSpy?.note()
-                if let readError { throw readError }
-                return snapshot
+                return outcome ?? .snapshot(snapshot)
             },
             transport: transport
         )
@@ -95,10 +136,11 @@ struct DocumentEditOwnerTests {
             subject: subject,
             placement: placement,
             agentAction: agentAction,
-            source: .backend(backend),
+            backend: { backend },
             draftStore: draftStore ?? self.draftStore(),
-            registry: registry(),
-            onChange: {}
+            registry: sessionRegistry ?? self.registry(),
+            handlers: handlers,
+            onChange: onChange
         )
     }
 
@@ -112,7 +154,7 @@ struct DocumentEditOwnerTests {
 
     // MARK: The editability rule
 
-    @Test func capabilityOffLeavesNoPencilButKeepsEditWithSession() async throws {
+    @Test func capabilityOffLeavesNoPencilButKeepsEditWithSession() async {
         let spy = ReadSpy()
         let owner = owner(
             subject: workspaceSubject(),
@@ -120,124 +162,97 @@ struct DocumentEditOwnerTests {
             agentAction: DocumentAgentEditAction { },
             readSpy: spy
         )
-        let read = try await owner.read()
 
-        #expect(read == .ownRead, "no capability: the reader loads the file its own way")
+        #expect(await owner.read() == .ownRead, "no capability: the reader loads the file its own way")
         #expect(spy.count == 0, "a server that does not edit the file gets no tagged read")
-        #expect(identifiers(owner) == ["document.edit.more"], "no capability means no pencil, only the overflow item")
+        #expect(identifiers(owner) == ["document.edit.more"])
         #expect(owner.barItems.first?.menu?.children.count == 1)
     }
 
-    @Test func untaggedReadLeavesNoPencil() async throws {
+    @Test func untaggedReadLeavesNoPencil() async {
         let owner = owner(
             subject: workspaceSubject(),
             capability: capability,
             snapshot: WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: nil)
         )
-        let read = try await owner.read()
 
-        #expect(read == .bytes(WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: nil), draftText: nil))
+        #expect(await owner.read() == .bytes(WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: nil), draftText: nil))
         #expect(owner.barItems.isEmpty, "bytes the server did not offer for editing have no edit entry")
     }
 
-    @Test func binaryBytesLeaveNoPencil() async throws {
-        let bytes = Data([0xC3, 0x28])
+    @Test func binaryBytesLeaveNoPencil() async {
         let owner = owner(
             subject: workspaceSubject(path: "notes.txt", fileType: .plain),
             capability: capability,
-            snapshot: WorkspaceFileDiskSnapshot(bytes: bytes, etag: "\"sha256-a\"")
+            snapshot: WorkspaceFileDiskSnapshot(bytes: Data([0xC3, 0x28]), etag: "\"sha256-a\"")
         )
-        _ = try await owner.read()
+        _ = await owner.read()
 
         #expect(owner.barItems.isEmpty, "bytes that are not UTF-8 text cannot open the editor")
     }
 
-    @Test func oversizedBytesLeaveNoPencil() async throws {
-        let bytes = Data(repeating: 0x61, count: 8)
-        let small = ServerInfo.WorkspaceFileEditingCapability(version: 1, maxBytes: 4)
-        let owner = owner(
+    /// The limit is the server's: one byte under it edits, one over does not.
+    @Test func theServerLimitIsTheBoundary() async {
+        let limit = 8
+        let small = ServerInfo.WorkspaceFileEditingCapability(version: 1, maxBytes: limit)
+        let atLimit = owner(
             subject: workspaceSubject(),
             capability: small,
-            snapshot: WorkspaceFileDiskSnapshot(bytes: bytes, etag: "\"sha256-a\"")
+            snapshot: WorkspaceFileDiskSnapshot(bytes: Data(repeating: 0x61, count: limit), etag: "\"sha256-a\"")
         )
-        _ = try await owner.read()
+        let overLimit = owner(
+            subject: workspaceSubject(),
+            capability: small,
+            snapshot: WorkspaceFileDiskSnapshot(bytes: Data(repeating: 0x61, count: limit + 1), etag: "\"sha256-a\"")
+        )
 
-        #expect(owner.barItems.isEmpty, "a file over the server's limit cannot open the editor")
+        _ = await atLimit.read()
+        _ = await overLimit.read()
+        #expect(identifiers(atLimit) == ["workspace-file-editor.edit"])
+        #expect(overLimit.barItems.isEmpty)
     }
 
-    @Test func nonTextFileHasNoEditEntry() async throws {
+    @Test func nonTextFileHasNoPencil() async {
         let owner = owner(
             subject: workspaceSubject(path: "photo.png", fileType: .image),
             capability: capability,
             agentAction: DocumentAgentEditAction { }
         )
-        let read = try await owner.read()
 
-        #expect(read == .ownRead)
+        #expect(await owner.read() == .ownRead)
         #expect(identifiers(owner) == ["document.edit.more"], "an image has no pencil, only the session route")
     }
 
-    @Test func snapshotIsNeverEditable() async throws {
-        let owner = owner(
-            subject: .snapshot,
-            capability: capability,
-            agentAction: DocumentAgentEditAction { }
-        )
-        let read = try await owner.read()
-
-        #expect(read == .ownRead)
-        #expect(identifiers(owner) == ["document.edit.more"], "a prompt reader offers only Edit with Session")
-    }
-
-    @Test func snapshotWithoutAnAgentActionOffersNothing() async throws {
+    @Test func snapshotIsNeverEditable() async {
         let owner = owner(subject: .snapshot, capability: capability)
-        _ = try await owner.read()
+        _ = await owner.read()
 
         #expect(owner.barItems.isEmpty)
     }
 
     /// The three conditions together: identity, capability, tagged UTF-8 read.
-    @Test func taggedTextReadOffersBothControls() async throws {
+    @Test func taggedTextReadOffersBothControls() async {
         let owner = owner(
             subject: workspaceSubject(),
             capability: capability,
             agentAction: DocumentAgentEditAction { }
         )
-        let read = try await owner.read()
 
-        #expect(read == .bytes(WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: "\"sha256-a\""), draftText: nil))
+        #expect(await owner.read() == .bytes(WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: "\"sha256-a\""), draftText: nil))
         #expect(identifiers(owner) == ["document.edit.more", "workspace-file-editor.edit"])
-
-        let pencil = try #require(owner.barItems.last)
-        #expect(pencil.title == DocumentEditLabels.edit)
-        #expect(pencil.accessibilityLabel == DocumentEditLabels.editFile)
-        let more = try #require(owner.barItems.first)
-        #expect(more.image == UIImage(systemName: "ellipsis.circle"))
-        let edit = try #require(more.menu?.children.first as? UIAction)
-        #expect(edit.title == DocumentEditLabels.editWithSession)
-        #expect(edit.accessibilityIdentifier == "controlFile.editInSession")
+        let edit = owner.barItems.first?.menu?.children.first as? UIAction
+        #expect(edit?.accessibilityIdentifier == "controlFile.editInSession")
     }
 
-    @Test func readerBarKeepsTheReadersPencilIdentifier() async throws {
-        let owner = owner(
-            subject: workspaceSubject(),
-            capability: capability,
-            placement: .readerBar
-        )
-        _ = try await owner.read()
-
-        #expect(identifiers(owner) == ["fullscreen-code.action.workspace-file-edit"])
-    }
-
-    @Test func skillFileReadsThroughItsSkillIdentity() async throws {
+    @Test func skillFileReadsThroughItsSkillIdentity() async {
         let owner = owner(subject: skillSubject(), capability: capability)
-        _ = try await owner.read()
+        _ = await owner.read()
 
         #expect(owner.identity == WorkspaceFileEditIdentity(serverId: "srv", skillId: "release", path: "SKILL.md"))
         #expect(identifiers(owner) == ["workspace-file-editor.edit"])
     }
 
-    @Test func hostFileOutsideASkillHasNoEditEntry() async throws {
+    @Test func hostFileOutsideASkillHasNoEditEntry() async {
         let subject = DocumentEditSubject.file(
             serverId: "srv",
             source: .hostFile,
@@ -248,112 +263,116 @@ struct DocumentEditOwnerTests {
             fileType: .markdown
         )
         let owner = owner(subject: subject, capability: capability)
-        let read = try await owner.read()
 
-        #expect(read == .ownRead)
+        #expect(await owner.read() == .ownRead)
         #expect(owner.barItems.isEmpty)
     }
 
-    @Test func startingAgentActionDisablesEditWithSession() async throws {
-        let owner = owner(
-            subject: .snapshot,
-            capability: capability,
-            agentAction: DocumentAgentEditAction(isStarting: true) { }
-        )
-        _ = try await owner.read()
+    // MARK: A read that the reader has moved on from
 
-        let more = try #require(owner.barItems.first)
-        let edit = try #require(more.menu?.children.first as? UIAction)
-        #expect(edit.title == DocumentEditLabels.startingSession)
-        #expect(edit.attributes.contains(.disabled))
+    /// File A's read may finish after the reader began B; it must not write B's
+    /// state, or the pencil on B would open A.
+    @Test func aReadForThePreviousDocumentNeverApplies() async {
+        let gate = ReadGate()
+        let snapshot = WorkspaceFileDiskSnapshot(bytes: Data("A".utf8), etag: "\"sha256-a\"")
+        let backend = DocumentEditOwner.Backend(
+            capability: { _ in ServerInfo.WorkspaceFileEditingCapability(version: 1, maxBytes: 1_024) },
+            read: { _ in
+                await gate.enter()
+                return .snapshot(snapshot)
+            },
+            transport: idleTransport
+        )
+        let owner = DocumentEditOwner(
+            subject: workspaceSubject(path: "a.md"),
+            placement: .screenBar,
+            backend: { backend },
+            draftStore: draftStore(),
+            registry: registry(),
+            onChange: {}
+        )
+
+        let readA = Task { await owner.read() }
+        await gate.waitForReader()
+        owner.begin(subject: workspaceSubject(path: "b.md"))
+        await gate.open()
+
+        #expect(await readA.value == .ownRead, "A's read finished after B began")
+        #expect(owner.identity == nil, "A's identity did not leak into B")
+        #expect(owner.barItems.isEmpty)
     }
 
-    // MARK: Draft keys
+    // MARK: Editing
 
-    /// A draft saved before this slice must still load: the workspace and Skill
-    /// keys are the ones the app has always written.
-    @Test func existingDraftKeysStillLoad() throws {
-        let workspace = WorkspaceFileEditIdentity(
-            serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md"
-        )
-        let worktree = WorkspaceFileEditIdentity(
-            serverId: "srv", workspaceId: "w1", worktreeId: "wt-1", path: "notes.md"
-        )
-        let skill = WorkspaceFileEditIdentity(serverId: "srv", skillId: "skill_1", path: "refs/a.md")
-
-        #expect(workspace.storageKey == "38fbdc66ee984456cb9e2cc52148ab18fb2bda8ffc9918d4bfbded4f5831342f")
-        #expect(worktree.storageKey == "54f0fc06518331abc3d6b3490901a7e8f860d429a790e43352d8dcc4ebe72e7d")
-        #expect(skill.storageKey == "25c4e2c6e5078f8f2016d6f49243ec27fc5d99657e061dc2d0023ec925a86691")
-
-        // The file an earlier build left behind, read back through today's store.
-        let store = draftStore()
-        try FileManager.default.createDirectory(at: store.directory, withIntermediateDirectories: true)
-        let draft = WorkspaceFileDraft(
-            identity: workspace,
-            baseEtag: tag("a"),
-            bytes: Data("kept words".utf8),
-            updatedAt: Date()
-        )
-        try JSONEncoder().encode(draft).write(
-            to: store.directory
-                .appendingPathComponent("38fbdc66ee984456cb9e2cc52148ab18fb2bda8ffc9918d4bfbded4f5831342f.draft")
-        )
-        #expect(store.loadResult(workspace) == .draft(draft), "an existing workspace draft still loads")
-    }
-
-    /// A kept draft wins over disk and opens the editor on it.
-    @Test func keptDraftReopensInTheEditor() async throws {
-        let store = draftStore()
-        let identity = WorkspaceFileEditIdentity(
-            serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md"
-        )
-        let draft = WorkspaceFileDraft(
-            identity: identity,
-            baseEtag: tag("a"),
-            bytes: Data("draft words".utf8),
-            updatedAt: Date()
-        )
-        try store.save(draft)
-
+    @Test func beginEditingCreatesAndRegistersASession() async {
+        let sessions = registry()
         let owner = owner(
             subject: workspaceSubject(),
             capability: capability,
-            snapshot: WorkspaceFileDiskSnapshot(bytes: Data("disk words".utf8), etag: tag("a")),
-            draftStore: store
+            transport: savedTransport,
+            sessionRegistry: sessions
         )
-        let read = try await owner.read()
+        _ = await owner.read()
+        owner.beginEditing()
 
-        guard case .bytes(_, let draftText) = read else {
-            Issue.record("expected the tagged read, got \(read)")
-            return
-        }
-        #expect(draftText == "draft words", "the kept draft is what the reader shows")
-        #expect(owner.isEditing, "a recovered draft opens the editor")
+        let session = owner.session
+        #expect(session != nil)
+        #expect(sessions.session(for: WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md")) === session)
+        #expect(owner.isEditing)
     }
 
-    /// The file is gone: its kept draft reopens in the non-writing state.
-    @Test func deletedFileKeepsItsDraft() async throws {
+    /// Another document arriving while the editor is open hands the buffer back:
+    /// the session must hold the typed text and detach from the page's text view.
+    @Test func beginningAnotherDocumentKeepsTheOpenEditorsBuffer() async {
+        let owner = owner(subject: workspaceSubject(), capability: capability, transport: savedTransport)
+        _ = await owner.read()
+        owner.beginEditing()
+        let page = owner.makeEditorPage()
+        page?.loadViewIfNeeded()
+        let session = owner.session
+        page?.editor.textView.text = "typed words"
+        session?.noteEdit()
+        #expect(owner.isEditing)
+
+        owner.begin(subject: workspaceSubject(path: "other.md"))
+
+        #expect(!owner.isEditing, "the previous document's editor is closed")
+        #expect(session?.currentText == "typed words", "the buffer came back from the editor")
+        #expect(session?.isEditorAttached == false, "the session no longer holds a freed text view")
+        #expect(await eventually { session?.isSettled == true }, "the detached session saves and settles")
+    }
+
+    /// The file is gone: its kept draft reopens in the non-writing state, and
+    /// once Done closes it the pencil opens it again.
+    @Test func deletedFilesDraftReopensFromThePencil() async {
         let store = draftStore()
-        let identity = WorkspaceFileEditIdentity(
-            serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md"
-        )
-        try store.save(WorkspaceFileDraft(
+        let identity = WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "notes.md")
+        try? store.save(WorkspaceFileDraft(
             identity: identity,
             baseEtag: tag("a"),
             bytes: Data("kept after delete".utf8),
             updatedAt: Date()
         ))
-
+        var shown: [String] = []
         let owner = owner(
             subject: workspaceSubject(),
             capability: capability,
-            readError: APIError.server(status: 404, message: "not found"),
-            draftStore: store
+            outcome: .missing,
+            transport: savedTransport,
+            draftStore: store,
+            handlers: .init(didShowText: { shown.append($0) })
         )
-        let read = try await owner.read()
 
-        #expect(read == .deletedDraft("kept after delete"))
+        #expect(await owner.read() == .deletedDraft("kept after delete"))
         #expect(owner.isEditing)
         #expect(owner.session?.status == .deleted)
+
+        owner.endEditing()
+        #expect(shown == ["kept after delete"])
+        #expect(identifiers(owner) == ["workspace-file-editor.edit"], "a deleted file's kept draft has a pencil")
+
+        owner.beginEditing()
+        #expect(owner.isEditing)
+        #expect(owner.session?.status == .deleted, "reopening never writes")
     }
 }

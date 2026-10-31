@@ -2235,12 +2235,7 @@ struct FullScreenReviewCommentSelectionTests {
     }
 
     @Test func fullScreenViewerInstallsEditItemsBeforeReaderActions() throws {
-        let edit = UIBarButtonItem(
-            title: "Edit",
-            image: UIImage(systemName: "pencil"),
-            primaryAction: UIAction { _ in }
-        )
-        edit.accessibilityLabel = "Edit in Oppi Session"
+        let edit = UIBarButtonItem(title: "Edit", primaryAction: UIAction { _ in })
         let controller = FullScreenCodeViewController(
             content: .markdown(content: "# Prompt", filePath: "Schedule.md"),
             editItems: [edit]
@@ -2251,9 +2246,7 @@ struct FullScreenReviewCommentSelectionTests {
         let contentController = try #require(navigationController.topViewController)
         let actions = try #require(contentController.navigationItem.rightBarButtonItems)
 
-        #expect(actions.first === edit)
-        #expect(actions.first?.title == "Edit")
-        #expect(actions.first?.accessibilityLabel == "Edit in Oppi Session")
+        #expect(actions.first === edit, "the edit entry sits before the reader's own copy control")
         #expect(actions.dropFirst().contains { $0.image == UIImage(systemName: "doc.on.doc") })
     }
 
@@ -2271,27 +2264,6 @@ struct FullScreenReviewCommentSelectionTests {
         }
 
         #expect(copied == ANSIParser.strip(formatted))
-    }
-
-    @Test func fullScreenViewerReplacesEditItemsWhenTheOwnerChangesThem() throws {
-        let controller = FullScreenCodeViewController(
-            content: .markdown(content: "# Prompt", filePath: "Schedule.md"),
-            editItems: [UIBarButtonItem(title: "Edit", primaryAction: UIAction { _ in })]
-        )
-        controller.loadViewIfNeeded()
-        let navigationController = try #require(controller.children.first as? UINavigationController)
-        let contentController = try #require(navigationController.topViewController)
-
-        let starting = UIBarButtonItem(title: "Starting…", primaryAction: UIAction { _ in })
-        starting.accessibilityValue = "Starting"
-        starting.isEnabled = false
-        controller.setEditBarItems([starting])
-
-        let edit = try #require(contentController.navigationItem.rightBarButtonItems?.first)
-        #expect(edit === starting)
-        #expect(edit.title == "Starting…")
-        #expect(edit.accessibilityValue == "Starting")
-        #expect(!edit.isEnabled)
     }
 
     @Test func liveSourceChunkUpdateKeepsNavigationChromeWhenMetadataIsUnchanged() throws {

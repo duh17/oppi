@@ -8,8 +8,9 @@ import UIKit
 /// show while an editor is open (the tagged read, a recovered draft, the
 /// conflict banner). The pencil appears only when the subject resolves to an
 /// edit identity, the server advertises editing for it, and the bytes are a
-/// tagged UTF-8 text read within the server's limit; otherwise the "…" is the
-/// whole entry. A screen shows `barItems` and hosts `editorPage`.
+/// tagged UTF-8 text read within the server's limit — or when a session already
+/// exists, which is how a draft kept for a deleted file opens again. A screen
+/// shows `barItems` and hosts `editorPage`.
 ///
 /// Saves stay with `WorkspaceFileEditSession` and the `WorkspaceFileWriteOutcome`
 /// contract; the owner only picks the transport, so a document served by
@@ -27,31 +28,23 @@ final class DocumentEditOwner {
     }
 
     /// Reads and writes one document. The live backend is the paired server's
-    /// `/files/current`; tests and previews script the answers.
+    /// `/files/current`; tests and previews script the answers. `read` answers
+    /// with the transport's own outcome, so a missing file and an unreachable
+    /// server are the API layer's words, not a second mapping here.
     struct Backend {
         /// Nil when the server does not edit this owner's files.
         var capability: (WorkspaceFileEditIdentity.Owner) async -> ServerInfo.WorkspaceFileEditingCapability?
-        /// The tagged read of the displayed bytes.
-        var read: (WorkspaceFileEditIdentity) async throws -> WorkspaceFileDiskSnapshot
+        var read: (WorkspaceFileEditIdentity) async -> WorkspaceFileReadOutcome
         var transport: WorkspaceFileEditTransport
 
         static func api(_ api: APIClient) -> Backend {
             Backend(
                 // The API client is an actor: the capability is its answer, not ours.
                 capability: { await api.fileEditingCapability(for: $0) },
-                read: { try await api.readFileForEditing($0) },
+                read: { await api.readFileForEditingOutcome($0) },
                 transport: .api(api)
             )
         }
-    }
-
-    enum Source {
-        /// The paired server, resolved when the owner reads.
-        case server(@MainActor () -> APIClient?)
-        /// Scripted answers.
-        case backend(Backend)
-        /// Nothing to read: text the app holds, so no document can be opened.
-        case none
     }
 
     enum ReadResult: Equatable {
@@ -63,6 +56,7 @@ final class DocumentEditOwner {
         case deletedDraft(String)
     }
 
+    /// What the screen offers the owner beyond its subject.
     @MainActor
     struct Handlers {
         /// The reader shows this text: Done, or Use Disk Version.
@@ -71,31 +65,27 @@ final class DocumentEditOwner {
         var didReload: () -> Void = {}
         /// The reader a Preview shows, built over the editor's draft.
         var makePreview: (String) -> UIViewController = { _ in UIViewController() }
-        /// The screen a conflict sheet is presented from.
-        var presenter: () -> UIViewController? = { nil }
     }
 
     private(set) var subject: DocumentEditSubject
     /// Shown above the editor: the checkout the file writes to.
     var checkoutSubtitle: String? {
-        didSet { if checkoutSubtitle != oldValue { setNeedsUpdate() } }
-    }
-    /// Where the conflict sheet's staged comments go, when the screen has one.
-    var reviewCommentSelectionScope: ReviewCommentSelectionScope?
-    /// Edit with Session, when the screen offers one.
-    var agentAction: DocumentAgentEditAction? {
-        didSet {
-            guard agentAction?.isStarting != oldValue?.isStarting else { return }
-            setNeedsUpdate()
-        }
+        didSet { if checkoutSubtitle != oldValue { onChange() } }
     }
     let handlers: Handlers
+    /// Edit with Session, when the screen offers one.
+    let agentAction: DocumentAgentEditAction?
 
     private let placement: Placement
-    private let source: Source
+    private let backendSource: @MainActor () -> Backend?
+    /// Construction context for the editor page's conflict sheet.
+    private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
     let draftStore: WorkspaceFileDraftStore
     private let registry: WorkspaceFileEditSessionRegistry
     private let onChange: @MainActor () -> Void
+    /// Bumped by every `begin`: a read that started for the previous document
+    /// must not write this one's state.
+    private var generation = 0
 
     /// The file this document edits, once the subject resolved to one.
     private(set) var identity: WorkspaceFileEditIdentity?
@@ -105,17 +95,16 @@ final class DocumentEditOwner {
     private(set) var maxBytes: Int?
     private(set) var session: WorkspaceFileEditSession?
     private(set) var isEditing = false {
-        didSet { if isEditing != oldValue { setNeedsUpdate() } }
+        didSet { if isEditing != oldValue { onChange() } }
     }
     private(set) var notice: String? {
-        didSet { if notice != oldValue { setNeedsUpdate() } }
+        didSet { if notice != oldValue { onChange() } }
     }
     private(set) var replacement: WorkspaceFileEditorReplacement? {
-        didSet { setNeedsUpdate() }
+        didSet { onChange() }
     }
     /// The open editor, made on first use and reused until editing ends.
     private(set) var editorPage: DocumentEditEditorPage?
-    private weak var conflictReview: WorkspaceFileConflictReviewViewController?
 
     private var barKey: BarKey?
     private var cachedBarItems: [UIBarButtonItem] = []
@@ -124,7 +113,8 @@ final class DocumentEditOwner {
         subject: DocumentEditSubject,
         placement: Placement,
         agentAction: DocumentAgentEditAction? = nil,
-        source: Source,
+        backend: @escaping @MainActor () -> Backend?,
+        reviewCommentSelectionScope: ReviewCommentSelectionScope? = nil,
         draftStore: WorkspaceFileDraftStore = .shared,
         registry: WorkspaceFileEditSessionRegistry = .shared,
         handlers: Handlers = Handlers(),
@@ -133,7 +123,8 @@ final class DocumentEditOwner {
         self.subject = subject
         self.placement = placement
         self.agentAction = agentAction
-        self.source = source
+        self.backendSource = backend
+        self.reviewCommentSelectionScope = reviewCommentSelectionScope
         self.draftStore = draftStore
         self.registry = registry
         self.handlers = handlers
@@ -143,49 +134,68 @@ final class DocumentEditOwner {
     // MARK: The reader
 
     /// The reader is about to load `subject`. Whatever the previous document
-    /// resolved is dropped, so a pencil never outlives the file it was read for;
-    /// the read that follows adopts whatever is live or kept.
+    /// resolved is dropped (and an open editor's buffer handed back first), so a
+    /// pencil never outlives the file it was read for; the read that follows
+    /// adopts whatever is live or kept.
     func begin(subject: DocumentEditSubject) {
         self.subject = subject
+        generation &+= 1
         reset()
     }
 
     /// The reader's read. Only an editable document has a tagged read, so the
     /// editor's base is exactly the bytes the reader shows.
-    func read() async throws -> ReadResult {
+    func read() async -> ReadResult {
+        let generation = generation
         guard let identity = subject.editIdentity,
               subject.fileType?.previewCategory == .text,
-              let backend = backend() else {
+              let backend = backendSource() else {
             reset()
             return .ownRead
         }
         // A server that does not edit this owner's files has no tagged read to
         // offer, so the reader loads the file its own way.
         guard let capability = await backend.capability(identity.owner) else {
+            guard generation == self.generation else { return .ownRead }
             reset()
             return .ownRead
         }
+        guard generation == self.generation else { return .ownRead }
         self.identity = identity
         maxBytes = capability.maxBytes
-        let snapshot: WorkspaceFileDiskSnapshot
-        do {
-            snapshot = try await backend.read(identity)
-        } catch let error where Self.isHTTPError(error, statusCodes: [404]) {
+        switch await backend.read(identity) {
+        case .snapshot(let snapshot):
+            guard generation == self.generation else { return .ownRead }
+            base = Self.editableBase(snapshot, maxBytes: capability.maxBytes)
+            return .bytes(
+                snapshot,
+                draftText: prepareEditing(
+                    identity: identity,
+                    snapshot: snapshot,
+                    maxBytes: capability.maxBytes,
+                    backend: backend
+                )
+            )
+        case .missing:
+            guard generation == self.generation else { return .ownRead }
             guard let session = WorkspaceFileEditRecovery.sessionForMissingFile(
                 identity: identity,
                 maxBytes: capability.maxBytes,
                 transport: backend.transport,
                 registry: registry,
                 draftStore: draftStore
-            ) else { throw error }
-            adopt(session, opening: true)
+            ) else {
+                // Nothing kept: the reader reports the miss its own way.
+                reset()
+                return .ownRead
+            }
+            adopt(session)
             return .deletedDraft(session.currentText)
+        case .failed:
+            guard generation == self.generation else { return .ownRead }
+            reset()
+            return .ownRead
         }
-        base = Self.editableBase(snapshot, maxBytes: capability.maxBytes)
-        return .bytes(
-            snapshot,
-            draftText: prepareEditing(identity: identity, snapshot: snapshot, maxBytes: capability.maxBytes, backend: backend)
-        )
     }
 
     /// The server offered these bytes for editing: tagged, exact UTF-8, and
@@ -240,11 +250,7 @@ final class DocumentEditOwner {
     /// the "…" and the pencil. Empty when this document offers no edit at all.
     var barItems: [UIBarButtonItem] {
         if isEditing { return editorPage?.barButtons ?? [] }
-        let key = BarKey(
-            offersEditor: base != nil,
-            hasAgentAction: agentAction != nil,
-            agentIsStarting: agentAction?.isStarting ?? false
-        )
+        let key = BarKey(offersEditor: offersEditor, hasAgentAction: agentAction != nil)
         if key != barKey {
             barKey = key
             cachedBarItems = makeBarItems()
@@ -252,10 +258,16 @@ final class DocumentEditOwner {
         return cachedBarItems
     }
 
+    /// The pencil's rule: a tagged, editable text read, or a session that still
+    /// exists — a draft kept for a file that has since been deleted.
+    private var offersEditor: Bool {
+        maxBytes != nil && (base != nil || session != nil)
+    }
+
     private func makeBarItems() -> [UIBarButtonItem] {
         var items: [UIBarButtonItem] = []
         if let more = moreItem() { items.append(more) }
-        if base != nil { items.append(pencilItem()) }
+        if offersEditor { items.append(pencilItem()) }
         return items
     }
 
@@ -277,12 +289,9 @@ final class DocumentEditOwner {
     private func moreItem() -> UIBarButtonItem? {
         guard let agentAction else { return nil }
         let edit = UIAction(
-            title: agentAction.isStarting
-                ? DocumentEditLabels.startingSession
-                : DocumentEditLabels.editWithSession,
-            image: UIImage(systemName: DocumentEditLabels.editWithSessionImage),
-            attributes: agentAction.isStarting ? .disabled : []
-        ) { [weak self] _ in self?.agentAction?.start() }
+            title: DocumentEditLabels.editWithSession,
+            image: UIImage(systemName: DocumentEditLabels.editWithSessionImage)
+        ) { _ in agentAction.start() }
         edit.accessibilityIdentifier = "controlFile.editInSession"
         let item = UIBarButtonItem(
             image: UIImage(systemName: DocumentEditLabels.moreImage),
@@ -296,7 +305,6 @@ final class DocumentEditOwner {
     private struct BarKey: Equatable {
         var offersEditor = false
         var hasAgentAction = false
-        var agentIsStarting = false
     }
 
     // MARK: Editing
@@ -304,7 +312,7 @@ final class DocumentEditOwner {
     /// Opens our editor on the displayed bytes, reusing a live session so one
     /// file never has two writers with different base tags.
     func beginEditing() {
-        guard let identity, let maxBytes, let backend = backend() else { return }
+        guard let identity, let maxBytes, let backend = backendSource() else { return }
         let session: WorkspaceFileEditSession
         if let live = registry.session(for: identity) {
             session = live
@@ -325,7 +333,7 @@ final class DocumentEditOwner {
         } else {
             return
         }
-        adopt(session, opening: true)
+        adopt(session)
     }
 
     /// Done: the reader shows the current draft. The editor teardown
@@ -354,14 +362,14 @@ final class DocumentEditOwner {
         let page = DocumentEditEditorPage(
             session: session,
             checkoutSubtitle: checkoutSubtitle,
+            reviewCommentSelectionScope: reviewCommentSelectionScope,
             onDone: { [weak self] in self?.endEditing() },
             onTogglePreview: { [weak self] in
                 self?.editorPage?.togglePreview()
                 self?.setNeedsUpdate()
             },
             makePreview: handlers.makePreview,
-            onReviewConflict: { [weak self] in self?.presentConflictReview() },
-            onUseDisk: { [weak self] in self?.confirmUseDiskVersion() }
+            onUseDisk: { [weak self] in self?.useDiskVersion() }
         )
         editorPage = page
         return page
@@ -370,12 +378,13 @@ final class DocumentEditOwner {
     /// Repaints the open editor and applies a replaced draft.
     func updateEditorPage(palette: ThemePalette) {
         guard let editorPage else { return }
-        editorPage.apply(palette: palette, replacement: replacement, notice: notice)
+        editorPage.apply(
+            palette: palette,
+            checkoutSubtitle: checkoutSubtitle,
+            replacement: replacement,
+            notice: notice
+        )
     }
-
-    /// The open editor's own bar items (status, Preview, Done), for the bar of
-    /// whichever screen shows the page.
-    var editorBarItems: WorkspaceFileEditBarItems? { editorPage?.barItems }
 
     /// The page is going away (the viewer is popped, or shows another file):
     /// the editor hands its buffer to the session first.
@@ -384,14 +393,10 @@ final class DocumentEditOwner {
         editorPage = nil
     }
 
-    // MARK: Conflict
-
-    private func adopt(_ session: WorkspaceFileEditSession, opening: Bool) {
+    private func adopt(_ session: WorkspaceFileEditSession) {
         self.session = session
-        if opening {
-            notice = nil
-            isEditing = true
-        }
+        notice = nil
+        isEditing = true
         setNeedsUpdate()
     }
 
@@ -414,65 +419,13 @@ final class DocumentEditOwner {
         }
     }
 
-    private func confirmUseDiskVersion() {
-        guard let presenter = handlers.presenter() else { return }
-        Confirmation(
-            title: String(localized: "Use Disk Version?"),
-            message: String(localized: "Your unsaved edits to this file will be discarded."),
-            actionTitle: String(localized: "Discard My Edits"),
-            style: .alert,
-            actionIdentifier: "workspace-file-editor.use-disk.confirm"
-        ).present(from: presenter, anchor: nil) { [weak self] in self?.useDiskVersion() }
-    }
-
-    private func presentConflictReview() {
-        guard conflictReview == nil, let session, let presenter = handlers.presenter() else { return }
-        let review = WorkspaceFileConflictReviewViewController(
-            session: session,
-            filePath: identity?.path ?? "",
-            reviewCommentSelectionScope: reviewCommentSelectionScope,
-            onUseDisk: { [weak self] in
-                self?.closeConflictReview()
-                self?.useDiskVersion()
-            },
-            onReplace: { [weak self] in
-                session.replaceDiskVersion()
-                self?.closeConflictReview()
-            },
-            onClose: { [weak self] in self?.closeConflictReview() }
-        )
-        conflictReview = review
-        Router.present(
-            review,
-            presentation: .sheet.inNavigation(),
-            from: presenter,
-            onDismiss: { [weak self] in self?.conflictReview = nil }
-        )
-    }
-
-    private func closeConflictReview() {
-        guard let conflictReview else { return }
-        self.conflictReview = nil
-        if conflictReview.presentingViewController != nil {
-            Router.finish(conflictReview)
-        }
-    }
-
     // MARK: Plumbing
 
-    private func backend() -> Backend? {
-        switch source {
-        case .none:
-            return nil
-        case .backend(let backend):
-            return backend
-        case .server(let apiClient):
-            guard let api = apiClient() else { return nil }
-            return .api(api)
-        }
-    }
-
     private func reset() {
+        // The page's editor holds the live buffer: hand it back before the page
+        // goes, or the session keeps a provider over a freed text view.
+        editorPage?.finishEditing()
+        editorPage = nil
         identity = nil
         base = nil
         maxBytes = nil
@@ -480,22 +433,10 @@ final class DocumentEditOwner {
         isEditing = false
         notice = nil
         replacement = nil
-        editorPage = nil
-        closeConflictReview()
         setNeedsUpdate()
     }
 
     private func setNeedsUpdate() {
-        barKey = nil
         onChange()
-    }
-
-    private static func isHTTPError(_ error: Error, statusCodes: Set<Int>) -> Bool {
-        switch error {
-        case APIError.server(let status, _), APIError.codedServer(let status, _, _):
-            return statusCodes.contains(status)
-        default:
-            return false
-        }
     }
 }

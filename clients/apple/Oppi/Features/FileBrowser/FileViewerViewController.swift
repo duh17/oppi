@@ -229,11 +229,12 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         configuration.fileName = selection.name
         configuration.fileSize = selection.size
         activeSelection = nil
-        // The entry belongs to the file on screen: another file starts over
-        // before its bytes are read, so no control outlives the previous file.
-        editOwner.begin(subject: editSubject(for: selection.path))
         setNeedsUpdateProperties()
+        // Re-showing the file on screen (a tree refresh, a resize) keeps its
+        // open editor and its session; another file's entry starts over before
+        // its bytes are read, so no control outlives the previous file.
         guard !alreadyShown else { return }
+        editOwner.begin(subject: editSubject(for: selection.path))
         beginUSDZSafeLoading()
         if isOnScreen { startLoad() }
     }
@@ -385,7 +386,11 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             subject: .snapshot,
             placement: editPlacement,
             agentAction: configuration.agentEdit,
-            source: .server { [weak self] in self?.loadedApiClient ?? self?.services.apiClient() },
+            backend: { [weak self] in
+                guard let self, let api = loadedApiClient ?? services.apiClient() else { return nil }
+                return .api(api)
+            },
+            reviewCommentSelectionScope: configuration.reviewCommentSelectionScope,
             handlers: .init(
                 didShowText: { [weak self] text in self?.content = .text(text) },
                 didReload: { [weak self] in self?.startLoad(force: true) },
@@ -396,15 +401,15 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                         content: fullScreenContent(text: text) ?? .fromText(text, filePath: path),
                         presentationMode: .contentOnly()
                     )
-                },
-                presenter: { [weak self] in self }
+                }
             ),
             onChange: { [weak self] in self?.setNeedsUpdateProperties() }
         )
     }
 
     /// What the edit entry sees of the file at `path`, which is what the
-    /// reader is about to load.
+    /// reader is about to load. Only the file this viewer was opened for edits
+    /// as its Skill's own file; another host path has no edit identity.
     private func editSubject(for path: String) -> DocumentEditSubject {
         .file(
             serverId: configuration.serverId,
@@ -412,18 +417,13 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             workspaceId: configuration.workspaceId,
             worktreeId: configuration.worktreeId,
             path: path,
-            skillFile: configuration.skillFile,
+            skillFile: path == configuration.filePath ? configuration.skillFile : nil,
             fileType: FileType.detect(from: path)
         )
     }
 
     private var shouldHideHostNavigationBar: Bool {
         showsEmbeddedNavigationChrome && isUsingFileViewer
-    }
-
-    private var isEditingText: Bool {
-        if case .text = content { return editOwner.isEditing }
-        return false
     }
 
     /// Text, PDF, and 3D scenes own the back swipe; the viewer handles it for the rest.
@@ -445,8 +445,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         configuration.navigationContext?.selection(adjacentTo: currentFilePath, direction: direction)
     }
 
-    private var canGoPrevious: Bool { !isEditingText && adjacentSelection(.previous) != nil }
-    private var canGoNext: Bool { !isEditingText && adjacentSelection(.next) != nil }
+    private var canGoPrevious: Bool { !editOwner.isEditing && adjacentSelection(.previous) != nil }
+    private var canGoNext: Bool { !editOwner.isEditing && adjacentSelection(.next) != nil }
 
     private var leadingAccessoryCount: Int {
         AdjacentFileNavigatorLayout.leadingAccessoryCount(
@@ -558,7 +558,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 #if DEBUG
     /// Test seam: the open editor's bar items, so a test can resolve the
     /// Editor Options menu the way the menu itself does.
-    var editorBarItemsForTesting: WorkspaceFileEditBarItems? { editOwner.editorBarItems }
+    var editorBarItemsForTesting: WorkspaceFileEditBarItems? { editOwner.editorPage?.barItems }
 #endif
 
     private func unmountContent() {
@@ -965,14 +965,16 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     private func updateBar() {
         var items: [UIBarButtonItem] = []
-        let editing = isEditingText
+        let editing = editOwner.isEditing
+        // The entry stays off the bar while the file loads, as main's control did.
+        let loading: Bool = if case .loading = content { true } else { false }
         if editing {
             // The editor owns the bar while typing: status, Preview, Done.
             items = editOwner.barItems
         } else {
             // Left to right: the edit entry, then Share. The entry's items are
             // trailing-first, so they go in reversed.
-            if editPlacement == .screenBar {
+            if editPlacement == .screenBar, !loading {
                 items.append(contentsOf: editOwner.barItems.reversed())
             }
             if configuration.chromeMode == .pushed, !isUsingFileViewer, let share = shareBarItem() {
@@ -1134,7 +1136,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         // a tagged read and a live or kept draft, or nothing to edit at all.
         editOwner.begin(subject: editSubject(for: requestedPath))
         editOwner.checkoutSubtitle = checkoutSubtitle
-        editOwner.reviewCommentSelectionScope = configuration.reviewCommentSelectionScope
 
         // Every re-show reads again: after AVKit fullscreen from an inline
         // Markdown video, or a pop back from a pushed wiki link. Rebuilding the
@@ -1269,7 +1270,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         category: FilePreviewCategory
     ) async throws -> ReaderRead? {
         if category == .text {
-            switch try await editOwner.read() {
+            switch await editOwner.read() {
             case .ownRead:
                 break
             case .deletedDraft(let text):
