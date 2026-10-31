@@ -21,6 +21,7 @@ enum SSHTerminalScreenshotStatus: String {
 final class SSHTerminalPreviewController: PreviewRootController {
     private let status: SSHTerminalScreenshotStatus
     private let channel: SSHTerminalChannel?
+    private let readout: SSHTerminalPreviewReadout
     /// The fixture bytes the terminal plays, and the Rex session's event
     /// stream: tasks this controller owns, so a re-used launch leaves nothing
     /// running behind the preview it dropped.
@@ -44,6 +45,8 @@ final class SSHTerminalPreviewController: PreviewRootController {
         connection.setPreviewServerId("preview-server")
         let channel = try? SSHTerminalChannel()
         self.channel = channel
+        let readout = SSHTerminalPreviewReadout()
+        self.readout = readout
         let root = AppRootEnvironment.preview(
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
             themeStore: themeStore
@@ -75,6 +78,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        readout.install(in: view)
         guard let channel else { return }
         let status = self.status
         // The fixture's bytes, once the terminal above is its view controller.
@@ -95,7 +99,9 @@ final class SSHTerminalPreviewController: PreviewRootController {
         // chat bar, so the blocked variant shows the card and status symbol
         // over the terminal's own bar. The status variants run a login shell,
         // so only the root record picks the key strip.
+        let readout = readout
         channel.opened(PreviewConnection { [weak channel] bytes in
+            readout.sent(bytes)
             let shown = String(decoding: bytes, as: UTF8.self).unicodeScalars.map { scalar -> String in
                 switch scalar.value {
                 case 0x1b: "\\e"
@@ -176,6 +182,44 @@ final class SSHTerminalPreviewController: PreviewRootController {
     private func osc(_ body: String) -> Data { Data("\u{1b}]7501;\(body)\u{1b}\\".utf8) }
 
     private func b64(_ text: String) -> String { Data(text.utf8).base64EncodedString() }
+}
+
+/// What a driven run (a UI test) reads of the preview: the bytes the terminal
+/// sent to its "host" as hex (`04` for ^D, one group per write; `none` before
+/// any). A tiny label, nearly transparent and untouchable, still in the
+/// accessibility tree.
+@MainActor
+final class SSHTerminalPreviewReadout {
+    private let sentLabel = UILabel()
+    private var sentGroups: [String] = []
+
+    func install(in view: UIView) {
+        for (label, id) in [(sentLabel, "sshTerminal.preview.sent")] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.font = .systemFont(ofSize: 1)
+            label.alpha = 0.02
+            label.isUserInteractionEnabled = false
+            label.isAccessibilityElement = true
+            label.accessibilityIdentifier = id
+            // Not empty: an element with no text is not in the accessibility tree.
+            label.accessibilityLabel = "none"
+            label.text = "none"
+            view.addSubview(label)
+            label.widthAnchor.constraint(greaterThanOrEqualToConstant: 6).isActive = true
+            label.heightAnchor.constraint(greaterThanOrEqualToConstant: 6).isActive = true
+        }
+        NSLayoutConstraint.activate([
+            sentLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sentLabel.topAnchor.constraint(equalTo: view.topAnchor),
+        ])
+    }
+
+    func sent(_ bytes: Data) {
+        sentGroups.append(bytes.map { String(format: "%02X", $0) }.joined(separator: " "))
+        sentLabel.text = sentGroups.joined(separator: " ")
+        sentLabel.accessibilityLabel = sentLabel.text
+    }
+
 }
 
 private actor PreviewConnection: SSHTerminalConnection {

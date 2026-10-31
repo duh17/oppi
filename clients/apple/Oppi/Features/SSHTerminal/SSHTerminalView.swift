@@ -2,9 +2,10 @@ import CoreGraphics
 import UIKit
 
 /// The terminal has no navigation bar. Back sits in a glass pill at the bottom
-/// leading corner; status, Herdr, and the … menu share one at the bottom
-/// trailing corner. The bar ends at the keyboard layout guide, and the grid
-/// ends above it, so it never covers a terminal row.
+/// leading corner; the program status, the bar's buttons, and the … menu share
+/// one centred pill between Back and the trailing end, where a Rex session's
+/// pane switcher has a pill of its own. The bar ends at the keyboard layout
+/// guide, and the grid ends above it, so it never covers a terminal row.
 enum SSHTerminalFloatingControls {
     /// The bar steps aside while a docked keyboard is up (typing) and comes
     /// back when it goes down. A broken connection keeps it: Back and
@@ -48,23 +49,46 @@ enum SSHTerminalBottomBar {
     static let shownHeight = pillHeight + topInset + bottomInset
     /// Rows the grid leaves free while the bar shows.
     static let reserve = shownHeight + gridGap
-    /// Back and the trailing pill sit this far inside the safe area.
+    /// Back and the pane switcher's pill sit this far inside the safe area.
     static let sideInset: CGFloat = 12
-    /// The least room between two pills.
+    /// The least room between Back and the centred pill, and between it and the pane switcher.
     static let pillGap: CGFloat = 8
 
-    /// How many buttons the middle pill has room for between Back and a
-    /// trailing pill of `trailingItems` 44 pt items, in a bar `width` wide
-    /// inside `safeInsets`. Whatever is left over goes to the … menu.
-    static func middleCapacity(width: CGFloat, safeInsets: UIEdgeInsets, trailingItems: Int) -> Int {
-        let room = width - safeInsets.left - safeInsets.right - 2 * sideInset
-            - SSHTerminalGlassPill.height - CGFloat(trailingItems) * SSHTerminalGlassPill.itemWidth - 2 * pillGap
-        return max(0, Int((room / SSHTerminalGlassPill.itemWidth).rounded(.down)))
+    /// The width between Back and what sits at the trailing end: the Rex pane
+    /// switcher's pill while it shows, else the screen's edge. The pill
+    /// lives in it; it is centred on the screen when it fits there
+    /// (`pillMinX`).
+    static func roomWidth(width: CGFloat, safeInsets: UIEdgeInsets, rexPanesShown: Bool) -> CGFloat {
+        let reserve = rexPanesShown ? SSHTerminalGlassPill.itemWidth + pillGap : 0
+        return width - safeInsets.left - safeInsets.right - 2 * sideInset
+            - SSHTerminalGlassPill.height - pillGap - reserve
+    }
+
+    /// Where the pill's leading edge is, for a pill `pillWidth` wide in a bar
+    /// `viewWidth` wide: centered on the screen, unless that would bring an
+    /// edge closer than `pillGap` to Back or to the pane switcher's pill (or
+    /// the side inset at the trailing edge), when it moves just far enough. A
+    /// pill wider than its room (the capacity prevents it) starts at the room's
+    /// leading edge.
+    static func pillMinX(pillWidth: CGFloat, viewWidth: CGFloat, safeInsets: UIEdgeInsets, rexPanesShown: Bool) -> CGFloat {
+        let lower = safeInsets.left + sideInset + SSHTerminalGlassPill.height + pillGap
+        let reserve = rexPanesShown ? SSHTerminalGlassPill.itemWidth + pillGap : 0
+        let upper = viewWidth - safeInsets.right - sideInset - reserve
+        let centered = (viewWidth - pillWidth) / 2
+        return max(lower, min(centered, upper - pillWidth))
+    }
+
+    /// How many buttons the pill has room for besides its fixed items (the
+    /// program-status symbol while shown, and …): whole 44 pt items in
+    /// `roomWidth`. Whatever is left over goes to the … menu.
+    static func capacity(width: CGFloat, safeInsets: UIEdgeInsets, rexPanesShown: Bool, fixedItems: Int) -> Int {
+        let room = roomWidth(width: width, safeInsets: safeInsets, rexPanesShown: rexPanesShown)
+        return max(0, Int((room / SSHTerminalGlassPill.itemWidth).rounded(.down)) - fixedItems)
     }
 }
 
-/// What the middle pill's capacity depends on besides the layout and the
-/// trailing pill: the bar's width and its side safe-area insets.
+/// What the pill's capacity depends on besides the layout and what sits
+/// beside it: the bar's width and its side safe-area insets.
 struct SSHTerminalBarFit: Equatable {
     var width: CGFloat = 0
     var left: CGFloat = 0

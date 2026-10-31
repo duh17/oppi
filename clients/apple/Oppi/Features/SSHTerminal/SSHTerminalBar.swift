@@ -2,15 +2,16 @@ import GhosttyVt
 import UIKit
 import UniformTypeIdentifiers
 
-/// A button the SSH terminal's bottom bar can show. Settings > Terminal >
-/// Bottom Bar picks which and in what order (`SSHTerminalBarLayout`), and the
-/// cases read in the default order.
+/// A built-in button the SSH terminal's bottom bar can show. Settings > Terminal >
+/// Bottom Bar picks which and in what order, as one list of
+/// `SSHTerminalBarItem`s (these, Program Shortcuts, and the person's custom
+/// keys), and the cases read in the default order.
 ///
-/// Back and the … menu are fixed (the bar's leading and trailing ends) and the
-/// program-status symbol is a readout, so none of them is here. A middle
-/// action sits in the middle pill; Herdr, Rex, and the switcher stay in the
-/// trailing pill beside ….
-enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
+/// Back and the … menu are fixed (the bar's leading end, and the end of the
+/// one centred pill), the Rex pane switcher has a pill of its own at the
+/// trailing end, and the program-status symbol is a readout, so none of them
+/// is here.
+enum SSHTerminalBarAction: String, CaseIterable, Identifiable {
     case keyboard
     case chatBar
     case escape
@@ -27,25 +28,8 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
 
     var id: String { rawValue }
 
-    /// Today's bar plus the two input buttons: Type in Terminal and Chat Bar in
-    /// the middle, Herdr, Rex, and the switcher on the right (each only where
-    /// the screen can offer it). Keys, Paste, and Browse Files Here start off.
-    static let defaultShown: Set<SSHTerminalBarAction> = [.keyboard, .chatBar, .herdr, .rex, .switcher]
-
-    /// The multiplexers whose overview sheet a trailing button opens.
+    /// The multiplexers whose overview sheet a button opens.
     static let overviews: [SSHTerminalBarAction] = [.herdr, .rex]
-
-    enum Group: Hashable, Sendable {
-        case middle
-        case trailing
-    }
-
-    var group: Group {
-        switch self {
-        case .herdr, .rex, .switcher: .trailing
-        default: .middle
-        }
-    }
 
     /// Sends keys to the program instead of opening something. A key turned off
     /// is not offered in the … menu (the keyboard bars have every key), but a
@@ -190,194 +174,3 @@ enum SSHTerminalBarAction: String, BarLayoutAction, Identifiable {
     }
 }
 
-typealias SSHTerminalBarLayout = BarLayout<SSHTerminalBarAction>
-
-/// Which multiplexer a terminal belongs to, and so which of the two overview
-/// buttons it can offer: a terminal in Rex is only Rex's, one in Herdr only
-/// Herdr's, and a plain shell, where each is a launcher, keeps both. The one
-/// owner of that rule: the bar, the … menu, and Customize Bar opened from the
-/// terminal all hide `hidden` and nothing else, so the saved layout is never
-/// edited to say it and a plain shell shows the user's choice again.
-enum SSHTerminalBarContext: Equatable, Sendable {
-    case plain
-    /// A pane of a Rex session (`SSHTerminalChannel.rex`).
-    case rex
-    /// A terminal whose own program is Herdr: the host's Run on Connect command
-    /// starts it (`SSHTerminalChannel.command`), so it ends with Herdr. A
-    /// `herdr` typed into a shell is not this, and nothing in the terminal's
-    /// bytes says so reliably.
-    case herdr
-
-    init(isRexPane: Bool, command: String?) {
-        if isRexPane {
-            self = .rex
-        } else if SSHTerminalMultiplexerKind.detected(in: command) == .herdr {
-            self = .herdr
-        } else {
-            self = .plain
-        }
-    }
-
-    /// The actions this terminal's multiplexer rules out.
-    var hidden: Set<SSHTerminalBarAction> {
-        switch self {
-        case .plain: []
-        case .rex: [.herdr]
-        case .herdr: [.rex]
-        }
-    }
-
-    /// Whether the terminal reads this multiplexer's overview in the
-    /// background. Hiding a button is presentation only, and Rex's read is also
-    /// how Oppi learns Rex is on the host (`SSHTerminalRexHostStore`, which the
-    /// Terminal tab follows), so a Herdr terminal still reads Rex though it
-    /// shows no Rex button. Herdr's read feeds nothing else, so a Rex pane
-    /// does not poll the host's Herdr.
-    func polls(_ action: SSHTerminalBarAction) -> Bool {
-        !hidden.contains(action) || action == .rex
-    }
-}
-
-/// What the bottom bar draws, split by pill, and what the … menu offers.
-struct SSHTerminalBarPlacement: Equatable {
-    var middle: [SSHTerminalBarAction]
-    var trailing: [SSHTerminalBarAction]
-    var menu: [SSHTerminalBarAction]
-}
-
-extension BarLayout where Action == SSHTerminalBarAction {
-    /// The middle pill holds as many of its shown actions as fit
-    /// (`middleCapacity`); the rest go to the … menu with the turned-off
-    /// actions that are not keys. Paste never goes in the menu: a menu item
-    /// cannot read the clipboard without iOS's Allow Paste alert, and holding
-    /// the grid already offers Paste.
-    func placement(available: Set<SSHTerminalBarAction>, middleCapacity: Int) -> SSHTerminalBarPlacement {
-        let drawn = bar(available: available)
-        let middleShown = drawn.filter { $0.group == .middle }
-        let fits = Array(middleShown.prefix(max(0, middleCapacity)))
-        let overflow = Array(middleShown.dropFirst(fits.count))
-        let hidden = menu(available: available).filter { !$0.isKey }
-        let menu = order.filter { action in
-            action != .paste && (overflow.contains(action) || hidden.contains(action))
-        }
-        return SSHTerminalBarPlacement(
-            middle: fits,
-            trailing: drawn.filter { $0.group == .trailing },
-            menu: menu
-        )
-    }
-}
-
-/// The bottom bar's middle pill: the shown middle actions that fit, in order.
-/// Rebuilt only when that list changes. Every button runs `perform`, so a tap,
-/// VoiceOver activation, and the … menu item for the same action do the same
-/// thing. Paste is the system paste control, which reads the clipboard
-/// without the Allow Paste alert. Its target is this pill, not the grid: with
-/// the grid as its target, a tap made the grid first responder, which raised
-/// the keyboard (and resized the shell) for a paste that needs none, and an
-/// image did not arrive. The pill cannot become first responder, so the items
-/// arrive here with the keyboard down and go on to the grid through
-/// `deliverPaste`.
-final class SSHTerminalBarMiddlePill: SSHTerminalGlassPill {
-    var perform: (SSHTerminalBarAction) -> Void = { _ in }
-    /// What the paste control's items are handed to: the grid's paste.
-    var deliverPaste: ([NSItemProvider]) -> Void = { _ in }
-
-    private(set) var actions: [SSHTerminalBarAction] = []
-    private var buttons: [SSHTerminalBarAction: SSHTerminalPillButton] = [:]
-    private var pasteControl: UIPasteControl?
-    private var tint: UIColor = .label
-    private var pasteBackground: UIColor = .black
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        // What the grid takes: text, or an image it saves on the host.
-        pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [
-            UTType.plainText.identifier, UTType.image.identifier,
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override func paste(itemProviders: [NSItemProvider]) {
-        deliverPaste(itemProviders)
-    }
-
-    func show(_ next: [SSHTerminalBarAction]) {
-        guard next != actions else { return }
-        actions = next
-        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        buttons = [:]
-        pasteControl = nil
-        for action in next {
-            if action == .paste {
-                stack.addArrangedSubview(makePasteControl())
-                continue
-            }
-            let button = SSHTerminalPillButton(
-                image: action.image(configuration: SSHTerminalPillButton.symbolConfiguration),
-                label: action.accessibilityLabel,
-                identifier: action.accessibilityIdentifier
-            )
-            if let cap = action.keyCap { button.showKeyCap(cap) }
-            button.addAction(UIAction { [weak self] _ in self?.perform(action) }, for: .touchUpInside)
-            button.apply(tint: tint)
-            buttons[action] = button
-            stack.addArrangedSubview(button)
-        }
-        isHidden = next.isEmpty
-    }
-
-    /// `selected` is the input that typing goes to now (`.keyboard` or
-    /// `.chatBar`): its button draws filled and carries the selected trait.
-    /// Keys dim while there is no connection to send them on.
-    /// `background` is the terminal's: the paste control draws its capsule in
-    /// it, since iOS will not draw a secure control on a clear background.
-    func apply(tint: UIColor, background: UIColor, selected: SSHTerminalBarAction?, keysEnabled: Bool) {
-        // Compared resolved: a theme color is a new dynamic UIColor every pass.
-        func same(_ one: UIColor, _ two: UIColor) -> Bool {
-            one.resolvedColor(with: traitCollection) == two.resolvedColor(with: traitCollection)
-        }
-        let changed = !same(tint, self.tint) || !same(background, pasteBackground)
-        self.tint = tint
-        pasteBackground = background
-        if changed, pasteControl != nil {
-            // The paste control takes its colors only when it is made.
-            let shown = actions
-            actions = []
-            show(shown)
-        }
-        for (action, button) in buttons {
-            button.apply(tint: tint)
-            if action == .keyboard || action == .chatBar {
-                let isSelected = action == selected
-                button.setSymbol(action.symbol(selected: isSelected))
-                button.accessibilityTraits = isSelected ? [.button, .selected] : .button
-            }
-            if action.isKey { button.isEnabled = keysEnabled }
-        }
-    }
-
-    func button(for action: SSHTerminalBarAction) -> UIButton? { buttons[action] }
-
-    private func makePasteControl() -> UIPasteControl {
-        let style = UIPasteControl.Configuration()
-        style.displayMode = .iconOnly
-        style.cornerStyle = .capsule
-        style.baseForegroundColor = tint
-        style.baseBackgroundColor = pasteBackground
-        let paste = UIPasteControl(configuration: style)
-        paste.translatesAutoresizingMaskIntoConstraints = false
-        paste.target = self
-        paste.accessibilityIdentifier = SSHTerminalBarAction.paste.accessibilityIdentifier
-        let width = paste.widthAnchor.constraint(equalToConstant: SSHTerminalGlassPill.itemWidth)
-        width.priority = .required - 1
-        NSLayoutConstraint.activate([
-            width,
-            paste.heightAnchor.constraint(equalToConstant: SSHTerminalGlassPill.height),
-        ])
-        pasteControl = paste
-        return paste
-    }
-}

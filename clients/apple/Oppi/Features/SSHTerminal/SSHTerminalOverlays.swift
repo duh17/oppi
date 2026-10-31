@@ -1,10 +1,16 @@
 import UIKit
 
 /// Hits pass through empty space to the grid; cards and buttons keep theirs.
+/// A child is asked for its own hit whatever its frame, so a pill that answers
+/// a touch a few points outside its glass (`SSHTerminalGlassPill`) keeps that
+/// reach inside this view's bounds.
 final class SSHTerminalPassthroughView: UIView {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let hit = super.hitTest(point, with: event)
-        return hit === self ? nil : hit
+        guard !isHidden, alpha > 0.01, isUserInteractionEnabled, self.point(inside: point, with: event) else { return nil }
+        for child in subviews.reversed() {
+            if let hit = child.hitTest(convert(point, to: child), with: event) { return hit }
+        }
+        return nil
     }
 }
 
@@ -131,10 +137,12 @@ class SSHTerminalPillButton: UIButton {
 
     /// Draws a short key cap ("Esc", "^C") instead of the symbol, the way the
     /// keyboard bars label those keys. Large Content Viewer keeps the symbol.
+    /// A cap longer than four characters (a chord such as ⌃⇧F5) steps down a
+    /// size to stay inside the 44 pt button.
     func showKeyCap(_ cap: String) {
         configuration?.image = nil
         var title = AttributedString(cap)
-        title.font = UIFont.monospacedSystemFont(ofSize: 14, weight: .semibold)
+        title.font = UIFont.monospacedSystemFont(ofSize: cap.count > 4 ? 11 : 14, weight: .semibold)
         configuration?.attributedTitle = title
     }
 }
@@ -182,6 +190,12 @@ final class SSHTerminalBackPill: UIView {
         pill.point(inside: convert(point, to: pill), with: event)
     }
 
+    /// The pill answers for the strip around its glass; the attention dot takes no touch.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard !isHidden, alpha > 0.01, isUserInteractionEnabled, self.point(inside: point, with: event) else { return nil }
+        return pill.hitTest(convert(point, to: pill), with: event)
+    }
+
     /// `foreground` is the terminal's own text color when its theme sets one.
     func apply(themeID: ThemeID, attentionPending: Bool, foreground: UIColor? = nil) {
         button.apply(tint: foreground ?? UIColor(themeID.palette.fg))
@@ -189,104 +203,6 @@ final class SSHTerminalBackPill: UIView {
         attentionDot.layer.borderColor = UIColor(themeID.palette.bg).cgColor
         attentionDot.isHidden = !attentionPending
         button.accessibilityValue = attentionPending ? "Attention pending" : nil
-    }
-}
-
-/// Bottom trailing: the program-status symbol (while a program has reported),
-/// then the trailing bar actions the layout shows and the screen can offer
-/// (Herdr or Rex when the host has it, the switcher with more than one
-/// terminal open), in the layout's order, then the … menu, which is always last.
-/// A Rex session with more than one pane adds its pane switcher right after
-/// the Rex sessions button.
-final class SSHTerminalMorePill: SSHTerminalGlassPill {
-    let status: SSHTerminalStatusGlyphButton
-    /// One button per multiplexer overview (`SSHTerminalBarAction.overviews`).
-    let overviews: [SSHTerminalBarAction: SSHTerminalPillButton] = Dictionary(
-        uniqueKeysWithValues: SSHTerminalBarAction.overviews.map { action in
-            (action, SSHTerminalPillButton(
-                image: action.image(configuration: SSHTerminalPillButton.symbolConfiguration),
-                label: action.accessibilityLabel,
-                identifier: action.accessibilityIdentifier
-            ))
-        }
-    )
-    /// Opens a menu of every open terminal.
-    let switcher = SSHTerminalPillButton(
-        systemName: SSHTerminalBarAction.switcher.symbol(),
-        label: SSHTerminalBarAction.switcher.accessibilityLabel,
-        identifier: SSHTerminalBarAction.switcher.accessibilityIdentifier
-    )
-    /// The Rex session's pane switcher, hidden unless the session has more than one pane.
-    let rexPanes = SSHTerminalRexPanesButton()
-    let more = SSHTerminalPillButton(systemName: "ellipsis", label: "More", identifier: "sshTerminal.more")
-
-    init(status: SSHTerminalStatusGlyphButton) {
-        self.status = status
-        super.init(frame: .zero)
-        more.showsMenuAsPrimaryAction = true
-        switcher.showsMenuAsPrimaryAction = true
-        status.isHidden = true
-        switcher.isHidden = true
-        rexPanes.isHidden = true
-        stack.addArrangedSubview(status)
-        for action in SSHTerminalBarAction.overviews {
-            guard let button = overviews[action] else { continue }
-            button.isHidden = true
-            stack.addArrangedSubview(button)
-        }
-        stack.addArrangedSubview(rexPanes)
-        stack.addArrangedSubview(switcher)
-        stack.addArrangedSubview(more)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func button(for action: SSHTerminalBarAction) -> SSHTerminalPillButton? {
-        action == .switcher ? switcher : overviews[action]
-    }
-
-    /// `trailing` is what the layout draws here, in order (`SSHTerminalBarPlacement.trailing`).
-    /// `waiting` holds each available multiplexer's count of panes that need
-    /// you; one it does not name has not answered. `rex` is a Rex terminal's
-    /// session, which gives the pane switcher its panes.
-    func apply(
-        themeID: ThemeID,
-        trailing: [SSHTerminalBarAction],
-        waiting: [SSHTerminalBarAction: Int],
-        showsStatus: Bool,
-        openTerminals: Int = 0,
-        rex: RexSessionState? = nil,
-        foreground: UIColor? = nil
-    ) {
-        let fg = foreground ?? UIColor(themeID.palette.fg)
-        status.isHidden = !showsStatus
-        let trailingButtons = (SSHTerminalBarAction.overviews + [.switcher]).compactMap { button(for: $0) }
-        let ordered: [UIView] = trailing.compactMap { button(for: $0) }
-        // The trailing actions in the layout's order, between status and the menu.
-        var order: [UIView] = [status] + ordered + trailingButtons.filter { !ordered.contains($0) } + [more]
-        // The pane switcher sits beside Rex's sessions, or before … when that
-        // button is in the menu.
-        let panesAt = overviews[.rex].flatMap { rexButton in order.firstIndex { $0 === rexButton }.map { $0 + 1 } } ?? order.count - 1
-        order.insert(rexPanes, at: panesAt)
-        if stack.arrangedSubviews != order {
-            for view in order { stack.addArrangedSubview(view) }
-        }
-        switcher.isHidden = !trailing.contains(.switcher)
-        switcher.accessibilityValue = "\(openTerminals) open"
-        switcher.apply(tint: fg)
-        for action in SSHTerminalBarAction.overviews {
-            guard let button = overviews[action] else { continue }
-            let count = waiting[action]
-            let waitingCount = count ?? 0
-            button.isHidden = !trailing.contains(action)
-            button.apply(tint: waitingCount > 0 ? UIColor(themeID.palette.orange) : fg)
-            button.accessibilityValue = count.map { "\($0) need you" } ?? ""
-            button.largeContentTitle = waitingCount > 0
-                ? "\(action.accessibilityLabel) (\(waitingCount))" : action.accessibilityLabel
-        }
-        rexPanes.apply(state: rex, tint: fg)
-        more.apply(tint: fg)
     }
 }
 

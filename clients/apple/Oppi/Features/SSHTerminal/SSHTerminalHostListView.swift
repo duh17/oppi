@@ -202,11 +202,13 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             )
         }
         let indexCell = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
-            let layout = AppPreferences.SSHTerminalBar.layout
+            let store = SSHTerminalBarStore()
+            let layout = store.layout
+            let keys = store.customKeys
             cell.configure(
                 title: String(localized: "Bottom Bar"),
                 systemImage: nil,
-                value: layout.order.filter { layout.isShown($0) }.map(\.label).joined(separator: ", "),
+                value: layout.order.filter { layout.isShown($0) }.map { $0.title(customKeys: keys) }.joined(separator: ", "),
                 identifier: "settings.sshTerminal.bar"
             ) { [weak self] in
                 guard let self else { return }

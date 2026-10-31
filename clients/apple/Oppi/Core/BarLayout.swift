@@ -66,6 +66,24 @@ struct BarLayout<Action: BarLayoutAction>: Hashable, Sendable {
         return Self(order: order, shown: next)
     }
 
+    /// Appends an action that is not in the order yet (a bar whose actions
+    /// are not all known at compile time, like the SSH terminal's custom
+    /// keys). One already in the order keeps its place and state.
+    func adding(_ action: Action, shown isShown: Bool) -> Self {
+        guard !order.contains(action) else { return self }
+        var next = shown
+        if isShown { next.insert(action) }
+        return Self(order: order + [action], shown: next)
+    }
+
+    /// Drops an action from the order and the shown set. `init` puts back one
+    /// of `allCases`, so this is for actions that are not cases.
+    func removing(_ action: Action) -> Self {
+        var next = shown
+        next.remove(action)
+        return Self(order: order.filter { $0 != action }, shown: next)
+    }
+
     /// Puts `visible`, the order of some of the actions, in the places those
     /// actions held. Every other action keeps its place and its shown state, so
     /// a screen that offers only some actions can reorder them without

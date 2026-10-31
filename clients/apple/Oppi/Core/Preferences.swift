@@ -464,31 +464,6 @@ enum AppPreferences {
         }
     }
 
-    // MARK: - SSH Terminal Bar
-
-    /// Which buttons the SSH terminal's bottom bar shows and in what order
-    /// (`SSHTerminalBarAction`). Hidden buttons live in the bar's … menu.
-    /// Device-local and the same for every host.
-    enum SSHTerminalBar {
-        static let preference = BarLayoutPreference<SSHTerminalBarAction>(
-            orderKey: "\(AppIdentifiers.subsystem).sshTerminal.barOrder",
-            shownKey: "\(AppIdentifiers.subsystem).sshTerminal.barShown",
-            didChangeNotification: Notification.Name("oppi.sshTerminalBar.didChange")
-        )
-
-        static var layout: SSHTerminalBarLayout { preference.layout(in: .standard) }
-
-        static func setLayout(_ layout: SSHTerminalBarLayout) {
-            preference.save(layout, in: .standard)
-        }
-
-        /// Forgets the saved layout, so the bar follows the default again,
-        /// including a default a later version changes.
-        static func reset() {
-            preference.reset(in: .standard)
-        }
-    }
-
     // MARK: - Appearance
 
     /// Spinner and dictation indicator style preferences.

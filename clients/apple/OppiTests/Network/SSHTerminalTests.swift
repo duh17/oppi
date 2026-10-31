@@ -2050,13 +2050,14 @@ struct SSHTerminalTests {
         let minimap = try #require(mounted.find { $0 is SSHTerminalRexMinimapView } as? SSHTerminalRexMinimapView)
         minimap.hideDelay = .milliseconds(150)
         #expect(!(0...2).contains { shown("sshTerminal.rexMinimap.\($0)") })
-        // The minimap sits at the grid's top right, the switcher in the trailing pill beside ….
+        // The minimap sits at the grid's top right, the switcher in a pill of its
+        // own at the bottom trailing corner, past the bar's pill that ends with ….
         let grid = try #require(mounted.controller.gridView)
         let corner = minimap.convert(CGPoint(x: minimap.bounds.maxX, y: minimap.bounds.minY), to: grid)
         #expect(corner.x > grid.bounds.width - 24 && corner.y < 24)
         let more = try #require(control("sshTerminal.more"))
-        #expect(switcher.superview === more.superview)
-        #expect(switcher.convert(CGPoint.zero, to: mounted.controller.view).x < more.convert(CGPoint.zero, to: mounted.controller.view).x)
+        #expect(switcher.superview !== more.superview)
+        #expect(switcher.convert(CGPoint.zero, to: mounted.controller.view).x > more.convert(CGPoint.zero, to: mounted.controller.view).x)
         #expect(grid.paneTransition.phase == .idle)
 
         // A swipe shows it, with the first pane's cell selected and the cells
@@ -3398,6 +3399,77 @@ struct SSHTerminalTests {
         let gapPoint = CGPoint(x: (backEdge + middleEdge) / 2, y: try stripPoint("sshTerminal.more").y)
         let gapHit = terminal.view.hitTest(gapPoint, with: nil)
         #expect(gapHit?.accessibilityIdentifier == nil, "the gap is not a bar control")
+    }
+
+    /// The bar's pill is centered on the screen and moves only when its
+    /// edges would come within the gap of Back or the Rex pane switcher's pill.
+    @Test func theBarPillIsCenteredOnTheScreenAndOnlyMovesWhenCrowded() async throws {
+        let suite = "SSHTerminalTests.pill.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SSHTerminalBarStore(defaults: defaults)
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {}, barStore: store)
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let terminal = mounted.controller
+        func frames() -> (pill: CGRect, back: CGRect)? {
+            terminal.updatePropertiesIfNeeded()
+            mounted.host.view.layoutIfNeeded()
+            guard let pill = mounted.find({ $0 is SSHTerminalBarPill }), let back = mounted.find({ $0 is SSHTerminalBackPill }) else { return nil }
+            return (pill.convert(pill.bounds, to: terminal.view), back.convert(back.bounds, to: terminal.view))
+        }
+        try #require(await waitForMainActorCondition { frames() != nil })
+        let start = try #require(frames())
+        #expect(abs(start.pill.midX - terminal.view.bounds.midX) < 0.5, "few buttons: centered on the screen, \(start.pill)")
+
+        // Every button on, and three custom keys: more than the room holds.
+        for key in ["d", "l", "k"] { store.save(SSHTerminalCustomKey(name: key.uppercased(), control: true, key: key)) }
+        store.setLayout(SSHTerminalBarLayout(order: store.layout.order, shown: Set(store.layout.order)))
+        try #require(await waitForMainActorCondition { (frames()?.pill.width ?? 0) > 280 })
+        let crowded = try #require(frames())
+        let width = terminal.view.bounds.width
+        let expected = SSHTerminalBottomBar.pillMinX(
+            pillWidth: crowded.pill.width, viewWidth: width, safeInsets: terminal.view.safeAreaInsets, rexPanesShown: false
+        )
+        #expect(abs(crowded.pill.minX - expected) < 0.5, "crowded: at the clamp \(expected), not \(crowded.pill.minX)")
+        #expect(crowded.pill.minX >= crowded.back.maxX + SSHTerminalBottomBar.pillGap - 0.5, "never closer than the gap to Back")
+        #expect(crowded.pill.maxX <= width - SSHTerminalBottomBar.sideInset + 0.5)
+        #expect(crowded.pill.midX > width / 2, "shifted toward the open side, not centered")
+    }
+
+    /// With the Rex pane switcher at the trailing corner the room is smaller: a
+    /// crowded pill stops a gap short of its pill and never overlaps it.
+    @Test func theBarPillKeepsAGapFromTheRexPaneSwitcher() async throws {
+        let suite = "SSHTerminalTests.pill.rex.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SSHTerminalBarStore(defaults: defaults)
+        for key in ["d", "l", "k"] { store.save(SSHTerminalCustomKey(name: key.uppercased(), control: true, key: key)) }
+        store.setLayout(SSHTerminalBarLayout(order: store.layout.order, shown: Set(store.layout.order)))
+        let rig = try await RexSessionTerminalTests().open(["a", "b"])
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {}, barStore: store)
+        )
+        defer { mounted.dismiss() }
+        let terminal = mounted.controller
+        func frames() -> (pill: CGRect, panes: CGRect)? {
+            terminal.updatePropertiesIfNeeded()
+            mounted.host.view.layoutIfNeeded()
+            guard let pill = mounted.find({ $0 is SSHTerminalBarPill }),
+                  let panes = mounted.find({ $0 is SSHTerminalRexPanesPill }), !panes.isHidden, panes.bounds.width > 0 else { return nil }
+            return (pill.convert(pill.bounds, to: terminal.view), panes.convert(panes.bounds, to: terminal.view))
+        }
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { (frames()?.pill.width ?? 0) > 220 })
+        let layout = try #require(frames())
+        #expect(layout.pill.maxX <= layout.panes.minX - SSHTerminalBottomBar.pillGap + 0.5, "a gap before the pane switcher: \(layout)")
+        let expected = SSHTerminalBottomBar.pillMinX(
+            pillWidth: layout.pill.width, viewWidth: terminal.view.bounds.width, safeInsets: terminal.view.safeAreaInsets, rexPanesShown: true
+        )
+        #expect(abs(layout.pill.minX - expected) < 0.5)
+        await rig.stop()
     }
 
     @Test func inputAndPasteBannersSitOnAMaterialCard() async throws {

@@ -68,7 +68,6 @@
       ".settingsToggle(": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalBarSettingsViewController.swift": {
-      "AppPreferences.*.set": 1,
       ".settingsToggle(": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalColorPickerViewController.swift": {

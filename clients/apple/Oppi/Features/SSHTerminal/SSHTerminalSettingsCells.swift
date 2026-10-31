@@ -7,6 +7,7 @@ final class SSHTerminalTextFieldCell: UICollectionViewListCell {
     let textField = UITextField()
     private let titleLabel = UILabel()
     private var onChange: ((String) -> Void)?
+    private var maximumLength: Int?
     private var returnAction: UIAction?
     private var fieldAfterMargin: NSLayoutConstraint?
     private var fieldAfterLabel: NSLayoutConstraint?
@@ -47,7 +48,9 @@ final class SSHTerminalTextFieldCell: UICollectionViewListCell {
     required init?(coder: NSCoder) { nil }
 
     /// `onReturn` runs when Return is pressed, after the field resigns. A field
-    /// with none keeps its existing Return behavior.
+    /// with none keeps its existing Return behavior. A field with a
+    /// `maximumLength` keeps its last characters, so typing over a one-key
+    /// field replaces the key.
     func configure(
         text: String,
         placeholder: String,
@@ -63,10 +66,12 @@ final class SSHTerminalTextFieldCell: UICollectionViewListCell {
         labelColor: UIColor = .label,
         enabled: Bool = true,
         returnKey: UIReturnKeyType = .default,
+        maximumLength: Int? = nil,
         onReturn: (() -> Void)? = nil,
         onChange: @escaping (String) -> Void
     ) {
         self.onChange = onChange
+        self.maximumLength = maximumLength
         if !textField.isFirstResponder, textField.text != text {
             textField.text = text
         }
@@ -112,12 +117,16 @@ final class SSHTerminalTextFieldCell: UICollectionViewListCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         onChange = nil
+        maximumLength = nil
         setReturnAction(nil)
         textField.delegate = nil
         textField.accessibilityIdentifier = nil
     }
 
     @objc private func changed() {
+        if let maximumLength, let text = textField.text, text.count > maximumLength {
+            textField.text = String(text.suffix(maximumLength))
+        }
         onChange?(textField.text ?? "")
     }
 }

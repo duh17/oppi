@@ -23,14 +23,15 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
     private(set) var gridView: SSHTerminalGridView?
     private let overlay = SSHTerminalPassthroughView()
-    /// The bottom bar's container: Back at the leading edge, status, Herdr
-    /// or Rex, and … at the trailing one. It ends at the keyboard layout guide, so
-    /// with a docked keyboard up (and a broken connection, the one case that
-    /// keeps the bar) it floats just above the keyboard.
+    /// The bottom bar's container: Back at the leading edge, the one centred
+    /// pill of buttons, and a Rex session's pane switcher at the trailing one.
+    /// It ends at the keyboard layout guide, so with a docked keyboard up (and a
+    /// broken connection, the one case that keeps the bar) it floats just above
+    /// the keyboard.
     private let bottomBar = SSHTerminalPassthroughView()
     private var bottomBarHeight: NSLayoutConstraint?
     /// A Rex session's window minimap at the grid's top right. Its pane
-    /// switcher is a button in the bar's trailing pill (`morePill.rexPanes`).
+    /// switcher is the bar's trailing pill (`rexPill`).
     private let rexMinimap = SSHTerminalRexMinimapView()
     /// The terminal shows a Rex session: the grid swipes (past the last pane
     /// that opens a new one) and takes VoiceOver's pane actions. The switcher
@@ -49,17 +50,23 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private let backToLive = JumpToBottomButton()
     private var backToLiveThemeID: ThemeID?
     private let statusGlyph = SSHTerminalStatusGlyphButton()
-    private lazy var morePill = SSHTerminalMorePill(status: statusGlyph)
-    /// The customizable middle of the bottom bar (Settings > Terminal >
-    /// Bottom Bar), between Back and the trailing pill.
-    private let middlePill = SSHTerminalBarMiddlePill()
-    private var barLayout = AppPreferences.SSHTerminalBar.layout
+    /// The bottom bar's one centred pill (Settings > Terminal > Bottom
+    /// Bar), between Back and the pane switcher.
+    private lazy var barPill = SSHTerminalBarPill(status: statusGlyph)
+    /// A Rex session's pane switcher, bottom trailing, only with more than one pane.
+    private let rexPill = SSHTerminalRexPanesPill()
+    private let barStore: SSHTerminalBarStore
+    private lazy var barLayout = barStore.layout
+    private lazy var barCustomKeys = barStore.customKeys
     /// What the bar drew on the last pass. The … menu offers its `menu`,
     /// so the menu opened now matches the bar on screen.
-    private var barPlacement = SSHTerminalBarPlacement(middle: [], trailing: [], menu: [])
+    private var barPlacement = SSHTerminalBarPlacement(slots: [], menu: [])
     private var barLayoutObserver: NSObjectProtocol?
-    /// The width and side insets the middle pill's capacity was last worked out for.
+    /// The width and side insets the pill's capacity was last worked out for.
     private var barFit = SSHTerminalBarFit()
+    /// The pill's room runs to the pane switcher while it shows, else to the edge.
+    private var roomEndsAtPanes: NSLayoutConstraint?
+    private var roomEndsAtEdge: NSLayoutConstraint?
     private var menuTitle: String?
     private var composerBar: ComposerBarController?
     private var composerSession: SSHTerminalComposerHost?
@@ -172,8 +179,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         editHost: @escaping () -> Void,
         hostLabel: String = "",
         session: SSHTerminalConnectSession? = nil,
-        composerConnection: ServerConnection? = nil
+        composerConnection: ServerConnection? = nil,
+        barStore: SSHTerminalBarStore = SSHTerminalBarStore()
     ) {
+        self.barStore = barStore
         self.channel = channel
         self.reconnect = reconnect
         self.editHost = editHost
@@ -201,14 +210,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         shownIdentity = terminalIdentity
         buildLayout()
         barLayoutObserver = NotificationCenter.default.addObserver(
-            forName: AppPreferences.SSHTerminalBar.preference.didChangeNotification,
+            forName: SSHTerminalBarStore.didChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.barLayout = AppPreferences.SSHTerminalBar.layout
-                self?.setNeedsUpdateProperties()
-            }
+            MainActor.assumeIsolated { self?.reloadBarSettings() }
         }
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -465,11 +471,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         topStack.translatesAutoresizingMaskIntoConstraints = false
 
         backPill.button.addAction(UIAction { [weak self] _ in self?.goBack() }, for: .touchUpInside)
-        for action in SSHTerminalBarAction.overviews {
-            morePill.button(for: action)?.addAction(UIAction { [weak self] _ in self?.showOverview(action) }, for: .touchUpInside)
-        }
-        middlePill.perform = { [weak self] action in self?.perform(action) }
-        middlePill.deliverPaste = { [weak self] items in self?.gridView?.paste(itemProviders: items) }
+        barPill.perform = { [weak self] slot in self?.perform(slot) }
+        barPill.deliverPaste = { [weak self] items in self?.gridView?.paste(itemProviders: items) }
         connectionBanner.onReconnect = { [weak self] in self?.reconnect() }
         noticeCard.onDismiss = { [weak self] key in
             self?.attention.dismiss(key)
@@ -528,29 +531,43 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
 
         bottomBar.translatesAutoresizingMaskIntoConstraints = false
         bottomBar.addSubview(backPill)
-        bottomBar.addSubview(middlePill)
-        bottomBar.addSubview(morePill)
-        middlePill.isHidden = true
-        // The middle pill centers in the room between Back and the trailing
-        // pill, and never comes closer than 8 pt to either.
-        let middleRoom = UILayoutGuide()
-        bottomBar.addLayoutGuide(middleRoom)
-        let middleCentered = middlePill.centerXAnchor.constraint(equalTo: middleRoom.centerXAnchor)
-        middleCentered.priority = .defaultHigh
+        bottomBar.addSubview(barPill)
+        bottomBar.addSubview(rexPill)
+        // The pill centers on the screen, so it grows the same distance each
+        // way, and moves off center only when it would come closer than 8 pt
+        // to Back or to what is at the trailing end (the pane switcher's pill
+        // while it shows, else the screen's edge): its edges must stay in the
+        // room between them, which wins over the centering
+        // (`SSHTerminalBottomBar.pillMinX` is the same rule as a function).
+        let room = UILayoutGuide()
+        bottomBar.addLayoutGuide(room)
+        let centered = barPill.centerXAnchor.constraint(equalTo: bottomBar.centerXAnchor)
+        centered.priority = .defaultHigh
+        // Below required: the capacity keeps the pill inside the room, and a
+        // bar too narrow for "…" alone should crowd, not break constraints.
+        let notBeforeRoom = barPill.leadingAnchor.constraint(greaterThanOrEqualTo: room.leadingAnchor)
+        notBeforeRoom.priority = .required - 1
+        let notPastRoom = barPill.trailingAnchor.constraint(lessThanOrEqualTo: room.trailingAnchor)
+        notPastRoom.priority = .required - 1
+        let endsAtPanes = room.trailingAnchor.constraint(equalTo: rexPill.leadingAnchor, constant: -SSHTerminalBottomBar.pillGap)
+        let endsAtEdge = room.trailingAnchor.constraint(
+            equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -SSHTerminalBottomBar.sideInset
+        )
+        roomEndsAtPanes = endsAtPanes
+        roomEndsAtEdge = endsAtEdge
         NSLayoutConstraint.activate([
-            middleRoom.leadingAnchor.constraint(equalTo: backPill.trailingAnchor, constant: SSHTerminalBottomBar.pillGap),
-            middleRoom.trailingAnchor.constraint(equalTo: morePill.leadingAnchor, constant: -SSHTerminalBottomBar.pillGap),
-            middleCentered,
-            middlePill.leadingAnchor.constraint(greaterThanOrEqualTo: middleRoom.leadingAnchor),
-            middlePill.trailingAnchor.constraint(lessThanOrEqualTo: middleRoom.trailingAnchor),
-            middlePill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
+            room.leadingAnchor.constraint(equalTo: backPill.trailingAnchor, constant: SSHTerminalBottomBar.pillGap),
+            centered,
+            notBeforeRoom,
+            notPastRoom,
+            barPill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
         ])
 
         // Hidden until a switch shows it (`SSHTerminalRexMinimapView`).
         // The minimap's cells, the switcher's menu, and the swipe all show a
         // pane through `showPane`.
         rexMinimap.select = { [weak self] block in self?.showPane(block) }
-        morePill.rexPanes.installMenu(
+        rexPill.button.installMenu(
             state: { [weak self] in self?.channel.rex?.state },
             select: { [weak self] block in self?.showPane(block) },
             newPane: { [weak self] in self?.gridView?.createPane() }
@@ -561,6 +578,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         view.addSubview(overlay)
         view.addSubview(bottomBar)
         let controlsInset = SSHTerminalBottomBar.sideInset
+        // The room runs to the screen's edge until the pane switcher shows; this
+        // one needs the bar in the view, for the safe area it names.
+        endsAtEdge.isActive = true
         let barHeight = bottomBar.heightAnchor.constraint(equalToConstant: SSHTerminalBottomBar.shownHeight)
         bottomBarHeight = barHeight
         NSLayoutConstraint.activate([
@@ -568,8 +588,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             // controls stay inside the safe area.
             backPill.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: controlsInset),
             backPill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
-            morePill.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -controlsInset),
-            morePill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
+            rexPill.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -controlsInset),
+            rexPill.topAnchor.constraint(equalTo: bottomBar.topAnchor, constant: SSHTerminalBottomBar.topInset),
             // Clear of a landscape notch, like the bar's pills.
             rexMinimap.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
             bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -755,7 +775,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         let header = SSHTerminalMenuHeader.text(title: title, folder: folder)
         guard header != menuTitle else { return }
         menuTitle = header
-        morePill.more.menu = UIMenu(
+        barPill.more.menu = UIMenu(
             title: header,
             children: [UIDeferredMenuElement.uncached { [weak self] completion in
                 completion(self?.overflowElements() ?? [])
@@ -766,8 +786,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// The switcher's menu is built when it opens, so it lists the terminals
     /// open then, with the one on screen checked. Installed once.
     private func installSwitcherMenu() {
-        guard morePill.switcher.menu == nil else { return }
-        morePill.switcher.menu = UIMenu(children: [switcherElements()])
+        guard barPill.switcher.menu == nil else { return }
+        barPill.switcher.menu = UIMenu(children: [switcherElements()])
     }
 
     /// The open terminals, resolved when the menu opens. The switcher button and
@@ -827,34 +847,44 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         return groups
     }
 
-    private func menuElement(for action: SSHTerminalBarAction) -> UIMenuElement {
-        let image = action.image()
-        if action == .switcher {
-            let menu = UIMenu(title: action.menuTitle, image: image, children: [switcherElements()])
-            menu.accessibilityIdentifier = action.menuIdentifier
+    private func menuElement(for slot: SSHTerminalBarSlot) -> UIMenuElement {
+        let image: UIImage? = switch slot.content {
+        case .action(let action): action.image()
+        case .customKey, .shortcut: UIImage(systemName: "keyboard")
+        }
+        if case .action(.switcher) = slot.content {
+            let menu = UIMenu(title: slot.title, image: image, children: [switcherElements()])
+            menu.accessibilityIdentifier = slot.menuIdentifier
             return menu
         }
+        // A shortcut's menu title carries its key, as its bar button's cap does.
+        var title = slot.title
+        if case .shortcut(let shortcut) = slot.content { title += " (\(shortcut.keyLabel))" }
         let item = UIAction(
-            title: action.menuTitle,
+            title: title,
             image: image,
-            attributes: action.isKey && !canSendKeys ? .disabled : []
-        ) { [weak self] _ in self?.perform(action) }
-        item.accessibilityIdentifier = action.menuIdentifier
+            attributes: slot.sendsKeys && !canSendKeys ? .disabled : []
+        ) { [weak self] _ in self?.perform(slot) }
+        item.accessibilityIdentifier = slot.menuIdentifier
         return item
     }
 
-    /// The actions this terminal can offer now. One that could only fail is
-    /// neither drawn nor in the menu.
-    private func availableBarActions(openTerminals: Int) -> Set<SSHTerminalBarAction> {
-        var available = Set(SSHTerminalBarAction.allCases).subtracting(barContext.hidden)
-        for action in SSHTerminalBarAction.overviews where overview(action)?.available != true {
-            available.remove(action)
-        }
-        if openTerminals < 2 { available.remove(.switcher) }
-        // The Files browser over this terminal's folder needs the host to
-        // report one and to be a paired Oppi server.
-        if channel.workingDirectory.isEmpty || pairedServer == nil { available.remove(.browseFiles) }
-        return available
+    /// What the bar offers this terminal now (`SSHTerminalBarOffer`): the one
+    /// owner the bar, the … menu, and VoiceOver read, from the multiplexer, the
+    /// hosts this screen reaches, the program in front, its custom keys and its
+    /// shortcuts. One that could only fail is neither drawn nor in the menu.
+    private func barOffer(openTerminals: Int) -> SSHTerminalBarOffer {
+        SSHTerminalBarOffer(
+            context: barContext,
+            overviews: Set(SSHTerminalBarAction.overviews.filter { overview($0)?.available == true }),
+            openTerminals: openTerminals,
+            // The Files browser over this terminal's folder needs the host to
+            // report one and to be a paired Oppi server.
+            canBrowseFiles: !channel.workingDirectory.isEmpty && pairedServer != nil,
+            program: keymapProgram,
+            customKeys: barCustomKeys,
+            shortcuts: keymap.actions
+        )
     }
 
     /// Which multiplexer this terminal belongs to: the owner of what the bar,
@@ -870,19 +900,31 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         inputMode == .chat && !rawKeyboard ? .chatBar : .keyboard
     }
 
-    /// One owner for a bar action, whether it came from its button, VoiceOver,
+    /// One owner for a bar button, whether it came from its button, VoiceOver,
     /// or the … menu.
-    private func perform(_ action: SSHTerminalBarAction) {
-        switch action {
-        case .keyboard: showTerminalKeyboard()
-        case .chatBar: focusChatBar()
-        case .escape, .interrupt, .tab, .up, .down, .enter:
-            channel.keys(action.strokes)
-        case .paste: break // The system paste control delivers through middlePill.deliverPaste.
-        case .browseFiles: browseFilesHere()
-        case .herdr, .rex: showOverview(action)
-        case .switcher: break // A menu, not an action.
+    private func perform(_ slot: SSHTerminalBarSlot) {
+        switch slot.content {
+        case .action(let action):
+            switch action {
+            case .keyboard: showTerminalKeyboard()
+            case .chatBar: focusChatBar()
+            case .escape, .interrupt, .tab, .up, .down, .enter:
+                channel.keys(slot.strokes)
+            case .paste: break // The system paste control delivers through barPill.deliverPaste.
+            case .browseFiles: browseFilesHere()
+            case .herdr, .rex: showOverview(action)
+            case .switcher: break // A menu, not an action.
+            }
+        case .customKey, .shortcut:
+            channel.keys(slot.strokes)
         }
+    }
+
+    /// The saved layout and custom keys, read again when Bottom Bar changes either.
+    private func reloadBarSettings() {
+        barLayout = barStore.layout
+        barCustomKeys = barStore.customKeys
+        setNeedsUpdateProperties()
     }
 
     /// Settings > Terminal > Bottom Bar, pushed over the terminal so the
@@ -908,37 +950,44 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             attention.glyphFrame.rect = statusGlyph.glyphFrame.rect
         }
         let foreground = lastTerminalColors?.foreground.map(UIColor.init)
+        let tint = foreground ?? UIColor(themeID.palette.fg)
         let openTerminals = session?.openTerminals().count ?? 0
-        let available = availableBarActions(openTerminals: openTerminals)
-        let trailing = barLayout.bar(available: available).filter { $0.group == .trailing }
-        morePill.apply(
-            themeID: themeID,
-            trailing: trailing,
-            waiting: overviewsWaiting,
-            showsStatus: showsStatus,
-            openTerminals: openTerminals,
-            rex: channel.rex?.state,
-            foreground: foreground
-        )
-        installSwitcherMenu()
-        // The middle gets what the trailing pill's 44 pt items (status, its
-        // actions, and …) leave.
         barFit = SSHTerminalBarFit(view)
-        barPlacement = barLayout.placement(
-            available: available,
-            middleCapacity: SSHTerminalBottomBar.middleCapacity(
+        // The Rex pane switcher's pill holds the room at the trailing end only
+        // while it shows; the pill is centred in what is left.
+        let rexPanesShown = channel.rex?.state.showsSwitcher == true
+        let animates = !reduceMotion && isOnScreen && view.window != nil
+        if roomEndsAtPanes?.isActive != rexPanesShown {
+            roomEndsAtEdge?.isActive = !rexPanesShown
+            roomEndsAtPanes?.isActive = rexPanesShown
+            if animates {
+                UIView.animate(withDuration: SSHTerminalBarPill.changeDuration, delay: 0, options: [.beginFromCurrentState]) {
+                    self.bottomBar.layoutIfNeeded()
+                }
+            }
+        }
+        barPlacement = barOffer(openTerminals: openTerminals).placement(
+            layout: barLayout,
+            capacity: SSHTerminalBottomBar.capacity(
                 width: view.bounds.width,
                 safeInsets: view.safeAreaInsets,
-                trailingItems: (showsStatus ? 1 : 0) + trailing.count + (channel.rex?.state.showsSwitcher == true ? 1 : 0) + 1
+                rexPanesShown: rexPanesShown,
+                // The status symbol, when a program has reported, and ….
+                fixedItems: (showsStatus ? 1 : 0) + 1
             )
         )
-        middlePill.show(barPlacement.middle)
-        middlePill.apply(
-            tint: foreground ?? UIColor(themeID.palette.fg),
+        barPill.apply(
+            themeID: themeID,
+            waiting: overviewsWaiting,
+            openTerminals: openTerminals,
+            tint: tint,
             background: lastTerminalColors?.background.map(UIColor.init) ?? UIColor(themeID.palette.bg),
             selected: selectedInput,
             keysEnabled: canSendKeys
         )
+        barPill.show(barPlacement.slots, showsStatus: showsStatus, animated: animates)
+        installSwitcherMenu()
+        rexPill.apply(state: channel.rex?.state, tint: tint)
         backPill.apply(themeID: themeID, attentionPending: attentionPending(), foreground: lastTerminalColors?.foreground.map(UIColor.init))
         updateRexPanes(themeID: themeID)
         installMenu(
@@ -1032,14 +1081,14 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         applyBottomBarGeometry(visible: visible)
         guard visible != controlsVisible || animation == nil else { return }
         controlsVisible = visible
-        for pill in [backPill, middlePill, morePill] as [UIView] {
+        for pill in [backPill, barPill, rexPill] as [UIView] {
             pill.isUserInteractionEnabled = visible
             pill.accessibilityElementsHidden = !visible
         }
         let apply = {
             self.backPill.alpha = visible ? 1 : 0
-            self.middlePill.alpha = visible ? 1 : 0
-            self.morePill.alpha = visible ? 1 : 0
+            self.barPill.alpha = visible ? 1 : 0
+            self.rexPill.alpha = visible ? 1 : 0
         }
         if let animation, isOnScreen, view.window != nil {
             UIView.animate(withDuration: animation.duration, delay: 0, options: animation.options, animations: apply)

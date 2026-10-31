@@ -101,6 +101,26 @@ struct SSHTerminalFloatingControlsTests {
     }
 }
 
+extension SSHTerminalBarPill {
+    /// One pass of the terminal's: colors and state, then the buttons, with no animation.
+    func draw(
+        _ slots: [SSHTerminalBarSlot], showsStatus: Bool = false,
+        waiting: [SSHTerminalBarAction: Int] = [:], keysEnabled: Bool = true, selected: SSHTerminalBarAction? = nil
+    ) {
+        apply(
+            themeID: ThemeRuntimeState.currentThemeID(), waiting: waiting, openTerminals: 0,
+            tint: .label, background: .black, selected: selected, keysEnabled: keysEnabled
+        )
+        show(slots, showsStatus: showsStatus, animated: false)
+    }
+
+    func draw(
+        _ actions: [SSHTerminalBarAction], showsStatus: Bool = false, waiting: [SSHTerminalBarAction: Int] = [:]
+    ) {
+        draw(actions.map { SSHTerminalBarSlot(content: .action($0)) }, showsStatus: showsStatus, waiting: waiting)
+    }
+}
+
 @Suite("SSH terminal floating pills")
 @MainActor
 struct SSHTerminalFloatingPillTests {
@@ -119,9 +139,9 @@ struct SSHTerminalFloatingPillTests {
 
     @Test func eachPillButtonAnswersA44By44PointTouch() throws {
         let back = SSHTerminalBackPill()
-        let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
+        let pill = SSHTerminalBarPill(status: SSHTerminalStatusGlyphButton())
         let herdr = try #require(pill.button(for: .herdr))
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], waiting: [.herdr: 0], showsStatus: true)
+        pill.draw([.herdr], showsStatus: true, waiting: [.herdr: 0])
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -164,7 +184,7 @@ struct SSHTerminalFloatingPillTests {
             expect44PointTouch(button, id)
         }
 
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [], waiting: [:], showsStatus: false)
+        pill.draw([])
         host.layoutIfNeeded()
         #expect(
             pill.bounds.width == SSHTerminalGlassPill.itemWidth,
@@ -190,8 +210,8 @@ struct SSHTerminalFloatingPillTests {
         }
         let host = root.view!
         let back = SSHTerminalBackPill()
-        let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], waiting: [.herdr: 0], showsStatus: true)
+        let pill = SSHTerminalBarPill(status: SSHTerminalStatusGlyphButton())
+        pill.draw([.herdr], showsStatus: true, waiting: [.herdr: 0])
         host.addSubview(back)
         host.addSubview(pill)
         NSLayoutConstraint.activate([
@@ -235,9 +255,9 @@ struct SSHTerminalFloatingPillTests {
         let bar = SSHTerminalPassthroughView()
         bar.translatesAutoresizingMaskIntoConstraints = false
         let back = SSHTerminalBackPill()
-        let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
+        let pill = SSHTerminalBarPill(status: SSHTerminalStatusGlyphButton())
         let herdr = try #require(pill.button(for: .herdr))
-        pill.apply(themeID: ThemeRuntimeState.currentThemeID(), trailing: [.herdr], waiting: [.herdr: 0], showsStatus: true)
+        pill.draw([.herdr], showsStatus: true, waiting: [.herdr: 0])
         bar.addSubview(back)
         bar.addSubview(pill)
         // A grid above the bar, ending its own rows short of it.
@@ -286,9 +306,9 @@ struct SSHTerminalFloatingPillTests {
     }
 }
 
-@Suite("SSH terminal middle pill")
+@Suite("SSH terminal bar pill")
 @MainActor
-struct SSHTerminalBarMiddlePillTests {
+struct SSHTerminalBarPillTests {
     /// The strip around a bar button reaches it, but not around Paste: iOS
     /// gives the paste control the clipboard only for a touch inside it, so
     /// the strip there falls through to the grid instead of pasting nothing.
@@ -304,15 +324,15 @@ struct SSHTerminalBarMiddlePillTests {
             window.rootViewController = nil
         }
         let host = root.view!
-        let pill = SSHTerminalBarMiddlePill()
-        pill.show([.keyboard, .paste])
+        let pill = SSHTerminalBarPill(status: SSHTerminalStatusGlyphButton())
+        pill.draw([.keyboard, .paste])
         host.addSubview(pill)
         NSLayoutConstraint.activate([
             pill.topAnchor.constraint(equalTo: host.topAnchor, constant: 40),
             pill.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 40),
         ])
         host.layoutIfNeeded()
-        let keyboard = try #require(pill.button(for: .keyboard))
+        let keyboard = try #require(pill.button(for: SSHTerminalBarSlot(content: .action(.keyboard))))
         let paste = try #require(pill.stack.arrangedSubviews.first { $0 is UIPasteControl })
         func above(_ view: UIView) -> CGPoint {
             host.convert(CGPoint(x: view.bounds.midX, y: -3), from: view)
@@ -324,94 +344,3 @@ struct SSHTerminalBarMiddlePillTests {
     }
 }
 
-@Suite("SSH terminal bottom bar layout")
-struct SSHTerminalBarPlacementTests {
-    private let everything = Set(SSHTerminalBarAction.allCases)
-
-    @Test func theDefaultBarIsTodaysPlusTypeInTerminalAndChatBar() {
-        let placement = SSHTerminalBarLayout.defaultValue.placement(available: everything, middleCapacity: 4)
-        #expect(placement.middle == [.keyboard, .chatBar])
-        #expect(placement.trailing == [.herdr, .rex, .switcher])
-        // Turned-off keys and Paste stay out of the menu; Browse Files Here,
-        // which the menu always had, stays in it.
-        #expect(placement.menu == [.browseFiles])
-    }
-
-    @Test func buttonsThatDoNotFitMoveIntoTheMenuInOrderButPasteNever() {
-        let layout = SSHTerminalBarLayout(
-            order: [.escape, .paste, .keyboard, .interrupt, .chatBar],
-            shown: [.escape, .paste, .keyboard, .interrupt, .chatBar, .switcher]
-        )
-        let placement = layout.placement(available: everything, middleCapacity: 2)
-        #expect(placement.middle == [.escape, .paste])
-        // A shown key with no room is offered; a hidden one is not.
-        #expect(placement.menu == [.keyboard, .interrupt, .chatBar, .browseFiles, .herdr, .rex])
-        #expect(placement.trailing == [.switcher])
-
-        let none = layout.placement(available: everything, middleCapacity: 0)
-        #expect(none.middle.isEmpty)
-        #expect(!none.menu.contains(.paste))
-    }
-
-    @Test func anActionTheTerminalCannotOfferIsNeitherDrawnNorInTheMenu() {
-        let available = everything.subtracting([.herdr, .rex, .switcher, .browseFiles])
-        let placement = SSHTerminalBarLayout.defaultValue.placement(available: available, middleCapacity: 4)
-        #expect(placement.trailing.isEmpty)
-        #expect(placement.menu.isEmpty)
-    }
-
-    /// What a terminal in this context draws and offers in its … menu, from the
-    /// user's layout, as the terminal computes it.
-    private func placement(
-        _ layout: SSHTerminalBarLayout = .defaultValue, in context: SSHTerminalBarContext
-    ) -> SSHTerminalBarPlacement {
-        layout.placement(available: everything.subtracting(context.hidden), middleCapacity: 4)
-    }
-
-    @Test func aRexPaneOffersOnlyRexAndAHerdrTerminalOnlyHerdr() {
-        #expect(placement(in: .rex).trailing == [.rex, .switcher])
-        #expect(placement(in: .herdr).trailing == [.herdr, .switcher])
-        // A plain shell on a host with both keeps both.
-        #expect(placement(in: .plain).trailing == [.herdr, .rex, .switcher])
-
-        // The … menu follows: a multiplexer turned off in the layout is offered
-        // there only where its terminal can use it.
-        let hiddenBoth = SSHTerminalBarLayout.defaultValue.setting(.herdr, shown: false).setting(.rex, shown: false)
-        #expect(placement(hiddenBoth, in: .rex).menu == [.browseFiles, .rex])
-        #expect(placement(hiddenBoth, in: .herdr).menu == [.browseFiles, .herdr])
-        #expect(placement(hiddenBoth, in: .plain).menu == [.browseFiles, .herdr, .rex])
-    }
-
-    @Test func theContextComesFromTheTerminalsOwnProgram() {
-        #expect(SSHTerminalBarContext(isRexPane: true, command: nil) == .rex)
-        #expect(SSHTerminalBarContext(isRexPane: true, command: "herdr") == .rex)
-        #expect(SSHTerminalBarContext(isRexPane: false, command: "herdr") == .herdr)
-        #expect(SSHTerminalBarContext(isRexPane: false, command: "/Users/me/.local/bin/herdr --attach") == .herdr)
-        // Login shells, other multiplexers, and other programs are plain.
-        for command in [nil, "", "tmux new -A -s main", "fish", "sh -c 'cd /tmp && herdr'"] {
-            #expect(SSHTerminalBarContext(isRexPane: false, command: command) == .plain, "\(command ?? "nil")")
-        }
-    }
-
-    @Test func reorderingTheShownRowsKeepsTheHiddenOnesPlaceAndChoice() {
-        let saved = SSHTerminalBarLayout(
-            order: [.keyboard, .herdr, .switcher, .rex, .chatBar],
-            shown: [.keyboard, .herdr, .switcher]
-        )
-        // A Rex terminal's page lists Rex and the switcher; the person drags Rex first.
-        let moved = saved.reordering([.rex, .switcher])
-        #expect(Array(moved.order.prefix(5)) == [.keyboard, .herdr, .rex, .switcher, .chatBar])
-        #expect(moved.shown == saved.shown)
-        #expect(moved.reordering([.switcher, .rex]) == saved)
-    }
-
-    @MainActor
-    @Test func theMiddleGetsWhatIsLeftBetweenBackAndTheTrailingPill() {
-        // iPhone portrait: 393 pt, Back, and a 4-item trailing pill leave room for 3.
-        #expect(SSHTerminalBottomBar.middleCapacity(width: 393, safeInsets: .zero, trailingItems: 4) == 3)
-        // Landscape safe-area insets take their share.
-        let landscape = UIEdgeInsets(top: 0, left: 59, bottom: 21, right: 59)
-        #expect(SSHTerminalBottomBar.middleCapacity(width: 852, safeInsets: landscape, trailingItems: 2) == 12)
-        #expect(SSHTerminalBottomBar.middleCapacity(width: 100, safeInsets: .zero, trailingItems: 2) == 0)
-    }
-}

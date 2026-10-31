@@ -17,9 +17,15 @@ enum SSHTerminalInputMode: Equatable {
 enum SSHTerminalAgentDetection {
     /// OSC 7501 `app` ids of coding agents. An id also matches by its first
     /// `-`/`_`/`.` segment, so `claude-code` reads as `claude`.
-    static let agentApps: Set<String> = [
-        "pi", "claude", "codex", "opencode", "gemini", "amp", "aider", "goose",
-        "crush", "droid", "cursor-agent", "qwen", "kimi", "copilot", "kilo", "grok",
+    static let agentApps = Set(agents.map(\.id))
+
+    /// The agents in the order a picker lists them, with the names people
+    /// call them by.
+    static let agents: [(id: String, title: String)] = [
+        ("pi", "pi"), ("claude", "Claude Code"), ("codex", "Codex"), ("opencode", "OpenCode"),
+        ("gemini", "Gemini CLI"), ("amp", "Amp"), ("aider", "Aider"), ("goose", "Goose"),
+        ("crush", "Crush"), ("droid", "Droid"), ("cursor-agent", "Cursor Agent"), ("qwen", "Qwen Code"),
+        ("kimi", "Kimi"), ("copilot", "Copilot CLI"), ("kilo", "Kilo"), ("grok", "Grok"),
     ]
 
     /// Whose key bindings the strips offer: the reporting agent, or the shell.
