@@ -851,8 +851,13 @@ export function addSessionAttachmentFile(
 /** Base64 bytes of an image block, or null when it cannot be stored as an attachment. */
 function imageBytesFromBlock(block: Record<string, unknown>, maxBytes: number): Buffer | null {
   const raw = typeof block.data === "string" ? block.data.trim() : "";
-  // No bytes, or already a reference to stored bytes.
-  if (!raw || !/^[A-Za-z0-9+/]+={0,2}$/.test(raw) || raw.length % 4 === 1) return null;
+  // No bytes, or already a reference to stored bytes. Base64 characters, then up to two `=`.
+  // A scan for a stray character, not `/^[A-Za-z0-9+/]+={0,2}$/`: in a long-running server V8
+  // throws RangeError ("Maximum call stack size exceeded") matching that against a multi-MB
+  // payload, which failed every history page holding a large screenshot.
+  const padding = raw.endsWith("==") ? 2 : raw.endsWith("=") ? 1 : 0;
+  const body = raw.slice(0, raw.length - padding);
+  if (!body || /[^A-Za-z0-9+/]/.test(body) || raw.length % 4 === 1) return null;
   const bytes = Buffer.from(raw, "base64");
   if (bytes.length <= 0 || bytes.length > maxBytes) return null;
   return bytes;
