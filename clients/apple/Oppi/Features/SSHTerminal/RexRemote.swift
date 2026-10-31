@@ -958,7 +958,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
     func createSession() async throws -> RexPaneTarget {
         let control = try openControl()
         let answer = try await control.call("session.create", [
-            "initial_windows": [["layout": ["block": ["flavor": "com.superlogical.terminal.shell"]]]],
+            "initial_windows": [["layout": ["block": ["flavor": RexSessionConnection.shellFlavor]]]],
         ])
         struct Created: Decodable {
             struct Window: Decodable {
