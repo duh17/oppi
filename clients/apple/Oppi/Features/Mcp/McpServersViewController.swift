@@ -327,13 +327,9 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         )
     }
 
-    private lazy var sidebarRow = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        self?.configure(cell, item: item)
-    }
-
     // A registration must exist before the first row is dequeued.
     override func prepareRegistrations() {
-        _ = (hostRow, sidebarRow)
+        _ = hostRow
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -342,13 +338,12 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             collectionView.dequeueConfiguredReusableCell(using: hostRow, for: indexPath, item: item)
         case .signInProvider, .signInContinue, .signInCancel, .signInError, .error, .retry,
              .scopeError, .noServers, .server, .inherited, .note:
-            collectionView.dequeueConfiguredReusableCell(using: sidebarRow, for: indexPath, item: item)
+            cardCell(for: item, at: indexPath)
         }
     }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         switch item {
         case .host:
             break

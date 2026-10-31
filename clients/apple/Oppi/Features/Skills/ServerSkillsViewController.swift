@@ -283,13 +283,9 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         cell.accessibilityIdentifier = "skills.cachedWarning"
     }
 
-    private lazy var skillRow = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        self?.configure(cell, item: item)
-    }
-
     // A registration must exist before the first row is dequeued.
     override func prepareRegistrations() {
-        _ = (serverRow, cachedWarningRow, skillRow)
+        _ = (serverRow, cachedWarningRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -299,7 +295,7 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         case .cachedWarning:
             collectionView.dequeueConfiguredReusableCell(using: cachedWarningRow, for: indexPath, item: item)
         case .skill:
-            collectionView.dequeueConfiguredReusableCell(using: skillRow, for: indexPath, item: item)
+            cardCell(for: item, at: indexPath)
         }
     }
 
@@ -320,10 +316,9 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         )
     }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         guard let state, case .skill(let id) = item, let skill = state.skills[id] else { return }
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         ListScreen.buttonRow(
             cell,
             identifier: "skills.row.\(skill.id)",

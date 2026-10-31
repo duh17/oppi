@@ -242,22 +242,9 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
 
     // MARK: - Rows
 
-    /// The page's rows: one `SidebarListCell`, a themed card, filled by
-    /// `configure(_:item:)`.
-    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        guard let self else { return }
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
-        configure(cell, item: item)
-    }
-
-    // A registration must exist before the first row is dequeued.
-    override func prepareRegistrations() {
-        _ = row
-    }
-
-    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
-    }
+    /// The page's rows are the kit's theme cards, filled by
+    /// `configureCard(_:item:)`.
+    override var rowStyle: ListRowStyle { .card }
 
     private func runWithItems(_ action: AgentScheduleAction) -> [Item] {
         switch action {
@@ -290,7 +277,7 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         }
     }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         switch item {
         case .summary:
@@ -360,14 +347,16 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
             }, for: .valueChanged)
             cell.accessories = [.customView(configuration: .init(customView: toggle, placement: .trailing()))]
         case .noRuns:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
+            // The list's own state, inside the card this page's rows are.
+            ListScreen.stateRow(
+                cell,
                 .empty(
                     title: String(localized: "No Runs Yet"),
                     systemImage: "clock.arrow.circlepath",
                     message: String(localized: "Scheduled and manual runs will appear here.")
                 ),
-                palette: palette
+                palette: palette,
+                keepsCard: true
             )
         case .run(let id):
             guard let run = runs.first(where: { $0.id == id }) else { return }

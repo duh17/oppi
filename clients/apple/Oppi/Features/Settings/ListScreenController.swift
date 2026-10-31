@@ -46,6 +46,14 @@ struct ListStateRow {
     var identifier: String
 }
 
+/// The cell a page draws its rows in. `.card` is the kit's theme-card row
+/// (`SidebarListCell`, filled by `configureCard(_:item:)`); `.plain` is a plain
+/// list cell, filled by `configure(_:item:)`.
+enum ListRowStyle {
+    case plain
+    case card
+}
+
 /// A row of the list: one of the page's items, or the base's own state row for
 /// a section that declared one. The state is not an `Item` because a page has
 /// no case for it and no cell to fill: the base draws it from `LoadState`.
@@ -98,10 +106,11 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 ///   changed are reconfigured, so a pass triggered by an open pop-up menu or by
 ///   another row leaves that menu alone. The theme is added for every row.
 /// - `configure(_:item:)`: a plain list cell (`content(_:)` fills its title in
-///   the theme's title color, `toggleRow` makes a switch row), or
-///   `dequeue(_:at:)` for pages with their own cell classes: the kit's
-///   `SettingsIndexRowCell`, `SettingsMenuRowCell`, `SettingsActionRowCell`,
-///   and `SettingsStateRowCell`.
+///   the theme's title color, `toggleRow` makes a switch row);
+///   `configureCard(_:item:)` with `rowStyle` `.card` for the kit's theme-card
+///   rows; or `dequeue(_:at:)` for pages with their own cell classes: the
+///   kit's `SettingsIndexRowCell`, `SettingsMenuRowCell`,
+///   `SettingsActionRowCell`, and `SettingsStateRowCell`.
 /// - `isSelectable(_:)` and `select(_:)`: the rows that act when tapped. A
 ///   selectable row carries the button trait, and VoiceOver activation selects
 ///   it, so touch and accessibility run the same `select(_:)`.
@@ -139,8 +148,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     private(set) var dataSource: UICollectionViewDiffableDataSource<Section, ListSlot<Section, Item>>?
     /// Whether the page is on screen: set when it appears and leaves. A page
     /// that loads its content when its subject changes asks this before
-    /// starting a load, so a covered list stays still. (Named `isShowing`
-    /// because most pages keep a private `isOnScreen` of their own.)
+    /// starting a load, so a covered list stays still.
     private(set) var isShowing = false
     /// The load `refresh()` is running: the base's, cancelled when the page
     /// leaves and before another starts.
@@ -170,7 +178,9 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     private var models: [Section: ListSection<Section, Item>] = [:]
 
     /// - Parameters:
-    ///   - listIdentifier: the list's accessibility identifier, `settings.<page>.list`.
+    ///   - listIdentifier: the list's accessibility identifier,
+    ///     `<feature>.<page>.list` (`agents.list`, `mcp.detail.list`); the
+    ///     Settings family's own pages say `settings.<page>.list`.
     ///   - scope: where the page's settings are kept. A page of declared
     ///     settings takes it from their `SettingStorage`; a page that has no
     ///     settings leaves it nil.
@@ -272,10 +282,32 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// Fills a plain list cell for `item`. The cell arrives reset.
     func configure(_ cell: UICollectionViewListCell, item: Item) {}
 
+    /// Fills a card row for `item`. The cell arrives as the theme card, so only
+    /// the content is left (`ListScreen.buttonRow`, `ListScreen.staticRow`, the
+    /// cell's own configuration). A page whose rows are all cards answers
+    /// `rowStyle` with `.card`; a page that mixes them in dequeue
+    /// `cardCell(for:at:)`.
+    func configureCard(_ cell: SidebarListCell, item: Item) {}
+
+    /// Which cell the page's rows are. A page with only its own cell classes
+    /// keeps `.plain` and overrides `dequeue(_:at:)`.
+    var rowStyle: ListRowStyle { .plain }
+
     /// The cell for `item`. Override to dequeue a page's own cell classes;
-    /// the default is a plain list cell filled by `configure(_:item:)`.
+    /// the default is the cell `rowStyle` names.
     func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        collectionView.dequeueConfiguredReusableCell(using: plainCell, for: indexPath, item: item)
+        switch rowStyle {
+        case .plain:
+            return collectionView.dequeueConfiguredReusableCell(using: plainCell, for: indexPath, item: item)
+        case .card:
+            return cardCell(for: item, at: indexPath)
+        }
+    }
+
+    /// The cell for one of a mixed page's rows: the kit's theme card, filled by
+    /// `configureCard(_:item:)`.
+    func cardCell(for item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
+        collectionView.dequeueConfiguredReusableCell(using: cardCell, for: indexPath, item: item)
     }
 
     /// Called once before the first row is dequeued. A page with its own cell
@@ -493,6 +525,15 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         if isSelectable(item) { cell.accessibilityTraits.insert(.button) }
     }
 
+    /// The page's rows as the theme's cards: the card's background, then the
+    /// page's content. The row builders (`ListScreen.buttonRow`,
+    /// `ListScreen.staticRow`) reset the rest, so a reused row keeps nothing.
+    private lazy var cardCell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
+        guard let self else { return }
+        ListScreen.background(cell, grouped: true, palette: ThemeRuntimeState.currentPalette(), settingsCard: true)
+        configureCard(cell, item: item)
+    }
+
     /// The section's state row: `LoadState`'s words, and its Retry when it has
     /// one, under the identifier the page gave it.
     private lazy var stateCell = UICollectionView.CellRegistration<SettingsStateRowCell, ListSlot<Section, Item>> { [weak self] cell, _, slot in
@@ -501,7 +542,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     }
 
     private func installDataSource() {
-        _ = (plainCell, settingFailureCell, stateCell)
+        _ = (plainCell, cardCell, settingFailureCell, stateCell)
         prepareRegistrations()
         let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] view, kind, indexPath in
             self?.configureSupplementary(view, kind: kind, at: indexPath)

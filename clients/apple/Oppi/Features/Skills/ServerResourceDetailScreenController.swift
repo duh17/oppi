@@ -211,26 +211,12 @@ class ServerResourceDetailScreenController<
 
     // MARK: - Rows
 
-    /// The page's rows: one `SidebarListCell`, a themed card, filled by
-    /// `configure(_:item:)`. The card is the kit's (the theme's, as on every
-    /// page on the base); the handler also dims a pressed button row.
-    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        guard let self else { return }
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
-        configure(cell, item: item)
-    }
-
-    // A registration must exist before the first row is dequeued.
-    override func prepareRegistrations() {
-        _ = row
-    }
-
-    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
-    }
+    /// The page's rows are the kit's theme cards, filled by
+    /// `configureCard(_:item:)`; the handler also dims a pressed button row.
+    override var rowStyle: ListRowStyle { .card }
 
     /// Fills one of the page's rows. The cell arrives as a themed card.
-    func configure(_ cell: SidebarListCell, item: Item) {}
+    override func configureCard(_ cell: SidebarListCell, item: Item) {}
 
     /// The rows a resource-detail page has, whose inputs are the same on both:
     /// the resource itself, a save in flight, and the load. A page's own rows

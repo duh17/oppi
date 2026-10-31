@@ -197,10 +197,6 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
 
     // MARK: - Rows
 
-    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        self?.configure(cell, item: item)
-    }
-
     private lazy var field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
         self?.configureField(cell, item: item)
     }
@@ -236,7 +232,7 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
 
     // A registration must exist before the first row is dequeued.
     override func prepareRegistrations() {
-        _ = (row, field, editor, menu, segmented)
+        _ = (field, editor, menu, segmented)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -250,13 +246,12 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
         case .exposure:
             collectionView.dequeueConfiguredReusableCell(using: menu, for: indexPath, item: item)
         default:
-            collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
+            cardCell(for: item, at: indexPath)
         }
     }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         switch item {
         case .host:
             ListScreen.staticRow(cell)
@@ -273,12 +268,7 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
                 ControlRowViews.label(message, style: .body, color: UIColor(palette.red))
             }
         case .saving:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .loading(String(localized: "Adding server…")),
-                palette: palette
-            )
-            ListScreen.background(cell, grouped: false, palette: palette)
+            ListScreen.stateRow(cell, .loading(String(localized: "Adding server…")), palette: palette)
         default:
             break
         }

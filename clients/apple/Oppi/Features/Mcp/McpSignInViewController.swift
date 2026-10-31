@@ -127,23 +127,19 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
 
     // MARK: - Rows
 
-    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        self?.configure(cell, item: item)
-    }
-
     private lazy var field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
         self?.configureCallback(cell)
     }
 
     // A registration must exist before the first row is dequeued.
     override func prepareRegistrations() {
-        _ = (row, field)
+        _ = field
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         item == .callback
             ? collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            : collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
+            : cardCell(for: item, at: indexPath)
     }
 
     private func configureCallback(_ cell: SSHTerminalTextFieldCell) {
@@ -161,9 +157,8 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
         cell.textField.inputAccessoryView = keyboardBar
     }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         switch item {
         case .host:
             ListScreen.staticRow(cell)
@@ -174,19 +169,11 @@ final class McpSignInViewController: ListScreenController<McpSignInViewControlle
                 "Status", ProviderAuthFlowPresentation.statusText(attempt.flow.status)
             )
         case .finishing:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .loading(String(localized: "Finishing sign-in on the host…")),
-                palette: palette
+            ListScreen.stateRow(
+                cell, .loading(String(localized: "Finishing sign-in on the host…")), palette: palette
             )
-            ListScreen.background(cell, grouped: false, palette: palette)
         case .preparing:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .loading(String(localized: "Preparing sign-in…")),
-                palette: palette
-            )
-            ListScreen.background(cell, grouped: false, palette: palette)
+            ListScreen.stateRow(cell, .loading(String(localized: "Preparing sign-in…")), palette: palette)
         case .openLink:
             ListScreen.buttonRow(cell, identifier: "mcp.auth.open", label: "Open Sign-In Page") { [weak self] in
                 self?.openSignInPage()

@@ -18,9 +18,6 @@ final class ExtensionDialogFallbackViewController: ListScreenController<
     private(set) var request: ExtensionUIRequest
     private let connection: ServerConnection
     private var isSubmitting = false
-    /// A response that lands after the server already closed the dialog must
-    /// not finish a closed sheet.
-    private var isVisible = false
     private lazy var cancelItem: UIBarButtonItem = {
         let item = UIBarButtonItem(
             title: String(localized: "Cancel"),
@@ -35,8 +32,7 @@ final class ExtensionDialogFallbackViewController: ListScreenController<
         self.connection = connection
         super.init(
             title: Self.title(of: request),
-            listIdentifier: "extension.dialog.list",
-            scope: .device
+            listIdentifier: "extension.dialog.list"
         )
         traitOverrides.appRootEnvironment = root
         navigationItem.leftBarButtonItem = cancelItem
@@ -78,14 +74,8 @@ final class ExtensionDialogFallbackViewController: ListScreenController<
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        isVisible = true
         // The sheet's navigation controller is what UIKit asks about a swipe.
         navigationController?.isModalInPresentation = true
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        isVisible = false
     }
 
     // MARK: Rows
@@ -159,7 +149,9 @@ final class ExtensionDialogFallbackViewController: ListScreenController<
                     sessionId: request.sessionId,
                     payload: .cancelled
                 )
-                if isVisible { Router.finish(self) }
+                // A response that lands after the server already closed the dialog must
+                // not finish a closed sheet.
+                if isShowing { Router.finish(self) }
             } catch {
                 isSubmitting = false
                 cancelItem.isEnabled = true

@@ -46,8 +46,6 @@ final class WorkspaceNetworkAccessViewController: ListScreenController<
     private var error: String? {
         didSet { setNeedsUpdateProperties() }
     }
-    /// A save that finishes after Back must not pop whatever is on top now.
-    private var isOnScreen = false
 
     private lazy var saveItem: UIBarButtonItem = {
         let item = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in self?.save() })
@@ -82,16 +80,6 @@ final class WorkspaceNetworkAccessViewController: ListScreenController<
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
-    }
-
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        isOnScreen = true
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        isOnScreen = false
     }
 
     override func updateProperties() {
@@ -163,7 +151,8 @@ final class WorkspaceNetworkAccessViewController: ListScreenController<
             guard let self else { return }
             switch outcome {
             case .saved:
-                if isOnScreen { Router.finish(self) }
+                // A save that finishes after Back must not pop whatever is on top now.
+                if isShowing { Router.finish(self) }
             case .failed(let message):
                 error = message
             case .superseded:

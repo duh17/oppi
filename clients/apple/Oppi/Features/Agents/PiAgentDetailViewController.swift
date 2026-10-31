@@ -156,24 +156,11 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
         }
     }
 
-    /// The page's rows: one `SidebarListCell`, a themed card, filled by
-    /// `configure(_:item:)`.
-    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        guard let self else { return }
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
-        configure(cell, item: item)
-    }
+    /// The page's rows are the kit's theme cards, filled by
+    /// `configureCard(_:item:)`.
+    override var rowStyle: ListRowStyle { .card }
 
-    // A registration must exist before the first row is dequeued.
-    override func prepareRegistrations() {
-        _ = row
-    }
-
-    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
-    }
-
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         switch item {
         case .identity:

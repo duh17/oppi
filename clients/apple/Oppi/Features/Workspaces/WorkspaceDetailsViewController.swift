@@ -28,8 +28,6 @@ final class WorkspaceDetailsViewController: ListScreenController<
     private var showsIconPicker = false {
         didSet { setNeedsUpdateProperties() }
     }
-    /// A save that finishes after Back must not pop whatever is on top now.
-    private var isOnScreen = false
 
     private lazy var saveItem: UIBarButtonItem = {
         let item = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in self?.save() })
@@ -79,18 +77,12 @@ final class WorkspaceDetailsViewController: ListScreenController<
 
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
-        isOnScreen = true
         model.start()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         iconPicker.sync()
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        isOnScreen = false
     }
 
     override func updateProperties() {
@@ -295,7 +287,8 @@ final class WorkspaceDetailsViewController: ListScreenController<
         let model = model
         Task { [weak self] in
             let outcome = await model.save()
-            guard let self, outcome == .saved, isOnScreen else { return }
+            // A save that finishes after Back must not pop whatever is on top now.
+            guard let self, outcome == .saved, isShowing else { return }
             Router.finish(self)
         }
     }

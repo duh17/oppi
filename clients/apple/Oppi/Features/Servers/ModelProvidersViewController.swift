@@ -357,36 +357,18 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
 
     // MARK: - Rows
 
-    /// The page's rows: one `SidebarListCell`, a themed card, filled by
-    /// `configure(_:item:)`.
-    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        guard let self else { return }
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
-        configure(cell, item: item)
-    }
+    /// The page's rows are the kit's theme cards, filled by
+    /// `configureCard(_:item:)`.
+    override var rowStyle: ListRowStyle { .card }
 
-    // A registration must exist before the first row is dequeued.
-    override func prepareRegistrations() {
-        _ = row
-    }
-
-    override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
-    }
-
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         switch item {
         case .signInAttempt:
             configureAttemptRow(cell, palette: palette)
         case .loading:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .loading(String(localized: "Loading providers…")),
-                palette: palette
-            )
             // The state fills its row; it is not a card of its own.
-            ListScreen.background(cell, grouped: false, palette: palette)
+            ListScreen.stateRow(cell, .loading(String(localized: "Loading providers…")), palette: palette)
         case .onboarding:
             ListScreen.staticRow(cell, identifier: "server.modelProviders.onboarding")
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 12, leading: 0, bottom: 12, trailing: 0)) {

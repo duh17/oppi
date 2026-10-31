@@ -138,7 +138,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
 
     // MARK: - Rows
 
-    override func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         guard let state else { return }
         let summary = state.summary
@@ -217,12 +217,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             content.textProperties.color = UIColor(palette.blue)
             cell.contentConfiguration = content
         case .loadingContents:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .loading(String(localized: "Loading skill contents…")),
-                palette: palette
-            )
-            ListScreen.background(cell, grouped: false, palette: palette)
+            ListScreen.stateRow(cell, .loading(String(localized: "Loading skill contents…")), palette: palette)
         case .browse:
             let count = state.detail?.files.count ?? 0
             let countLabel = count == 1 ? "1 file" : "\(count) files"

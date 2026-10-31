@@ -154,7 +154,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
 
     // MARK: - Rows
 
-    override func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         guard let state else { return }
         let summary = state.summary
@@ -232,12 +232,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             content.textProperties.color = UIColor(palette.blue)
             cell.contentConfiguration = content
         case .loadingContributions:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
-                .loading(String(localized: "Loading contributions…")),
-                palette: palette
-            )
-            ListScreen.background(cell, grouped: false, palette: palette)
+            ListScreen.stateRow(cell, .loading(String(localized: "Loading contributions…")), palette: palette)
         case .tool(let name), .command(let name):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {

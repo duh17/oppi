@@ -8,8 +8,8 @@ import UIKit
 /// The Agents, Schedules, and the detail screens, and the workspace forms,
 /// still build their own list with these; a page on the base takes its look
 /// from `SettingsListStyle` instead. The row builders (`buttonRow`,
-/// `staticRow`, `background`) are also what a page on the base draws its own
-/// cell classes with (`SidebarListCell`).
+/// `staticRow`, `stateRow`, `background`) are also what a page on the base
+/// draws its own cell classes with (`SidebarListCell`).
 ///
 /// A row that opens or acts is a `SidebarListCell`: its `SidebarRowElement`
 /// takes the tap and is the row's accessibility element, a button, because
@@ -112,6 +112,16 @@ enum ListScreen {
         cell.element.isHidden = true
         cell.accessibilityElements = nil
         cell.accessibilityIdentifier = identifier
+    }
+
+    /// A row that says the list's own state in place: `LoadState`'s words (a
+    /// spinner, a symbol, or a failure) as one row's content. The row is not a
+    /// card of its own, so the card a list paints behind its rows is cleared;
+    /// `keepsCard` leaves it, for a list that states itself inside a card.
+    static func stateRow(_ cell: SidebarListCell, _ state: LoadState, palette: ThemePalette, keepsCard: Bool = false) {
+        staticRow(cell)
+        cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(state, palette: palette)
+        if !keepsCard { background(cell, grouped: false, palette: palette) }
     }
 
     /// Reuse: every row sets all of these, the cell's own accessibility

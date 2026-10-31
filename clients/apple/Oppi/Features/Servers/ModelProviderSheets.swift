@@ -164,23 +164,19 @@ final class ProviderSignInViewController: ListScreenController<ProviderSignInVie
 
     // MARK: - Rows
 
-    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        self?.configure(cell, item: item)
-    }
-
     private lazy var field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
         self?.configureInput(cell)
     }
 
     // A registration must exist before the first row is dequeued.
     override func prepareRegistrations() {
-        _ = (row, field)
+        _ = field
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         item == .input
             ? collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            : collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
+            : cardCell(for: item, at: indexPath)
     }
 
     private func configureInput(_ cell: SSHTerminalTextFieldCell) {
@@ -201,10 +197,9 @@ final class ProviderSignInViewController: ListScreenController<ProviderSignInVie
         )
     }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         let flow = attempt.flow
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         switch item {
         case .value(let title):
             ListScreen.staticRow(cell, identifier: "server.modelProviders.signIn.\(title.lowercased())")
@@ -440,10 +435,6 @@ final class ProviderAPIKeyViewController: ListScreenController<ProviderAPIKeyVie
 
     // MARK: - Rows
 
-    private lazy var row = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        self?.configure(cell, item: item)
-    }
-
     private lazy var field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
         cell.configure(
@@ -460,18 +451,17 @@ final class ProviderAPIKeyViewController: ListScreenController<ProviderAPIKeyVie
 
     // A registration must exist before the first row is dequeued.
     override func prepareRegistrations() {
-        _ = (row, field)
+        _ = field
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         item == .key
             ? collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
-            : collectionView.dequeueConfiguredReusableCell(using: row, for: indexPath, item: item)
+            : cardCell(for: item, at: indexPath)
     }
 
-    private func configure(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         ListScreen.staticRow(cell)
         if item == .provider {
             var content = UIListContentConfiguration.cell()

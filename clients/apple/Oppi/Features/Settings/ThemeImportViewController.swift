@@ -159,22 +159,18 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
         }
     }
 
-    private lazy var themeRow = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        self?.configureTheme(cell, item: item)
-    }
-
     override func prepareRegistrations() {
-        _ = (stateRow, themeRow)
+        _ = stateRow
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         if case .theme = item {
-            return collectionView.dequeueConfiguredReusableCell(using: themeRow, for: indexPath, item: item)
+            return cardCell(for: item, at: indexPath)
         }
         return collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
     }
 
-    private func configureTheme(_ cell: SidebarListCell, item: Item) {
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         switch item {
         case .loading, .failed, .empty:
@@ -206,7 +202,6 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
                 check.tintColor = UIColor(palette.green)
                 cell.accessories = [.customView(configuration: .init(customView: check, placement: .trailing()))]
             }
-            ListScreen.background(cell, grouped: true, palette: palette, settingsCard: true)
         }
     }
 
