@@ -126,6 +126,59 @@ describe("telemetry-review on v2 events", () => {
     );
   });
 
+  it("separates builds by commit and breaks a metric down by app launch", () => {
+    const now = Date.now();
+    const memory = (mb: number, client: Record<string, string>) => ({
+      v: 2,
+      ts: now,
+      origin: "app",
+      name: "app.device_resources",
+      fields: { memory_mb: mb },
+      tags: {},
+      client: { kind: "ios", buildNumber: "56", appVersion: "1.1.2", ...client },
+    });
+    withTelemetryDir(
+      {
+        "app-events-2026-10-27.jsonl": [
+          memory(100, { gitCommit: "aaaaaaaaaaaa", bootId: "boot-1" }),
+          memory(120, { gitCommit: "aaaaaaaaaaaa", bootId: "boot-2" }),
+          memory(300, { gitCommit: "bbbbbbbbbbbb", bootId: "boot-3" }),
+          // No commit: still counted, labelled by build number alone.
+          memory(50, {}),
+        ],
+      },
+      (dir) => {
+        const loaded = loadSamples(dir, 1);
+        const result = review(loaded, {
+          days: 1,
+          dataDir: "/tmp/oppi-test-data",
+          dictationOnly: false,
+          byTags: ["boot"],
+        });
+
+        expect(Object.keys(result.builds).sort()).toEqual([
+          "56",
+          "56@aaaaaaaaaaaa",
+          "56@bbbbbbbbbbbb",
+        ]);
+        const memoryMax = (label: string) =>
+          result.builds[label]?.metrics["app.device_resources.memory_mb"]?.max;
+        expect(memoryMax("56@aaaaaaaaaaaa")).toBe(120);
+        expect(memoryMax("56@bbbbbbbbbbbb")).toBe(300);
+        expect(memoryMax("56")).toBe(50);
+        expect(result.builds["56@aaaaaaaaaaaa"]).toMatchObject({ version: "1.1.2", samples: 2 });
+
+        // Fleet-wide series and counts do not depend on the split.
+        expect(result.metrics["app.device_resources.memory_mb"]?.count).toBe(4);
+        expect(result.summary.totalSamples).toBe(4);
+
+        const boot = result.breakdowns.find((section) => section.tag === "boot");
+        expect(Object.keys(boot?.values ?? {}).sort()).toEqual(["boot-1", "boot-2", "boot-3"]);
+        expect(boot?.values["boot-3"]?.metrics["app.device_resources.memory_mb"]?.max).toBe(300);
+      },
+    );
+  });
+
   it("keeps only events matching an SLO's where filter in that field's series", () => {
     const now = Date.now();
     const event = (status: string, durationMs: number) => ({

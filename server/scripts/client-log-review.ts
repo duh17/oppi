@@ -9,6 +9,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { buildLabel } from "./build-label.ts";
+
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
 const CLIENT_LOG_PREFIX = "client-logs-";
@@ -153,12 +155,6 @@ function formatWindowValue(value: number): string {
 
 function inc(map: Record<string, number>, key: string, by = 1): void {
   map[key] = (map[key] ?? 0) + by;
-}
-
-function buildLabel(record: { buildNumber?: string; gitCommit?: string }): string {
-  const build = record.buildNumber?.trim() || "unknown";
-  const commit = record.gitCommit?.trim();
-  return commit ? `${build}@${commit}` : build;
 }
 
 function signatureParts(entry: ClientLogEntry, normalizedLevel: string): string[] {

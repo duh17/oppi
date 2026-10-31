@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { EVENT_DEFS, GROUPS, fieldSpec, type EventDef } from "../src/telemetry/catalog.ts";
 import { tagsMatch } from "../src/telemetry/validate.ts";
+import { buildLabel } from "./build-label.ts";
 
 interface SloThreshold {
   tm99: number;
@@ -40,6 +41,10 @@ export interface LoadedRecord {
   sessionId?: string;
   buildNumber?: string;
   appVersion?: string;
+  /** Git commit of the app build (`client.gitCommit`). */
+  gitCommit?: string;
+  /** One app launch (`client.bootId`); a new value on every process start. */
+  bootId?: string;
 }
 
 /** One field value of one event: a point in the `<event>.<field>` series. */
@@ -49,6 +54,7 @@ interface LoadedSample {
   value: number;
   unit: string;
   tags?: Record<string, string>;
+  bootId?: string;
 }
 
 interface MetricBucket {
@@ -324,6 +330,8 @@ function parseRecord(line: string): LoadedRecord | undefined {
     ...(typeof raw.sessionId === "string" ? { sessionId: raw.sessionId } : {}),
     ...(typeof client?.buildNumber === "string" ? { buildNumber: client.buildNumber } : {}),
     ...(typeof client?.appVersion === "string" ? { appVersion: client.appVersion } : {}),
+    ...(typeof client?.gitCommit === "string" ? { gitCommit: client.gitCommit } : {}),
+    ...(typeof client?.bootId === "string" ? { bootId: client.bootId } : {}),
   };
 }
 
@@ -358,7 +366,8 @@ export function loadSamples(telemetryDir: string, daysBack: number): LoadResult 
       if (!record || record.ts < cutoffMs) continue;
       records.push(record);
       const def = eventDef(record.name)!;
-      const build = record.buildNumber;
+      // Every local install shares one build number, so builds are keyed build@commit.
+      const build = record.buildNumber ? buildLabel(record) : undefined;
       if (build) {
         if (!buildSummary[build]) {
           buildSummary[build] = {
@@ -381,7 +390,14 @@ export function loadSamples(telemetryDir: string, daysBack: number): LoadResult 
         const metric = seriesName(record.name, field);
         const unit = fieldSpec(fieldDef).unit;
         pushValue(values, metric, value, unit);
-        samples.push({ ts: record.ts, metric, value, unit, tags: record.tags });
+        samples.push({
+          ts: record.ts,
+          metric,
+          value,
+          unit,
+          tags: record.tags,
+          ...(record.bootId ? { bootId: record.bootId } : {}),
+        });
         if (build) {
           if (!byBuild[build]) byBuild[build] = {};
           pushValue(byBuild[build], metric, value, unit);
@@ -1058,6 +1074,18 @@ function buildMetricResult(metric: string, vals: number[], unit: string): Metric
   };
 }
 
+/**
+ * The value of a `--by` key. `boot` is not an event tag: it is the app launch
+ * (`client.bootId`) the event came from.
+ */
+function breakdownValue(
+  key: string,
+  tags: Record<string, string> | undefined,
+  bootId: string | undefined,
+): string | undefined {
+  return key === "boot" ? bootId : tags?.[key];
+}
+
 function buildBreakdowns(
   data: LoadResult,
   byTags: string[],
@@ -1082,7 +1110,7 @@ function buildBreakdowns(
     for (const sample of data.samples) {
       if (!shouldIncludeMetric(sample.metric, dictationOnly)) continue;
       if (dictationOnly && !DICTATION_BREAKDOWN_METRICS.has(sample.metric)) continue;
-      const tagValue = sample.tags?.[tag];
+      const tagValue = breakdownValue(tag, sample.tags, sample.bootId);
       if (!tagValue) continue;
       sawAny = true;
       if (!buckets[tagValue]) buckets[tagValue] = {};
@@ -1091,7 +1119,7 @@ function buildBreakdowns(
 
     // An attempt is a setup that finished (ok or error); cancelled setups are not attempts.
     for (const record of data.records) {
-      const tagValue = record.tags[tag];
+      const tagValue = breakdownValue(tag, record.tags, record.bootId);
       if (!tagValue) continue;
       if (record.name === "app.dictation_setup") {
         if (record.tags.status === "cancelled") continue;
@@ -2030,6 +2058,9 @@ Options:
                         Nearest-rank percentiles. Raw events; fast successful routine
                         routes are omitted.
   --by <tags>           Breakdown tags (comma-separated). Example: voice_engine,stt_model
+                        'boot' breaks down by app launch (client bootId), to tell a leak
+                        from workload. Breakdowns print only with --dictation; otherwise
+                        read them from --json or --compact. Build rows are keyed build@commit.
   --json                Machine-readable JSON
   --compact             Minimal JSON for agents
   --svg-out <path>      Write an app-viewable SVG trend dashboard to a file
