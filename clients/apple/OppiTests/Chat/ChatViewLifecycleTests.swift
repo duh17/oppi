@@ -484,6 +484,85 @@ struct ChatViewLifecycleTests {
         connection.disconnectStream()
     }
 
+    /// Quick Session sends the new session's first message from its chat. The
+    /// server took it, but its ack was slow and the chat was left first. The sent
+    /// message must not come back as the session's draft (2026-10-31: the first
+    /// prompt of a quick session sat in the composer when the chat was reopened).
+    @Test func quickSessionMessageSentBeforeLeavingDoesNotComeBackAsDraft() async throws {
+        let sessionId = "quick-\(UUID().uuidString)"
+        let workspaceId = "w1"
+        let message = "Compare how these multiplexers bind agents"
+        let connection = ServerConnection()
+        connection.configure(credentials: makeTestCredentials(fingerprint: "sha256:draft-lifetime"))
+        connection._setActiveSessionIdForTesting(sessionId)
+        connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
+        connection._sendAckTimeoutForTesting = .milliseconds(50)
+        connection._turnSendRetryDelayForTesting = .milliseconds(1)
+        connection.sessionStore.upsert(
+            makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready)
+        )
+        let frames = ScriptedFrameStreamFactory()
+        connection._connectStreamForTesting = { [weak connection] in
+            connection?.wsClient?._setStatusForTesting(.connected)
+            return frames.makeStream()
+        }
+        // The server holds the ack: the prompt frame goes out and nothing answers it.
+        var promptsSent = 0
+        connection._sendMessageForTesting = { sent in
+            if case .prompt = sent { promptsSent += 1 }
+        }
+
+        let draftStore = ComposerDraftStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appending(path: "quick-draft-\(UUID().uuidString).json", directoryHint: .notDirectory),
+            saveDelay: .seconds(60)
+        )
+        let appNavigation = AppNavigation()
+        appNavigation.pendingQuickSessionMessage = message
+        var chat: ChatViewController? = makeChat(
+            connection: connection,
+            sessionId: sessionId,
+            appNavigation: appNavigation
+        )
+        let host = try #require(chat.map { chat in
+            chat.sessionManager._loadHistoryForTesting = { _, _ in nil }
+            // The scripted stream has no URL-bound socket; report it live.
+            chat.sessionManager._focusedStreamLivenessForTesting = { .connected }
+            return show(chat, in: chat, appRoot: makeTestAppRoot(composerDraftStore: draftStore))
+        })
+        let key = try #require(chat?.composerDraftKey)
+
+        #expect(await frames.waitForCreated(1))
+        frames.yield(index: 0, event: StreamFrameEvent(
+            sessionId: sessionId,
+            message: .connected(session: makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready)),
+            meta: nil
+        ))
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { promptsSent == 1 },
+            "The quick session message was never sent"
+        )
+        #expect(chat?.composerDraftController.text.isEmpty == true, "A dispatched send leaves the field")
+        #expect(
+            draftStore.record(for: key)?.payload.text == message,
+            "Until the ack, the stored draft keeps the message for crash recovery"
+        )
+
+        // Leave before the ack. Nothing else holds the chat.
+        chat = nil
+        host.teardown()
+        #expect(
+            await waitForMainActorCondition { host.controller == nil },
+            "The left chat must go away for this proof"
+        )
+
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(3)) { draftStore.record(for: key) == nil },
+            "A message that left on the wire before the chat closed came back as the session's draft"
+        )
+        connection.disconnectStream()
+    }
+
     private func makeHost(
         connection: ServerConnection,
         sessionId: String,
@@ -504,12 +583,16 @@ struct ChatViewLifecycleTests {
         return (show(chat, in: stack), stack)
     }
 
-    private func show(_ chat: ChatViewController, in windowRoot: UIViewController) -> HostHarness {
+    private func show(
+        _ chat: ChatViewController,
+        in windowRoot: UIViewController,
+        appRoot: AppRootEnvironment = makeTestAppRoot()
+    ) -> HostHarness {
         // A window in the app's scene, so UIKit runs the chat's
         // `updateProperties()` when the stores it reads change.
         let window = makeSceneWindow()
         // The chat's leaves and the timeline's empty state need the app root.
-        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        window.traitOverrides.appRootEnvironment = appRoot
         window.rootViewController = windowRoot
         window.makeKeyAndVisible()
 

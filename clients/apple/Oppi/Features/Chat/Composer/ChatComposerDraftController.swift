@@ -462,24 +462,50 @@ final class ChatComposerDraftController {
             didClearSubmittedDraft = false
         }
 
-        // A successful acknowledgement must drop the in-flight attachments even
-        // if newer typing changed the payload or revision, and even if
-        // navigation detached this controller in the meantime.
-        if !snapshot.wasEphemeral,
-           let snapshotKey = snapshot.key,
-           let store = snapshot.store {
-            if snapshot.draftClearance == .afterSuccess {
-                Self.removeSubmittedAttachments(
-                    submittedAttachmentIDs,
-                    matching: snapshot,
-                    from: store,
-                    key: snapshotKey
-                )
-            } else if let revision = snapshot.revision {
-                store.clearDraft(for: snapshotKey, ifRevision: revision)
-            }
-        }
+        Self.settleStoredDraft(after: snapshot, submittedAttachmentIDs: submittedAttachmentIDs)
         return didClearSubmittedDraft
+    }
+
+    /// Acknowledge a send on its controller, or on the stored draft alone when
+    /// the controller is gone. A chat left while its send awaits the ack drops
+    /// its controller; the stored draft still holds the sent message (kept for
+    /// crash recovery) and must lose it, or reopening the chat shows it again.
+    static func completeSubmission(
+        _ snapshot: SubmissionSnapshot,
+        on controller: ChatComposerDraftController?
+    ) {
+        if let controller {
+            controller.completeSubmission(snapshot)
+        } else {
+            settleStoredDraft(
+                after: snapshot,
+                submittedAttachmentIDs: Set(
+                    snapshot.payload.attachments.map(\.id) + snapshot.pendingAttachments.map(\.id)
+                )
+            )
+        }
+    }
+
+    /// A successful acknowledgement must drop the in-flight attachments even
+    /// if newer typing changed the payload or revision, and even if
+    /// navigation detached or released the controller in the meantime.
+    private static func settleStoredDraft(
+        after snapshot: SubmissionSnapshot,
+        submittedAttachmentIDs: Set<String>
+    ) {
+        guard !snapshot.wasEphemeral,
+              let snapshotKey = snapshot.key,
+              let store = snapshot.store else { return }
+        if snapshot.draftClearance == .afterSuccess {
+            removeSubmittedAttachments(
+                submittedAttachmentIDs,
+                matching: snapshot,
+                from: store,
+                key: snapshotKey
+            )
+        } else if let revision = snapshot.revision {
+            store.clearDraft(for: snapshotKey, ifRevision: revision)
+        }
     }
 
     private static func removeSubmittedAttachments(

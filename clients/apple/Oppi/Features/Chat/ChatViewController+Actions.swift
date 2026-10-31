@@ -149,7 +149,7 @@ extension ChatViewController {
             redactionPolicy: redactionPolicy,
             onSendSucceeded: { [weak self] in
                 guard let submission else { return }
-                self?.composerDraftController.completeSubmission(submission)
+                ChatComposerDraftController.completeSubmission(submission, on: self?.composerDraftController)
                 self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
             },
             onAsyncFailure: { [weak self] in

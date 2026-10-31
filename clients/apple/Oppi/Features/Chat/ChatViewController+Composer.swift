@@ -747,7 +747,7 @@ extension ChatViewController {
                 reducer: reducer,
                 sessionId: sessionId,
                 onSendSucceeded: { [weak self] in
-                    self?.composerDraftController.completeSubmission(submission)
+                    ChatComposerDraftController.completeSubmission(submission, on: self?.composerDraftController)
                     self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                 },
                 onAsyncFailure: { [weak self] in
@@ -766,7 +766,7 @@ extension ChatViewController {
                 sessionStore: sessionStore,
                 sessionId: sessionId,
                 onSendSucceeded: { [weak self] in
-                    self?.composerDraftController.completeSubmission(submission)
+                    ChatComposerDraftController.completeSubmission(submission, on: self?.composerDraftController)
                     self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                 },
                 onAsyncFailure: { [weak self] in
@@ -869,7 +869,8 @@ extension ChatViewController {
                         }
                     },
                     onSendSucceeded: { [weak self] in
-                        self?.composerDraftController.completeSubmission(submission)
+                        // The ack can land after this chat is gone (left mid-send).
+                        ChatComposerDraftController.completeSubmission(submission, on: self?.composerDraftController)
                         self?.clearSentReviewComments(ids: stagedReviewCommentIds)
                         self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                     },

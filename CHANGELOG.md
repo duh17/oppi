@@ -131,6 +131,7 @@ Example:
 
 ### Fixed
 
+- **Client:** A message you send and then leave the chat before the server confirms it (common for a Quick Session's first message, or on a slow network) no longer comes back as that chat's draft when you reopen it.
 - **Client:** SSH Terminal: a Rex pane that has shown an image (an agent's screenshot, `kitten icat`) opens with its history and the image, instead of "This pane's screen could not be read". The bundled terminal engine now reads every part of the screen Rex sends and skips the parts a newer Rex adds that it does not know.
 - **Client:** A Thread strip's counts now agree with the thread it opens: a child counts as **stopped** exactly when the open thread folds it behind **N Stopped**, so a finished child this phone has not opened no longer counts as "done" beside "stopped" (the strip said "3 working · 34 done · 103 stopped" above a fold of "137 Stopped"). A thread with nothing active draws one line (its counts, Agents, and chevron) instead of two blank lines above them; while a child works or needs you the strip keeps its height, so a child changing state never moves the rows below. The **Session Rows** preview shows the same.
 - **Client:** SSH Terminal: a Rex host whose `nc` cannot open Unix sockets (Debian's `netcat-traditional`, BusyBox) says to install one that can, such as `netcat-openbsd`, instead of "The connection to Rex closed".
