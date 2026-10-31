@@ -48,11 +48,18 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             || processInfo.environment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS_EMBEDDED"] == "1"
     }
 
-    private static let editItem = UIBarButtonItem(
-        title: "Edit",
-        image: UIImage(systemName: "pencil"),
-        primaryAction: UIAction { _ in }
-    )
+    /// The reader's edit entry, from the same owner every reader uses: text the
+    /// harness holds is a `.snapshot`, so there is no pencil and the "…" holds
+    /// Edit with Session.
+    private static func editItems() -> [UIBarButtonItem] {
+        DocumentEditOwner(
+            subject: .snapshot,
+            placement: .readerBar,
+            agentAction: DocumentAgentEditAction {},
+            backend: { nil },
+            onChange: {}
+        ).barItems
+    }
 
     private static var diffWrappingModeEnabled: Bool {
         let processInfo = ProcessInfo.processInfo
@@ -194,7 +201,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             content: content,
             presentationMode: presentationMode,
             reviewCommentSelectionContext: context,
-            editItems: Self.diffWrappingModeEnabled ? [] : [Self.editItem]
+            editItems: Self.diffWrappingModeEnabled ? [] : Self.editItems()
         )
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false

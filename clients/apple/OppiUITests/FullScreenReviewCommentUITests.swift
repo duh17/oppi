@@ -21,8 +21,12 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         launchReviewCommentHarness()
 
         XCTAssertTrue(
-            app.buttons["Edit in Oppi Session"].waitForExistence(timeout: 5),
-            "The full-screen reader did not expose its session edit action"
+            app.buttons["document.edit.more"].waitForExistence(timeout: 5),
+            "The full-screen reader did not expose its edit entry"
+        )
+        XCTAssertFalse(
+            app.buttons["workspace-file-editor.edit"].exists,
+            "Held text has no pencil; its session is the only edit entry"
         )
         XCTAssertFalse(
             app.buttons["fullscreen-code.review-comments.stash"].exists,
@@ -122,7 +126,7 @@ final class FullScreenReviewCommentUITests: XCTestCase {
 
         tapElement(doneButton)
         XCTAssertTrue(
-            app.buttons["Edit in Oppi Session"].waitForExistence(timeout: 5),
+            app.buttons["document.edit.more"].waitForExistence(timeout: 5),
             "Closing the stash sheet should return to the document"
         )
         XCTAssertTrue(stashButton.waitForExistence(timeout: 2))
@@ -132,7 +136,8 @@ final class FullScreenReviewCommentUITests: XCTestCase {
         launchReviewCommentHarness(embedded: true)
 
         XCTAssertTrue(app.buttons["fullScreen.code.close"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Edit in Oppi Session"].waitForExistence(timeout: 2))
+        let more = app.buttons["document.edit.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 2), "The embedded reader lost its edit entry")
         XCTAssertFalse(app.buttons["fullscreen-code.review-comments.stash"].exists)
 
         app.buttons["fullScreen.code.close"].tap()
@@ -140,6 +145,13 @@ final class FullScreenReviewCommentUITests: XCTestCase {
             waitForDiagnostic("diag.embedded.backCount", timeout: 2, matching: { $0 == 1 }),
             1,
             "Embedded reader back chrome did not call the NavigationStack dismissal action"
+        )
+
+        // The overflow is the reader's whole edit entry for held text.
+        tapElement(more)
+        XCTAssertTrue(
+            app.buttons["controlFile.editInSession"].waitForExistence(timeout: 2),
+            "The overflow did not offer Edit with Session"
         )
     }
 
