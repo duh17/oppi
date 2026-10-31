@@ -5,24 +5,19 @@ import UIKit
 ///
 /// Pushed from Workspace Settings, which already made the workspace's server
 /// the active one and bound `model` to it; this page only reads the model. Its
-/// loading, empty, and failed states read like the workspace Skills page's.
+/// loading, empty, and failed states read like the workspace Skills page's: the
+/// model's own load, drawn by the base's state row.
 @MainActor
 final class WorkspaceExtensionsViewController: ListScreenController<
     WorkspaceExtensionsViewController.Section,
     WorkspaceExtensionsViewController.Item
 > {
-    enum Section: Hashable, Sendable { case loading, oppi, pi }
+    enum Section: Hashable, Sendable { case oppi, pi }
 
-    enum Item: Hashable, Sendable {
-        case loading
-        case empty
-        case ext(String)
-        case error
-    }
+    enum Item: Hashable, Sendable { case ext(String) }
 
     private let model: WorkspaceSettingsModel
     private let root: AppRootEnvironment
-    private var loadTask: Task<Void, Never>?
     /// Bumped when a switch's write ends, so it is redrawn from the stored
     /// value even where that value did not change (a failed write).
     private var toggleRevision = 0
@@ -40,10 +35,6 @@ final class WorkspaceExtensionsViewController: ListScreenController<
         traitOverrides.appRootEnvironment = root
     }
 
-    deinit {
-        loadTask?.cancel()
-    }
-
     // MARK: - Lifecycle
 
     override func viewWillAppear(_ animated: Bool) {
@@ -51,17 +42,16 @@ final class WorkspaceExtensionsViewController: ListScreenController<
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        let model = model
-        loadTask?.cancel()
-        loadTask = Task { await model.loadPiResourcesIfNeeded() }
-    }
+    /// The model loads the two Pi resource lists once per scope, so a load each
+    /// appearance asks it for nothing after the first; a failed one is retried
+    /// by the next ask (the base's Retry, or the page appearing again).
+    override var loadPolicy: LoadPolicy { .eachAppearance }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        loadTask?.cancel()
-        loadTask = nil
+    override func load() async throws {
+        // A read or a write that failed is what a Retry is for: it reads the list
+        // again rather than keeping what the server last said.
+        if model.extensionsError != nil { model.startPiResourceReload() }
+        await model.loadPiResourcesIfNeeded()
     }
 
     // MARK: - Rows
@@ -69,9 +59,6 @@ final class WorkspaceExtensionsViewController: ListScreenController<
     override func sections() -> [ListSection<Section, Item>] {
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
-        if model.isLoadingExtensions && model.extensions.isEmpty {
-            return [ListSection(.loading, items: [.loading])]
-        }
         var sections: [ListSection<Section, Item>] = []
         let oppi = model.extensions.filter(\.isOppi)
         let pi = model.extensions.filter { !$0.isOppi }
@@ -82,35 +69,42 @@ final class WorkspaceExtensionsViewController: ListScreenController<
                 items: oppi.map { .ext($0.name) }
             ))
         }
-        var piItems: [Item] = pi.isEmpty ? [.empty] : pi.map { .ext($0.name) }
-        if model.extensionsError != nil { piItems.append(.error) }
+        // The Pi group always shows: it is where the state row goes when the
+        // folder has no Pi extensions, is loading them, or could not.
         let serverName = model.serverName(in: root.coordinator.serverStore)
         sections.append(ListSection(
             .pi,
             header: String(localized: "Pi Extensions"),
             footer: model.piResourceFooter(serverName: serverName),
-            items: piItems
+            items: pi.map { .ext($0.name) },
+            state: stateRow(
+                hasContent: !pi.isEmpty,
+                isLoading: isLoading,
+                failure: failureReport(reason: model.extensionsError)
+            )
         ))
         return sections
     }
 
+    override func loadingCaption() -> String? { String(localized: "Loading extensions…") }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Extensions") }
+
+    /// Nothing resolved yet: the folder has no Pi extensions.
+    override func emptyState() -> LoadState? {
+        .empty(title: String(localized: "No Pi extensions discovered for this folder yet."), systemImage: "puzzlepiece.extension")
+    }
+
     override func inputs(of item: Item) -> AnyHashable {
-        switch item {
-        case .loading, .empty:
-            return AnyHashable(0)
-        case .ext(let name):
-            guard let ext = extensionInfo(named: name) else { return AnyHashable(0) }
-            return AnyHashable([
-                AnyHashable(ext.name),
-                AnyHashable(ext.subtitle),
-                AnyHashable(isEnabled(ext)),
-                AnyHashable(model.isPending(.extensions, path: ext.path)),
-                AnyHashable(model.canTogglePiResources),
-                AnyHashable(toggleRevision),
-            ])
-        case .error:
-            return AnyHashable(model.extensionsError)
-        }
+        guard case .ext(let name) = item, let ext = extensionInfo(named: name) else { return AnyHashable(0) }
+        return AnyHashable([
+            AnyHashable(ext.name),
+            AnyHashable(ext.subtitle),
+            AnyHashable(isEnabled(ext)),
+            AnyHashable(model.isPending(.extensions, path: ext.path)),
+            AnyHashable(model.canTogglePiResources),
+            AnyHashable(toggleRevision),
+        ])
     }
 
     private func extensionInfo(named name: String) -> ExtensionInfo? {
@@ -126,36 +120,12 @@ final class WorkspaceExtensionsViewController: ListScreenController<
         configureExtension(cell, ext: ext)
     }
 
-    /// Loading, empty, and the inline error: read-only rows.
-    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
-        guard let self else { return }
-        switch item {
-        case .loading:
-            cell.configure(.loading(String(localized: "Loading extensions\u{2026}")))
-        case .error:
-            let model = self.model
-            cell.configure(
-                .failure(
-                    title: String(localized: "Couldn't Load Extensions"),
-                    reason: model.extensionsError ?? "",
-                    retry: { [model] in model.startPiResourceReload() }
-                ),
-                identifier: "workspace.edit.extensions.error"
-            )
-        default:
-            cell.configure(.message(String(localized: "No Pi extensions discovered for this folder yet.")))
-        }
-    }
-
     override func prepareRegistrations() {
-        _ = (extensionRow, stateRow)
+        _ = extensionRow
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        if case .ext = item {
-            return collectionView.dequeueConfiguredReusableCell(using: extensionRow, for: indexPath, item: item)
-        }
-        return collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
+        collectionView.dequeueConfiguredReusableCell(using: extensionRow, for: indexPath, item: item)
     }
 
     private func configureExtension(_ cell: UICollectionViewListCell, ext: ExtensionInfo) {

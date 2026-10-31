@@ -5,7 +5,9 @@ import UIKit
 /// button opens the skill's detail on this workspace's server and folder.
 ///
 /// Pushed from Workspace Settings, which already made the workspace's server
-/// the active one and bound `model` to it; this page only reads the model.
+/// the active one and bound `model` to it; this page only reads the model. The
+/// skills are the model's own load, so the state row is built from its facts:
+/// the base runs the load and draws the row.
 @MainActor
 final class WorkspaceSkillsViewController: ListScreenController<
     WorkspaceSkillsViewController.Section,
@@ -13,17 +15,11 @@ final class WorkspaceSkillsViewController: ListScreenController<
 > {
     enum Section: Hashable, Sendable { case skills }
 
-    enum Item: Hashable, Sendable {
-        case loading
-        case empty
-        case skill(String)
-        case error
-    }
+    enum Item: Hashable, Sendable { case skill(String) }
 
     private let model: WorkspaceSettingsModel
     private let connection: ServerConnection
     private let root: AppRootEnvironment
-    private var loadTask: Task<Void, Never>?
     /// Bumped when a toggle's write ends, so its switch is redrawn from the
     /// stored value even where that value did not change (a failed write).
     private var toggleRevision = 0
@@ -41,10 +37,6 @@ final class WorkspaceSkillsViewController: ListScreenController<
         traitOverrides.appRootEnvironment = root
     }
 
-    deinit {
-        loadTask?.cancel()
-    }
-
     // MARK: - Lifecycle
 
     override func viewWillAppear(_ animated: Bool) {
@@ -52,17 +44,16 @@ final class WorkspaceSkillsViewController: ListScreenController<
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        let model = model
-        loadTask?.cancel()
-        loadTask = Task { await model.loadPiResourcesIfNeeded() }
-    }
+    /// The model loads the two Pi resource lists once per scope, so a load each
+    /// appearance asks it for nothing after the first; a failed one is retried
+    /// by the next ask (the base's Retry, or the page appearing again).
+    override var loadPolicy: LoadPolicy { .eachAppearance }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        loadTask?.cancel()
-        loadTask = nil
+    override func load() async throws {
+        // A read or a write that failed is what a Retry is for: it reads the list
+        // again rather than keeping what the server last said.
+        if model.skillsError != nil { model.startPiResourceReload() }
+        await model.loadPiResourcesIfNeeded()
     }
 
     // MARK: - Rows
@@ -70,36 +61,38 @@ final class WorkspaceSkillsViewController: ListScreenController<
     override func sections() -> [ListSection<Section, Item>] {
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
-        var items: [Item] = []
-        if model.isLoadingSkills && model.skills.isEmpty {
-            items.append(.loading)
-        } else if model.skills.isEmpty {
-            items.append(.empty)
-        } else {
-            items.append(contentsOf: model.skills.map { .skill($0.name) })
-        }
-        if model.skillsError != nil { items.append(.error) }
         let serverName = model.serverName(in: root.coordinator.serverStore)
-        return [ListSection(.skills, footer: model.piResourceFooter(serverName: serverName), items: items)]
+        return [ListSection(
+            .skills,
+            footer: model.piResourceFooter(serverName: serverName),
+            items: model.skills.map { .skill($0.name) },
+            state: stateRow(
+                hasContent: !model.skills.isEmpty,
+                isLoading: isLoading,
+                failure: failureReport(reason: model.skillsError)
+            )
+        )]
+    }
+
+    override func loadingCaption() -> String? { String(localized: "Loading skills…") }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Skills") }
+
+    /// Nothing resolved yet: the folder has no Pi skills.
+    override func emptyState() -> LoadState? {
+        .empty(title: String(localized: "No Pi skills discovered for this folder yet."), systemImage: "sparkles.rectangle.stack")
     }
 
     override func inputs(of item: Item) -> AnyHashable {
-        switch item {
-        case .loading, .empty:
-            return AnyHashable(0)
-        case .skill(let name):
-            guard let skill = skill(named: name) else { return AnyHashable(0) }
-            return AnyHashable([
-                AnyHashable(skill.name),
-                AnyHashable(skill.description),
-                AnyHashable(isEnabled(skill)),
-                AnyHashable(model.isPending(.skills, path: skill.path)),
-                AnyHashable(model.canTogglePiResources),
-                AnyHashable(toggleRevision),
-            ])
-        case .error:
-            return AnyHashable(model.skillsError)
-        }
+        guard case .skill(let name) = item, let skill = skill(named: name) else { return AnyHashable(0) }
+        return AnyHashable([
+            AnyHashable(skill.name),
+            AnyHashable(skill.description),
+            AnyHashable(isEnabled(skill)),
+            AnyHashable(model.isPending(.skills, path: skill.path)),
+            AnyHashable(model.canTogglePiResources),
+            AnyHashable(toggleRevision),
+        ])
     }
 
     private func skill(named name: String) -> SkillInfo? {
@@ -115,36 +108,12 @@ final class WorkspaceSkillsViewController: ListScreenController<
         configureSkill(cell, skill: skill)
     }
 
-    /// Loading, empty, and the inline error: read-only rows.
-    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
-        guard let self else { return }
-        switch item {
-        case .loading:
-            cell.configure(.loading(String(localized: "Loading skills\u{2026}")))
-        case .error:
-            let model = self.model
-            cell.configure(
-                .failure(
-                    title: String(localized: "Couldn't Load Skills"),
-                    reason: model.skillsError ?? "",
-                    retry: { [model] in model.startPiResourceReload() }
-                ),
-                identifier: "workspace.edit.skills.error"
-            )
-        default:
-            cell.configure(.message(String(localized: "No Pi skills discovered for this folder yet.")))
-        }
-    }
-
     override func prepareRegistrations() {
-        _ = (skillRow, stateRow)
+        _ = skillRow
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
-        if case .skill = item {
-            return collectionView.dequeueConfiguredReusableCell(using: skillRow, for: indexPath, item: item)
-        }
-        return collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
+        collectionView.dequeueConfiguredReusableCell(using: skillRow, for: indexPath, item: item)
     }
 
     private func configureSkill(_ cell: WorkspaceSkillRowCell, skill: SkillInfo) {

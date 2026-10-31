@@ -5,7 +5,8 @@ import UIKit
 /// server reports which servers cannot run in the sandbox and why.
 ///
 /// Pushed from Workspace Settings, which already made the workspace's server
-/// the active one and bound `model` to it; this page only reads the model.
+/// the active one and bound `model` to it; this page only reads the model. The
+/// list is the model's own load, so the base runs it and draws its state row.
 @MainActor
 final class WorkspaceSandboxMcpViewController: ListScreenController<
     WorkspaceSandboxMcpViewController.Section,
@@ -14,20 +15,17 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
     enum Section: Hashable, Sendable { case servers }
 
     enum Item: Hashable, Sendable {
-        case loading
-        case loadFailed
-        case empty
         /// With a way to add one: the row opens the MCP Servers list.
         case openServers
         case server(String)
         /// A picked name the server no longer lists, so it can still be switched off.
         case missing(String)
-        case error
+        /// A save that failed, over the servers the page already had.
+        case saveFailed
     }
 
     private let model: WorkspaceSettingsModel
     private let root: AppRootEnvironment
-    private var loadTask: Task<Void, Never>?
     /// Bumped when a switch's write ends, so it is redrawn from the stored
     /// value even where that value did not change (a failed write).
     private var toggleRevision = 0
@@ -44,10 +42,6 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
         traitOverrides.appRootEnvironment = root
     }
 
-    deinit {
-        loadTask?.cancel()
-    }
-
     // MARK: - Lifecycle
 
     override func viewWillAppear(_ animated: Bool) {
@@ -55,17 +49,12 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        let model = model
-        loadTask?.cancel()
-        loadTask = Task { await model.loadSandboxMcpServers() }
-    }
+    /// The server's MCP servers, each time the page shows: another device can
+    /// add one to the global list.
+    override var loadPolicy: LoadPolicy { .eachAppearance }
 
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        loadTask?.cancel()
-        loadTask = nil
+    override func load() async throws {
+        await model.loadSandboxMcpServers()
     }
 
     // MARK: - Rows
@@ -78,30 +67,43 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
     override func sections() -> [ListSection<Section, Item>] {
         // Read the theme so a change re-runs this pass.
         _ = (root.themeStore.mode, root.themeStore.manualThemeID)
-        var items: [Item] = []
-        if let servers = model.sandboxMcpServers {
-            let missing = missingNames(from: servers)
-            if servers.isEmpty && missing.isEmpty { items += [.empty, .openServers] }
-            items += servers.map { .server($0.name) }
-            items += missing.map { .missing($0) }
-        } else if model.sandboxMcpLoadError != nil {
-            items.append(.loadFailed)
-        } else {
-            items.append(.loading)
+        let servers = model.sandboxMcpServers ?? []
+        let missing = missingNames(from: servers)
+        var items: [Item] = servers.map { .server($0.name) }
+        items += missing.map { .missing($0) }
+        // Nothing to pick from once the read settled: the way to add one sits under
+        // the empty row. While it loads, the row beside it is the base's.
+        if servers.isEmpty, missing.isEmpty, !isLoading, model.sandboxMcpLoadError == nil {
+            items.append(.openServers)
         }
-        if model.sandboxMcpError != nil { items.append(.error) }
+        if model.sandboxMcpError != nil { items.append(.saveFailed) }
         let serverName = model.serverName(in: root.coordinator.serverStore) ?? String(localized: "your server")
         let footer = String(localized: "Only servers you turn on load in this workspace. Web servers are called from \(serverName), and only to Allowed Hosts; their sign-in stays there. Command servers run inside the sandbox, where the agent can read their settings; servers that use \(serverName)\u{2019}s secrets are blocked.")
-        return [ListSection(.servers, footer: footer, items: items)]
+        return [ListSection(
+            .servers,
+            footer: footer,
+            items: items,
+            state: stateRow(
+                hasContent: !(servers.isEmpty && missing.isEmpty),
+                isLoading: isLoading,
+                failure: failureReport(reason: model.sandboxMcpLoadError)
+            )
+        )]
+    }
+
+    override func loadingCaption() -> String? { String(localized: "Loading MCP servers…") }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load MCP Servers") }
+
+    override func emptyState() -> LoadState? {
+        .empty(title: String(localized: "No MCP servers to pick from yet."), systemImage: "network")
     }
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
-        case .loading, .empty, .openServers:
+        case .openServers:
             return AnyHashable(0)
-        case .loadFailed:
-            return AnyHashable(model.sandboxMcpLoadError)
-        case .error:
+        case .saveFailed:
             return AnyHashable(model.sandboxMcpError)
         case .server(let name):
             guard let entry = entry(named: name) else { return AnyHashable(0) }
@@ -139,37 +141,19 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
         }
     }
 
-    /// Loading, empty, and the failures: state rows. A failed load can be retried.
-    private lazy var stateRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, item in
+    /// The save's failure, over the servers the page already had: Retry reads
+    /// the list again, which clears it and shows what the host holds now.
+    private lazy var saveFailureRow = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
-        switch item {
-        case .loading:
-            cell.configure(.loading(String(localized: "Loading MCP servers\u{2026}")))
-        case .loadFailed:
-            let model = model
-            cell.configure(
-                .failure(
-                    title: String(localized: "Couldn't Load MCP Servers"),
-                    reason: model.sandboxMcpLoadError ?? "",
-                    retry: { Task { await model.loadSandboxMcpServers() } }
-                ),
-                identifier: "workspace.edit.sandboxMcp.loadError"
-            )
-        case .error:
-            // A save that failed: Retry reads the list again, which clears it and
-            // shows what the host holds now.
-            let model = model
-            cell.configure(
-                .failure(
-                    title: String(localized: "Couldn't Save the MCP Server"),
-                    reason: model.sandboxMcpError ?? "",
-                    retry: { Task { await model.loadSandboxMcpServers() } }
-                ),
-                identifier: "workspace.edit.sandboxMcp.error"
-            )
-        default:
-            cell.configure(.message(String(localized: "No MCP servers to pick from yet.")))
-        }
+        let model = model
+        cell.configure(
+            .failure(
+                title: String(localized: "Couldn't Save the MCP Server"),
+                reason: model.sandboxMcpError ?? "",
+                retry: { [weak self] in self?.setNeedsLoad() }
+            ),
+            identifier: "workspace.edit.sandboxMcp.error"
+        )
     }
 
     private lazy var linkRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
@@ -182,7 +166,7 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
     }
 
     override func prepareRegistrations() {
-        _ = (serverRow, stateRow, linkRow)
+        _ = (serverRow, saveFailureRow, linkRow)
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
@@ -191,8 +175,8 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
             collectionView.dequeueConfiguredReusableCell(using: serverRow, for: indexPath, item: item)
         case .openServers:
             collectionView.dequeueConfiguredReusableCell(using: linkRow, for: indexPath, item: item)
-        default:
-            collectionView.dequeueConfiguredReusableCell(using: stateRow, for: indexPath, item: item)
+        case .saveFailed:
+            collectionView.dequeueConfiguredReusableCell(using: saveFailureRow, for: indexPath, item: item)
         }
     }
 

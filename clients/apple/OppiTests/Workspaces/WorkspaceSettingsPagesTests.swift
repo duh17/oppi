@@ -551,6 +551,54 @@ struct WorkspaceDetailsAndListTests {
         #expect(list.contentUnavailableConfiguration != nil, "an empty server says so")
     }
 
+    @Test func aPullToRefreshReadsTheCatalogEvenWhenTheConnectionJustSynced() async throws {
+        defer { TestURLProtocol.handler = nil }
+        let reads = TestReadCounter()
+        TestURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/workspaces") == true { reads.count += 1 }
+            return try self.response(json: "{\"workspaces\":[]}")
+        }
+        let (list, connection, window) = try mountReadyList([makeTestWorkspace(id: "w1", name: "Notes")])
+        defer { window.isHidden = true; window.rootViewController = nil }
+
+        // The page's first load reads the catalog.
+        try await waitUntil { reads.count > 0 }
+        // A connection that synced a moment ago skips an ordinary refresh for two
+        // minutes: a pull is an ask, so it reads anyway.
+        connection.workspaceStore.isLoaded = true
+        connection.workspaceStore.lastSyncFailed = false
+        connection.workspaceStore.lastSuccessfulSyncAt = Date()
+        let before = reads.count
+
+        list.collectionView.refreshControl?.sendActions(for: .valueChanged)
+        try await waitUntil { reads.count > before }
+        #expect(reads.count > before, "a pull reads the catalog inside the refresh window")
+    }
+
+    /// The workspace list over a server whose client is ready, so its loads reach the
+    /// test's routes instead of waiting on a transport preparation.
+    private func mountReadyList(
+        _ workspaces: [Workspace]
+    ) throws -> (WorkspaceListViewController, ServerConnection, UIWindow) {
+        let root = try makeTestAppRoot(
+            readyServerId: Self.serverId,
+            apiClient: makeTestURLProtocolClient(host: "studio.test")
+        )
+        let server = try #require(root.coordinator.serverStore.server(for: Self.serverId))
+        let connection = try #require(root.coordinator.connection(for: Self.serverId))
+        connection.workspaceStore.setActiveServer(server.id)
+        for workspace in workspaces { connection.workspaceStore.upsert(workspace, serverId: server.id) }
+        let list = WorkspaceListViewController(server: server, root: root)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 1200)
+        window.traitOverrides.appRootEnvironment = root
+        window.rootViewController = RouterNavigationController(rootViewController: list)
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        return (list, connection, window)
+    }
+
     /// Closes the error alert; the list shows one at a time.
     private func dismissAlert(in window: UIWindow) async throws {
         let alert = try #require(window.rootViewController?.presentedViewController as? UIAlertController)
@@ -628,13 +676,18 @@ struct WorkspaceDetailsAndListTests {
         defer { window.isHidden = true; window.rootViewController = nil }
         try await waitUntil { window.layoutIfNeeded(); return self.find("server.workspace.w0", in: list.view) != nil }
         let swipe = try #require(list.trailingSwipeActions(for: .workspace("w0")))
-        list.collectionView.setContentOffset(
-            CGPoint(x: 0, y: list.collectionView.contentSize.height - list.collectionView.bounds.height),
-            animated: false
-        )
-        window.layoutIfNeeded()
         let row = try #require(list.indexPath(for: .workspace("w0")))
-        try #require(list.collectionView.cellForItem(at: row) == nil, "the first row is offscreen")
+        // The list's own passes (a load landing, artwork arriving) can settle the
+        // layout after a scroll, so the row is scrolled away until it stays away.
+        try await waitUntil {
+            list.collectionView.setContentOffset(
+                CGPoint(x: 0, y: list.collectionView.contentSize.height - list.collectionView.bounds.height),
+                animated: false
+            )
+            window.layoutIfNeeded()
+            return list.collectionView.cellForItem(at: row) == nil
+        }
+        #expect(list.collectionView.cellForItem(at: row) == nil, "the first row is offscreen")
 
         try #require(swipe.actions.first).handler(try #require(swipe.actions.first), list.view) { _ in }
 
@@ -645,5 +698,17 @@ struct WorkspaceDetailsAndListTests {
         #expect(source.window != nil, "the fallback source is a view on screen, not the scrolled-away row")
         #expect(sheet.popoverPresentationController?.permittedArrowDirections.isEmpty == true, "with no row to point at, no arrow")
 
+    }
+}
+
+/// Counts the requests a test's handler answered, from whichever queue answered
+/// them.
+private final class TestReadCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen = 0
+
+    var count: Int {
+        get { lock.withLock { seen } }
+        set { lock.withLock { seen = newValue } }
     }
 }

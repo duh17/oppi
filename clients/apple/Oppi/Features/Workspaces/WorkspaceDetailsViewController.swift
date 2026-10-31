@@ -75,14 +75,20 @@ final class WorkspaceDetailsViewController: ListScreenController<
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        model.start()
-    }
-
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         iconPicker.sync()
+    }
+
+    // MARK: - Load
+
+    /// The folder the draft starts with, checked again each time the page shows:
+    /// the server may have made or removed it since. The base runs it and
+    /// cancels a check the page leaves; the folder's row says how it went.
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    override func load() async throws {
+        await model.validateHostMount()
     }
 
     override func updateProperties() {

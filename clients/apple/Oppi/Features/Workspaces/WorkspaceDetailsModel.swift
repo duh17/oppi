@@ -75,11 +75,6 @@ final class WorkspaceDetailsModel {
         startFolderCheck()
     }
 
-    /// Checks the folder the draft starts with, as the page appears.
-    func start() {
-        startFolderCheck()
-    }
-
     // MARK: - Folder check
 
     private func startFolderCheck() {

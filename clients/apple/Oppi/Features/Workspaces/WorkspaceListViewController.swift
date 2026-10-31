@@ -30,8 +30,11 @@ final class WorkspaceListViewController: ListScreenController<
     private let server: PairedServer
     private let root: AppRootEnvironment
     private let locks: ScopedLockService
-    private var refreshTask: Task<Void, Never>?
     private var deleteTask: Task<Void, Never>?
+    /// Whether the load now running was asked for (a pull, a Retry) rather than
+    /// started by the page appearing: an ask reads the catalog even when the
+    /// connection synced it moments ago.
+    private var forcesRefresh = false
     private var isDeleting = false {
         didSet { setNeedsUpdateProperties() }
     }
@@ -60,7 +63,6 @@ final class WorkspaceListViewController: ListScreenController<
     }
 
     deinit {
-        refreshTask?.cancel()
         deleteTask?.cancel()
     }
 
@@ -74,56 +76,57 @@ final class WorkspaceListViewController: ListScreenController<
 
     // MARK: - Lifecycle
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        let refresh = UIRefreshControl()
-        refresh.addAction(UIAction { [weak self, weak refresh] _ in
-            Task { [weak self, weak refresh] in
-                await self?.refreshCatalog(force: true)
-                refresh?.endRefreshing()
-            }
-        }, for: .valueChanged)
-        collectionView.refreshControl = refresh
-    }
-
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setToolbarHidden(true, animated: animated)
     }
 
-    override func viewIsAppearing(_ animated: Bool) {
-        super.viewIsAppearing(animated)
-        refreshTask?.cancel()
-        refreshTask = Task { [weak self] in await self?.refreshCatalog(force: false) }
-    }
-
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        refreshTask?.cancel()
-        refreshTask = nil
+        forcesRefresh = false
+    }
+
+    // MARK: - Load
+
+    /// The server's workspaces, each time the page shows: another device can
+    /// add, rename, or delete one.
+    override var loadPolicy: LoadPolicy { .eachAppearance }
+
+    /// A pull to refresh and a Retry are an ask: they read the catalog even
+    /// when the connection synced it a moment ago.
+    override func setNeedsLoad() {
+        forcesRefresh = true
+        super.setNeedsLoad()
+    }
+
+    override func load() async throws {
+        let force = forcesRefresh
+        forcesRefresh = false
+        guard await root.coordinator.apiClientReady(for: server.id) != nil,
+              let connection else {
+            throw LoadFailure(String(localized: "Server is offline"))
+        }
+        await connection.refreshWorkspaceCatalog(force: force)
+    }
+
+    // MARK: - List state
+
+    override func loadingCaption() -> String? { String(localized: "Loading workspaces…") }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Workspaces") }
+
+    /// Nothing on this server yet: the way to make one is the bar's +.
+    override func emptyState() -> LoadState? {
+        .empty(
+            title: String(localized: "No Workspaces"),
+            systemImage: "square.grid.2x2",
+            message: String(localized: "Tap + to create one.")
+        )
     }
 
     override func updateProperties() {
         super.updateProperties()
         ListScreen.setBarItems(trailing: [createItem], leading: [], on: navigationItem)
-        if workspaces.isEmpty {
-            contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
-                .empty(
-                    title: String(localized: "No Workspaces"),
-                    systemImage: "square.grid.2x2",
-                    message: String(localized: "Tap + to create one.")
-                ),
-                palette: ThemeRuntimeState.currentPalette()
-            )
-        } else {
-            contentUnavailableConfiguration = nil
-        }
-    }
-
-    private func refreshCatalog(force: Bool) async {
-        guard await root.coordinator.apiClientReady(for: server.id) != nil,
-              let connection else { return }
-        await connection.refreshWorkspaceCatalog(force: force)
     }
 
     // MARK: - Rows
