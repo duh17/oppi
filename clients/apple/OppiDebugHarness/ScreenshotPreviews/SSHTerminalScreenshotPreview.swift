@@ -1,6 +1,5 @@
 #if DEBUG
 import Synchronization
-import SwiftUI
 import UIKit
 
 /// Which OSC 7501 report this preview feeds through the real terminal engine.
@@ -11,65 +10,88 @@ enum SSHTerminalScreenshotStatus: String {
     case rexPanes
 }
 
-/// The real terminal surface over an in-memory connection: a Herdr-like
-/// screen in the grid, and `herdr api snapshot` answered with one blocked agent
-/// so the toolbar overview and its badge render, beside two saved machines:
-/// `mac-mini` with a working agent and `build box`, which cannot be reached.
-/// The host runs Rex too, with a pane waiting on a permission, so the Rex
-/// Sessions button and its sheet render beside Herdr's. `status: .blocked`
+/// `SCREENSHOT_SCREEN=ssh-terminal`, `-status-blocked`, `-rex-panes`: the real
+/// terminal at the root of a router stack, over an in-memory connection. A
+/// Herdr-like screen in the grid, and `herdr api snapshot` answered with one
+/// blocked agent so the toolbar overview and its badge render, beside two saved
+/// machines: `mac-mini` with a working agent and `build box`, which cannot be
+/// reached. The host runs Rex too, with a pane waiting on a permission, so the
+/// Rex Sessions button and its sheet render beside Herdr's. `status: .blocked`
 /// also feeds real OSC 7501 bytes through libghostty.
-struct SSHTerminalScreenshotPreview: View {
-    var status: SSHTerminalScreenshotStatus = .none
-    var hostLabel: String = "chen@mac-studio"
-    private let themeID: ThemeID
-    @State private var channel = try? SSHTerminalChannel()
+///
+/// The capture pins one side of the theme, as the app root does, so the
+/// terminal's materials and popovers follow it rather than whatever appearance
+/// the simulator was left in.
+final class SSHTerminalPreviewController: PreviewRootController {
+    private let status: SSHTerminalScreenshotStatus
+    private let channel: SSHTerminalChannel?
     /// A server-scoped connection, as the app root injects, so the input bar
     /// claims the shared dictation manager and shows its mic.
-    @State private var connection: ServerConnection = {
+    private let connection: ServerConnection
+    /// The fixture bytes the terminal plays, and the Rex session's event
+    /// stream: tasks this controller owns, so a re-used launch leaves nothing
+    /// running behind the preview it dropped.
+    private var playback: Task<Void, Never>?
+    private var consumption: Task<Void, Never>?
+
+    init(status: SSHTerminalScreenshotStatus = .none, hostLabel: String = "chen@mac-studio") {
+        self.status = status
+        // The one side of the theme the captures use; a fresh `ThemeStore` reads
+        // it, and puts it in `ThemeRuntimeState` the way the preview did.
+        if ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
+            ScreenshotVolatileDefaults.applyTheme(.light)
+        } else {
+            ScreenshotVolatileDefaults.applyDarkTheme(true)
+        }
+        let themeStore = ThemeStore()
         let connection = ServerConnection()
         connection.setPreviewServerId("preview-server")
-        return connection
-    }()
-
-    init(
-        status: SSHTerminalScreenshotStatus = .none,
-        hostLabel: String = "chen@mac-studio"
-    ) {
-        self.status = status
-        self.hostLabel = hostLabel
-        let themeID: ThemeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light"
-            ? .light : .dark
-        self.themeID = themeID
-        ThemeRuntimeState.setThemeID(themeID)
+        self.connection = connection
+        let channel = try? SSHTerminalChannel()
+        self.channel = channel
+        let root = AppRootEnvironment.preview(
+            coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+            themeStore: themeStore
+        )
+        super.init(
+            root: root,
+            themeStore: themeStore,
+            content: PreviewHost.screenStack(root: root) {
+                // A channel that will not open leaves the empty window the
+                // SwiftUI preview's failed `if let` showed.
+                guard let channel else { return UIViewController() }
+                return SSHTerminalViewController(
+                    channel: channel,
+                    reconnect: {},
+                    editHost: {},
+                    hostLabel: hostLabel,
+                    composerConnection: connection
+                )
+            }
+        )
     }
 
-    var body: some View {
-        Group {
-            if let channel {
-                // The terminal at the root of a router stack, the way the app pushes it.
-                SSHTerminalPreviewHost(
-                    channel: channel,
-                    hostLabel: hostLabel,
-                    themeID: themeID,
-                    connection: connection
-                )
-                .task {
-                    if status == .rexPanes {
-                        await playRexSession(on: channel)
-                    } else {
-                        play(on: channel)
-                    }
-                }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        playback?.cancel()
+        consumption?.cancel()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        guard let channel else { return }
+        let status = self.status
+        // The SwiftUI preview's `.task`: the fixture's bytes, once the terminal
+        // above is its view controller.
+        playback = Task { @MainActor [weak self] in
+            if status == .rexPanes {
+                await self?.playRexSession(on: channel)
+            } else {
+                self?.play(on: channel)
             }
         }
-        .ignoresSafeArea()
-        .environment(connection)
-        .environment(\.themeID, themeID)
-        .environment(\.theme, themeID.appTheme)
-        // As the app root does: materials and popovers follow the theme, not
-        // whatever appearance the simulator was left in.
-        .preferredColorScheme(themeID.preferredColorScheme)
-        .accessibilityIdentifier("screenshot.ready")
     }
 
     private func play(on channel: SSHTerminalChannel) {
@@ -124,7 +146,7 @@ struct SSHTerminalScreenshotPreview: View {
         ) else { return }
         channel.rex = RexSessionModel(connection: connection)
         channel.opened(connection)
-        Task { await channel.consume(queue) }
+        consumption = Task { await channel.consume(queue) }
     }
 
     private func herdrScreen(_ esc: String) -> String {
@@ -158,30 +180,6 @@ struct SSHTerminalScreenshotPreview: View {
     private func osc(_ body: String) -> Data { Data("\u{1b}]7501;\(body)\u{1b}\\".utf8) }
 
     private func b64(_ text: String) -> String { Data(text.utf8).base64EncodedString() }
-}
-
-private struct SSHTerminalPreviewHost: UIViewControllerRepresentable {
-    let channel: SSHTerminalChannel
-    let hostLabel: String
-    let themeID: ThemeID
-    let connection: ServerConnection
-
-    func makeUIViewController(context: Context) -> RouterNavigationController {
-        let terminal = SSHTerminalViewController(
-            channel: channel,
-            reconnect: {},
-            editHost: {},
-            hostLabel: hostLabel,
-            composerConnection: connection
-        )
-        let style: UIUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        terminal.overrideUserInterfaceStyle = style
-        let navigation = RouterNavigationController(rootViewController: terminal)
-        navigation.interfaceStyle = { style }
-        return navigation
-    }
-
-    func updateUIViewController(_ controller: RouterNavigationController, context: Context) {}
 }
 
 private actor PreviewConnection: SSHTerminalConnection {

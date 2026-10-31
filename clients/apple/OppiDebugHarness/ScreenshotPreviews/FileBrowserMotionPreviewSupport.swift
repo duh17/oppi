@@ -1,6 +1,5 @@
 #if DEBUG
-import Foundation
-import SwiftUI
+import UIKit
 
 enum FileBrowserMotionPreviewSupport {
     static let workspaceId = "preview-motion"
@@ -26,53 +25,10 @@ enum FileBrowserMotionPreviewSupport {
         Identifiable \(path) page for previous/next file motion.
         """
     }
-}
 
-/// The file viewer as a tree pane at the root of a router stack, between
-/// two neighbors.
-struct FileBrowserMotionPreview: View {
-    private let apiClient = FileBrowserMotionPreviewSupport.makeClient()
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let files = FileBrowserMotionPreviewSupport.files
-        let middle = files[1]
-        let apiClient = apiClient
-        RouterPreviewControllerNavigation(id: "file-browser-motion") {
-            FileViewerViewController(
-                configuration: .init(
-                    workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
-                    filePath: middle.path,
-                    fileName: middle.name,
-                    fileSize: 240,
-                    chromeMode: .treePane,
-                    navigationContext: FileBrowserNavigationContext(
-                        files: files.map {
-                            FileBrowserSelection(path: $0.path, name: $0.name, size: 240)
-                        }
-                    )
-                ),
-                services: .init(apiClient: apiClient)
-            )
-        }
-        .ignoresSafeArea()
-        .preferredColorScheme(.dark)
-        .overlay(alignment: .bottom) {
-            FileBrowserMotionReduceMotionReadout(reduceMotion: reduceMotion)
-        }
-        .accessibilityIdentifier("screenshot.ready")
-    }
-}
-
-/// The review screen at the root of a router stack, between two neighbors.
-struct ReviewFileMotionPreview: View {
-    private let apiClient = FileBrowserMotionPreviewSupport.makeClient()
-    @State private var connection = ServerConnection()
-    @State private var navigation = AppNavigation()
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let files = FileBrowserMotionPreviewSupport.files.map {
+    /// The review screen's neighbors: one changed file each.
+    static var reviewFiles: [WorkspaceReviewFile] {
+        files.map {
             WorkspaceReviewFile(
                 path: $0.path,
                 status: "M",
@@ -84,45 +40,126 @@ struct ReviewFileMotionPreview: View {
                 selectedSessionTouched: true
             )
         }
-        let apiClient = apiClient
-        let connection = connection
-        let navigation = navigation
-        RouterPreviewControllerNavigation(id: "review-file-motion") {
-            // The review pushes a quick-action chat with these.
-            WorkspaceReviewFileDetailViewController(
-                configuration: .init(
-                    workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
-                    selectedSessionId: nil,
-                    file: files[1],
-                    navigationFiles: files
-                ),
-                connection: connection,
-                apiClient: apiClient,
-                navigation: navigation
-            )
-        }
-        .ignoresSafeArea()
-        .preferredColorScheme(.dark)
-        .overlay(alignment: .bottom) {
-            FileBrowserMotionReduceMotionReadout(reduceMotion: reduceMotion)
-        }
-        .accessibilityIdentifier("screenshot.ready")
     }
 }
 
-private struct FileBrowserMotionReduceMotionReadout: View {
-    let reduceMotion: Bool
+/// Which screen a motion capture shows. Both sit in a router stack between two
+/// neighbor files.
+enum FileBrowserMotionPreviewMode {
+    /// The file viewer as a tree pane.
+    case fileBrowser
+    /// The review screen, whose quick-action chat the files feed.
+    case review
+}
 
-    var body: some View {
-        Text(reduceMotion ? "reduce-motion-on" : "reduce-motion-off")
-            .font(.caption2.monospaced())
-            .foregroundStyle(.themeOnBlue)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(.themeBlue)
-            .accessibilityIdentifier("file.motion.reduceMotion")
-            .accessibilityValue(reduceMotion ? "on" : "off")
-            .accessibilityLabel(reduceMotion ? "reduce-motion-on" : "reduce-motion-off")
+/// `SCREENSHOT_SCREEN=file-browser-motion` / `review-file-motion`: the real
+/// screen at the root of a router stack, over the fixture files, in the dark
+/// theme the captures pin (`.preferredColorScheme(.dark)`). The strip along the
+/// bottom edge reports the host's Reduce Motion setting, the UIKit form of the
+/// `\.accessibilityReduceMotion` the SwiftUI wrapper read, so a capture pair
+/// shows both the plain and the reduced transition.
+final class FileBrowserMotionPreviewController: PreviewRootController {
+    // The services the screens push and play with, held as long as the preview
+    // the way the SwiftUI view's `@State` held them.
+    private let connection: ServerConnection
+    private let navigation: AppNavigation
+    /// Reports the host's Reduce Motion setting: the UIKit form of the
+    /// `@Environment(\.accessibilityReduceMotion)` the SwiftUI wrapper read.
+    private let readout = UILabel()
+
+    init(mode: FileBrowserMotionPreviewMode) {
+        ScreenshotVolatileDefaults.applyDarkTheme(true)
+        let connection = ServerConnection()
+        let navigation = AppNavigation()
+        self.connection = connection
+        self.navigation = navigation
+        let root = AppRootEnvironment.preview(
+            coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+            navigation: navigation
+        )
+        let apiClient = FileBrowserMotionPreviewSupport.makeClient()
+        let files = FileBrowserMotionPreviewSupport.files
+        let reviewFiles = FileBrowserMotionPreviewSupport.reviewFiles
+        super.init(
+            root: root,
+            themeStore: root.themeStore,
+            content: PreviewHost.screenStack(root: root) {
+                switch mode {
+                case .fileBrowser:
+                    let middle = files[1]
+                    return FileViewerViewController(
+                        configuration: .init(
+                            workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
+                            filePath: middle.path,
+                            fileName: middle.name,
+                            fileSize: 240,
+                            chromeMode: .treePane,
+                            navigationContext: FileBrowserNavigationContext(
+                                files: files.map {
+                                    FileBrowserSelection(path: $0.path, name: $0.name, size: 240)
+                                }
+                            )
+                        ),
+                        services: .init(apiClient: apiClient)
+                    )
+                case .review:
+                    return WorkspaceReviewFileDetailViewController(
+                        configuration: .init(
+                            workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
+                            selectedSessionId: nil,
+                            file: reviewFiles[1],
+                            navigationFiles: reviewFiles
+                        ),
+                        connection: connection,
+                        apiClient: apiClient,
+                        navigation: navigation
+                    )
+                }
+            }
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        // A readout, not a control: the screen under it keeps its taps. The
+        // captures match its label, the way the SwiftUI `Text` carried it.
+        readout.backgroundColor = .themeBlue
+        readout.font = .monospacedSystemFont(
+            ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize,
+            weight: .regular
+        )
+        readout.textColor = .themeOnBlue
+        readout.textAlignment = .center
+        readout.isUserInteractionEnabled = false
+        readout.accessibilityIdentifier = "file.motion.reduceMotion"
+        readout.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(readout)
+        NSLayoutConstraint.activate([
+            readout.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            readout.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            readout.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+        ])
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applyReduceMotion),
+            name: UIAccessibility.reduceMotionStatusDidChangeNotification,
+            object: nil
+        )
+        applyReduceMotion()
+    }
+
+    /// Follows the setting live, as the environment read did.
+    @objc private func applyReduceMotion() {
+        let text = UIAccessibility.isReduceMotionEnabled ? "reduce-motion-on" : "reduce-motion-off"
+        readout.text = text
+        readout.accessibilityLabel = text
     }
 }
 

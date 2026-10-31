@@ -1,35 +1,59 @@
 #if DEBUG
-import SwiftUI
 import UIKit
 
-/// The full-screen audio player over the theme background, the way a reader
-/// page shows it.
-struct AudioLyricsPlayerPreviewHost: View {
-    let configuration: AudioLyricsPlayerViewController.Configuration
-
-    var body: some View {
-        Host(configuration: configuration)
-            .background { Color.themeBg.ignoresSafeArea() }
-    }
-
-    private struct Host: UIViewControllerRepresentable {
-        let configuration: AudioLyricsPlayerViewController.Configuration
-
-        func makeUIViewController(context: Context) -> AudioLyricsPlayerViewController {
-            AudioLyricsPlayerViewController(configuration: configuration)
-        }
-
-        func updateUIViewController(_ controller: AudioLyricsPlayerViewController, context: Context) {}
-    }
-}
-
-// MARK: - Script Reader Preview
-
-/// Speaker-tagged WebVTT in the full-screen player. Plays a generated silent clip,
-/// seeks into a dialogue line, and pauses so the current-line highlight is stable.
-struct AudioScriptReaderPreview: View {
-    @State private var audioPlayer = AudioPlayerService()
+/// `SCREENSHOT_SCREEN=audio-script-reader`: speaker-tagged WebVTT in the
+/// full-screen player, over the theme background the way a reader page shows it.
+/// It plays a generated silent clip, seeks into a dialogue line, and pauses so
+/// the current-line highlight is stable.
+final class AudioScriptReaderPreviewController: PreviewRootController {
+    private let audioPlayer: AudioPlayerService
+    /// The clip the SwiftUI preview's `.task` set up; the controller owns it so a
+    /// preview that goes away stops touching the player.
+    private var setup: Task<Void, Never>?
     private static let itemID = "audio-script-reader-preview"
+
+    init(themeStore: ThemeStore) {
+        let audioPlayer = AudioPlayerService()
+        self.audioPlayer = audioPlayer
+        let root = AppRootEnvironment.preview(
+            coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+            themeStore: themeStore
+        )
+        super.init(
+            root: root,
+            themeStore: themeStore,
+            content: AudioLyricsPlayerViewController(configuration: .init(
+                title: "shaolin.m4a",
+                lyrics: nil,
+                itemID: Self.itemID,
+                audioPlayer: audioPlayer,
+                play: { _ in },
+                openFile: nil,
+                autoplayOnAppear: false,
+                showsCloseButton: true,
+                timedText: Self.timedText
+            ))
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        setup?.cancel()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        let audioPlayer = self.audioPlayer
+        setup = Task { @MainActor in
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("audio-script-reader-preview.wav")
+            try? Self.silentWAV(seconds: 90).write(to: url)
+            audioPlayer.toggleFilePlayback(fileURL: url, itemID: Self.itemID)
+            audioPlayer.seek(to: 31)
+            audioPlayer.pause()
+        }
+    }
 
     private static let sidecar = """
     WEBVTT
@@ -75,29 +99,6 @@ struct AudioScriptReaderPreview: View {
         )
         guard let track = TimedText.track(candidate: candidate, text: sidecar) else { return .empty }
         return TimedText.LoadResult(tracks: [track], selectedIndex: 0)
-    }
-
-    var body: some View {
-        AudioLyricsPlayerPreviewHost(configuration: .init(
-            title: "shaolin.m4a",
-            lyrics: nil,
-            itemID: Self.itemID,
-            audioPlayer: audioPlayer,
-            play: { _ in },
-            openFile: nil,
-            autoplayOnAppear: false,
-            showsCloseButton: true,
-            timedText: Self.timedText
-        ))
-        .task {
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("audio-script-reader-preview.wav")
-            try? Self.silentWAV(seconds: 90).write(to: url)
-            audioPlayer.toggleFilePlayback(fileURL: url, itemID: Self.itemID)
-            audioPlayer.seek(to: 31)
-            audioPlayer.pause()
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("screenshot.ready")
     }
 
     /// 8 kHz mono 16-bit PCM silence.

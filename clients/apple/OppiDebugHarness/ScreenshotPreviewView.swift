@@ -82,26 +82,14 @@ enum ScreenshotVolatileDefaults {
 struct ScreenshotPreviewView: View {
     var body: some View {
         switch ScreenshotPreviewConfig.screen {
-        case "ssh-terminal":
-            SSHTerminalScreenshotPreview()
-        case "ssh-terminal-status-blocked":
-            SSHTerminalScreenshotPreview(status: .blocked)
-        case "ssh-terminal-rex-panes":
-            SSHTerminalScreenshotPreview(status: .rexPanes)
         case "chat-routes":
             ChatRoutesHarnessPreview()
         case "session-timeline":
             SessionTimelinePreview()
-        case "file-browser-motion":
-            FileBrowserMotionPreview()
-        case "review-file-motion":
-            ReviewFileMotionPreview()
         case "streaming-flicker":
             StreamingFlickerPreviewView()
         case "feature-tip-p0":
             FeatureEducationP0TipPreview()
-        case "audio-script-reader":
-            AudioScriptReaderPreview()
         case "chat-top-bar-default":
             ChatTopBarScreenshotPreview(
                 order: ChatTopBarAction.allCases,

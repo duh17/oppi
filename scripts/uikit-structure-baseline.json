@@ -167,15 +167,6 @@
     "clients/apple/OppiDebugHarness/ScreenshotPreviewView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/AudioScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/FileBrowserMotionPreviewSupport.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/OppiDebugHarness/ScreenshotPreviews/SSHTerminalScreenshotPreview.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/OppiDebugHarness/ScreenshotPreviews/SessionTimelinePreview.swift": {
       "import SwiftUI": 1
     },

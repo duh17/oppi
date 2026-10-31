@@ -108,6 +108,26 @@ enum DebugHarnessLaunch {
             if ScreenshotPreviewConfig.screen == "workspace-shell" {
                 return WorkspaceShellPreviewController()
             }
+            // The files, terminal, and audio family: the motion captures, the
+            // terminal's three fixture connections, and the script reader.
+            if ScreenshotPreviewConfig.screen == "file-browser-motion" {
+                return FileBrowserMotionPreviewController(mode: .fileBrowser)
+            }
+            if ScreenshotPreviewConfig.screen == "review-file-motion" {
+                return FileBrowserMotionPreviewController(mode: .review)
+            }
+            if ScreenshotPreviewConfig.screen == "ssh-terminal" {
+                return SSHTerminalPreviewController()
+            }
+            if ScreenshotPreviewConfig.screen == "ssh-terminal-status-blocked" {
+                return SSHTerminalPreviewController(status: .blocked)
+            }
+            if ScreenshotPreviewConfig.screen == "ssh-terminal-rex-panes" {
+                return SSHTerminalPreviewController(status: .rexPanes)
+            }
+            if ScreenshotPreviewConfig.screen == "audio-script-reader" {
+                return AudioScriptReaderPreviewController(themeStore: root.themeStore)
+            }
         }
         return nil
     }
