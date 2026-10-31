@@ -75,7 +75,10 @@ final class DocumentEditEditorPage: UIViewController {
 
     private func installOwnBarItemsIfPresented() {
         guard navigationController?.topViewController === self else { return }
-        let items = barButtons
+        // The status is a symbol here: a custom-view item makes a navigation bar
+        // lay out forever (the file viewer's own bar keeps the live status view).
+        _ = barButtons
+        let items = barItems.navigationItems
         if navigationItem.rightBarButtonItems?.elementsEqual(items, by: ===) != true {
             navigationItem.rightBarButtonItems = items
         }

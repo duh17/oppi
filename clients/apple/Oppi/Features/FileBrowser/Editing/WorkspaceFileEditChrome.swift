@@ -78,6 +78,69 @@ enum WorkspaceFileEditStatusPresentation {
     }
 }
 
+/// Draws the locked SF Symbol as pixels. A live `UIImageView` in a bar item
+/// keeps checkmark.circle's Select trait.
+private final class WorkspaceFileEditStatusSymbolCanvas: UIView {
+    var systemName = "" {
+        didSet {
+            if oldValue != systemName { redrawSymbol() }
+        }
+    }
+
+    private var symbolImage: UIImage?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        backgroundColor = .clear
+        isUserInteractionEnabled = false
+        // `WorkspaceFileEditStatusView` speaks the status.
+        isAccessibilityElement = false
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(themeDidChange),
+            name: .oppiThemeDidChange,
+            object: nil
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override var intrinsicContentSize: CGSize { CGSize(width: 22, height: 22) }
+
+    override func draw(_ rect: CGRect) {
+        symbolImage?.draw(in: rect)
+    }
+
+    /// The palette's comment color is a snapshot. UIKit toolbar glyphs are not
+    /// recreated when the palette changes, so redraw from the live palette.
+    @objc private func themeDidChange() {
+        redrawSymbol()
+    }
+
+    private func redrawSymbol() {
+        symbolImage = Self.drawnSymbol(systemName)
+        setNeedsDisplay()
+    }
+
+    private static func drawnSymbol(_ name: String) -> UIImage? {
+        guard !name.isEmpty else { return nil }
+        let config = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
+        guard let symbol = UIImage(systemName: name, withConfiguration: config) else { return nil }
+        let tinted = symbol.withTintColor(UIColor(ThemeRuntimeState.currentPalette().comment), renderingMode: .alwaysOriginal)
+        let format = UIGraphicsImageRendererFormat.preferred()
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: tinted.size, format: format).image { _ in
+            tinted.draw(at: .zero)
+        }
+    }
+}
+
 /// The editor's status banner: what went wrong with the save and, for a
 /// conflict or a failure, Review Changes and Use Disk Version. Hidden while
 /// there is nothing to say. The owner calls `update(palette:)` from its
@@ -374,15 +437,14 @@ final class WorkspaceFileConflictReviewViewController: UIViewController {
 /// vertical rail can show it; the horizontal bar renders them icon-only.
 @MainActor
 final class WorkspaceFileEditBarItems {
-    /// The save status as a symbol: a custom-view item makes a navigation bar lay
-    /// out forever, so every bar that shows these items — the viewer's and the
-    /// reader's — takes this one. VoiceOver speaks the status word.
-    private lazy var statusItem: UIBarButtonItem = {
-        let item = UIBarButtonItem(image: nil, style: .plain, target: nil, action: nil)
-        // One id for the save status in every bar.
-        item.accessibilityIdentifier = "workspace-file-editor.status"
-        return item
-    }()
+    private let statusView = WorkspaceFileEditStatusView()
+    private lazy var statusItem = UIBarButtonItem(customView: statusView)
+    /// The same status as a symbol, for a `UINavigationItem`: a navigation bar
+    /// lays a custom-view item out in an endless loop, so the page a reader
+    /// hosts in a stack of its own shows this instead of `statusItem`.
+    private lazy var statusImageItem = UIBarButtonItem(image: nil, style: .plain, target: nil, action: nil)
+    /// Keeps the passive status glyph out of the buttons' glass group.
+    private let spacer = UIBarButtonItem.fixedSpace()
     private let optionsItem: UIBarButtonItem
     private let previewItem: UIBarButtonItem
     private let doneItem: UIBarButtonItem
@@ -415,17 +477,24 @@ final class WorkspaceFileEditBarItems {
 
     /// `rightBarButtonItems` order: Done is the trailing-most.
     var items: [UIBarButtonItem] {
-        [doneItem, previewItem, optionsItem, statusItem]
+        [doneItem, previewItem, optionsItem, spacer, statusItem]
+    }
+
+    /// The same controls for a `UINavigationItem`, where the status is a symbol
+    /// rather than the live status view.
+    var navigationItems: [UIBarButtonItem] {
+        [doneItem, previewItem, optionsItem, statusImageItem]
     }
 
     func update(status: WorkspaceFileEditSession.Status, isShowingPreview: Bool) {
+        statusView.status = status
         switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
         case .symbol(let name):
-            statusItem.image = UIImage(systemName: name)
+            statusImageItem.image = UIImage(systemName: name)
         case .progress:
-            statusItem.image = UIImage(systemName: "arrow.triangle.2.circlepath")
+            statusImageItem.image = UIImage(systemName: "arrow.triangle.2.circlepath")
         }
-        statusItem.accessibilityLabel = WorkspaceFileEditStatusPresentation.label(for: status)
+        statusImageItem.accessibilityLabel = WorkspaceFileEditStatusPresentation.label(for: status)
         let title = isShowingPreview ? String(localized: "Source") : String(localized: "Preview")
         if previewItem.title != title {
             previewItem.title = title
@@ -469,5 +538,61 @@ enum WorkspaceFileEditorOptions {
             UIAction(title: title, state: isOn ? .on : .off) { _ in set(!isOn) }
         })
         return [keybindings, settings]
+    }
+}
+
+/// The editing bar's passive save-status glyph: the drawn symbol, or a small
+/// spinner while saving or checking. VoiceOver speaks `label(for:)`.
+final class WorkspaceFileEditStatusView: UIView {
+    var status: WorkspaceFileEditSession.Status = .saved {
+        didSet { if status != oldValue { apply() } }
+    }
+
+    private let canvas = WorkspaceFileEditStatusSymbolCanvas()
+    private let spinner = UIActivityIndicatorView(style: .medium)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityIdentifier = "workspace-file-editor.status"
+        accessibilityTraits = []
+        for subview in [canvas, spinner] as [UIView] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(subview)
+            NSLayoutConstraint.activate([
+                subview.centerXAnchor.constraint(equalTo: centerXAnchor),
+                subview.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+        }
+        // Keeps Saving/Checking from resizing Preview and Done.
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: Self.slot),
+            heightAnchor.constraint(equalToConstant: Self.slot),
+            canvas.widthAnchor.constraint(equalToConstant: Self.slot),
+            canvas.heightAnchor.constraint(equalToConstant: Self.slot),
+        ])
+        spinner.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+        apply()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: CGSize { CGSize(width: Self.slot, height: Self.slot) }
+
+    private static let slot: CGFloat = 22
+
+    private func apply() {
+        accessibilityLabel = WorkspaceFileEditStatusPresentation.label(for: status)
+        switch WorkspaceFileEditStatusPresentation.indicator(for: status) {
+        case .progress:
+            canvas.isHidden = true
+            spinner.color = UIColor(ThemeRuntimeState.currentPalette().comment)
+            spinner.startAnimating()
+        case .symbol(let name):
+            spinner.stopAnimating()
+            canvas.systemName = name
+            canvas.isHidden = false
+        }
     }
 }
