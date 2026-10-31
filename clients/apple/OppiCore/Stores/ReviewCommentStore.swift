@@ -129,11 +129,21 @@ final class ReviewCommentStore {
         }
     }
 
+    /// Drop sent comments from what is stored now, not from this copy. The ack
+    /// can land after the chat that sent them is gone, when the session's next
+    /// chat may have stored comments this copy never saw.
     func clearSent(ids: [String]) {
         guard !ids.isEmpty else { return }
         let idSet = Set(ids)
         comments.removeAll { idSet.contains($0.id) }
-        if persist() {
+        guard let storageKey,
+              let stored = try? storedComments(forKey: storageKey) else {
+            if persist() {
+                lastError = nil
+            }
+            return
+        }
+        if persist(stored.filter { !idSet.contains($0.id) }) {
             lastError = nil
         }
     }
@@ -196,6 +206,10 @@ final class ReviewCommentStore {
     }
 
     private func persist() -> Bool {
+        persist(comments)
+    }
+
+    private func persist(_ comments: [ReviewComment]) -> Bool {
         guard let storageKey else { return true }
         do {
             let data = try JSONEncoder().encode(comments)

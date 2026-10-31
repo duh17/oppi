@@ -487,16 +487,36 @@ struct ChatViewLifecycleTests {
     /// Quick Session sends the new session's first message from its chat. The
     /// server took it, but its ack was slow and the chat was left first. The sent
     /// message must not come back as the session's draft (2026-10-31: the first
-    /// prompt of a quick session sat in the composer when the chat was reopened).
+    /// prompt of a quick session sat in the composer when the chat was reopened),
+    /// and the review comments it carried must not stay staged for the next send.
     @Test func quickSessionMessageSentBeforeLeavingDoesNotComeBackAsDraft() async throws {
         let sessionId = "quick-\(UUID().uuidString)"
         let workspaceId = "w1"
         let message = "Compare how these multiplexers bind agents"
+
+        // A review comment staged on this session rides along with the message.
+        let reviewStorageKey = ReviewCommentStore.makeStorageKey(
+            prefix: "reviewComments.localDrafts.v1",
+            workspaceId: workspaceId,
+            sessionId: sessionId
+        )
+        defer { UserDefaults.standard.removeObject(forKey: reviewStorageKey) }
+        let stagedComment = try ReviewCommentStore().create(
+            workspaceId: workspaceId,
+            sessionId: sessionId,
+            body: "Check the pane protocol",
+            reference: ReviewCommentReference(
+                source: .file, label: nil, path: "README.md", side: nil,
+                startLine: 1, endLine: 1, selectedText: nil, languageHint: nil,
+                toolCallId: nil, timelineItemId: nil, url: nil
+            )
+        )
+
         let connection = ServerConnection()
         connection.configure(credentials: makeTestCredentials(fingerprint: "sha256:draft-lifetime"))
         connection._setActiveSessionIdForTesting(sessionId)
         connection.setSplitStreamCapabilitiesForTesting(sessionStream: true)
-        connection._sendAckTimeoutForTesting = .milliseconds(50)
+        connection._sendAckTimeoutForTesting = .milliseconds(300)
         connection._turnSendRetryDelayForTesting = .milliseconds(1)
         connection.sessionStore.upsert(
             makeTestSession(id: sessionId, workspaceId: workspaceId, status: .ready)
@@ -508,8 +528,12 @@ struct ChatViewLifecycleTests {
         }
         // The server holds the ack: the prompt frame goes out and nothing answers it.
         var promptsSent = 0
+        var sentText: String?
         connection._sendMessageForTesting = { sent in
-            if case .prompt = sent { promptsSent += 1 }
+            if case .prompt(let text, _, _, _, _) = sent {
+                promptsSent += 1
+                sentText = text
+            }
         }
 
         let draftStore = ComposerDraftStore(
@@ -542,6 +566,7 @@ struct ChatViewLifecycleTests {
             await waitForMainActorCondition(timeout: .seconds(3)) { promptsSent == 1 },
             "The quick session message was never sent"
         )
+        #expect(sentText?.contains(stagedComment.body) == true, "The staged review comment rides with the message")
         #expect(chat?.composerDraftController.text.isEmpty == true, "A dispatched send leaves the field")
         #expect(
             draftStore.record(for: key)?.payload.text == message,
@@ -555,10 +580,30 @@ struct ChatViewLifecycleTests {
             await waitForMainActorCondition { host.controller == nil },
             "The left chat must go away for this proof"
         )
+        // The session's next chat stages a new comment before the ack lands.
+        let laterComment = try ReviewCommentStore().create(
+            workspaceId: workspaceId,
+            sessionId: sessionId,
+            body: "Newer comment",
+            reference: stagedComment.reference
+        )
 
         #expect(
-            await waitForMainActorCondition(timeout: .seconds(3)) { draftStore.record(for: key) == nil },
+            await waitForMainActorCondition(timeout: .seconds(5)) { draftStore.record(for: key) == nil },
             "A message that left on the wire before the chat closed came back as the session's draft"
+        )
+        let reopened = ReviewCommentStore()
+        reopened.load(workspaceId: workspaceId, sessionId: sessionId)
+        #expect(
+            await waitForMainActorCondition(timeout: .seconds(5)) {
+                reopened.load(workspaceId: workspaceId, sessionId: sessionId)
+                return !reopened.comments.contains { $0.id == stagedComment.id }
+            },
+            "A review comment sent before the chat closed stayed staged for the next message"
+        )
+        #expect(
+            reopened.comments.map(\.id) == [laterComment.id],
+            "Settling the sent comments must keep one staged after the chat left"
         )
         connection.disconnectStream()
     }

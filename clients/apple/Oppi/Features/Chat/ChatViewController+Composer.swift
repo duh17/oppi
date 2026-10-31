@@ -355,10 +355,6 @@ extension ChatViewController {
         reviewComments.delete(comment)
     }
 
-    private func clearSentReviewComments(ids: [String]) {
-        reviewComments.clearSent(ids: ids)
-    }
-
     func attachComposerDraftIfPossible() {
         guard let composerDraftStore = root?.composerDraftStore, let composerDraftKey else { return }
         composerDraftController.attach(
@@ -801,6 +797,8 @@ extension ChatViewController {
         )
         let text = PendingFileReference.appendReferenceBlock(to: reviewText, files: originalPendingRepoPointers)
         let stagedReviewCommentIds = reviewComments.stagedCommentIds
+        // Held past this chat: the ack can land after it is gone.
+        let sentReviewComments = reviewComments
         let sessionManagerRef = sessionManager
         let scrollRef = scrollController
 
@@ -871,7 +869,7 @@ extension ChatViewController {
                     onSendSucceeded: { [weak self] in
                         // The ack can land after this chat is gone (left mid-send).
                         ChatComposerDraftController.completeSubmission(submission, on: self?.composerDraftController)
-                        self?.clearSentReviewComments(ids: stagedReviewCommentIds)
+                        sentReviewComments.clearSent(ids: stagedReviewCommentIds)
                         self?.dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle()
                     },
                     onAsyncFailure: { [weak self] _, _ in
