@@ -232,6 +232,9 @@ final class SSHTerminalConnectSession {
                 task = nil
                 connecting = false
                 if adopted {
+                    // A pane that opened is Rex seen on this host, whatever it was
+                    // saved with: the Terminal tab follows it from now on.
+                    if rexPane != nil { makeStore().rexHosts.markSeen(value) }
                     showsTerminal = true
                 } else {
                     failure = Self.backgroundFailure

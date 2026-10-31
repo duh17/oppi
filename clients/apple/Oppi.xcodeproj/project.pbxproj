@@ -2393,6 +2393,7 @@
 		F926B016D6D2499767E90E7B /* SSHConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E552CCBAAE9D0983625EA179 /* SSHConnection.swift */; };
 		F9338774F2E29FCFC115A42E /* MermaidXYChartParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33056886A4351AE6D0E18104 /* MermaidXYChartParser.swift */; };
 		F976AEEF86F68E14C84067B0 /* ScreenAwakeControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34F3E4DC44580B2DFBF8376F /* ScreenAwakeControllerTests.swift */; };
+		F99AE7E800FF208CAEF681B1 /* SSHTerminalRexHostStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94EC36AECFB47B1674FE4D2A /* SSHTerminalRexHostStore.swift */; };
 		F9E55A4E63101047A88B3F42 /* DoctorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B817FC02FC19BEC31EE97C /* DoctorView.swift */; };
 		FA634B76C8E9CD3599B996A8 /* MermaidKanbanParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B231D97AE677A326B334E5 /* MermaidKanbanParser.swift */; };
 		FA7B98A1FEC9B12594D68E32 /* TestFactories.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9ADC6C6B9062E402A307F35 /* TestFactories.swift */; };
@@ -3735,6 +3736,7 @@
 		9496F488480CA2B43FFA9DB6 /* UIHarnessTestCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIHarnessTestCase.swift; sourceTree = "<group>"; };
 		94B27E3695C8A22FD5F26F7B /* ServerExtensionRowCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerExtensionRowCell.swift; sourceTree = "<group>"; };
 		94CB003D4B03D38558E5AB99 /* TimelineInlineVideoNativePlayE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineInlineVideoNativePlayE2ETests.swift; sourceTree = "<group>"; };
+		94EC36AECFB47B1674FE4D2A /* SSHTerminalRexHostStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalRexHostStore.swift; sourceTree = "<group>"; };
 		94F97095846D9C1AD24928AC /* MermaidJourneyRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidJourneyRenderer.swift; sourceTree = "<group>"; };
 		9506D2E58A787905A514F86B /* WorkspaceMarkdownImageFileLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceMarkdownImageFileLookup.swift; sourceTree = "<group>"; };
 		952C2B3768F77DDC9A4D1A2C /* ScrollPropertyTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollPropertyTestSupport.swift; sourceTree = "<group>"; };
@@ -6277,6 +6279,7 @@
 				62938FF91403E064BEED9929 /* SSHPTYSession.swift */,
 				20B573986723BDEE60285E0A /* SSHTerminalColorStore.swift */,
 				1548BB65A34EFE85F6DB642A /* SSHTerminalProfile.swift */,
+				94EC36AECFB47B1674FE4D2A /* SSHTerminalRexHostStore.swift */,
 				03321A1C350C49D0786BBFCA /* TailnetTransportRoute.swift */,
 				758B3FBB44FF9BFB8D721E67 /* TLSPinning.swift */,
 				8A5D599D59063ADF624DDFA8 /* ToolOutputSidecar.swift */,
@@ -10589,6 +10592,7 @@
 				89CD31A45CA80D8F69DCD504 /* SSHTerminalRegistry.swift in Sources */,
 				0CB4C5C508CE304B246C8B65 /* SSHTerminalRemoteShell.swift in Sources */,
 				D83467774EC1FF9D8DC72DFB /* SSHTerminalRexFollower.swift in Sources */,
+				F99AE7E800FF208CAEF681B1 /* SSHTerminalRexHostStore.swift in Sources */,
 				2CD10A3ED8299B4BD54AC6D3 /* SSHTerminalRexList.swift in Sources */,
 				9FEC05E756D44694CB0E6362 /* SSHTerminalRexListScreenshotPreview.swift in Sources */,
 				C31E5C2518530F69D18EDBE1 /* SSHTerminalRexPanes.swift in Sources */,

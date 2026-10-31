@@ -228,6 +228,10 @@ struct SSHTerminalProfileStore {
         self.keychain = keychain
     }
 
+    /// Which of these hosts Rex was seen on, kept in the same defaults and
+    /// removed with the host (`delete`).
+    var rexHosts: SSHTerminalRexHostStore { SSHTerminalRexHostStore(defaults: defaults) }
+
     /// True when the catalog value is present but does not decode. Opening the
     /// list uses this to offer an explicit reset. It does not read the Keychain.
     var metadataIsCorrupt: Bool {
@@ -378,6 +382,7 @@ struct SSHTerminalProfileStore {
         try keychain.delete(account: Self.sudoPasswordAccount(for: id))
         try write(profiles.filter { $0.id != id })
         SSHTerminalColorStore(defaults: defaults).forget(id)
+        SSHTerminalRexHostStore(defaults: defaults).forget(id)
     }
 
     /// Drops a catalog value that does not decode. A readable catalog is left

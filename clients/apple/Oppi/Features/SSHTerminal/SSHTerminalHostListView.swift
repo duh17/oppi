@@ -359,9 +359,12 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         dataSource?.apply(snapshot, animatingDifferences: false)
     }
 
-    /// Makes, updates, and drops a follower per saved Rex host.
+    /// Makes, updates, and drops a follower per Rex host: one saved with
+    /// Multiplexer: Rex, or one Oppi has seen Rex on (`SSHTerminalRexHostStore`).
+    /// A host in neither group is never dialed from here.
     private func syncRexHosts() {
-        let wanted = profiles.filter(\.opensRexSessions)
+        let seen = profileStore().rexHosts
+        let wanted = profiles.filter { $0.opensRexSessions || seen.hasSeenRex(on: $0) }
         for id in rexHosts.keys where !wanted.contains(where: { $0.id == id }) {
             rexHosts[id]?.follower.close()
             rexHosts[id]?.chrome.hostDidDisappear()
@@ -398,6 +401,16 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
 
     private func makeRexHost(_ profile: SSHTerminalProfile) -> RexHost {
         let follower = makeFollower(profile)
+        // What this host's monitor finds keeps the memory of where Rex is: a
+        // host with no `rex` leaves the section (when it was in it only because
+        // Rex had been seen there).
+        follower.monitor.onFinding = { [weak self, weak follower] finding in
+            guard let self, let follower else { return }
+            self.profileStore().rexHosts.record(finding, on: follower.profile)
+            if finding == .absent(.notInstalled) {
+                Task { @MainActor [weak self] in self?.reload() }
+            }
+        }
         let chrome = SSHTerminalConnectChrome(
             host: self,
             session: follower.session,

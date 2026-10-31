@@ -325,3 +325,17 @@ extension SSHTerminalProfile {
         }
     }
 }
+
+extension SSHTerminalRexHostStore {
+    /// What a monitor found on `profile`'s host: a read of Rex remembers the
+    /// host, a host with no `rex` forgets it. A Rex that is not running stays
+    /// remembered (it may be started), and so does a host whose `nc` cannot
+    /// reach it (the host's fix, not a sign Rex is gone).
+    func record(_ finding: RexMonitor.Finding, on profile: SSHTerminalProfile) {
+        switch finding {
+        case .reached: markSeen(profile)
+        case .absent(.notInstalled): forget(profile.id)
+        case .absent(.notRunning), .absent(.noNc): break
+        }
+    }
+}

@@ -136,6 +136,95 @@ struct SSHTerminalRexListRowTests {
     }
 }
 
+/// A host whose Rex bridge command exits with `status` as soon as it opens: 4,
+/// Rex is installed and not running; 5, not installed; 126, no usable `nc`.
+@MainActor
+private final class ExitingStreamHost: RexStreamHost {
+    let status: Int
+    private(set) var opened = 0
+    var isConnected: Bool { true }
+
+    init(status: Int) { self.status = status }
+
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        opened += 1
+        let host = RexFakeHost { _ in .hold }
+        let stream = host.open(sink: sink)
+        let status = status
+        Task { host.end(status: status) }
+        return stream
+    }
+}
+
+/// Which hosts Rex was seen on: what is remembered, for whom, and what a
+/// monitor's findings change.
+@Suite("Rex host memory", .serialized, .timeLimit(.minutes(1)))
+@MainActor
+struct SSHTerminalRexHostMemoryTests {
+    private let hosts = IsolatedHosts()
+    private let studio = SSHTerminalProfile(host: "mac-studio", port: 22, username: "chen", authentication: .deviceKey)
+
+    /// A mark is for the account it was seen as: a host edited to another
+    /// machine, port, or user is not one Rex was seen on, and deleting the host
+    /// removes its mark.
+    @Test func aMarkNamesTheAccountAndGoesWithTheHost() throws {
+        try hosts.save([studio])
+        let seen = hosts.store().rexHosts
+        #expect(!seen.hasSeenRex(on: studio))
+        seen.markSeen(studio)
+        #expect(seen.hasSeenRex(on: studio))
+        #expect(hosts.store().rexHosts.hasSeenRex(on: studio), "it is kept, not held in memory")
+
+        var respelled = studio
+        respelled.host = " Mac-Studio. "
+        #expect(seen.hasSeenRex(on: respelled), "the same endpoint in another spelling")
+        var moved = studio
+        moved.host = "mac-mini"
+        var otherPort = studio
+        otherPort.port = 2222
+        var otherUser = studio
+        otherUser.username = "root"
+        #expect([moved, otherPort, otherUser].allSatisfy { !seen.hasSeenRex(on: $0) })
+
+        try hosts.store().delete(id: studio.id)
+        #expect(!hosts.store().rexHosts.hasSeenRex(on: studio), "deleted with the host")
+    }
+
+    @Test func aFindingRemembersForgetsOrKeeps() {
+        let seen = hosts.store().rexHosts
+        seen.record(.reached, on: studio)
+        #expect(seen.hasSeenRex(on: studio))
+        seen.record(.absent(.notRunning), on: studio)
+        seen.record(.absent(.noNc), on: studio)
+        #expect(seen.hasSeenRex(on: studio), "not running, or no nc, says nothing about Rex being on the host")
+        seen.record(.absent(.notInstalled), on: studio)
+        #expect(!seen.hasSeenRex(on: studio), "no rex on the host: forgotten")
+    }
+
+    /// What the monitor tells whoever remembers: Rex read once, or why it could not be.
+    @Test func aMonitorReportsReachingRexAndWhyItCouldNot() async throws {
+        let monitor = RexMonitor(publishDelay: .milliseconds(20), retryDelay: { _, _ in .seconds(30) })
+        var found: [RexMonitor.Finding] = []
+        monitor.onFinding = { found.append($0) }
+        let task = Task { await monitor.run(over: RexPreviewStreamHost()) }
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !found.isEmpty })
+        task.cancel()
+        await task.value
+        #expect(found == [.reached])
+
+        for (status, absence) in [(126, RexAbsence.noNc), (5, .notInstalled), (4, .notRunning)] {
+            let monitor = RexMonitor(publishDelay: .milliseconds(20), retryDelay: { _, _ in .seconds(30) })
+            var found: [RexMonitor.Finding] = []
+            monitor.onFinding = { found.append($0) }
+            let task = Task { await monitor.run(over: ExitingStreamHost(status: status)) }
+            try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !found.isEmpty }, "exit \(status)")
+            task.cancel()
+            await task.value
+            #expect(found == [.absent(absence)], "exit \(status) is \(absence)")
+        }
+    }
+}
+
 /// The Rex follower and the Terminal tab built on it.
 @Suite("Terminal tab Rex section", .serialized, .timeLimit(.minutes(1)))
 @MainActor
@@ -317,7 +406,11 @@ struct SSHTerminalRexSectionTests {
     }
 
     /// A tab whose hosts follow a fake Rex (`RexPreviewStreamHost`): nothing signs in.
-    private func mountTab(_ profiles: [SSHTerminalProfile], registry: SSHTerminalRegistry = SSHTerminalRegistry()) throws -> Rig {
+    /// `standIn` makes a host's Rex when it is not the preview's.
+    private func mountTab(
+        _ profiles: [SSHTerminalProfile], registry: SSHTerminalRegistry = SSHTerminalRegistry(),
+        standIn: ((SSHTerminalProfile) -> any RexStreamHost)? = nil
+    ) throws -> Rig {
         let built = Built()
         let store = hosts.store
         return try mount(profiles, built: built) { profile in
@@ -326,7 +419,7 @@ struct SSHTerminalRexSectionTests {
                 profile: profile, promptsAutomatically: false,
                 session: SSHTerminalConnectSession(registry: registry, profileStore: store),
                 monitor: RexMonitor(publishDelay: .milliseconds(20), retryDelay: { _, _ in .milliseconds(10) }),
-                standIn: stream
+                standIn: standIn?(profile) ?? stream
             )
             built.followers[profile.id] = follower
             built.streams[profile.id] = stream
@@ -400,6 +493,105 @@ struct SSHTerminalRexSectionTests {
 
     private func headers(in rig: Rig) -> [String] {
         collectionCells(rig.list).compactMap(\.accessibilityIdentifier).filter { $0.hasSuffix(".header") }.sorted()
+    }
+
+    // MARK: Hosts Rex was seen on
+
+    private let seenHost = SSHTerminalProfile(host: "mac-studio", username: "chen", authentication: .deviceKey)
+
+    /// A host saved with no Multiplexer that Oppi has seen Rex on leads with the
+    /// section too; one it has never seen Rex on gets no follower, so nothing
+    /// dials it from the tab.
+    @Test func aHostRexWasSeenOnGetsTheSectionAndAHostNeverSeenIsNotDialed() async throws {
+        let seen = seenHost
+        try hosts.save([seen, plainHost])
+        hosts.store().rexHosts.markSeen(seen)
+
+        let rig = try mountTab([seen, plainHost])
+        defer { rig.tearDown() }
+        #expect(Array(rig.built.followers.keys) == [seen.id], "a follower for the host Rex was seen on, none for the other")
+        #expect(headers(in: rig) == ["sshTerminal.rexList.\(seen.id.uuidString).header"])
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !self.actionCells(in: rig).isEmpty })
+        #expect(actionCells(in: rig).map(\.accessibilityLabel) == ["oppi, 3 panes \u{00B7} 1 needs you", "dotfiles, 1 pane"])
+        #expect(rig.built.streams[plainHost.id] == nil)
+    }
+
+    /// What a seen host does not get is a prompt: the tab dials it only when
+    /// nothing would ask, and otherwise says Tap to connect.
+    @Test func aHostRexWasSeenOnIsNeverSignedInWhenItWouldAsk() async throws {
+        let seen = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey)
+        try hosts.save([seen])
+        hosts.store().rexHosts.markSeen(seen)
+        let rig = try mountDialingTab([seen], silent: Silent(false))
+        defer { rig.tearDown() }
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !self.actionCells(in: rig).isEmpty })
+        #expect(actionCells(in: rig).first?.accessibilityIdentifier == "sshTerminal.rexList.\(seen.id.uuidString).connect")
+        let session = try #require(rig.built.followers[seen.id]).session
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) {
+            !session.connecting && !session.passwordPrompt && session.hostFailure == nil
+        })
+    }
+
+    /// A tab follower that reads Rex on a host saved with Multiplexer: Rex
+    /// remembers it too, so the memory survives the form's choice changing.
+    @Test func readingRexOnAHostRemembersIt() async throws {
+        let rig = try mountTab([rexHost])
+        defer { rig.tearDown() }
+        let follower = try #require(rig.built.followers[rexHost.id])
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { follower.monitor.available })
+        #expect(hosts.store().rexHosts.hasSeenRex(on: rexHost))
+    }
+
+    /// Rex reported not installed (exit 5) on a host that was in the section
+    /// only because Rex had been seen there: the memory is dropped and the
+    /// section goes. The host stays saved.
+    @Test func rexNotInstalledOnASeenHostForgetsItAndLeavesTheSection() async throws {
+        let seen = seenHost
+        try hosts.save([seen])
+        hosts.store().rexHosts.markSeen(seen)
+        let exiting = ExitingStreamHost(status: 5)
+        let rig = try mountTab([seen], standIn: { _ in exiting })
+        defer { rig.tearDown() }
+
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !self.hosts.store().rexHosts.hasSeenRex(on: seen) })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.list.view.layoutIfNeeded()
+            return self.headers(in: rig).isEmpty
+        }, "the section is gone")
+        #expect(hosts.store().load().map(\.id) == [seen.id], "the host is still saved")
+        #expect(exiting.opened == 1, "and asked once, not again")
+    }
+
+    /// Not installed on a host saved with Multiplexer: Rex keeps its section,
+    /// with the advice, since the person chose Rex for it.
+    @Test func rexNotInstalledOnAHostSavedWithRexKeepsItsSectionAndSaysSo() async throws {
+        let rig = try mountTab([rexHost], standIn: { _ in ExitingStreamHost(status: 5) })
+        defer { rig.tearDown() }
+        let reason = "sshTerminal.rexList.\(rexHost.id.uuidString).reason"
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.list.view.layoutIfNeeded()
+            return self.collectionCells(rig.list).contains { $0.accessibilityIdentifier == reason }
+        })
+        #expect(headers(in: rig) == ["sshTerminal.rexList.\(rexHost.id.uuidString).header"])
+    }
+
+    /// Rex installed and not running (exit 4): the host keeps its section and
+    /// its memory, and the section says Rex is not running; it fills in when
+    /// Rex starts.
+    @Test func rexNotRunningOnASeenHostKeepsItAndShowsThatState() async throws {
+        let seen = seenHost
+        try hosts.save([seen])
+        hosts.store().rexHosts.markSeen(seen)
+        let rig = try mountTab([seen], standIn: { _ in ExitingStreamHost(status: 4) })
+        defer { rig.tearDown() }
+        let reason = "sshTerminal.rexList.\(seen.id.uuidString).reason"
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.list.view.layoutIfNeeded()
+            return self.collectionCells(rig.list).contains { $0.accessibilityIdentifier == reason }
+        })
+        #expect(rig.built.followers[seen.id]?.monitor.absence == .notRunning)
+        #expect(hosts.store().rexHosts.hasSeenRex(on: seen))
+        #expect(headers(in: rig) == ["sshTerminal.rexList.\(seen.id.uuidString).header"])
     }
 
     @Test func theSectionAppearsOnlyForSavedRexHosts() async throws {

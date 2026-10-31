@@ -621,6 +621,16 @@ final class RexMonitor: SSHTerminalOverviewSource {
     /// Opens a tapped pane on this device: the terminal screen shows it in a
     /// terminal of its own (`SSHTerminalConnectSession.openRexPane`).
     @ObservationIgnored var openPane: ((RexPaneTarget) -> Void)?
+    /// What the host answered, for whoever remembers which hosts have Rex
+    /// (`SSHTerminalRexHostStore`): called on each subscription that reached
+    /// Rex, and each one that found out why it could not.
+    @ObservationIgnored var onFinding: (@MainActor (Finding) -> Void)?
+
+    enum Finding: Equatable {
+        /// The first full read of a subscription succeeded: Rex is there.
+        case reached
+        case absent(RexAbsence)
+    }
 
     /// How long a burst of changes waits before it reaches `snapshot`, so a
     /// busy pane is one UI update, not one per event.
@@ -681,6 +691,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
                 case .notRunning?: absence = .notRunning
                 default: absence = nil
                 }
+                if let absence { onFinding?(.absent(absence)) }
                 if let absence, absence.givesUp {
                     snapshot = nil
                     failure = nil
@@ -771,6 +782,7 @@ final class RexMonitor: SSHTerminalOverviewSource {
             try await control.open()
             try await bootstrap(control, inbox, generation: mine)
             synced = true
+            onFinding?(.reached)
             for await _ in inbox.wake {
                 let events = inbox.drain()
                 for event in events { mirror.apply(event) }

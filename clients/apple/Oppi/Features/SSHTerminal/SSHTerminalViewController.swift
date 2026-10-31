@@ -122,7 +122,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private var cursorShiftHeld = false
     private var rawKeyboard = false
     private var herdr = HerdrMonitor()
-    private var rex = RexMonitor()
+    private var rex: RexMonitor
     private var keymap = SSHTerminalKeymapLoader()
     /// What the person chose with Type in Terminal or Chat Bar. It lives with
     /// this screen: leaving it (Back, then reopening the terminal builds a new
@@ -180,6 +180,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         self.hostLabel = hostLabel
         self.session = session
         self.composerConnection = composerConnection
+        rex = Self.makeRexMonitor(for: session?.connectedProfile)
         let profileID = session?.connectedProfile?.id
         let choice = profileID.map { SSHTerminalColorStore().choice(for: $0) } ?? .host
         colorChoice = choice
@@ -663,7 +664,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             colorLoader = SSHTerminalColorLoader(profileID: hostID, choice: colorChoice, dark: appIsDark)
         }
         herdr = HerdrMonitor()
-        rex = RexMonitor()
+        rex = Self.makeRexMonitor(for: session?.connectedProfile)
         keymap = SSHTerminalKeymapLoader()
         inputMode = .terminal
         attention = SSHTerminalAttention()
@@ -2134,6 +2135,17 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         var reason = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         if !reason.isEmpty, !".!?".contains(reason.last ?? ".") { reason += "." }
         return "\(reason) \(target.folderName) did not open in \(multiplexer.name)."
+    }
+
+    /// A terminal's Rex monitor tells the Terminal tab what it found on the
+    /// host (`SSHTerminalRexHostStore`): a host Rex was read on gets a live Rex
+    /// section there, and one with no `rex` loses it.
+    private static func makeRexMonitor(for profile: SSHTerminalProfile?) -> RexMonitor {
+        let monitor = RexMonitor()
+        if let profile {
+            monitor.onFinding = { SSHTerminalProfileStore().rexHosts.record($0, on: profile) }
+        }
+        return monitor
     }
 
     private func stopOverviewPolls() {
