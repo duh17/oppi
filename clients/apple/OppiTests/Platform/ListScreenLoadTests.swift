@@ -53,6 +53,20 @@ struct ListScreenLoadTests {
 
         page.setNeedsLoad()
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loads == 3 }, "setNeedsLoad loads")
+
+        // Another subject has loaded nothing yet: its first load failing is not
+        // what the page keeps, so it tries again when it appears.
+        page.subject = "server-b"
+        page.outcome = .failure("No such server")
+        page.setNeedsUpdateProperties()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure == "No such server" })
+        page.outcome = .success
+        page.answer = "Third"
+        window.rootViewController = UIViewController()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
+        window.rootViewController = UINavigationController(rootViewController: page)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.rows == ["Third"] },
+                "a new subject's failed first load is retried on the next appearance")
     }
 
     @Test("A page that loads nothing has no task and no pull to refresh")

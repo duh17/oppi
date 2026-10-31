@@ -72,13 +72,15 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    `ServerResourceDetailScreenController`), the two ways a page takes over the
  *    load the kit owns: an `override func viewIsAppearing` (a page that starts
  *    its own load on the way in) and `isLoadCancellation` (a page that decides
- *    for itself whether a load failed). The kit runs one task per page
+ *    for itself whether a load failed). It is a ratchet, not a proof: it sees
+ *    the call by name, so a page can still take the trigger or the outcome
+ *    another way (a stored closure, a helper). The kit runs one task per page
  *    (`loadPolicy`, `loadSubject`, `load`, `setNeedsLoad`), so a page overrides
- *    those and never the trigger or the outcome; a new page starts at 0 and the
- *    count only goes down. `Task {` and `Task.isCancelled` are not counted: a
- *    page needs its own task for an action (archive, run now, sign-in cancel),
- *    and the kit expects the `Task.isCancelled` check after an `await` that keeps
- *    a late answer off the screen.
+ *    those instead; a new page starts at 0 and the count only goes down.
+ *    `Task {` and `Task.isCancelled` are not counted: a page needs its own task
+ *    for an action (archive, run now, sign-in cancel), and the kit expects the
+ *    `Task.isCancelled` check after an `await` that keeps a late answer off the
+ *    screen.
  *
  *  - `UIContentUnavailableConfiguration` factory is a ratchet of the same kind: a
  *    screen's whole-screen (or list-cell) loading, empty, no-results, and failed
@@ -483,9 +485,10 @@ ${settingsGuide}. The count only goes down: \`bun scripts/uikit-structure-guard.
 lowers the baseline after a page moves.
 
 A page on ListScreenController that writes isLoadCancellation or an override
-func viewIsAppearing decides its own load's trigger or outcome. The kit owns one
-load task per page: say loadPolicy, loadSubject(), and load() (and
-subjectDidChange() when the page drops what the old subject showed), and ask for a
-load with setNeedsLoad(); see ${settingsGuide}. A page's own task for an action is
-fine. The count only goes down.`);
+func viewIsAppearing takes over the trigger or the outcome of the load the kit
+owns. This is a ratchet, not a proof: it reads the call by name. Say loadPolicy,
+loadSubject(), and load() (subjectDidChange() too when the page drops what the
+old subject showed), and ask for a load with setNeedsLoad(); see
+${settingsGuide}. A page's own task for an action is fine. The count only goes
+down.`);
 process.exit(1);

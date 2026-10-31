@@ -115,27 +115,19 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 ///   carry headings only on some (a catalog's groups) narrows the `headers:`
 ///   it was built with.
 /// - `loadPolicy`, `loadSubject()`, `load()` and `subjectDidChange()`: what the
-///   page loads, when, and what its load is for. The base owns the one task:
-///   it starts it on appearance (per the policy), on pull to refresh, on a
-///   subject change, and on `setNeedsLoad()` (a Retry, a foreground return, a
-///   finished sign-in); it cancels it when the page leaves and before another
-///   starts, and ignores a cancelled load instead of showing it as a failure.
-///   `isLoading` and `loadFailure` are the outcome the page's rows read.
-///   `isShowing` says whether the page can be seen.
-/// - `animatesUpdates`: whether a snapshot change animates its rows. A catalog
-///   list that swaps whole sections answers false.
+///   page loads, when, and what it is for. One task: started on appearance (per
+///   the policy), on pull to refresh, on a subject change, and on
+///   `setNeedsLoad()`; cancelled when the page leaves; a cancelled load is never
+///   a failure. `isLoading` and `loadFailure` are what the rows read.
+/// - `animatesUpdates`: whether a snapshot change animates its rows.
 /// - `ListSection.state`: the list's own loading, empty, or failed state
-///   (`LoadState`) where the section's rows would be; the base draws it, with
-///   its identifier, so a page owns no state row, cell, or identifier map.
-/// - `wholeScreenState()`: the same state for a page with no rows at all
-///   (connecting, loading, or failed with one Retry), which the base draws over
-///   the whole screen instead of in a row.
+///   (`LoadState`) where the section's rows would be, drawn with its identifier.
+/// - `wholeScreenState()`: the same state for a page with no rows at all, drawn
+///   over the whole screen.
 /// - `inputs(of:)`: the values a row is drawn from. Only rows whose inputs
-///   changed are reconfigured. The default differs on every pass, so a row a
-///   page does not key is redrawn every pass and cannot go stale; a page whose
-///   row holds an open pop-up menu, a switch in flight, or a text field keys it
-///   with what the row draws, so a pass leaves it alone. The theme is added for
-///   every row.
+///   changed are reconfigured; the default differs every pass, so a row a page
+///   does not key cannot go stale. A row that holds an open menu, a switch in
+///   flight, or text is keyed by what it draws. The theme is added for every row.
 /// - `configure(_:item:)`: a plain list cell (`content(_:)` fills its title in
 ///   the theme's title color, `toggleRow` makes a switch row);
 ///   `configureCard(_:item:)` with `rowStyle` `.card` for the kit's theme-card
@@ -143,8 +135,8 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 ///   kit's `SettingsIndexRowCell`, `SettingsMenuRowCell`,
 ///   `SettingsActionRowCell`, and `SettingsStateRowCell`.
 /// - `isSelectable(_:)` and `select(_:)`: the rows that act when tapped. A
-///   selectable row carries the button trait, and VoiceOver activation selects
-///   it, so touch and accessibility run the same `select(_:)`.
+///   selectable row carries the button trait, and VoiceOver activation runs the
+///   same `select(_:)`.
 /// - `copyText(of:)`: the text a long press on an info row copies.
 /// - `trailingSwipeActions(for:)`, `decorate(header:section:)`,
 ///   `decorate(footer:section:)`: swipe actions, and an icon or tone on a
@@ -157,10 +149,8 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 @MainActor
 class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendable>: UIViewController, UICollectionViewDelegate {
     private(set) lazy var collectionView: UICollectionView = {
-        // One section at a time, because the page says which of them show a
-        // header (`showsHeader(for:)`) and which of a catalog's groups have a
-        // heading. Everything else is the kit's list: a clear background so the
-        // theme's `bg` shows behind the cards, and the page's swipe actions.
+        // One section at a time: the page says which show a header. Everything
+        // else is the kit's list, so the theme's `bg` shows behind the cards.
         let layout = UICollectionViewCompositionalLayout { [weak self] index, environment in
             var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
             config.backgroundColor = .clear
@@ -180,18 +170,15 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// Whether the page is on screen: set when it appears and leaves. A page
     /// asks this before reacting to something that changed while it was covered.
     private(set) var isShowing = false
-    /// The page's load: one task, cancelled when the page leaves and before a
-    /// load for another subject starts.
+    /// The page's load: one task, cancelled on leave and before another starts.
     private var loadTask: Task<Void, Never>?
-    /// The subject of the page's last load, and whether it was ever taken (a
-    /// page's subject can be nil). Compared on every `updateProperties()` pass.
+    /// The subject of the last load (a page's subject can be nil) and whether it
+    /// was ever taken; compared on every pass.
     private var loadedSubject: AnyHashable?
     private var hasLoadedSubject = false
-    /// Whether the page ever started a load here, so `onceUntilSubjectChanges`
-    /// knows a later appearance keeps what this one loaded.
+    /// Whether a load succeeded here: a page that loads once keeps it.
     private var hasLoadedOnce = false
-    /// Whether the page is loading its content now. A page's state row or
-    /// spinner reads it.
+    /// Whether the page is loading its content now.
     private(set) var isLoading = false {
         didSet { if isLoading != oldValue { setNeedsUpdateProperties() } }
     }
@@ -200,12 +187,10 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     private(set) var loadFailure: String? {
         didSet { if loadFailure != oldValue { setNeedsUpdateProperties() } }
     }
-    /// The list's pull to refresh, for a page that loads (`loadPolicy` other
-    /// than `.none`). Only the base touches it: it starts the page's load and
-    /// ends when that load settles.
+    /// The list's pull to refresh, for a page that loads. Only the base touches
+    /// it: it starts the page's load and ends when that load settles.
     private lazy var pullToRefreshControl = UIRefreshControl()
-    /// Where the page's settings are kept; `nil` for a page that has none. A
-    /// section says its scope only when it differs from this.
+    /// Where the page's settings are kept; `nil` for a page that has none.
     let pageScope: SettingsScope?
     /// The store behind the page's declared settings (`SettingsCatalog`).
     let settings: SettingsStore?
@@ -273,30 +258,26 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// The sections and rows the page shows now.
     func sections() -> [ListSection<Section, Item>] { [] }
 
-    /// Whether `section` shows its header. The default is the `headers:` the
-    /// page was built with; a page whose sections carry a heading only on some
-    /// (a catalog's groups) answers for each.
+    /// Whether `section` shows its header: the `headers:` the page was built
+    /// with, unless the page answers for each.
     func showsHeader(for section: Section) -> Bool { showsHeaders }
 
     // MARK: - Load
 
-    /// What the page loads, and when. The default loads nothing: a page with
-    /// nothing to load gets no task and no pull to refresh control.
+    /// What the page loads, and when. The default loads nothing.
     var loadPolicy: LoadPolicy { .none }
 
     /// What the page's load is for: the server it follows, the route it serves.
-    /// The base compares it on every `updateProperties()` pass; a change
-    /// cancels the load that is running, runs `subjectDidChange()`, and starts
-    /// one for the new subject.
+    /// Compared on every pass; a change cancels the running load, runs
+    /// `subjectDidChange()`, and starts one for the new subject.
     func loadSubject() -> AnyHashable? { nil }
 
-    /// The page's subject changed: drop what the old one showed, so nothing of
-    /// it stays on screen while the new one loads.
+    /// The page's subject changed: drop what the old one showed.
     func subjectDidChange() {}
 
-    /// Loads the page's content. A throw becomes `loadFailure`, which the
-    /// page's rows show; a cancelled load (the page left, its subject changed,
-    /// another load replaced it) is not a failure and stores nothing.
+    /// Loads the page's content. A throw becomes `loadFailure`; a cancelled load
+    /// (the page left, its subject changed, another load replaced it) is not a
+    /// failure and stores nothing.
     func load() async throws {}
 
     /// Runs the page's `load()` now, cancelling one already running: a Retry, a
@@ -312,14 +293,13 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// Runs `load()` for the page's subject now, replacing a load in flight.
     private func startLoad() {
         guard loadPolicy != .none else { return }
-        // A load for a subject the page has not loaded yet — a server that
-        // changed while the page was covered, so nothing ran on the way — still
-        // drops what the old subject showed.
+        // A subject that changed while the page was covered ran no pass to drop
+        // its rows, so the load that starts here does it.
         let subject = loadSubject()
-        // A load for a subject the page has not loaded yet — a server that
-        // changed while the page was covered, so nothing ran on the way — still
-        // drops what the old subject showed.
-        if hasLoadedSubject, subject != loadedSubject { subjectDidChange() }
+        if hasLoadedSubject, subject != loadedSubject {
+            hasLoadedOnce = false
+            subjectDidChange()
+        }
         loadTask?.cancel()
         loadedSubject = subject
         hasLoadedSubject = true
@@ -331,28 +311,21 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
                 guard !Task.isCancelled else { return }
                 loadFailure = nil
                 isLoading = false
-                // Only a load that succeeded is what a page keeps: a first load
-                // that failed or was cancelled loads again when it appears.
+                // Only a load that succeeded is what a page keeps.
                 hasLoadedOnce = true
             } catch {
-                // A load this page cancelled — it left, its subject changed, or
-                // another load replaced it — is not a failure, and leaves the
-                // flags to the load that replaced it.
+                // A load this page cancelled leaves the flags to the load that
+                // replaced it; the page is still here otherwise.
                 guard !Task.isCancelled else { return }
                 isLoading = false
-                // The page is still here and its request ended as a cancel (a
-                // superseded request, a URLSession cancel): nothing failed.
                 if !error.isLoadCancellation { loadFailure = error.localizedDescription }
             }
-            // A pull to refresh spins until the page's load settles, however it
-            // settled.
             if pullToRefreshControl.isRefreshing { pullToRefreshControl.endRefreshing() }
         }
     }
 
     /// Compares the page's subject every pass: a new one belongs to another
-    /// server, route, or connection, so the page's rows and the load that is
-    /// running are no longer its own.
+    /// server, route, or connection.
     private func updateLoadSubject() {
         guard loadPolicy != .none else { return }
         let subject = loadSubject()
@@ -363,22 +336,21 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         }
         guard subject != loadedSubject else { return }
         loadedSubject = subject
+        // The new subject has loaded nothing yet, so a page that loads once
+        // loads it (and tries again if that fails).
+        hasLoadedOnce = false
         subjectDidChange()
         // A covered page loads when it appears again.
         if isShowing { startLoad() }
     }
 
-    /// The page's state while it has no rows to show at all: connecting,
-    /// loading, or failed. The base draws it with
-    /// `UIContentUnavailableConfiguration.loadState` over the empty list, so it
-    /// says and looks what every other screen's whole-screen state does. A page
-    /// with rows states itself in a section (`ListSection.state`).
+    /// The page's state while it has no rows to show at all. The base draws it
+    /// over the empty list; a page with rows states itself in a section
+    /// (`ListSection.state`).
     func wholeScreenState() -> LoadState? { nil }
 
-    /// Whether a snapshot change animates its rows. The default animates once
-    /// the list has rows, so a page's first rows appear in place; a catalog
-    /// list that swaps whole sections answers false, so a reload does not slide
-    /// them around.
+    /// Whether a snapshot change animates its rows (the default: once the list
+    /// has rows).
     var animatesUpdates: Bool {
         (dataSource?.snapshot().numberOfItems ?? 0) > 0
     }
@@ -434,8 +406,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         dataSource?.indexPath(for: .item(item))
     }
 
-    /// The page's items the list shows now, in order. A section's state row is
-    /// the base's, not one of them.
+    /// The page's items the list shows now, in order (a state row is not one).
     var shownItems: [Item] {
         dataSource?.snapshot().itemIdentifiers.compactMap(\.pageItem) ?? []
     }

@@ -257,14 +257,9 @@ enum AgentsLoadStateTests {
             #expect(agent.inputs(of: .block(title: "Description", value: "A"))
                 != agent.inputs(of: .block(title: "Description", value: "B")))
             #expect(agent.inputs(of: .resourceList(title: "Skills", value: "A"))
-                == agent.inputs(of: .resourceList(title: "Skills", value: "A")))
+                != agent.inputs(of: .resourceList(title: "Skills", value: "B")))
             let pi = PiAgentDetailViewController(root: root)
             #expect(pi.inputs(of: .file) == pi.inputs(of: .file))
-            let detail = ServerExtensionDetailViewController(
-                target: ServerResourceDetailNavTarget(serverId: "server", kind: .extension, resourceId: "review"),
-                root: root
-            )
-            #expect(detail.inputs(of: .tool("review")) == detail.inputs(of: .tool("review")))
         }
         private func hasAlert(_ screen: UIViewController, _ window: UIWindow) -> Bool {
             screen.presentedViewController != nil || window.rootViewController?.presentedViewController != nil

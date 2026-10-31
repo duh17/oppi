@@ -229,6 +229,7 @@ private final class ExtensionDetailAnswers: @unchecked Sendable {
     private let enabled: ServerExtensionSummary
     private let lock = NSLock()
     private var enables = 0
+    private var failsDetail = false
 
     init(catalog: ServerExtensionCatalog, detail: ServerExtensionDetail, enabled: ServerExtensionSummary) {
         self.catalog = catalog
@@ -239,7 +240,10 @@ private final class ExtensionDetailAnswers: @unchecked Sendable {
     var enableRequests: Int { lock.withLock { enables } }
 
     /// Fails every detail request, as the reload after a save can fail.
-    var failDetail = false
+    var failDetail: Bool {
+        get { lock.withLock { failsDetail } }
+        set { lock.withLock { failsDetail = newValue } }
+    }
 
     func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse)? {
         let path = request.url?.path ?? ""
