@@ -427,6 +427,12 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         editOwner.presentEditorIfNeeded(from: self)
     }
 
+    /// The host is removing this reader: hand the editor's buffer back first, so
+    /// the session never keeps a provider over a freed text view.
+    func finishEditing() {
+        editOwner.finishEditing()
+    }
+
     // MARK: The document
 
     /// One read of the document behind the prompt: the pencil appears only for a

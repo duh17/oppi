@@ -25,6 +25,7 @@ import {
 } from "../host.js";
 import { listConfiguredHostExtensionResources } from "../extension-loader.js";
 import { projectTrustState } from "../project-trust.js";
+import { serverResourceId } from "../server-resource-id.js";
 import { workspaceMountRoot } from "../session-work-root.js";
 import {
   httpStatusForPiResourceError,
@@ -42,6 +43,8 @@ interface SkillRouteInfo {
   name: string;
   description: string;
   path: string;
+  /** The server catalog's id for this Skill, from its `SKILL.md` path. */
+  id?: string;
   builtIn: boolean;
   enabled: boolean;
 }
@@ -65,6 +68,9 @@ function sdkSkillToInfo(skill: Skill, resource?: ResolvedResource): SkillRouteIn
     name: skill.name,
     description: skill.description,
     path: skill.baseDir,
+    // The same id the catalog publishes, so a client can match the Skill it
+    // listed against the detail it reads even when the directory is a symlink.
+    id: serverResourceId("skill", skill.filePath),
     builtIn: false,
     enabled: resource?.enabled ?? true,
   };

@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillRegistry, extractFrontmatterField, type SkillsChangedEvent } from "../src/skills.js";
+import { serverResourceId } from "../src/server-resource-id.js";
 
 // ─── Helpers ───
 
@@ -170,6 +171,39 @@ describe("SkillRegistry", () => {
     it("returns undefined for missing skill", () => {
       registry.scan();
       expect(registry.getDetail("nope")).toBeUndefined();
+    });
+
+    /// A client matches the detail it reads against the catalog entry it listed
+    /// by this id, so the two must agree — including for a Skill directory that
+    /// is a symlink, which is how most of the owner's skills are installed. The
+    /// catalog hashes the Skill's own `SKILL.md` after resolving it; the detail's
+    /// `path` is the directory as Pi names it, which is a different string.
+    it("carries the catalog id, symlinked or not", () => {
+      const elsewhere = mkdtempSync(join(tmpdir(), "pi-skill-target-"));
+      try {
+        const realDir = makeSkillDir(
+          elsewhere,
+          "linked",
+          `---\nname: linked\ndescription: "A symlinked skill"\n---\n# Linked\n`,
+        );
+        symlinkSync(realDir, join(scanDir, "linked"));
+        const plainDir = makeSkillDir(
+          scanDir,
+          "plain",
+          `---\nname: plain\ndescription: "A plain skill"\n---\n# Plain\n`,
+        );
+        registry.scan();
+
+        const linked = registry.getDetail("linked")!;
+        const plain = registry.getDetail("plain")!;
+        expect(linked.skill.id).toBe(serverResourceId("skill", join(realDir, "SKILL.md")));
+        expect(plain.skill.id).toBe(serverResourceId("skill", join(plainDir, "SKILL.md")));
+        // The directory the detail reports is still the one Pi names, so a
+        // client that compares paths would not match the catalog's realpath.
+        expect(linked.skill.path).toBe(join(scanDir, "linked"));
+      } finally {
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
     });
   });
 

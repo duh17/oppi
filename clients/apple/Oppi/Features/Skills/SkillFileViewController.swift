@@ -69,24 +69,18 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
         filePath.components(separatedBy: "/").last ?? filePath
     }
 
-    /// Whether the catalog proves this is an editable Skill's own file. The
-    /// catalog's `path` is the host path the reader's Skill resolved to, so a
-    /// project Skill that shares a global one's name is not confused for it;
-    /// a Skill either side cannot name by path stays read-only.
-    private static func editableFile(
+    /// Whether the catalog proves this is an editable Skill's own file. The two
+    /// sides name a Skill differently — the catalog hashes its `SKILL.md` after
+    /// resolving it, and the detail reports the directory Pi named (a symlink for
+    /// most installed Skills) — so they are matched by the catalog's own id, and
+    /// a detail without one matches nothing. `editable` is the summary's to say.
+    static func editableFile(
         detail: SkillDetail,
         filePath: String,
         skills: [ServerSkillSummary]
     ) -> (hostPath: String, skillFile: SkillFileEditTarget, summary: ServerSkillSummary)? {
-        let skillPath = (detail.skill.path as NSString).standardizingPath
-        // The path only identifies the Skill; `editable` is the summary's to say.
-        // A path either side cannot name picks no Skill at all, so a project
-        // Skill that shadows a global one is never edited as that Skill.
-        guard !skillPath.isEmpty, skillPath != ".",
-              let summary = skills.first(where: {
-                  guard let candidate = $0.path, !candidate.isEmpty else { return false }
-                  return (candidate as NSString).standardizingPath == skillPath
-              }),
+        guard let catalogId = detail.skill.catalogId, !catalogId.isEmpty,
+              let summary = skills.first(where: { $0.id == catalogId }),
             case .editable(let hostPath) = ServerSkillFilePresentation.resolve(
                 editable: summary.editable,
                 resourcePath: summary.path,
@@ -215,6 +209,9 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
 
     private func removeReader() {
         guard let reader = embeddedContent else { return }
+        // The review reader owns an editor: it hands the buffer back before the
+        // page goes, or the session keeps a provider over a freed text view.
+        (reader as? ReviewableControlMarkdownViewController)?.finishEditing()
         reader.willMove(toParent: nil)
         reader.view.removeFromSuperview()
         reader.removeFromParent()
@@ -224,8 +221,10 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
     // MARK: - Loading
 
     /// The file, and the catalog entry that proves its Skill is editable. The
-    /// detail carries the Skill's own path (`cwd` may have made it a project
-    /// Skill), so the catalog is matched by path and never by name.
+    /// detail carries the catalog's own id for the Skill, which is what the
+    /// catalog is matched on; a detail that fails only costs the pencil, never
+    /// the file. The text is fetched only when the plain reader will show it:
+    /// the review reader reads the file itself.
     private func load() {
         loadTask?.cancel()
         guard let api = connection.apiClient, let serverId = connection.currentServerId else {
@@ -237,23 +236,32 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
         let cwd = cwd
         let store = connection.serverResourceStore
         loadTask = Task { [weak self] in
-            do {
-                let detail = try await api.getSkillDetail(name: skillName, cwd: cwd)
-                let text = try await api.getSkillFile(name: skillName, path: filePath, cwd: cwd)
-                // The catalog is filled by the Skills, Agents and Extensions
-                // screens; a chat can reach a Skill before any of them ran.
-                if !store.hasLoadedSkills(forServer: serverId) {
-                    await store.load(serverId: serverId, api: api)
-                }
-                guard !Task.isCancelled else { return }
-                let editableFile = Self.editableFile(
-                    detail: detail,
+            let detail = try? await api.getSkillDetail(name: skillName, cwd: cwd)
+            guard !Task.isCancelled else { return }
+            // The catalog is filled by the Skills, Agents and Extensions
+            // screens; a chat can reach a Skill before any of them ran.
+            if !store.hasLoadedSkills(forServer: serverId) {
+                await store.load(serverId: serverId, api: api)
+            }
+            guard !Task.isCancelled else { return }
+            let editableFile = detail.flatMap {
+                Self.editableFile(
+                    detail: $0,
                     filePath: filePath,
                     skills: store.skills(forServer: serverId)
                 )
-                logger.debug("Loaded skill file: \(skillName)/\(filePath)")
+            }
+            do {
                 guard let self else { return }
                 self.editableFile = editableFile
+                if editableFile != nil {
+                    logger.debug("Loaded editable skill file: \(skillName)/\(filePath)")
+                    self.phase = .loaded("")
+                    return
+                }
+                let text = try await api.getSkillFile(name: skillName, path: filePath, cwd: cwd)
+                guard !Task.isCancelled else { return }
+                logger.debug("Loaded skill file: \(skillName)/\(filePath)")
                 self.phase = .loaded(text)
             } catch {
                 guard !Task.isCancelled else { return }

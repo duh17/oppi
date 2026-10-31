@@ -2155,6 +2155,7 @@
 		E0B83DCB6DBB32347D163BCC /* QuickSessionControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 132682218D7EF18B477FF353 /* QuickSessionControl.swift */; };
 		E0C5B64B9819C33285D9F914 /* ChatRouteLockGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D03B01E81E766B94B1D9B4 /* ChatRouteLockGateTests.swift */; };
 		E0DA38DC11881B1F5B482808 /* MacAppCommandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8680A155C564F21546AA448C /* MacAppCommandTests.swift */; };
+		E0EA8761650624B9E7B41211 /* SkillFileViewControllerMatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BC85814D643A4B91D6FF5A /* SkillFileViewControllerMatchTests.swift */; };
 		E0EE285FFEEB660234E9489C /* MacServerLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F4C89E3C0D8C01188014E81 /* MacServerLifecycle.swift */; };
 		E11B250DF8FDD63501F3B03D /* MermaidClassRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E14A4BC931984D4A4464CDB /* MermaidClassRenderer.swift */; };
 		E11C67A039413ECABDC267EB /* doom-getting-started.org in Resources */ = {isa = PBXBuildFile; fileRef = 16DD759C437D7636C8340B79 /* doom-getting-started.org */; };
@@ -4607,6 +4608,7 @@
 		F95A119C4C7A64218C5EEA31 /* SyntaxHighlightSchedulingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxHighlightSchedulingTests.swift; sourceTree = "<group>"; };
 		F96E8050A8F265A85BF4D3E2 /* MacBashCommandChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacBashCommandChromeTests.swift; sourceTree = "<group>"; };
 		F9AB4C43F23F298A6638EF30 /* CodeEditorTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodeEditorTextView.swift; sourceTree = "<group>"; };
+		F9BC85814D643A4B91D6FF5A /* SkillFileViewControllerMatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillFileViewControllerMatchTests.swift; sourceTree = "<group>"; };
 		F9D47B9F2F749E3E646743C1 /* ProviderAuthFlowAttemptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderAuthFlowAttemptTests.swift; sourceTree = "<group>"; };
 		F9DBF54613493ABEF41C3818 /* ToolTimelineRowFullScreenSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolTimelineRowFullScreenSupport.swift; sourceTree = "<group>"; };
 		FA019CC86B5CD7E0E51856ED /* MacComposerActionPaintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacComposerActionPaintTests.swift; sourceTree = "<group>"; };
@@ -6288,6 +6290,7 @@
 				C542BD74088A1BD1C771CCB4 /* ServerSkillFileTreeTests.swift */,
 				D82143B2194DB55258A8C533 /* ServerSkillListPresentationTests.swift */,
 				C86496CDC944DE7D752BC6B8 /* ServerSkillsViewControllerTests.swift */,
+				F9BC85814D643A4B91D6FF5A /* SkillFileViewControllerMatchTests.swift */,
 			);
 			path = Skills;
 			sourceTree = "<group>";
@@ -9881,6 +9884,7 @@
 				FBCC38DE23AA415E406B7B8D /* ShareQuickSessionSenderTests.swift in Sources */,
 				2167D82EA26BB30F75F0CE7F /* ShareQuickSessionTransportPolicyTests.swift in Sources */,
 				64C905D66A4E8DE1BFEB9C16 /* ShellRouteScreensTests.swift in Sources */,
+				E0EA8761650624B9E7B41211 /* SkillFileViewControllerMatchTests.swift in Sources */,
 				3B1BB1EC2B5ACE9B05632F32 /* SpinnerStyleTests.swift in Sources */,
 				8A042D49C57108D1C9A2701D /* StartOppiSessionIntentTests.swift in Sources */,
 				079237DE2B42D4EBFF82CB1A /* StatusBarForwardingTests.swift in Sources */,

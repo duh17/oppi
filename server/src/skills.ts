@@ -26,6 +26,7 @@ import {
   type Skill,
 } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "./logger.js";
+import { serverResourceId } from "./server-resource-id.js";
 
 // ─── Types ───
 
@@ -36,6 +37,13 @@ export interface SkillInfo {
   description: string;
   /** Host filesystem path to the skill directory. */
   path: string;
+  /**
+   * The server catalog's id for this Skill (`GET /server/resources/skills`),
+   * computed from the Skill's own `SKILL.md` path. `path` above is the directory
+   * as Pi names it, which for a symlinked Skill is not where the catalog found
+   * it, so a client that needs to say "this is that catalog entry" compares ids.
+   */
+  id?: string;
 }
 
 /** Extended skill info with SKILL.md content and file tree. */
@@ -53,6 +61,7 @@ function sdkSkillToInfo(skill: Skill): SkillInfo {
     name: skill.name,
     description: skill.description,
     path: skill.baseDir,
+    id: serverResourceId("skill", skill.filePath),
   };
 }
 
