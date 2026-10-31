@@ -60,21 +60,52 @@ struct EntityIconTests {
 
     @Test func sandboxMarkIsTheSizeItAlwaysWas() throws {
         let sandboxed = EntityIcon.image(.workspace(nil, sandbox: true), size: 16)
-        // The mark's disc is the widest run of ink in the bottom half: the mark
-        // paints over the glyph, so its centre row measures the disc itself.
-        let diameter = longestBottomRun(sandboxed)
-        // Main drew max(11, frame * 0.34) points.
-        #expect(diameter >= 10.5, "mark \(diameter) pt across, image \(sandboxed.size) @\(sandboxed.scale)")
-        #expect(diameter <= 13)
+        // The mark's orange fill, inside its 1 pt background-coloured ring: the
+        // disc itself is max(11, frame * 0.34) points across.
+        let ring = try #require(warmestPixel(in: sandboxed))
+        let fill = try #require(inBlob(sandboxed, near: ring, tolerance: 40))
+        #expect(fill.width >= 8.5, "mark fill \(fill.width) pt across (disc 11 pt with its ring), rect \(fill)")
+        #expect(fill.width <= 9.6)
+        #expect(abs(fill.height - fill.width) <= 0.5, "the mark is a disc: \(fill)")
+        // It sits against the frame's trailing edge, where main let it overhang.
+        #expect(fill.maxX >= 14.5, "the mark ends at \(fill.maxX) pt in a 16 pt frame")
+        #expect(fill.minY >= 4, "the mark starts at \(fill.minY) pt, in the bottom half")
     }
 
-    @Test func sandboxIconIsDrawnSmallerThanAPlainOne() {
-        // The icon steps back to leave the mark its corner.
-        let plain = EntityIcon.image(.workspace(.symbol("square.grid.2x2"), sandbox: false), size: 16)
-        let sandboxed = EntityIcon.image(.workspace(.symbol("square.grid.2x2"), sandbox: true), size: 16)
-        let plainTop = inkTop(plain, scale: plain.scale)
-        let sandboxTop = inkTop(sandboxed, scale: sandboxed.scale)
-        #expect(plainTop < sandboxTop, "the plain icon draws bigger than the sandboxed one")
+    /// The mark's own geometry, exactly as the drawer computes it, and the content
+    /// box each caller lays out: a row keeps its glyph, the Guided pill steps back.
+    @Test func geometryIsWhatMainDrew() {
+        #expect(EntityIcon.sandboxMarkRect(inFrame: 16) == CGRect(x: 5, y: 5, width: 11, height: 11))
+        let wide = EntityIcon.sandboxMarkRect(inFrame: 36)
+        #expect(wide.width == 36 * 0.34)
+        #expect(wide.maxX == 36, "the mark sits against the frame's corner")
+        #expect(wide.maxY == 36)
+
+        // The Guided pill draws a 12 pt icon in a 16 pt canvas; a row draws its
+        // content box whole (IconChoiceUIView passes box(forGlyph: 24) = 30.77).
+        #expect(EntityIcon.contentRect(inFrame: 16, content: 12) == CGRect(x: 2, y: 2, width: 12, height: 12))
+        let rowGlyph = EntityIcon.box(forGlyph: 24)
+        #expect(EntityIcon.contentRect(inFrame: 36, content: rowGlyph).width == rowGlyph)
+        #expect(EntityIcon.contentRect(inFrame: 36, content: rowGlyph).minX == (36 - rowGlyph) / 2)
+    }
+
+    /// Main had two rules, and the content box is how each caller keeps its own:
+    /// a row draws its glyph as large as it does plain, and the Guided pill steps
+    /// a 12 pt icon back inside a 16 pt canvas to make room for the mark.
+    @Test func eachCallerKeepsItsGlyphSizeWhenTheMarkAppears() {
+        // A row: the content box is what draws, not the frame.
+        let rowGlyph = EntityIcon.box(forGlyph: 24)
+        let rowSandbox = EntityIcon.image(
+            .workspace(.symbol("square.grid.2x2"), sandbox: true),
+            size: 36,
+            contentSize: rowGlyph
+        )
+        let narrower = EntityIcon.image(
+            .workspace(.symbol("square.grid.2x2"), sandbox: true),
+            size: 36,
+            contentSize: 18
+        )
+        #expect(png(rowSandbox) != png(narrower), "a row's content box is what draws")
     }
 
     // MARK: - Genmoji
@@ -148,51 +179,82 @@ struct EntityIconTests {
     }
 
     private func averageColour(_ image: UIImage) -> (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)? {
-        let pixels = rgbaPixels(image)
-        guard !pixels.isEmpty else { return nil }
-        let count = CGFloat(pixels.count)
+        let grid = pixelGrid(image)
+        guard !grid.pixels.isEmpty else { return nil }
+        let count = CGFloat(grid.pixels.count)
         return (
-            pixels.reduce(0) { $0 + CGFloat($1.0) } / count / 255,
-            pixels.reduce(0) { $0 + CGFloat($1.1) } / count / 255,
-            pixels.reduce(0) { $0 + CGFloat($1.2) } / count / 255,
-            pixels.reduce(0) { $0 + CGFloat($1.3) } / count / 255
+            grid.pixels.reduce(0) { $0 + CGFloat($1.0) } / count / 255,
+            grid.pixels.reduce(0) { $0 + CGFloat($1.1) } / count / 255,
+            grid.pixels.reduce(0) { $0 + CGFloat($1.2) } / count / 255,
+            grid.pixels.reduce(0) { $0 + CGFloat($1.3) } / count / 255
         )
     }
 
-    /// The widest horizontal run of ink in the bottom half of the image, in
-    /// points: a sandbox mark paints over whatever is under it.
-    private func longestBottomRun(_ image: UIImage) -> CGFloat {
-        let width = Int(image.size.width * image.scale)
-        let height = Int(image.size.height * image.scale)
-        let pixels = rgbaPixels(image)
-        var longest = 0
-        for y in (height / 2)..<height {
-            var right = -1
-            for column in stride(from: width - 1, through: 0, by: -1)
-            where pixels[y * width + column].3 > 200 {
-                right = column
-                break
+    /// The most orange pixel in the bottom-trailing quadrant: the sandbox mark's
+    /// fill, whatever the theme's exact orange is.
+    private func warmestPixel(in image: UIImage) -> (UInt8, UInt8, UInt8, UInt8)? {
+        let grid = pixelGrid(image)
+        var best: (UInt8, UInt8, UInt8, UInt8)?
+        var bestWarmth = 40
+        for y in (grid.height / 2)..<grid.height {
+            for x in (grid.width / 2)..<grid.width {
+                let pixel = grid.pixels[y * grid.width + x]
+                guard pixel.3 > 200 else { continue }
+                let warmth = Int(pixel.0) - Int(pixel.2)
+                if warmth > bestWarmth {
+                    bestWarmth = warmth
+                    best = pixel
+                }
             }
-            guard right >= 0 else { continue }
-            var left = right
-            while left > 0, pixels[y * width + left - 1].3 > 200 {
-                left -= 1
-            }
-            longest = max(longest, right - left + 1)
         }
-        return CGFloat(longest) / image.scale
-    }
-    /// The first row with a visibly drawn pixel, in image points.
-    private func inkTop(_ image: UIImage, scale: CGFloat) -> CGFloat {
-        let width = Int(image.size.width * scale)
-        for (index, pixel) in rgbaPixels(image).enumerated() where pixel.3 > 128 {
-            return CGFloat(index / width) / scale
-        }
-        return image.size.height
+        return best
     }
 
-    private func rgbaPixels(_ image: UIImage) -> [(UInt8, UInt8, UInt8, UInt8)] {
-        guard let cgImage = image.cgImage else { return [] }
+    /// The bounding box of the pixels close to `pixel`, in image points.
+    private func inBlob(
+        _ image: UIImage,
+        near pixel: (UInt8, UInt8, UInt8, UInt8),
+        tolerance: Int
+    ) -> CGRect? {
+        let grid = pixelGrid(image)
+        var minX = grid.width
+        var minY = grid.width
+        var maxX = -1
+        var maxY = -1
+        for (index, other) in grid.pixels.enumerated() {
+            guard other.3 > 200,
+                  abs(Int(other.0) - Int(pixel.0)) < tolerance,
+                  abs(Int(other.1) - Int(pixel.1)) < tolerance,
+                  abs(Int(other.2) - Int(pixel.2)) < tolerance else { continue }
+            let x = index % grid.width
+            let y = index / grid.width
+            minX = min(minX, x)
+            minY = min(minY, y)
+            maxX = max(maxX, x)
+            maxY = max(maxY, y)
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        return CGRect(
+            x: CGFloat(minX) / grid.scale,
+            y: CGFloat(minY) / grid.scale,
+            width: CGFloat(maxX - minX + 1) / grid.scale,
+            height: CGFloat(maxY - minY + 1) / grid.scale
+        )
+    }
+
+    /// Pixels and their own dimensions: the CGImage's, never the point size times a
+    /// scale, which can round to a different count.
+    private struct PixelGrid {
+        let pixels: [(UInt8, UInt8, UInt8, UInt8)]
+        let width: Int
+        let height: Int
+        let scale: CGFloat
+    }
+
+    private func pixelGrid(_ image: UIImage) -> PixelGrid {
+        guard let cgImage = image.cgImage else {
+            return PixelGrid(pixels: [], width: 0, height: 0, scale: image.scale)
+        }
         let width = cgImage.width
         let height = cgImage.height
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
@@ -209,10 +271,13 @@ struct EntityIconTests {
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
-        guard drawn else { return [] }
-        return stride(from: 0, to: bytes.count, by: 4).map { offset in
+        guard drawn else {
+            return PixelGrid(pixels: [], width: width, height: height, scale: image.scale)
+        }
+        let pixels = stride(from: 0, to: bytes.count, by: 4).map { offset in
             (bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
         }
+        return PixelGrid(pixels: pixels, width: width, height: height, scale: image.scale)
     }
 
     private static func solid(_ colour: UIColor, side: CGFloat) -> UIImage {

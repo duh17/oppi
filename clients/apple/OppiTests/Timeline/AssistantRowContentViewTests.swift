@@ -192,7 +192,7 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func badgeCancelsStaleGenmojiLoadWhenReused() async throws {
+    @Test func badgeReusedForAnotherIconIgnoresTheLateGenmoji() async throws {
         let gate = IconAssetFetchGateForTimeline()
         let cache = IconAssetCache(
             fetch: { assetId in

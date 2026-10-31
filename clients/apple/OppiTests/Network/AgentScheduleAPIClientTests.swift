@@ -1123,6 +1123,28 @@ struct IconAssetCacheTests {
         #expect(!shows(icon, mostly: .systemGreen))
     }
 
+    /// A cache keeps a failed asset failed, and a cleared cache (a reconnect)
+    /// gives it another chance.
+    @Test func aFailedAssetIsNotFetchedAgainUntilTheCacheIsCleared() async throws {
+        let assetId = "ia_" + String(repeating: "E", count: 43)
+        let counter = IconAssetFetchCounter()
+        let cache = IconAssetCache(
+            fetch: { _ in
+                await counter.increment()
+                throw APIError.server(status: 404, message: "no such icon")
+            },
+            decode: { _, _ in (decodedImage(), NSObject()) }
+        )
+
+        #expect(!cache.hasFailedLoad(assetId: assetId))
+        _ = try? await cache.image(assetId: assetId, size: 32)
+        #expect(cache.hasFailedLoad(assetId: assetId))
+        #expect(await counter.value() == 1)
+
+        cache.removeAll()
+        #expect(!cache.hasFailedLoad(assetId: assetId), "a new connection retries the asset")
+    }
+
     @Test func productionRemoteDecoderAcceptsVisibleGeneratedHEIF() throws {
         let data = try imageIOHEIFFixture(width: 64, height: 64, visible: true)
         let decoded = try IconAssetCache.decodeRemoteHEIF(data: data, size: 32)
