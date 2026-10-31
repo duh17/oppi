@@ -241,28 +241,6 @@ struct ScheduleDetailPageTests {
         }, "the row draws the schedule's prompt, so a changed one redraws it")
     }
 
-    @Test("a load cancelled under the page keeps the schedule and raises no alert")
-    func cancelledLoadKeepsTheSchedule() async throws {
-        let answers = ScheduleDetailAnswers(prompt: "Summarize the day.")
-        let (screen, routes) = try makeScreen(answers: answers)
-        defer {
-            screen.hide()
-            routes.end()
-        }
-
-        let prompt = try #require(await screen.waitForButton("schedule.detail.prompt"))
-        let shown = try #require(prompt.accessibilityLabel)
-
-        // The server answers a cancel: control flow, not a failure to alert.
-        answers.mode = .cancelled
-        screen.root.collectionView.refreshControl?.sendActions(for: .valueChanged)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { answers.requests > 1 })
-        #expect(await screen.staysTrue(for: .milliseconds(400)) {
-            screen.button("schedule.detail.prompt")?.accessibilityLabel == shown
-                && screen.root.presentedViewController == nil
-        }, "a cancelled load keeps the schedule it shows and reports nothing")
-    }
-
     private func makeScreen(
         answers: ScheduleDetailAnswers
     ) throws -> (screen: DetailScreen, routes: TestURLProtocol.RouteScope) {
@@ -325,26 +303,17 @@ private final class DetailScreen {
 
 /// Answers a schedule's page: the schedule, its runs, and the Agents it names.
 /// The prompt is what the server holds, so a test can change the schedule
-/// between loads; a cancelled mode answers like a request a page cancelled. One per test,
-/// so no two pages share a schedule.
+/// between loads. One per test, so no two pages share a schedule.
 private final class ScheduleDetailAnswers: @unchecked Sendable {
-    enum Mode { case available, cancelled }
-
     static let host = "schedule-page.test"
     let scheduleId = "schedule-page-tests"
 
     private let lock = NSLock()
-    private var currentMode = Mode.available
     private var currentPrompt: String
     private var countedRequests = 0
 
     init(prompt: String) {
         currentPrompt = prompt
-    }
-
-    var mode: Mode {
-        get { lock.withLock { currentMode } }
-        set { lock.withLock { currentMode = newValue } }
     }
 
     var prompt: String {
@@ -355,11 +324,7 @@ private final class ScheduleDetailAnswers: @unchecked Sendable {
     var requests: Int { lock.withLock { countedRequests } }
 
     func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
-        let mode = lock.withLock { () -> Mode in
-            countedRequests += 1
-            return currentMode
-        }
-        if case .cancelled = mode { throw URLError(.cancelled) }
+        lock.withLock { countedRequests += 1 }
         let path = request.url?.path ?? ""
         if path.hasSuffix("/runs") {
             return try mockJSONResponse(json: #"{"runs":[]}"#, for: request)

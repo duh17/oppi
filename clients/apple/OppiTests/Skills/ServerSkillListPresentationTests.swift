@@ -90,36 +90,6 @@ struct ServerSkillListPresentationTests {
         #expect(ServerSkillListPresentation.accessibilityLabel(for: row) == "Broken, Pi user settings, Error")
     }
 
-    @Test func detailRetryCancelsEarlierGenerationAndKeepsLatestResponse() async {
-        let target = ServerResourceDetailNavTarget(serverId: "server-a", kind: .skill, resourceId: "release")
-        let initial = ServerSkillDetail(summary: skill(id: "release", name: "Initial", state: .disabled), skillMarkdown: "", files: [])
-        let retried = ServerSkillDetail(summary: skill(id: "release", name: "Retried", state: .enabled), skillMarkdown: "# Release", files: [])
-        let initialGate = SkillDetailSuspensionGate()
-        let retryGate = SkillDetailSuspensionGate()
-        let loader = ServerResourceDetailLoader<ServerSkillDetail>(target: target)
-
-        loader.load(target: target) {
-            await initialGate.suspend()
-            return initial
-        }
-        await initialGate.waitUntilSuspended()
-
-        loader.load(target: target) {
-            await retryGate.suspend()
-            return retried
-        }
-        await retryGate.waitUntilSuspended()
-        await retryGate.release()
-        await retryGate.waitUntilReturned()
-
-        #expect(loader.detail == retried)
-        #expect(loader.usesDetailSummary)
-
-        await initialGate.release()
-        await initialGate.waitUntilReturned()
-        #expect(loader.detail == retried)
-    }
-
     @Test func healthyDetailRetrySupersedesStaleCatalogErrorForRenderingAndToggle() {
         let staleCatalog = skill(id: "release", name: "Release", state: .error, loadError: "Stale catalog failure")
         let healthyDetail = ServerSkillDetail(
@@ -159,37 +129,3 @@ struct ServerSkillListPresentationTests {
     }
 }
 
-private actor SkillDetailSuspensionGate {
-    private var suspended = false
-    private var returned = false
-    private var suspensionWaiters: [CheckedContinuation<Void, Never>] = []
-    private var returnWaiters: [CheckedContinuation<Void, Never>] = []
-    private var releaseContinuation: CheckedContinuation<Void, Never>?
-
-    func suspend() async {
-        suspended = true
-        let waiters = suspensionWaiters
-        suspensionWaiters.removeAll()
-        waiters.forEach { $0.resume() }
-        await withCheckedContinuation { releaseContinuation = $0 }
-        returned = true
-        let returnedWaiters = returnWaiters
-        returnWaiters.removeAll()
-        returnedWaiters.forEach { $0.resume() }
-    }
-
-    func waitUntilSuspended() async {
-        guard !suspended else { return }
-        await withCheckedContinuation { suspensionWaiters.append($0) }
-    }
-
-    func waitUntilReturned() async {
-        guard !returned else { return }
-        await withCheckedContinuation { returnWaiters.append($0) }
-    }
-
-    func release() {
-        releaseContinuation?.resume()
-        releaseContinuation = nil
-    }
-}

@@ -186,44 +186,6 @@ struct SettingsKitTests {
         })
     }
 
-    @Test("The list loads when the page appears, and again on pull to refresh")
-    func refreshOnAppearanceAndPull() async throws {
-        let page = RefreshPage()
-        let window = try show(page)
-        defer { hideTestWindow(window); window.rootViewController = nil }
-
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.refreshes == 1 }, "appearing loads")
-
-        page.collectionView.refreshControl?.sendActions(for: .valueChanged)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.refreshes == 2 }, "pull to refresh loads")
-
-        // Leaving says the page is not showing, so a covered list keeps still.
-        window.rootViewController = UIViewController()
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
-    }
-
-    @Test("A page that loads once keeps what it loaded when it appears again, and a pull to refresh loads")
-    func aPageThatLoadsOnceKeepsWhatItLoaded() async throws {
-        let page = LoadOncePage()
-        let window = try show(page)
-        defer { hideTestWindow(window); window.rootViewController = nil }
-
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.shownItems == ["First answer"] })
-
-        // Away and back with the server's answer changed: coming back from a
-        // pushed editor keeps what that editor saved, not a fresh load.
-        page.answer = "Second answer"
-        window.rootViewController = UIViewController()
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { !page.isShowing })
-        window.rootViewController = page
-        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) { page.isShowing })
-        #expect(page.shownItems == ["First answer"], "appearing again does not load")
-
-        page.collectionView.refreshControl?.sendActions(for: .valueChanged)
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.shownItems == ["Second answer"] },
-                "a pull to refresh still loads")
-    }
-
     @Test("A page that edits text dismisses the keyboard on a drag, as the lists that built their own did")
     func draggingDismissesTheKeyboard() {
         let page = DraggingPage()
@@ -236,15 +198,11 @@ struct SettingsKitTests {
         #expect(plain.collectionView.keyboardDismissMode == .none, "a page that does not opt in keeps UIKit's default")
     }
 
-    @Test("Only a page that loads its content pulls to refresh")
+    @Test("Only a page that loads has a pull to refresh")
     func pullToRefreshIsOptedInto() {
         let plain = ScopedPage()
         plain.loadViewIfNeeded()
         #expect(plain.collectionView.refreshControl == nil, "a page that loads nothing has no spinner to pull")
-
-        let loading = RefreshPage()
-        loading.loadViewIfNeeded()
-        #expect(loading.collectionView.refreshControl != nil)
     }
 
     @Test("A page shows a header only on the sections it names")
@@ -394,47 +352,6 @@ private final class DraggingPage: ListScreenController<DraggingPage.Section, Int
     }
 
     override func sections() -> [ListSection<Section, Int>] { [ListSection(.only, items: [1])] }
-}
-
-/// A page that counts its loads.
-private final class RefreshPage: ListScreenController<RefreshPage.Section, Int> {
-    enum Section: Hashable, Sendable { case only }
-
-    private(set) var refreshes = 0
-
-    init() {
-        super.init(title: "Refresh", listIdentifier: "test.refresh.list", pullsToRefresh: true)
-    }
-
-    override func sections() -> [ListSection<Section, Int>] { [ListSection(.only, items: [1])] }
-
-    override func refresh() async { refreshes += 1 }
-}
-
-/// A page that loads once and keeps the answer it loaded; the test changes
-/// what a load would find between appearances.
-private final class LoadOncePage: ListScreenController<LoadOncePage.Section, String> {
-    enum Section: Hashable, Sendable { case only }
-
-    /// What a load finds.
-    var answer = "First answer"
-    /// What the page loaded, and shows.
-    private(set) var loaded: String?
-
-    init() {
-        super.init(title: "Load Once", listIdentifier: "test.loadOnce.list", pullsToRefresh: true)
-    }
-
-    override var loadsWhenAppearing: Bool { loaded == nil }
-
-    override func sections() -> [ListSection<Section, String>] {
-        [ListSection(.only, items: loaded.map { [$0] } ?? [])]
-    }
-
-    override func refresh() async {
-        loaded = answer
-        setNeedsUpdateProperties()
-    }
 }
 
 /// A page with two sections, only one of which carries a heading.

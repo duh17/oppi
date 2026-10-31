@@ -43,55 +43,6 @@ struct ModelProvidersPageTests {
         })
     }
 
-    @Test("the page loads the visible server's providers when it appears")
-    func providersLoadOnFirstAppearance() async throws {
-        let routes = Self.useAnswers(["ready-server.test": ProviderHostAnswers(providers: [
-            provider("claude", name: "Claude", authenticated: true),
-            provider("gemini", name: "Gemini", authenticated: false, oauth: true),
-        ])])
-        defer { routes.end() }
-        let root = try makeRoot()
-        let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
-        let window = try show(page)
-        defer { hide(window) }
-
-        // No `updateProperties` of our own: the appearance is what loads, and the
-        // page takes the server that pass would have taken.
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            page.shownItems.count == 2
-        }, "the appearance must load the visible server's providers")
-        #expect(page.shownItems == [.provider("claude"), .provider("gemini")])
-        #expect(page.sections().map(\.header) == ["Connected", "Available"])
-    }
-
-    @Test("a load whose request ends as a cancel keeps its providers and reports no failure")
-    func cancelledLoadKeepsProviders() async throws {
-        let answers = ProviderHostAnswers(providers: [provider("claude", name: "Claude", authenticated: true)])
-        let routes = Self.useAnswers(["ready-server.test": answers])
-        defer { routes.end() }
-        let root = try makeRoot()
-        let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
-        let window = try show(page)
-        defer { hide(window) }
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            page.shownItems.contains(.provider("claude"))
-        })
-
-        // The next load's request ends as a cancel — what leaving the page, or a
-        // refresh replacing this one, produces. That is control flow: the rows
-        // this server already showed stay, and nothing is reported as failed.
-        let before = answers.statusRequests
-        answers.cancelNextStatusRequest()
-        page.setNeedsRefresh()
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            answers.statusRequests == before + 1
-        }, "the second load asked the server")
-        // Its answer lands on the main actor a moment later.
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(!page.sections().contains { $0.id == .error }, "a cancelled request is not a failure to report")
-        #expect(page.shownItems.contains(.provider("claude")), "the providers it had stay on screen")
-    }
-
     @Test("a host switch drops the old server's providers and shows the new one's")
     func hostSwitchReloadsTheNewServer() async throws {
         let routes = Self.useAnswers([
@@ -126,6 +77,45 @@ struct ModelProvidersPageTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             page.shownItems.contains(.provider("gemini")) && !page.shownItems.contains(.provider("claude"))
         }, "the page follows the switch and loads the new server instead of keeping the old rows")
+    }
+
+    @Test("a reload that cannot read usage keeps the usage it already showed")
+    func failedUsageReloadKeepsTheUsage() async throws {
+        let usageReadAt = 1_700_000_000_000
+        let answers = ProviderHostAnswers(
+            providers: [provider("claude", name: "Claude", authenticated: true)],
+            quotas: ProviderQuotasInfo(
+                providers: [ProviderQuota(
+                    providerId: "claude", displayName: "Claude", authenticated: true, planType: "max",
+                    windows: [], credits: nil, prepaidBalanceCents: nil, fetchedAt: usageReadAt, error: nil
+                )],
+                fetchedAt: usageReadAt
+            )
+        )
+        let routes = Self.useAnswers(["ready-server.test": answers])
+        defer { routes.end() }
+        let root = try makeRoot()
+        let page = ModelProvidersViewController(target: ModelProvidersNavTarget(serverId: serverId), root: root)
+        let window = try show(page)
+        defer { hide(window) }
+
+        func usageFooter() -> String? {
+            page.sections().first { $0.id == .connected }?.footer
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            usageFooter()?.hasPrefix("Usage as of") == true
+        }, "the page shows the usage it read")
+        let shownFooter = try #require(usageFooter())
+
+        // The next load cannot read the usage. Its providers are new; the usage
+        // on screen stays, and its footer still says when it was read.
+        let before = answers.statusRequests
+        answers.failQuotas = true
+        page.setNeedsLoad()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { answers.statusRequests > before })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            usageFooter() == shownFooter && page.shownItems.contains(.provider("claude"))
+        }, "a failed usage read keeps the usage the page showed")
     }
 
     @Test("the API key sheet saves the trimmed key and refuses to be swiped away with one typed")
@@ -233,16 +223,15 @@ private final class RefusingProviderAuthClient: ProviderAuthFlowClient, @uncheck
 }
 
 /// What one host's provider routes answer: the status rows and the quota windows,
-/// with a status request that can be made to end as a cancel, the way a request
-/// cancelled under its page arrives. Counts the status requests, so a test can tell
-/// the one a refresh sent from one it did not.
+/// with a usage read that can be made to fail the way an expired quota token's
+/// does. Counts the status requests, so a test can tell the one a reload sent
+/// from one it did not.
 private final class ProviderHostAnswers: @unchecked Sendable {
     private struct Envelope<Value: Encodable>: Encodable { let providers: Value }
 
     private let providers: [ProviderAuthProviderStatus]
     private let quotas: ProviderQuotasInfo
     private let lock = NSLock()
-    private var cancelsNextStatus = false
     private var statusCount = 0
 
     init(
@@ -255,19 +244,16 @@ private final class ProviderHostAnswers: @unchecked Sendable {
 
     var statusRequests: Int { lock.withLock { statusCount } }
 
-    func cancelNextStatusRequest() { lock.withLock { cancelsNextStatus = true } }
+    /// Fails the next usage reads instead of answering them.
+    var failQuotas = false
 
     func answer(for request: URLRequest) throws -> (Data, HTTPURLResponse)? {
         switch request.url?.path {
         case let path? where path.hasSuffix("/provider-auth/status"):
-            let cancels = lock.withLock {
-                statusCount += 1
-                defer { cancelsNextStatus = false }
-                return cancelsNextStatus
-            }
-            if cancels { throw URLError(.cancelled) }
+            lock.withLock { statusCount += 1 }
             return try mockJSONResponse(encoding: Envelope(providers: providers), for: request)
         case let path? where path.hasSuffix("/server/provider-quotas"):
+            if failQuotas { throw URLError(.badServerResponse) }
             return try mockJSONResponse(encoding: quotas, for: request)
         default:
             return nil

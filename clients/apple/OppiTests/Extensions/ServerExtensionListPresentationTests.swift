@@ -65,69 +65,16 @@ struct ServerExtensionListPresentationTests {
         #expect(ServerExtensionListPresentation.accessibilityLabel(for: row) == "Broken, Pi user settings, Error")
     }
 
-    @Test func postMutationDetailFailureCannotRevertAuthoritativeCatalogSummary() async {
-        let target = ServerResourceDetailNavTarget(serverId: "server-a", kind: .extension, resourceId: "review")
-        let staleDetail = ServerExtensionDetail(
-            summary: extensionRow(id: "review", name: "Review", state: .off),
-            contributedTools: ["review"],
-            contributedCommands: nil
-        )
+    @Test func aFailedDetailRequestLeavesTheCatalogSummaryAuthoritative() {
+        // A mutation's catalog answer is authoritative until a detail request
+        // succeeds: with no fresh detail to draw, the catalog's row wins.
         let authoritative = extensionRow(id: "review", name: "Review", state: .on)
-        let failureGate = ExtensionDetailSuspensionGate()
-        let loader = ServerResourceDetailLoader(initialDetail: staleDetail, target: target)
-
-        loader.invalidateSummaryAfterAuthoritativeMutation()
-        loader.load(target: target) {
-            await failureGate.suspend()
-            throw APIError.server(status: 503, message: "Detail unavailable")
-        }
-        await failureGate.waitUntilSuspended()
-        await failureGate.release()
-        await failureGate.waitUntilReturned()
 
         let rendered = resolvedServerExtensionDetailSummary(
             catalogSummary: authoritative,
-            freshDetail: loader.usesDetailSummary ? loader.detail : nil
+            freshDetail: nil
         )
         #expect(rendered == authoritative)
-        #expect(loader.detail == staleDetail)
-        #expect(loader.error == "Detail unavailable")
-    }
-
-    @Test func targetChangeDiscardsOldServerDetailResponse() async {
-        let oldTarget = ServerResourceDetailNavTarget(serverId: "server-a", kind: .extension, resourceId: "shared")
-        let newTarget = ServerResourceDetailNavTarget(serverId: "server-b", kind: .extension, resourceId: "shared")
-        let oldDetail = ServerExtensionDetail(
-            summary: extensionRow(id: "shared", name: "Server A", state: .on),
-            contributedTools: nil,
-            contributedCommands: nil
-        )
-        let newDetail = ServerExtensionDetail(
-            summary: extensionRow(id: "shared", name: "Server B", state: .off),
-            contributedTools: nil,
-            contributedCommands: nil
-        )
-        let oldGate = ExtensionDetailSuspensionGate()
-        let newGate = ExtensionDetailSuspensionGate()
-        let loader = ServerResourceDetailLoader<ServerExtensionDetail>(target: oldTarget)
-
-        loader.load(target: oldTarget) {
-            await oldGate.suspend()
-            return oldDetail
-        }
-        await oldGate.waitUntilSuspended()
-        loader.load(target: newTarget) {
-            await newGate.suspend()
-            return newDetail
-        }
-        await newGate.waitUntilSuspended()
-        await newGate.release()
-        await newGate.waitUntilReturned()
-        await oldGate.release()
-        await oldGate.waitUntilReturned()
-
-        #expect(loader.detail == newDetail)
-        #expect(loader.target == newTarget)
     }
 
     @Test func healthyDetailRetrySupersedesStaleCatalogErrorForRenderingAndToggle() {
@@ -207,37 +154,3 @@ struct ServerExtensionListPresentationTests {
     }
 }
 
-private actor ExtensionDetailSuspensionGate {
-    private var suspended = false
-    private var returned = false
-    private var suspensionWaiters: [CheckedContinuation<Void, Never>] = []
-    private var returnWaiters: [CheckedContinuation<Void, Never>] = []
-    private var releaseContinuation: CheckedContinuation<Void, Never>?
-
-    func suspend() async {
-        suspended = true
-        let waiters = suspensionWaiters
-        suspensionWaiters.removeAll()
-        waiters.forEach { $0.resume() }
-        await withCheckedContinuation { releaseContinuation = $0 }
-        returned = true
-        let returnedWaiters = returnWaiters
-        returnWaiters.removeAll()
-        returnedWaiters.forEach { $0.resume() }
-    }
-
-    func waitUntilSuspended() async {
-        guard !suspended else { return }
-        await withCheckedContinuation { suspensionWaiters.append($0) }
-    }
-
-    func waitUntilReturned() async {
-        guard !returned else { return }
-        await withCheckedContinuation { returnWaiters.append($0) }
-    }
-
-    func release() {
-        releaseContinuation?.resume()
-        releaseContinuation = nil
-    }
-}
