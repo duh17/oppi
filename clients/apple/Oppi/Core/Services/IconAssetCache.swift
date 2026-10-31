@@ -61,8 +61,7 @@ final class IconAssetCache {
     }
 
     func image(assetId: String, size: CGFloat) async throws -> UIImage {
-        let sizeKey = Int(size.rounded(.up))
-        let key = "\(assetId):\(sizeKey)"
+        let key = Self.cacheKey(assetId: assetId, size: size)
         if let cached = entries.object(forKey: key as NSString) {
             return cached.image
         }
@@ -88,6 +87,16 @@ final class IconAssetCache {
                 self?.cancelWaiter(waiterID, key: key)
             }
         }
+    }
+
+    /// The artwork if it is already decoded at `size`, for a caller that draws
+    /// once and cannot await: a menu's action image, a list row's icon.
+    func cachedImage(assetId: String, size: CGFloat) -> UIImage? {
+        entries.object(forKey: Self.cacheKey(assetId: assetId, size: size) as NSString)?.image
+    }
+
+    private static func cacheKey(assetId: String, size: CGFloat) -> String {
+        "\(assetId):\(Int(size.rounded(.up)))"
     }
 
     func removeAll() {

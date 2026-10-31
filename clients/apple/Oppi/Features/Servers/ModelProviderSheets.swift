@@ -467,11 +467,7 @@ final class ProviderAPIKeyViewController: ListScreenController<ProviderAPIKeyVie
             var content = UIListContentConfiguration.cell()
             content.text = provider.name
             content.textProperties.color = UIColor(palette.fg)
-            content.image = ComposerProviderIconRenderer.image(
-                provider: provider.id,
-                size: 18,
-                colors: SessionRowStyle.for(root.themeStore.activeThemeID).colors
-            )
+            content.image = EntityIcon.image(.provider(provider.id), size: 18)
             content.imageProperties.maximumSize = CGSize(width: 18, height: 18)
             cell.contentConfiguration = content
         } else {

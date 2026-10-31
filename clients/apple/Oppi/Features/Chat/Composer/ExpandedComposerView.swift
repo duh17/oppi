@@ -588,7 +588,7 @@ final class ExpandedComposerViewController: UIViewController, UITextViewDelegate
                 }
                 return model.flatMap(providerFromModel)
             }()
-            let icon = provider.map { ComposerProviderIconRenderer.image(provider: $0, size: 11, colors: colors) }
+            let icon = provider.map { EntityIcon.image(.provider($0), size: 11) }
             modelButton.apply(title: modelTitle, icon: icon, tint: colors.fg, showsChevron: true, colors: colors)
             modelButton.accessibilityValue = modelTitle
             thinkingButton.apply(

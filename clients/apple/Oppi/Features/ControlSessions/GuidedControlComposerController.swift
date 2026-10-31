@@ -401,7 +401,7 @@ final class GuidedControlComposerController: UIViewController {
         stackedWorkspaceRow.isHidden = !model.showsWorkspacePicker
         stackedWorkspacePill.apply(
             title: workspace?.name ?? "Workspace",
-            icon: workspaceIcon(colors: colors) ?? UIImage(systemName: "folder"),
+            icon: workspaceIcon(),
             tint: colors.fg,
             showsChevron: true,
             colors: colors
@@ -414,7 +414,7 @@ final class GuidedControlComposerController: UIViewController {
         let modelTitle = shortModelName(model.effectiveModelId ?? presentation.pillText)
         stackedModelPill.apply(
             title: modelTitle,
-            icon: presentation.pillProvider.map { ComposerProviderIconRenderer.image(provider: $0, size: 11, colors: colors) },
+            icon: presentation.pillProvider.map { EntityIcon.image(.provider($0), size: 11) },
             tint: colors.fg,
             showsChevron: true,
             colors: colors
@@ -453,22 +453,28 @@ final class GuidedControlComposerController: UIViewController {
 
     // MARK: - Workspace
 
-    func workspaceIcon(colors: ComposerThemeColors) -> UIImage? {
-        model.selectedWorkspace.map {
-            WorkspaceRuntimeIconRenderer.render(workspace: $0, size: 12, frameSize: 16, colors: colors)
-        }
+    func workspaceIcon() -> UIImage {
+        let workspace = model.selectedWorkspace
+        return EntityIcon.image(
+            .workspace(workspace?.icon, sandbox: workspace?.runtime == .sandbox),
+            size: 16,
+            assets: model.selectedServerIconAssetCache
+        )
     }
 
     /// The server's workspaces, the selected one checked.
     func workspaceMenu() -> UIMenu {
         let selectedId = model.selectedWorkspace?.id
         let prefix = model.identifierPrefix
+        let assets = model.selectedServerIconAssetCache
         return UIMenu(children: model.workspaces.map { workspace in
-            UIAction(
-                title: workspace.name,
-                image: UIImage(systemName: workspace.id == selectedId ? "checkmark" : "folder"),
-                identifier: UIAction.Identifier("\(prefix).workspace.\(workspace.id)")
-            ) { [weak self] _ in
+            UIAction.choice(
+                workspace.name,
+                .workspace(workspace.icon, sandbox: workspace.runtime == .sandbox),
+                selected: workspace.id == selectedId,
+                assets: assets,
+                id: "\(prefix).workspace.\(workspace.id)"
+            ) { [weak self] in
                 self?.model.selectWorkspace(workspace)
             }
         })

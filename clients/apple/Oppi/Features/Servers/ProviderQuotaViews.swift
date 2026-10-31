@@ -346,11 +346,7 @@ private final class ProviderRowContentView: UIView, UIContentView {
 
         if iconKey?.provider != provider.id || iconKey?.theme != configuration.themeID {
             iconKey = (provider.id, configuration.themeID)
-            icon.image = ComposerProviderIconRenderer.image(
-                provider: provider.id,
-                size: 18,
-                colors: SessionRowStyle.for(configuration.themeID).colors
-            )
+            icon.image = EntityIcon.image(.provider(provider.id), size: 18)
         }
         nameLabel.text = provider.name
         nameLabel.textColor = UIColor(palette.fg)

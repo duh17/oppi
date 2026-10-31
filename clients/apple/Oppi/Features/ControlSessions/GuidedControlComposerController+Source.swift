@@ -69,7 +69,7 @@ extension GuidedControlComposerController: ChatComposerSource {
         }
         let workspace = ComposerAction.workspace(
             title: model.selectedWorkspace?.name ?? "Workspace",
-            icon: workspaceIcon(colors: colors),
+            icon: workspaceIcon(),
             identifier: "\(model.identifierPrefix).workspacePicker",
             menu: workspaceMenu(),
             colors: colors

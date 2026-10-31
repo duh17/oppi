@@ -327,6 +327,15 @@ extension ChatViewController {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.model.chatDisplayRefresh += 1 }
             },
+            // The rail's avatar is the Agent's artwork: a Genmoji that finishes
+            // loading after the first pass redraws the item.
+            center.addObserver(
+                forName: .oppiEntityIconDidLoad,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.model.chatDisplayRefresh += 1 }
+            },
             center.addObserver(
                 forName: AppPreferences.ChatTopBar.didChangeNotification,
                 object: nil,

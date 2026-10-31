@@ -397,13 +397,8 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             self?.presentFlowSheet()
         }
         let providerId = attempt.flow.providerId
-        let themeID = root.themeStore.activeThemeID
         cell.contentConfiguration = ControlViewContent {
-            let icon = UIImageView(image: ComposerProviderIconRenderer.image(
-                provider: providerId,
-                size: 18,
-                colors: SessionRowStyle.for(themeID).colors
-            ))
+            let icon = UIImageView(image: EntityIcon.image(.provider(providerId), size: 18))
             icon.contentMode = .scaleAspectFit
             NSLayoutConstraint.activate([
                 icon.widthAnchor.constraint(equalToConstant: 18),

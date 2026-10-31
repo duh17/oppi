@@ -22,8 +22,7 @@ extension QuickSessionViewController {
         let enabled = model.isInitialized
         let workspace = model.selectedWorkspace
         workspacePill.apply(QuickSessionPillButton.Content(
-            icon: workspace.map { .choice($0.icon, purpose: .workspace, sandbox: $0.runtime == .sandbox) }
-                ?? .symbol("folder", color: colors.blue, style: .caption2, weight: .semibold),
+            icon: .choice(workspace?.icon, purpose: .workspace, sandbox: workspace?.runtime == .sandbox),
             iconAssetCache: model.selectedServerIconAssetCache,
             title: workspace?.name ?? "Workspace",
             titleColor: colors.fg,
@@ -148,7 +147,7 @@ extension QuickSessionViewController {
             ?? providerFromModel(modelId)
         modelPill.apply(
             title: title,
-            icon: provider.map { ComposerProviderIconRenderer.image(provider: $0, size: 11, colors: colors) },
+            icon: provider.map { EntityIcon.image(.provider($0), size: 11) },
             tint: colors.fg,
             showsChevron: true,
             colors: colors

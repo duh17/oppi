@@ -235,7 +235,9 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .icon:
-            return AnyHashable(agent?.definition.icon)
+            // The Genmoji load generation is in the key: the row that drew the
+            // fallback symbol redraws when the artwork arrives.
+            return AnyHashable([AnyHashable(agent?.definition.icon), AnyHashable(EntityIcon.loadGeneration)])
         case .prompt:
             guard let instructions = agent?.definition.instructions else { return AnyHashable(0) }
             return AnyHashable([AnyHashable(Self.systemPromptTitle(instructions.mode)), AnyHashable(instructions.text)])
@@ -320,8 +322,13 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
             ) { [weak self] in
                 self?.showsIconPicker = true
             }
+            let assets = connection.iconAssetCache
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 6, leading: 0, bottom: 6, trailing: 0)) {
-                let icon = UIImageView(image: AgentIconRenderer.render(value: agent.definition.icon, size: 24))
+                let icon = UIImageView(image: EntityIcon.image(
+                    .agent(agent.definition.icon),
+                    size: 24,
+                    assets: assets
+                ))
                 icon.contentMode = .center
                 icon.widthAnchor.constraint(equalToConstant: 32).isActive = true
                 icon.heightAnchor.constraint(equalToConstant: 32).isActive = true

@@ -201,7 +201,7 @@ final class ChatBarItems {
 
         if joinsRail {
             railSessionItem.menu = makeSessionMenu(title: chat.sessionDisplayName, includesRename: true)
-            railSessionItem.image = chat.railSessionImage(palette: palette)
+            railSessionItem.image = chat.railSessionImage()
             railSessionItem.accessibilityValue = chat.sessionDisplayName
             var rail: [UIBarButtonItem] = []
             if usesCustomBack { rail.append(keepsVisible(backItem)) }
@@ -807,14 +807,17 @@ extension ChatViewController {
     }
 
     /// The session slot's avatar on the rail.
-    func railSessionImage(palette: ThemePalette) -> UIImage {
+    func railSessionImage() -> UIImage {
         switch assistantIdentityPresentation {
         case .agent:
-            AgentIconRenderer.render(value: session?.launch?.agentIcon, size: AgentIconSizingPolicy.titleTextMinimum)
-                .withRenderingMode(.alwaysOriginal)
+            EntityIcon.image(
+                .agent(session?.launch?.agentIcon),
+                size: AgentIconSizingPolicy.titleTextMinimum,
+                assets: connection.iconAssetCache
+            )
+            .withRenderingMode(.alwaysOriginal)
         case .globalAvatar:
-            PiAvatarRenderer.render(size: 22, themeID: AppRootEnvironment.near(self)?.themeStore.activeThemeID)
-                .withRenderingMode(.alwaysOriginal)
+            EntityIcon.image(.pi, size: 22).withRenderingMode(.alwaysOriginal)
         }
     }
 }

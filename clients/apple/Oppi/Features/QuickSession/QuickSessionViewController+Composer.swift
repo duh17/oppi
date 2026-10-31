@@ -51,7 +51,7 @@ extension QuickSessionViewController: ChatComposerSource {
 
     private func composerActionRow(colors: ComposerThemeColors) -> ComposerActionRow {
         let presentation = model.modelPresentation
-        composerIcons.prepare(agents: model.availableAgents, themeID: root.themeStore.activeThemeID)
+        composerIcons.prepare(assets: model.selectedServerIconAssetCache)
         let toolbar = ComposerActionRow.sessionToolbar(
             modelTitle: shortModelName(model.effectiveModelId ?? presentation.pillText),
             modelProvider: presentation.pillProvider,
@@ -179,51 +179,23 @@ extension QuickSessionViewController: ChatComposerSource {
     }
 }
 
-/// Rendered Agent and Pi icons for Quick Session's composer, keyed by Agent,
-/// icon, and size. The composer rebuilds its action row and Agent list on every
-/// update, and each Genmoji or emoji icon is a raster: reuse the pixels until
-/// the server's Agent list or the theme changes.
+/// Rendered Agent and Pi icons for Quick Session's composer. The pixels are
+/// `EntityIcon`'s; this holds the server's icon cache the composer draws with,
+/// so a Genmoji Agent has its artwork in the action row and its popover.
 @MainActor
 final class QuickSessionComposerIconCache {
-    private struct AgentIconKey: Hashable {
-        let agentID: String
-        let icon: IconChoice
-        let size: CGFloat
-    }
+    private weak var assets: IconAssetCache?
 
-    private var agents: [AgentDefinitionSummary] = []
-    private var themeID: ThemeID?
-    private var agentIcons: [AgentIconKey: UIImage] = [:]
-    private var piAvatars: [CGFloat: UIImage] = [:]
-
-    /// Drops rasters the new Agent list or theme invalidates. `AgentIconRenderer`
-    /// tints with the palette blue and `PiAvatarRenderer` with the palette
-    /// foreground, so a theme change repaints both.
-    func prepare(agents: [AgentDefinitionSummary], themeID: ThemeID) {
-        if agents != self.agents {
-            self.agents = agents
-            agentIcons.removeAll()
-        }
-        if themeID != self.themeID {
-            self.themeID = themeID
-            agentIcons.removeAll()
-            piAvatars.removeAll()
-        }
+    func prepare(assets: IconAssetCache?) {
+        self.assets = assets
     }
 
     func icon(for agent: AgentDefinitionSummary, size: CGFloat) -> UIImage {
-        let key = AgentIconKey(agentID: agent.id, icon: agent.icon, size: size)
-        if let cached = agentIcons[key] { return cached }
-        let image = AgentIconRenderer.render(value: agent.icon, size: size)
-        agentIcons[key] = image
-        return image
+        EntityIcon.image(.agent(agent.icon), size: size, assets: assets)
     }
 
     /// The one Pi mark, at each size it is shown.
     func piAvatar(size: CGFloat) -> UIImage {
-        if let cached = piAvatars[size] { return cached }
-        let image = PiAvatarRenderer.render(size: size)
-        piAvatars[size] = image
-        return image
+        EntityIcon.image(.pi, size: size)
     }
 }

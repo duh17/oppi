@@ -149,10 +149,13 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
     override func inputs(of item: Item) -> AnyHashable {
         guard case .saved(let id) = item, let agent = agents.first(where: { $0.id == id }) else { return AnyHashable(0) }
         // The row draws the age as text ("2h ago"), which changes without the
-        // agent changing: the string is the input, so a pass redraws it.
+        // agent changing: the string is the input, so a pass redraws it. The icon's
+        // load generation is an input too: a row that drew an Agent's fallback
+        // symbol redraws when its Genmoji arrives.
         return AnyHashable([
             AnyHashable(agent.name), AnyHashable(agent.version), AnyHashable(agent.description),
             AnyHashable(agent.icon), AnyHashable(agent.updatedAt.relativeString()),
+            AnyHashable(EntityIcon.loadGeneration),
         ])
     }
 
@@ -189,6 +192,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
             ) { [weak self] in
                 self?.openAgent(agent.id)
             }
+            let assets = root.coordinator.activeConnection.iconAssetCache
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 4, leading: 0, bottom: 4, trailing: 0)) {
                 let badge = ControlStatusPill()
                 badge.apply(
@@ -198,7 +202,11 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
                     palette: palette,
                     monospacedDigit: true
                 )
-                let icon = UIImageView(image: AgentIconRenderer.render(value: agent.icon, size: 22))
+                let icon = UIImageView(image: EntityIcon.image(
+                    .agent(agent.icon),
+                    size: 22,
+                    assets: assets
+                ))
                 icon.contentMode = .center
                 icon.widthAnchor.constraint(equalToConstant: 30).isActive = true
                 icon.heightAnchor.constraint(equalToConstant: 30).isActive = true

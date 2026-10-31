@@ -212,29 +212,23 @@ private final class UsageMetricBox: UIControl {
 
 // MARK: - Provider glyph
 
-/// A provider's logo as a template image, or its monogram when there is no logo.
+/// A provider's mark in its brand color: the logo, or its monogram when it has
+/// none. `EntityIcon` draws it, the same mark the model pills and rows show.
 final class UsageProviderGlyphView: UIView {
     private let imageView = UIImageView()
-    private let monogram = UILabel()
     private let side: CGFloat
 
     init(side: CGFloat) {
         self.side = side
         super.init(frame: .zero)
         imageView.contentMode = .scaleAspectFit
-        monogram.textAlignment = .center
-        monogram.adjustsFontSizeToFitWidth = true
-        for view in [imageView, monogram] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
-            NSLayoutConstraint.activate([
-                view.topAnchor.constraint(equalTo: topAnchor),
-                view.bottomAnchor.constraint(equalTo: bottomAnchor),
-                view.leadingAnchor.constraint(equalTo: leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: trailingAnchor),
-            ])
-        }
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(imageView)
         NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
             widthAnchor.constraint(equalToConstant: side),
             heightAnchor.constraint(equalToConstant: side),
         ])
@@ -246,23 +240,12 @@ final class UsageProviderGlyphView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func configure(provider: String?, colors: UsageColors) {
-        let tint = UIColor(providerIconTint(colors.palette.comment, palette: colors.palette))
+    func configure(provider: String?) {
         guard let provider = provider.flatMap({ $0.isEmpty ? nil : $0 }) else {
             imageView.image = nil
-            monogram.text = nil
             return
         }
-        if let asset = providerLogoAssetName(provider), let image = UIImage(named: asset) {
-            imageView.image = image.withRenderingMode(.alwaysTemplate)
-            imageView.tintColor = tint
-            monogram.text = nil
-        } else {
-            imageView.image = nil
-            monogram.text = providerMonogram(provider)
-            monogram.font = .systemFont(ofSize: max(8, side * 0.8), weight: .heavy)
-            monogram.textColor = tint
-        }
+        imageView.image = EntityIcon.image(.provider(provider), size: side)
     }
 }
 
@@ -356,7 +339,7 @@ final class UsageModelRowView: UIView {
         let share = total > 0 ? max(0, item.value(for: metric) / total) : 0
         let value = metric.formatted(item.value(for: metric))
         let percent = "\(Int((share * 100).rounded()))%"
-        glyph.configure(provider: item.provider, colors: colors)
+        glyph.configure(provider: item.provider)
         nameLabel.text = item.displayName
         nameLabel.textColor = accent
         providerLabel.text = item.providerDisplayName
@@ -507,7 +490,7 @@ final class UsageSessionRowView: UIView {
     func configure(_ session: StatsDailySession, colors: UsageColors) {
         let model = session.model ?? "unknown"
         let name = session.name ?? "Session \(String(session.id.prefix(8)))"
-        glyph.configure(provider: modelProviderKey(model), colors: colors)
+        glyph.configure(provider: modelProviderKey(model))
         nameLabel.text = name
         nameLabel.textColor = colors.fg
         modelLabel.text = displayModelName(model)

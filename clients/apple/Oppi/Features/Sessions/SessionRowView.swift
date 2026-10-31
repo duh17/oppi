@@ -795,7 +795,7 @@ final class SessionRowStyle {
     /// The provider's 11 pt mark.
     func providerIcon(_ provider: String) -> UIImage {
         if let icon = providerIcons[provider] { return icon }
-        let icon = ComposerProviderIconRenderer.image(provider: provider, size: 11, colors: colors)
+        let icon = EntityIcon.image(.provider(provider), size: 11)
         providerIcons[provider] = icon
         return icon
     }

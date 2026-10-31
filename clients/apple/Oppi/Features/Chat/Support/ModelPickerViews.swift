@@ -239,11 +239,7 @@ final class ModelPickerHeaderView: UICollectionReusableView {
         let name = providerDisplayLabel(provider)
         configureText(name, palette: palette)
         iconView.isHidden = false
-        iconView.image = ComposerProviderIconRenderer.image(
-            provider: provider,
-            size: 11,
-            colors: ComposerThemeColors(palette: palette)
-        )
+        iconView.image = EntityIcon.image(.provider(provider), size: 11)
         pills.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for badge in badges {
             let pill = InsetLabel(insets: UIEdgeInsets(top: 3, left: 7, bottom: 3, right: 7), capsule: true)

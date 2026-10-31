@@ -148,7 +148,7 @@ final class SessionGridBadgeView: UIView {
 
         switch presentation {
         case .agent(.genmoji(let assetId, _)):
-            imageView.image = AgentIconRenderer.render(value: .defaultValue, size: 36)
+            imageView.image = EntityIcon.image(.agent(nil), size: 36, assets: iconAssetCache)
             guard let iconAssetCache else { return }
             currentGenmojiAssetID = assetId
             loadTask = Task { @MainActor [weak self, iconAssetCache] in
@@ -165,7 +165,7 @@ final class SessionGridBadgeView: UIView {
             }
 
         case .agent:
-            let image = AgentIconRenderer.render(value: agentIcon, size: 36)
+            let image = EntityIcon.image(.agent(agentIcon), size: 36, assets: iconAssetCache)
             Self.imageCache.setObject(image, forKey: cacheKey as NSString)
             imageView.image = image
 

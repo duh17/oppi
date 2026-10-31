@@ -61,6 +61,7 @@ final class QuickSessionViewController: UIViewController {
     }
 
     private var setupTask: Task<Void, Never>?
+    private var iconLoadObserver: NSObjectProtocol?
     private var observedFileIndexPaths: [String]??
     /// Swipe down to close, as a modal's down swipe: a draft or a viewport
     /// that is scrolled down takes the swipe to scroll back up instead.
@@ -111,6 +112,24 @@ final class QuickSessionViewController: UIViewController {
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (controller: Self, _: UITraitCollection) in
             controller.setNeedsUpdateProperties()
             controller.composer.setNeedsUpdateProperties()
+        }
+        // The action row's Agent pill and its popover draw the Agents' artwork:
+        // a Genmoji that arrives after the first pass redraws them.
+        iconLoadObserver = NotificationCenter.default.addObserver(
+            forName: .oppiEntityIconDidLoad,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.setNeedsUpdateProperties()
+                self?.composer.setNeedsUpdateProperties()
+            }
+        }
+    }
+
+    isolated deinit {
+        if let iconLoadObserver {
+            NotificationCenter.default.removeObserver(iconLoadObserver)
         }
     }
 

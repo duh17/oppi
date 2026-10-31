@@ -1,36 +1,7 @@
 import UIKit
 
 // What the UIKit composer takes from the SwiftUI theme types: the palette's
-// colors and provider icon tints.
-
-@MainActor
-enum ComposerProviderIconRenderer {
-    static func image(provider: String, size: CGFloat, colors: ComposerThemeColors) -> UIImage {
-        let palette = ThemeRuntimeState.currentPalette()
-        // `ProviderColor` owns the provider aliases (`openai-codex` reads as OpenAI).
-        let tint = UIColor(providerIconTint(
-            .init(uiColor: ProviderColor.color(forProvider: provider, palette: palette)),
-            palette: palette
-        ))
-        if let assetName = providerLogoAssetName(provider),
-           let asset = UIImage(named: assetName) {
-            return asset.withTintColor(tint, renderingMode: .alwaysOriginal)
-        }
-        let mark = providerMonogram(provider) as NSString
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-        return renderer.image { _ in
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: max(8, size * 0.8), weight: .heavy),
-                .foregroundColor: tint,
-            ]
-            let textSize = mark.size(withAttributes: attributes)
-            mark.draw(
-                at: CGPoint(x: (size - textSize.width) / 2, y: (size - textSize.height) / 2),
-                withAttributes: attributes
-            )
-        }
-    }
-}
+// colors.
 
 extension ComposerThemeColors {
     init(palette: ThemePalette) {

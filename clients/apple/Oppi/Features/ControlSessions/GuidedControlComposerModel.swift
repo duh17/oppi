@@ -95,6 +95,9 @@ final class GuidedControlComposerModel {
 
     var workspaces: [Workspace] { connection.workspaceStore.workspaces }
 
+    /// Loads the selected server's Genmoji workspace icons.
+    var selectedServerIconAssetCache: IconAssetCache? { connection.iconAssetCache }
+
     var reviewCommentPresentation: GuidedControlSessionComposerReviewComments.Presentation {
         GuidedControlSessionComposerReviewComments.presentation(
             stagedCount: configuration.stagedComments?.stagedCount ?? 0

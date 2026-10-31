@@ -1,12 +1,11 @@
 import UIKit
 
-/// A saved workspace or Agent icon: an SF Symbol in
-/// the theme blue, an emoji, or a Genmoji the server stores, which loads
-/// through the server's icon cache and shows the default symbol until it
-/// arrives. A sandbox workspace adds the lock mark.
-/// Also the Pi mark, and plain symbols for the other pills. Quick Session's
-/// pills and pickers, the chat title, the empty chat, and the workspace
-/// sidebar's rows draw their icons with it.
+/// A saved workspace or Agent icon: an SF Symbol in the theme blue, an emoji, or
+/// a Genmoji the server stores, a sandbox workspace's lock mark, the Pi mark, and
+/// plain symbols for the other pills. `EntityIcon` owns the pixels and their
+/// fallbacks; this view places them in its frame and redraws when artwork lands.
+/// Quick Session's pills and pickers, the chat title, the empty chat, and the
+/// workspace sidebar's rows draw their icons with it.
 @MainActor
 final class IconChoiceUIView: UIView {
     enum Content: Equatable {
@@ -17,26 +16,15 @@ final class IconChoiceUIView: UIView {
         enum Purpose: Equatable {
             case agent
             case workspace
-
-            var defaultSymbolName: String {
-                switch self {
-                case .agent: "person.crop.circle"
-                case .workspace: "square.grid.2x2"
-                }
-            }
         }
     }
 
     private let size: CGFloat
     private let frameSize: CGFloat
     private let imageView = UIImageView()
-    private let textLabel = UILabel()
-    private let sandboxMark = UIImageView()
     private var content: Content?
-    private var colors = ComposerThemeColors.placeholder
     private weak var assetCache: IconAssetCache?
-    private var loadTask: Task<Void, Never>?
-    private var loadedAssetId: String?
+    private var iconLoadObserver: NSObjectProtocol?
 
     init(size: CGFloat, frameSize: CGFloat) {
         self.size = size
@@ -45,33 +33,33 @@ final class IconChoiceUIView: UIView {
         isUserInteractionEnabled = false
         isAccessibilityElement = false
         imageView.contentMode = .center
-        textLabel.textAlignment = .center
-        sandboxMark.contentMode = .center
-        for view in [imageView, textLabel] as [UIView] {
-            view.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(view)
-            NSLayoutConstraint.activate([
-                view.leadingAnchor.constraint(equalTo: leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: trailingAnchor),
-                view.topAnchor.constraint(equalTo: topAnchor),
-                view.bottomAnchor.constraint(equalTo: bottomAnchor),
-            ])
-        }
-        let markSize = max(11, frameSize * 0.34)
-        sandboxMark.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(sandboxMark)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(imageView)
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: frameSize),
             heightAnchor.constraint(equalToConstant: frameSize),
-            sandboxMark.widthAnchor.constraint(equalToConstant: markSize),
-            sandboxMark.heightAnchor.constraint(equalToConstant: markSize),
-            sandboxMark.trailingAnchor.constraint(equalTo: trailingAnchor, constant: frameSize * 0.05),
-            sandboxMark.bottomAnchor.constraint(equalTo: bottomAnchor, constant: frameSize * 0.05),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        iconLoadObserver = NotificationCenter.default.addObserver(
+            forName: .oppiEntityIconDidLoad,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.render() }
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    isolated deinit {
+        if let iconLoadObserver {
+            NotificationCenter.default.removeObserver(iconLoadObserver)
+        }
+    }
 
     /// The size the icon's content takes in its frame, following Dynamic Type.
     private var contentSize: CGFloat {
@@ -82,95 +70,34 @@ final class IconChoiceUIView: UIView {
         )
     }
 
+    /// `colors` is the presenter's theme and no longer changes an icon's pixels:
+    /// `EntityIcon` draws with the theme the app is on, like every other icon.
     func apply(_ content: Content, colors: ComposerThemeColors, assetCache: IconAssetCache? = nil) {
-        let changed = content != self.content || assetCache !== self.assetCache
         self.content = content
-        self.colors = colors
         self.assetCache = assetCache
         render()
-        if changed { loadGenmojiIfNeeded() }
     }
 
     private func render() {
         guard let content else { return }
-        textLabel.isHidden = true
-        imageView.isHidden = false
         imageView.contentMode = .center
-        sandboxMark.isHidden = true
         switch content {
         case .piAvatar:
-            imageView.contentMode = .scaleAspectFit
-            imageView.image = PiAvatarRenderer.render(size: frameSize * 2)
+            imageView.image = EntityIcon.image(.pi, size: frameSize)
         case .symbol(let name, let color, let style, let weight):
             imageView.image = UIImage.scaledSymbol(name, style: style, weight: weight, color: color)
         case .choice(let choice, let purpose, let sandbox):
-            sandboxMark.isHidden = !sandbox
-            if sandbox { sandboxMark.image = sandboxImage() }
-            switch AgentIconContent.resolve(choice) {
-            case .symbol(let name):
-                imageView.image = symbol(name)
-            case .text(let emoji):
-                imageView.isHidden = true
-                textLabel.isHidden = false
-                textLabel.text = emoji
-                textLabel.font = .systemFont(ofSize: contentSize)
-            case .genmoji(let assetId, _):
-                if loadedAssetId == assetId, let image = imageView.image, image.isSymbolImage == false {
-                    imageView.contentMode = .scaleAspectFit
-                } else {
-                    imageView.image = symbol(purpose.defaultSymbolName)
-                }
-            case .fallback:
-                imageView.image = symbol(purpose.defaultSymbolName)
+            let entity: IconEntity = switch purpose {
+            case .agent: .agent(choice)
+            case .workspace: .workspace(choice, sandbox: sandbox)
             }
-        }
-    }
-
-    private func symbol(_ name: String) -> UIImage? {
-        UIImage(
-            systemName: name,
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: contentSize)
-        )?.withTintColor(colors.blue, renderingMode: .alwaysOriginal)
-    }
-
-    private func loadGenmojiIfNeeded() {
-        loadTask?.cancel()
-        loadTask = nil
-        guard case .choice(let choice, _, _) = content,
-              case .genmoji(let assetId, _) = AgentIconContent.resolve(choice),
-              let assetCache else {
-            loadedAssetId = nil
-            return
-        }
-        guard loadedAssetId != assetId else { return }
-        loadedAssetId = nil
-        let renderSize = contentSize * 2
-        loadTask = Task { [weak self] in
-            guard let image = try? await assetCache.image(assetId: assetId, size: renderSize),
-                  !Task.isCancelled, let self else { return }
-            self.loadedAssetId = assetId
-            self.imageView.contentMode = .scaleAspectFit
-            self.imageView.image = image
-        }
-    }
-
-    private func sandboxImage() -> UIImage {
-        let markSize = max(11, frameSize * 0.34)
-        let colors = colors
-        return UIGraphicsImageRenderer(size: CGSize(width: markSize, height: markSize)).image { _ in
-            let rect = CGRect(x: 0, y: 0, width: markSize, height: markSize)
-            colors.orange.setFill()
-            UIBezierPath(ovalIn: rect).fill()
-            colors.bg.setStroke()
-            let ring = UIBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
-            ring.lineWidth = 1
-            ring.stroke()
-            let lock = UIImage(
-                systemName: "lock.fill",
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: markSize * 0.52, weight: .bold)
-            )?.withTintColor(colors.bg, renderingMode: .alwaysOriginal)
-            let lockSize = lock?.size ?? .zero
-            lock?.draw(at: CGPoint(x: (markSize - lockSize.width) / 2, y: (markSize - lockSize.height) / 2))
+            // A sandbox workspace's mark sits in the frame's corner, so that icon
+            // is drawn in the whole frame; the others are centered content.
+            imageView.image = EntityIcon.image(
+                entity,
+                size: sandbox ? frameSize : contentSize,
+                assets: assetCache
+            )
         }
     }
 }

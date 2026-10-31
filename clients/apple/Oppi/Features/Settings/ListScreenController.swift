@@ -476,7 +476,8 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
             }, for: .valueChanged)
         }
         installDataSource()
-        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: .oppiThemeDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(redrawRows), name: .oppiThemeDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(redrawRows), name: .oppiEntityIconDidLoad, object: nil)
         setNeedsUpdateProperties()
     }
 
@@ -514,7 +515,9 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         if loadPolicy != .none { pullToRefreshControl.endRefreshing() }
     }
 
-    @objc private func themeDidChange() { setNeedsUpdateProperties() }
+    /// A theme change repaints the rows, and so does artwork arriving: a row that
+    /// drew an Agent's fallback symbol redraws once its Genmoji is decoded.
+    @objc private func redrawRows() { setNeedsUpdateProperties() }
 
     override func updateProperties() {
         super.updateProperties()

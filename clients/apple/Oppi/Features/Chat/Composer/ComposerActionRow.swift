@@ -102,7 +102,7 @@ extension ComposerAction {
     ) -> ComposerAction {
         ComposerAction(
             id: "session.toolbar.model",
-            icon: provider.map { .image(ComposerProviderIconRenderer.image(provider: $0, size: 11, colors: colors)) },
+            icon: provider.map { .image(EntityIcon.image(.provider($0), size: 11)) },
             title: title,
             tint: colors.fg,
             accessibilityLabel: "Model",
@@ -185,14 +185,14 @@ extension ComposerAction {
 
     static func workspace(
         title: String,
-        icon: UIImage?,
+        icon: UIImage,
         identifier: String,
         menu: UIMenu,
         colors: ComposerThemeColors
     ) -> ComposerAction {
         ComposerAction(
             id: identifier,
-            icon: icon.map { .image($0) } ?? .symbol("folder"),
+            icon: .image(icon),
             title: title,
             tint: colors.fg,
             accessibilityLabel: "Workspace picker, current workspace \(title)",

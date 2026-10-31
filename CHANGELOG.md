@@ -135,6 +135,8 @@ Example:
 
 ### Fixed
 
+- **Client:** An Agent's Genmoji now shows: the Agents list, the Agent's own page, Quick Session's Agent picker, and the rail avatar beside a chat draw the Agent's emoji, symbol, or Genmoji instead of falling back to the default person symbol. A workspace with no icon shows the same grid symbol everywhere (the workspace button above the Agents and Schedules composers showed a folder).
+- **Client:** **Usage** draws provider marks in their brand colors, the same marks the model pills and rows use, instead of a grey logo or letter.
 - **Server:** In a long durable session, history behind a message with a large pasted image (a full-resolution screenshot of a few MB) loads again: scrolling up stopped at that message, and Session Outline taps on anything older did nothing.
 - **Client:** When the server can't deliver earlier messages for **Show Earlier** or a Session Outline jump, the chat says so instead of doing nothing.
 - **Client:** A message you send and then leave the chat before the server confirms it (common for a Quick Session's first message, or on a slow network) no longer comes back as that chat's draft when you reopen it, and review comments sent with it no longer stay staged and ride along with your next message.
