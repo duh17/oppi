@@ -566,6 +566,9 @@ run_apple_gate() {
   # 0.6 s, so it runs here for every Apple-lane push (the build phase's architecture check
   # only re-runs when its watched app sources change, not when a test does).
   (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/ax-id-guard.ts) || return $?
+  # The edit-entry scan reads app sources the build phase's stamp does not watch, so a change
+  # to the guard or to one reader's bar would otherwise pass unpushed. About 0.1 s.
+  (cd "$REPO_ROOT" && run_without_git_local_env bun scripts/document-edit-guard.ts) || return $?
   local scheme="OppiUnitTests"
   if [[ "$APPLE_MODE" == "all" ]]; then
     scheme="Oppi"

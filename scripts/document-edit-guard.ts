@@ -2,268 +2,104 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-layer-rules.mjs";
 
 /**
  * Document edit-entry guard for the iOS app target (clients/apple/Oppi and its
  * Debug-only clients/apple/OppiDebugHarness).
  *
  * Every document's edit entry has one owner, `DocumentEditOwner`
- * (`clients/apple/Oppi/Features/DocumentEditing`). It decides whether a reader
- * opens our editor (a pencil), whether it offers an Oppi session instead (a "…"
- * holding Edit with Session), and it owns the tagged read, the draft recovery,
- * and the editor page. A screen that builds its own edit machinery forks the
- * rule: two readers disagree about what is editable, or about which bar item
- * opens what.
- *
- * Two rules, one plain source scan, no simulator. Comments are stripped; string
- * literals are kept, because the pencil rule is about a symbol name.
- *
- *  1. Edit machinery stays in the owner. Outside
- *     `Features/DocumentEditing/`, `WorkspaceFileEditorViewController(`,
- *     `WorkspaceFileEditSession(`, `WorkspaceFileEditBarItems(`,
- *     `fileEditingCapability(`, and `DocumentEditLabels` are disallowed. Tests
- *     are not scanned: they build these on purpose.
- *  2. One pencil. `"pencil"` as a symbol outside `Features/DocumentEditing/`
- *     fails unless the file is in `allowed` below, so a reader with the edit
- *     entry (a file that builds `FullScreenCodeViewController(` or
- *     `FileViewerViewController(`) cannot grow a second, hand-rolled pencil.
- *     The exceptions are the form Edit buttons and the two non-edit pencils,
- *     each named with the reason it is not a document entry. A file's count is
- *     its cap, so a new pencil in an allowed file still fails.
+ * (`clients/apple/Oppi/Features/DocumentEditing`). Outside that folder this scan
+ * fails on the machinery of an edit entry — the session, editor, page, bar
+ * items, recovery, conflict review, banner, labels, the capability and the
+ * editor's read — and on a pencil symbol (`pencil`, `pencil.circle`,
+ * `square.and.pencil`, `systemItem: .edit`) that no `allowed` entry names with
+ * its reason. A file's count is its cap, so a new pencil in an allowed file
+ * still fails. Tests are not scanned: they build these on purpose.
  *
  * Policy: dev/architecture-client.md, "Document editing".
- *
- *   bun scripts/document-edit-guard.ts            check
  */
-
-type Rule = {
-  name: string;
-  pattern: RegExp;
-};
-
-type Hit = { file: string; line: number; rule: string };
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const scanRoots = ["clients/apple/Oppi", "clients/apple/OppiDebugHarness"].map((dir) => join(repoRoot, dir));
 const ownerDirectory = "clients/apple/Oppi/Features/DocumentEditing/";
+const scanRoots = ["clients/apple/Oppi", "clients/apple/OppiDebugHarness"].map((dir) => join(repoRoot, dir));
 const guide = "dev/architecture-client.md, section \"Document editing\"";
 
-/** The owner and everything it is allowed to build. */
-const rules: Rule[] = [
-  {
-    name: "WorkspaceFileEditorViewController(",
-    pattern: /\bWorkspaceFileEditorViewController\s*\(/g,
-  },
-  {
-    name: "WorkspaceFileEditSession(",
-    pattern: /\bWorkspaceFileEditSession\s*\(/g,
-  },
-  {
-    name: "WorkspaceFileEditBarItems(",
-    pattern: /\bWorkspaceFileEditBarItems\s*\(/g,
-  },
-  {
-    name: "fileEditingCapability(",
-    pattern: /\bfileEditingCapability\s*\(/g,
-  },
-  {
-    name: "DocumentEditLabels",
-    pattern: /\bDocumentEditLabels\b/g,
-  },
-  {
-    name: "\"pencil\" symbol",
-    pattern: /"pencil"/g,
-  },
+/** Rule name, matcher, and whether the symbol lives in a string (raw lines). */
+const rules: [name: string, pattern: RegExp, rawLines?: boolean][] = [
+  ["WorkspaceFileEditorViewController(", /\bWorkspaceFileEditorViewController\s*\(/g],
+  ["WorkspaceFileEditSession(", /\bWorkspaceFileEditSession\s*\(/g],
+  ["WorkspaceFileEditBarItems(", /\bWorkspaceFileEditBarItems\s*\(/g],
+  ["WorkspaceFileEditRecovery", /\bWorkspaceFileEditRecovery\b/g],
+  ["WorkspaceFileConflictReviewViewController(", /\bWorkspaceFileConflictReviewViewController\s*\(/g],
+  ["WorkspaceFileEditBannerView(", /\bWorkspaceFileEditBannerView\s*\(/g],
+  ["DocumentEditLabels", /\bDocumentEditLabels\b/g],
+  ["fileEditingCapability(", /\bfileEditingCapability\s*\(/g],
+  ["readFileForEditing(", /\breadFileForEditing\s*\(/g],
+  ["edit pencil", /"pencil"|"pencil\.circle"|"square\.and\.pencil"|systemItem:\s*\.edit\b/, true],
 ];
 
+const O = "clients/apple/Oppi/";
 /**
- * Pencils and machinery that are not a document edit entry, per file with a cap
- * and a reason. The cap is that file's count: a new pencil in a listed file
- * still fails. An entry nobody needs is deleted.
+ * Machinery and pencils that are not a document's edit entry, per file with a
+ * cap and a reason. The cap is that file's count; an entry nobody needs goes.
  */
-const allowed: { file: string; rule: string; count: number; reason: string }[] = [
-  {
-    file: "clients/apple/Oppi/Core/Networking/APIClient.swift",
-    rule: "fileEditingCapability(",
-    count: 3,
-    reason: "The transport implements and checks the server's editing capability; the owner decides whether a document is editable.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/Agents/AgentDetailViewController.swift",
-    rule: "\"pencil\" symbol",
-    count: 1,
-    reason: "The Agent form's Edit button opens the editing form, not a document.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/Schedules/ScheduleDetailViewController.swift",
-    rule: "\"pencil\" symbol",
-    count: 2,
-    reason: "The schedule form's Edit button (image and action open the same form), not a document.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/Chat/ChatViewController+Bars.swift",
-    rule: "\"pencil\" symbol",
-    count: 1,
-    reason: "Rename Session opens the title form.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalViewController.swift",
-    rule: "\"pencil\" symbol",
-    count: 1,
-    reason: "Edit Host opens the host form.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStashContent.swift",
-    rule: "\"pencil\" symbol",
-    count: 1,
-    reason: "Edit review comment edits the staged comment, not a file.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/Chat/Timeline/QuietTimelineProjection.swift",
-    rule: "\"pencil\" symbol",
-    count: 1,
-    reason: "The write tool's own SF Symbol, drawn as a tool icon.",
-  },
-  {
-    file: "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift",
-    rule: "\"pencil\" symbol",
-    count: 1,
-    reason: "The conflict review's Keep Editing button closes the sheet; its diff reader is not an edit entry.",
-  },
-  {
-    file: "clients/apple/OppiDebugHarness/FullScreenReviewCommentHarnessView.swift",
-    rule: "\"pencil\" symbol",
-    count: 1,
-    reason: "The reader harness's stand-in edit item; the harness hosts the reader without a document.",
-  },
+const allowed: [file: string, rule: string, count: number, reason: string][] = [
+  [O + "Core/Networking/APIClient.swift", "fileEditingCapability(", 3,
+    "The transport implements and checks the capability."],
+  [O + "Core/Networking/APIClient.swift", "readFileForEditing(", 2,
+    "The transport's own editor read, which the owner reaches through its backend."],
+  [O + "Features/Agents/AgentDetailViewController.swift", "edit pencil", 1,
+    "The Agent form's Edit button opens the editing form, not a document."],
+  [O + "Features/Schedules/ScheduleDetailViewController.swift", "edit pencil", 2,
+    "The schedule form's Edit button (image and action): a form, not a document."],
+  [O + "Features/Chat/ChatViewController+Bars.swift", "edit pencil", 1,
+    "Rename Session opens the title form."],
+  [O + "Features/SSHTerminal/SSHTerminalViewController.swift", "edit pencil", 1,
+    "Edit Host opens the host form."],
+  [O + "Features/Chat/ReviewComments/ReviewCommentStashContent.swift", "edit pencil", 1,
+    "Edit review comment edits the staged comment, not a file."],
+  [O + "Features/Chat/Timeline/QuietTimelineProjection.swift", "edit pencil", 1,
+    "The write tool's own SF Symbol, drawn as a tool icon."],
+  [O + "Features/Chat/Support/WorkspaceContextBar.swift", "edit pencil", 1,
+    "New Session's compose icon beside the selection count."],
+  [O + "Features/Sessions/SessionListCollection.swift", "edit pencil", 1,
+    "The Message capsule's compose icon."],
+  [O + "Features/Review/WorkspaceReviewFileDetailViewController.swift", "edit pencil", 1,
+    "New Session's compose icon; the file's own entry comes from the viewer."],
+  [O + "Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift", "edit pencil", 2,
+    "The save status glyph and the conflict review's Keep Editing button."],
 ];
-
-/**
- * The file with its comments blanked and its line breaks kept, so line numbers
- * still point at the source. String literals survive: the pencil rule reads one.
- */
-function stripSwiftComments(source: string): string {
-  let output = "";
-  let index = 0;
-  let state: "code" | "line-comment" | "block-comment" | "string" | "multiline-string" = "code";
-  let blockCommentDepth = 0;
-
-  while (index < source.length) {
-    const char = source[index];
-    const next = source[index + 1] ?? "";
-    const nextTwo = source[index + 2] ?? "";
-
-    if (state === "line-comment") {
-      if (char === "\n") {
-        output += "\n";
-        state = "code";
-      } else {
-        output += " ";
-      }
-      index += 1;
-      continue;
-    }
-
-    if (state === "block-comment") {
-      if (char === "/" && next === "*") {
-        blockCommentDepth += 1;
-        output += "  ";
-        index += 2;
-        continue;
-      }
-      if (char === "*" && next === "/") {
-        blockCommentDepth -= 1;
-        output += "  ";
-        index += 2;
-        if (blockCommentDepth === 0) state = "code";
-        continue;
-      }
-      output += char === "\n" ? "\n" : " ";
-      index += 1;
-      continue;
-    }
-
-    if (state === "multiline-string") {
-      output += char === "\n" ? "\n" : char;
-      if (char === '"' && next === '"' && nextTwo === '"') {
-        output += '""';
-        index += 3;
-        state = "code";
-        continue;
-      }
-      index += 1;
-      continue;
-    }
-
-    if (state === "string") {
-      output += char;
-      if (char === "\\") {
-        output += next;
-        index += 2;
-        continue;
-      }
-      if (char === '"') state = "code";
-      index += 1;
-      continue;
-    }
-
-    if (char === "/" && next === "/") {
-      output += "  ";
-      index += 2;
-      state = "line-comment";
-      continue;
-    }
-    if (char === "/" && next === "*") {
-      output += "  ";
-      index += 2;
-      state = "block-comment";
-      blockCommentDepth = 1;
-      continue;
-    }
-    if (char === '"' && next === '"' && nextTwo === '"') {
-      output += '"""';
-      index += 3;
-      state = "multiline-string";
-      continue;
-    }
-    if (char === '"') {
-      output += char;
-      index += 1;
-      state = "string";
-      continue;
-    }
-
-    output += char;
-    index += 1;
-  }
-
-  return output;
-}
 
 function walkSwiftFiles(root: string): string[] {
   if (!existsSync(root)) return [];
-  const files: string[] = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
+  return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     const path = join(root, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...walkSwiftFiles(path));
-    } else if (entry.isFile() && entry.name.endsWith(".swift")) {
-      files.push(path);
-    }
-  }
-  return files;
+    if (entry.isDirectory()) return walkSwiftFiles(path);
+    return entry.isFile() && entry.name.endsWith(".swift") ? [path] : [];
+  });
 }
 
-function scan(): Hit[] {
-  const hits: Hit[] = [];
+function scan(): { file: string; line: number; rule: string }[] {
+  const hits: { file: string; line: number; rule: string }[] = [];
   for (const absolute of scanRoots.flatMap(walkSwiftFiles)) {
     const file = relative(repoRoot, absolute);
     if (file.startsWith(ownerDirectory)) continue;
-    const source = stripSwiftComments(readFileSync(absolute, "utf8"));
-    for (const { name, pattern } of rules) {
-      for (const match of source.matchAll(pattern)) {
-        const line = source.slice(0, match.index).split("\n").length;
-        hits.push({ file, line, rule: name });
+    const source = readFileSync(absolute, "utf8");
+    const stripped = stripSwiftCommentsAndStrings(source);
+    for (const [name, pattern, rawLines] of rules) {
+      if (rawLines) {
+        // A symbol lives in a string literal, which the stripper blanks: read
+        // the raw lines and skip the ones that are comment.
+        source.split("\n").forEach((text, index) => {
+          const code = text.trim();
+          const comment = code.startsWith("//") || code.startsWith("*") || code.startsWith("/*");
+          if (!comment && text.match(pattern)) hits.push({ file, line: index + 1, rule: name });
+        });
+        continue;
+      }
+      for (const match of stripped.matchAll(pattern)) {
+        hits.push({ file, line: stripped.slice(0, match.index).split("\n").length, rule: name });
       }
     }
   }
@@ -271,46 +107,25 @@ function scan(): Hit[] {
 }
 
 const hits = scan();
-const failures: string[] = [];
-
 const cap = (file: string, rule: string) =>
-  allowed.find((entry) => entry.file === file && entry.rule === rule)?.count ?? 0;
-
-for (const hit of hits) {
-  if (cap(hit.file, hit.rule) === 0) {
-    failures.push(
-      `- ${hit.file}:${hit.line}: ${hit.rule} outside DocumentEditOwner (${guide}). `
-        + "A reader's edit entry is the owner's pencil; a form's Edit button needs an entry in the guard's allowed list.",
-    );
-  }
-}
-
-for (const entry of allowed) {
-  const fileHits = hits.filter((hit) => hit.file === entry.file && hit.rule === entry.rule);
-  if (fileHits.length > entry.count) {
-    failures.push(
-      `- ${entry.file}: ${entry.rule} count ${fileHits.length} exceeds the allowed ${entry.count} — `
-        + `${entry.reason} A new one belongs to DocumentEditOwner.`,
-    );
-    for (const hit of fileHits) failures.push(`    ${entry.file}:${hit.line}: ${entry.rule}`);
-  }
+  allowed.find(([entryFile, entryRule]) => entryFile === file && entryRule === rule)?.[2] ?? 0;
+const failures = hits
+  .filter((hit) => cap(hit.file, hit.rule) === 0)
+  .map((hit) =>
+    `- ${hit.file}:${hit.line}: ${hit.rule} outside DocumentEditOwner (${guide}). `
+      + "A reader's edit entry is the owner's; a form's Edit button needs an allowed entry with its reason.");
+for (const [file, rule, count, reason] of allowed) {
+  const found = hits.filter((hit) => hit.file === file && hit.rule === rule);
+  if (found.length <= count) continue;
+  failures.push(`- ${file}: ${rule} count ${found.length} exceeds ${count} — ${reason}`);
+  for (const hit of found) failures.push(`    ${file}:${hit.line}: ${rule}`);
 }
 
 if (failures.length === 0) {
-  console.log(
-    "Document edit guard: PASS — one owner for every edit entry; no session, editor, bar items, capability read, labels, or stray pencil outside Features/DocumentEditing.",
-  );
+  console.log("Document edit guard: PASS — one owner for every edit entry; no session, editor, page, sheet, read, label, or stray pencil outside Features/DocumentEditing.");
   process.exit(0);
 }
 
-console.log("Document edit guard: FAIL — edit machinery outside the owner.\n");
-for (const line of failures) console.log(line);
-console.log(`
-DocumentEditOwner (clients/apple/Oppi/Features/DocumentEditing) is the one owner
-of a document's edit entry: whether the reader shows a pencil (our editor) or a
-"…" holding Edit with Session, the tagged read and draft recovery behind the
-bytes, ans the editor page with its bar items. A reader hands the owner a
-DocumentEditSubject and shows owner.barItems; it never builds an edit session,
-reads the editing capability, or makes its own pencil. See ${guide}.
-`);
+console.log(`Document edit guard: FAIL — edit machinery outside the owner.\n\n${failures.join("\n")}`);
+console.log(`\nDocumentEditOwner is the one owner of a document's edit entry, from the tagged read to the page's sheets. A screen that decides editability itself — ServerSkillFilePresentation when it builds a Skill's subject — says so there. See ${guide}.`);
 process.exit(1);
