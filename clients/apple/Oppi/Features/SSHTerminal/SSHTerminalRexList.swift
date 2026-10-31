@@ -121,7 +121,7 @@ extension SSHTerminalRexFollower {
         SSHTerminalRexListState(
             connecting: session.connecting,
             opening: session.connecting && !session.listsRexSessions,
-            connectFailure: session.failure,
+            connectFailure: session.failure ?? promptNote,
             needsTap: needsTap,
             snapshot: monitor.snapshot,
             absence: monitor.absence,

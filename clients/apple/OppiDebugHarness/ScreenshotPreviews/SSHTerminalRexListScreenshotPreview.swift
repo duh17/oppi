@@ -25,7 +25,13 @@ final class RexPreviewStreamHost: RexStreamHost {
 final class SSHTerminalRexListPreviewController: PreviewRootController {
     static let rexHostID = UUID(uuid: (0x5E, 0x5E, 0x5E, 0x5E, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0, 0, 0, 1))
 
-    private var consumers: [Task<Void, Never>] = []
+    /// The tasks feeding the fake terminals this preview opened.
+    private final class Consumers {
+        var tasks: [Task<Void, Never>] = []
+        deinit { tasks.forEach { $0.cancel() } }
+    }
+
+    private let consumers: Consumers
 
     init() {
         if ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" {
@@ -49,34 +55,35 @@ final class SSHTerminalRexListPreviewController: PreviewRootController {
             coordinator: ConnectionCoordinator(serverStore: ServerStore()),
             themeStore: themeStore
         )
-        let list = SSHTerminalHostListViewController()
-        super.init(
-            root: root,
-            themeStore: themeStore,
-            content: PreviewHost.screenStack(root: root) { list }
-        )
-        list.makeFollower = { [weak self, weak list] profile in
+        // The list is made with the factory that opens its sessions, so the
+        // factory reaches the list through a reference set once it exists.
+        weak var listRef: SSHTerminalHostListViewController?
+        let consumers = Consumers()
+        let list = SSHTerminalHostListViewController(makeFollower: { profile in
             let follower = SSHTerminalRexFollower(
                 profile: profile, promptsAutomatically: false, standIn: RexPreviewStreamHost()
             )
             follower.monitor.openPane = { pane in
                 Task { @MainActor in
-                    guard let self, let list, let channel = try? SSHTerminalChannel() else { return }
-                    if let task = await SSHTerminalPreviewController.playRexSession(on: channel) { self.consumers.append(task) }
+                    guard let list = listRef, let channel = try? SSHTerminalChannel() else { return }
+                    if let task = await SSHTerminalPreviewController.playRexSession(on: channel) { consumers.tasks.append(task) }
                     Router.push(SSHTerminalViewController(
                         channel: channel, reconnect: {}, editHost: {}, hostLabel: "chen@mac-studio \u{00B7} \(pane.label)"
                     ), from: list)
                 }
             }
             return follower
-        }
+        })
+        listRef = list
+        self.consumers = consumers
+        super.init(
+            root: root,
+            themeStore: themeStore,
+            content: PreviewHost.screenStack(root: root) { list }
+        )
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    deinit {
-        consumers.forEach { $0.cancel() }
-    }
 }
 #endif

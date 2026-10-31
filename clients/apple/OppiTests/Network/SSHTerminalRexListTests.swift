@@ -246,8 +246,8 @@ struct SSHTerminalRexSectionTests {
         let known = SSHKnownHosts(keychain: keychain)
         let now = Mutex(0.0)
         let approvals = SSHApprovalCache(window: 300, now: { now.withLock { $0 } })
-        func connects(_ profile: SSHTerminalProfile) -> Bool {
-            profile.connectsWithoutPrompt(approvals: approvals, knownHosts: known, store: hosts.store())
+        func connects(_ profile: SSHTerminalProfile, locked: Bool = false) -> Bool {
+            profile.connectsWithoutPrompt(approvals: approvals, knownHosts: known, store: hosts.store(), appLockRequiresUnlock: locked)
         }
         defer {
             approvals.invalidateAll()
@@ -261,6 +261,7 @@ struct SSHTerminalRexSectionTests {
         #expect(!connects(rexHost))
         approvals.store(LAContext(), for: .deviceKeySigning)
         #expect(connects(rexHost))
+        #expect(!connects(rexHost, locked: true), "a lock that is due ends every approval, so the connect would ask")
         now.withLock { $0 = 301 }
         #expect(!connects(rexHost), "an approval older than the window is a prompt again")
 
@@ -275,11 +276,11 @@ struct SSHTerminalRexSectionTests {
     }
 
     @Test func aTabFollowerDoesNotSignInOnItsOwnAndSaysTapToConnect() {
-        // A device-key host whose key was never trusted: signing in would show the trust sheet.
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
         let follower = SSHTerminalRexFollower(
-            profile: SSHTerminalProfile(host: "never-trusted-\(UUID().uuidString).example", username: "chen", authentication: .deviceKey, opensRexSessions: true),
-            promptsAutomatically: false,
-            session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: hosts.store)
+            profile: host, promptsAutomatically: false,
+            session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: hosts.store),
+            signsInSilently: { _ in false }
         )
         defer { follower.close() }
         #expect(follower.needsTap)
@@ -315,13 +316,11 @@ struct SSHTerminalRexSectionTests {
         }
     }
 
+    /// A tab whose hosts follow a fake Rex (`RexPreviewStreamHost`): nothing signs in.
     private func mountTab(_ profiles: [SSHTerminalProfile], registry: SSHTerminalRegistry = SSHTerminalRegistry()) throws -> Rig {
-        try hosts.save(profiles)
-        let list = SSHTerminalHostListViewController()
-        list.profileStore = hosts.store
         let built = Built()
         let store = hosts.store
-        list.makeFollower = { profile in
+        return try mount(profiles, built: built) { profile in
             let stream = RexPreviewStreamHost()
             let follower = SSHTerminalRexFollower(
                 profile: profile, promptsAutomatically: false,
@@ -333,9 +332,41 @@ struct SSHTerminalRexSectionTests {
             built.streams[profile.id] = stream
             return follower
         }
+    }
+
+    /// Whether a sign-in would ask for nothing, for a tab whose followers sign
+    /// in for real (to a loopback port nothing listens on).
+    @MainActor private final class Silent {
+        var value: Bool
+        init(_ value: Bool) { self.value = value }
+    }
+
+    /// A tab whose hosts sign in on their own whenever `silent` says nothing would ask.
+    private func mountDialingTab(_ profiles: [SSHTerminalProfile], silent: Silent) throws -> Rig {
+        let built = Built()
+        let store = hosts.store
+        return try mount(profiles, built: built) { profile in
+            let follower = SSHTerminalRexFollower(
+                profile: profile, promptsAutomatically: false,
+                session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: store),
+                // One quiet sign-in per host: once a try has been made, nothing is quiet.
+                signsInSilently: { _ in silent.value && (built.followers[profile.id]?.session.attemptedPort ?? 22) == 22 }
+            )
+            built.followers[profile.id] = follower
+            return follower
+        }
+    }
+
+    private func mount(
+        _ profiles: [SSHTerminalProfile], built: Built,
+        makeFollower: @escaping @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower
+    ) throws -> Rig {
+        try hosts.save(profiles)
+        let list = SSHTerminalHostListViewController(profileStore: hosts.store, makeFollower: makeFollower)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.traitOverrides.appRootEnvironment = makeTestAppRoot()
         let navigation = RouterNavigationController(rootViewController: list)
         window.rootViewController = navigation
         window.makeKeyAndVisible()
@@ -448,41 +479,136 @@ struct SSHTerminalRexSectionTests {
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) { stream.hosts.count == 2 }, "the tab reads Rex again on return")
     }
 
-    @Test func aRexHostThatNeedsAPromptShowsTapToConnectAndNeverAsksOnItsOwn() async throws {
-        // This host's key was never trusted, so signing in would ask.
-        let untrusted = SSHTerminalProfile(
-            host: "never-trusted-\(UUID().uuidString).example", username: "chen", authentication: .deviceKey, opensRexSessions: true
-        )
-        try hosts.save([untrusted])
-        let list = SSHTerminalHostListViewController()
-        list.profileStore = hosts.store
-        let store = hosts.store
-        var sessions: [SSHTerminalConnectSession] = []
-        list.makeFollower = { profile in
-            let session = SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: store)
-            sessions.append(session)
-            return SSHTerminalRexFollower(profile: profile, promptsAutomatically: false, session: session)
-        }
-        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        window.rootViewController = RouterNavigationController(rootViewController: list)
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true; window.rootViewController = nil }
-        list.view.layoutIfNeeded()
-
-        let rig = Rig(list: list, window: window, navigation: try #require(list.navigationController), built: Built())
+    /// A host that would ask is not dialed by the tab, and the tap is what runs
+    /// the connect.
+    @Test func aRexHostThatNeedsAPromptShowsTapToConnectAndNeverDialsOnItsOwn() async throws {
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let rig = try mountDialingTab([host], silent: Silent(false))
+        defer { rig.tearDown() }
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { !self.actionCells(in: rig).isEmpty })
         let connect = try #require(actionCells(in: rig).first)
-        #expect(connect.accessibilityIdentifier == "sshTerminal.rexList.\(untrusted.id.uuidString).connect")
+        #expect(connect.accessibilityIdentifier == "sshTerminal.rexList.\(host.id.uuidString).connect")
         #expect(connect.accessibilityLabel == "Tap to connect")
-        let session = try #require(sessions.first)
+        let session = try #require(rig.built.followers[host.id]).session
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) {
-            !session.connecting && !session.passwordPrompt && session.hostFailure == nil && list.presentedViewController == nil
+            !session.connecting && !session.passwordPrompt && session.hostFailure == nil && rig.list.presentedViewController == nil
         }, "the tab dialed nothing and showed no sheet by itself")
 
         try tap(connect, in: rig)
-        #expect(session.connecting || session.failure != nil || session.hostFailure != nil, "the tap runs the normal connect")
+        #expect(session.connecting || session.failure != nil, "the tap runs the normal connect")
         session.cancel()
+    }
+
+    /// What an automatic sign-in can run into although the host looked quiet:
+    /// a key that changed or is not trusted, or a password that is not there.
+    enum Hit: CaseIterable {
+        case changedKey, unknownKey, missingPassword
+    }
+
+    /// The tab started the sign-in itself, so it must not present what it ran
+    /// into: the row says so and offers Tap to connect, and the tap is what
+    /// shows the trust decision or the password sheet.
+    @Test(arguments: Hit.allCases)
+    func anAutomaticSignInThatHitsAPromptPresentsNothingUntilTheTap(_ hit: Hit) async throws {
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let silent = Silent(true)
+        let rig = try mountDialingTab([host], silent: silent)
+        defer { rig.tearDown() }
+        let follower = try #require(rig.built.followers[host.id])
+        let session = follower.session
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { follower.automaticAttempt }, "the tab signs in by itself when nothing would ask")
+        session.cancel()
+        silent.value = false
+
+        let keyA = SSHHostKey(openSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBZbA0Hd5UkWHXHAQsrp7ZCdVjLOZsb9eJwvcdU6UT5q")
+        let keyB = SSHHostKey(openSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherKeyOtherKeyOtherKeyOtherKeyOtherKeyOtherKe")
+        session.failure = nil
+        switch hit {
+        case .changedKey: session.hostFailure = .hostKeyMismatch(saved: keyA, presented: keyB)
+        case .unknownKey: session.hostFailure = .unknownHostKey(keyB)
+        case .missingPassword: session.passwordPrompt = true
+        }
+        func pass() {
+            rig.list.setNeedsUpdateProperties()
+            rig.list.updatePropertiesIfNeeded()
+            rig.list.view.layoutIfNeeded()
+        }
+        pass()
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            pass()
+            return rig.list.presentedViewController == nil
+        }, "nothing is presented for what an automatic sign-in hit")
+        #expect(follower.needsTap)
+        let ids = collectionCells(rig.list).compactMap(\.accessibilityIdentifier)
+        let prefix = "sshTerminal.rexList.\(host.id.uuidString)."
+        #expect(ids.contains(prefix + "connect") && ids.contains(prefix + "failure"), "a failure line and Tap to connect")
+
+        let connect = try #require(actionCells(in: rig).first)
+        try tap(connect, in: rig)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            pass()
+            return rig.list.presentedViewController != nil
+        }, "the tap presents it")
+        session.passwordPrompt = false
+        session.hostFailure = nil
+    }
+
+    /// A host edited or deleted while the tab was covered is signed in, and
+    /// saved, from the saved copy, never from the one the tab held before.
+    @Test func aHostEditedWhileTheTabWasCoveredIsSignedInFromTheSavedCopy() async throws {
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let silent = Silent(false)
+        let rig = try mountDialingTab([host], silent: silent)
+        defer { rig.tearDown() }
+        let follower = try #require(rig.built.followers[host.id])
+        rig.navigation.pushViewController(UIViewController(), animated: false)
+
+        // The form saved a new port; meanwhile an approval makes the host quiet.
+        var edited = host
+        edited.port = 2
+        try hosts.store().save(edited)
+        silent.value = true
+        rig.navigation.popViewController(animated: false)
+
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { follower.session.attemptedPort != 22 })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) {
+            follower.session.attemptedPort == 2 && self.hosts.store().profile(id: host.id)?.port == 2
+        }, "it signs in with the saved copy and the edit is not saved over")
+        follower.session.cancel()
+    }
+
+    @Test func aHostDeletedWhileTheTabWasCoveredIsNeitherSignedInNorSavedBack() async throws {
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let silent = Silent(false)
+        let rig = try mountDialingTab([host], silent: silent)
+        defer { rig.tearDown() }
+        let follower = try #require(rig.built.followers[host.id])
+        rig.navigation.pushViewController(UIViewController(), animated: false)
+        try hosts.store().delete(id: host.id)
+        silent.value = true
+        rig.navigation.popViewController(animated: false)
+
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(400)) {
+            !follower.session.connecting && follower.session.failure == nil && self.hosts.store().load().isEmpty
+        }, "nothing dials the deleted host and the list stays empty")
+    }
+
+    /// The Keychain is asked once per visit, not on every pass of the screen.
+    @Test func whetherASignInWouldAskIsNotReadOnEveryPass() {
+        var asked = 0
+        let follower = SSHTerminalRexFollower(
+            profile: rexHost, promptsAutomatically: false,
+            session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: hosts.store),
+            signsInSilently: { _ in asked += 1; return false }
+        )
+        defer { follower.close() }
+        for _ in 0..<5 {
+            _ = follower.needsTap
+            follower.sync(active: true)
+        }
+        #expect(asked == 1)
+        follower.appeared()
+        _ = follower.needsTap
+        #expect(asked == 2, "returning to the screen asks again")
     }
 }

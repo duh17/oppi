@@ -12,6 +12,9 @@ final class SSHTerminalConnectChrome {
     private let editHost: () -> Void
     private let submitPassword: (String) -> Void
     private let onSaved: (SSHTerminalProfile) -> Void
+    /// False while a prompt the screen did not ask for (an automatic sign-in
+    /// ran into it) is held back for a tap: nothing is presented for it.
+    private let presentsPrompts: () -> Bool
 
     private weak var passwordScreen: UIViewController?
     private weak var trustScreen: UIViewController?
@@ -27,7 +30,8 @@ final class SSHTerminalConnectChrome {
         setProfile: @escaping (SSHTerminalProfile) -> Void,
         editHost: @escaping () -> Void,
         submitPassword: @escaping (String) -> Void,
-        onSaved: @escaping (SSHTerminalProfile) -> Void
+        onSaved: @escaping (SSHTerminalProfile) -> Void,
+        presentsPrompts: @escaping () -> Bool = { true }
     ) {
         self.host = host
         self.session = session
@@ -36,6 +40,7 @@ final class SSHTerminalConnectChrome {
         self.editHost = editHost
         self.submitPassword = submitPassword
         self.onSaved = onSaved
+        self.presentsPrompts = presentsPrompts
     }
 
     /// Covered or popped. In-flight connect ends unless the terminal is showing
@@ -53,15 +58,16 @@ final class SSHTerminalConnectChrome {
         }
         lastWasBackground = isBackground
 
+        let presents = presentsPrompts()
         if session.passwordPrompt {
-            presentPassword(from: host)
+            if presents { presentPassword(from: host) }
         } else {
             dismissPassword()
         }
 
         switch session.hostFailure {
         case .unknownHostKey, .hostKeyMismatch:
-            presentTrust(from: host)
+            if presents { presentTrust(from: host) }
         default:
             presentedTrustFailure = nil
             dismissTrust()

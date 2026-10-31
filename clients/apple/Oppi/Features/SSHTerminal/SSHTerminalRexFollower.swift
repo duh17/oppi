@@ -33,10 +33,22 @@ final class SSHTerminalRexFollower {
     /// drops; cleared as the attempt starts, so a failed one is not retried
     /// until one of those happens again (or a pull to refresh).
     private(set) var needsListConnection = true
+    /// The sign-in in flight, or the last one, was started by the screen, not
+    /// by a tap. Whatever it ran into (a trust decision, a password) is held
+    /// back until a tap: the connect chrome presents nothing for it
+    /// (`SSHTerminalConnectChrome`'s `presentsPrompts`), and the row says so.
+    /// Never set for a follower that `promptsAutomatically`.
+    private(set) var automaticAttempt = false
 
     /// What Rex is read over when no sign-in is: tests and the debug harness
     /// pass a stand-in host.
     @ObservationIgnored private let standIn: (any RexStreamHost)?
+    /// Whether signing in would ask for nothing (`SSHTerminalProfile.connectsWithoutPrompt`).
+    @ObservationIgnored private let signsInSilently: @MainActor (SSHTerminalProfile) -> Bool
+    /// The last answer, kept until something that can change it: the Keychain is
+    /// not read on every pass of the screen. A `true` is only trusted for what
+    /// is drawn; a decision to sign in asks again.
+    @ObservationIgnored private var silentCache: Bool?
     @ObservationIgnored private var reader: Task<Void, Never>?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
@@ -46,7 +58,8 @@ final class SSHTerminalRexFollower {
         promptsAutomatically: Bool,
         session: SSHTerminalConnectSession = SSHTerminalConnectSession(),
         monitor: RexMonitor = RexMonitor(),
-        standIn: (any RexStreamHost)? = nil
+        standIn: (any RexStreamHost)? = nil,
+        signsInSilently: @escaping @MainActor (SSHTerminalProfile) -> Bool = { $0.connectsWithoutPrompt() }
     ) {
         self.profile = profile.normalized()
         self.suppliedPassword = suppliedPassword
@@ -54,6 +67,7 @@ final class SSHTerminalRexFollower {
         self.session = session
         self.monitor = monitor
         self.standIn = standIn
+        self.signsInSilently = signsInSilently
         monitor.openPane = { [weak session] pane in session?.openRexPane(pane) }
         // Backgrounding closes the connection even while a terminal covers the
         // screen, whose updates then stop.
@@ -63,7 +77,7 @@ final class SSHTerminalRexFollower {
                 MainActor.assumeIsolated { self?.enterBackground() }
             },
             center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.needsListConnection = true }
+                MainActor.assumeIsolated { self?.markNeedsConnection() }
             },
         ]
     }
@@ -82,11 +96,51 @@ final class SSHTerminalRexFollower {
     /// Rex is being read, or a sign-in is on its way: nothing to tap.
     var isConnected: Bool { streamHost != nil }
 
+    /// A trust decision is waiting on the person (the host's key is unknown or changed).
+    private var trustPending: Bool {
+        switch session.hostFailure {
+        case .unknownHostKey?, .hostKeyMismatch?: true
+        default: false
+        }
+    }
+
     /// Signing in would ask the person for something, or a try failed: the
     /// Terminal tab shows a row to tap, which runs the normal connect.
     var needsTap: Bool {
-        guard !promptsAutomatically, !isConnected, !session.connecting, !session.passwordPrompt else { return false }
-        return session.failure != nil || !profile.connectsWithoutPrompt()
+        guard !promptsAutomatically, !isConnected, !session.connecting else { return false }
+        // The password sheet is up for a tap that asked for it.
+        if session.passwordPrompt, !automaticAttempt { return false }
+        if session.passwordPrompt || trustPending || session.failure != nil { return true }
+        return !silentForDisplay
+    }
+
+    /// What an automatic sign-in ran into, in a line for the row.
+    var promptNote: String? {
+        if session.passwordPrompt { return "Needs your password." }
+        switch session.hostFailure {
+        case .unknownHostKey?: return "This host's key is not trusted yet."
+        case .hostKeyMismatch?: return "This host's key has changed."
+        default: return nil
+        }
+    }
+
+    private var silentForDisplay: Bool {
+        if let silentCache { return silentCache }
+        let value = signsInSilently(profile)
+        silentCache = value
+        return value
+    }
+
+    private func canSignInSilently() -> Bool {
+        if silentCache == false { return false }
+        let value = signsInSilently(profile)
+        silentCache = value
+        return value
+    }
+
+    private func markNeedsConnection() {
+        silentCache = nil
+        needsListConnection = true
     }
 
     /// The screen's per-pass hook. `active`: showing, in the foreground, and
@@ -95,14 +149,16 @@ final class SSHTerminalRexFollower {
     func sync(active: Bool) {
         _ = session.connecting
         _ = session.passwordPrompt
+        _ = session.hostFailure
         _ = session.rexSessions
         _ = needsListConnection
+        _ = automaticAttempt
         guard active else { return }
         if isConnected {
             startReading()
-        } else if needsListConnection, standIn == nil, !session.connecting, !session.passwordPrompt,
-                  promptsAutomatically || profile.connectsWithoutPrompt() {
-            connectList()
+        } else if needsListConnection, standIn == nil, !session.connecting, !session.passwordPrompt, !trustPending,
+                  promptsAutomatically || canSignInSilently() {
+            connectList(automatic: true)
         }
     }
 
@@ -112,26 +168,35 @@ final class SSHTerminalRexFollower {
         if !stored.sameCredentials(as: profile) {
             session.cancel()
             close()
-            needsListConnection = true
         }
+        silentCache = nil
         profile = stored.normalized()
     }
 
     /// The screen shows again: sign in if the connection is gone.
     func appeared() {
-        if !isConnected { needsListConnection = true }
+        silentCache = nil
+        if !isConnected { markNeedsConnection() }
     }
 
     /// The person asked to connect (a row tapped): signs in whatever the
-    /// sign-in needs, over the screen's connect chrome.
+    /// sign-in needs, over the screen's connect chrome. What an automatic
+    /// attempt already ran into (a trust decision, a password) is shown now.
     func connect() {
-        connectList()
+        if automaticAttempt, session.passwordPrompt || trustPending {
+            automaticAttempt = false
+            return
+        }
+        silentCache = nil
+        connectList(automatic: false)
     }
 
     /// Signs in the list's own connection, unless one is open or on its way.
-    func connectList(password: String? = nil) {
+    /// `automatic`: the screen started it, not a tap.
+    func connectList(password: String? = nil, automatic: Bool = false) {
         guard !isConnected, !session.connecting, !AppScenePhase.shared.isBackground else { return }
         needsListConnection = false
+        automaticAttempt = automatic && !promptsAutomatically
         SSHTerminalFolderEntry.prepare(session: session, profile: profile, target: nil)
         session.listsRexSessions = true
         session.connect(profile: profile, suppliedPassword: password ?? suppliedPassword)
@@ -153,7 +218,7 @@ final class SSHTerminalRexFollower {
     func refresh() async {
         guard standIn != nil || session.rexSessions?.channel.isActive == true else {
             session.closeRexSessions()
-            return connectList()
+            return connectList(automatic: true)
         }
         monitor.retry()
         startReading()
@@ -173,7 +238,7 @@ final class SSHTerminalRexFollower {
             self.reader = nil
             guard let connection, !connection.channel.isActive, self.session.rexSessions?.channel === connection.channel else { return }
             self.session.closeRexSessions()
-            self.needsListConnection = true
+            self.markNeedsConnection()
         }
     }
 
@@ -191,10 +256,12 @@ final class SSHTerminalRexFollower {
         session.closeRexSessions()
     }
 
-    /// Ends the stream and the connection: the screen is gone.
+    /// Ends the stream and the connection: the screen is gone, or the person
+    /// left it for another. It signs in again when the screen shows again.
     func close() {
         stopReading()
         session.closeRexSessions()
+        markNeedsConnection()
     }
 
     /// A tapped session opens in a terminal of its own, on its focused pane,
@@ -225,15 +292,18 @@ extension SSHTerminalProfile {
     /// already trusted, and the credential is behind an approval still valid
     /// (`SSHApprovalCache`: Face ID or the passcode, reused for 5 minutes) or
     /// needs none. A password that is not saved, a key or password not yet
-    /// approved, and an unknown host key all need the person, so a screen that
-    /// must not prompt on its own leaves them to a tap.
+    /// approved, an unknown host key, and a lock that is due all need the
+    /// person, so a screen that must not prompt on its own leaves them to a tap.
+    @MainActor
     func connectsWithoutPrompt(
         approvals: SSHApprovalCache = .shared,
         knownHosts: SSHKnownHosts = SSHKnownHosts(),
-        store: SSHTerminalProfileStore = SSHTerminalProfileStore()
+        store: SSHTerminalProfileStore = SSHTerminalProfileStore(),
+        appLockRequiresUnlock: Bool = AppLockService.shared.requiresUnlock()
     ) -> Bool {
         let value = normalized()
-        guard value.isConfigured, (try? knownHosts.savedKey(host: value.host, port: value.port)) != nil else { return false }
+        // A lock that is due makes the connect end every approval and ask again.
+        guard !appLockRequiresUnlock, value.isConfigured, (try? knownHosts.savedKey(host: value.host, port: value.port)) != nil else { return false }
         switch value.authentication {
         case .deviceKey:
             return approvals.context(for: .deviceKeySigning) != nil

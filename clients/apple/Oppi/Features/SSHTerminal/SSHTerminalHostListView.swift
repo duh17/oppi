@@ -9,13 +9,10 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     }
 
     /// How a Rex host's follower is made. The tab never prompts on its own;
-    /// the debug harness swaps in one over a stand-in Rex.
-    var makeFollower: @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower = {
-        SSHTerminalRexFollower(profile: $0, promptsAutomatically: false)
-    }
-
+    /// the debug harness and tests pass one over a stand-in Rex.
+    private let makeFollower: @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower
     /// Where the saved hosts live. Tests pass a store over their own defaults.
-    var profileStore: @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() }
+    private let profileStore: @Sendable () -> SSHTerminalProfileStore
 
     private let session = SSHTerminalConnectSession()
     private var chrome: SSHTerminalConnectChrome?
@@ -57,8 +54,16 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         case reset
     }
 
-    init(showsSidebarToggle: Bool = false) {
+    init(
+        showsSidebarToggle: Bool = false,
+        profileStore: @escaping @Sendable () -> SSHTerminalProfileStore = { SSHTerminalProfileStore() },
+        makeFollower: @escaping @MainActor (SSHTerminalProfile) -> SSHTerminalRexFollower = {
+            SSHTerminalRexFollower(profile: $0, promptsAutomatically: false)
+        }
+    ) {
         self.showsSidebarToggle = showsSidebarToggle
+        self.profileStore = profileStore
+        self.makeFollower = makeFollower
         var config = SettingsListStyle.layoutConfiguration(headers: false, footers: false)
         config.trailingSwipeActionsConfigurationProvider = { indexPath in
             nil
@@ -101,6 +106,9 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         isOnScreen = true
+        // The saved hosts first: a host edited or deleted while this screen was
+        // covered must not be signed in, or saved back, from the old copy.
+        reload()
         for host in rexHosts.values { host.follower.appeared() }
         setNeedsUpdateProperties()
     }
@@ -114,12 +122,14 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         super.viewDidDisappear(animated)
         isOnScreen = false
         chrome?.hostDidDisappear()
-        // The monitors stop while the tab is covered; a connection stays up
-        // under a terminal it opened and is read again on return.
+        // The monitors stop while the tab is covered. A screen pushed over it (a
+        // terminal, a form) leaves its connection up, read again on return;
+        // leaving the tab for another closes them, and they sign in again on return.
+        let covered = navigationController?.viewControllers.contains(self) == true && !isBeingDismissed
         for host in rexHosts.values {
             host.follower.stopReading()
             host.chrome.hostDidDisappear()
-            if isMovingFromParent || isBeingDismissed { host.follower.close() }
+            if !covered { host.follower.close() }
         }
     }
 
@@ -399,7 +409,9 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
                 follower.session.showsTerminal = false
             },
             submitPassword: { [weak follower] in follower?.submitPassword($0) },
-            onSaved: { [weak follower] in follower?.profile = $0 }
+            onSaved: { [weak follower] in follower?.profile = $0 },
+            // A trust decision or password an automatic sign-in hit waits for the tap.
+            presentsPrompts: { [weak follower] in follower?.automaticAttempt != true }
         )
         return RexHost(follower: follower, chrome: chrome)
     }
