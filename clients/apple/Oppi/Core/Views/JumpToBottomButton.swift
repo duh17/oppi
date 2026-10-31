@@ -77,6 +77,13 @@ final class JumpToBottomButton: UIControl {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// A 36pt circle answers a 44pt touch, like the terminal's bar buttons;
+    /// an owner whose bounds are tighter (the chat's 44pt slot) clips it.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let outset = (44 - Self.side) / 2
+        return bounds.insetBy(dx: -outset, dy: -outset).contains(point)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         busyRing.path = UIBezierPath(ovalIn: busyGlass.bounds.insetBy(dx: 0.75, dy: 0.75)).cgPath
