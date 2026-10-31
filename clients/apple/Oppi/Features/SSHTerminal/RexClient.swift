@@ -1105,9 +1105,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
     /// What the pane's icon starts from while its program reports status
     /// (`RexSessionState.programName`); nil for a plain shell.
     private static func program(of block: String, in state: State) -> String? {
-        guard let records = state.records[block], !records.isEmpty else { return nil }
-        let app = records.first { $0.id.isEmpty }?.app ?? records.first?.app
-        return RexSessionState.programName(title: state.titles[block], app: app, label: state.labels[block])
+        RexSessionState.program(title: state.titles[block], records: state.records[block] ?? [], label: state.labels[block])
     }
 
     private static func snapshot(_ state: State) -> RexSessionState {

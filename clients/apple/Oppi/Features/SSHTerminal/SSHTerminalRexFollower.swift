@@ -276,6 +276,26 @@ final class SSHTerminalRexFollower {
         markNeedsConnection()
     }
 
+    /// The sessions whose panes the list shows. Kept for the follower's life,
+    /// which is the tab's visit: nothing is saved.
+    private(set) var expandedSessions: Set<String> = []
+
+    func toggleExpanded(session sessionID: String) {
+        if expandedSessions.contains(sessionID) {
+            expandedSessions.remove(sessionID)
+        } else {
+            expandedSessions.insert(sessionID)
+        }
+    }
+
+    /// A tapped pane opens its session in a terminal of its own, on that pane
+    /// (an open terminal for the session is shown and moved to it). False when
+    /// Rex no longer lists the pane.
+    @discardableResult
+    func open(session sessionID: String, pane blockID: String) -> Bool {
+        monitor.open(.init(scope: sessionID, id: blockID, isGroup: false))
+    }
+
     /// A tapped session opens in a terminal of its own, on its focused pane,
     /// or its first (`SSHTerminalConnectSession.openRexPane`: the session's
     /// open terminal is shown instead of a second connection). False when the

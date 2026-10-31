@@ -463,27 +463,44 @@ final class RouterModalSitesUITests: XCTestCase {
     }
 
     /// The Terminal tab leads with the saved Rex host's live sessions: one
-    /// row per session naming it, its panes, and who waits on you, with the
-    /// status as its value. A tap opens the session as a Rex terminal.
-    func testTerminalTabListsRexSessionsAndATapOpensTheTerminal() {
+    /// row per session naming it, where it works, its windows and panes, and
+    /// who waits on you, with the status as its value. The disclosure lists a
+    /// session's panes, grouped by window, and a tap on a pane or on the
+    /// session opens it as a Rex terminal.
+    func testTerminalTabListsRexSessionsExpandsThemAndATapOpensTheTerminal() {
         launch(screen: "ssh-terminal-rex-list")
         let hostID = "5E5E5E5E-0000-4000-8000-000000000001"
-        let oppi = app.cells["sshTerminal.rexList.\(hostID).session:01a18a26-6620-76be-b529-4d9ad2b36c63"]
-        let dotfiles = app.cells["sshTerminal.rexList.\(hostID).session:01a18a26-6620-76be-b529-4d9ad2b36c64"]
+        let prefix = "sshTerminal.rexList.\(hostID)."
+        let oppi = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c63"]
+        let dotfiles = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c64"]
         XCTAssertTrue(oppi.waitForExistence(timeout: 15), "The Rex section did not list its sessions")
         XCTAssertTrue(dotfiles.exists)
-        XCTAssertTrue(app.descendants(matching: .any)["sshTerminal.rexList.\(hostID).header"].exists, "The host's heading is missing")
-        XCTAssertEqual(oppi.label, "oppi, 3 panes \u{00B7} 1 needs you")
+        XCTAssertTrue(app.descendants(matching: .any)[prefix + "header"].exists, "The host's heading is missing")
+        XCTAssertEqual(oppi.label, "oppi, in oppi, 2 windows \u{00B7} 3 panes \u{00B7} 1 needs you")
         XCTAssertEqual(oppi.value as? String, "Needs approval")
-        XCTAssertEqual(dotfiles.label, "dotfiles, 1 pane")
+        XCTAssertEqual(dotfiles.label, "dotfiles, in dotfiles, 1 pane")
         XCTAssertEqual(dotfiles.value as? String, "Idle")
         // The host's own row stays below the section.
         XCTAssertTrue(app.buttons["sshTerminal.host.row.\(hostID)"].exists, "The Rex host's row must stay")
         attachScreenshot("terminal-tab-rex-section")
 
-        oppi.tap()
+        // The disclosure shows the session's panes under the name of each window.
+        let pi = app.cells[prefix + "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"]
+        XCTAssertFalse(pi.exists, "Sessions start collapsed")
+        let disclosure = app.buttons[prefix + "session:01a18a26-6620-76be-b529-4d9ad2b36c63.disclosure"]
+        XCTAssertEqual(disclosure.value as? String, "Collapsed")
+        disclosure.tap()
+        XCTAssertTrue(pi.waitForExistence(timeout: 5), "The disclosure must list the session's panes")
+        XCTAssertEqual(disclosure.value as? String, "Expanded")
+        XCTAssertTrue(app.descendants(matching: .any)[prefix + "window:01a18a26-6645-713c-97f1-2f1058c8c82f"].exists, "A session with two windows names each")
+        XCTAssertTrue(app.cells[prefix + "block:01a18a26-6620-78ba-80d4-4e8caa018b37"].exists)
+        XCTAssertFalse(app.cells[prefix + "block:01a18a7e-911a-721b-a50b-14dfc0cc62cc"].exists, "Another session stays collapsed")
+        attachScreenshot("terminal-tab-rex-expanded")
+
+        // A tap on a pane opens the session's terminal.
+        pi.tap()
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
-        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "A tap on a session must open its Rex terminal")
+        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "A tap on a pane must open its Rex terminal")
         attachScreenshot("terminal-tab-rex-opened")
         assertRunning()
     }

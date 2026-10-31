@@ -103,6 +103,17 @@ struct RexSessionState: Equatable, Sendable {
         [title, app, label].compactMap { $0 }.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
+    /// What a pane's icon starts from: nil for a pane whose program never
+    /// reported status (a plain shell), else `programName` of its title, the
+    /// `app` its status names (the root record's, else the first's), and Rex's
+    /// label. The one rule behind every pane icon: the bar's switcher and the
+    /// Terminal tab's pane rows.
+    static func program(title: String?, records: [SSHTerminalPaneRecord], label: String?) -> String? {
+        guard !records.isEmpty else { return nil }
+        let app = records.first { $0.id.isEmpty }?.app ?? records.first?.app
+        return programName(title: title, app: app, label: label)
+    }
+
     var panes: [Pane]
     /// The pane on screen, or the one just asked for.
     var shown: String

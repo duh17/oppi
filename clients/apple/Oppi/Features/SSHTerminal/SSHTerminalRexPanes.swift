@@ -147,7 +147,7 @@ enum SSHTerminalRexPaneMenu {
 /// program's own mark when it puts one first in its title (`π - …`, `✳ …`);
 /// a plain shell, and a program with nothing to start a monogram from, is the
 /// terminal glyph.
-enum SSHTerminalPaneIcon: Equatable {
+enum SSHTerminalPaneIcon: Hashable, Sendable {
     case terminal
     case monogram(String)
 

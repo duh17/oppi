@@ -424,49 +424,10 @@ final class RexFakeHost: Sendable {
         return frame + payload
     }
 
-    /// Two sessions: Claude waiting on a permission and a working pi in one,
-    /// beside a shell in a second window that never reported; a codex pane
-    /// at idle in the other.
+    /// The preview's Rex (`RexFakeWorld.preview()`): two sessions, one with a
+    /// pane waiting on a permission.
     static func preview() -> RexFakeHost {
-        let oppi = "session:01a18a26-6620-76be-b529-4d9ad2b36c63"
-        let dotfiles = "session:01a18a26-6620-76be-b529-4d9ad2b36c64"
-        func block(_ id: String) -> String {
-            #"{"block_id":"\#(id)","label":"shell","creator_name":"com.superlogical.terminal"}"#
-        }
-        func window(_ id: String, _ label: String, focused: String, _ blocks: [String]) -> String {
-            #"{"window_id":"\#(id)","label":"\#(label)","focused_block_id":"\#(focused)","layers":[{"blocks":[\#(blocks.map(block).joined(separator: ","))]}]}"#
-        }
-        let claude = "block:01a18a26-6620-78ba-80d4-4e8caa018b37"
-        let pi = "block:01a18a7e-911a-721b-a50b-14dfc0cc62ca"
-        let logs = "block:01a18a7e-911a-721b-a50b-14dfc0cc62cb"
-        let codex = "block:01a18a7e-911a-721b-a50b-14dfc0cc62cc"
-        let views: [String: String] = [
-            oppi: #"{"revision":4,"session_id":"\#(oppi)","label":"oppi","active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c82f","windows":[\#(window("window:01a18a26-6645-713c-97f1-2f1058c8c82f", "agents", focused: claude, [claude, pi])),\#(window("window:01a18a26-6645-713c-97f1-2f1058c8c830", "logs", focused: logs, [logs]))]}"#,
-            dotfiles: #"{"revision":2,"session_id":"\#(dotfiles)","label":"dotfiles","active_window_id":"window:01a18a26-6645-713c-97f1-2f1058c8c831","windows":[\#(window("window:01a18a26-6645-713c-97f1-2f1058c8c831", "main", focused: codex, [codex]))]}"#,
-        ]
-        let titles = [claude: "Fixing the build", pi: "Adding skill frontmatter", logs: "tail -f server.log", codex: "Ready"]
-        let records = [
-            claude: #"[{"effective_app":"claude","state":"working"},{"id":"bash","effective_app":"claude","state":"blocked","kind":"permission","msg":"Run rm -rf build?"}]"#,
-            pi: #"[{"effective_app":"pi","state":"working"}]"#,
-            codex: #"[{"effective_app":"codex","state":"idle"}]"#,
-        ]
-        return RexFakeHost { request in
-            switch request.method {
-            case "session.attach_all":
-                return .result(#"{"sessions":[{"session_id":"\#(oppi)","label":"oppi"},{"session_id":"\#(dotfiles)","label":"dotfiles"}]}"#)
-            case "session.view":
-                guard let view = request.string("session_id").flatMap({ views[$0] }) else {
-                    return .refuse(code: "session_not_found", message: "no such session")
-                }
-                return .result(view)
-            case "com.superlogical.terminal.title":
-                return .result(#"{"title":"\#(request.string("block_id").flatMap { titles[$0] } ?? "")"}"#)
-            case "com.superlogical.terminal.program_status":
-                return .result(#"{"records":\#(request.string("block_id").flatMap { records[$0] } ?? "[]")}"#)
-            default:
-                return .result("{}")
-            }
-        }
+        RexFakeWorld.preview().host()
     }
 }
 #endif

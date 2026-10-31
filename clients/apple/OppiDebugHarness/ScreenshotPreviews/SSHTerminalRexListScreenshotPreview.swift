@@ -2,16 +2,19 @@
 import UIKit
 
 /// A stand-in connection to a fake Rex host: every stream the monitor opens
-/// is a new `RexFakeHost.preview()`, as a new SSH exec channel is a new
-/// bridge to Rex.
+/// is a new connection to the same `world` (the preview's by default), as a
+/// new SSH exec channel is a new bridge to Rex.
 @MainActor
 final class RexPreviewStreamHost: RexStreamHost {
     private(set) var hosts: [RexFakeHost] = []
+    let world: RexFakeWorld
     var isConnected: Bool { true }
+
+    init(world: RexFakeWorld = .preview()) { self.world = world }
 
     func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
         guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
-        let host = RexFakeHost.preview()
+        let host = world.host()
         hosts.append(host)
         return host.open(sink: sink)
     }

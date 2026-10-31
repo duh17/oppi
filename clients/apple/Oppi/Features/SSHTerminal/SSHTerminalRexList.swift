@@ -1,35 +1,112 @@
 import UIKit
 
-/// One Rex session on the Terminal tab: its name, how many panes it has, how
-/// many of them wait on you, and the status that leads them (the same rollup a
-/// thread uses, so a blocked pane wins over a working one). A tap opens it.
+/// One Rex session on the Terminal tab: its name, where it is working (the
+/// focused pane's folder), how many windows and panes it has, how many of them
+/// wait on you, and the status that leads them (the same rollup a thread uses,
+/// so a blocked pane wins over a working one). A tap opens it; its disclosure
+/// lists its panes.
 struct SSHTerminalRexListSession: Hashable, Sendable {
     let sessionID: String
     let title: String
+    let windowCount: Int
     let paneCount: Int
     let needsYou: Int
+    /// The last component of the focused pane's folder.
+    let folder: String?
     let status: SSHTerminalOverviewRow.Status
+    /// The pane rows are showing under it.
+    let isExpanded: Bool
 
-    init(_ session: RexSnapshot.Session) {
+    init(_ session: RexSnapshot.Session, expanded: Bool = false) {
         let panes = session.windows.flatMap(\.panes)
         sessionID = session.sessionID
         title = session.label.flatMap { $0.isEmpty ? nil : $0 } ?? "Session"
+        windowCount = session.windows.count
         paneCount = panes.count
         let statuses = panes.compactMap(\.status)
         needsYou = statuses.filter(\.isBlocked).count
         status = SessionStatusRollup(root: nil, others: statuses).headline.map { .known($0) } ?? .none
+        folder = session.openingPane?.folderName
+        isExpanded = expanded && !panes.isEmpty
     }
 
-    /// "3 panes", "1 pane", with "· 2 need you" after it while panes wait.
+    /// There are panes to show under it.
+    var hasPanes: Bool { paneCount > 0 }
+
+    /// "3 panes", "1 pane", "2 windows · 3 panes" with more than one window,
+    /// and "· 2 need you" after it while panes wait.
     var summary: String {
-        let panes = paneCount == 1 ? "1 pane" : "\(paneCount) panes"
-        guard needsYou > 0 else { return panes }
-        return panes + " \u{00B7} " + SSHTerminalRexListRow.needsYouText(needsYou)
+        var parts: [String] = []
+        if windowCount > 1 { parts.append("\(windowCount) windows") }
+        parts.append(paneCount == 1 ? "1 pane" : "\(paneCount) panes")
+        if needsYou > 0 { parts.append(SSHTerminalRexListRow.needsYouText(needsYou)) }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
-    /// What the row says to VoiceOver: the session, its panes, and who waits.
+    /// The line under the name: the folder it works in, then the counts.
+    var detail: String {
+        [folder, summary].compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+
+    /// What the row says to VoiceOver: the session, its folder, its panes, and who waits.
     var accessibilityLabel: String {
-        [title, summary].joined(separator: ", ")
+        [title, folder.map { "in \($0)" }, summary].compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
+/// One pane under an expanded session: what the bar's pane switcher would
+/// call it, the icon it would draw for it (`SSHTerminalPaneIcon`, by the same
+/// rule), the folder it is in, and its status. A tap opens the session on it.
+struct SSHTerminalRexListPane: Hashable, Sendable {
+    let sessionID: String
+    let blockID: String
+    let name: String
+    /// The terminal's title when it says more than the name, then the folder.
+    let detail: String?
+    let icon: SSHTerminalPaneIcon
+    let status: SSHTerminalOverviewRow.Status
+    let needsYou: Bool
+    /// The pane Rex types into.
+    let isFocused: Bool
+    /// The window it is in, for a session that groups its panes by window.
+    let windowName: String?
+
+    init(_ pane: RexSnapshot.Pane, session: RexSnapshot.Session, window: RexSnapshot.Window, windowName: String? = nil) {
+        self.windowName = windowName
+        sessionID = session.sessionID
+        blockID = pane.blockID
+        name = pane.displayName
+        let title = pane.title.flatMap { $0.isEmpty || $0 == pane.displayName ? nil : $0 }
+        detail = [title, pane.folderName].compactMap { $0 }.joined(separator: " \u{00B7} ").nilIfEmpty
+        icon = SSHTerminalPaneIcon(program: pane.program)
+        status = pane.status.map { .known($0) } ?? .none
+        needsYou = pane.status?.isBlocked == true
+        isFocused = session.isFocused(pane, in: window)
+    }
+
+    var accessibilityLabel: String {
+        [name, windowName.map { "in window \($0)" }, detail, needsYou ? "needs you" : nil].compactMap { $0 }.joined(separator: ", ")
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+extension RexSnapshot.Pane {
+    /// The last component of the folder the terminal reported (`file://host/path`,
+    /// or a plain path as Rex keeps one an older program reported).
+    var folderName: String? {
+        guard let pwd,
+              let path = SSHTerminalWorkingDirectory.path(from: pwd) ?? SSHTerminalWorkingDirectory.normalize(pwd)
+        else { return nil }
+        return path == "/" ? "/" : (path as NSString).lastPathComponent
+    }
+
+    /// What the pane's icon starts from (`RexSessionState.program`): the
+    /// bar's pane switcher draws the same icon for the same pane.
+    var program: String? {
+        RexSessionState.program(title: title, records: records, label: label)
     }
 }
 
@@ -40,17 +117,20 @@ struct SSHTerminalRexListRow: Hashable, Sendable {
         /// The host's name, with how many panes wait on you across its sessions.
         case header(name: String, needsYou: Int)
         case session(SSHTerminalRexListSession)
+        /// A window's name over its panes, for a session with more than one window.
+        case window(id: String, name: String)
+        case pane(SSHTerminalRexListPane)
         case placeholder(String)
         case failure(String)
         /// The host would ask for a password, a trust decision, or Face ID: the
         /// tab never does that on its own, so the row is the person's go-ahead.
         case tapToConnect
 
-        /// A session and the connect row take a tap; the rest only read.
+        /// A session, a pane, and the connect row take a tap; the rest only read.
         var isAction: Bool {
             switch self {
-            case .session, .tapToConnect: true
-            case .header, .placeholder, .failure: false
+            case .session, .pane, .tapToConnect: true
+            case .header, .window, .placeholder, .failure: false
             }
         }
     }
@@ -78,6 +158,8 @@ struct SSHTerminalRexListState: Equatable {
     /// A stream failure from the monitor, under which the last snapshot stays.
     var failure: String?
     var needsYou = 0
+    /// The sessions showing their panes.
+    var expanded: Set<String> = []
 }
 
 extension SSHTerminalRexListRow {
@@ -109,7 +191,25 @@ extension SSHTerminalRexListRow {
         if snapshot.sessions.isEmpty {
             rows.append(.init(id: "empty", kind: .placeholder("No Rex sessions.")))
         }
-        rows += snapshot.sessions.map { .init(id: "session|" + $0.sessionID, kind: .session(.init($0))) }
+        for session in snapshot.sessions {
+            let expanded = state.expanded.contains(session.sessionID)
+            rows.append(.init(id: "session|" + session.sessionID, kind: .session(.init(session, expanded: expanded))))
+            guard expanded else { continue }
+            // A session with several windows groups its panes under each window's name.
+            let namesWindows = session.windows.count > 1
+            for (index, window) in session.windows.enumerated() {
+                let windowName = window.label.flatMap { $0.isEmpty ? nil : $0 } ?? "Window \(index + 1)"
+                if namesWindows {
+                    rows.append(.init(id: "window|\(session.sessionID)|\(window.windowID)", kind: .window(id: window.windowID, name: windowName)))
+                }
+                for pane in window.panes {
+                    rows.append(.init(
+                        id: "pane|\(session.sessionID)|\(pane.blockID)",
+                        kind: .pane(.init(pane, session: session, window: window, windowName: namesWindows ? windowName : nil))
+                    ))
+                }
+            }
+        }
         return rows
     }
 }
@@ -126,7 +226,8 @@ extension SSHTerminalRexFollower {
             snapshot: monitor.snapshot,
             absence: monitor.absence,
             failure: monitor.failure,
-            needsYou: monitor.needsAttention
+            needsYou: monitor.needsAttention,
+            expanded: expandedSessions
         )
     }
 }
@@ -166,5 +267,100 @@ final class SSHTerminalRexListActionCell: SSHTerminalOverviewCell {
         accessibilityValue = nil
         accessibilityHint = nil
         accessibilityTraits = []
+    }
+}
+
+/// A session row. It is two accessibility elements, as the host row is: the
+/// row (identifier, label, value, button trait; activation opens the session,
+/// as a touch does) and its disclosure, which shows or hides the panes. The
+/// cell itself is a container (`accessibilityElements`), so a test finds
+/// `app.buttons[id]` and `app.buttons[id + ".disclosure"]`. The row's custom
+/// actions carry what a swipe has (and the disclosure), so VoiceOver reaches
+/// all of it. A touch on the row is the collection view's selection, which the
+/// screen routes to the same owner.
+final class SSHTerminalRexListSessionCell: SSHTerminalOverviewCell {
+    /// The element over the row's content: not a control, so a touch falls
+    /// through to the cell's selection.
+    private final class RowElement: UIView {
+        var perform: (() -> Void)?
+
+        override func accessibilityActivate() -> Bool {
+            guard let perform else { return false }
+            perform()
+            return true
+        }
+    }
+
+    private let rowElement = RowElement()
+    private let disclosure = UIButton(type: .system)
+    private var toggle: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = false
+        rowElement.translatesAutoresizingMaskIntoConstraints = false
+        rowElement.isAccessibilityElement = true
+        rowElement.accessibilityTraits = .button
+        contentView.addSubview(rowElement)
+        NSLayoutConstraint.activate([
+            rowElement.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            rowElement.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            rowElement.topAnchor.constraint(equalTo: contentView.topAnchor),
+            rowElement.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+        disclosure.addAction(UIAction { [weak self] _ in self?.toggle?() }, for: .touchUpInside)
+        disclosure.accessibilityTraits = .button
+        disclosure.accessibilityLabel = "Panes"
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    /// Resets what a reused cell carried, then sets the row's. `actions` are
+    /// the row's custom actions (rename, close); the disclosure's is added here.
+    func configureSession(
+        _ session: SSHTerminalRexListSession, identifier: String, themeID: ThemeID,
+        actions: [UIAccessibilityCustomAction], perform: @escaping () -> Void, toggle: @escaping () -> Void
+    ) {
+        self.toggle = toggle
+        rowElement.perform = perform
+        rowElement.accessibilityIdentifier = identifier
+        rowElement.accessibilityLabel = session.accessibilityLabel
+        rowElement.accessibilityValue = session.status.label
+        rowElement.accessibilityHint = "Open this Rex session"
+        var accessories = statusAccessories(for: session.status, themeID: themeID)
+        var custom = actions
+        if session.hasPanes {
+            var conf = UIButton.Configuration.plain()
+            conf.image = UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(textStyle: .footnote, scale: .small))
+            conf.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 8)
+            conf.baseForegroundColor = UIColor(themeID.palette.comment)
+            disclosure.configuration = conf
+            disclosure.transform = session.isExpanded ? CGAffineTransform(rotationAngle: .pi / 2) : .identity
+            disclosure.accessibilityIdentifier = identifier + ".disclosure"
+            disclosure.accessibilityValue = session.isExpanded ? "Expanded" : "Collapsed"
+            accessories.append(.customView(configuration: .init(customView: disclosure, placement: .trailing())))
+            custom.append(UIAccessibilityCustomAction(name: session.isExpanded ? "Hide Panes" : "Show Panes") { [weak self] _ in
+                self?.toggle?()
+                return true
+            })
+            accessibilityElements = [rowElement, disclosure]
+        } else {
+            accessibilityElements = [rowElement]
+        }
+        rowElement.accessibilityCustomActions = custom
+        self.accessories = accessories
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        toggle = nil
+        rowElement.perform = nil
+        rowElement.accessibilityIdentifier = nil
+        rowElement.accessibilityCustomActions = nil
+        disclosure.accessibilityIdentifier = nil
+        disclosure.transform = .identity
+        accessories = []
+        accessibilityElements = nil
     }
 }

@@ -219,12 +219,18 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         let rexActionCell = UICollectionView.CellRegistration<SSHTerminalRexListActionCell, Item> { [weak self] cell, _, item in
             self?.configureRexAction(cell, item: item)
         }
+        let rexSessionCell = UICollectionView.CellRegistration<SSHTerminalRexListSessionCell, Item> { [weak self] cell, _, item in
+            self?.configureRexSession(cell, item: item)
+        }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView, cellProvider: SettingsListStyle.cardProvider { [weak self] collectionView, indexPath, item in
             switch item {
             case .rexRow:
-                // A session and the connect row are buttons; the rest read.
+                // A session is a row with a disclosure; a pane and the connect
+                // row are buttons; the rest read.
                 switch self?.rexRows[item]?.kind {
-                case .session, .tapToConnect:
+                case .session:
+                    collectionView.dequeueConfiguredReusableCell(using: rexSessionCell, for: indexPath, item: item)
+                case .pane, .tapToConnect:
                     collectionView.dequeueConfiguredReusableCell(using: rexActionCell, for: indexPath, item: item)
                 default:
                     collectionView.dequeueConfiguredReusableCell(using: rexCell, for: indexPath, item: item)
@@ -459,7 +465,14 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
             content.textProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "\(prefix).\(row.id)"
-        case .session, .tapToConnect:
+        case .window(let windowID, let name):
+            content.text = name
+            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
+            content.textProperties.color = UIColor(palette.comment)
+            cell.indentationLevel = 1
+            cell.accessibilityIdentifier = "\(prefix).\(windowID)"
+            cell.accessibilityTraits = .header
+        case .session, .pane, .tapToConnect:
             break
         }
         cell.contentConfiguration = content
@@ -475,22 +488,29 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         content.secondaryTextProperties.color = UIColor(palette.comment)
         content.textProperties.font = .preferredFont(forTextStyle: .body)
         switch row.kind {
-        case .session(let session):
-            content.text = session.title
-            content.secondaryText = session.summary
+        case .pane(let pane):
+            content.text = pane.name
+            content.secondaryText = pane.detail
+            // The pane Rex types into is bold, as in the overview.
+            let body = UIFont.preferredFont(forTextStyle: .body)
+            content.textProperties.font = pane.isFocused
+                ? body.fontDescriptor.withSymbolicTraits(.traitBold).map { UIFont(descriptor: $0, size: 0) } ?? body : body
             content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
-            cell.accessories = cell.statusAccessories(for: session.status, themeID: themeID)
-            cell.indentationLevel = 0
+            content.image = pane.icon.image()
+            content.imageProperties.tintColor = UIColor(palette.comment)
+            cell.accessories = cell.statusAccessories(for: pane.status, themeID: themeID)
+            cell.indentationLevel = pane.windowName == nil ? 1 : 2
             cell.configureAction(
-                identifier: "\(prefix).\(session.sessionID)",
-                label: session.accessibilityLabel,
-                value: session.status.label,
-                hint: "Open this Rex session"
+                identifier: "\(prefix).\(pane.blockID)",
+                label: pane.accessibilityLabel,
+                value: pane.status.label,
+                hint: "Open this pane"
             ) { [weak self] in self?.activateRexRow(host: hostID, id: id) }
         case .tapToConnect:
             content.text = "Tap to connect"
             content.textProperties.color = UIColor(palette.blue)
             cell.accessories = []
+            cell.indentationLevel = 0
             cell.configureAction(
                 identifier: "\(prefix).connect",
                 label: "Tap to connect",
@@ -503,6 +523,34 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         cell.contentConfiguration = content
     }
 
+    private func configureRexSession(_ cell: SSHTerminalRexListSessionCell, item: Item) {
+        guard case .rexRow(let hostID, let id) = item, case .session(let session)? = rexRows[item]?.kind else { return }
+        let themeID = sshTerminalThemeID
+        let palette = themeID.palette
+        var content = UIListContentConfiguration.subtitleCell()
+        content.textProperties.color = UIColor(palette.fg)
+        content.secondaryTextProperties.color = UIColor(palette.comment)
+        content.textProperties.font = .preferredFont(forTextStyle: .body)
+        content.text = session.title
+        content.secondaryText = session.detail
+        content.secondaryTextProperties.font = .preferredFont(forTextStyle: .footnote)
+        cell.contentConfiguration = content
+        cell.indentationLevel = 0
+        cell.configureSession(
+            session, identifier: "sshTerminal.rexList.\(hostID.uuidString).\(session.sessionID)", themeID: themeID,
+            actions: [],
+            perform: { [weak self] in self?.activateRexRow(host: hostID, id: id) },
+            toggle: { [weak self] in self?.toggleRexSession(host: hostID, id: id) }
+        )
+    }
+
+    /// Shows or hides a session's panes. Resolved from the row's identity when it runs.
+    private func toggleRexSession(host hostID: UUID, id: String) {
+        guard let follower = rexHosts[hostID]?.follower, case .session(let session)? = rexRows[.rexRow(host: hostID, id: id)]?.kind else { return }
+        follower.toggleExpanded(session: session.sessionID)
+        setNeedsUpdateProperties()
+    }
+
     /// The one action a Rex row has, for a touch (the row's selection) and for
     /// VoiceOver's activation: resolved from the row's identity when it runs.
     private func activateRexRow(host hostID: UUID, id: String) {
@@ -511,6 +559,9 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
         case .session(let session):
             guard !follower.session.connecting, !follower.session.passwordPrompt else { return }
             follower.open(session: session.sessionID)
+        case .pane(let pane):
+            guard !follower.session.connecting, !follower.session.passwordPrompt else { return }
+            follower.open(session: pane.sessionID, pane: pane.blockID)
         case .tapToConnect:
             follower.connect()
         default:
