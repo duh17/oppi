@@ -74,7 +74,8 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         collectionView.accessibilityIdentifier = "schedules.list"
         collectionView.refreshControl = refreshControl
         refreshControl.addAction(UIAction { [weak self] _ in self?.refresh() }, for: .valueChanged)
-        ListScreen.pinFullWidth(collectionView, in: view)
+        // The readable form width, as every kit page holds its list on iPad.
+        SettingsListStyle.pin(collectionView, in: view)
         installDataSource()
         composer.install(in: self)
     }

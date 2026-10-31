@@ -46,9 +46,6 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
     private let refreshControl = UIRefreshControl()
     private let signInPresenter = McpSignInPresenter()
     private var observedFlowStatus: ProviderAuthFlowSnapshot.Status?
-    private lazy var buttonRow = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
-        self?.configureButton(cell, item: item)
-    }
 
     init(
         scope: McpScopeSnapshot,
@@ -228,14 +225,13 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
     }
 
     override func prepareRegistrations() {
-        _ = buttonRow
         _ = menuRow
     }
 
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
         case .continueSignIn, .signIn, .signOut, .remove:
-            collectionView.dequeueConfiguredReusableCell(using: buttonRow, for: indexPath, item: item)
+            cardCell(for: item, at: indexPath)
         case .exposure:
             collectionView.dequeueConfiguredReusableCell(using: menuRow, for: indexPath, item: item)
         default:
@@ -331,11 +327,11 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         }
     }
 
-    /// A row that is one button (`SidebarListCell`): its element is the row's
-    /// only accessibility element, so `app.buttons[id]` finds it.
-    private func configureButton(_ cell: SidebarListCell, item: Item) {
+    /// A row that is one button: its element is the row's only accessibility
+    /// element, so `app.buttons[id]` finds it. The kit paints the theme card
+    /// behind it, as it does for the rows beside these.
+    override func configureCard(_ cell: SidebarListCell, item: Item) {
         let palette = palette
-        ListScreen.background(cell, grouped: true, palette: palette)
         let locked = locked
         switch item {
         case .continueSignIn:
