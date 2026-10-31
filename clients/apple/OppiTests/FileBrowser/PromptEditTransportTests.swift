@@ -148,9 +148,9 @@ struct PromptEditTransportTests {
         _ transport: WorkspaceFileEditTransport,
         _ identity: WorkspaceFileEditIdentity,
         _ text: String,
-        _ ifMatch: String
+        _ tag: String
     ) async -> WorkspaceFileWriteOutcome {
-        await transport.write(identity, Data(text.utf8), ifMatch)
+        await transport.write(identity, Data(text.utf8), .version(tag))
     }
 
     // MARK: Agent prompt

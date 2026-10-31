@@ -16,16 +16,12 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     private let tools = PiToolsEditor()
 
     private let fileReview = RouterModalPresenter()
-    private let defaultPromptViewer = RouterModalPresenter()
     private let composer: GuidedControlComposerController
 
     private var prompt: PiSystemPromptSnapshot? {
         didSet { setNeedsUpdateProperties() }
     }
     private var showsFilePromptReview = false {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var showsDefaultPrompt = false {
         didSet { setNeedsUpdateProperties() }
     }
 
@@ -60,7 +56,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     override func viewDidLoad() {
         super.viewDidLoad()
         composer.install(in: self)
-        for presenter in [fileReview, defaultPromptViewer] { presenter.anchor = self }
+        fileReview.anchor = self
     }
 
     /// The Pi configuration: the base loads it once when the page appears and
@@ -85,7 +81,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        for presenter in [fileReview, defaultPromptViewer] { presenter.sync() }
+        fileReview.sync()
         // A failed save that arrived while the screen was off screen shows now.
         setNeedsUpdateProperties()
     }
@@ -243,7 +239,9 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
         let prompt = prompt
         let connection = root.coordinator.activeConnection
         fileReview.update(
-            id: showsFilePromptReview && prompt?.resolvedPath != nil ? "file-prompt" : nil,
+            // The reader opens whether or not SYSTEM.md exists: a missing file is
+            // still the prompt's document, and the reader is where its pencil is.
+            id: showsFilePromptReview && prompt != nil ? "file-prompt" : nil,
             presentation: .sheet,
             root: root,
             clear: { [weak self] in self?.showsFilePromptReview = false },
@@ -257,11 +255,18 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
                         sourceLabel: "SYSTEM.md",
                         sourcePath: prompt?.resolvedPath ?? "",
                         targetPath: prompt?.resolvedPath,
-                        // Only a SYSTEM.md that exists is a document: the default
-                        // prompt the server answers instead has nothing on disk.
-                        subject: prompt?.source == .file
-                            ? .piFile(path: AgentManagementPresentation.piSystemPromptFilePath)
-                            : .snapshot,
+                        // Pi's prompt is one document whether or not the file is
+                        // there: a SYSTEM.md that does not exist yet reads as an
+                        // editable document whose editor starts from Pi's default
+                        // prompt — the text this reader is showing — so leaving it
+                        // alone writes nothing and the first real edit creates the
+                        // file. The server decides: a server without
+                        // `piFileEditing`, or a symlinked SYSTEM.md, answers no
+                        // editable read.
+                        subject: .piFile(
+                            path: AgentManagementPresentation.piSystemPromptFilePath,
+                            seedText: prompt?.source == .default ? prompt?.content : nil
+                        ),
                         connection: connection,
                         refreshDocument: { [weak self] in
                             guard let api = connection.apiClient else { return nil }
@@ -270,13 +275,6 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
                     )
                 }
             }
-        )
-        defaultPromptViewer.update(
-            id: showsDefaultPrompt ? "default-prompt" : nil,
-            presentation: .fullScreen,
-            root: root,
-            clear: { [weak self] in self?.showsDefaultPrompt = false },
-            screen: { .controller { PiDefaultPromptViewController(content: prompt?.content ?? "") } }
         )
     }
 
@@ -290,11 +288,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
     }
 
     private func openPrompt() {
-        if AgentManagementPresentation.piPromptIsReviewable(source) {
-            showsFilePromptReview = true
-        } else if prompt?.content != nil {
-            showsDefaultPrompt = true
-        }
+        showsFilePromptReview = true
     }
 
     /// The Pi configuration: the base loads it once when the page appears (see

@@ -8,7 +8,7 @@ import Foundation
 /// `WorkspaceFileWriteOutcome` as `/files/current`, so the editor, its drafts,
 /// its conflict banner, and its status words need nothing new: the record's
 /// version is the etag, a 409 is `.stale`, and a record that is gone is
-/// `.missing`.
+/// `.missing`. A record always exists, so a write is always a version match.
 extension WorkspaceFileEditTransport {
     /// `GET /agents/:id`: bytes are `instructions.text` (an Agent with no custom
     /// prompt reads as empty), the tag is the version. The mode read with that
@@ -30,8 +30,8 @@ extension WorkspaceFileEditTransport {
                     return readFailure(error)
                 }
             },
-            write: { _, bytes, ifMatch in
-                guard let version = Int(ifMatch) else {
+            write: { _, bytes, condition in
+                guard case .version(let tag) = condition, let version = Int(tag) else {
                     return .rejected(status: 0, message: String(localized: "The Agent's version could not be read."))
                 }
                 let text = WorkspaceFileTextCodec.decodeDraft(bytes) ?? ""
@@ -66,8 +66,8 @@ extension WorkspaceFileEditTransport {
                     return readFailure(error)
                 }
             },
-            write: { _, bytes, ifMatch in
-                guard let version = Int(ifMatch) else {
+            write: { _, bytes, condition in
+                guard case .version(let tag) = condition, let version = Int(tag) else {
                     return .rejected(status: 0, message: String(localized: "The schedule's version could not be read."))
                 }
                 let prompt = WorkspaceFileTextCodec.decodeDraft(bytes) ?? ""

@@ -31,17 +31,48 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
 
         let prompt = app.buttons["agents.pi.systemPrompt"]
         XCTAssertTrue(prompt.waitForExistence(timeout: 10), "Pi detail did not load")
+        // Pi's prompt reader is one screen whether or not SYSTEM.md exists: the
+        // page opens it as a sheet, and the sheet's own dismiss control closes it.
+        assertReviewSheet { prompt.tap() }
+
+        // SYSTEM.md does not exist here, and the reader still offers the pencil.
+        // Its editor starts from Pi's default prompt — the text the reader shows —
+        // so leaving it alone writes nothing.
         prompt.tap()
-        let back = app.buttons["fullScreen.code.close"]
-        XCTAssertTrue(back.waitForExistence(timeout: 5), "The default prompt did not open full screen")
+        let pencil = app.buttons["workspace-file-editor.edit"]
+        XCTAssertTrue(pencil.waitForExistence(timeout: 5), "A missing SYSTEM.md must still be editable")
+        attachScreenshot("pi-prompt-reader-pencil")
+        tapBarButton(pencil)
+        let editor = app.textViews["workspace-file-editor.text"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "The pencil must open the editor")
+        XCTAssertEqual(
+            (editor.value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            "You are a coding agent.",
+            "The editor opens on Pi's default prompt, not on nothing"
+        )
+        attachScreenshot("pi-prompt-editor-default")
         assertRunning()
-        back.tap()
-        XCTAssertTrue(back.waitForNonExistence(timeout: 10), "Back must close the full-screen viewer")
-        XCTAssertTrue(prompt.waitForExistence(timeout: 5))
-        prompt.tap()
-        XCTAssertTrue(back.waitForExistence(timeout: 5), "The viewer must open again")
-        back.tap()
-        XCTAssertTrue(back.waitForNonExistence(timeout: 10))
+        tapBarButton(app.buttons["workspace-file-editor.done"])
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done must return to the reader")
+        XCTAssertFalse(
+            lastWrite.contains("PUT /files/current"),
+            "An untouched default writes nothing: \(lastWrite)"
+        )
+
+        // The first real edit creates SYSTEM.md. The fixture records the write's
+        // method and path (a text body is not summarised), so that is what this
+        // can see; the create's `If-None-Match: *` is the unit test's claim.
+        tapBarButton(pencil)
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText(" Ship it.")
+        XCTAssertTrue(
+            waitFor(lastWrite.contains("PUT /files/current"), timeout: 15),
+            "The edit must create the file: \(lastWrite)"
+        )
+        tapBarButton(app.buttons["workspace-file-editor.done"])
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done must return to the reader")
+        app.buttons["fullScreen.code.close"].tap()
 
         assertCompactOppiBar(page: "agents-pi")
     }
@@ -77,13 +108,21 @@ final class RouterSettingsModalsUITests: XCTestCase, PreviewUITestCase {
         XCTAssertTrue(prompt.waitForExistence(timeout: 10), "Pi detail did not load")
         assertReviewSheet { prompt.tap() }
 
-        // The prompt holds text the app pieced together: no pencil, and the "…"
-        // holds Edit with Session.
+        // A SYSTEM.md that exists is a document: the reader has the pencil, and
+        // the "…" beside it holds Edit with Session.
         prompt.tap()
         let more = app.buttons["document.edit.more"]
         XCTAssertTrue(more.waitForExistence(timeout: 5), "The prompt reader offered no edit entry")
-        XCTAssertFalse(app.buttons["workspace-file-editor.edit"].exists, "A prompt reader has no pencil")
+        let pencil = app.buttons["workspace-file-editor.edit"]
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "An existing SYSTEM.md must be editable")
         attachScreenshot("pi-prompt-reader-entry")
+        tapBarButton(pencil)
+        let text = app.textViews["workspace-file-editor.text"]
+        XCTAssertTrue(text.waitForExistence(timeout: 10), "The pencil did not open the editor")
+        attachScreenshot("pi-prompt-editor")
+        assertRunning()
+        tapBarButton(app.buttons["workspace-file-editor.done"])
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done must return to the reader")
         tapBarButton(more)
         let edit = app.buttons["controlFile.editInSession"]
         XCTAssertTrue(edit.waitForExistence(timeout: 5), "The overflow did not offer Edit with Session")

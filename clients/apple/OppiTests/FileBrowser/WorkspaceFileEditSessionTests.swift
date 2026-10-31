@@ -13,12 +13,12 @@ import UIKit
 private final class ScriptedEditTransport {
     struct PendingWrite {
         let bytes: Data
-        let ifMatch: String
+        let condition: WorkspaceFileWriteCondition
         let continuation: CheckedContinuation<WorkspaceFileWriteOutcome, Never>
     }
 
     private(set) var pending: [PendingWrite] = []
-    private(set) var writeLog: [(bytes: Data, ifMatch: String)] = []
+    private(set) var writeLog: [(bytes: Data, condition: WorkspaceFileWriteCondition)] = []
     var reads: [WorkspaceFileReadOutcome] = []
     private(set) var readCount = 0
 
@@ -30,13 +30,13 @@ private final class ScriptedEditTransport {
                     return self.reads.isEmpty ? .failed : self.reads.removeFirst()
                 }
             },
-            write: { _, bytes, ifMatch in
+            write: { _, bytes, condition in
                 await withCheckedContinuation { continuation in
                     Task { @MainActor in
-                        self.writeLog.append((bytes, ifMatch))
+                        self.writeLog.append((bytes, condition))
                         self.pending.append(PendingWrite(
                             bytes: bytes,
-                            ifMatch: ifMatch,
+                            condition: condition,
                             continuation: continuation
                         ))
                     }
@@ -149,6 +149,81 @@ struct WorkspaceFileEditSessionTests {
             maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store
         )
         #expect(oversize == nil)
+    }
+
+    /// A file the server offers to create: an empty base whose first save is
+    /// conditioned on the file still not existing.
+    @Test func aCreatableBaseCreatesOnItsFirstSaveAndExtendsAfter() async throws {
+        let harness = Harness()
+        let session = WorkspaceFileEditSession(
+            identity: harness.identity,
+            disk: WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true),
+            maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
+            idleDelay: .milliseconds(30), retryDelay: .milliseconds(20)
+        )
+        let created = try #require(session)
+        harness.buffer = created.currentText
+        created.attachEditor { harness.buffer }
+        #expect(created.baseCondition == .absent)
+
+        harness.type("# Pi\n", into: created)
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog[0].condition == .absent, "the first save creates the file")
+        #expect(harness.store.load(harness.identity)?.baseEtag == "*", "a draft keeps the creation it extends")
+
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { created.status == .saved })
+        #expect(created.baseCondition == .version(tag("b")), "the file exists now: the next save overwrites")
+
+        harness.type("more\n", into: created)
+        created.flush()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog[1].condition == .version(tag("b")))
+    }
+
+    /// An untouched seed is not an edit: Done writes nothing, so a document that
+    /// does not exist stays absent until someone changes it.
+    @Test func anUntouchedCreatableBaseWritesNothing() async {
+        let harness = Harness()
+        let seed = Data("You are a coding agent.".utf8)
+        let session = WorkspaceFileEditSession(
+            identity: harness.identity,
+            disk: WorkspaceFileDiskSnapshot(bytes: seed, etag: nil, creatable: true),
+            maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
+            idleDelay: .milliseconds(20), retryDelay: .milliseconds(20)
+        )!
+        harness.buffer = session.currentText
+        session.attachEditor { harness.buffer }
+        #expect(session.currentText == "You are a coding agent.")
+        #expect(session.hasUnsavedChanges == false)
+        session.detachEditor()
+        try? await Task.sleep(for: .milliseconds(60))
+        #expect(harness.scripted.writeLog.isEmpty, "nothing to create: no request")
+        #expect(session.status == .saved)
+        #expect(session.baseCondition == .absent, "the file is still not there")
+    }
+
+    /// The first real edit of a seeded creatable base creates the file with the
+    /// edited seed.
+    @Test func aCreatableBaseSendsTheEditedSeedAsACreate() async {
+        let harness = Harness()
+        let seed = Data("You are a coding agent.".utf8)
+        let session = WorkspaceFileEditSession(
+            identity: harness.identity,
+            disk: WorkspaceFileDiskSnapshot(bytes: seed, etag: nil, creatable: true),
+            maxBytes: 64, transport: harness.scripted.transport, draftStore: harness.store,
+            idleDelay: .milliseconds(20), retryDelay: .milliseconds(20)
+        )!
+        harness.buffer = session.currentText
+        session.attachEditor { harness.buffer }
+        harness.type(" Ship it.", into: session)
+        session.flush()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        #expect(harness.scripted.writeLog[0].condition == .absent)
+        #expect(
+            harness.scripted.writeLog[0].bytes == Data("You are a coding agent. Ship it.".utf8),
+            "the created file holds the edited seed, not an empty prompt"
+        )
     }
 
     @Test func identityKeysSeparateWorktreeAndServer() {
@@ -266,13 +341,13 @@ struct WorkspaceFileEditSessionTests {
         #expect(session.status == .pending)
         #expect(await eventually { harness.scripted.pending.count == 1 })
         #expect(harness.store.load(harness.identity)?.bytes == Data("hello world!".utf8), "draft checkpointed before the write")
-        #expect(harness.scripted.writeLog[0].ifMatch == tag("a"))
+        #expect(harness.scripted.writeLog[0].condition == .version(tag("a")))
         #expect(harness.scripted.writeLog[0].bytes == Data("hello world!".utf8))
         #expect(session.status == .saving)
 
         harness.scripted.resolveNext(.saved(etag: tag("b")))
         #expect(await eventually { session.status == .saved })
-        #expect(session.baseEtag == tag("b"))
+        #expect(session.baseCondition == .version(tag("b")))
         #expect(harness.store.load(harness.identity) == nil)
         #expect(harness.scripted.writeLog.count == 1, "two keystrokes inside one idle window make one write")
     }
@@ -292,7 +367,7 @@ struct WorkspaceFileEditSessionTests {
         harness.scripted.resolveNext(.saved(etag: tag("b")))
         #expect(await eventually { harness.scripted.pending.count == 1 })
         #expect(session.hasUnsavedChanges || session.status == .saving)
-        #expect(harness.scripted.writeLog[1].ifMatch == tag("b"), "follow-up write extends the acknowledged tag")
+        #expect(harness.scripted.writeLog[1].condition == .version(tag("b")), "follow-up write extends the acknowledged tag")
         #expect(harness.scripted.writeLog[1].bytes == Data("hello 1 2".utf8))
         #expect(harness.store.load(harness.identity)?.baseEtag == tag("b"))
 
@@ -376,7 +451,7 @@ struct WorkspaceFileEditSessionTests {
         #expect(session.reviewedDisk?.etag == tag("d"))
         session.replaceDiskVersion()
         #expect(await eventually { harness.scripted.pending.count == 1 })
-        #expect(harness.scripted.writeLog[1].ifMatch == tag("d"))
+        #expect(harness.scripted.writeLog[1].condition == .version(tag("d")))
         #expect(harness.scripted.writeLog[1].bytes == Data("hello mine".utf8))
 
         // Disk moved again after review: back to conflict, no silent clobber.
@@ -396,7 +471,7 @@ struct WorkspaceFileEditSessionTests {
         harness.scripted.reads = [.snapshot(WorkspaceFileDiskSnapshot(bytes: Data("hello same".utf8), etag: tag("e")))]
         await session.reviewDisk()
         #expect(session.status == .saved)
-        #expect(session.baseEtag == tag("e"))
+        #expect(session.baseCondition == .version(tag("e")))
         #expect(harness.store.load(harness.identity) == nil)
     }
 
@@ -434,13 +509,13 @@ struct WorkspaceFileEditSessionTests {
         #expect(await session.useDiskVersion() == .replaced("theirs\r\n"))
         harness.buffer = "theirs\r\n"
         #expect(session.status == .saved)
-        #expect(session.baseEtag == tag("f"))
+        #expect(session.baseCondition == .version(tag("f")))
         #expect(harness.store.load(harness.identity) == nil)
 
         harness.type("+", into: session)
         session.flush()
         #expect(await eventually { harness.scripted.pending.count == 1 })
-        #expect(harness.scripted.writeLog[1].ifMatch == tag("f"), "autosave resumes from the disk version")
+        #expect(harness.scripted.writeLog[1].condition == .version(tag("f")), "autosave resumes from the disk version")
     }
 
     @Test func serverRefusalStopsAutosaveAndKeepsDraft() async {
@@ -481,7 +556,7 @@ struct WorkspaceFileEditSessionTests {
         harness.scripted.resolveNext(.notSent)
         #expect(await eventually { session.status == .offline || harness.scripted.pending.count == 1 })
         #expect(await eventually { harness.scripted.pending.count == 1 })
-        #expect(harness.scripted.writeLog[1].ifMatch == tag("a"))
+        #expect(harness.scripted.writeLog[1].condition == .version(tag("a")))
         #expect(harness.scripted.readCount == 0, "a request that never left needs no re-read")
         harness.scripted.resolveNext(.saved(etag: tag("b")))
         #expect(await eventually { session.status == .saved })
@@ -498,7 +573,7 @@ struct WorkspaceFileEditSessionTests {
         #expect(await eventually { session.status == .saved })
         #expect(harness.scripted.readCount == 1)
         #expect(harness.scripted.writeLog.count == 1)
-        #expect(session.baseEtag == tag("b"))
+        #expect(session.baseCondition == .version(tag("b")))
     }
 
     @Test func unknownOutcomeRereadsBeforeRetryAndNeverClobbers() async {
@@ -512,7 +587,7 @@ struct WorkspaceFileEditSessionTests {
         harness.scripted.resolveNext(.unknown)
         #expect(await eventually { harness.scripted.pending.count == 1 })
         #expect(harness.scripted.readCount == 2, "a failed re-read is retried before any write")
-        #expect(harness.scripted.writeLog[1].ifMatch == tag("a"))
+        #expect(harness.scripted.writeLog[1].condition == .version(tag("a")))
         harness.scripted.resolveNext(.saved(etag: tag("b")))
         #expect(await eventually { session.status == .saved })
 
@@ -740,7 +815,7 @@ struct WorkspaceFileEditRecoveryTests {
 
         harness.buffer = session.currentText
         // swiftlint:disable:next unowned_variable_capture - harness outlives the editor callback
-        session.attachEditor { [unowned harness] in harness.buffer }
+        session.attachEditor { harness.buffer }
         harness.type("!", into: session)
         session.flush()
         harness.scripted.reads = [.missing]

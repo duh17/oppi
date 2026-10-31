@@ -198,6 +198,28 @@ final class DocumentEditOwner {
                     backend: backend
                 )
             )
+        case .creatable:
+            guard generation == self.generation else { return .ownRead }
+            // A file the server offers to create: the editor starts from the text
+            // the reader supplied — Pi's default prompt for `SYSTEM.md`, nothing
+            // for a template — so Done with no change is not a change and writes
+            // nothing, and the first real edit's save creates the file. The
+            // reader keeps showing what it had (Pi's default prompt).
+            let seed = WorkspaceFileDiskSnapshot(
+                bytes: Data((subject.creatableSeedText ?? "").utf8),
+                etag: nil,
+                creatable: true
+            )
+            base = Self.editableBase(seed, maxBytes: capability.maxBytes)
+            return .bytes(
+                seed,
+                draftText: prepareEditing(
+                    identity: identity,
+                    snapshot: seed,
+                    maxBytes: capability.maxBytes,
+                    backend: backend
+                )
+            )
         case .missing:
             guard generation == self.generation else { return .ownRead }
             guard let session = WorkspaceFileEditRecovery.sessionForMissingFile(
@@ -220,14 +242,15 @@ final class DocumentEditOwner {
         }
     }
 
-    /// The server offered these bytes for editing: tagged, exact UTF-8, and
-    /// within its limit. The same three conditions `WorkspaceFileEditSession`
-    /// needs, so the pencil can never open an editor that cannot start.
+    /// The server offered these bytes for editing: a version to overwrite or a
+    /// file to create, exact UTF-8, and within its limit. The same conditions
+    /// `WorkspaceFileEditSession` needs, so the pencil can never open an editor
+    /// that cannot start.
     private static func editableBase(
         _ snapshot: WorkspaceFileDiskSnapshot,
         maxBytes: Int
     ) -> WorkspaceFileDiskSnapshot? {
-        guard snapshot.etag != nil,
+        guard snapshot.writeCondition != nil,
               snapshot.bytes.count <= maxBytes,
               WorkspaceFileTextCodec.decode(snapshot.bytes) != nil else { return nil }
         return snapshot
@@ -411,7 +434,7 @@ final class DocumentEditOwner {
         switch subject {
         case .agentInstructions: String(localized: "System Prompt")
         case .schedulePrompt: String(localized: "Prompt")
-        case .piFile(let path): (path as NSString).lastPathComponent
+        case .piFile(let path, _): (path as NSString).lastPathComponent
         case .file, .snapshot: String(localized: "Edit")
         }
     }

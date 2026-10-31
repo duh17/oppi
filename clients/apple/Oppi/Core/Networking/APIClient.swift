@@ -29,6 +29,12 @@ enum HostFileResolvedPathHeaders {
     }
 }
 
+/// The editor's read of a file that is not there yet: the body is empty, there is
+/// no ETag, and the first save creates the file (`If-None-Match: *`).
+enum WorkspaceFileCreatableHeader {
+    static let name = "X-Oppi-Creatable"
+}
+
 /// Network failures that may make an HTTP route unavailable for future work.
 /// HTTP responses, decoding failures, cancellation, and TLS failures are intentionally excluded.
 enum APIClientAvailabilityFailure: Sendable, Equatable {
@@ -2049,8 +2055,9 @@ actor APIClient: ClientLogUploading {
         return capability
     }
 
-    /// The editor's read: the exact bytes with their strong ETag. Only on
-    /// servers that advertise editing for the identity's owner.
+    /// The editor's read: the exact bytes with their strong ETag, or — for a file
+    /// the server offers to create — an empty base with no tag. Only on servers
+    /// that advertise editing for the identity's owner.
     func readFileForEditing(_ identity: WorkspaceFileEditIdentity) async throws -> WorkspaceFileDiskSnapshot {
         guard identity.owner.isFile, fileEditingCapability(for: identity.owner) != nil else {
             throw CocoaError(.featureUnsupported)
@@ -2062,13 +2069,18 @@ actor APIClient: ClientLogUploading {
             return req
         }
         try checkStatus(response, data: data)
-        let etag = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag")
-        return WorkspaceFileDiskSnapshot(bytes: data, etag: etag)
+        let http = response as? HTTPURLResponse
+        // The server names a file it would let the editor create; the body is
+        // empty and there is no version to overwrite.
+        let creatable = http?.value(forHTTPHeaderField: WorkspaceFileCreatableHeader.name) != nil
+        let etag = creatable ? nil : http?.value(forHTTPHeaderField: "ETag")
+        return WorkspaceFileDiskSnapshot(bytes: data, etag: etag, creatable: creatable)
     }
 
     func readFileForEditingOutcome(_ identity: WorkspaceFileEditIdentity) async -> WorkspaceFileReadOutcome {
         do {
-            return .snapshot(try await readFileForEditing(identity))
+            let snapshot = try await readFileForEditing(identity)
+            return snapshot.creatable ? .creatable : .snapshot(snapshot)
         } catch let APIError.server(status, _) where status == 404 {
             return .missing
         } catch let APIError.codedServer(status, _, _) where status == 404 {
@@ -2078,16 +2090,19 @@ actor APIClient: ClientLogUploading {
         }
     }
 
-    /// Guarded write of an existing text file. The only file-write URL this
-    /// client builds: `PUT /files/current` with `origin=workspace` or
-    /// `origin=skill`, one concrete `If-Match`, raw bytes.
+    /// Guarded write of one text file. The only file-write URL this client builds:
+    /// `PUT /files/current` with `origin=workspace`, `origin=skill`, or
+    /// `origin=pi`, raw bytes, and one precondition — the version it overwrites,
+    /// or `If-None-Match: *` for a file it read as absent.
     func writeEditedFile(
         _ identity: WorkspaceFileEditIdentity,
         bytes: Data,
-        ifMatch: String
+        condition: WorkspaceFileWriteCondition
     ) async -> WorkspaceFileWriteOutcome {
-        guard identity.owner.isFile, fileEditingCapability(for: identity.owner) != nil,
-              !ifMatch.isEmpty, ifMatch != "*" else {
+        guard identity.owner.isFile, fileEditingCapability(for: identity.owner) != nil else {
+            return .rejected(status: 0, message: "Editing is not available on this server")
+        }
+        if case .version(let tag) = condition, tag.isEmpty || tag == "*" {
             return .rejected(status: 0, message: "Editing is not available on this server")
         }
         let data: Data
@@ -2098,7 +2113,12 @@ actor APIClient: ClientLogUploading {
                 var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
                 req.httpMethod = "PUT"
                 req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-                req.setValue(ifMatch, forHTTPHeaderField: "If-Match")
+                switch condition {
+                case .version(let tag):
+                    req.setValue(tag, forHTTPHeaderField: "If-Match")
+                case .absent:
+                    req.setValue("*", forHTTPHeaderField: "If-None-Match")
+                }
                 req.httpBody = bytes
                 return req
             }

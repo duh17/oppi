@@ -428,7 +428,12 @@ final class SettingsSweepPreviewController: PreviewRootController {
         case "agents":
             return stack { AgentListViewController(root: root) }
         case "agents-pi", "agents-pi-file":
-            return stack { PiAgentDetailViewController(root: root) }
+            // Pi's prompt reader needs the server's `piFileEditing` capability
+            // before its pencil can appear.
+            return PreviewLoadingController(
+                prepare: { _ = try? await client.serverInfo() },
+                content: { stack { PiAgentDetailViewController(root: root) } }
+            )
         case "extension-detail":
             return stack {
                 ServerExtensionDetailViewController(
@@ -573,6 +578,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
             : PiSystemPromptSnapshot(
                 source: .default, path: "~/.pi/agent/SYSTEM.md", resolvedPath: nil, content: "You are a coding agent."
             )
+        // `agents-pi` is the Pi page before SYSTEM.md exists: its reader still has
+        // the pencil, and the editor behind it opens empty.
+        SettingsSweepFixtureURLProtocol.piSystemPromptIsAbsent = page == "agents-pi"
 
         SettingsSweepFixtureURLProtocol.routes = [
             "/themes": json(Themes(themes: [
@@ -761,6 +769,9 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
     nonisolated(unsafe) static var recordHandler: ((_ method: String, _ path: String, _ body: Data) -> Data?)?
     /// The editor's tagged read: a strong ETag on every `origin=skill` GET.
     private static let skillSourceETag = "\"sha256-\(String(repeating: "a", count: 64))\""
+    /// `agents-pi` has no `SYSTEM.md`: its `origin=pi` read is the empty creatable
+    /// base a first save would write, not a tagged document.
+    nonisolated(unsafe) static var piSystemPromptIsAbsent = false
     nonisolated(unsafe) static var writeDelay: TimeInterval = 0
     /// How long a read's answer is held, so a capture can see the page loading.
     nonisolated(unsafe) static var readDelay: TimeInterval = 0
@@ -814,13 +825,22 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
             client?.urlProtocolDidFinishLoading(self)
             return
         }
-        let body = Self.routes.first { $0.key.hasPrefix(methodPrefix) && path.hasSuffix($0.key.dropFirst(methodPrefix.count)) }?.value
-            ?? Self.routes.first { $0.key.hasPrefix("/") && path.hasSuffix($0.key) }?.value
         var headers = ["Content-Type": "application/json"]
+        var body = Self.routes.first { $0.key.hasPrefix(methodPrefix) && path.hasSuffix($0.key.dropFirst(methodPrefix.count)) }?.value
+            ?? Self.routes.first { $0.key.hasPrefix("/") && path.hasSuffix($0.key) }?.value
         if request.httpMethod == "GET",
            let query = request.url?.query,
            query.contains("origin=skill") || query.contains("origin=pi") {
             headers["ETag"] = Self.skillSourceETag
+        }
+        // Pi's own file that does not exist: no tag, no bytes, and the offer to
+        // create it, which is what puts a pencil on the reader.
+        if request.httpMethod == "GET",
+           Self.piSystemPromptIsAbsent,
+           request.url?.query?.contains("origin=pi") == true {
+            headers["ETag"] = nil
+            headers[WorkspaceFileCreatableHeader.name] = "1"
+            body = Data()
         }
         let response = HTTPURLResponse(
             url: request.url ?? URL(fileURLWithPath: "/"),

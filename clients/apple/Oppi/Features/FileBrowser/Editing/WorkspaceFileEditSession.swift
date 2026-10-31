@@ -2,11 +2,15 @@ import Foundation
 import Observation
 
 /// Read and write seams for one document. The live adapter calls
-/// `GET`/`PUT /files/current` with the owner's origin (`workspace` or
-/// `skill`); a record's prompt has its own route. Tests supply scripted closures.
+/// `GET`/`PUT /files/current` with the owner's origin (`workspace`, `skill`, or
+/// `pi`); a record's prompt has its own route. Tests supply scripted closures.
 struct WorkspaceFileEditTransport: Sendable {
     var read: @Sendable (WorkspaceFileEditIdentity) async -> WorkspaceFileReadOutcome
-    var write: @Sendable (WorkspaceFileEditIdentity, Data, String) async -> WorkspaceFileWriteOutcome
+    var write: @Sendable (
+        WorkspaceFileEditIdentity,
+        Data,
+        WorkspaceFileWriteCondition
+    ) async -> WorkspaceFileWriteOutcome
 }
 
 extension WorkspaceFileEditTransport {
@@ -15,8 +19,8 @@ extension WorkspaceFileEditTransport {
             read: { identity in
                 await api.readFileForEditingOutcome(identity)
             },
-            write: { identity, bytes, ifMatch in
-                await api.writeEditedFile(identity, bytes: bytes, ifMatch: ifMatch)
+            write: { identity, bytes, condition in
+                await api.writeEditedFile(identity, bytes: bytes, condition: condition)
             }
         )
     }
@@ -92,7 +96,7 @@ final class WorkspaceFileEditSession {
     /// A stored draft could not be applied and was moved aside, not deleted.
     private(set) var draftNotice: String?
 
-    @ObservationIgnored private(set) var baseEtag: String
+    @ObservationIgnored private(set) var baseCondition: WorkspaceFileWriteCondition
     @ObservationIgnored private(set) var diskBytes: Data
     @ObservationIgnored private(set) var editGeneration = 0
     @ObservationIgnored private(set) var savedGeneration = 0
@@ -112,7 +116,7 @@ final class WorkspaceFileEditSession {
 
     private init(
         identity: WorkspaceFileEditIdentity,
-        baseEtag: String,
+        baseCondition: WorkspaceFileWriteCondition,
         diskBytes: Data,
         bufferText: String,
         maxBytes: Int,
@@ -127,17 +131,18 @@ final class WorkspaceFileEditSession {
         self.draftStore = draftStore
         self.idleDelay = idleDelay
         self.retryDelay = retryDelay
-        self.baseEtag = baseEtag
+        self.baseCondition = baseCondition
         self.diskBytes = diskBytes
         self.bufferText = bufferText
     }
 
-    /// Opens a session from one tagged read. Returns nil when the server did not
-    /// tag the bytes, they are not exact UTF-8, or they exceed `maxBytes`, or
-    /// when an unreadable stored draft could not be moved aside.
-    /// A stored draft is recovered: same base tag resumes autosave; a different
-    /// disk tag opens in conflict with autosave stopped. A draft that cannot be
-    /// applied is quarantined, never deleted.
+    /// Opens a session from one tagged read, or from a read that answered a file
+    /// the server offers to create. Returns nil when the server offered neither a
+    /// version nor a creation, the bytes are not exact UTF-8, or they exceed
+    /// `maxBytes`, or when an unreadable stored draft could not be moved aside.
+    /// A stored draft is recovered: same base resumes autosave; a different base
+    /// opens in conflict with autosave stopped. A draft that cannot be applied is
+    /// quarantined, never deleted.
     convenience init?(
         identity: WorkspaceFileEditIdentity,
         disk: WorkspaceFileDiskSnapshot,
@@ -147,7 +152,7 @@ final class WorkspaceFileEditSession {
         idleDelay: Duration = .seconds(1),
         retryDelay: Duration = .seconds(5)
     ) {
-        guard let etag = disk.etag,
+        guard let condition = disk.writeCondition,
               disk.bytes.count <= maxBytes,
               let diskText = WorkspaceFileTextCodec.decode(disk.bytes) else { return nil }
         let stored = draftStore.loadResult(identity)
@@ -172,7 +177,7 @@ final class WorkspaceFileEditSession {
         }
         self.init(
             identity: identity,
-            baseEtag: etag,
+            baseCondition: condition,
             diskBytes: disk.bytes,
             bufferText: diskText,
             maxBytes: maxBytes,
@@ -186,18 +191,18 @@ final class WorkspaceFileEditSession {
         bufferText = recovered.text
         editGeneration = 1
         recoveredDraft = true
-        if recovered.draft.baseEtag == etag {
+        if recovered.draft.baseEtag == condition.storedTag {
             status = .pending
             scheduleIdle()
         } else {
             // Keep the draft's own base so a later recovery still sees conflict.
-            baseEtag = recovered.draft.baseEtag
+            baseCondition = WorkspaceFileWriteCondition(storedTag: recovered.draft.baseEtag)
             status = .conflict
         }
     }
 
     /// Reopens a kept draft whose file is gone (404). The session never writes:
-    /// Replace needs a reviewed disk tag, and a missing file has none.
+    /// Replace needs a reviewed disk version, and a missing file has none.
     convenience init?(
         identity: WorkspaceFileEditIdentity,
         deletedFileDraft draft: WorkspaceFileDraft,
@@ -211,7 +216,7 @@ final class WorkspaceFileEditSession {
               let text = WorkspaceFileTextCodec.decodeDraft(draft.bytes) else { return nil }
         self.init(
             identity: identity,
-            baseEtag: draft.baseEtag,
+            baseCondition: WorkspaceFileWriteCondition(storedTag: draft.baseEtag),
             diskBytes: Data(),
             bufferText: text,
             maxBytes: maxBytes,
@@ -273,7 +278,7 @@ final class WorkspaceFileEditSession {
         }
         let draft = WorkspaceFileDraft(
             identity: identity,
-            baseEtag: baseEtag,
+            baseEtag: baseCondition.storedTag,
             bytes: WorkspaceFileTextCodec.encode(currentText),
             updatedAt: Date()
         )
@@ -316,7 +321,7 @@ final class WorkspaceFileEditSession {
     // MARK: - Conflict actions
 
     /// Fetch the disk version for review. If disk already equals the buffer the
-    /// conflict resolves to that tag.
+    /// conflict resolves to that version.
     @discardableResult
     func reviewDisk() async -> WorkspaceFileReadOutcome {
         let startEpoch = epoch
@@ -330,14 +335,19 @@ final class WorkspaceFileEditSession {
                 return outcome
             }
             if snapshot.bytes == WorkspaceFileTextCodec.encode(currentText), inFlight == nil {
-                acknowledge(bytes: snapshot.bytes, etag: tag, generation: editGeneration)
+                acknowledge(
+                    bytes: snapshot.bytes,
+                    condition: .version(tag),
+                    generation: editGeneration
+                )
             } else {
                 reviewedDisk = snapshot
                 // The file exists again: that is a conflict against this tag,
                 // never a create.
                 if status == .deleted { setStatus(.conflict) }
             }
-        case .missing:
+        case .missing, .creatable:
+            // There is no disk version to review or to keep: the file is gone.
             reviewedDisk = nil
             if inFlight == nil { setStatus(.deleted) }
         case .failed:
@@ -346,18 +356,19 @@ final class WorkspaceFileEditSession {
         return outcome
     }
 
-    /// Overwrite disk with the buffer, conditioned on the reviewed disk tag.
+    /// Overwrite disk with the buffer, conditioned on the reviewed disk version.
     /// Never recreates a deleted file.
     func replaceDiskVersion() {
         guard status == .conflict, inFlight == nil,
-              let reviewed = reviewedDisk, let tag = reviewed.etag else { return }
+              let reviewed = reviewedDisk,
+              case .version(let tag) = reviewed.writeCondition else { return }
         let bytes = WorkspaceFileTextCodec.encode(currentText)
         guard bytes.count <= maxBytes else {
             setStatus(.tooLarge)
             return
         }
         reviewedDisk = nil
-        send(bytes: bytes, generation: editGeneration, ifMatch: tag)
+        send(bytes: bytes, generation: editGeneration, condition: .version(tag))
     }
 
     /// Discard the buffer for the disk version (reviewed, else freshly read).
@@ -372,7 +383,9 @@ final class WorkspaceFileEditSession {
             case .snapshot(let read):
                 guard startEpoch == epoch, inFlight == nil else { return .unavailable }
                 snapshot = read
-            case .missing:
+            case .missing, .creatable:
+                // No disk version: a file that is not there is the same answer
+                // as one that was deleted.
                 discardForMissingFile()
                 return .missing
             case .failed:
@@ -380,7 +393,7 @@ final class WorkspaceFileEditSession {
             }
         }
         cancelPendingWork()
-        guard let tag = snapshot.etag,
+        guard let condition = snapshot.writeCondition,
               snapshot.bytes.count <= maxBytes,
               let text = WorkspaceFileTextCodec.decode(snapshot.bytes) else {
             draftStore.remove(identity)
@@ -389,7 +402,7 @@ final class WorkspaceFileEditSession {
             return .notEditable
         }
         bufferText = text
-        baseEtag = tag
+        baseCondition = condition
         diskBytes = snapshot.bytes
         editGeneration &+= 1
         savedGeneration = editGeneration
@@ -430,17 +443,19 @@ final class WorkspaceFileEditSession {
         let generation = editGeneration
         let bytes = WorkspaceFileTextCodec.encode(currentText)
         if bytes == diskBytes {
-            acknowledge(bytes: bytes, etag: baseEtag, generation: generation)
+            // Nothing to send: an empty document that was never created stays
+            // uncreated, so the base stays the creation it was.
+            acknowledge(bytes: bytes, condition: baseCondition, generation: generation)
             return
         }
         guard bytes.count <= maxBytes else {
             setStatus(.tooLarge)
             return
         }
-        send(bytes: bytes, generation: generation, ifMatch: baseEtag)
+        send(bytes: bytes, generation: generation, condition: baseCondition)
     }
 
-    private func send(bytes: Data, generation: Int, ifMatch: String) {
+    private func send(bytes: Data, generation: Int, condition: WorkspaceFileWriteCondition) {
         retryTask?.cancel()
         retryTask = nil
         let flight = InFlight(
@@ -454,7 +469,7 @@ final class WorkspaceFileEditSession {
         let transport = transport
         let identity = identity
         inFlightTask = Task { [weak self] in
-            let outcome = await transport.write(identity, bytes, ifMatch)
+            let outcome = await transport.write(identity, bytes, condition)
             self?.handleWrite(outcome, for: flight)
         }
     }
@@ -466,7 +481,7 @@ final class WorkspaceFileEditSession {
         guard flight.epoch == epoch else { return }
         switch outcome {
         case .saved(let etag):
-            acknowledge(bytes: flight.bytes, etag: etag, generation: flight.generation)
+            acknowledge(bytes: flight.bytes, condition: .version(etag), generation: flight.generation)
         case .stale:
             reviewedDisk = nil
             setStatus(.conflict)
@@ -489,9 +504,14 @@ final class WorkspaceFileEditSession {
         }
     }
 
-    /// `mode` is what the write carried; nil keeps the mode already known.
-    private func acknowledge(bytes: Data, etag: String, generation: Int) {
-        baseEtag = etag
+    /// The write landed (or nothing needed writing): the session's base is now
+    /// what the next save is conditioned on.
+    private func acknowledge(
+        bytes: Data,
+        condition: WorkspaceFileWriteCondition,
+        generation: Int
+    ) {
+        baseCondition = condition
         diskBytes = bytes
         savedGeneration = generation
         reviewedDisk = nil
@@ -540,8 +560,8 @@ final class WorkspaceFileEditSession {
         switch outcome {
         case .snapshot(let snapshot):
             if snapshot.bytes == flight.bytes, let tag = snapshot.etag {
-                acknowledge(bytes: flight.bytes, etag: tag, generation: flight.generation)
-            } else if snapshot.etag == baseEtag {
+                acknowledge(bytes: flight.bytes, condition: .version(tag), generation: flight.generation)
+            } else if snapshot.writeCondition == baseCondition {
                 setStatus(.pending)
                 startSaveIfPossible()
             } else {
@@ -550,6 +570,11 @@ final class WorkspaceFileEditSession {
             }
         case .missing:
             setStatus(.deleted)
+            checkpoint()
+        case .creatable:
+            // The create landed after all: an empty file is not the buffer, and
+            // the base that must not exist now does.
+            setStatus(.conflict)
             checkpoint()
         case .failed:
             verify(after: flight, delay: retryDelay)

@@ -48,6 +48,14 @@ struct DocumentEditOwnerTests {
         )
     }
 
+    /// Pi's own `SYSTEM.md`, the one subject whose file may not exist yet.
+    private func piSubject(
+        path: String = "SYSTEM.md",
+        seedText: String? = nil
+    ) -> DocumentEditSubject {
+        .piFile(path: path, seedText: seedText)
+    }
+
     /// The transport a test never gets to: the owner only reads here.
     private var idleTransport: WorkspaceFileEditTransport {
         WorkspaceFileEditTransport(read: { _ in .failed }, write: { _, _, _ in .notSent })
@@ -131,7 +139,7 @@ struct DocumentEditOwnerTests {
                     await readSpy?.note()
                     return outcome ?? .snapshot(snapshot)
                 },
-                write: { identity, bytes, ifMatch in await transport.write(identity, bytes, ifMatch) }
+                write: { identity, bytes, condition in await transport.write(identity, bytes, condition) }
             )
         )
         return DocumentEditOwner(
@@ -180,6 +188,49 @@ struct DocumentEditOwnerTests {
 
         #expect(await owner.read() == .bytes(WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: nil), draftText: nil))
         #expect(owner.barItems.isEmpty, "bytes the server did not offer for editing have no edit entry")
+    }
+
+    /// A file the server offers to create: the pencil is there, and the editor
+    /// starts from the seed the reader supplied. SYSTEM.md replaces Pi's built-in
+    /// prompt, so its seed is that prompt — never nothing.
+    @Test func aCreatableReadOpensOnTheReadersSeedText() async {
+        let owner = owner(
+            subject: piSubject(seedText: "You are a coding agent."),
+            serverId: "srv",
+            capability: capability,
+            outcome: .creatable
+        )
+
+        let result = await owner.read()
+        let seeded = WorkspaceFileDiskSnapshot(
+            bytes: Data("You are a coding agent.".utf8),
+            etag: nil,
+            creatable: true
+        )
+        #expect(result == .bytes(seeded, draftText: nil))
+        #expect(owner.base == seeded)
+        #expect(identifiers(owner) == ["workspace-file-editor.edit"], "a file that is not there yet still edits")
+
+        owner.beginEditing()
+        #expect(owner.isEditing)
+        #expect(owner.session?.currentText == "You are a coding agent.", "the editor opens on the seed")
+        #expect(owner.session?.hasUnsavedChanges == false, "an untouched seed is not an edit")
+        #expect(owner.session?.baseCondition == .absent, "its first real save creates the file")
+    }
+
+    /// A document with no default behind it (a prompt template) starts empty.
+    @Test func aCreatableReadWithoutASeedOpensEmpty() async {
+        let owner = owner(
+            subject: piSubject(path: "prompts/review.md"),
+            serverId: "srv",
+            capability: capability,
+            outcome: .creatable
+        )
+
+        let result = await owner.read()
+        #expect(result == .bytes(WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true), draftText: nil))
+        owner.beginEditing()
+        #expect(owner.session?.currentText == "")
     }
 
     @Test func binaryBytesLeaveNoPencil() async {
@@ -326,7 +377,7 @@ struct DocumentEditOwnerTests {
     /// SYSTEM.md is a document like a workspace file: the server advertises the
     /// `pi` origin, the bytes come back tagged, so the pencil opens our editor.
     @Test func piAgentFileReadsThroughItsPiIdentity() async {
-        let owner = owner(subject: .piFile(path: "SYSTEM.md"), serverId: "srv", capability: capability)
+        let owner = owner(subject: .piFile(path: "SYSTEM.md", seedText: nil), serverId: "srv", capability: capability)
 
         _ = await owner.read()
         #expect(owner.identity == WorkspaceFileEditIdentity(serverId: "srv", piPath: "SYSTEM.md"))
@@ -337,8 +388,8 @@ struct DocumentEditOwnerTests {
     /// server without the origin keeps the file read-only, and a subject with no
     /// server cannot name a document at all.
     @Test func piAgentFileNeedsAServerThatEditsIt() async {
-        let noServer = owner(subject: .piFile(path: "SYSTEM.md"), serverId: nil, capability: capability)
-        let noCapability = owner(subject: .piFile(path: "SYSTEM.md"), serverId: "srv", capability: nil)
+        let noServer = owner(subject: .piFile(path: "SYSTEM.md", seedText: nil), serverId: nil, capability: capability)
+        let noCapability = owner(subject: .piFile(path: "SYSTEM.md", seedText: nil), serverId: "srv", capability: nil)
 
         #expect(await noServer.read() == .ownRead)
         #expect(noServer.barItems.isEmpty)

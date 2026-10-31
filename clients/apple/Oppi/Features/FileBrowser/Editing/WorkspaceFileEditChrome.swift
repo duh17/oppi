@@ -413,7 +413,8 @@ final class WorkspaceFileConflictReviewViewController: UIViewController {
             }
             let disk = WorkspaceFileTextCodec.decode(snapshot.bytes) ?? ""
             phase = .diff(Self.diffContent(disk: disk, draft: draft, filePath: filePath))
-        case .missing:
+        case .missing, .creatable:
+            // No disk version: the draft is compared with nothing.
             phase = .diff(Self.diffContent(disk: "", draft: draft, filePath: filePath))
         case .failed:
             phase = .unavailable

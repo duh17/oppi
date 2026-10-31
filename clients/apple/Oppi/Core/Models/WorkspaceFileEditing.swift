@@ -136,14 +136,59 @@ extension WorkspaceFileEditIdentity: Codable {
 }
 
 /// Bytes of one `GET /files/current?origin=workspace` and the strong ETag from the
-/// same response. A nil tag means the server did not offer the file for editing.
+/// same response. A nil tag means the server did not offer the file for editing;
+/// `creatable` means it offered to create a file that is not there.
 struct WorkspaceFileDiskSnapshot: Sendable, Equatable {
     let bytes: Data
     let etag: String?
+    /// The read answered "missing, creatable": no version, and the save that
+    /// follows is conditioned on the file still being absent. The bytes are the
+    /// seed text the reader supplied (empty when there is none) — what an editor
+    /// starts from, not what the server holds. Only Pi's own allowlisted files
+    /// answer this (`X-Oppi-Creatable`).
+    let creatable: Bool
+
+    init(bytes: Data, etag: String?, creatable: Bool = false) {
+        self.bytes = bytes
+        self.etag = etag
+        self.creatable = creatable
+    }
+
+    /// What a save from these bytes is conditioned on, or nil when the server did
+    /// not offer the file for editing at all.
+    var writeCondition: WorkspaceFileWriteCondition? {
+        if let etag { return .version(etag) }
+        return creatable ? .absent : nil
+    }
+}
+
+/// What one save is conditioned on: the disk version it overwrites (`If-Match`),
+/// or the fact that the file must still not exist (`If-None-Match: *`), which is
+/// how the editor creates a file it read as absent.
+enum WorkspaceFileWriteCondition: Sendable, Equatable {
+    case version(String)
+    case absent
+
+    /// The tag a draft keeps between launches. `*` is the absence precondition,
+    /// the same token the request sends, so a draft of a file that was never
+    /// created still knows its own base.
+    var storedTag: String {
+        switch self {
+        case .version(let tag): tag
+        case .absent: "*"
+        }
+    }
+
+    init(storedTag: String) {
+        self = storedTag == "*" ? .absent : .version(storedTag)
+    }
 }
 
 enum WorkspaceFileReadOutcome: Sendable, Equatable {
     case snapshot(WorkspaceFileDiskSnapshot)
+    /// The file does not exist, and the server offered to create it: an empty
+    /// base whose first save writes it.
+    case creatable
     /// 404: deleted, unknown worktree, or no longer an eligible file.
     case missing
     /// Transport or unexpected server failure. Nothing is known about disk.
@@ -153,9 +198,11 @@ enum WorkspaceFileReadOutcome: Sendable, Equatable {
 /// Typed result of `PUT /files/current?origin=workspace`.
 enum WorkspaceFileWriteOutcome: Sendable, Equatable {
     case saved(etag: String)
-    /// 412: the disk tag no longer matches `If-Match`. Disk was not changed.
+    /// 412: the disk tag no longer matches `If-Match`, or the file this save
+    /// would have created is there now. Disk was not changed.
     case stale
-    /// 404: deleted or no longer eligible. The server never creates the file.
+    /// 404: deleted or no longer eligible. A workspace or Skill file is never
+    /// created by a save.
     case missing
     /// Other refusal (403, 413, 415, 428, 5xx). Disk was not changed by this request.
     case rejected(status: Int, message: String)

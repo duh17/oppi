@@ -31,9 +31,7 @@ struct AgentManagementPresentationTests {
         #expect(!AgentManagementPresentation.piIdentityAccessibilityLabel.contains("Ordinary upstream Pi"))
     }
 
-    @Test func piPromptFileIsReviewableAndMissingFileUsesTheDefaultLabel() {
-        #expect(AgentManagementPresentation.piPromptIsReviewable(.file))
-        #expect(!AgentManagementPresentation.piPromptIsReviewable(.default))
+    @Test func piPromptMissingFileUsesTheDefaultLabel() {
         #expect(
             AgentManagementPresentation.piDefaultPromptInUseLabel
                 == "Pi default in use until SYSTEM.md exists"

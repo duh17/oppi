@@ -42,10 +42,6 @@ enum AgentManagementPresentation {
         [.pi] + savedAgents.map(AgentManagementRow.saved)
     }
 
-    static func piPromptIsReviewable(_ source: PiSystemPromptSnapshot.Source) -> Bool {
-        source == .file
-    }
-
     static func piSystemPromptAccessibilityLabel(source: PiSystemPromptSnapshot.Source) -> String {
         source == .file ? "Read and comment on SYSTEM.md" : piDefaultPromptInUseLabel
     }

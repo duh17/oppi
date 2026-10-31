@@ -10,6 +10,7 @@ private final class EditURLProtocol: URLProtocol, @unchecked Sendable {
         let method: String
         let url: URL
         let ifMatch: String?
+        let ifNoneMatch: String?
         let body: Data
     }
 
@@ -26,6 +27,7 @@ private final class EditURLProtocol: URLProtocol, @unchecked Sendable {
             method: request.httpMethod ?? "",
             url: request.url!,
             ifMatch: request.value(forHTTPHeaderField: "If-Match"),
+            ifNoneMatch: request.value(forHTTPHeaderField: "If-None-Match"),
             body: body
         )
         Self.lock.lock()
@@ -121,7 +123,7 @@ struct APIClientWorkspaceFileEditingTests {
             try await loadCapabilities(client, capabilities)
             #expect(await client.fileEditingCapability(for: workspaceFile("notes.md").owner) == nil)
             let outcome = await client.writeEditedFile(
-                workspaceFile("notes.md"), bytes: Data("x".utf8), ifMatch: Self.tag
+                workspaceFile("notes.md"), bytes: Data("x".utf8), condition: .version(Self.tag)
             )
             guard case .rejected = outcome else {
                 Issue.record("expected rejected, got \(outcome)")
@@ -148,7 +150,7 @@ struct APIClientWorkspaceFileEditingTests {
             (200, ["Content-Type": "application/json"], Data(#"{"etag":\#(Self.newTagJSON),"size":9,"mtimeMs":1}"#.utf8))
         }
         let outcome = await client.writeEditedFile(
-            workspaceFile("docs/a b.md", worktreeId: "wt-1"), bytes: bytes, ifMatch: Self.tag
+            workspaceFile("docs/a b.md", worktreeId: "wt-1"), bytes: bytes, condition: .version(Self.tag)
         )
         #expect(outcome == .saved(etag: Self.newTag))
         let request = try #require(EditURLProtocol.recorded.first)
@@ -179,16 +181,16 @@ struct APIClientWorkspaceFileEditingTests {
         ]
         for (status, expected) in cases {
             EditURLProtocol.handler = { _ in (status, [:], Data(#"{"error":"File too large (max 1MB)"}"#.utf8)) }
-            let outcome = await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), ifMatch: Self.tag)
+            let outcome = await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), condition: .version(Self.tag))
             #expect(outcome == expected)
         }
 
         EditURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
-        #expect(await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), ifMatch: Self.tag) == .notSent)
+        #expect(await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), condition: .version(Self.tag)) == .notSent)
         EditURLProtocol.handler = { _ in throw URLError(.timedOut) }
-        #expect(await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), ifMatch: Self.tag) == .unknown)
+        #expect(await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), condition: .version(Self.tag)) == .unknown)
         EditURLProtocol.handler = { _ in throw URLError(.networkConnectionLost) }
-        #expect(await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), ifMatch: Self.tag) == .unknown)
+        #expect(await client.writeEditedFile(workspaceFile("a.md"), bytes: Data("x".utf8), condition: .version(Self.tag)) == .unknown)
         // Every write, including failures, used the one current-file route.
         #expect(EditURLProtocol.recorded.allSatisfy { $0.method == "PUT" && $0.url.path == "/files/current" })
     }
@@ -225,7 +227,7 @@ struct APIClientWorkspaceFileEditingTests {
             #"{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#
         )
         #expect(await workspaceOnly.fileEditingCapability(for: skillFile.owner) == nil)
-        guard case .rejected = await workspaceOnly.writeEditedFile(skillFile, bytes: Data("x".utf8), ifMatch: Self.tag) else {
+        guard case .rejected = await workspaceOnly.writeEditedFile(skillFile, bytes: Data("x".utf8), condition: .version(Self.tag)) else {
             Issue.record("a server without skillFileEditing must not get a Skill write")
             return
         }
@@ -242,7 +244,7 @@ struct APIClientWorkspaceFileEditingTests {
             return (200, ["Content-Type": "application/json"], Data(#"{"etag":\#(Self.newTagJSON),"size":8,"mtimeMs":1}"#.utf8))
         }
         #expect(try await client.readFileForEditing(skillFile) == WorkspaceFileDiskSnapshot(bytes: bytes, etag: Self.tag))
-        #expect(await client.writeEditedFile(skillFile, bytes: bytes, ifMatch: Self.tag) == .saved(etag: Self.newTag))
+        #expect(await client.writeEditedFile(skillFile, bytes: bytes, condition: .version(Self.tag)) == .saved(etag: Self.newTag))
         #expect(EditURLProtocol.recorded.map(\.method) == ["GET", "PUT"])
         for request in EditURLProtocol.recorded {
             #expect(request.url.path == "/files/current")
@@ -263,7 +265,7 @@ struct APIClientWorkspaceFileEditingTests {
             #"{"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576}}"#
         )
         #expect(await older.fileEditingCapability(for: systemPrompt.owner) == nil)
-        guard case .rejected = await older.writeEditedFile(systemPrompt, bytes: Data("x".utf8), ifMatch: Self.tag) else {
+        guard case .rejected = await older.writeEditedFile(systemPrompt, bytes: Data("x".utf8), condition: .version(Self.tag)) else {
             Issue.record("a server without piFileEditing must not get a Pi write")
             return
         }
@@ -280,11 +282,42 @@ struct APIClientWorkspaceFileEditingTests {
             return (200, ["Content-Type": "application/json"], Data(#"{"etag":\#(Self.newTagJSON),"size":5,"mtimeMs":1}"#.utf8))
         }
         #expect(try await client.readFileForEditing(systemPrompt) == WorkspaceFileDiskSnapshot(bytes: bytes, etag: Self.tag))
-        #expect(await client.writeEditedFile(systemPrompt, bytes: bytes, ifMatch: Self.tag) == .saved(etag: Self.newTag))
+        #expect(await client.writeEditedFile(systemPrompt, bytes: bytes, condition: .version(Self.tag)) == .saved(etag: Self.newTag))
         // The origin is the only parameter: the server refuses any other one.
         for request in EditURLProtocol.recorded {
             #expect(request.url.path == "/files/current")
             #expect(query(request.url) == ["origin": "pi", "path": "SYSTEM.md"])
         }
+    }
+
+    /// A missing Pi file: the read answers an empty creatable base, and the first
+    /// save asks to create it rather than to overwrite a version.
+    @Test func aMissingPiFileReadsCreatableAndItsFirstSaveCreatesIt() async throws {
+        defer { EditURLProtocol.reset() }
+        let client = makeClient()
+        try await loadCapabilities(client, #"{"piFileEditing":{"version":1,"maxBytes":1048576}}"#)
+        let systemPrompt = WorkspaceFileEditIdentity(serverId: "s1", piPath: "SYSTEM.md")
+
+        EditURLProtocol.handler = { record in
+            if record.method == "GET" {
+                return (200, [WorkspaceFileCreatableHeader.name: "1"], Data())
+            }
+            return (200, ["Content-Type": "application/json"], Data(#"{"etag":\#(Self.newTagJSON),"size":5,"mtimeMs":1}"#.utf8))
+        }
+        #expect(try await client.readFileForEditing(systemPrompt) == WorkspaceFileDiskSnapshot(bytes: Data(), etag: nil, creatable: true))
+        #expect(await client.readFileForEditingOutcome(systemPrompt) == .creatable)
+
+        let bytes = Data("# Pi\n".utf8)
+        #expect(await client.writeEditedFile(systemPrompt, bytes: bytes, condition: .absent) == .saved(etag: Self.newTag))
+        #expect(EditURLProtocol.recorded.map(\.method) == ["GET", "GET", "PUT"])
+        let put = EditURLProtocol.recorded[2]
+        #expect(put.ifNoneMatch == "*", "a create says the file must still be absent")
+        #expect(put.ifMatch == nil, "a create never also claims a version")
+        #expect(put.body == bytes)
+
+        // The same PUT answered 412 is the editor's stale conflict: something
+        // else created the file first.
+        EditURLProtocol.handler = { _ in (412, [:], Data(#"{"error":"Precondition failed"}"#.utf8)) }
+        #expect(await client.writeEditedFile(systemPrompt, bytes: bytes, condition: .absent) == .stale)
     }
 }

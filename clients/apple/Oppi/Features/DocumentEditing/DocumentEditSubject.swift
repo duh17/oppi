@@ -27,8 +27,11 @@ enum DocumentEditSubject: Equatable {
     case schedulePrompt(scheduleId: String)
     /// One of Pi's own agent files (`SYSTEM.md`, `prompts/`), by
     /// Pi-agent-relative path: the host home's one writable spot, allowlisted by
-    /// the server. The reader that shows it names the file it read.
-    case piFile(path: String)
+    /// the server. The reader that shows it names the file it read, and supplies
+    /// `seedText`: the text a *missing* file starts from. `SYSTEM.md` replaces
+    /// Pi's built-in prompt, so its seed is that prompt — an editor opened empty
+    /// there would replace it with nothing — and a prompt template has none.
+    case piFile(path: String, seedText: String?)
     /// Bytes the app holds with no file behind them: the Pi prompt readers, a
     /// tool row. A snapshot is never editable; it may still offer Edit with
     /// Session.
@@ -82,11 +85,22 @@ extension DocumentEditSubject {
         case .schedulePrompt(let scheduleId):
             guard let serverId, !serverId.isEmpty else { return nil }
             return WorkspaceFileEditIdentity(serverId: serverId, scheduleId: scheduleId)
-        case .piFile(let path):
+        case .piFile(let path, _):
             guard let serverId, !serverId.isEmpty, !path.isEmpty else { return nil }
             return WorkspaceFileEditIdentity(serverId: serverId, piPath: path)
         case .snapshot:
             return nil
+        }
+    }
+
+    /// The text an editor starts from when the document does not exist yet. Only
+    /// Pi's own `SYSTEM.md` has one: it replaces Pi's built-in prompt, so the
+    /// editor starts from that prompt and a save that changes nothing writes
+    /// nothing.
+    var creatableSeedText: String? {
+        switch self {
+        case .piFile(_, let seedText): seedText
+        case .file, .agentInstructions, .schedulePrompt, .snapshot: nil
         }
     }
 
@@ -96,7 +110,7 @@ extension DocumentEditSubject {
         switch self {
         case .file(_, _, _, _, _, _, let fileType): fileType
         case .agentInstructions, .schedulePrompt: .markdown
-        case .piFile(let path): FileType.detect(from: path)
+        case .piFile(let path, _): FileType.detect(from: path)
         case .snapshot: nil
         }
     }
