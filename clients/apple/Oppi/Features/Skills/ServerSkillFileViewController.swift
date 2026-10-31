@@ -28,25 +28,6 @@ enum ServerSkillFilePresentation: Equatable {
             : .readOnly(hostPath: location.path)
     }
 
-    /// The editor's target for a Skill file a reader opened by name (`GET
-    /// /skills/:name`), which carries no catalog id: the catalog's one Skill with
-    /// that name, when it is editable and this is one of its own files. Several
-    /// Skills of one name is ambiguous, and an ambiguous answer is no target.
-    static func editTarget(
-        skillName: String,
-        filePath: String,
-        skills: [ServerSkillSummary]
-    ) -> SkillFileEditTarget? {
-        let matches = skills.filter { $0.name == skillName }
-        guard matches.count == 1, let summary = matches.first,
-              case .editable = resolve(
-                  editable: summary.editable,
-                  resourcePath: summary.path,
-                  selectedFilePath: filePath
-              ) else { return nil }
-        return SkillFileEditTarget(skillId: summary.id, path: filePath)
-    }
-
     /// `isSkillSource` is false for a file beside a top-level Markdown Skill:
     /// that Skill is the one file, so revising it never edits its neighbors.
     private static func hostLocation(

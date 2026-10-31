@@ -85,7 +85,13 @@ function editTargetFor(request: {
     return { root: request.origin.root, requestedPath: request.path };
   }
   if (request.originKind === "pi" && request.origin.kind === "pi") {
-    return { root: request.origin.agentDir, requestedPath: request.path };
+    return {
+      root: request.origin.agentDir,
+      requestedPath: request.path,
+      // The allowlist again, on the path after symlinks: a link inside the
+      // agent directory must not reach a file the list does not name.
+      allowsCanonical: (relativeToRealRoot) => piAgentEditablePath(relativeToRealRoot) !== null,
+    };
   }
   return null;
 }

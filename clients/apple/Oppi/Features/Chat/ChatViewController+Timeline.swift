@@ -138,32 +138,35 @@ extension ChatViewController {
     func openTimelineReader(_ payload: ChatReaderPayload) {
         guard let store = root?.chatReaderPayloadStore else { return }
         scrollController.suspendForNavigation()
+        // The row may show a tool's output; the document it names is the live
+        // file the pencil edits, read from this chat's own checkout.
+        var readerPayload = Self.stampedTimelineReaderPayload(
+            payload,
+            sessionId: sessionId,
+            composerDestination: canvasDestination,
+            lockOrigin: readerLockOrigin
+        )
+        if case .document(let content, _) = readerPayload.kind, readerPayload.editSubject == nil {
+            readerPayload.editSubject = liveFileSubject(for: content)
+        }
         appNavigation.openChatReader(
-            store.store(
-                Self.stampedTimelineReaderPayload(
-                    payload,
-                    sessionId: sessionId,
-                    composerDestination: canvasDestination,
-                    lockOrigin: readerLockOrigin
-                ).withLiveFileSubject(liveFileSubject(for: payload)),
-                retaining: appNavigation.containsChatReader
-            )
+            store.store(readerPayload, retaining: appNavigation.containsChatReader)
         )
     }
 
     /// The live workspace file a reader's bytes name, when this chat can resolve
     /// one. The row may show a tool's output; the pencil edits the file on disk
     /// now, through the ordinary workspace edit path.
-    private func liveFileSubject(for payload: ChatReaderPayload) -> DocumentEditSubject? {
-        guard payload.editSubject == nil,
-              let path = payload.contentFilePath,
+    private func liveFileSubject(for content: FullScreenCodeContent) -> DocumentEditSubject? {
+        guard let path = content.filePath,
               let serverId = resolvedServerId,
               let workspaceId = timelineWorkspaceId,
               let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceId }),
               let workspacePath = WorkspaceFileEditPath.reportedPath(
                   path,
                   runtime: workspace.runtime,
-                  hostMount: workspace.hostMount
+                  hostMount: workspace.hostMount,
+                  worktreeId: session?.worktreeId
               ) else { return nil }
         return .file(
             serverId: serverId,

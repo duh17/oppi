@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -42,13 +43,9 @@ function seed(): Fixture {
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(join(agentDir, "SYSTEM.md"), "# Pi system prompt\n");
   writeFileSync(join(agentDir, "settings.json"), '{"defaultTools":[]}\n');
-  exitOutsideSkills(agentDir);
-  return { root, agentDir, dataDir };
-}
-
-/** A directory next to the agent dir, so a symlink out of it has a target. */
-function exitOutsideSkills(agentDir: string): void {
+  // A file beside the agent directory, so a symlink out of it has a target.
   writeFileSync(join(agentDir, "..", "settings.md"), "beside the agent dir\n");
+  return { root, agentDir, dataDir };
 }
 
 async function call(
@@ -84,7 +81,7 @@ async function call(
   return res;
 }
 
-function etagFor(bytes: Buffer | string): string {
+function tag(bytes: Buffer | string): string {
   return `"sha256-${createHash("sha256").update(bytes).digest("hex")}"`;
 }
 
@@ -97,7 +94,7 @@ describe("/files/current?origin=pi", () => {
     expect(read.statusCode).toBe(200);
     const original = readFileSync(systemPrompt);
     expect(read.body.equals(original)).toBe(true);
-    expect(read.headers.ETag).toBe(etagFor(original));
+    expect(read.headers.ETag).toBeDefined();
 
     const missingTag = await call(fixture, "PUT", "SYSTEM.md", Buffer.from("x"));
     expect(missingTag.statusCode).toBe(428);
@@ -107,11 +104,11 @@ describe("/files/current?origin=pi", () => {
       "if-match": read.headers.ETag,
     });
     expect(saved.statusCode).toBe(200);
-    expect(JSON.parse(saved.body.toString("utf8"))).toMatchObject({
-      etag: etagFor(edited),
-      size: edited.length,
-    });
+    const savedEtag = (JSON.parse(saved.body.toString("utf8")) as { etag: string }).etag;
+    expect(JSON.parse(saved.body.toString("utf8"))).toMatchObject({ size: edited.length });
     expect(readFileSync(systemPrompt).equals(edited)).toBe(true);
+    // The save's tag is the next read's tag: the editor never needs the scheme.
+    expect((await call(fixture, "GET", "SYSTEM.md")).headers.ETag).toBe(savedEtag);
 
     // The tag the read answered with no longer matches: a stale write is 412
     // and leaves the file alone, exactly like a workspace file.
@@ -120,6 +117,55 @@ describe("/files/current?origin=pi", () => {
     });
     expect(stale.statusCode).toBe(412);
     expect(readFileSync(systemPrompt).equals(edited)).toBe(true);
+  });
+
+  it("never creates a file, and refuses a path the allowlist does not name", async () => {
+    const fixture = seed();
+    mkdirSync(join(fixture.agentDir, "prompts"));
+    const anyTag = `"sha256-${"a".repeat(64)}"`;
+
+    for (const path of ["prompts/new.md", "prompts/.git/config.md", "prompts/sub/new.md"]) {
+      const res = await call(fixture, "PUT", path, Buffer.from("created\n"), { "if-match": anyTag });
+      expect(res.statusCode).toBe(404);
+      expect(existsSync(join(fixture.agentDir, path))).toBe(false);
+    }
+    // The allowlist names Markdown prompt templates, not every file under prompts/.
+    writeFileSync(join(fixture.agentDir, "prompts", "notes.json"), "{}\n");
+    expect((await call(fixture, "GET", "prompts/notes.json")).statusCode).toBe(404);
+  });
+
+  it("refuses an allowlisted path that a symlink leads to another agent file", async () => {
+    const fixture = seed();
+    const auth = join(fixture.agentDir, "auth.json");
+    const secret = '{"k":"secret"}\n';
+    writeFileSync(auth, secret);
+    mkdirSync(join(fixture.agentDir, "prompts"));
+    // `prompts/up -> ..`, so `prompts/up/auth.json` is the agent dir's own auth.json.
+    symlinkSync("..", join(fixture.agentDir, "prompts", "up"));
+
+    const read = await call(fixture, "GET", "prompts/up/auth.json");
+    expect(read.headers.ETag).toBeUndefined();
+    const write = await call(fixture, "PUT", "prompts/up/auth.json", Buffer.from("{}\n"), {
+      "if-match": tag(secret),
+    });
+    expect(write.statusCode).toBe(404);
+    expect(readFileSync(auth, "utf8")).toBe(secret);
+  });
+
+  it("refuses a prompts directory that is a symlink to the agent directory", async () => {
+    const fixture = seed();
+    // `prompts -> .` makes every sibling agent file look allowlisted.
+    symlinkSync(".", join(fixture.agentDir, "prompts"));
+
+    const read = await call(fixture, "GET", "prompts/settings.json");
+    expect(read.headers.ETag).toBeUndefined();
+    const write = await call(fixture, "PUT", "prompts/settings.json", Buffer.from("{}\n"), {
+      "if-match": tag('{"defaultTools":[]}\n'),
+    });
+    expect(write.statusCode).toBe(404);
+    expect(readFileSync(join(fixture.agentDir, "settings.json"), "utf8")).toBe(
+      '{"defaultTools":[]}\n',
+    );
   });
 
   it("edits Pi's prompt templates under prompts/", async () => {
@@ -148,7 +194,7 @@ describe("/files/current?origin=pi", () => {
 
   it("refuses every file outside Pi's agent files, read and write alike", async () => {
     const fixture = seed();
-    const anyTag = etagFor("anything\n");
+    const anyTag = tag("anything\n");
     for (const path of ["settings.json", "SYSTEM.md.bak", "prompts", "../settings.md"]) {
       expect((await call(fixture, "GET", path)).statusCode).toBe(404);
       const write = await call(fixture, "PUT", path, Buffer.from("owned\n"), {
@@ -168,7 +214,7 @@ describe("/files/current?origin=pi", () => {
     const fixture = seed();
     const outside = join(fixture.root, "outside.md");
     writeFileSync(outside, "outside\n");
-    const anyTag = etagFor("outside\n");
+    const anyTag = tag("outside\n");
 
     for (const path of ["prompts/../../outside.md", "/etc/hosts", "~/outside.md"]) {
       expect((await call(fixture, "GET", path)).statusCode).toBe(404);

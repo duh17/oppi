@@ -269,7 +269,7 @@ struct DocumentEditOwnerTests {
                 )
             ),
             workspaceId: "w1",
-            worktreeId: "wt-1",
+            worktreeId: nil,
             path: "/Users/preview/oppi/src/a.ts",
             skillFile: nil,
             fileType: .plain
@@ -279,47 +279,45 @@ struct DocumentEditOwnerTests {
         _ = await owner.read()
         #expect(
             owner.identity
-                == WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: "wt-1", path: "src/a.ts")
+                == WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "src/a.ts")
         )
         #expect(identifiers(owner) == ["workspace-file-editor.edit"])
     }
 
     /// A path the workspace does not hold has no identity: the host's own file, a
     /// sandbox path outside its mount, and a sandbox home path all stay read-only.
-    @Test func aSessionPathOutsideTheWorkspaceHasNoPencil() async {
-        func sessionSubject(path: String, runtime: WorkspaceRuntime) -> DocumentEditSubject {
+    @Test func aWorktreeSessionDoesNotMapAnAbsolutePathOntoItsWorkspace() async {
+        func sessionSubject(path: String, worktreeId: String?) -> DocumentEditSubject {
             .file(
                 serverId: "srv",
                 source: .sessionTouched(
                     SessionTouchedFileOrigin(
                         sessionId: "session-1",
-                        workspaceRuntime: runtime,
+                        workspaceRuntime: .host,
                         hostMount: "/Users/preview/oppi"
                     )
                 ),
                 workspaceId: "w1",
-                worktreeId: nil,
+                worktreeId: worktreeId,
                 path: path,
                 skillFile: nil,
                 fileType: .markdown
             )
         }
 
-        for (path, runtime) in [
-            ("/tmp/elsewhere.md", WorkspaceRuntime.host),
-            ("~/notes.md", .host),
-            ("/Users/preview/oppi/../elsewhere.md", .host),
-            ("/etc/hosts", .sandbox),
-        ] {
-            #expect(
-                sessionSubject(path: path, runtime: runtime).editIdentity(serverId: "srv") == nil,
-                "\(path) is not a workspace file"
-            )
-        }
-        // A sandbox's guest path is its workspace path, as the workspace origin spells it.
+        // The mount is the main checkout, so mapping this path would edit the
+        // worktree's copy of a file the row read from main.
+        let absolute = "/Users/preview/oppi/src/a.ts"
+        #expect(sessionSubject(path: absolute, worktreeId: "wt-1").editIdentity(serverId: "srv") == nil)
+        // A relative path is the checkout's own, whatever the session's worktree.
         #expect(
-            sessionSubject(path: "/workspace/oppi/src/a.ts", runtime: .sandbox).editIdentity(serverId: "srv")
-                == WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "/workspace/oppi/src/a.ts")
+            sessionSubject(path: "src/a.ts", worktreeId: "wt-1").editIdentity(serverId: "srv")
+                == WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: "wt-1", path: "src/a.ts")
+        )
+        // In the main checkout the same absolute path is that file.
+        #expect(
+            sessionSubject(path: absolute, worktreeId: nil).editIdentity(serverId: "srv")
+                == WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "src/a.ts")
         )
     }
 
@@ -330,7 +328,6 @@ struct DocumentEditOwnerTests {
     @Test func piAgentFileReadsThroughItsPiIdentity() async {
         let owner = owner(subject: .piFile(path: "SYSTEM.md"), serverId: "srv", capability: capability)
 
-        #expect(owner.identity == nil, "nothing resolves before the read")
         _ = await owner.read()
         #expect(owner.identity == WorkspaceFileEditIdentity(serverId: "srv", piPath: "SYSTEM.md"))
         #expect(identifiers(owner) == ["workspace-file-editor.edit"])

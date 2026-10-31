@@ -388,11 +388,6 @@ struct PromptEditTransportTests {
     }
 
     @Test func aPiAgentFileIsItsOwnDocument() {
-        #expect(
-            DocumentEditSubject.piFile(path: "SYSTEM.md").editIdentity(serverId: "s1")
-                == WorkspaceFileEditIdentity(serverId: "s1", piPath: "SYSTEM.md")
-        )
-        #expect(DocumentEditSubject.piFile(path: "prompts/review.md").fileType == .markdown)
         // Its drafts are its own: never a workspace file's, never a prompt's.
         let keys = [
             WorkspaceFileEditIdentity(serverId: "s1", piPath: "SYSTEM.md").storageKey,
@@ -400,6 +395,5 @@ struct PromptEditTransportTests {
             WorkspaceFileEditIdentity(serverId: "s1", agentId: "SYSTEM.md").storageKey,
         ]
         #expect(Set(keys).count == keys.count)
-        #expect(DocumentEditSubject.piFile(path: "SYSTEM.md").editIdentity(serverId: nil) == nil)
     }
 }

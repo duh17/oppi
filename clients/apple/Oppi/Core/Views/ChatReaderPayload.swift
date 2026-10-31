@@ -65,42 +65,36 @@ struct ChatReaderPayload {
     init(
         kind: Kind,
         destination: ComposerCanvasDestination? = nil,
-        lockOrigin: ScopedLockTarget? = nil,
-        editSubject: DocumentEditSubject? = nil
+        lockOrigin: ScopedLockTarget? = nil
     ) {
         self.kind = kind
         self.destination = destination
         self.lockOrigin = lockOrigin
-        self.editSubject = editSubject
     }
 
     init(
         content: FullScreenCodeContent,
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
-        destination: ComposerCanvasDestination? = nil,
-        editSubject: DocumentEditSubject? = nil
+        destination: ComposerCanvasDestination? = nil
     ) {
         self.init(
             kind: .document(
                 content: content,
                 reviewCommentSelectionContext: reviewCommentSelectionContext
             ),
-            destination: destination,
-            editSubject: editSubject
+            destination: destination
         )
     }
 
     static func document(
         content: FullScreenCodeContent,
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
-        destination: ComposerCanvasDestination? = nil,
-        editSubject: DocumentEditSubject? = nil
+        destination: ComposerCanvasDestination? = nil
     ) -> Self {
         Self(
             content: content,
             reviewCommentSelectionContext: reviewCommentSelectionContext,
-            destination: destination,
-            editSubject: editSubject
+            destination: destination
         )
     }
 
@@ -133,16 +127,13 @@ struct ChatReaderPayload {
         with destination: ComposerCanvasDestination?,
         lockOrigin: ScopedLockTarget? = nil
     ) -> Self {
-        Self(kind: kind, destination: destination, lockOrigin: lockOrigin, editSubject: editSubject)
+        Self(kind: kind, destination: destination, lockOrigin: lockOrigin)
     }
 
+    /// A reader opened from inside this one inherits the chat it belongs to, not
+    /// this reader's document: its own edit entry stays its own.
     func inheritingDestination(from parent: Self) -> Self {
-        Self(
-            kind: kind,
-            destination: parent.destination,
-            lockOrigin: parent.lockOrigin,
-            editSubject: parent.editSubject
-        )
+        stamped(with: parent.destination, lockOrigin: parent.lockOrigin)
     }
 
     var content: FullScreenCodeContent {
@@ -161,22 +152,6 @@ struct ChatReaderPayload {
         case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
             return nil
         }
-    }
-
-    /// The file the document names, when it names one.
-    var contentFilePath: String? {
-        switch kind {
-        case .document(let content, _):
-            return content.filePath
-        case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
-            return nil
-        }
-    }
-
-    /// The same reader, with the live document behind it when none was named.
-    func withLiveFileSubject(_ subject: DocumentEditSubject?) -> Self {
-        guard let subject, editSubject == nil else { return self }
-        return Self(kind: kind, destination: destination, lockOrigin: lockOrigin, editSubject: subject)
     }
 }
 

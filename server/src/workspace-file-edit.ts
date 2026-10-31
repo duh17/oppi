@@ -54,7 +54,7 @@ export type FileEditInspection =
 
 /** One file the editor may read and write: a path that must stay under `root`. */
 export interface FileEditTarget {
-  /** Host directory: a workspace checkout or mount, or an editable Skill's directory. */
+  /** Host directory: a workspace checkout or mount, an editable Skill's directory, or Pi's agent directory. */
   root: string;
   requestedPath: string;
   /**
@@ -62,6 +62,13 @@ export interface FileEditTarget {
    * Absent for a Skill directory, where only root-relative paths resolve.
    */
   workspace?: Workspace;
+  /**
+   * A narrower rule than root containment, asked about the path after symlinks
+   * are resolved (root-relative, `/`-separated). Pi's agent directory uses it so
+   * its allowlist names files, not a root: a symlink inside the directory cannot
+   * widen what may be written.
+   */
+  allowsCanonical?: (relativeToRealRoot: string) => boolean;
 }
 
 function isSandboxed(target: { workspace?: Workspace }): boolean {
@@ -266,6 +273,12 @@ export async function inspectFileForEdit(input: FileEditTarget): Promise<FileEdi
   }
   if (!isPathWithinRoot(canonical, realRoot)) {
     return isSandboxed(input) ? { kind: "forbidden" } : { kind: "ineligible" };
+  }
+  if (input.allowsCanonical) {
+    const relativeCanonical = canonical.slice(realRoot.length + 1).replaceAll("\\", "/");
+    if (!input.allowsCanonical(relativeCanonical)) {
+      return isSandboxed(input) ? { kind: "forbidden" } : { kind: "ineligible" };
+    }
   }
   if (lst.isSymbolicLink()) return { kind: "ineligible" };
   if (!lst.isFile()) return { kind: "not-found" };
@@ -486,6 +499,7 @@ async function writeEditedFileAtomic(
       workspace: input.workspace,
       root: input.root,
       requestedPath: input.requestedPath,
+      ...(input.allowsCanonical ? { allowsCanonical: input.allowsCanonical } : {}),
     });
     const recheckError = inspectionError(recheck);
     if (recheckError) return recheckError;
@@ -620,6 +634,7 @@ export async function putEditedFile(
       expectedEtag: precondition.etag,
       bytes: input.body,
       mode: inspection.mode,
+      ...(input.allowsCanonical ? { allowsCanonical: input.allowsCanonical } : {}),
     });
   });
 }

@@ -66,7 +66,8 @@ extension DocumentEditSubject {
                       let workspacePath = WorkspaceFileEditPath.reportedPath(
                           path,
                           runtime: origin.workspaceRuntime,
-                          hostMount: origin.hostMount
+                          hostMount: origin.hostMount,
+                          worktreeId: worktreeId
                       ) else { return nil }
                 return WorkspaceFileEditIdentity(
                     serverId: fileServerId,

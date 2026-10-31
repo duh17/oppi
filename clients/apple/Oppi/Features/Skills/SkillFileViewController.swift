@@ -29,11 +29,15 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
         didSet { setNeedsUpdateProperties() }
     }
     private var shownPhase: Phase?
-    private var reader: FullScreenCodeViewController?
+    /// The page on screen: the plain reader, or the review reader of an editable
+    /// Skill's file.
+    private var embeddedContent: UIViewController?
     private var loadTask: Task<Void, Never>?
-    /// The document's edit entry: its pencil edits this file through its Skill
-    /// when the server's catalog says the Skill is editable.
-    private lazy var editOwner = makeEditOwner()
+    /// The editable reading of this file, when the server's catalog proves this
+    /// Skill is editable and this is one of its own files. It is the same review
+    /// reader a Skill's file opens from Server Skills, so the pencil, the "…"
+    /// and the editor are that entry's, not a second copy of them.
+    private var editableFile: (hostPath: String, skillFile: SkillFileEditTarget, summary: ServerSkillSummary)?
 
     init(
         skillName: String,
@@ -65,45 +69,27 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
         filePath.components(separatedBy: "/").last ?? filePath
     }
 
-    /// The Skill this file belongs to, as the server's catalog names it: the one
-    /// Skill with this reader's name, when it is editable and this is one of its
-    /// own files. Nil shows no pencil, and the reader keeps the bar it had.
-    private var skillFile: SkillFileEditTarget? {
-        guard let serverId = connection.currentServerId else { return nil }
-        return ServerSkillFilePresentation.editTarget(
-            skillName: skillName,
-            filePath: filePath,
-            skills: connection.serverResourceStore.skills(forServer: serverId)
-        )
-    }
-
-    private func makeEditOwner() -> DocumentEditOwner? {
-        guard let skillFile else { return nil }
-        let subject = DocumentEditSubject.file(
-            serverId: connection.currentServerId,
-            source: .hostFile,
-            workspaceId: "",
-            worktreeId: nil,
-            path: filePath,
-            skillFile: skillFile,
-            fileType: FileType.detect(from: filePath)
-        )
-        return DocumentEditOwner(
-            subject: subject,
-            backend: { [weak self] in
-                guard let self, let api = connection.apiClient else { return nil }
-                return .make(for: subject, api: api)
-            },
-            handlers: .init(
-                makePreview: { [weak self] text in
-                    FullScreenCodeViewController(
-                        content: .fromText(text, filePath: self?.filePath),
-                        presentationMode: .contentOnly()
-                    )
-                }
-            ),
-            onChange: { [weak self] in self?.setNeedsUpdateProperties() }
-        )
+    /// Whether the catalog proves this is an editable Skill's own file. The
+    /// catalog's `path` is the host path the reader's Skill resolved to, so a
+    /// project Skill that shares a global one's name is not confused for it;
+    /// a Skill either side cannot name by path stays read-only.
+    private static func editableFile(
+        detail: SkillDetail,
+        filePath: String,
+        skills: [ServerSkillSummary]
+    ) -> (hostPath: String, skillFile: SkillFileEditTarget, summary: ServerSkillSummary)? {
+        let skillPath = (detail.skill.path as NSString).standardizingPath
+        guard let summary = skills.first(where: {
+            guard let candidate = $0.path else { return false }
+            return (candidate as NSString).standardizingPath == skillPath
+        }),
+            case .editable(let hostPath) = ServerSkillFilePresentation.resolve(
+                editable: summary.editable,
+                resourcePath: summary.path,
+                selectedFilePath: filePath
+            )
+        else { return nil }
+        return (hostPath, SkillFileEditTarget(skillId: summary.id, path: filePath), summary)
     }
 
     private var isShowingFile: Bool {
@@ -141,10 +127,7 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
             shownPhase = phase
             show(phase)
         }
-        reader?.applyThemeIfNeeded(themeID)
-        reader?.setEditBarItems(editOwner?.barItems ?? [])
-        editOwner?.updateEditorPage(palette: root.themeStore.activeThemeID.palette, checkoutSubtitle: nil)
-        editOwner?.presentEditorIfNeeded(from: self)
+        (embeddedContent as? FullScreenCodeViewController)?.applyThemeIfNeeded(themeID)
         navigationItem.title = isShowingFile ? "" : fileName
         navigationController?.updateNavigationBar(for: self, animated: false)
     }
@@ -175,11 +158,28 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
             )
         case .loaded(let text):
             contentUnavailableConfiguration = nil
-            embedReader(text: text)
+            embedLoaded(text: text)
         }
     }
 
-    private func embedReader(text: String) {
+    /// An editable Skill's file shows the review reader Server Skills uses, so
+    /// its pencil and "…" come from the one owner; anything else shows the
+    /// plain reader it always had.
+    private func embedLoaded(text: String) {
+        if let editable = editableFile {
+            embed(ReviewableControlMarkdownViewController(
+                hostFilePath: editable.hostPath,
+                serverId: connection.currentServerId ?? "",
+                title: filePath,
+                skillFile: editable.skillFile,
+                domain: .skills,
+                targetId: editable.summary.id,
+                targetName: editable.summary.name,
+                sourceLabel: "\(editable.summary.name) / \(filePath)",
+                connection: connection
+            ))
+            return
+        }
         let reader = FullScreenCodeViewController(
             content: .fromText(text, filePath: filePath),
             presentationMode: .embedded(onDismiss: { [weak self] in
@@ -189,56 +189,68 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
             reviewCommentSelectionContext: reviewCommentSelectionScope?.makeContext(
                 sessionId: nil,
                 sourceLabel: nil
-            ),
-            editItems: editOwner?.barItems ?? []
+            )
         )
-        if let editOwner {
-            Task { [weak self] in
-                _ = await editOwner.read()
-                self?.setNeedsUpdateProperties()
-            }
-        }
-        addChild(reader)
-        reader.view.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(reader.view)
-        // The reader's own glass bar sits at the top of the screen.
+        embed(reader)
+    }
+
+    /// The page takes the whole screen under the reader's own glass bar.
+    private func embed(_ content: UIViewController) {
+        addChild(content)
+        content.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(content.view)
         NSLayoutConstraint.activate([
-            reader.view.topAnchor.constraint(equalTo: view.topAnchor),
-            reader.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            reader.view.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            reader.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            content.view.topAnchor.constraint(equalTo: view.topAnchor),
+            content.view.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            content.view.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            content.view.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
         ])
-        reader.didMove(toParent: self)
-        self.reader = reader
+        content.didMove(toParent: self)
+        embeddedContent = content
     }
 
     private func removeReader() {
-        // The editor holds the live buffer: hand it back before the reader goes.
-        editOwner?.finishEditing()
-        guard let reader else { return }
+        guard let reader = embeddedContent else { return }
         reader.willMove(toParent: nil)
         reader.view.removeFromSuperview()
         reader.removeFromParent()
-        self.reader = nil
+        embeddedContent = nil
     }
 
     // MARK: - Loading
 
+    /// The file, and the catalog entry that proves its Skill is editable. The
+    /// detail carries the Skill's own path (`cwd` may have made it a project
+    /// Skill), so the catalog is matched by path and never by name.
     private func load() {
         loadTask?.cancel()
-        guard let api = connection.apiClient else {
+        guard let api = connection.apiClient, let serverId = connection.currentServerId else {
             if !isShowingFile { phase = .failed(String(localized: "Not connected")) }
             return
         }
         let skillName = skillName
         let filePath = filePath
         let cwd = cwd
+        let store = connection.serverResourceStore
         loadTask = Task { [weak self] in
             do {
+                let detail = try await api.getSkillDetail(name: skillName, cwd: cwd)
                 let text = try await api.getSkillFile(name: skillName, path: filePath, cwd: cwd)
+                // The catalog is filled by the Skills, Agents and Extensions
+                // screens; a chat can reach a Skill before any of them ran.
+                if !store.hasLoadedSkills(forServer: serverId) {
+                    await store.load(serverId: serverId, api: api)
+                }
                 guard !Task.isCancelled else { return }
+                let editableFile = Self.editableFile(
+                    detail: detail,
+                    filePath: filePath,
+                    skills: store.skills(forServer: serverId)
+                )
                 logger.debug("Loaded skill file: \(skillName)/\(filePath)")
-                self?.phase = .loaded(text)
+                guard let self else { return }
+                self.editableFile = editableFile
+                self.phase = .loaded(text)
             } catch {
                 guard !Task.isCancelled else { return }
                 logger.error("Failed to load \(skillName)/\(filePath): \(error.localizedDescription)")

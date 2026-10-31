@@ -251,4 +251,40 @@ struct APIClientWorkspaceFileEditingTests {
         #expect(EditURLProtocol.recorded[1].ifMatch == Self.tag)
         #expect(EditURLProtocol.recorded[1].body == bytes)
     }
+
+    @Test func piAgentFilesEditThroughThePiOriginOnlyWhenTheServerAdvertisesIt() async throws {
+        defer { EditURLProtocol.reset() }
+        let systemPrompt = WorkspaceFileEditIdentity(serverId: "s1", piPath: "SYSTEM.md")
+
+        // An older server does not advertise the origin: no request, no pencil.
+        let older = makeClient()
+        try await loadCapabilities(
+            older,
+            #"{"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576}}"#
+        )
+        #expect(await older.fileEditingCapability(for: systemPrompt.owner) == nil)
+        guard case .rejected = await older.writeEditedFile(systemPrompt, bytes: Data("x".utf8), ifMatch: Self.tag) else {
+            Issue.record("a server without piFileEditing must not get a Pi write")
+            return
+        }
+        #expect(EditURLProtocol.recorded.isEmpty)
+
+        let client = makeClient()
+        try await loadCapabilities(
+            client,
+            #"{"piFileEditing":{"version":1,"maxBytes":1048576}}"#
+        )
+        let bytes = Data("# Pi\n".utf8)
+        EditURLProtocol.handler = { record in
+            if record.method == "GET" { return (200, ["ETag": Self.tag], bytes) }
+            return (200, ["Content-Type": "application/json"], Data(#"{"etag":\#(Self.newTagJSON),"size":5,"mtimeMs":1}"#.utf8))
+        }
+        #expect(try await client.readFileForEditing(systemPrompt) == WorkspaceFileDiskSnapshot(bytes: bytes, etag: Self.tag))
+        #expect(await client.writeEditedFile(systemPrompt, bytes: bytes, ifMatch: Self.tag) == .saved(etag: Self.newTag))
+        // The origin is the only parameter: the server refuses any other one.
+        for request in EditURLProtocol.recorded {
+            #expect(request.url.path == "/files/current")
+            #expect(query(request.url) == ["origin": "pi", "path": "SYSTEM.md"])
+        }
+    }
 }

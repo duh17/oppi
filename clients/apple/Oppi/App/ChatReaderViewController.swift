@@ -28,6 +28,10 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
 
     private let store: ChatReaderPayloadStore
     private let navigation: AppNavigation
+    /// What serves a live document on this reader's server. The app root answers
+    /// by default; a caller that already holds a connection (and a test) can hand
+    /// one in.
+    private let editBackendOverride: (@MainActor (DocumentEditSubject) -> DocumentEditOwner.Backend?)?
     private let payloadHolder = ChatReaderPayloadHolder()
     private var shown: Shown?
     private var cover: ScopedLockCoverViewController?
@@ -35,12 +39,17 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     private(set) var page: UIViewController?
     /// The mounted reader's edit entry, when the payload names a live document.
     private var editOwner: DocumentEditOwner?
-    private weak var editReader: FullScreenCodeViewController?
 
-    init(target: ChatReaderNavTarget, store: ChatReaderPayloadStore, navigation: AppNavigation) {
+    init(
+        target: ChatReaderNavTarget,
+        store: ChatReaderPayloadStore,
+        navigation: AppNavigation,
+        editBackend: (@MainActor (DocumentEditSubject) -> DocumentEditOwner.Backend?)? = nil
+    ) {
         self.target = target
         self.store = store
         self.navigation = navigation
+        editBackendOverride = editBackend
         super.init(nibName: nil, bundle: nil)
         navigationItem.largeTitleDisplayMode = .never
     }
@@ -188,10 +197,15 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
                 reviewCommentSelectionContext: reviewCommentSelectionContext,
                 addToChatDestination: payload.destination
             )
-            if let owner = makeEditOwner(subject: payload.editSubject, reader: reader) {
-                Task { [weak self] in
+            if let owner = makeEditOwner(
+                subject: payload.editSubject,
+                reader: reader,
+                filePath: content.filePath
+            ) {
+                Task { [weak self, weak reader] in
                     _ = await owner.read()
-                    self?.setNeedsUpdateProperties()
+                    guard let self, let reader else { return }
+                    applyEditEntry(to: reader)
                 }
             }
             mounted = reader
@@ -299,40 +313,49 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     /// document keeps the bar it had.
     private func makeEditOwner(
         subject: DocumentEditSubject?,
-        reader: FullScreenCodeViewController
+        reader: FullScreenCodeViewController,
+        filePath: String?
     ) -> DocumentEditOwner? {
         guard let subject, subject != .snapshot else { return nil }
         let owner = DocumentEditOwner(
             subject: subject,
             serverId: { [weak self] in self?.payloadLockOrigin?.serverId },
             backend: { [weak self] in
-                guard let self,
-                      let serverId = payloadLockOrigin?.serverId,
+                guard let self else { return nil }
+                if let override = editBackendOverride { return override(subject) }
+                guard let serverId = payloadLockOrigin?.serverId,
                       let api = AppRootEnvironment.near(self)?.coordinator.connection(for: serverId)?.apiClient
                 else { return nil }
                 return .make(for: subject, api: api)
             },
             handlers: .init(
-                makePreview: { [weak reader] text in
+                makePreview: { text in
                     FullScreenCodeViewController(
-                        content: .fromText(text, filePath: reader?.contentFilePath),
+                        content: .fromText(text, filePath: filePath),
                         presentationMode: .contentOnly()
                     )
                 }
             ),
             onChange: { [weak self, weak reader] in
                 guard let self, let reader else { return }
-                reader.setEditBarItems(editOwner?.barItems ?? [])
-                editOwner?.updateEditorPage(
-                    palette: (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette,
-                    checkoutSubtitle: nil
-                )
-                editOwner?.presentEditorIfNeeded(from: self)
+                applyEditEntry(to: reader)
             }
         )
         editOwner = owner
-        editReader = reader
         return owner
+    }
+
+    /// The reader's bar and the editor that belongs over it, from the owner's
+    /// current answer. Called on every owner change and after the owner's read:
+    /// a successful read changes nothing the owner reports, so its bar items
+    /// would otherwise never reach the reader.
+    private func applyEditEntry(to reader: FullScreenCodeViewController) {
+        reader.setEditBarItems(editOwner?.barItems ?? [])
+        editOwner?.updateEditorPage(
+            palette: (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette,
+            checkoutSubtitle: nil
+        )
+        editOwner?.presentEditorIfNeeded(from: self)
     }
 
     private var payloadLockOrigin: ScopedLockTarget? {
@@ -342,10 +365,11 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
     private func removePage() {
         ChatReaderOpenLookup.install(nil, on: view)
         ChatReaderLinkIntercept.install(nil, on: view)
-        // The editor holds the live buffer: hand it back before the reader goes.
-        editOwner?.finishEditing()
+        // Closing through the owner hands the buffer back and takes the editor
+        // down with it; dropping the owner alone would leave the page up over a
+        // detached session.
+        editOwner?.endEditing()
         editOwner = nil
-        editReader = nil
         guard let page else { return }
         page.willMove(toParent: nil)
         page.view.removeFromSuperview()

@@ -18,12 +18,26 @@ struct ChatReaderViewControllerTests {
     }
 
     private func push(_ payload: ChatReaderPayload?) -> Host {
+        push(payload, editBackend: nil)
+    }
+
+    /// A reader whose live document is served by `editBackend` instead of the
+    /// app root, which these tests do not build.
+    private func push(
+        _ payload: ChatReaderPayload?,
+        editBackend: (@MainActor (DocumentEditSubject) -> DocumentEditOwner.Backend?)?
+    ) -> Host {
         forgetSharedScopedLockFlags()
         let store = ChatReaderPayloadStore()
         let appNavigation = AppNavigation()
         let target = payload.map { store.store($0) } ?? ChatReaderNavTarget(id: UUID())
         appNavigation.openChatReader(target)
-        let reader = ChatReaderViewController(target: target, store: store, navigation: appNavigation)
+        let reader = ChatReaderViewController(
+            target: target,
+            store: store,
+            navigation: appNavigation,
+            editBackend: editBackend
+        )
         let navigation = UINavigationController(rootViewController: UIViewController())
         navigation.pushViewController(reader, animated: false)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
@@ -31,6 +45,71 @@ struct ChatReaderViewControllerTests {
         window.makeKeyAndVisible()
         navigation.view.layoutIfNeeded()
         return Host(window: window, navigation: navigation, reader: reader, store: store, appNavigation: appNavigation)
+    }
+
+    /// A tool row's reader whose live document is a tagged text read: the pencil
+    /// must reach the reader's bar after that read, with no owner state change to
+    /// trigger it.
+    @Test("a tool row's reader shows the pencil its live document earns")
+    func toolRowReaderShowsThePencil() async throws {
+        var payload = ChatReaderPayload(
+            kind: .document(content: .code(content: "let a = 1", language: "swift", filePath: "src/a.swift", startLine: 1))
+        )
+        payload.editSubject = .file(
+            serverId: "s1",
+            source: .workspaceFile,
+            workspaceId: "w1",
+            worktreeId: nil,
+            path: "src/a.swift",
+            skillFile: nil,
+            fileType: .code(language: .swift)
+        )
+        let snapshot = WorkspaceFileDiskSnapshot(bytes: Data("let a = 1".utf8), etag: "\"sha256-a\"")
+        let host = push(payload) { _ in
+            DocumentEditOwner.Backend(
+                capability: { _ in ServerInfo.WorkspaceFileEditingCapability(version: 1, maxBytes: 1_048_576) },
+                transport: WorkspaceFileEditTransport(
+                    read: { _ in .snapshot(snapshot) },
+                    write: { _, _, _ in .notSent }
+                )
+            )
+        }
+        defer { host.close() }
+        _ = try #require(host.reader.page)
+
+        var waited = 0
+        while !identifiersSeeThePencil(host), waited < 200 {
+            try await Task.sleep(for: .milliseconds(10))
+            host.window.layoutIfNeeded()
+            waited += 1
+        }
+        #expect(identifiersSeeThePencil(host), "the tool row's pencil never reached the reader's bar")
+        Self.capture(host, named: "tool-row-reader")
+    }
+
+    /// Writes the window a capture can be looked at: `/tmp/edit-e3/<name>.png`.
+    private static func capture(_ host: Host, named name: String) {
+        let size = host.window.bounds.size
+        guard size.width > 0 else { return }
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            host.window.drawHierarchy(in: host.window.bounds, afterScreenUpdates: true)
+        }
+        guard let data = image.pngData() else { return }
+        let directory = URL(fileURLWithPath: "/tmp/edit-e3", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: directory.appendingPathComponent("\(name).png"))
+    }
+
+    /// The reader's own answer: the items its edit entry installed, and the bar
+    /// items on any navigation item it reached.
+    private func identifiersSeeThePencil(_ host: Host) -> Bool {
+        let reader = host.reader.page as? FullScreenCodeViewController
+        if reader?.installedEditIdentifiers.contains("workspace-file-editor.edit") == true { return true }
+        let items = (host.reader.navigationItem.rightBarButtonItems ?? [])
+            + (host.reader.page?.navigationItem.rightBarButtonItems ?? [])
+        if items.contains(where: { $0.accessibilityIdentifier == "workspace-file-editor.edit" }) { return true }
+        guard let view = host.reader.page?.view else { return false }
+        return descendant(identifier: "workspace-file-editor.edit", in: view) != nil
     }
 
     private func descendant(identifier: String, in root: UIView) -> UIView? {

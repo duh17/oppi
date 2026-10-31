@@ -604,7 +604,7 @@ final class SettingsSweepPreviewController: PreviewRootController {
             // A Skill file is a host read; the fixture answers every one.
             "/files/current": Data("# Release\n\nReview release readiness.".utf8),
             // `skill-file-edit`: the server edits Skill files, read through the Skill.
-            "/server/info": Data(#"{"name":"mac-studio","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"mac-studio","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":1,"modelCount":0}}"#.utf8),
+            "/server/info": Data(#"{"name":"mac-studio","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"mac-studio","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576},"skillFileEditing":{"version":1,"maxBytes":1048576},"piFileEditing":{"version":1,"maxBytes":1048576}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":1,"modelCount":0}}"#.utf8),
             "PUT /files/current": Data(#"{"etag":"\"sha256-\#(String(repeating: "b", count: 64))\"","size":1,"mtimeMs":1}"#.utf8),
             "/server/resources/skills": json(ServerSkillsCatalog(skills: skills)),
             "PUT /server/resources/skills/release/enabled": json({ () -> ServerSkillSummary in
@@ -817,7 +817,9 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
         let body = Self.routes.first { $0.key.hasPrefix(methodPrefix) && path.hasSuffix($0.key.dropFirst(methodPrefix.count)) }?.value
             ?? Self.routes.first { $0.key.hasPrefix("/") && path.hasSuffix($0.key) }?.value
         var headers = ["Content-Type": "application/json"]
-        if request.httpMethod == "GET", request.url?.query?.contains("origin=skill") == true {
+        if request.httpMethod == "GET",
+           let query = request.url?.query,
+           query.contains("origin=skill") || query.contains("origin=pi") {
             headers["ETag"] = Self.skillSourceETag
         }
         let response = HTTPURLResponse(

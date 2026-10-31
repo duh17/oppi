@@ -115,19 +115,27 @@ enum SessionFileFullScreenContentBuilder {
 /// so a reader showing a copy has a pencil that edits the live file.
 enum WorkspaceFileEditPath {
     /// A path the session reported (its tool calls, the Git panel's This session).
+    ///
+    /// A worktree session (`worktreeId` set) resolves only its own relative
+    /// paths: an absolute path names a directory outside the checkout it would
+    /// be mapped onto, so mapping it against the workspace mount would edit a
+    /// different file. Its absolute paths therefore have no identity here.
     static func reportedPath(
         _ path: String,
         runtime: WorkspaceRuntime?,
-        hostMount: String?
+        hostMount: String?,
+        worktreeId: String? = nil
     ) -> String? {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.contains("\0") else { return nil }
+        let isAbsolutePath = trimmed.hasPrefix("/") || trimmed.hasPrefix("~")
+        if worktreeId?.isEmpty == false, isAbsolutePath { return nil }
         // A sandbox session reads guest paths (`/workspace/<slug>/…`), which the
         // workspace origin accepts as they are; a relative path there is
         // already workspace-relative.
         if runtime == .sandbox {
             if trimmed.hasPrefix("/workspace/") { return trimmed }
-            return trimmed.hasPrefix("/") || trimmed.hasPrefix("~") ? nil : trimmed
+            return isAbsolutePath ? nil : trimmed
         }
         // A host path resolves only inside the mount; one outside the workspace
         // is the host's file and has no workspace identity.
