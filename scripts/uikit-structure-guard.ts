@@ -19,6 +19,16 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *  - `import SwiftUI` is a ratchet: a file's count fails the guard when it
  *    exceeds uikit-structure-baseline.json (files absent from the baseline
  *    have baseline 0). Decreases pass.
+ *
+ *  - A `UIColor(<palette>.` bridge is a ratchet of the same kind: a UIKit
+ *    call site converts the palette's SwiftUI `Color` again instead of reading
+ *    the colour the palette already has for UIKit (`palette.ui.fg`). The
+ *    baseline keeps the opacity chains that build a one-off translucent
+ *    colour (`UIColor(palette.bg.opacity(0.30))` has no `withAlphaComponent`
+ *    equivalent: a palette token may itself be translucent), and
+ *    `Core/Theme/ThemeCatalog.swift` and `Core/Theme/ThemePalette+UIKit.swift`,
+ *    which build the UIKit palette. The guard reads the argument by name, so a
+ *    bridge through a variable that is not called a palette is not seen.
  *  - `SettingsListStyle.pin(`, `SettingsListStyle.applyTheme(`, and a hand-built
  *    `UICollectionLayoutListConfiguration(appearance: .insetGrouped)` are a
  *    ratchet of the same kind: a settings list that pins, themes, or lays
@@ -250,6 +260,19 @@ const constructs: Construct[] = [
     exemptFiles: navigationBarOwners,
   },
   { name: "import SwiftUI", pattern: /^[ \t]*(?:@\w+[ \t]+)*import[ \t]+SwiftUI\b/gm, disallowed: false },
+  // A UIKit call site that bridges the palette instead of reading its colors: see
+  // "Client boundary rules current code" in the guide.
+  {
+    name: "UIColor(<palette>.",
+    pattern: /\bUIColor\s*\(\s*[A-Za-z_.]*palette\s*\./g,
+    disallowed: false,
+    exemptFiles: [
+      // Both build the UIKit colors: the shared palette type, and the iOS-only
+      // carrier that adds the tokens it leaves to SwiftUI.
+      "clients/apple/Oppi/Core/Theme/ThemeCatalog.swift",
+      "clients/apple/Oppi/Core/Theme/ThemePalette+UIKit.swift",
+    ],
+  },
   // Alerts outside the shared presenters: see "Alerts" in the guide.
   {
     name: "UIAlertController(",
@@ -500,6 +523,13 @@ the guard's allowed list. A new \`import SwiftUI\` raises that file's baseline,
 which also needs approval; \`bun scripts/uikit-structure-guard.ts --update\`
 lowers it after a migration. After a rename or move, --update is fine when the
 baseline diff only moves entries.
+
+A UIColor(<palette>.) bridge at a UIKit call site builds the palette's colour
+from its SwiftUI Color again, which the palette's UIKit view avoids: read
+palette.ui.fg (or any other token, see ThemeUIKitTokens) instead of
+UIColor(palette.fg). The count only goes down; --update lowers the baseline
+behind it. ThemeCatalog.swift and ThemePalette+UIKit.swift are exempt because
+they build the UIKit palette.
 
 SettingsListStyle.pin(, SettingsListStyle.applyTheme(, and a hand-built
 UICollectionLayoutListConfiguration(appearance: .insetGrouped) outside the

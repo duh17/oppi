@@ -13,6 +13,9 @@
     "clients/apple/Oppi/Core/Extensions/Color+Theme.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Core/Formatting/ANSIAttributedStringRenderer.swift": {
+      "UIColor(<palette>.": 16
+    },
     "clients/apple/Oppi/Core/Theme/AppFontConstants.swift": {
       "import SwiftUI": 1
     },
@@ -30,6 +33,9 @@
     },
     "clients/apple/Oppi/Core/Theme/ThemeStore.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/DiffAttributedStringBuilder.swift": {
+      "UIColor(<palette>.": 10
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditDraft.swift": {
       "AppPreferences.*.set": 1
@@ -49,10 +55,23 @@
     "clients/apple/Oppi/Features/Chat/ChatViewController+Bars.swift": {
       "UIAlertController(": 1
     },
+    "clients/apple/Oppi/Features/Chat/Composer/ComposerSwiftUIInterop.swift": {
+      "UIColor(<palette>.": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/MessageQueueContainer.swift": {
+      "UIColor(<palette>.": 2
+    },
     "clients/apple/Oppi/Features/Chat/Support/ModelPickerViewController.swift": {
       "APIClient settings write": 1
     },
+    "clients/apple/Oppi/Features/Chat/Support/ModelPickerViews.swift": {
+      "UIColor(<palette>.": 2
+    },
+    "clients/apple/Oppi/Features/Chat/Support/SessionOutlineCells.swift": {
+      "UIColor(<palette>.": 4
+    },
     "clients/apple/Oppi/Features/Chat/Support/SessionOutlineViewController.swift": {
+      "UIColor(<palette>.": 2,
       "UIAlertController(": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
@@ -60,6 +79,12 @@
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/USDZRealityCanvas.swift": {
       "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/BashToolRowView.swift": {
+      "UIColor(<palette>.": 2
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowStatusAppearance.swift": {
+      "UIColor(<palette>.": 5
     },
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {
       "UIAlertController(": 1
