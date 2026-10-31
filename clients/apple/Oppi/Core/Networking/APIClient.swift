@@ -148,10 +148,11 @@ actor APIClient: ClientLogUploading {
     private let trustDelegate: PinnedServerTrustDelegate
     private let availabilityObserver: APIClientAvailabilityObserver?
     nonisolated private let responseFailureObserverBox = APIClientResponseFailureObserverBox()
-    /// `workspaceFileEditing` and `skillFileEditing` from this client's own
-    /// `/server/info`. Nil keeps those files read-only.
+    /// `workspaceFileEditing`, `skillFileEditing`, and `piFileEditing` from this
+    /// client's own `/server/info`. Nil keeps those files read-only.
     private var workspaceFileEditing: ServerInfo.WorkspaceFileEditingCapability?
     private var skillFileEditing: ServerInfo.WorkspaceFileEditingCapability?
+    private var piFileEditing: ServerInfo.WorkspaceFileEditingCapability?
 
     init(
         environment: OppiClientEnvironment,
@@ -458,6 +459,7 @@ actor APIClient: ClientLogUploading {
     private func recordCapabilities(_ info: ServerInfo) -> ServerInfo {
         workspaceFileEditing = info.capabilities?.workspaceFileEditing
         skillFileEditing = info.capabilities?.skillFileEditing
+        piFileEditing = info.capabilities?.piFileEditing
         return info
     }
 
@@ -2030,13 +2032,15 @@ actor APIClient: ClientLogUploading {
     // MARK: - File Editing
 
     /// Editing capability for this server and owner. Nil means read-only:
-    /// workspace files need `workspaceFileEditing`, Skill files `skillFileEditing`.
+    /// workspace files need `workspaceFileEditing`, Skill files `skillFileEditing`,
+    /// Pi's own agent files `piFileEditing`.
     func fileEditingCapability(
         for owner: WorkspaceFileEditIdentity.Owner
     ) -> ServerInfo.WorkspaceFileEditingCapability? {
         let capability: ServerInfo.WorkspaceFileEditingCapability? = switch owner {
         case .workspace: workspaceFileEditing
         case .skill: skillFileEditing
+        case .pi: piFileEditing
         // A record's prompt is edited through its own route, which every server of
         // this version answers; it has no file-editing capability to check.
         case .agent, .schedule: nil
@@ -2125,6 +2129,7 @@ actor APIClient: ClientLogUploading {
         let origin: CurrentFileOrigin = switch identity.owner {
         case .workspace(let workspaceId, let worktreeId): .workspace(workspaceId: workspaceId, worktreeId: worktreeId)
         case .skill(let skillId): .skill(skillId: skillId)
+        case .pi: .pi
         case .agent, .schedule: throw CocoaError(.featureUnsupported)
         }
         return try makeCurrentFileURL(origin, path: identity.path)
@@ -2859,6 +2864,8 @@ actor APIClient: ClientLogUploading {
         case session(sessionId: String)
         /// An editable Skill's own files, by Skill-relative path.
         case skill(skillId: String)
+        /// Pi's own agent files (`SYSTEM.md`, `prompts/`), by agent-relative path.
+        case pi
     }
 
     /// `/files/current` and its per-file companions, which take the same query.
@@ -2905,6 +2912,8 @@ actor APIClient: ClientLogUploading {
                 URLQueryItem(name: "origin", value: "skill"),
                 URLQueryItem(name: "skillId", value: skillId),
             ]
+        case .pi:
+            queryItems = [URLQueryItem(name: "origin", value: "pi")]
         }
         queryItems.append(URLQueryItem(name: "path", value: path))
         return try makeURL(pathSegments: route.pathSegments, queryItems: queryItems)

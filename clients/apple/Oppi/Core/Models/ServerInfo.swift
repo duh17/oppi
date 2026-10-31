@@ -111,6 +111,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var workspaceFileEditing: WorkspaceFileEditingCapability? = nil
         /// Guarded `PUT /files/current?origin=skill` for editable Skills. Missing means read-only.
         var skillFileEditing: WorkspaceFileEditingCapability? = nil
+        /// Guarded `PUT /files/current?origin=pi` for Pi's own agent files. Missing means read-only.
+        var piFileEditing: WorkspaceFileEditingCapability? = nil
         /// Create requests may ask for `engine: "durable"` (`experimental.serverDurable`).
         var durableSessions: CapabilityVersion? = nil
         /// Durable sessions replicate over the focused socket (`attach` / `snapshot` / `update`).

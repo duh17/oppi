@@ -1556,6 +1556,7 @@ final class WorkspaceContextBarView: UIView {
         let others = displayFiles.filter { $0.gitFile == nil }.map(\.path)
         let viewer = SessionFilePages.sessionTouchedFileViewer(
             workspaceId: workspaceId,
+            worktreeId: context.worktreeId,
             sessionId: sessionId,
             serverId: context.serverId,
             path: path,

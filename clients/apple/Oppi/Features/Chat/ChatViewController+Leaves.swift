@@ -480,6 +480,7 @@ extension ChatViewController: ChatComposerSource {
 enum SessionFilePages {
     static func sessionTouchedFileViewer(
         workspaceId: String,
+        worktreeId: String?,
         sessionId: String,
         serverId: String?,
         path: String,
@@ -494,6 +495,7 @@ enum SessionFilePages {
             ?? store.workspaces.first { $0.id == workspaceId }
         let configuration = FileViewerViewController.Configuration(
             workspaceId: workspaceId,
+            worktreeId: worktreeId,
             serverId: serverId,
             filePath: path,
             fileName: path.lastPathComponentForDisplay,

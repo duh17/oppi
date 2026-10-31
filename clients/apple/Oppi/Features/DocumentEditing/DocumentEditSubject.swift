@@ -9,7 +9,8 @@ enum DocumentEditSubject: Equatable {
     /// host file that is one of an editable Skill's own files. The reader that
     /// builds the subject sets `skillFile` only for the file it was opened for,
     /// and `ServerSkillFilePresentation.editable` decides whether that Skill is
-    /// editable at all.
+    /// editable at all. A session-touched file's identity is the workspace file
+    /// its session path names; `worktreeId` is the session's checkout.
     case file(
         serverId: String?,
         source: FileBrowserContentSource,
@@ -24,6 +25,10 @@ enum DocumentEditSubject: Equatable {
     case agentInstructions(agentId: String)
     /// A Schedule's prompt (`action.prompt`), edited in place.
     case schedulePrompt(scheduleId: String)
+    /// One of Pi's own agent files (`SYSTEM.md`, `prompts/`), by
+    /// Pi-agent-relative path: the host home's one writable spot, allowlisted by
+    /// the server. The reader that shows it names the file it read.
+    case piFile(path: String)
     /// Bytes the app holds with no file behind them: the Pi prompt readers, a
     /// tool row. A snapshot is never editable; it may still offer Edit with
     /// Session.
@@ -52,8 +57,23 @@ extension DocumentEditSubject {
             case .hostFile:
                 guard let skillFile else { return nil }
                 return WorkspaceFileEditIdentity(serverId: fileServerId, skillId: skillFile.skillId, path: skillFile.path)
-            case .sessionFile, .sessionTouched:
+            case .sessionFile:
                 return nil
+            case .sessionTouched(let origin):
+                // The session's copy of a workspace file edits as that file: the
+                // pencil opens the live one through its workspace path.
+                guard !workspaceId.isEmpty,
+                      let workspacePath = WorkspaceFileEditPath.reportedPath(
+                          path,
+                          runtime: origin.workspaceRuntime,
+                          hostMount: origin.hostMount
+                      ) else { return nil }
+                return WorkspaceFileEditIdentity(
+                    serverId: fileServerId,
+                    workspaceId: workspaceId,
+                    worktreeId: worktreeId,
+                    path: workspacePath
+                )
             }
         case .agentInstructions(let agentId):
             guard let serverId, !serverId.isEmpty else { return nil }
@@ -61,6 +81,9 @@ extension DocumentEditSubject {
         case .schedulePrompt(let scheduleId):
             guard let serverId, !serverId.isEmpty else { return nil }
             return WorkspaceFileEditIdentity(serverId: serverId, scheduleId: scheduleId)
+        case .piFile(let path):
+            guard let serverId, !serverId.isEmpty, !path.isEmpty else { return nil }
+            return WorkspaceFileEditIdentity(serverId: serverId, piPath: path)
         case .snapshot:
             return nil
         }
@@ -72,6 +95,7 @@ extension DocumentEditSubject {
         switch self {
         case .file(_, _, _, _, _, _, let fileType): fileType
         case .agentInstructions, .schedulePrompt: .markdown
+        case .piFile(let path): FileType.detect(from: path)
         case .snapshot: nil
         }
     }

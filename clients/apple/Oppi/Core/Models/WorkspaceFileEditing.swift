@@ -3,10 +3,11 @@ import Foundation
 
 /// One editable document: server + owner + owner-relative path. A workspace file
 /// names its checkout (a nil worktree means main; a set worktree never falls
-/// back to main). A Skill file is one of an editable Skill's own files. An Agent
-/// prompt and a Schedule prompt are records the editor writes through their own
-/// endpoints, tagged by the record's version. No other origin (host, session) is
-/// editable.
+/// back to main). A Skill file is one of an editable Skill's own files. Pi's own
+/// agent files (`SYSTEM.md`, `prompts/`) are the host home's one writable spot.
+/// An Agent prompt and a Schedule prompt are records the editor writes through
+/// their own endpoints, tagged by the record's version. No other origin (host,
+/// session) is editable.
 struct WorkspaceFileEditIdentity: Hashable, Sendable {
     /// What reads and writes the document.
     enum Owner: Hashable, Sendable {
@@ -14,6 +15,9 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
         case workspace(id: String, worktreeId: String?)
         /// `origin=skill` on `/files/current`.
         case skill(id: String)
+        /// `origin=pi` on `/files/current`: Pi's own agent files, allowlisted by
+        /// the server, never the rest of the host home.
+        case pi
         /// An Agent's `instructions.text`, read and written with `GET`/`PATCH /agents/:id`.
         case agent(id: String)
         /// A Schedule's `action.prompt`, read and written with `GET`/`PATCH /schedules/:id`.
@@ -23,7 +27,7 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
         /// editing for. A record's prompt is edited through its own route.
         var isFile: Bool {
             switch self {
-            case .workspace, .skill: true
+            case .workspace, .skill, .pi: true
             case .agent, .schedule: false
             }
         }
@@ -31,7 +35,8 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
 
     let serverId: String
     let owner: Owner
-    /// Workspace- or Skill-relative path; the document's name for a record's prompt.
+    /// Workspace-, Skill-, or Pi-agent-relative path; the document's name for a
+    /// record's prompt.
     let path: String
 
     init(serverId: String, workspaceId: String, worktreeId: String?, path: String) {
@@ -45,6 +50,13 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
         self.serverId = serverId
         self.owner = .skill(id: skillId)
         self.path = path
+    }
+
+    /// Pi's own agent file, by Pi-agent-relative path (`SYSTEM.md`, `prompts/x.md`).
+    init(serverId: String, piPath: String) {
+        self.serverId = serverId
+        self.owner = .pi
+        self.path = piPath
     }
 
     init(serverId: String, agentId: String) {
@@ -66,6 +78,7 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
         // The workspace key predates Skill files; changing it would strand drafts.
         case .workspace(let workspaceId, let worktreeId): ["v1", serverId, workspaceId, worktreeId ?? "", path]
         case .skill(let skillId): ["skill-v1", serverId, skillId, path]
+        case .pi: ["pi-v1", serverId, path]
         case .agent(let agentId): ["agent-v1", serverId, agentId]
         case .schedule(let scheduleId): ["schedule-v1", serverId, scheduleId]
         }
@@ -77,7 +90,7 @@ struct WorkspaceFileEditIdentity: Hashable, Sendable {
 /// Flat keys, so drafts stored before Skill files decode as workspace files.
 extension WorkspaceFileEditIdentity: Codable {
     private enum CodingKeys: String, CodingKey {
-        case serverId, workspaceId, worktreeId, skillId, agentId, scheduleId, path
+        case serverId, workspaceId, worktreeId, skillId, agentId, scheduleId, pi, path
     }
 
     init(from decoder: Decoder) throws {
@@ -90,6 +103,8 @@ extension WorkspaceFileEditIdentity: Codable {
             self.init(serverId: serverId, scheduleId: scheduleId)
         } else if let skillId = try container.decodeIfPresent(String.self, forKey: .skillId) {
             self.init(serverId: serverId, skillId: skillId, path: path)
+        } else if try container.decodeIfPresent(Bool.self, forKey: .pi) == true {
+            self.init(serverId: serverId, piPath: path)
         } else {
             self.init(
                 serverId: serverId,
@@ -114,6 +129,8 @@ extension WorkspaceFileEditIdentity: Codable {
             try container.encode(agentId, forKey: .agentId)
         case .schedule(let scheduleId):
             try container.encode(scheduleId, forKey: .scheduleId)
+        case .pi:
+            try container.encode(true, forKey: .pi)
         }
     }
 }

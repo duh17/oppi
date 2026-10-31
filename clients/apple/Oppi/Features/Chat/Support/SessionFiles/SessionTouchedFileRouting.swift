@@ -106,6 +106,35 @@ enum SessionFileFullScreenContentBuilder {
     }
 }
 
+/// The workspace file a session path names, for the editor's identity.
+///
+/// A session path is the session's own spelling: a guest path in a sandbox, an
+/// absolute path on a host mount, a relative path the session resolved, or a path
+/// outside the workspace entirely. Only one that names a workspace file has an
+/// edit identity, and it names it the way `/files/current?origin=workspace` does,
+/// so a reader showing a copy has a pencil that edits the live file.
+enum WorkspaceFileEditPath {
+    /// A path the session reported (its tool calls, the Git panel's This session).
+    static func reportedPath(
+        _ path: String,
+        runtime: WorkspaceRuntime?,
+        hostMount: String?
+    ) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("\0") else { return nil }
+        // A sandbox session reads guest paths (`/workspace/<slug>/…`), which the
+        // workspace origin accepts as they are; a relative path there is
+        // already workspace-relative.
+        if runtime == .sandbox {
+            if trimmed.hasPrefix("/workspace/") { return trimmed }
+            return trimmed.hasPrefix("/") || trimmed.hasPrefix("~") ? nil : trimmed
+        }
+        // A host path resolves only inside the mount; one outside the workspace
+        // is the host's file and has no workspace identity.
+        return trimmed.workspaceRelativePath(hostMount: hostMount)
+    }
+}
+
 /// Where a session-touched file and the files its Markdown references are
 /// read: the host for confirmed host paths, else the session's copy.
 struct SessionTouchedFileOrigin: Equatable {

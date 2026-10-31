@@ -254,6 +254,101 @@ struct DocumentEditOwnerTests {
         #expect(identifiers(owner) == ["workspace-file-editor.edit"])
     }
 
+    // MARK: A session's copy of a workspace file
+
+    /// The Git panel's This session shows the session's copy; its pencil edits the
+    /// live file, so the subject resolves the workspace path the session path names.
+    @Test func aSessionCopyEditsTheLiveWorkspaceFile() async {
+        let subject = DocumentEditSubject.file(
+            serverId: "srv",
+            source: .sessionTouched(
+                SessionTouchedFileOrigin(
+                    sessionId: "session-1",
+                    workspaceRuntime: .host,
+                    hostMount: "/Users/preview/oppi"
+                )
+            ),
+            workspaceId: "w1",
+            worktreeId: "wt-1",
+            path: "/Users/preview/oppi/src/a.ts",
+            skillFile: nil,
+            fileType: .plain
+        )
+        let owner = owner(subject: subject, serverId: "srv", capability: capability)
+
+        _ = await owner.read()
+        #expect(
+            owner.identity
+                == WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: "wt-1", path: "src/a.ts")
+        )
+        #expect(identifiers(owner) == ["workspace-file-editor.edit"])
+    }
+
+    /// A path the workspace does not hold has no identity: the host's own file, a
+    /// sandbox path outside its mount, and a sandbox home path all stay read-only.
+    @Test func aSessionPathOutsideTheWorkspaceHasNoPencil() async {
+        func sessionSubject(path: String, runtime: WorkspaceRuntime) -> DocumentEditSubject {
+            .file(
+                serverId: "srv",
+                source: .sessionTouched(
+                    SessionTouchedFileOrigin(
+                        sessionId: "session-1",
+                        workspaceRuntime: runtime,
+                        hostMount: "/Users/preview/oppi"
+                    )
+                ),
+                workspaceId: "w1",
+                worktreeId: nil,
+                path: path,
+                skillFile: nil,
+                fileType: .markdown
+            )
+        }
+
+        for (path, runtime) in [
+            ("/tmp/elsewhere.md", WorkspaceRuntime.host),
+            ("~/notes.md", .host),
+            ("/Users/preview/oppi/../elsewhere.md", .host),
+            ("/etc/hosts", .sandbox),
+        ] {
+            #expect(
+                sessionSubject(path: path, runtime: runtime).editIdentity(serverId: "srv") == nil,
+                "\(path) is not a workspace file"
+            )
+        }
+        // A sandbox's guest path is its workspace path, as the workspace origin spells it.
+        #expect(
+            sessionSubject(path: "/workspace/oppi/src/a.ts", runtime: .sandbox).editIdentity(serverId: "srv")
+                == WorkspaceFileEditIdentity(serverId: "srv", workspaceId: "w1", worktreeId: nil, path: "/workspace/oppi/src/a.ts")
+        )
+    }
+
+    // MARK: Pi's own agent files
+
+    /// SYSTEM.md is a document like a workspace file: the server advertises the
+    /// `pi` origin, the bytes come back tagged, so the pencil opens our editor.
+    @Test func piAgentFileReadsThroughItsPiIdentity() async {
+        let owner = owner(subject: .piFile(path: "SYSTEM.md"), serverId: "srv", capability: capability)
+
+        #expect(owner.identity == nil, "nothing resolves before the read")
+        _ = await owner.read()
+        #expect(owner.identity == WorkspaceFileEditIdentity(serverId: "srv", piPath: "SYSTEM.md"))
+        #expect(identifiers(owner) == ["workspace-file-editor.edit"])
+    }
+
+    /// The server id and the server's `piFileEditing` are both required: an old
+    /// server without the origin keeps the file read-only, and a subject with no
+    /// server cannot name a document at all.
+    @Test func piAgentFileNeedsAServerThatEditsIt() async {
+        let noServer = owner(subject: .piFile(path: "SYSTEM.md"), serverId: nil, capability: capability)
+        let noCapability = owner(subject: .piFile(path: "SYSTEM.md"), serverId: "srv", capability: nil)
+
+        #expect(await noServer.read() == .ownRead)
+        #expect(noServer.barItems.isEmpty)
+        #expect(await noCapability.read() == .ownRead)
+        #expect(noCapability.barItems.isEmpty)
+    }
+
     @Test func hostFileOutsideASkillHasNoEditEntry() async {
         let subject = DocumentEditSubject.file(
             serverId: "srv",

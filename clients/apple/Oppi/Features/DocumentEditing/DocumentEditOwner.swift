@@ -53,7 +53,7 @@ final class DocumentEditOwner {
                 return .record(transport: .agentInstructions(api: api, agentId: agentId))
             case .schedulePrompt(let scheduleId):
                 return .record(transport: .schedulePrompt(api: api, scheduleId: scheduleId))
-            case .file, .snapshot:
+            case .file, .snapshot, .piFile:
                 return .api(api)
             }
         }
@@ -411,6 +411,7 @@ final class DocumentEditOwner {
         switch subject {
         case .agentInstructions: String(localized: "System Prompt")
         case .schedulePrompt: String(localized: "Prompt")
+        case .piFile(let path): (path as NSString).lastPathComponent
         case .file, .snapshot: String(localized: "Edit")
         }
     }

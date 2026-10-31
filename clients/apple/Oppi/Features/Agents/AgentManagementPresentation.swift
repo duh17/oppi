@@ -26,6 +26,8 @@ enum AgentManagementRow: Equatable, Identifiable {
 
 enum AgentManagementPresentation {
     static let globalSystemPromptPath = "~/.pi/agent/SYSTEM.md"
+    /// The same file as the server's `origin=pi` document names it: Pi-agent-relative.
+    static let piSystemPromptFilePath = "SYSTEM.md"
     static let piIdentityAccessibilityLabel = "Pi"
     static let piDefaultPromptInUseLabel = "Pi default in use until SYSTEM.md exists"
     static let piStandardToolsSummary = "Pi standard"

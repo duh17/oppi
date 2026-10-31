@@ -241,6 +241,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
 
     private func updateModals() {
         let prompt = prompt
+        let connection = root.coordinator.activeConnection
         fileReview.update(
             id: showsFilePromptReview && prompt?.resolvedPath != nil ? "file-prompt" : nil,
             presentation: .sheet,
@@ -255,7 +256,17 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
                         targetName: "Pi",
                         sourceLabel: "SYSTEM.md",
                         sourcePath: prompt?.resolvedPath ?? "",
-                        targetPath: prompt?.resolvedPath
+                        targetPath: prompt?.resolvedPath,
+                        // Only a SYSTEM.md that exists is a document: the default
+                        // prompt the server answers instead has nothing on disk.
+                        subject: prompt?.source == .file
+                            ? .piFile(path: AgentManagementPresentation.piSystemPromptFilePath)
+                            : .snapshot,
+                        connection: connection,
+                        refreshDocument: { [weak self] in
+                            guard let api = connection.apiClient else { return nil }
+                            return (try? await api.getPiSystemPrompt())?.content
+                        }
                     )
                 }
             }

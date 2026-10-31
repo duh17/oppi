@@ -8,6 +8,42 @@ struct SessionTouchedFileRoutingTests {
     private let guestPath = "/workspace/deep-research/reports/2026-08-19-private-cdp-browser/brief.md"
     private let hostMount = "~/workspace/deep-research"
 
+    // MARK: The workspace file the session path names
+
+    @Test func hostMountPathNamesItsWorkspaceFile() {
+        let absolute = NSString(string: "~/workspace/deep-research/reports/brief.md").expandingTildeInPath
+        #expect(
+            WorkspaceFileEditPath.reportedPath(absolute, runtime: .host, hostMount: hostMount)
+                == "reports/brief.md"
+        )
+    }
+
+    @Test func relativeAndGuestPathsKeepTheirForm() {
+        #expect(
+            WorkspaceFileEditPath.reportedPath("reports/brief.md", runtime: .host, hostMount: hostMount)
+                == "reports/brief.md"
+        )
+        // The workspace origin takes a sandbox's guest path as it is.
+        #expect(
+            WorkspaceFileEditPath.reportedPath(guestPath, runtime: .sandbox, hostMount: hostMount)
+                == guestPath
+        )
+    }
+
+    @Test func pathsOutsideTheWorkspaceHaveNoIdentity() {
+        #expect(
+            WorkspaceFileEditPath.reportedPath("/Users/someone/.aws/credentials", runtime: .host, hostMount: hostMount)
+                == nil
+        )
+        #expect(WorkspaceFileEditPath.reportedPath("~/.zshrc", runtime: .host, hostMount: hostMount) == nil)
+        #expect(WorkspaceFileEditPath.reportedPath("", runtime: .host, hostMount: hostMount) == nil)
+        // A sandbox resolves only its own mount, never a host path.
+        #expect(
+            WorkspaceFileEditPath.reportedPath("/Users/someone/.aws/credentials", runtime: .sandbox, hostMount: hostMount)
+                == nil
+        )
+    }
+
     @Test func sandboxGuestPathUsesSessionRawNotHostBrowse() {
         let route = SessionTouchedFileLoadRoute.resolve(
             path: guestPath,
