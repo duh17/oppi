@@ -159,4 +159,28 @@ struct DurableSessionsSettingTests {
         #expect(h.store.read(SettingsCatalog.durableSessionsEnabled).current == true)
         #expect(h.connection?.durableSessionsAvailable == true)
     }
+
+    @Test("A page that loads again as it appears does not take a refused save's reason away")
+    func loadingAgainKeepsTheRefusal() async throws {
+        let h = try makeHarness()
+        defer { hide(h) }
+        h.transport.failNextSave(with: SettingsTestError())
+        try await flip(serverSwitch, on: h.page, to: true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            h.page.view.layoutIfNeeded()
+            return Self.labels(in: h.page.view).contains("The server said no.")
+        })
+
+        // The page loading again as it appears — nobody asked — must take the
+        // documents the store holds, not re-read them over the refusal: a re-read
+        // replaces the switch's state with what it fetched, and the row goes with it.
+        // The store is what the row is drawn from; a removed row's cell stays in the
+        // list as a hidden, reusable view, so its text is not the proof.
+        try await h.page.load()
+        #expect(h.store.read(SettingsCatalog.durableSessionsEnabled).failureReason == "The server said no.",
+                "an appearance keeps the refusal the row is showing")
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            h.store.read(SettingsCatalog.durableSessionsEnabled).failureReason == "The server said no."
+        })
+    }
 }

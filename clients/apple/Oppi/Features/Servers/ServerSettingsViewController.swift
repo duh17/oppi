@@ -115,16 +115,20 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
     /// has, and `viewWillAppear` reads the three settings again.
     override var loadPolicy: LoadPolicy { .onceUntilSubjectChanges }
 
-    /// The server's summary, its providers, its devices, and the three settings
-    /// this page switches, as its pull to refresh and its Retry run it. The
-    /// model keeps the failure, so the row is built from its facts.
+    /// The server's summary, its providers, its devices, and — for a pull or a
+    /// Retry — the three settings this page switches. The model keeps the failure,
+    /// so the row is built from its facts.
+    ///
+    /// Only an ask re-reads the settings: a re-read replaces a switch's state with
+    /// the document it fetched, so one landing after a save the server refused would
+    /// take the refusal away a moment after the row said it. The page appearing
+    /// takes the documents the store already holds (its rows read them).
     override func load() async throws {
         await model.load()
-        if let settings {
-            _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
-            _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
-            _ = await settings.reload(SettingsCatalog.durableSessionsEnabled)
-        }
+        guard loadTrigger == .ask, let settings else { return }
+        _ = await settings.reload(SettingsCatalog.serverMetricsEnabled)
+        _ = await settings.reload(SettingsCatalog.mobileOutputGuideEnabled)
+        _ = await settings.reload(SettingsCatalog.durableSessionsEnabled)
     }
 
     override func failureTitle() -> String? { String(localized: "Couldn't Load Server Settings") }
