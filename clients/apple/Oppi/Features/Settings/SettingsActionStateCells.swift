@@ -155,6 +155,9 @@ final class SettingsStateRowCell: UICollectionViewListCell {
         case message(String)
         /// The work failed. `retry` runs it again and adds the Retry label.
         case failure(String, retry: (() -> Void)?)
+        /// The work failed, and the page can say what failed and why: the title,
+        /// and the reason on a line under it.
+        case failed(title: String, reason: String?, retry: (() -> Void)?)
 
         /// A list's whole-content `LoadState` as this row: its words, and its
         /// Retry when it has one.
@@ -164,8 +167,8 @@ final class SettingsStateRowCell: UICollectionViewListCell {
                 self = .loading(loadState.rowText)
             case .empty, .noResults:
                 self = .message(loadState.rowText)
-            case .failed:
-                self = .failure(loadState.rowText, retry: loadState.rowRetry)
+            case .failed(let title, let message, _):
+                self = .failed(title: title, reason: message, retry: loadState.rowRetry)
             }
         }
     }
@@ -176,6 +179,7 @@ final class SettingsStateRowCell: UICollectionViewListCell {
     private let stack = UIStackView()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let textLabel = UILabel()
+    private let reasonLabel = UILabel()
     private let retryLabel = UILabel()
 
     override init(frame: CGRect) {
@@ -187,10 +191,14 @@ final class SettingsStateRowCell: UICollectionViewListCell {
         textLabel.adjustsFontForContentSizeCategory = true
         textLabel.numberOfLines = 0
         textLabel.textAlignment = .center
+        reasonLabel.font = .preferredFont(forTextStyle: .footnote)
+        reasonLabel.adjustsFontForContentSizeCategory = true
+        reasonLabel.numberOfLines = 0
+        reasonLabel.textAlignment = .center
         retryLabel.font = .preferredFont(forTextStyle: .body)
         retryLabel.adjustsFontForContentSizeCategory = true
         retryLabel.text = Self.retryTitle
-        for view in [spinner, textLabel, retryLabel] {
+        for view in [spinner, textLabel, reasonLabel, retryLabel] {
             stack.addArrangedSubview(view)
         }
         for view in [stack, button] {
@@ -216,10 +224,12 @@ final class SettingsStateRowCell: UICollectionViewListCell {
     required init?(coder: NSCoder) { nil }
 
     /// `identifier` is the button's: a row with a retry is `app.buttons[id]`,
-    /// the others `app.staticTexts[id]`.
+    /// the others `app.staticTexts[id]`. A failure's title is the label, with the
+    /// reason on its own line under it.
     func configure(_ state: State, identifier: String? = nil) {
         let style = SettingsStyle.current
         let text: String
+        var reason: String?
         var retry: (() -> Void)?
         spinner.stopAnimating()
         spinner.isHidden = true
@@ -237,12 +247,20 @@ final class SettingsStateRowCell: UICollectionViewListCell {
             text = message
             textLabel.textColor = style.warning
             retry = action
+        case .failed(title: let title, reason: let why, retry: let action):
+            text = title
+            reason = why
+            textLabel.textColor = style.warning
+            retry = action
         }
         textLabel.text = text
+        reasonLabel.text = reason
+        reasonLabel.textColor = style.value
+        reasonLabel.isHidden = reason == nil
         retryLabel.textColor = style.accent
         retryLabel.isHidden = retry == nil
         button.accessibilityIdentifier = identifier
-        button.accessibilityLabel = text
+        button.accessibilityLabel = [text, reason].compactMap { $0 }.joined(separator: ". ")
         button.isUserInteractionEnabled = retry != nil
         button.accessibilityTraits = retry == nil ? .staticText : .button
         button.accessibilityHint = retry == nil ? nil : Self.retryTitle
@@ -256,6 +274,8 @@ final class SettingsStateRowCell: UICollectionViewListCell {
         button.accessibilityLabel = nil
         button.accessibilityHint = nil
         textLabel.text = nil
+        reasonLabel.text = nil
+        reasonLabel.isHidden = true
         spinner.stopAnimating()
         isHighlighted = false
     }

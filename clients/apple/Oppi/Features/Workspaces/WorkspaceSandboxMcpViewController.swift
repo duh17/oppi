@@ -152,7 +152,11 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
                 identifier: "workspace.edit.sandboxMcp.loadError"
             )
         case .error:
-            cell.configure(.failure(model.sandboxMcpError ?? "", retry: nil), identifier: "workspace.edit.sandboxMcp.error")
+            let model = model
+            cell.configure(
+                .failure(model.sandboxMcpError ?? "", retry: { Task { await model.loadSandboxMcpServers() } }),
+                identifier: "workspace.edit.sandboxMcp.error"
+            )
         default:
             cell.configure(.message(String(localized: "No MCP servers to pick from yet.")))
         }

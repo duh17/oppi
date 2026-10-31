@@ -4,9 +4,10 @@ import UIKit
 
 /// The list kit's own state row, proven once instead of once per page: a load in
 /// flight shows as the compact loading row where the rows will be, a failure is
-/// one row with one Retry that keeps its place while the Retry runs, and a page
-/// whose load settled with nothing shows its empty state. A page that names no
-/// state section draws no row of the kit's.
+/// one row whose title is the page's and whose reason is the request's, with one
+/// Retry that keeps its place while the Retry runs and leaves with a load that
+/// succeeds, and a page whose load settled with nothing shows its empty state.
+/// The whole-screen state a page with no rows gets is the same failure.
 @Suite("List screen state row")
 @MainActor
 struct ListScreenStateRowTests {
@@ -26,27 +27,28 @@ struct ListScreenStateRowTests {
         page.releaseHeld()
     }
 
-    @Test("A failure is one row with one Retry, under the rows the page kept")
+    @Test("A failure is the page's title over the request's reason, one row with one Retry")
     func failureRowRetries() async throws {
         let page = StateRowPage()
-        page.outcome = .failure("Could not load.")
+        page.outcome = .requestFailed("not found")
         let window = try show(page)
         defer { hide(window) }
 
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            Self.row(in: page)?.accessibilityLabel == "Could not load."
+            Self.row(in: page)?.accessibilityLabel == "Couldn't Load. not found"
         })
         let failed = try #require(Self.row(in: page))
         #expect(failed.accessibilityTraits.contains(.button))
         #expect(failed.accessibilityHint == SettingsStateRowCell.retryTitle)
         #expect(Self.rows(in: page).count == 1, "one row, never a red label and a Retry of its own")
+        #expect(Self.reasonLine(in: page) == "not found", "the reason is its own line under the title")
 
         // A failure the page recovered its rows from shows under them.
         page.rows = ["kept"]
         page.setNeedsUpdateProperties()
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             page.view.layoutIfNeeded()
-            return page.shownItems == ["kept"] && Self.row(in: page)?.accessibilityLabel == "Could not load."
+            return page.shownItems == ["kept"] && Self.row(in: page)?.accessibilityLabel == "Couldn't Load. not found"
         }, "the rows it kept stay listed under the failure")
 
         // Retry runs the load, and its row becomes the loading row: the same cell,
@@ -61,7 +63,43 @@ struct ListScreenStateRowTests {
         let loading = try #require(Self.row(in: page))
         #expect(loading === failed, "the same row, so VoiceOver focus stays on it")
         #expect(!loading.accessibilityTraits.contains(.button))
+
+        // A load that succeeds takes the row away.
+        page.outcome = .success(["kept", "loaded"])
         page.releaseHeld()
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return !page.shownItems.isEmpty && Self.rows(in: page).isEmpty
+        }, "a successful Retry leaves no state row")
+    }
+
+    @Test("A load that could not run is its own title, with no reason under it")
+    func pageWordsFailureIsItsTitle() async throws {
+        let page = StateRowPage()
+        page.outcome = .pageWords("Server is offline")
+        let window = try show(page)
+        defer { hide(window) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            Self.row(in: page)?.accessibilityLabel == "Server is offline"
+        })
+        #expect(Self.reasonLine(in: page) == nil, "a complete title needs no second line")
+    }
+
+    @Test("A page with no rows states the same failure over the whole screen")
+    func wholeScreenFailure() async throws {
+        let page = StateRowPage()
+        page.stateSectionName = nil
+        page.outcome = .requestFailed("not found")
+        let window = try show(page)
+        defer { hide(window) }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            (page.contentUnavailableConfiguration as? UIContentUnavailableConfiguration)?.text == "Couldn't Load"
+        }, "a page with nothing to list is its state")
+        let shown = try #require(page.contentUnavailableConfiguration as? UIContentUnavailableConfiguration)
+        #expect(shown.secondaryText == "not found")
+        #expect(page.shownItems.isEmpty)
     }
 
     @Test("A load that settled with nothing is the page's empty state")
@@ -80,19 +118,21 @@ struct ListScreenStateRowTests {
     }
 
     @Test("A page that names no state section draws no row of the kit's")
-    func noStateSectionDrawsNoRow() async throws {
+    func noStateSection() async throws {
         let page = StateRowPage()
         page.stateSectionName = nil
-        page.outcome = .failure("Could not load.")
+        page.outcome = .success(["row"])
         let window = try show(page)
         defer { hide(window) }
 
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loads == 1 })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            page.view.layoutIfNeeded()
+            return page.shownItems == ["row"]
+        })
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
             page.view.layoutIfNeeded()
             return Self.rows(in: page).isEmpty
         }, "the page keeps its own state: the kit adds no row it was not asked for")
-        #expect(page.shownItems.isEmpty)
     }
 
     // MARK: - Helpers
@@ -125,11 +165,29 @@ struct ListScreenStateRowTests {
     private static func rows(in page: StateRowPage) -> [UIButton] {
         var found: [UIButton] = []
         for cell in page.collectionView.visibleCells {
-            found += button(withIdentifier: "test.states.loading", in: cell)
-            found += button(withIdentifier: "test.states.failed", in: cell)
-            found += button(withIdentifier: "test.states.empty", in: cell)
+            found += button(withIdentifier: "test.states.state", in: cell)
         }
         return found.filter { !$0.isHidden }
+    }
+
+    /// The reason under a failed row's title, which the cell draws as its own
+    /// line: the row is one button, so its labels are the only place a test can
+    /// read the two lines apart.
+    private static func reasonLine(in page: StateRowPage) -> String? {
+        page.view.layoutIfNeeded()
+        for cell in page.collectionView.visibleCells {
+            for label in labels(in: cell) where label.text == "not found" {
+                return label.text
+            }
+        }
+        return nil
+    }
+
+    private static func labels(in view: UIView) -> [UILabel] {
+        var found: [UILabel] = []
+        if let label = view as? UILabel { found.append(label) }
+        for subview in view.subviews { found += labels(in: subview) }
+        return found
     }
 
     private static func button(withIdentifier identifier: String, in view: UIView) -> [UIButton] {
@@ -148,7 +206,10 @@ private final class StateRowPage: ListScreenController<StateRowPage.Section, Str
 
     enum Outcome {
         case success([String])
-        case failure(String)
+        /// A request's failure: the page's title over this reason.
+        case requestFailed(String)
+        /// The page's own words for a load that could not run: its whole title.
+        case pageWords(String)
         /// Answers once the test releases it.
         case held
     }
@@ -173,12 +234,10 @@ private final class StateRowPage: ListScreenController<StateRowPage.Section, Str
 
     override func loadingCaption() -> String? { "Loading things…" }
 
+    override func failureTitle() -> String? { "Couldn't Load" }
+
     override func emptyState() -> LoadState? {
         .empty(title: "Nothing here.", systemImage: "tray")
-    }
-
-    override var stateRowIdentifiers: StateRowIdentifiers {
-        StateRowIdentifiers(loading: "test.states.loading", failed: "test.states.failed", empty: "test.states.empty")
     }
 
     override func sections() -> [ListSection<Section, String>] {
@@ -200,8 +259,10 @@ private final class StateRowPage: ListScreenController<StateRowPage.Section, Str
         switch outcome {
         case .success(let answer):
             rows = answer
-        case .failure(let message):
-            throw LoadFailure(message)
+        case .requestFailed(let reason):
+            throw RequestFailed(reason: reason)
+        case .pageWords(let words):
+            throw LoadFailure(words)
         case .held:
             isHolding = true
             await withCheckedContinuation { gates.append($0) }
@@ -217,4 +278,11 @@ private final class StateRowPage: ListScreenController<StateRowPage.Section, Str
         guard !gates.isEmpty else { return }
         gates.removeFirst().resume()
     }
+}
+
+/// A request's failure: its reason, which the page's title heads.
+private struct RequestFailed: LocalizedError {
+    var reason: String
+
+    var errorDescription: String? { reason }
 }

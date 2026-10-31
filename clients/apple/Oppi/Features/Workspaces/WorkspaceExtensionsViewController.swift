@@ -133,7 +133,11 @@ final class WorkspaceExtensionsViewController: ListScreenController<
         case .loading:
             cell.configure(.loading(String(localized: "Loading extensions\u{2026}")))
         case .error:
-            cell.configure(.failure(model.extensionsError ?? "", retry: nil), identifier: "workspace.edit.extensions.error")
+            let model = self.model
+            cell.configure(
+                .failure(model.extensionsError ?? "", retry: { [model] in model.startPiResourceReload() }),
+                identifier: "workspace.edit.extensions.error"
+            )
         default:
             cell.configure(.message(String(localized: "No Pi extensions discovered for this folder yet.")))
         }

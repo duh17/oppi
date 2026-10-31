@@ -155,7 +155,13 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
                 sections.append(ListSection(.notice, items: [.cachedWarning]))
             }
         }
-        if let row = catalogStateRow(state) {
+        if let row = stateRow(
+            hasContent: !state.presentation.visibleExtensions.isEmpty,
+            isLoading: state.catalog == .firstLoad,
+            failure: state.catalog == .unavailable
+                ? String(localized: "The selected server has no cached Extensions catalog.")
+                : nil
+        ) {
             sections.append(ListSection(.state, items: [], state: row))
         }
         switch state.catalog {
@@ -199,20 +205,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
     /// The caption the catalog's compact loading row shows.
     override func loadingCaption() -> String? { String(localized: "Loading extensions…") }
 
-    /// The list's state, where its rows would be: loading, a catalog this server
-    /// never loaded, or nothing matched the search. The store owns the catalog's
-    /// load, so the row is built from the store's sync state with the kit's one
-    /// row: a failure outranks a load in flight, and both outrank the empty
-    /// state.
-    private func catalogStateRow(_ state: ViewState) -> ListStateRow? {
-        stateRow(
-            hasContent: !state.presentation.visibleExtensions.isEmpty,
-            isLoading: state.catalog == .firstLoad,
-            failure: state.catalog == .unavailable
-                ? String(localized: "Extensions are unavailable. The selected server has no cached Extensions catalog.")
-                : nil
-        )
-    }
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Extensions") }
 
     /// A search that matched nothing: the one empty state this page has.
     override func emptyState() -> LoadState? {
@@ -221,11 +214,6 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
             title: String(localized: "No extensions match “\(state.presentation.query)”."),
             systemImage: "puzzlepiece.extension"
         )
-    }
-
-    /// The identifiers this page's state row has always had, one per kind.
-    override var stateRowIdentifiers: StateRowIdentifiers {
-        StateRowIdentifiers(loading: "extensions.loading", failed: "extensions.retry", empty: "extensions.noResults")
     }
 
     override func inputs(of item: Item) -> AnyHashable {

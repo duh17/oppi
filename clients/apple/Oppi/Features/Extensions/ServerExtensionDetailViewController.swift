@@ -26,9 +26,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case mutationError
         case detail(String)
         case status
-        case loadError
         case warning(String)
-        case retry
         case tool(String)
         case command(String)
     }
@@ -50,7 +48,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                 title: "Extension",
                 listIdentifier: "server.extension.list",
                 loadingCaption: String(localized: "Loading extension…"),
-                unavailableTitle: String(localized: "Extension Unavailable"),
+                failureTitle: String(localized: "Couldn't Load Extension"),
                 expectedKind: .extension,
                 catalog: .extensions,
                 mutationKey: .normalExtension(resourceId),
@@ -94,11 +92,11 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             ListSection(.source, header: "Source", items: sourceItems),
             ListSection(.status, header: "Status", items: statusItems),
         ]
-        // The contributions' place holds the kit's compact loading row until the
-        // detail arrives; a request that failed says so in Status, with its own
-        // Retry, so the row is not repeated here.
-        if state.detail == nil, state.loadError == nil {
-            sections.append(ListSection(.loading, items: []))
+        // The contributions' place: the kit's compact loading row until the detail
+        // arrives, and its one failed row with Retry when Pi could not read the
+        // extension.
+        if let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: failureReason) {
+            sections.append(ListSection(.loading, items: [], state: row))
         }
         if let tools = state.detail?.contributedTools, !tools.isEmpty {
             sections.append(ListSection(.tools, header: "Contributed Tools", items: Self.unique(tools).map(Item.tool)))
@@ -117,22 +115,22 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         return items + [.detail("Provenance"), .detail("Kind"), .detail("Scope")]
     }
 
-    /// The load's state and what it found: the retry under either a row error
-    /// or a failed load, and each warning once (a diffable list traps on a
-    /// repeated row).
-    private var statusItems: [Item] {
-        guard let state else { return [] }
-        let summary = state.summary
-        var items: [Item] = [.status]
-        if summary.loadError ?? state.loadError != nil { items.append(.loadError) }
-        items += Self.unique(summary.warnings).map(Item.warning)
-        if summary.state == .error || state.loadError != nil { items.append(.retry) }
-        return items
+    /// Why the contributions are not here: the request's failure, or the extension
+    /// Pi could not load, so one row says either and retries it.
+    private var failureReason: String? {
+        if let loadFailure { return loadFailure.reason ?? loadFailure.title }
+        guard let summary = state?.summary else { return nil }
+        if let error = summary.loadError { return error }
+        let hasError = summary.state == .error || summary.state == .unknown
+        return hasError ? String(localized: "Pi could not load this extension.") : nil
     }
 
-    /// The contributions are what the detail request fetches: until they are here
-    /// the list shows the compact loading row in their place.
-    override func stateSection() -> Section? { .loading }
+    /// The load's state and what it found: the state, and each warning once (a
+    /// diffable list traps on a repeated row).
+    private var statusItems: [Item] {
+        guard let state else { return [] }
+        return [.status] + Self.unique(state.summary.warnings).map(Item.warning)
+    }
 
     override func hasContent() -> Bool { state?.detail != nil }
 
@@ -154,7 +152,6 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case .enabled: resourceRowInputs(.serverDefault)
         case .mutationError: resourceRowInputs(.mutationError)
         case .status: resourceRowInputs(.status)
-        case .loadError: resourceRowInputs(.loadError)
         case .detail: AnyHashable([
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.kind),
         ])
@@ -223,12 +220,6 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                 row.accessibilityLabel = label
                 return row
             }
-        case .loadError:
-            ListScreen.staticRow(cell, identifier: "server.extension.loadError")
-            let error = summary.loadError ?? state.loadError ?? ""
-            cell.contentConfiguration = ControlViewContent {
-                ControlRowViews.label(error, style: .footnote, color: UIColor(palette.orange))
-            }
         case .warning(let warning):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent {
@@ -239,14 +230,6 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                     color: UIColor(palette.fg)
                 )
             }
-        case .retry:
-            ListScreen.buttonRow(cell, identifier: "server.extension.retry", label: "Retry") { [weak self] in
-                self?.setNeedsLoad()
-            }
-            var content = UIListContentConfiguration.cell()
-            content.text = "Retry"
-            content.textProperties.color = UIColor(palette.blue)
-            cell.contentConfiguration = content
         case .tool(let name), .command(let name):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = ControlViewContent(insets: .init(top: 11, leading: 0, bottom: 11, trailing: 0)) {

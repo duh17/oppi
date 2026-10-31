@@ -30,8 +30,9 @@ extension LoadState {
 
     /// The same words as one line of text, for a list that shows its state in a
     /// row instead of over the whole screen: a catalog that is loading, has
-    /// nothing, matched nothing, or failed. A title and a message join into the
-    /// one sentence a row can say.
+    /// nothing, or matched nothing. A failure is drawn with its reason on a line
+    /// of its own (`SettingsStateRowCell`); this is the one-line form, which a
+    /// row's inputs are keyed by.
     var rowText: String {
         switch self {
         case .connecting:
@@ -43,7 +44,7 @@ extension LoadState {
         case .noResults(let query):
             String(localized: "No results for “\(query)”.")
         case .failed(let title, let message, _):
-            [title, message].compactMap { $0 }.joined(separator: " ")
+            [title, message].compactMap { $0 }.joined(separator: ". ")
         }
     }
 

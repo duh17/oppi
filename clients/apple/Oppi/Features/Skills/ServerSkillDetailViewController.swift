@@ -23,9 +23,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         case mutationError
         case detail(String)
         case status
-        case loadError
         case warning(String)
-        case retry
         case browse
     }
 
@@ -42,7 +40,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
                 title: String(localized: "Skill"),
                 listIdentifier: "skills.detail.list",
                 loadingCaption: String(localized: "Loading skill…"),
-                unavailableTitle: String(localized: "Skill Unavailable"),
+                failureTitle: String(localized: "Couldn't Load Skill"),
                 showsConnecting: true,
                 expectedKind: .skill,
                 catalog: .skills,
@@ -81,16 +79,26 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             ListSection(.source, header: "Source", items: sourceItems),
             ListSection(.validation, header: "Validation", items: validationItems),
         ]
-        // The Contents place holds the kit's compact loading row until the detail
-        // arrives; a request that failed says so in Validation, with its own
-        // Retry, so the row is not repeated here.
-        if state.detail == nil, state.loadError == nil {
-            sections.append(ListSection(.loading, items: []))
+        // The contents' place: the kit's compact loading row until the detail
+        // arrives, and its one failed row with Retry when Pi could not read the
+        // Skill.
+        if let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: failureReason) {
+            sections.append(ListSection(.loading, items: [], state: row))
         }
         if state.detail != nil {
             sections.append(ListSection(.contents, header: "Contents", items: [.browse]))
         }
         return sections
+    }
+
+    /// Why the contents are not here: the request's failure, or the Skill Pi could
+    /// not read, so one row says either and retries it.
+    private var failureReason: String? {
+        if let loadFailure { return loadFailure.reason ?? loadFailure.title }
+        guard let summary = state?.summary else { return nil }
+        if let error = summary.loadError { return error }
+        let hasError = summary.state == .error || summary.state == .unknown
+        return hasError ? String(localized: "Pi could not read this Skill.") : nil
     }
 
     private var sourceItems: [Item] {
@@ -99,24 +107,12 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         return items + [.detail("Provenance"), .detail("Scope"), .detail("Files")]
     }
 
-    /// The load's state and what it found: the retry under a row error, an
-    /// unknown state, or a failed load, and each warning once (a diffable list
-    /// traps on a repeated row).
+    /// What the load found: the resource's state, and each warning once (a
+    /// diffable list traps on a repeated row).
     private var validationItems: [Item] {
         guard let state else { return [] }
-        let summary = state.summary
-        var items: [Item] = [.status]
-        if summary.loadError ?? state.loadError != nil { items.append(.loadError) }
-        items += Self.unique(summary.warnings).map(Item.warning)
-        let hasError = summary.state == .error || summary.state == .unknown
-        if hasError || state.loadError != nil { items.append(.retry) }
-        return items
+        return [.status] + Self.unique(state.summary.warnings).map(Item.warning)
     }
-
-    /// The page's rows are the kit's theme cards, filled by
-    /// `configureCard(_:item:)`; the contents' load is the kit's compact state
-    /// row, in a section of its own below them.
-    override func stateSection() -> Section? { .loading }
 
     /// The contents are what the detail request fetches: until they are here the
     /// list shows the compact loading row in the Contents place.
@@ -140,7 +136,6 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         case .enabled: resourceRowInputs(.serverDefault)
         case .mutationError: resourceRowInputs(.mutationError)
         case .status: resourceRowInputs(.status)
-        case .loadError: resourceRowInputs(.loadError)
         case .detail: AnyHashable([
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.editable),
         ])
@@ -209,28 +204,12 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             content.image = UIImage(systemName: hasError ? "exclamationmark.triangle.fill" : "checkmark.circle")
             content.imageProperties.tintColor = UIColor(palette.fg)
             cell.contentConfiguration = content
-        case .loadError:
-            ListScreen.staticRow(cell, identifier: "skills.detail.loadError")
-            let error = summary.loadError ?? state.loadError ?? ""
-            var content = UIListContentConfiguration.cell()
-            content.text = error
-            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
-            content.textProperties.color = UIColor(palette.orange)
-            cell.contentConfiguration = content
         case .warning(let warning):
             ListScreen.staticRow(cell)
             cell.contentConfiguration = Self.noteContent(
                 warning, systemImage: "exclamationmark.circle",
                 color: UIColor(palette.fg), imageColor: UIColor(palette.fg)
             )
-        case .retry:
-            ListScreen.buttonRow(cell, identifier: "skills.detail.retry", label: "Retry") { [weak self] in
-                self?.setNeedsLoad()
-            }
-            var content = UIListContentConfiguration.cell()
-            content.text = "Retry"
-            content.textProperties.color = UIColor(palette.blue)
-            cell.contentConfiguration = content
         case .browse:
             let count = state.detail?.files.count ?? 0
             let countLabel = count == 1 ? "1 file" : "\(count) files"

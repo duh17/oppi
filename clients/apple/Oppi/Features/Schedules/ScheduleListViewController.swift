@@ -10,7 +10,8 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
     }
 
     private enum Item: Hashable {
-        case placeholder(Int)
+        /// The list's own state: loading its schedules, or why it could not.
+        case state
         case empty
         case schedule(String)
     }
@@ -106,7 +107,6 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         super.updateProperties()
         ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         updateBarItems()
-        composer.setScreenError(error, identifier: "schedules.error")
         applySnapshot()
     }
 
@@ -136,8 +136,9 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         var snapshot = NSDiffableDataSourceSnapshot<Int, Item>()
         snapshot.appendSections([0])
         let visible = visibleSchedules
-        if isLoading && schedules.isEmpty {
-            snapshot.appendItems([.placeholder(0), .placeholder(1)])
+        if error != nil || (isLoading && schedules.isEmpty) {
+            // The list's own state, in the place its rows would take.
+            snapshot.appendItems([.state])
         } else if visible.isEmpty {
             snapshot.appendItems([.empty])
         } else {
@@ -153,9 +154,32 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         let cell = UICollectionView.CellRegistration<SidebarListCell, Item> { [weak self] cell, _, item in
             self?.configure(cell, item: item)
         }
-        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
-            collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
+        let stateCell = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
+            guard let self else { return }
+            let palette = palette
+            // The card the schedule rows sit on, so the state is one of them.
+            var background = UIBackgroundConfiguration.listGroupedCell()
+            background.backgroundColor = UIColor(palette.bgHighlight)
+            background.cornerRadius = 20
+            cell.backgroundConfiguration = background
+            if let error {
+                cell.configure(
+                    .failed(title: String(localized: "Couldn't Load Schedules"), reason: error) { [weak self] in
+                        self?.refresh()
+                    },
+                    identifier: "schedules.state"
+                )
+            } else {
+                cell.configure(.loading(String(localized: "Loading schedules…")), identifier: "schedules.state")
+            }
         }
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
+            if case .state = item {
+                return collectionView.dequeueConfiguredReusableCell(using: stateCell, for: indexPath, item: item)
+            }
+            return collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
+        }
+        _ = stateCell
     }
 
     private func configure(_ cell: SidebarListCell, item: Item) {
@@ -163,11 +187,10 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         ListScreen.background(cell, grouped: false, palette: palette)
         let cardInsets = NSDirectionalEdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
         switch item {
-        case .placeholder:
-            ListScreen.staticRow(cell)
-            cell.contentConfiguration = ControlViewContent(insets: cardInsets, followsLayoutMargins: false) {
-                ScheduleCardView.placeholder(palette: palette)
-            }
+        case .state:
+            // The list's own state is the kit's cell; `installDataSource()`
+            // dequeues it for this row.
+            break
         case .empty:
             ListScreen.staticRow(cell)
             cell.contentConfiguration = UIContentUnavailableConfiguration.loadState(
@@ -259,7 +282,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
 
     private func loadSchedules() async {
         guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            error = "Server is offline"
+            error = String(localized: "Server is offline")
             return
         }
         isLoading = true
@@ -329,29 +352,6 @@ enum ScheduleCardView {
             ControlRowViews.stack([header, name, ControlRowViews.divider(palette), timing], spacing: 14),
             palette: palette
         )
-    }
-
-    static func placeholder(palette: ThemePalette) -> UIView {
-        func bar(width: CGFloat?, height: CGFloat, alpha: CGFloat, radius: CGFloat) -> UIView {
-            let view = UIView()
-            view.backgroundColor = UIColor(palette.comment).withAlphaComponent(alpha)
-            view.layer.cornerRadius = radius
-            view.heightAnchor.constraint(equalToConstant: height).isActive = true
-            if let width { view.widthAnchor.constraint(equalToConstant: width).isActive = true }
-            return view
-        }
-        let column = ControlRowViews.stack([
-            bar(width: 72, height: 12, alpha: 0.16, radius: 3),
-            bar(width: nil, height: 24, alpha: 0.16, radius: 5),
-            ControlRowViews.divider(palette),
-            bar(width: 160, height: 14, alpha: 0.12, radius: 3),
-        ], spacing: 14, alignment: .leading)
-        column.arrangedSubviews[1].widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-        column.arrangedSubviews[2].widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-        let card = surface(column, palette: palette)
-        card.isAccessibilityElement = false
-        card.accessibilityElementsHidden = true
-        return card
     }
 
     private static func surface(_ content: UIView, palette: ThemePalette) -> UIView {

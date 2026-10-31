@@ -38,7 +38,6 @@ extension ServerExtensionSummary: ServerResourceDetailSummary {
 struct ServerResourceDetailState<Summary, Detail> {
     var summary: Summary
     var detail: Detail?
-    var loadError: String?
     var isLoading: Bool
     var isPending: Bool
     var mutationError: String?
@@ -46,14 +45,15 @@ struct ServerResourceDetailState<Summary, Detail> {
     var serverName: String
 }
 
-/// One resource-detail page's own half: the copy of its whole-screen states,
-/// where its resource is kept, and how it is asked for and saved.
+/// One resource-detail page's own half: the copy of its failure, where its
+/// resource is kept, and how it is asked for and saved.
 struct ServerResourceDetailPage<Detail> {
     /// The title before the catalog row arrives.
     var title: String
     var listIdentifier: String
     var loadingCaption: String
-    var unavailableTitle: String
+    /// The title of a failed load: "Couldn't Load Skill", over the request's reason.
+    var failureTitle: String
     /// Whether the page says "Connecting…" until it has its server; a page that
     /// shows its catalog row first says what it is loading instead.
     var showsConnecting = false
@@ -197,7 +197,6 @@ class ServerResourceDetailScreenController<
                 // after a save the catalog's summary wins until the reload
                 // lands, and the contents it found stay on screen meanwhile.
                 detail: detail,
-                loadError: loadFailure,
                 isLoading: isLoading,
                 isPending: store.isMutationPending(page.mutationKey, serverId: target.serverId),
                 mutationError: store.mutationError(for: page.mutationKey, serverId: target.serverId),
@@ -223,11 +222,14 @@ class ServerResourceDetailScreenController<
             return .loading(page.loadingCaption)
         }
         return .failed(
-            title: page.unavailableTitle,
-            message: loadFailure,
+            title: loadFailure.title,
+            message: loadFailure.reason,
             retry: RetryAction { [weak self] in self?.setNeedsLoad() }
         )
     }
+
+    /// The title of this page's failure row: "Couldn't Load Skill".
+    override func failureTitle() -> String? { page.failureTitle }
 
     // MARK: - Rows
 
@@ -242,7 +244,7 @@ class ServerResourceDetailScreenController<
     /// the resource itself, a save in flight, and the load. A page's own rows
     /// add their own.
     enum ResourceRow {
-        case title, serverDefault, mutationError, status, loadError
+        case title, serverDefault, mutationError, status
     }
 
     /// What one of the shared rows draws from.
@@ -266,8 +268,6 @@ class ServerResourceDetailScreenController<
             ])
         case .status:
             AnyHashable([summary.detailState])
-        case .loadError:
-            AnyHashable(summary.detailLoadError ?? state.loadError)
         }
     }
 

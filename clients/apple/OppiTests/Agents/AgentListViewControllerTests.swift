@@ -158,10 +158,11 @@ enum AgentsLoadStateTests {
             #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
                 screen.view.layoutIfNeeded()
                 row = AgentListViewControllerTests.buttons("agents.state", in: screen.view)
-                    .first { !$0.isHiddenInHierarchy && $0.accessibilityLabel == PinnedServerTrustDelegate.rejectionMessage }
+                    .first { !$0.isHiddenInHierarchy && $0.accessibilityLabel?.contains(PinnedServerTrustDelegate.rejectionMessage) == true }
                 return row != nil
             })
-            #expect(row?.accessibilityLabel == "The server's certificate doesn't match the paired one.")
+            #expect(row?.accessibilityLabel == "Couldn't Load Agents. The server's certificate doesn't match the paired one.",
+                    "the page's title over the request's reason")
             #expect(row?.accessibilityTraits.contains(.button) == true)
         }
     }

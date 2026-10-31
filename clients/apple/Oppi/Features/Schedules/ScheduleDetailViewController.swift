@@ -208,10 +208,14 @@ final class ScheduleDetailViewController: ListScreenController<ScheduleDetailVie
         content.prefersSideBySideTextAndSecondaryText = true
     }
 
-    /// Nothing loaded yet, or no such schedule: the page is its state.
+    /// A failed load keeps the rows it already had and says so under them, with
+    /// Retry; with no schedule there is nothing to list, so the page is its whole
+    /// screen's state.
     override func stateSection() -> Section? { .status }
 
     override func loadingCaption() -> String? { String(localized: "Loading schedule…") }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Schedule") }
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {

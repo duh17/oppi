@@ -140,14 +140,14 @@ struct ServerSkillsViewControllerTests {
         #expect(store.skills(forServer: serverId).first?.state == .enabled)
     }
 
-    @Test("A Skill the server could not classify still offers Retry")
+    @Test("A Skill the server could not classify states itself in the kit's one failed row, with Retry")
     func unknownStateSkillOffersRetry() throws {
         let root = try makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.serverResourceStore.replaceSkills([skill(state: .unknown)], serverId: serverId)
 
-        // No window, so the page never loads: no failed request adds a Retry of
-        // its own, and only the catalog row's state decides.
+        // No window, so the page never loads: only the catalog row's own state
+        // decides what the page says.
         let screen = ServerSkillDetailViewController(
             target: ServerResourceDetailNavTarget(serverId: serverId, kind: .skill, resourceId: "release"),
             root: root,
@@ -155,18 +155,20 @@ struct ServerSkillsViewControllerTests {
         )
         screen.loadViewIfNeeded()
         screen.updateProperties()
-        let rows = screen.shownItems
-        func isRetry(_ item: ServerSkillDetailViewController.Item) -> Bool {
-            if case .retry = item { return true }
-            return false
+        #expect(!screen.shownItems.isEmpty, "the catalog row fills the page without a load")
+
+        let row = try #require(
+            screen.sections().first { $0.id == .loading }?.state,
+            "an unknown Skill is the page's one failed row, not a row of its own"
+        )
+        guard case .failed(let title, let reason, let retry) = row.state else {
+            Issue.record("the row is not a failure: \(row.state.rowText)")
+            return
         }
-        func isLoadError(_ item: ServerSkillDetailViewController.Item) -> Bool {
-            if case .loadError = item { return true }
-            return false
-        }
-        #expect(!rows.isEmpty, "the catalog row fills the page without a load")
-        #expect(!rows.contains(where: isLoadError), "no load error, which would offer a Retry of its own")
-        #expect(rows.contains(where: isRetry), "an unknown Skill's Validation offers Retry, as a failed one does")
+        #expect(title == "Couldn't Load Skill")
+        #expect(reason == String(localized: "Pi could not read this Skill."))
+        #expect(retry != nil, "the row offers the page's Retry")
+        #expect(row.identifier == "skills.detail.state")
     }
 
     @Test("Retry on an unavailable Skills catalog says why, sends one new request, and loads the list")
@@ -191,25 +193,31 @@ struct ServerSkillsViewControllerTests {
         let window = try show(UINavigationController(rootViewController: screen))
         defer { hide(window) }
 
-        var retry: UIButton?
-        #expect(await waitForMainActorCondition(timeout: .seconds(10)) {
-            screen.view.layoutIfNeeded()
-            retry = Self.button(withIdentifier: "skills.retry", in: screen.view)
-            return retry != nil
-        })
-        let button = try #require(retry)
-        #expect(button.accessibilityLabel?.localizedCaseInsensitiveContains("unavailable") == true)
+        // The failed row, not the loading row that shares its identifier.
+        func failedRow() -> ListStateRow? {
+            guard case .failed = screen.sections().first(where: { $0.id == .status })?.state?.state else { return nil }
+            return screen.sections().first(where: { $0.id == .status })?.state
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(10)) { failedRow() != nil })
+        let row = try #require(failedRow())
+        guard case .failed(let title, let reason, let retryAction) = row.state else {
+            Issue.record("the row is not a failure: \(row.state.rowText)")
+            return
+        }
+        #expect(title == "Couldn't Load Skills")
+        #expect(reason == String(localized: "The selected server has no cached Skills catalog."))
+        #expect(retryAction != nil, "the row offers the page's Retry")
+        #expect(row.identifier == "skills.state")
         #expect(Self.button(withIdentifier: "skills.row.release", in: screen.view) == nil)
 
         // The server comes back, but nothing reloads by itself.
         let settled = catalog.requests
         catalog.makeAvailable()
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
-            screen.view.layoutIfNeeded()
-            return Self.button(withIdentifier: "skills.retry", in: screen.view) != nil
-                && catalog.requests == settled
+            failedRow() != nil && catalog.requests == settled
         })
 
+        let button = try #require(Self.button(withIdentifier: "skills.state", in: screen.view))
         button.sendActions(for: .touchUpInside)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             screen.view.layoutIfNeeded()

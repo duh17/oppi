@@ -136,7 +136,7 @@ final class AgentListViewController: ListScreenController<AgentListViewControlle
 
     override func loadingCaption() -> String? { String(localized: "Loading saved Agents…") }
 
-    override var stateRowIdentifiers: StateRowIdentifiers { StateRowIdentifiers("agents.state") }
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Agents") }
 
     override func inputs(of item: Item) -> AnyHashable {
         guard case .saved(let id) = item, let agent = agents.first(where: { $0.id == id }) else { return AnyHashable(0) }

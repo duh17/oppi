@@ -59,7 +59,7 @@ struct ListScreenLoadTests {
         page.subject = "server-b"
         page.outcome = .failure("No such server")
         page.setNeedsUpdateProperties()
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure == "No such server" })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure?.title == "No such server" })
         page.outcome = .success
         page.answer = "Third"
         window.rootViewController = UIViewController()
@@ -148,7 +148,7 @@ struct ListScreenLoadTests {
         let window = try show(page)
         defer { hide(window) }
 
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure == "Server offline" })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure?.title == "Server offline" })
         #expect(!page.isLoading)
 
         // A Retry (or a foreground return, a settled sign-in) asks for a load.
@@ -177,7 +177,7 @@ struct ListScreenLoadTests {
         page.outcome = .failure("No such server")
         window.rootViewController = UINavigationController(rootViewController: page)
 
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure == "No such server" })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure?.title == "No such server" })
         #expect(page.subjectChanges == 1, "the page dropped what the old subject showed")
         #expect(page.rows.isEmpty, "the old subject's rows are gone")
     }
@@ -209,7 +209,7 @@ struct ListScreenLoadTests {
         let window = try show(page)
         defer { hide(window) }
 
-        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure == "Server offline" })
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) { page.loadFailure?.title == "Server offline" })
 
         // Away and back: nothing was loaded, so the page loads again instead of
         // sitting empty with no prompt.

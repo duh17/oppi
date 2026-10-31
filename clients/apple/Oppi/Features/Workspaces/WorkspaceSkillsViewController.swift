@@ -122,7 +122,11 @@ final class WorkspaceSkillsViewController: ListScreenController<
         case .loading:
             cell.configure(.loading(String(localized: "Loading skills\u{2026}")))
         case .error:
-            cell.configure(.failure(model.skillsError ?? "", retry: nil), identifier: "workspace.edit.skills.error")
+            let model = self.model
+            cell.configure(
+                .failure(model.skillsError ?? "", retry: { [model] in model.startPiResourceReload() }),
+                identifier: "workspace.edit.skills.error"
+            )
         default:
             cell.configure(.message(String(localized: "No Pi skills discovered for this folder yet.")))
         }

@@ -21,7 +21,7 @@ final class ServerResourcesE2ETests: E2ETestCase {
         XCTAssertTrue(search.waitForExistence(timeout: 5), "Skills search field did not render")
         search.tap()
         search.typeText("no-matching-e2e-skill")
-        XCTAssertTrue(app.staticTexts["skills.noResults"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["skills.state"].waitForExistence(timeout: 5))
         try saveLabScreenshot(name: "iphone-server-resources-skills-no-results-e2e")
     }
 

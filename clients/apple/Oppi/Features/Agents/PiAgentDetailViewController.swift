@@ -135,7 +135,7 @@ final class PiAgentDetailViewController: ListScreenController<PiAgentDetailViewC
 
     override func loadingCaption() -> String? { String(localized: "Loading Pi settings…") }
 
-    override var stateRowIdentifiers: StateRowIdentifiers { StateRowIdentifiers("agents.pi.state") }
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Pi Settings") }
 
     override func inputs(of item: Item) -> AnyHashable {
         switch item {

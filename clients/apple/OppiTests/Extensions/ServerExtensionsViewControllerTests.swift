@@ -141,24 +141,30 @@ struct ServerExtensionsViewControllerTests {
         let window = try show(UINavigationController(rootViewController: screen))
         defer { hide(window) }
 
-        var retryButton: UIButton?
-        #expect(await waitForMainActorCondition(timeout: .seconds(10)) {
-            screen.view.layoutIfNeeded()
-            retryButton = Self.button(withIdentifier: "extensions.retry", in: screen.view)
-            return retryButton != nil
-        })
-        let retry = try #require(retryButton)
+        // The failed row, not the loading row that shares its identifier.
+        func failedRow() -> ListStateRow? {
+            guard case .failed = screen.sections().first(where: { $0.id == .state })?.state?.state else { return nil }
+            return screen.sections().first(where: { $0.id == .state })?.state
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(10)) { failedRow() != nil })
+        let row = try #require(failedRow())
+        guard case .failed(let title, let reason, let retryAction) = row.state else {
+            Issue.record("the row is not a failure: \(row.state.rowText)")
+            return
+        }
+        #expect(title == "Couldn't Load Extensions")
+        #expect(reason == String(localized: "The selected server has no cached Extensions catalog."))
+        #expect(retryAction != nil, "the row offers the page's Retry")
         #expect(Self.button(withIdentifier: "extensions.row.workflow", in: screen.view) == nil)
 
         // The server comes back, but nothing reloads by itself.
         let settled = catalog.requests
         catalog.makeAvailable()
         #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
-            screen.view.layoutIfNeeded()
-            return Self.button(withIdentifier: "extensions.retry", in: screen.view) != nil
-                && catalog.requests == settled
+            failedRow() != nil && catalog.requests == settled
         })
 
+        let retry = try #require(Self.button(withIdentifier: "extensions.state", in: screen.view))
         retry.sendActions(for: .touchUpInside)
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             screen.view.layoutIfNeeded()
@@ -168,7 +174,7 @@ struct ServerExtensionsViewControllerTests {
         // The replaced state row leaves the screen (a recycled cell may linger, hidden).
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             screen.view.layoutIfNeeded()
-            return Self.buttons(withIdentifier: "extensions.retry", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
+            return Self.buttons(withIdentifier: "extensions.state", in: screen.view).allSatisfy(\.isHiddenInHierarchy)
         })
         await Self.removeCachedCatalog(of: serverId)
     }

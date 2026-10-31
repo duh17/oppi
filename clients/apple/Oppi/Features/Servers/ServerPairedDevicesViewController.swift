@@ -115,7 +115,11 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
             cell.configure(.message(String(localized: "No paired devices")), identifier: "server.pairedDevices.empty")
         case .error:
             guard case .loaded(_, let error?) = state else { return }
-            cell.configure(.failure(error, retry: nil), identifier: "server.pairedDevices.error")
+            let model = self.model
+            cell.configure(
+                .failure(error, retry: { [model] in Task { await model.reloadPairedDevices() } }),
+                identifier: "server.pairedDevices.error"
+            )
         case .failed:
             guard case .failed(let message) = state else { return }
             cell.configure(

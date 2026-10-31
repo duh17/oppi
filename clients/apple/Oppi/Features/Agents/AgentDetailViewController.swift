@@ -236,6 +236,8 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
 
     override func loadingCaption() -> String? { String(localized: "Loading agent…") }
 
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Agent") }
+
     override func inputs(of item: Item) -> AnyHashable {
         switch item {
         case .icon:
@@ -639,7 +641,7 @@ final class AgentDetailViewController: ListScreenController<AgentDetailViewContr
     /// store's own sync state to its rows.
     override func load() async throws {
         guard let apiClient = connection.apiClient, let serverId = connection.currentServerId else {
-            throw LoadFailure("Server is offline")
+            throw LoadFailure(String(localized: "Server is offline"))
         }
         agent = try await apiClient.getAgent(agentId)
         guard !Task.isCancelled else { return }

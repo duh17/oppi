@@ -5,7 +5,7 @@ import UIKit
 /// real views over one fixture server, with API pages answered by
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
 /// `ssh-hosts`, `mcp`, `theme-import`,
-/// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
+/// `skills`, `skills-offline` (the seeded catalog, cached while the refresh fails), `skill-detail`, `skill-detail-failed`, `skill-browser`, `extensions`, `extensions-offline` (the catalog
 /// request fails over a cached catalog), `extensions-unavailable` (the
 /// request fails with nothing cached), `extensions-builtin-only`, `extension-detail`,
 /// `agents-pi`, `agent-detail-failed`, `workspace-create`, `workspace-create-configure`, `mcp-add`,
@@ -13,7 +13,8 @@ import UIKit
 /// `model-providers` (the connected and available groups over fixture usage),
 /// `model-providers-failed` (the status request answers 404) and
 /// `model-providers-loading` (with `SCREENSHOT_SWEEP_READ_DELAY`, which holds
-/// every read so a capture can see the load).
+/// every read so a capture can see the load); `schedules-failed` and
+/// `schedules-loading` do the same for the schedules list.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`, `skill-file-edit` (a
 /// server that also edits Skill files in place),
@@ -200,8 +201,8 @@ final class SettingsSweepPreviewController: PreviewRootController {
 
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())
         coordinator.serverStore.replaceServersForPreview([server])
-        if page == "mcp" || page == "model-providers" || page == "mcp-failed"
-            || page == "model-providers-failed" || page == "model-providers-loading" {
+        if ["mcp", "mcp-failed", "model-providers", "model-providers-failed", "model-providers-loading"]
+            .contains(page) {
             // The MCP and provider screens wait for `apiClientReady`, so their
             // connection is a ready one whose requests the fixture answers, as
             // the Router and Metrics previews build theirs.
@@ -343,17 +344,13 @@ final class SettingsSweepPreviewController: PreviewRootController {
                 },
                 content: { stack { ServerExtensionsViewController(root: root) } }
             )
-        case "mcp":
+        case "mcp", "mcp-failed":
+            // `mcp-failed`: the host's probe answers 404, so the list shows its
+            // one failed row.
             return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
-        case "mcp-failed":
-            // The host's probe answers 404: what the list says when it cannot
-            // provide the servers is the one failed row (`mcp.retry`).
-            return stack { McpServersViewController(scopeId: McpScopeSnapshot.globalId, root: root) }
-        case "model-providers":
-            return stack { ModelProvidersViewController(target: .init(serverId: server.id), root: root) }
-        case "model-providers-failed", "model-providers-loading":
-            // The status request answers 404 (failed), or is held by
-            // `SCREENSHOT_SWEEP_READ_DELAY` (loading).
+        case "model-providers", "model-providers-failed", "model-providers-loading":
+            // The status request answers 404 (`-failed`), or is held by
+            // `SCREENSHOT_SWEEP_READ_DELAY` (`-loading`).
             return stack { ModelProvidersViewController(target: .init(serverId: server.id), root: root) }
         case "agent-detail-failed":
             return stack {
@@ -391,7 +388,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
             }
         case "theme-import":
             return stack { ThemeImportViewController(root: root) }
-        case "schedules":
+        case "schedules", "schedules-failed", "schedules-loading":
+            // `-failed`: the schedules request answers 404; `-loading` is held by
+            // `SCREENSHOT_SWEEP_READ_DELAY`.
             return stack { ScheduleListViewController(root: root) }
         case "agents":
             return stack { AgentListViewController(root: root) }
@@ -405,7 +404,9 @@ final class SettingsSweepPreviewController: PreviewRootController {
                     connection: connection
                 )
             }
-        case "skill-detail":
+        case "skill-detail", "skill-detail-failed":
+            // `-failed`: the detail request answers 404, so the page states its own
+            // failure row over the catalog row it opened.
             return stack {
                 ServerSkillDetailViewController(
                     target: .init(serverId: server.id, kind: .skill, resourceId: "release"),
@@ -620,6 +621,12 @@ final class SettingsSweepPreviewController: PreviewRootController {
         }
         if page == "mcp-failed" {
             SettingsSweepFixtureURLProtocol.routes["/mcp/scopes/global/servers"] = nil
+        }
+        if page == "schedules-failed" {
+            SettingsSweepFixtureURLProtocol.routes["/schedules"] = nil
+        }
+        if page == "skill-detail-failed" {
+            SettingsSweepFixtureURLProtocol.routes["/server/resources/skills/release"] = nil
         }
     }
 }

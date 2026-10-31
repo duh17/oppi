@@ -208,7 +208,9 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
             guard !Task.isCancelled, !error.isLoadCancellation else { return }
             statuses = []
             setupState = .unavailable
-            throw LoadFailure(String(localized: "Failed to load provider status: \(error.localizedDescription)"))
+            // The request's own reason is the row's second line; the page's title
+            // says what failed.
+            throw error
         }
         guard !Task.isCancelled else { return }
         statuses = loaded
@@ -291,6 +293,8 @@ final class ModelProvidersViewController: ListScreenController<ModelProvidersVie
     override func hasContent() -> Bool { setupState != .unknown }
 
     override func loadingCaption() -> String? { String(localized: "Loading providers…") }
+
+    override func failureTitle() -> String? { String(localized: "Couldn't Load Providers") }
 
     /// A page with no server says so over the whole screen instead of in a row.
     override func wholeScreenState() -> LoadState? {

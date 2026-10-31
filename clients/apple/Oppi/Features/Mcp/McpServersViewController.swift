@@ -63,6 +63,9 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
     private var preparingCount = 0 {
         didSet { setNeedsUpdateProperties() }
     }
+    /// Whether this page has asked its host anything yet: before that it says
+    /// nothing about what the host can provide.
+    private var hasProbed = false { didSet { setNeedsUpdateProperties() } }
     private var activityObservers = NotificationObservers()
 
     init(scopeId: String, root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
@@ -175,6 +178,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
     override func load() async throws {
         guard let server else { return }
         model.switchHost(to: server.id)
+        hasProbed = true
         preparingCount += 1
         let client = await coordinator.apiClientReady(for: server.id)
         preparingCount -= 1
@@ -221,7 +225,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             if attempt.actionError != nil { items.append(.signInError) }
             sections.append(ListSection(.signIn, header: "Sign-In on \(attempt.serverName)", items: items))
         }
-        if let row = stateRow(hasContent: hasContent, isLoading: state.loading, failure: stateFailure) {
+        if let row = stateRow(hasContent: hasContent, isLoading: state.loading || isLoading, failure: stateFailure) {
             sections.append(ListSection(.state, items: [], state: row))
         }
         if let scope = state.snapshot?.scope, state.hasClient, state.server != nil {
@@ -250,18 +254,17 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
 
     /// A host that cannot provide the list (no client, no scope) is a failure
     /// with Retry, like a catalog's; a scope that answered with no servers is
-    /// not.
+    /// not. Before the first probe the page says nothing of its own: it does not
+    /// know yet.
     private var stateFailure: String? {
         if let error = state.error { return error }
-        guard !hasContent, !state.loading else { return nil }
-        return String(localized: "MCP servers are unavailable. Connect to a paired server to manage MCP.")
+        guard hasProbed, !hasContent, !state.loading else { return nil }
+        return String(localized: "Connect to a paired server to manage MCP.")
     }
 
     override func loadingCaption() -> String? { String(localized: "Probing MCP servers…") }
 
-    override var stateRowIdentifiers: StateRowIdentifiers {
-        StateRowIdentifiers(loading: "mcp.loading", failed: "mcp.retry")
-    }
+    override func failureTitle() -> String? { String(localized: "Couldn't Load MCP Servers") }
 
     private var serverSectionHeader: String? {
         isGlobal ? nil : "This Workspace"

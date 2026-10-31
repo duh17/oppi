@@ -46,28 +46,12 @@ struct ListStateRow {
     var identifier: String
 }
 
-/// The identifiers the base's own state row carries, one per kind of state it
-/// can show: the compact loading row's, the failed row's (its text and its Retry
-/// are the one button), and the page's empty state's. A page whose tests name
-/// each keeps the name it had; the default is the list's own name
-/// (`skills.list` → `skills.state` for all three).
-struct StateRowIdentifiers {
-    var loading: String
-    var failed: String
-    var empty: String
-
-    /// The same identifier for all three kinds.
-    init(_ identifier: String) {
-        loading = identifier
-        failed = identifier
-        empty = identifier
-    }
-
-    init(loading: String, failed: String, empty: String? = nil) {
-        self.loading = loading
-        self.failed = failed
-        self.empty = empty ?? failed
-    }
+/// A page's failed load: the words that title its failure (“Couldn't Load Agent”,
+/// or its own sentence when only it can say why), and the request's reason under
+/// them, which a load that could not run does not have.
+struct LoadFailureReport: Equatable {
+    var title: String
+    var reason: String?
 }
 
 /// The cell a page draws its rows in. `.card` is the kit's theme-card row
@@ -145,11 +129,11 @@ enum ListSlot<Section: Hashable & Sendable, Item: Hashable & Sendable>: Hashable
 ///   a failure. `isLoading` and `loadFailure` are what the rows read.
 /// - `animatesUpdates`: whether a snapshot change animates its rows.
 /// - `stateSection()` with `emptyState()`, `hasContent()`, `loadingCaption()`
-///   and `stateRowIdentifiers`: the list's one state row (a failure with Retry,
-///   the compact loading row, the page's empty state), which the base writes
-///   and draws. A page whose store owns its state builds the row with
-///   `stateRow(hasContent:isLoading:failure:)`; `ListSection.state` remains for a
-///   section that states itself on its own.
+///   and `failureTitle()`: the list's one state row (the compact loading row, a
+///   failure titled by the page with the request's reason under it and one Retry,
+///   the page's empty state), which the base writes and draws. A store-backed
+///   page builds the row with `stateRow(hasContent:isLoading:failure:)`;
+///   `ListSection.state` remains for a section that states itself on its own.
 /// - `wholeScreenState()`: the same state for a page with no rows at all, drawn
 ///   over the whole screen.
 /// - `inputs(of:)`: the values a row is drawn from. Only rows whose inputs
@@ -210,9 +194,9 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     private(set) var isLoading = false {
         didSet { if isLoading != oldValue { setNeedsUpdateProperties() } }
     }
-    /// Why the page's last load failed, in its own words. A load that succeeds
-    /// clears it; a load the page cancelled never sets it.
-    private(set) var loadFailure: String? {
+    /// Why the page's last load failed. A load that succeeds clears it; a load
+    /// the page cancelled never sets it.
+    private(set) var loadFailure: LoadFailureReport? {
         didSet { if loadFailure != oldValue { setNeedsUpdateProperties() } }
     }
     /// The list's pull to refresh, for a page that loads. Only the base touches
@@ -318,8 +302,8 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         startLoad()
     }
 
-    /// Takes the failure back, for a page that showed it as an alert rather
-    /// than a row: a later failure sets it again.
+    /// Takes the failure back, for a page that says a load failed another way:
+    /// a later failure sets it again.
     func clearLoadFailure() { loadFailure = nil }
 
     /// Runs `load()` for the page's subject now, replacing a load in flight.
@@ -350,7 +334,7 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
                 // replaced it; the page is still here otherwise.
                 guard !Task.isCancelled else { return }
                 isLoading = false
-                if !error.isLoadCancellation { loadFailure = error.localizedDescription }
+                if !error.isLoadCancellation { loadFailure = failureReport(for: error) }
             }
             if pullToRefreshControl.isRefreshing { pullToRefreshControl.endRefreshing() }
         }
@@ -382,11 +366,16 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// server that is gone) overrides this.
     func wholeScreenState() -> LoadState? {
         if isLoading { return .loading(loadingCaption()) }
-        if let loadFailure { return Self.failureState(loadFailure) { [weak self] in self?.setNeedsLoad() } }
+        if let loadFailure { return state(for: loadFailure) }
         return emptyState()
     }
 
     // MARK: - State row
+
+    /// The title of the page's failed row: “Couldn't Load Agent”, under which the
+    /// request's own reason shows. nil says the failure is its own title, which a
+    /// page uses for the words it throws from `load()` (`LoadFailure`).
+    func failureTitle() -> String? { nil }
 
     /// The section the base puts the list's own state row in, as its first row:
     /// the page lists the section even when it holds nothing else. nil leaves the
@@ -399,48 +388,53 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// on its way, so the base shows its loading row where the rows will be.
     func hasContent() -> Bool { true }
 
-    /// The words under the compact loading row's spinner: "Loading skills…". The
+    /// The words under the compact loading row's spinner: “Loading skills…”. The
     /// whole-screen loading state draws the same.
     func loadingCaption() -> String? { nil }
 
-    /// What the list says when it has nothing to show and nothing failed: no
-    /// Skills resolved, nothing matched the search.
+    /// What the list says when it has nothing to show and nothing failed.
     func emptyState() -> LoadState? { nil }
 
-    /// The identifiers of the base's own state row, per kind.
-    var stateRowIdentifiers: StateRowIdentifiers {
+    /// The one identifier the base's state row carries, whatever it shows: the
+    /// list's own name (`skills.list` → `skills.state`).
+    var stateRowIdentifier: String {
         let name = listIdentifier.hasSuffix(".list")
             ? String(listIdentifier.dropLast(".list".count))
             : listIdentifier
-        return StateRowIdentifiers("\(name).state")
+        return "\(name).state"
     }
 
     /// The list's one state row: a load in flight where the rows will be (a Retry
-    /// keeps its row and turns it into this one), the failure — one row, one
-    /// Retry — and then the page's empty state while it has nothing to show.
-    /// The base fills its `stateSection()` with it; a page whose store owns the
-    /// load passes the store's facts instead of the base's `isLoading` and
-    /// `loadFailure`.
+    /// keeps its row and turns it into this one), the failure with one Retry, and
+    /// the page's empty state while it has nothing to show. The base fills its
+    /// `stateSection()` with it; a page whose store owns the load passes the
+    /// store's facts instead of the base's `isLoading` and `loadFailure`.
     func stateRow(hasContent: Bool, isLoading: Bool, failure: String?) -> ListStateRow? {
         if isLoading, !hasContent || failure != nil {
-            return ListStateRow(
-                state: .loading(loadingCaption()), identifier: stateRowIdentifiers.loading
-            )
+            return ListStateRow(state: .loading(loadingCaption()), identifier: stateRowIdentifier)
         }
         if let failure {
-            return ListStateRow(
-                state: Self.failureState(failure) { [weak self] in self?.setNeedsLoad() },
-                identifier: stateRowIdentifiers.failed
-            )
+            let report = LoadFailureReport(title: failureTitle() ?? failure, reason: failureTitle() == nil ? nil : failure)
+            return ListStateRow(state: state(for: report), identifier: stateRowIdentifier)
         }
         guard !hasContent, let settled = emptyState() else { return nil }
-        return ListStateRow(state: settled, identifier: stateRowIdentifiers.empty)
+        return ListStateRow(state: settled, identifier: stateRowIdentifier)
     }
 
-    /// A failure as the list says it: the reason, and one Retry that runs
-    /// `retry`.
-    static func failureState(_ failure: String, retry: @escaping @MainActor () -> Void) -> LoadState {
-        .failed(title: failure, message: nil, retry: RetryAction(run: retry))
+    /// A failure as the list says it: its title, the reason under it, and one
+    /// Retry.
+    private func state(for report: LoadFailureReport) -> LoadState {
+        .failed(title: report.title, message: report.reason, retry: RetryAction { [weak self] in self?.setNeedsLoad() })
+    }
+
+    /// Why `error` failed the page's load: the page's own words when it threw a
+    /// `LoadFailure`, else the request's reason under the page's `failureTitle()`.
+    private func failureReport(for error: any Error) -> LoadFailureReport {
+        if let words = error as? LoadFailure { return LoadFailureReport(title: words.message, reason: nil) }
+        return LoadFailureReport(
+            title: failureTitle() ?? String(localized: "Couldn't Load"),
+            reason: error.localizedDescription
+        )
     }
 
     /// Whether a snapshot change animates its rows (the default: once the list
@@ -634,10 +628,22 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         var sections = sections()
         guard let stateSection = stateSection(),
               let index = sections.firstIndex(where: { $0.id == stateSection }) else { return sections }
-        sections[index].state = stateRow(
-            hasContent: hasContent(), isLoading: isLoading, failure: loadFailure
-        )
+        sections[index].state = listStateRow()
         return sections
+    }
+
+    /// The base's own state row, from its own load: a load in flight where the
+    /// rows will be, the page's failure with one Retry, then the page's empty
+    /// state while it has nothing to show.
+    private func listStateRow() -> ListStateRow? {
+        if isLoading, !hasContent() || loadFailure != nil {
+            return ListStateRow(state: .loading(loadingCaption()), identifier: stateRowIdentifier)
+        }
+        if let loadFailure {
+            return ListStateRow(state: state(for: loadFailure), identifier: stateRowIdentifier)
+        }
+        guard !hasContent(), let settled = emptyState() else { return nil }
+        return ListStateRow(state: settled, identifier: stateRowIdentifier)
     }
 
     /// Whether `sections` show anything: a row, or a section's state row.
