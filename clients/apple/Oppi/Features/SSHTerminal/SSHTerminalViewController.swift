@@ -42,7 +42,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private let openBanner = SSHTerminalTextBannerView(identifier: "sshTerminal.openNotice")
     private let noticeCard = SSHTerminalNoticeCardView()
     private let copyNotice = SSHTerminalCopyNoticeView()
-    private let backToLive = SSHTerminalBackToLiveButton()
+    private let backToLive = JumpToBottomButton()
+    private var backToLiveThemeID: ThemeID?
     private let statusGlyph = SSHTerminalStatusGlyphButton()
     private lazy var morePill = SSHTerminalMorePill(status: statusGlyph)
     /// The customizable middle of the bottom bar (Settings > SSH Terminal >
@@ -470,9 +471,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             self?.setNeedsUpdateProperties()
         }
         noticeCard.onFrameChange = { [weak self] in self?.attention.cardFrame = $0 }
-        backToLive.addAction(UIAction { [weak self] _ in
-            self?.gridView?.backToLive()
-        }, for: .touchUpInside)
+        backToLive.accessibilityIdentifier = "sshTerminal.backToLive"
+        backToLive.accessibilityLabel = "Back to Live"
+        backToLive.onTap = { [weak self] in self?.gridView?.backToLive() }
         statusGlyph.onOpen = { [weak self] in self?.showStatusDetail() }
 
         connectionBanner.isHidden = true
@@ -481,7 +482,6 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         openBanner.isHidden = true
         noticeCard.isHidden = true
         copyNotice.isHidden = true
-        backToLive.isHidden = true
         topStack.addArrangedSubview(connectionBanner)
         topStack.addArrangedSubview(inputBanner)
         topStack.addArrangedSubview(pasteBanner)
@@ -1196,7 +1196,12 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         if let copyNoticeText {
             copyNotice.apply(text: copyNoticeText, themeID: themeID)
         }
-        backToLive.isHidden = !detached
+        if backToLiveThemeID != themeID {
+            backToLiveThemeID = themeID
+            // The terminal never shows the button busy; the tint is unused.
+            backToLive.apply(palette: themeID.palette, busyTint: UIColor(themeID.palette.blue))
+        }
+        backToLive.setVisible(detached)
     }
 
     // MARK: - Composer

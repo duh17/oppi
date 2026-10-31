@@ -1383,6 +1383,7 @@
 		95387380750A5E1610B654D4 /* SSHApprovalCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE520C61516EEF3FE2FE1FED /* SSHApprovalCacheTests.swift */; };
 		9540229EB398D6BCF9D4B5AE /* MermaidSankeyParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4493E1956A1C3E05BB3C7687 /* MermaidSankeyParser.swift */; };
 		95580B1B9C6428AEA8170BC7 /* FileShareArtifactTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DF41EE63B019A7B614BEABB /* FileShareArtifactTests.swift */; };
+		955AB7BBD42E7AB90107344C /* JumpToBottomButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AFB045DCAEBBCFA6A66CF43 /* JumpToBottomButton.swift */; };
 		9576B70D1C48E76C35BBCF14 /* RenderStrategyPerfTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5744AA46ED83779CFC64CD07 /* RenderStrategyPerfTests.swift */; };
 		95D9E55E155961BAE1A62556 /* McpServersModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54168235EDF48D7A00BC0684 /* McpServersModel.swift */; };
 		9613A13B34CAFB837223A6A7 /* ServerBadgePageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B25F043F4650FC9AE59267F4 /* ServerBadgePageTests.swift */; };
@@ -2640,6 +2641,7 @@
 		0AB4594A6D4B80B2F368AA3B /* PairingDeviceName.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingDeviceName.swift; sourceTree = "<group>"; };
 		0AD3AD655356B7266A3581D3 /* FileBrowserHostHomeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileBrowserHostHomeTests.swift; sourceTree = "<group>"; };
 		0AF15FEA62F07EC2775F47F0 /* TimelineReducerLoadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerLoadTests.swift; sourceTree = "<group>"; };
+		0AFB045DCAEBBCFA6A66CF43 /* JumpToBottomButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JumpToBottomButton.swift; sourceTree = "<group>"; };
 		0B458866CCE6ABB9C2B5B2DD /* MacKeyboardSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacKeyboardSettingsView.swift; sourceTree = "<group>"; };
 		0B57FD5B198557963DCF2FCF /* TimelineCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineCacheTests.swift; sourceTree = "<group>"; };
 		0B7A03D104E935131D98FF59 /* AskCardShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskCardShared.swift; sourceTree = "<group>"; };
@@ -6590,6 +6592,7 @@
 				19DF6B26AFB30174BDB64DEE /* InAppBrowserView.swift */,
 				A70DC58E52119EFF3D2E7045 /* InlineMediaPlayback.swift */,
 				73A66AC7CDDBAA955BBAD5D9 /* InsetLabel.swift */,
+				0AFB045DCAEBBCFA6A66CF43 /* JumpToBottomButton.swift */,
 				4D1438A4C551D6DFDC988171 /* LoadStateContent.swift */,
 				24EB557504322E89E70F7427 /* MarkdownReaderRenderAhead.swift */,
 				B75EE4D488F34EB13AC9CB46 /* MarkdownResourceAccess.swift */,
@@ -10264,6 +10267,7 @@
 				93109088C456B215D926CB95 /* JSONPrettyPrinter.swift in Sources */,
 				8CACFBB9029C919C81C90A9A /* JSONUnpairedSurrogateRepair.swift in Sources */,
 				35FE8D0E3CD7EEBDE04BA3A4 /* JSONValue.swift in Sources */,
+				955AB7BBD42E7AB90107344C /* JumpToBottomButton.swift in Sources */,
 				D359F79F9FA6B3769CFCC999 /* KeybindingCatalog.swift in Sources */,
 				976E8C9E8BB75AE25A28B0AB /* KeybindingEventMap.swift in Sources */,
 				62E9EE618E6F8ED5438D0E4F /* KeychainDeviceCredentialMerger.swift in Sources */,

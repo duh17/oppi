@@ -545,81 +545,26 @@ final class ChatStoppedFooterView: UIView {
 // MARK: - Jump to bottom
 
 /// The jump-to-bottom hint in its 44pt slot at the timeline's bottom trailing
-/// corner: a plain arrow, or while the agent works a spinner in the model's
-/// color with an arrow badge. It scales and fades in and out.
+/// corner: a `JumpToBottomButton` fed the chat's state. The slot takes touches
+/// only while the button shows.
 final class ChatJumpToBottomView: UIView {
     weak var chat: ChatViewController?
-    private let button = UIControl()
-    private let idleGlass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
-    private let idleArrow = UIImageView()
-    private let busyGlass = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
-    private let busyRing = CAShapeLayer()
-    private let spinner = WorkingSpinnerUIView(side: 20)
-    private let badge = UIImageView()
-    private var shownVisible: Bool?
-    private var shownBusy: Bool?
+    private let button = JumpToBottomButton()
 
     init(chat: ChatViewController) {
         self.chat = chat
         super.init(frame: .zero)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.isAccessibilityElement = true
-        button.accessibilityTraits = .button
         button.accessibilityIdentifier = "chat.jumpToBottom"
-        button.addAction(UIAction { [weak chat] _ in chat?.scrollController.requestScrollToBottom() }, for: .touchUpInside)
+        button.onTap = { [weak chat] in chat?.scrollController.requestScrollToBottom() }
         addSubview(button)
-        idleGlass.layer.cornerRadius = 17
-        idleGlass.clipsToBounds = true
-        idleArrow.contentMode = .center
-        busyGlass.layer.cornerRadius = 18
-        busyGlass.clipsToBounds = true
-        busyRing.fillColor = UIColor.clear.cgColor
-        busyRing.lineWidth = 1.5
-        badge.contentMode = .center
-        badge.layer.cornerRadius = 7
-        badge.clipsToBounds = true
-        for view in [idleGlass, idleArrow, busyGlass, spinner, badge] as [UIView] {
-            view.isUserInteractionEnabled = false
-            view.translatesAutoresizingMaskIntoConstraints = false
-            button.addSubview(view)
-        }
-        busyGlass.layer.addSublayer(busyRing)
         NSLayoutConstraint.activate([
             button.trailingAnchor.constraint(equalTo: trailingAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
-            button.widthAnchor.constraint(equalToConstant: 36),
-            button.heightAnchor.constraint(equalToConstant: 36),
-            idleGlass.centerXAnchor.constraint(equalTo: button.centerXAnchor),
-            idleGlass.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            idleGlass.widthAnchor.constraint(equalToConstant: 34),
-            idleGlass.heightAnchor.constraint(equalToConstant: 34),
-            idleArrow.centerXAnchor.constraint(equalTo: idleGlass.centerXAnchor),
-            idleArrow.centerYAnchor.constraint(equalTo: idleGlass.centerYAnchor),
-            busyGlass.topAnchor.constraint(equalTo: button.topAnchor),
-            busyGlass.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-            busyGlass.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-            busyGlass.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-            spinner.centerXAnchor.constraint(equalTo: button.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            spinner.widthAnchor.constraint(equalToConstant: 20),
-            spinner.heightAnchor.constraint(equalToConstant: 20),
-            badge.widthAnchor.constraint(equalToConstant: 14),
-            badge.heightAnchor.constraint(equalToConstant: 14),
-            badge.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: 2),
-            badge.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: 2),
         ])
-        button.alpha = 0
-        button.isHidden = true
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        busyRing.path = UIBezierPath(ovalIn: busyGlass.bounds.insetBy(dx: 0.75, dy: 0.75)).cgPath
-        busyRing.frame = busyGlass.bounds
-    }
 
     override func updateProperties() {
         super.updateProperties()
@@ -627,105 +572,11 @@ final class ChatJumpToBottomView: UIView {
         let visible = chat.scrollController.isJumpToBottomHintVisible
         let busy = chat.sessionManager.isBusy
         let palette = chat.chromeThemeID.palette
-        let provider = ProviderColor.color(for: chat.session?.model, palette: palette)
-        idleArrow.image = UIImage.scaledSymbol("arrow.down", style: .caption1, weight: .bold, color: UIColor(palette.fg))
-        badge.backgroundColor = provider
-        badge.image = UIImage(
-            systemName: "arrow.down",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 7, weight: .black)
-        )?.withTintColor(
-            ThemeColorContrast.foreground(for: provider),
-            renderingMode: .alwaysOriginal
-        )
-        busyRing.strokeColor = provider.cgColor
-        spinner.apply(tint: provider, palette: palette)
+        button.apply(palette: palette, busyTint: ProviderColor.color(for: chat.session?.model, palette: palette))
         button.accessibilityLabel = busy ? "Agent working, jump to bottom" : "Jump to latest message"
-        setBusy(busy, animated: shownBusy != nil)
-        setVisible(visible, animated: shownVisible != nil)
-    }
-
-    private var reduceMotion: Bool { UIAccessibility.isReduceMotionEnabled }
-
-    private func setBusy(_ busy: Bool, animated: Bool) {
-        guard busy != shownBusy else { return }
-        shownBusy = busy
-        let apply = {
-            for view in [self.busyGlass, self.spinner, self.badge] as [UIView] {
-                view.alpha = busy ? 1 : 0
-                view.transform = busy || self.reduceMotion ? .identity : CGAffineTransform(scaleX: 0.8, y: 0.8)
-            }
-            for view in [self.idleGlass, self.idleArrow] as [UIView] {
-                view.alpha = busy ? 0 : 1
-                view.transform = !busy || self.reduceMotion ? .identity : CGAffineTransform(scaleX: 0.8, y: 0.8)
-            }
-        }
-        if animated, !reduceMotion {
-            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseInOut, animations: apply)
-        } else {
-            apply()
-        }
-        updateSpinnerAnimation()
-        if busy, !reduceMotion {
-            let pulse = CABasicAnimation(keyPath: "strokeColor")
-            pulse.fromValue = busyRing.strokeColor.map { UIColor(cgColor: $0).withAlphaComponent(0.15).cgColor }
-            pulse.toValue = busyRing.strokeColor.map { UIColor(cgColor: $0).withAlphaComponent(0.45).cgColor }
-            pulse.duration = 0.9
-            pulse.autoreverses = true
-            pulse.repeatCount = .infinity
-            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            busyRing.add(pulse, forKey: "pulse")
-        } else {
-            busyRing.removeAnimation(forKey: "pulse")
-            busyRing.strokeColor = busyRing.strokeColor.map { UIColor(cgColor: $0).withAlphaComponent(0.15).cgColor }
-        }
-    }
-
-    /// The spinner runs only while the hint shows it: busy and on screen.
-    private func updateSpinnerAnimation() {
-        spinner.isAnimating = shownBusy == true && shownVisible == true
-    }
-
-    /// The slot stays laid out so the button can animate; it takes touches
-    /// only while the button shows.
-    private func setVisible(_ visible: Bool, animated: Bool) {
+        button.setBusy(busy)
+        button.setVisible(visible)
         isUserInteractionEnabled = visible
-        guard visible != shownVisible else { return }
-        shownVisible = visible
-        let hiddenTransform = reduceMotion ? CGAffineTransform.identity : Self.scale(0.96, anchoredAt: button)
-        if visible {
-            button.isHidden = false
-            updateSpinnerAnimation()
-        }
-        let change = {
-            self.button.alpha = visible ? 1 : 0
-            self.button.transform = visible ? .identity : hiddenTransform
-        }
-        let finish: (Bool) -> Void = { _ in
-            // The spinner keeps turning through the fade, then stops.
-            guard self.shownVisible == false else { return }
-            self.button.isHidden = true
-            self.updateSpinnerAnimation()
-        }
-        if animated {
-            UIView.animate(
-                withDuration: reduceMotion ? 0 : 0.18,
-                delay: 0,
-                options: [.curveEaseInOut, .beginFromCurrentState],
-                animations: change,
-                completion: finish
-            )
-        } else {
-            change()
-            finish(true)
-        }
-    }
-
-    /// A scale toward the button's bottom trailing corner.
-    private static func scale(_ factor: CGFloat, anchoredAt view: UIView) -> CGAffineTransform {
-        let size = CGSize(width: 36, height: 36)
-        let dx = size.width / 2 * (1 - factor)
-        let dy = size.height / 2 * (1 - factor)
-        return CGAffineTransform(translationX: dx, y: dy).scaledBy(x: factor, y: factor)
     }
 }
 

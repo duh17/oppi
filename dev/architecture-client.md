@@ -128,6 +128,7 @@ UIKit owns every iOS view and all app structure (decided 2026-10-15). The target
 - `InsetLabel`: pills and badges with insets and an optional capsule.
 - `UIFont.scaled`, `UIFont.scaledMonospaced`, `UIImage.scaledSymbol`: the one Dynamic Type font and symbol helper.
 - `WorkingSpinnerUIView`: the working spinner (timeline row, jump-to-bottom hint) for every spinner style.
+- `JumpToBottomButton`: the 36 pt glass arrow (with a busy ring, spinner, and badge) that jumps to the bottom: the chat timeline's `ChatJumpToBottomView` and the SSH terminal's Back to Live. The owner sets its label and identifier and drives `setVisible` and `setBusy`.
 - `PlainRowButton`, `ChangedFileRow`: a whole-row button and a changed-file row (context bar and Git panel, commit detail).
 - `TerminalMirrorIndicatorUIView`: the pi-tui mirror mark (session rows, chat title).
 - `HostSwitcherModel`: the single owner of the server list, connection retry, and switching.

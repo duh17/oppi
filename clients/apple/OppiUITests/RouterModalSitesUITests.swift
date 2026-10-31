@@ -387,6 +387,7 @@ final class RouterModalSitesUITests: XCTestCase {
         XCTAssertEqual(switcher.value as? String, "\u{03C0} - oppi, 1 of 3", "A vertical drag must not change pane")
         attachScreenshot("rex-panes-scrolled")
         backToLive.tap()
+        XCTAssertTrue(waitForDisappearance(of: backToLive), "Back to Live must return the grid to the live screen")
 
         // A sideways swipe moves to the next pane, and back.
         grid.swipeLeft()

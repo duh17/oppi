@@ -509,23 +509,3 @@ final class SSHTerminalCopyNoticeView: UIView {
         accessibilityLabel = text
     }
 }
-
-final class SSHTerminalBackToLiveButton: UIButton {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        translatesAutoresizingMaskIntoConstraints = false
-        var config = UIButton.Configuration.borderedProminent()
-        config.image = UIImage(systemName: "arrow.down.to.line")
-        config.title = "Back to Live"
-        config.imagePadding = 6
-        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
-        configuration = config
-        accessibilityIdentifier = "sshTerminal.backToLive"
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-}
