@@ -27,6 +27,8 @@ final class AgentNativeEditViewController: ListScreenController<
     private var extensionToolTask: Task<Void, Never>?
     private var extensionToolRefreshKey: String?
 
+    nonisolated(unsafe) private var chatStyleObserver: NSObjectProtocol?
+
     private lazy var cancelItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { [weak self] _ in
         guard let self else { return }
         Router.finish(self)
@@ -86,22 +88,33 @@ final class AgentNativeEditViewController: ListScreenController<
 
     // MARK: - Lifecycle
 
+    deinit {
+        if let chatStyleObserver {
+            NotificationCenter.default.removeObserver(chatStyleObserver)
+        }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         // The text editors grow as their text does.
         collectionView.selfSizingInvalidation = .enabledIncludingConstraints
         navigationItem.leftBarButtonItem = cancelItem
         // The Chat Style menu names the Settings style it follows.
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(chatStyleDidChange),
-            name: AppPreferences.ChatDisplay.didChangeNotification,
-            object: nil
-        )
+        // "queue: .main" so a style change posted from any thread runs this
+        // screen's main-actor work on the main thread; a selector observer would
+        // run it on the posting thread and trap in `MainActor.assumeIsolated`
+        // (`bd3b2b5d4`, the same shape as the working spinner).
+        chatStyleObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferences.ChatDisplay.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.chatStyleDidChange() }
+        }
         loadTask = Task { [draft, apiClient] in await draft.refreshResources(apiClient: apiClient) }
     }
 
-    @objc private func chatStyleDidChange() { setNeedsUpdateProperties() }
+    private func chatStyleDidChange() { setNeedsUpdateProperties() }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)

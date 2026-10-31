@@ -28,19 +28,31 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
         navigationItem.backBarButtonItem = UIBarButtonItem(title: String(localized: "Chat"))
     }
 
+    nonisolated(unsafe) private var topBarObserver: NSObjectProtocol?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         // The Top Bar page is pushed above this one and writes the layout; the
         // Top Bar row's summary has to follow it while this page is behind.
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(topBarDidChange),
-            name: AppPreferences.ChatTopBar.didChangeNotification,
-            object: nil
-        )
+        // "queue: .main" so the layout change the Top Bar page writes runs this
+        // page's main-actor work on the main thread; a selector observer would run
+        // it on the posting thread and trap in `MainActor.assumeIsolated`.
+        topBarObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferences.ChatTopBar.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.topBarDidChange() }
+        }
     }
 
-    @objc private func topBarDidChange() { setNeedsUpdateProperties() }
+    deinit {
+        if let topBarObserver {
+            NotificationCenter.default.removeObserver(topBarObserver)
+        }
+    }
+
+    private func topBarDidChange() { setNeedsUpdateProperties() }
 
     private var chatStyle: AppPreferences.ChatDisplay.Style { AppPreferences.ChatDisplay.style }
     private var topBarLayout: ChatTopBarLayout { AppPreferences.ChatTopBar.layout }
