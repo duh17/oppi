@@ -89,7 +89,8 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    the call by name, so a page can still take the trigger or the outcome
  *    another way (a stored closure, a helper). The kit runs one task per page
  *    (`loadPolicy`, `loadSubject`, `load`, `setNeedsLoad`), so a page overrides
- *    those instead; a new page starts at 0 and the count only goes down.
+ *    those instead; the baseline holds no entry for either, so a new page and a
+ *    page that adds one fail the guard, and the count only goes down.
  *    `Task {` and `Task.isCancelled` are not counted: a page needs its own task
  *    for an action (archive, run now, sign-in cancel), and the kit expects the
  *    `Task.isCancelled` check after an `await` that keeps a late answer off the
