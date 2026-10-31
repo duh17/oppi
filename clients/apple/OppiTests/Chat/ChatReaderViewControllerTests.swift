@@ -41,6 +41,11 @@ struct ChatReaderViewControllerTests {
         let navigation = UINavigationController(rootViewController: UIViewController())
         navigation.pushViewController(reader, animated: false)
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        // A window with no scene never draws, and the pencil capture below is a
+        // picture of this window.
+        window.windowScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
         window.rootViewController = navigation
         window.makeKeyAndVisible()
         navigation.view.layoutIfNeeded()
@@ -78,16 +83,27 @@ struct ChatReaderViewControllerTests {
         _ = try #require(host.reader.page)
 
         var waited = 0
-        while !identifiersSeeThePencil(host), waited < 200 {
+        while !pencilIsInTheWindow(host), waited < 200 {
             try await Task.sleep(for: .milliseconds(10))
             host.window.layoutIfNeeded()
             waited += 1
         }
-        #expect(identifiersSeeThePencil(host), "the tool row's pencil never reached the reader's bar")
+        #expect(
+            pencilIsInTheWindow(host),
+            "the tool row's pencil never reached the reader's bar: \(identifiers(in: host.window).joined(separator: ", ")) | bars: \(barButtonIdentifiers(in: host.window).joined(separator: ", "))"
+        )
         Self.capture(host, named: "tool-row-reader")
     }
 
-    /// Writes the window a capture can be looked at: `/tmp/edit-e3/<name>.png`.
+    /// Every identifier the window's views carry, for a failure that says what
+    /// the bar does hold instead of only that the pencil is missing.
+    private func identifiers(in root: UIView) -> [String] {
+        let own = root.accessibilityIdentifier.map { [$0] } ?? []
+        return own + root.subviews.flatMap { identifiers(in: $0) }
+    }
+
+    /// The window as a picture, so the pencil can be looked at rather than only
+    /// counted: `/tmp/edit-e3/<name>.png`.
     private static func capture(_ host: Host, named name: String) {
         let size = host.window.bounds.size
         guard size.width > 0 else { return }
@@ -100,16 +116,30 @@ struct ChatReaderViewControllerTests {
         try? data.write(to: directory.appendingPathComponent("\(name).png"))
     }
 
-    /// The reader's own answer: the items its edit entry installed, and the bar
-    /// items on any navigation item it reached.
-    private func identifiersSeeThePencil(_ host: Host) -> Bool {
-        let reader = host.reader.page as? FullScreenCodeViewController
-        if reader?.installedEditIdentifiers.contains("workspace-file-editor.edit") == true { return true }
-        let items = (host.reader.navigationItem.rightBarButtonItems ?? [])
-            + (host.reader.page?.navigationItem.rightBarButtonItems ?? [])
-        if items.contains(where: { $0.accessibilityIdentifier == "workspace-file-editor.edit" }) { return true }
-        guard let view = host.reader.page?.view else { return false }
-        return descendant(identifier: "workspace-file-editor.edit", in: view) != nil
+    /// The pencil the reader installed, found where a person sees it: a view or a
+    /// bar item with the shared identifier in the window's own hierarchy, after
+    /// layout. Nothing about the reader's internals is asked.
+    private func pencilIsInTheWindow(_ host: Host) -> Bool {
+        host.window.layoutIfNeeded()
+        if descendant(identifier: "workspace-file-editor.edit", in: host.window) != nil { return true }
+        return barButtonIdentifiers(in: host.window).contains("workspace-file-editor.edit")
+    }
+
+    /// The identifiers of the bar items the bars in this hierarchy carry. A bar
+    /// button's own view need not repeat its item's identifier, so the bars are
+    /// asked as well as their views.
+    private func barButtonIdentifiers(in root: UIView) -> [String] {
+        var identifiers: [String] = []
+        if let bar = root as? UINavigationBar {
+            for item in bar.items ?? [] {
+                identifiers += (item.leftBarButtonItems ?? []).compactMap(\.accessibilityIdentifier)
+                identifiers += (item.rightBarButtonItems ?? []).compactMap(\.accessibilityIdentifier)
+            }
+        }
+        if let bar = root as? UIToolbar {
+            identifiers += (bar.items ?? []).compactMap(\.accessibilityIdentifier)
+        }
+        return root.subviews.reduce(identifiers) { $0 + barButtonIdentifiers(in: $1) }
     }
 
     private func descendant(identifier: String, in root: UIView) -> UIView? {

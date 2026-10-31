@@ -315,12 +315,6 @@ final class FullScreenCodeViewController: UIViewController {
         configureNavigation(on: viewController, palette: bodyThemeID.palette)
     }
 
-    /// What the reader installed from its edit entry, for the test that proves an
-    /// entry reaches this bar at all.
-    var installedEditIdentifiers: [String] {
-        editItems.compactMap(\.accessibilityIdentifier)
-    }
-
     /// Rebuild persistent UIKit content and chrome when SwiftUI's active theme
     /// changes. Full-screen bodies capture a palette at construction time, so
     /// merely invalidating the representable leaves code, markdown, diff,
