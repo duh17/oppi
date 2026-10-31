@@ -492,8 +492,10 @@ final class SSHTerminalPanePlaceholderView: UIView {
     /// The New Pane card of a drag. `armed` says a release now opens a pane.
     func showNewPane(armed: Bool) {
         label.text = "New Pane"
+        // The first display of the card plays its dimmed state in too.
+        let wasCard = !glyph.isHidden
         glyph.isHidden = false
-        guard armed != isArmed || stack.alpha == 0 else { return }
+        guard !wasCard || armed != isArmed else { return }
         isArmed = armed
         let change = {
             self.stack.alpha = armed ? 1 : Self.dimmedAlpha

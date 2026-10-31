@@ -967,7 +967,8 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
             neighbour: { [weak self] delta in self?.channel.rex?.latest.neighbour(offsetBy: delta)?.name },
             step: { [weak self] delta in self?.channel.rex?.step(delta) ?? false },
             shown: { [weak self] in self?.channel.rex?.latest.shown },
-            newPane: { [weak self] in self?.openNewPane() ?? false }
+            newPane: { [weak self] in self?.openNewPane() ?? false },
+            canCreatePane: { [weak self] in self?.newPaneTask == nil }
         )
     }
 

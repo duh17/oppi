@@ -99,6 +99,10 @@ struct SSHTerminalPaneStepping {
     /// grid's New Pane action, and the switcher's New Pane item. False when
     /// one is already being opened.
     var newPane: () -> Bool
+    /// Whether a new pane can be opened now (none is being opened): while one
+    /// is, the swipe past the last pane rubber-bands like the first pane's edge
+    /// instead of offering a card that would spring back.
+    var canCreatePane: () -> Bool
 }
 
 /// The bar's pane switcher menu: the session's panes in strip order, the

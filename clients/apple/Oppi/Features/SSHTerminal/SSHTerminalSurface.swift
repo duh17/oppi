@@ -1212,7 +1212,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             paneTransition.drag(
                 translationX: travel,
                 neighbour: paneStepping?.neighbour(SSHTerminalPaneSwipe.direction(of: travel)),
-                offersNewPane: paneStepping != nil
+                offersNewPane: paneStepping?.canCreatePane() == true
             )
         case .ended:
             guard paneTransition.phase == .dragging else { return }
@@ -1220,7 +1220,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             let release = SSHTerminalPaneSwipe.release(
                 translation: pan.translation(in: self), velocity: velocity,
                 canStep: { [weak self] in self?.paneStepping?.neighbour($0) != nil },
-                canCreate: paneStepping != nil
+                canCreate: paneStepping?.canCreatePane() == true
             )
             switch release {
             case .commit(let step) where paneStepping?.step(step) == true:

@@ -185,7 +185,7 @@ final class RexSessionModel {
     func newPane() async throws -> String {
         let block = try await connection.newPane()
         guard show(block) else {
-            throw RexClientError.refused(code: "not_found", message: "Rex did not list the new pane.")
+            throw RexClientError.unreadable("a view without the new pane")
         }
         return latest.panes.first { $0.blockID == block }?.name ?? "Terminal"
     }

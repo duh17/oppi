@@ -605,7 +605,7 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         let gone = core.withLock { apply(view: decoded, to: &$0) }
         if let gone { leave(gone.0, order: gone.1, surviving: gone.2, reason: "The pane closed in Rex.") }
         guard core.withLock({ $0.layout?.contains(block) == true }) else {
-            throw RexClientError.refused(code: "not_found", message: "Rex did not list the new pane.")
+            throw RexClientError.unreadable("a view without the new pane")
         }
         return block
     }
