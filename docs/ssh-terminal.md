@@ -4,7 +4,7 @@ The Terminal tab opens an interactive shell on a host saved on this iPhone or iP
 
 ## Set up a host
 
-1. Open **Settings → Terminal**, or **Terminal** below **MCP Servers** in the workspace sidebar. Opening the list does not dial, read a saved password, or ask for Face ID. With a saved [Rex host](#rex-sessions-on-the-terminal-tab) it checks the Keychain for a trusted host key and, only when nothing would ask for a password, a trust decision, or Face ID, signs in to read that host's Rex sessions; it never shows a prompt on its own.
+1. Open **Settings → Terminal**, or **Terminal** below **MCP Servers** in the workspace sidebar. Opening the list does not ask for Face ID or show a prompt by itself. With a saved [Rex host](#rex-sessions-on-the-terminal-tab) it checks the Keychain for a trusted host key and signs in to read that host's Rex sessions only when nothing would ask for a password, a trust decision, or Face ID (a saved password or device key you approved in the last 5 minutes counts); otherwise the host shows **Tap to connect**.
 2. Tap **Add**. Enter a host, port (default 22), and username. The host has no default. Enable Remote Login or `sshd` on it. **Edit** reopens the form for a saved host.
 3. Choose **Password** or **This Device's Key**.
    - **Password:** enter it at connect. **Save Password** is optional.

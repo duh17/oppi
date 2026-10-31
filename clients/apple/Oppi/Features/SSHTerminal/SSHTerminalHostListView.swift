@@ -411,7 +411,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             submitPassword: { [weak follower] in follower?.submitPassword($0) },
             onSaved: { [weak follower] in follower?.profile = $0 },
             // A trust decision or password an automatic sign-in hit waits for the tap.
-            presentsPrompts: { [weak follower] in follower?.automaticAttempt != true }
+            presentsPrompts: { [weak follower] in follower?.holdsPrompts != true }
         )
         return RexHost(follower: follower, chrome: chrome)
     }

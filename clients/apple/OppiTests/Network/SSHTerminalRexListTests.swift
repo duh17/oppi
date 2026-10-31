@@ -553,6 +553,57 @@ struct SSHTerminalRexSectionTests {
         session.hostFailure = nil
     }
 
+    /// The hold is for the list's own sign-in. A pane opened from a row (or a
+    /// pane terminal's Reconnect) runs on the same session and chrome with
+    /// `listsRexSessions` off: its password prompt is the person's own action.
+    @Test func aPanesPromptAfterAnAutomaticSignInIsPresented() async throws {
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let rig = try mountDialingTab([host], silent: Silent(true))
+        defer { rig.tearDown() }
+        let follower = try #require(rig.built.followers[host.id])
+        let session = follower.session
+        try #require(await waitForMainActorCondition(timeout: .seconds(5)) { follower.automaticAttempt })
+        session.cancel()
+
+        // The sign-in held its prompt; a pane open then asks for a password.
+        session.listsRexSessions = false
+        session.passwordPrompt = true
+        #expect(!follower.holdsPrompts)
+        #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
+            rig.list.setNeedsUpdateProperties()
+            rig.list.updatePropertiesIfNeeded()
+            return rig.list.presentedViewController != nil
+        }, "the pane's prompt is presented")
+        session.passwordPrompt = false
+    }
+
+    /// A host saved with other credentials is a new host: the old one's
+    /// trust failure must neither show nor be reopened by a tap.
+    @Test func aHostSavedWithOtherCredentialsDropsWhatTheOldOneRanInto() async throws {
+        let host = SSHTerminalProfile(host: "127.0.0.1", port: 1, username: "chen", authentication: .deviceKey, opensRexSessions: true)
+        let follower = SSHTerminalRexFollower(
+            profile: host, promptsAutomatically: false,
+            session: SSHTerminalConnectSession(registry: SSHTerminalRegistry(), profileStore: hosts.store),
+            signsInSilently: { _ in true }
+        )
+        defer { follower.close() }
+        follower.sync(active: true)
+        try #require(follower.automaticAttempt)
+        follower.session.cancel()
+        follower.session.failure = nil
+        follower.session.hostFailure = .hostKeyMismatch(
+            saved: SSHHostKey(openSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBZbA0Hd5UkWHXHAQsrp7ZCdVjLOZsb9eJwvcdU6UT5q"),
+            presented: SSHHostKey(openSSH: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherKeyOtherKeyOtherKeyOtherKeyOtherKeyOtherKe")
+        )
+        #expect(follower.promptNote != nil && follower.needsTap)
+
+        var edited = host
+        edited.port = 2
+        follower.update(profile: edited)
+        #expect(follower.promptNote == nil && follower.session.hostFailure == nil && !follower.automaticAttempt)
+        #expect(!follower.holdsPrompts)
+    }
+
     /// A host edited or deleted while the tab was covered is signed in, and
     /// saved, from the saved copy, never from the one the tab held before.
     @Test func aHostEditedWhileTheTabWasCoveredIsSignedInFromTheSavedCopy() async throws {

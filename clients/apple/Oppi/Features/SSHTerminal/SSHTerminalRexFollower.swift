@@ -33,12 +33,17 @@ final class SSHTerminalRexFollower {
     /// drops; cleared as the attempt starts, so a failed one is not retried
     /// until one of those happens again (or a pull to refresh).
     private(set) var needsListConnection = true
-    /// The sign-in in flight, or the last one, was started by the screen, not
-    /// by a tap. Whatever it ran into (a trust decision, a password) is held
-    /// back until a tap: the connect chrome presents nothing for it
-    /// (`SSHTerminalConnectChrome`'s `presentsPrompts`), and the row says so.
-    /// Never set for a follower that `promptsAutomatically`.
+    /// The list's sign-in in flight, or the last one, was started by the
+    /// screen, not by a tap. Never set for a follower that `promptsAutomatically`.
     private(set) var automaticAttempt = false
+
+    /// What that sign-in ran into (a trust decision, a password) is held back
+    /// until a tap: the connect chrome presents nothing for it
+    /// (`SSHTerminalConnectChrome`'s `presentsPrompts`), and the row says so.
+    /// Only the list's own sign-in is held: a pane opened from a row, or a pane
+    /// terminal's Reconnect, runs on the same session with `listsRexSessions`
+    /// off, and is the person's own action.
+    var holdsPrompts: Bool { automaticAttempt && session.listsRexSessions }
 
     /// What Rex is read over when no sign-in is: tests and the debug harness
     /// pass a stand-in host.
@@ -109,7 +114,7 @@ final class SSHTerminalRexFollower {
     var needsTap: Bool {
         guard !promptsAutomatically, !isConnected, !session.connecting else { return false }
         // The password sheet is up for a tap that asked for it.
-        if session.passwordPrompt, !automaticAttempt { return false }
+        if session.passwordPrompt, !holdsPrompts { return false }
         if session.passwordPrompt || trustPending || session.failure != nil { return true }
         return !silentForDisplay
     }
@@ -153,6 +158,7 @@ final class SSHTerminalRexFollower {
         _ = session.rexSessions
         _ = needsListConnection
         _ = automaticAttempt
+        _ = session.listsRexSessions
         guard active else { return }
         if isConnected {
             startReading()
@@ -168,6 +174,12 @@ final class SSHTerminalRexFollower {
         if !stored.sameCredentials(as: profile) {
             session.cancel()
             close()
+            // What the old host ran into says nothing about the new one.
+            automaticAttempt = false
+            session.hostFailure = nil
+            session.failure = nil
+            session.passwordPrompt = false
+            session.password = ""
         }
         silentCache = nil
         profile = stored.normalized()
@@ -183,7 +195,7 @@ final class SSHTerminalRexFollower {
     /// sign-in needs, over the screen's connect chrome. What an automatic
     /// attempt already ran into (a trust decision, a password) is shown now.
     func connect() {
-        if automaticAttempt, session.passwordPrompt || trustPending {
+        if holdsPrompts, session.passwordPrompt || trustPending {
             automaticAttempt = false
             return
         }
