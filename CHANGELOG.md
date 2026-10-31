@@ -42,7 +42,6 @@ Example:
 
 ### Fixed
 
-- **Client:** Opening or closing a thread in **All Sessions** or a workspace's sessions no longer leaves a band of blurred rows under the top bar. The list now checks for that band after a thread folds and lays itself out again when it finds one.
 - **Client:** A server reached through the in-app Tailscale proxy no longer stays on "Connecting…" after a launch where its first connection attempt failed while the proxy was still starting. After any first-connection failure that waiting can clear (a timeout, an unreachable server, a server error), the app retries on its own while it is open, after 1, 2, 4, 8, 16, then every 30 seconds, and stops once connected or when the server rejects the connection.
 - **Server:** `oppi doctor` on Linux no longer aborts with `Command failed: launchctl print …`; it skips the macOS LaunchAgent check. `oppi server` commands on Linux say to run `oppi serve` under systemd or Docker instead of crashing.
 - **Client:** Tapping a notification while another chat is open shows the tapped session instead of an empty timeline.
