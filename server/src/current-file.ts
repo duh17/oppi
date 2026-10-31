@@ -266,7 +266,9 @@ export type CurrentFileOrigin =
   /** Workspace or workspace-session root: worktree, host mount, or sandbox mount. */
   | { kind: "workspace"; workspace: Workspace; root: string }
   /** An editable Skill's directory; only Skill-relative paths inside it resolve. */
-  | { kind: "skill"; root: string };
+  | { kind: "skill"; root: string }
+  /** Pi's agent directory; only the allowlisted agent-relative paths resolve. */
+  | { kind: "pi"; agentDir: string };
 
 export type CurrentFilePathResult =
   | { kind: "ok"; file: ResolvedCurrentFile }
@@ -290,12 +292,12 @@ export async function resolveCurrentFilePath(
 
   let realRoot: string;
   try {
-    realRoot = await realpath(origin.root);
+    realRoot = await realpath(origin.kind === "pi" ? origin.agentDir : origin.root);
   } catch {
     return { kind: "root-not-found" };
   }
-  if (origin.kind === "skill") {
-    const root = resolve(origin.root);
+  if (origin.kind === "skill" || origin.kind === "pi") {
+    const root = resolve(origin.kind === "skill" ? origin.root : origin.agentDir);
     const lexicalPath = isAbsolute(requestedPath) ? null : resolve(root, requestedPath);
     if (!lexicalPath || lexicalPath === root || !isPathWithinRoot(lexicalPath, root)) {
       return { kind: "not-found" };

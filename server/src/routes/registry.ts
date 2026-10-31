@@ -598,7 +598,7 @@ const rawApiRouteSpecs = [
     operationId: "getCurrentFile",
     surface: "core",
     auth: "owner",
-    description: "Current-file bytes by origin (host, workspace, session, or skill).",
+    description: "Current-file bytes by origin (host, workspace, session, skill, or pi).",
   },
   {
     method: "HEAD",
@@ -614,7 +614,7 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
     description:
-      "Guarded write of an existing text file. origin=workspace or origin=skill (an editable Skill's own file); requires one concrete If-Match; does not create.",
+      "Guarded write of an existing text file. origin=workspace, origin=skill (an editable Skill's own file), or origin=pi (Pi's own agent files); requires one concrete If-Match; does not create.",
   },
   {
     method: "GET",

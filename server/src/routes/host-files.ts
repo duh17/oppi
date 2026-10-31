@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+
 import {
   listTimedTextSidecars,
   resolveCurrentFilePath,
@@ -17,6 +19,7 @@ import { listDirectoryEntries } from "../directory-listing.js";
 import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import { createLogger, type Logger } from "../logger.js";
 import { readAudioMediaInfo } from "../media-info.js";
+import { piAgentEditablePath } from "../pi-agent-files.js";
 import { sessionWorkRoot, type SessionWorkRoot } from "../session-work-root.js";
 import type { DirectoryListingResponse } from "../types.js";
 import {
@@ -33,6 +36,8 @@ import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 export interface HostFileRouteOptions {
   logger?: Logger;
   homeDir?: string;
+  /** Pi's agent directory, the root of `origin=pi` (defaults to Pi's own). */
+  piAgentDir?: string;
 }
 
 const defaultLog = createLogger({ base: { component: "host_files" } });
@@ -61,8 +66,8 @@ type CurrentFileRequest =
 
 /**
  * The file the editor reads and writes for a query origin, or null. Only the
- * `workspace` and `skill` query origins edit; a session read that resolves
- * into a workspace stays read-only.
+ * `workspace`, `skill`, and `pi` query origins edit; a session read that
+ * resolves into a workspace stays read-only.
  */
 function editTargetFor(request: {
   originKind: string;
@@ -79,6 +84,9 @@ function editTargetFor(request: {
   if (request.originKind === "skill" && request.origin.kind === "skill") {
     return { root: request.origin.root, requestedPath: request.path };
   }
+  if (request.originKind === "pi" && request.origin.kind === "pi") {
+    return { root: request.origin.agentDir, requestedPath: request.path };
+  }
   return null;
 }
 
@@ -89,6 +97,9 @@ export function createHostFileRoutes(
 ): RouteDispatcher {
   const log = options.logger ?? defaultLog;
   const homeDir = options.homeDir;
+  // Read per request: Pi's agent directory is configuration (an env var or the
+  // home it reads), not a value to freeze at route construction.
+  const piAgentDir = (): string => options.piAgentDir ?? getAgentDir();
 
   /**
    * Parse the unified current-file origin. Origin selects path resolution; it
@@ -100,6 +111,9 @@ export function createHostFileRoutes(
    *   mount, or control-session cwd).
    * - `origin=skill&skillId`: an editable Skill's own files, by Skill-relative
    *   path; a single-file Skill is that one file. Read-only Skills are 403.
+   * - `origin=pi`: Pi's own agent files, by agent-relative path. The allowlist
+   *   (`pi-agent-files.ts`) is these files only: the rest of the home stays
+   *   read-only, and a path outside it is 404 for reads and writes alike.
    */
   async function parseCurrentFileRequest(url: URL): Promise<CurrentFileRequest> {
     const params = url.searchParams;
@@ -128,6 +142,20 @@ export function createHostFileRoutes(
       case "host":
         if (workspaceId !== null || worktreeId !== null || sessionId !== null) return conflict;
         return { kind: "ok", origin: { kind: "host", homeDir }, path, originKind };
+      case "pi": {
+        if (workspaceId !== null || worktreeId !== null || sessionId !== null) return conflict;
+        const editablePath = piAgentEditablePath(path);
+        if (!editablePath) return { kind: "error", status: 404, message: "File not found" };
+        let agentDir: string;
+        try {
+          agentDir = piAgentDir();
+        } catch {
+          log.warn("currentfile.pi_agent_dir_failed", {});
+          return { kind: "error", status: 404, message: "File not found" };
+        }
+        if (!isAbsolute(agentDir)) return { kind: "error", status: 404, message: "File not found" };
+        return { kind: "ok", origin: { kind: "pi", agentDir }, path: editablePath, originKind };
+      }
       case "workspace": {
         if (!workspaceId || sessionId !== null) return conflict;
         const workspace = ctx.storage.getWorkspace(workspaceId);
