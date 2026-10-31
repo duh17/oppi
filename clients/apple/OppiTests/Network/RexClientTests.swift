@@ -1486,7 +1486,7 @@ struct RexSessionTerminalTests {
     @Test func thePaneListFollowsViewChangesAndTitles() async throws {
         let rig = try await open(["a", "b"])
         try #require(await waitForMainActorCondition(timeout: .seconds(5)) { rig.model.state.panes.count == 2 })
-        #expect(rig.model.state.showsSwitcher && rig.model.state.showsMinimap)
+        #expect(rig.model.state.panes.count > 1 && rig.model.state.showsMinimap)
 
         let bigger = RexFakeSession(sessionID: Self.session, panes: ["a", "b", "c"].map {
             .init(block: Self.block($0), label: "shell", title: "t", screen: "")
@@ -1532,7 +1532,7 @@ struct RexSessionTerminalTests {
 
     @Test func aSessionOfOnePaneHasNoSwitcherAndAWindowOfOneHasNoMinimap() async throws {
         let rig = try await open(["a"])
-        #expect(!rig.model.state.showsSwitcher && !rig.model.state.showsMinimap)
+        #expect(rig.model.state.panes.count == 1 && !rig.model.state.showsMinimap)
         #expect(rig.model.step(1) == false && rig.model.step(-1) == false)
         await rig.stop()
     }

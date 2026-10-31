@@ -78,6 +78,10 @@ struct SSHTerminalOverviewRow: Hashable, Sendable {
         case group(focused: Bool)
         /// An agent or pane under its group.
         case item(subtitle: String?, focused: Bool, status: Status)
+        /// A heading inside one list (the Rex panel's sections), with its symbol.
+        case section(symbol: String)
+        /// A row that does something rather than names something (New Pane).
+        case action(symbol: String)
     }
 
     enum Status: Hashable, Sendable {
@@ -94,6 +98,9 @@ struct SSHTerminalOverviewRow: Hashable, Sendable {
     let kind: Kind
     /// Nil for a row a tap cannot act on.
     let focus: SSHTerminalOverviewFocus?
+    /// The row's accessibility identifier, where a test or a driver must tell
+    /// rows of one kind apart; else the list's own for the kind.
+    var accessibilityID: String? = nil
 }
 
 struct SSHTerminalOverviewSection: Hashable, Sendable {

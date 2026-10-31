@@ -255,9 +255,10 @@ final class SSHTerminalBarPill: SSHTerminalGlassPill {
     }
 }
 
-/// The Rex session's pane switcher, bottom trailing: a pill of its own, kept
-/// apart from the bar's buttons, shown only for a session with more than one
-/// pane.
+/// The Rex session's one control, bottom trailing: a pill of its own, kept
+/// apart from the bar's buttons, for every terminal that is a Rex pane. Its icon
+/// is the pane on screen with that program's status on it; a tap opens the Rex
+/// panel, touch and hold the panes menu.
 final class SSHTerminalRexPanesPill: SSHTerminalGlassPill {
     let button = SSHTerminalRexPanesButton()
 
@@ -270,10 +271,12 @@ final class SSHTerminalRexPanesPill: SSHTerminalGlassPill {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// Draws the shown pane (`SSHTerminalRexPanesButton.apply`); the pill is
-    /// there only while the button is.
-    func apply(state: RexSessionState?, tint: UIColor) {
-        button.apply(state: state, tint: tint)
+    /// Draws the shown pane and its status (`SSHTerminalRexPanesButton.apply`);
+    /// the pill is there only while the button is.
+    func apply(
+        state: RexSessionState?, tint: UIColor, status: SSHTerminalRexPillStatus, themeID: ThemeID, reduceMotion: Bool
+    ) {
+        button.apply(state: state, tint: tint, status: status, themeID: themeID, reduceMotion: reduceMotion)
         isHidden = button.isHidden
     }
 }

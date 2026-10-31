@@ -94,6 +94,13 @@ struct RexSessionState: Equatable, Sendable {
         /// What the pane's program puts first, while it reports OSC 7501 status
         /// (`programName`); nil for a plain shell. The switcher's icon is drawn from it.
         var program: String? = nil
+        /// The OSC 7501 records Rex reports for the pane's program: what the Rex
+        /// pill and panel say about its status, whatever the pane's own byte
+        /// stream carried.
+        var records: [SSHTerminalPaneRecord] = []
+
+        /// The pane's program status, rolled up from `records`.
+        var status: SessionStatusKind? { SSHTerminalPaneRecord.headline(of: records) }
     }
 
     /// The name a reporting pane's icon starts from: the terminal's title (a
@@ -122,9 +129,6 @@ struct RexSessionState: Equatable, Sendable {
 
     var shownName: String { panes.first { $0.blockID == shown }?.name ?? "Terminal" }
 
-    /// The bar's pane switcher is for a session with more than one pane. (The
-    /// swipe is for every session: past the last pane it opens a new one.)
-    var showsSwitcher: Bool { panes.count > 1 }
     var showsMinimap: Bool { minimap.count > 1 }
     /// Where the shown pane is in strip order.
     var shownIndex: Int? { panes.firstIndex { $0.blockID == shown } }

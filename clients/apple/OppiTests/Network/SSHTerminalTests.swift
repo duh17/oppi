@@ -2045,7 +2045,8 @@ struct SSHTerminalTests {
             return switcher.accessibilityValue == "title a, 1 of 3"
         })
         #expect(switcher.accessibilityLabel == "Pane", "the label is the purpose; the value is the pane")
-        #expect(switcher.showsMenuAsPrimaryAction && switcher.menu != nil)
+        // A tap opens the Rex panel; touch and hold shows the panes menu.
+        #expect(!switcher.showsMenuAsPrimaryAction && switcher.menu != nil)
         // The minimap is part of the screen but not on it: hidden at rest.
         let minimap = try #require(mounted.find { $0 is SSHTerminalRexMinimapView } as? SSHTerminalRexMinimapView)
         minimap.hideDelay = .milliseconds(150)
@@ -2316,8 +2317,11 @@ struct SSHTerminalTests {
         button.apply(state: reporting, tint: .white)
         #expect(button.icon == .terminal && iconViews() == 1)
 
-        // One pane: no switcher.
+        // One pane still has the control: the panel holds the status and the other sessions.
         button.apply(state: RexSessionState(panes: [panes[0]], shown: "a", minimap: []), tint: .white)
+        #expect(!button.isHidden)
+        // Not a Rex session: no control.
+        button.apply(state: nil, tint: .white)
         #expect(button.isHidden)
     }
 
@@ -2362,9 +2366,9 @@ struct SSHTerminalTests {
         #expect(created == 2)
     }
 
-    /// One pane has no switcher, no minimap, and no pane to step to; it can
+    /// One pane has the Rex control but no minimap, and no pane to step to; it can
     /// still grow: a swipe past it and VoiceOver's New Pane open another.
-    @Test func aRexTerminalOfOnePaneHasNoSwitcherNoMinimapAndNothingToStepTo() async throws {
+    @Test func aRexTerminalOfOnePaneHasTheRexControlButNoMinimapAndNothingToStepTo() async throws {
         let rig = try await RexSessionTerminalTests().open(["a"])
         let mounted = try MountedTerminalTestController(
             SSHTerminalViewController(channel: rig.channel, reconnect: {}, editHost: {})
@@ -2381,7 +2385,8 @@ struct SSHTerminalTests {
                     && sequence(first: $0, next: \.superview).allSatisfy { !$0.isHidden }
             } != nil
         }
-        #expect(!visible("sshTerminal.bar.rexPanes") && !visible("sshTerminal.rexMinimap."))
+        #expect(visible("sshTerminal.bar.rexPanes"), "the one Rex control is there for any Rex pane")
+        #expect(!visible("sshTerminal.rexMinimap."))
         #expect(mounted.controller.gridView?.paneStepping != nil, "a session of one pane can still open a new one")
         #expect(mounted.controller.gridView?.stepPane(1) == false && mounted.controller.gridView?.stepPane(-1) == false)
         #expect(mounted.controller.gridView?.accessibilityCustomActions?.map(\.name) == ["Next Pane", "Previous Pane", "New Pane"])

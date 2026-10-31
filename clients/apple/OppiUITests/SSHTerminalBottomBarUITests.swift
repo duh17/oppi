@@ -195,6 +195,94 @@ final class SSHTerminalBottomBarUITests: XCTestCase {
         XCTAssertGreaterThan(more.frame.minX, app.buttons["sshTerminal.back"].frame.maxX, "The pill clears Back")
         attachScreenshot("bar-rex-panes")
 
+        // The icon says what the pane's program is doing: blocked (the second
+        // pane), then resting (the third). The panel names this pane's status.
+        let grid = element("sshTerminal.grid")
+        grid.swipeLeft()
+        XCTAssertTrue(waitFor((switcher.value as? String)?.hasPrefix("tail -f server.log, 2 of 3, Needs approval") == true), "The blocked pane speaks its status: \(switcher.value as? String ?? "nil")")
+        attachScreenshot("rex-pill-blocked")
+        switcher.tap()
+        XCTAssertTrue(element("sshTerminal.rexPanel.thisPane").waitForExistence(timeout: 5))
+        XCTAssertFalse(app.cells.staticTexts["No program status reported."].exists, "This pane lists the blocked program's status")
+        attachScreenshot("rex-panel-blocked")
+        app.buttons["Done"].firstMatch.tap()
+        grid.swipeLeft()
+        XCTAssertTrue(waitFor((switcher.value as? String)?.hasPrefix("\u{2733} Fixing the build, 3 of 3") == true))
+        attachScreenshot("rex-pill-idle")
+        assertRunning()
+    }
+
+    /// A Rex pane's one Rex control: a tap opens the panel (this pane's status,
+    /// the session's panes, the other sessions); a pane picked there is shown,
+    /// and another session's pane is opened. The preview has no host to dial,
+    /// so `sshTerminal.preview.opened` reads which pane the panel asked for.
+    func testRexPanelSwitchesPaneAndOpensAnotherSession() {
+        launch(screen: "ssh-terminal-rex-panes")
+        let switcher = app.buttons["sshTerminal.bar.rexPanes"]
+        XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear")
+        XCTAssertFalse(app.buttons["sshTerminal.programStatus"].exists, "A Rex pane has no separate status symbol")
+        XCTAssertFalse(app.buttons["sshTerminal.rex"].exists, "A Rex pane has no separate Rex Sessions button")
+        let pane = "\u{03C0} - oppi, 1 of 3"
+        XCTAssertTrue(
+            waitFor((switcher.value as? String).map { $0.hasPrefix(pane + ", ") } == true),
+            "The icon speaks the program's status after the pane: \(switcher.value as? String ?? "nil")"
+        )
+        attachScreenshot("rex-pill-working")
+
+        switcher.tap()
+        XCTAssertTrue(element("sshTerminal.rexPanel.thisPane").waitForExistence(timeout: 5), "A tap must open the Rex panel")
+        XCTAssertTrue(element("sshTerminal.rexPanel.panes").exists)
+        attachScreenshot("rex-panel")
+        // The sheet opens half height: the rest of the list is below its fold.
+        scroll { element("sshTerminal.rexPanel.newPane").exists && element("sshTerminal.rexPanel.otherSessions").exists }
+        XCTAssertTrue(element("sshTerminal.rexPanel.otherSessions").exists)
+        XCTAssertTrue(element("sshTerminal.rexPanel.newPane").exists)
+        // The host's other sessions arrive after the panel opens.
+        let others = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "sshTerminal.rexPanel.session."))
+        scroll { others.count == 2 }
+        XCTAssertTrue(waitFor(others.count == 2, timeout: 10), "The panel must list the host's two other sessions")
+        attachScreenshot("rex-panel-sessions")
+
+        // A pane of this session is shown from the panel, and the panel closes.
+        let logs = element("sshTerminal.rexPanel.pane.block:preview-logs")
+        XCTAssertTrue(logs.waitForExistence(timeout: 5))
+        logs.tap()
+        XCTAssertTrue(
+            waitFor((switcher.value as? String)?.hasPrefix("tail -f server.log, 2 of 3") == true),
+            "The panel must show the pane it was asked for: \(switcher.value as? String ?? "nil")"
+        )
+        XCTAssertFalse(element("sshTerminal.rexPanel.panes").exists, "Picking a pane closes the panel")
+
+        // Another session's pane opens through the panel.
+        switcher.tap()
+        XCTAssertTrue(element("sshTerminal.rexPanel.thisPane").waitForExistence(timeout: 5))
+        scroll { others.count == 2 }
+        XCTAssertTrue(waitFor(others.count == 2, timeout: 10))
+        let dotfiles = others.containing(NSPredicate(format: "label CONTAINS %@", "dotfiles")).element(boundBy: 0)
+        XCTAssertTrue(dotfiles.exists, "The dotfiles session is not in the panel")
+        dotfiles.tap()
+        let opened = app.staticTexts["sshTerminal.preview.opened"]
+        XCTAssertTrue(waitFor(opened.label == "block:01a18a7e-911a-721b-a50b-14dfc0cc62cc"), "Opening a session opens the pane Rex types into there: \(opened.label)")
+        assertRunning()
+    }
+
+    /// Bottom Bar settings, opened from a Rex pane, choose the panel's sections;
+    /// a section turned off is gone from the panel.
+    func testRexPanelSectionsFollowBottomBarSettings() {
+        launch(screen: "ssh-terminal-rex-panes")
+        openBottomBarSettings()
+        let others = app.switches["settings.sshTerminal.bar.rexPanel.otherSessions"]
+        reveal(others)
+        XCTAssertTrue(others.exists, "No Rex panel choices in Bottom Bar")
+        attachScreenshot("rex-settings")
+        others.tap()
+        app.buttons["BackButton"].tap()
+        let switcher = app.buttons["sshTerminal.bar.rexPanes"]
+        XCTAssertTrue(switcher.waitForExistence(timeout: 10))
+        switcher.tap()
+        XCTAssertTrue(element("sshTerminal.rexPanel.panes").waitForExistence(timeout: 5))
+        scroll { element("sshTerminal.rexPanel.newPane").exists }
+        XCTAssertFalse(element("sshTerminal.rexPanel.otherSessions").exists, "Other Sessions was turned off")
         assertRunning()
     }
 

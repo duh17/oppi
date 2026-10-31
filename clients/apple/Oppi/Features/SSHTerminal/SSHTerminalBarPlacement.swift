@@ -112,8 +112,9 @@ enum SSHTerminalBarContext: Equatable, Sendable {
         }
     }
 
-    /// The actions this terminal's multiplexer rules out.
-    var hidden: Set<SSHTerminalBarAction> {
+    /// The multiplexer overviews this terminal's own multiplexer rules out:
+    /// Herdr in a Rex pane, Rex in a Herdr terminal.
+    var overviewsRuledOut: Set<SSHTerminalBarAction> {
         switch self {
         case .plain: []
         case .rex: [.herdr]
@@ -121,15 +122,27 @@ enum SSHTerminalBarContext: Equatable, Sendable {
         }
     }
 
+    /// The bar actions this terminal leaves out of the bar, the … menu, and
+    /// Customize Bar: the overviews it rules out, and in a Rex pane Rex Sessions
+    /// too, since the pane switcher's pill opens the one Rex panel that holds it.
+    var hidden: Set<SSHTerminalBarAction> {
+        self == .rex ? overviewsRuledOut.union([.rex]) : overviewsRuledOut
+    }
+
     /// Whether the terminal reads this multiplexer's overview in the
     /// background. Hiding a button is presentation only, and Rex's read is also
     /// how Oppi learns Rex is on the host (`SSHTerminalRexHostStore`, which the
-    /// Terminal tab follows), so a Herdr terminal still reads Rex though it
-    /// shows no Rex button. Herdr's read feeds nothing else, so a Rex pane does
+    /// Terminal tab follows), so a terminal still reads Rex though it shows no
+    /// Rex Sessions button (a Rex pane's control is the pane switcher, a Herdr
+    /// terminal has none). Herdr's read feeds nothing else, so a Rex pane does
     /// not poll the host's Herdr.
     func polls(_ action: SSHTerminalBarAction) -> Bool {
         !hidden.contains(action) || action == .rex
     }
+
+    /// Whether the program-status symbol has a place in the bar's pill. A Rex
+    /// pane draws the status on the pane switcher's icon instead.
+    var showsProgramStatus: Bool { self != .rex }
 }
 
 /// One button the bar can draw or the … menu can offer: a list item, or one

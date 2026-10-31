@@ -146,9 +146,24 @@ final class SSHTerminalOverviewViewController: UIViewController, UICollectionVie
             content.textProperties.font = Self.font(focused: focused)
             content.secondaryTextProperties.color = UIColor(palette.comment)
             cell.accessories = cell.statusAccessories(for: status, themeID: themeID)
-            cell.accessibilityIdentifier = "\(prefix).item"
+            cell.accessibilityIdentifier = row.accessibilityID ?? "\(prefix).item"
             cell.accessibilityTraits = row.focus == nil ? [] : .button
             cell.accessibilityValue = [status.label, focused ? "Focused" : nil].compactMap { $0 }.joined(separator: ", ")
+            cell.indentationLevel = 1
+        case .section(let symbol):
+            content.image = UIImage(systemName: symbol)
+            content.imageProperties.tintColor = UIColor(palette.comment)
+            content.textProperties.color = UIColor(palette.comment)
+            content.textProperties.font = UIFontMetrics(forTextStyle: .footnote).scaledFont(for: .systemFont(ofSize: 13, weight: .semibold))
+            content.textProperties.transform = .uppercase
+            cell.accessibilityIdentifier = row.accessibilityID ?? "\(prefix).section"
+            cell.accessibilityTraits = .header
+        case .action(let symbol):
+            content.image = UIImage(systemName: symbol)
+            content.imageProperties.tintColor = UIColor(palette.blue)
+            content.textProperties.color = UIColor(palette.blue)
+            cell.accessibilityIdentifier = row.accessibilityID ?? "\(prefix).action"
+            cell.accessibilityTraits = .button
             cell.indentationLevel = 1
         }
         cell.contentConfiguration = content

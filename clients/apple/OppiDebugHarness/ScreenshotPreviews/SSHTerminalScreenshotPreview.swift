@@ -62,7 +62,9 @@ final class SSHTerminalPreviewController: PreviewRootController {
                     reconnect: {},
                     editHost: {},
                     hostLabel: hostLabel,
-                    composerConnection: connection
+                    composerConnection: connection,
+                    // No host to dial: a pane of another session is recorded, not opened.
+                    rexPaneOpener: { readout.opened($0.blockID) }
                 )
             }
         )
@@ -136,7 +138,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
         // terminal glyph.
         let panes = [
             RexFakeSession.Pane(block: "block:preview-pi", label: "shell", title: "\u{03C0} - oppi", screen: (1...80).map { "\(esc)2mbuild log line \($0)\(esc)0m\r\n" }.joined() + "\(esc)1m\u{03C0}\(esc)0m in ~/oppi\r\n\(esc)32m>\(esc)0m refactor the connection\r\n\r\nThe terminal stands for the session.\r\nSwipe sideways to move between its panes.\r\n", records: #"[{"state":"working","app":"pi"}]"#),
-            RexFakeSession.Pane(block: "block:preview-logs", label: "shell", title: "tail -f server.log", screen: "\(esc)2m12:01:09\(esc)0m listening on :7749\r\n\(esc)2m12:01:11\(esc)0m GET /health 200\r\n"),
+            RexFakeSession.Pane(block: "block:preview-logs", label: "shell", title: "tail -f server.log", screen: "\(esc)2m12:01:09\(esc)0m listening on :7749\r\n\(esc)2m12:01:11\(esc)0m GET /health 200\r\n", records: #"[{"state":"blocked","kind":"permission"}]"#),
             RexFakeSession.Pane(block: "block:preview-claude", label: "shell", title: "\u{2733} Fixing the build", screen: "\(esc)1mclaude\(esc)0m in ~/dotfiles\r\n\(esc)32m>\(esc)0m fix the build\r\n\r\nReading the failing target.\r\n", records: #"[{"state":"idle","app":"claude"}]"#),
         ]
         let fake = RexFakeSession(sessionID: "session:preview", panes: panes)
@@ -147,7 +149,7 @@ final class SSHTerminalPreviewController: PreviewRootController {
             target: RexPaneTarget(sessionID: fake.sessionID, blockID: panes[0].block, label: "pi"), queue: queue
         ) else { return nil }
         channel.rex = RexSessionModel(connection: connection)
-        channel.opened(connection)
+        channel.opened(PreviewRexHostConnection(session: connection))
         return Task { await channel.consume(queue) }
     }
 
@@ -185,16 +187,17 @@ final class SSHTerminalPreviewController: PreviewRootController {
 }
 
 /// What a driven run (a UI test) reads of the preview: the bytes the terminal
-/// sent to its "host" as hex (`04` for ^D, one group per write; `none` before
-/// any). A tiny label, nearly transparent and untouchable, still in the
-/// accessibility tree.
+/// sent to its "host" as hex (`04` for ^D, one group per write; `none` before any), and the pane
+/// of another Rex session the panel asked to open (`none` until one is). Two
+/// tiny labels, nearly transparent and untouchable, still in the accessibility tree.
 @MainActor
 final class SSHTerminalPreviewReadout {
     private let sentLabel = UILabel()
+    private let openedLabel = UILabel()
     private var sentGroups: [String] = []
 
     func install(in view: UIView) {
-        for (label, id) in [(sentLabel, "sshTerminal.preview.sent")] {
+        for (label, id) in [(sentLabel, "sshTerminal.preview.sent"), (openedLabel, "sshTerminal.preview.opened")] {
             label.translatesAutoresizingMaskIntoConstraints = false
             label.font = .systemFont(ofSize: 1)
             label.alpha = 0.02
@@ -211,6 +214,8 @@ final class SSHTerminalPreviewReadout {
         NSLayoutConstraint.activate([
             sentLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             sentLabel.topAnchor.constraint(equalTo: view.topAnchor),
+            openedLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            openedLabel.topAnchor.constraint(equalTo: sentLabel.bottomAnchor),
         ])
     }
 
@@ -220,6 +225,31 @@ final class SSHTerminalPreviewReadout {
         sentLabel.accessibilityLabel = sentLabel.text
     }
 
+    func opened(_ block: String) {
+        openedLabel.text = block
+        openedLabel.accessibilityLabel = block
+    }
+}
+
+/// A Rex pane's connection with the host's own side channels: the pane's
+/// terminal is the fake session's, and the bridge stream beside it (which the
+/// Rex panel's other sessions are read over) is the fake host that lists two
+/// sessions.
+private struct PreviewRexHostConnection: SSHTerminalConnection {
+    let session: RexSessionConnection
+
+    func send(_ bytes: Data) async throws { try await session.send(bytes) }
+    func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {
+        try await session.resize(columns: columns, rows: rows, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+    }
+    func run(_ command: String, input: Data) async throws -> SSHExecResult { try await session.run(command, input: input) }
+    func openStream(command: String, sink: @escaping SSHPTYByteSink) async throws -> SSHExecStream {
+        guard command == RexBridge.command else { throw SSHConnectionError.notConnected }
+        return RexFakeHost.preview().open(sink: sink)
+    }
+    func checkAlive() async throws { try await session.checkAlive() }
+    func close() { session.close() }
+    func cancel() async { await session.cancel() }
 }
 
 private actor PreviewConnection: SSHTerminalConnection {

@@ -164,6 +164,21 @@ struct SSHTerminalCustomKey: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// What a Rex pane's one Rex control (the pane switcher's pill) shows: the
+/// panel it opens has up to three sections, and the pill's icon can carry the
+/// program's status. Every part is on until it is turned off.
+struct SSHTerminalRexPanelSettings: Equatable, Codable, Sendable {
+    /// This pane: the program status records of the pane on screen.
+    var showsThisPane = true
+    /// Panes in this session: switch, and open a new one.
+    var showsPanes = true
+    /// Other sessions on the host: open one.
+    var showsOtherSessions = true
+    /// The pane icon carries the program's status (a dot, the OSC 9;4 ring) and
+    /// the number of other panes that need you.
+    var showsStatusOnIcon = true
+}
+
 /// Where the Bottom Bar's choices are kept: its layout and the custom keys,
 /// in one `UserDefaults`, device-local and the same for every host. Only a
 /// change someone made writes, so a stored layout is always a choice.
@@ -182,6 +197,7 @@ struct SSHTerminalBarStore {
     private static let legacyOrderKey = "\(AppIdentifiers.subsystem).sshTerminal.barOrder"
     private static let legacyShownKey = "\(AppIdentifiers.subsystem).sshTerminal.barShown"
     private static let keysKey = "\(AppIdentifiers.subsystem).sshTerminal.barKeys"
+    private static let rexPanelKey = "\(AppIdentifiers.subsystem).sshTerminal.rexPanel"
 
     let defaults: UserDefaults
 
@@ -250,7 +266,18 @@ struct SSHTerminalBarStore {
         // drops it, and `layout` never shows it.
     }
 
-    /// Forgets the saved layout; the custom keys stay.
+    var rexPanel: SSHTerminalRexPanelSettings {
+        defaults.data(forKey: Self.rexPanelKey)
+            .flatMap { try? JSONDecoder().decode(SSHTerminalRexPanelSettings.self, from: $0) } ?? SSHTerminalRexPanelSettings()
+    }
+
+    func setRexPanel(_ settings: SSHTerminalRexPanelSettings) {
+        guard settings != rexPanel else { return }
+        defaults.set(try? JSONEncoder().encode(settings), forKey: Self.rexPanelKey)
+        NotificationCenter.default.post(name: Self.preference.didChangeNotification, object: nil)
+    }
+
+    /// Forgets the saved layout; the custom keys and the Rex panel's choices stay.
     func reset() {
         defaults.removeObject(forKey: Self.preference.orderKey)
         defaults.removeObject(forKey: Self.preference.shownKey)

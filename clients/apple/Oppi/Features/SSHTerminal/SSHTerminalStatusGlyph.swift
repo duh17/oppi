@@ -161,7 +161,7 @@ final class SSHTerminalStatusMarkView: UIView {
         }
     }
 
-    private static func ringColor(for state: SSHTerminalProgressReport.State, palette: ThemePalette) -> UIColor {
+    static func ringColor(for state: SSHTerminalProgressReport.State, palette: ThemePalette) -> UIColor {
         switch state {
         case .set, .indeterminate: UIColor(palette.blue)
         case .error: UIColor(palette.red)

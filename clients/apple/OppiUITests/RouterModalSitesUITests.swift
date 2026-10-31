@@ -371,7 +371,7 @@ final class RouterModalSitesUITests: XCTestCase {
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
         XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear in the bar")
         XCTAssertEqual(switcher.label, "Pane")
-        XCTAssertEqual(switcher.value as? String, "\u{03C0} - oppi, 1 of 3", "The session opens on its first pane")
+        XCTAssertEqual(paneValue(switcher), "\u{03C0} - oppi, 1 of 3", "The session opens on its first pane")
         let cells = (0...2).map { app.buttons["sshTerminal.rexMinimap.\($0)"] }
         XCTAssertFalse(cells[0].exists, "The minimap stays hidden when the terminal opens")
         let grid = app.descendants(matching: .any)["sshTerminal.grid"]
@@ -385,7 +385,7 @@ final class RouterModalSitesUITests: XCTestCase {
         let bottom = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
         top.press(forDuration: 0.05, thenDragTo: bottom, withVelocity: .default, thenHoldForDuration: 0)
         XCTAssertTrue(backToLive.waitForExistence(timeout: 5), "A vertical drag must scroll the history")
-        XCTAssertEqual(switcher.value as? String, "\u{03C0} - oppi, 1 of 3", "A vertical drag must not change pane")
+        XCTAssertEqual(paneValue(switcher), "\u{03C0} - oppi, 1 of 3", "A vertical drag must not change pane")
         XCTAssertFalse(cells[0].exists, "Scrolling history does not show the minimap")
         attachScreenshot("rex-panes-scrolled")
         backToLive.tap()
@@ -393,33 +393,38 @@ final class RouterModalSitesUITests: XCTestCase {
 
         // A sideways swipe moves to the next pane, and back.
         grid.swipeLeft()
-        XCTAssertTrue(waitFor(switcher.value as? String == "tail -f server.log, 2 of 3"), "A swipe left must show the next pane")
+        XCTAssertTrue(waitFor(paneValue(switcher) == "tail -f server.log, 2 of 3"), "A swipe left must show the next pane")
         XCTAssertTrue(waitForDisappearance(of: cells[1]), "The minimap is not left on screen after the switch settles")
         attachScreenshot("rex-panes-second")
         grid.swipeRight()
-        XCTAssertTrue(waitFor(switcher.value as? String == "\u{03C0} - oppi, 1 of 3"), "A swipe right must show the previous pane")
+        XCTAssertTrue(waitFor(paneValue(switcher) == "\u{03C0} - oppi, 1 of 3"), "A swipe right must show the previous pane")
         XCTAssertTrue(waitForDisappearance(of: cells[0]), "The minimap is not left on screen after the swipe back")
 
-        // The switcher's menu lists the panes in strip order and shows the one chosen.
-        switcher.tap()
+        // Touch and hold shows the quick menu of the panes in strip order, and shows the one chosen
+        // (a tap opens the Rex panel instead).
+        switcher.press(forDuration: 1.0)
         let third = app.buttons["sshTerminal.rexPanes.2"]
         XCTAssertTrue(third.waitForExistence(timeout: 5), "The switcher's menu did not open")
         XCTAssertTrue(app.buttons["sshTerminal.rexPanes.0"].exists && app.buttons["sshTerminal.rexPanes.1"].exists)
         attachScreenshot("rex-panes-menu")
         third.tap()
-        XCTAssertTrue(waitFor(switcher.value as? String == "\u{2733} Fixing the build, 3 of 3"), "A menu choice must show that pane")
+        XCTAssertTrue(waitFor(paneValue(switcher) == "\u{2733} Fixing the build, 3 of 3"), "A menu choice must show that pane")
         XCTAssertTrue(waitForDisappearance(of: cells[2]), "The minimap is not left on screen after a menu choice")
 
-        // Customize Bar opened from this Rex pane lists Rex and the switcher but
-        // not Herdr: a terminal in Rex offers only Rex.
+        // Customize Bar opened from this Rex pane lists the switcher but neither
+        // Herdr nor Rex Sessions: a terminal in Rex offers only Rex, and its one
+        // Rex control (the pane switcher) holds Rex Sessions.
         app.buttons["sshTerminal.more"].tap()
         let customize = app.buttons["sshTerminal.menu.customize"]
         XCTAssertTrue(customize.waitForExistence(timeout: 5), "The … menu did not open")
         customize.tap()
         let list = app.descendants(matching: .any)["settings.sshTerminal.bar.list"]
         XCTAssertTrue(list.waitForExistence(timeout: 5), "Customize Bar did not open")
-        XCTAssertTrue(app.descendants(matching: .any)["settings.sshTerminal.bar.row.rex"].waitForExistence(timeout: 5), "A Rex pane's Customize Bar must list Rex")
-        XCTAssertTrue(app.descendants(matching: .any)["settings.sshTerminal.bar.row.switcher"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["settings.sshTerminal.bar.row.switcher"].waitForExistence(timeout: 5), "A Rex pane's Customize Bar must list the switcher")
+        XCTAssertFalse(app.descendants(matching: .any)["settings.sshTerminal.bar.row.rex"].exists, "A Rex pane's Customize Bar must not list Rex Sessions")
+        let panelChoice = app.descendants(matching: .any)["settings.sshTerminal.bar.rexPanel.thisPane"]
+        scrollUntilHittable(panelChoice)
+        XCTAssertTrue(panelChoice.exists, "A Rex pane's Customize Bar must offer the Rex panel's choices")
         XCTAssertFalse(app.descendants(matching: .any)["settings.sshTerminal.bar.row.herdr"].exists, "A Rex pane's Customize Bar must not list Herdr")
         attachScreenshot("rex-customize-bar")
         assertRunning()
@@ -432,33 +437,33 @@ final class RouterModalSitesUITests: XCTestCase {
         launch(screen: "ssh-terminal-rex-panes")
         let switcher = app.buttons["sshTerminal.bar.rexPanes"]
         XCTAssertTrue(switcher.waitForExistence(timeout: 15), "The pane switcher did not appear in the bar")
-        XCTAssertEqual(switcher.value as? String, "\u{03C0} - oppi, 1 of 3")
+        XCTAssertEqual(paneValue(switcher), "\u{03C0} - oppi, 1 of 3")
         let grid = app.descendants(matching: .any)["sshTerminal.grid"]
         XCTAssertTrue(grid.waitForExistence(timeout: 5))
 
         // The first pane's edge gives way and opens nothing.
         grid.swipeRight()
         Thread.sleep(forTimeInterval: 1)
-        XCTAssertEqual(switcher.value as? String, "\u{03C0} - oppi, 1 of 3", "A swipe right at the first pane must not change anything")
+        XCTAssertEqual(paneValue(switcher), "\u{03C0} - oppi, 1 of 3", "A swipe right at the first pane must not change anything")
 
         // Walk to the last pane, then swipe past it.
         grid.swipeLeft()
-        XCTAssertTrue(waitFor(switcher.value as? String == "tail -f server.log, 2 of 3"))
+        XCTAssertTrue(waitFor(paneValue(switcher) == "tail -f server.log, 2 of 3"))
         grid.swipeLeft()
-        XCTAssertTrue(waitFor(switcher.value as? String == "\u{2733} Fixing the build, 3 of 3"))
+        XCTAssertTrue(waitFor(paneValue(switcher) == "\u{2733} Fixing the build, 3 of 3"))
         grid.swipeLeft()
-        XCTAssertTrue(waitFor(switcher.value as? String == "new shell, 4 of 4"), "A swipe past the last pane must open and show a new pane")
+        XCTAssertTrue(waitFor(paneValue(switcher) == "new shell, 4 of 4"), "A swipe past the last pane must open and show a new pane")
         attachScreenshot("rex-panes-new")
         XCTAssertFalse(app.buttons["sshTerminal.openNotice"].exists, "A pane that opened has no error to show")
 
         // The menu's last item opens another one after the shown pane.
-        switcher.tap()
+        switcher.press(forDuration: 1.0)
         let newPane = app.buttons["sshTerminal.rexPanes.new"]
         XCTAssertTrue(newPane.waitForExistence(timeout: 5), "The switcher's menu has no New Pane item")
         XCTAssertEqual(newPane.label, "New Pane")
         attachScreenshot("rex-panes-new-menu")
         newPane.tap()
-        XCTAssertTrue(waitFor(switcher.value as? String == "new shell, 5 of 5"), "The menu's New Pane must open and show a pane")
+        XCTAssertTrue(waitFor(paneValue(switcher) == "new shell, 5 of 5"), "The menu's New Pane must open and show a pane")
         assertRunning()
     }
 
@@ -722,6 +727,14 @@ final class RouterModalSitesUITests: XCTestCase {
         let element = app.staticTexts[identifier]
         _ = element.waitForExistence(timeout: 5)
         return element.label
+    }
+
+    /// The pane switcher's value up to "N of M": what follows is its program's
+    /// status, which the panes of the preview have or have not.
+    private func paneValue(_ element: XCUIElement) -> String? {
+        guard let value = element.value as? String,
+              let range = value.range(of: #"^.*?, \d+ of \d+"#, options: .regularExpression) else { return element.value as? String }
+        return String(value[range])
     }
 
     private func text(of element: XCUIElement) -> String {

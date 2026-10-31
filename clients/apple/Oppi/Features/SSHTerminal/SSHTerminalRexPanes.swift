@@ -279,9 +279,23 @@ enum SSHTerminalPaneIcon: Hashable, Sendable {
 /// sessions, for a session with more than one pane. It draws the shown pane's
 /// icon (`SSHTerminalPaneIcon`), which rolls to the next pane's when the pane
 /// changes (up for a pane further along the strip, down for one before it; a
-/// crossfade with Reduce Motion), and opens a menu of the session's panes.
+/// crossfade with Reduce Motion). It is the terminal's one Rex control: a tap
+/// opens the Rex panel (`SSHTerminalRexPanelContent`), and touching and holding
+/// shows the quick menu of the session's panes. The program's status rides on
+/// the icon (`SSHTerminalRexPillStatus`).
 final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
     private let glyph = SSHTerminalRexPaneGlyphView()
+    /// The OSC 9;4 progress ring around the icon, as the status symbol draws it.
+    let ring = SSHTerminalProgressRingView()
+    private let statusDot = UIView()
+    private let statusMark = UIImageView()
+    private let badge = UILabel()
+    /// Where the button is on screen, for the blocked card to collapse into.
+    let glyphFrame = SSHTerminalGlyphFrame()
+    /// The status the icon draws now, nil for none: a test reads it.
+    private(set) var shownStatus: SessionStatusKind?
+    /// The count the badge shows, nil while it is hidden.
+    var badgeText: String? { badge.isHidden ? nil : badge.text }
     private var shownBlock: String?
     private var shownIndex: Int?
     /// The icon the Large Content Viewer shows, so it is made when the icon changes.
@@ -295,13 +309,57 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
     init() {
         super.init(image: nil, label: "Pane", identifier: "sshTerminal.bar.rexPanes")
         glyph.translatesAutoresizingMaskIntoConstraints = false
+        ring.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(ring)
         addSubview(glyph)
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        statusDot.isUserInteractionEnabled = false
+        statusDot.isHidden = true
+        statusDot.layer.borderWidth = 1.5
+        statusMark.translatesAutoresizingMaskIntoConstraints = false
+        statusMark.contentMode = .scaleAspectFit
+        statusDot.addSubview(statusMark)
+        addSubview(statusDot)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.isUserInteractionEnabled = false
+        badge.isHidden = true
+        badge.font = UIFontMetrics(forTextStyle: .caption2).scaledFont(for: .systemFont(ofSize: 10, weight: .bold))
+        badge.textAlignment = .center
+        badge.layer.cornerRadius = 7
+        badge.layer.masksToBounds = true
+        addSubview(badge)
         NSLayoutConstraint.activate([
             glyph.centerXAnchor.constraint(equalTo: centerXAnchor),
             glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ring.centerXAnchor.constraint(equalTo: centerXAnchor),
+            ring.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ring.widthAnchor.constraint(equalToConstant: SSHTerminalProgressRingView.diameter),
+            ring.heightAnchor.constraint(equalToConstant: SSHTerminalProgressRingView.diameter),
+            // The status dot sits at the icon's lower trailing corner, the
+            // needs-you count at its upper trailing one.
+            statusDot.centerXAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 1),
+            statusDot.centerYAnchor.constraint(equalTo: glyph.bottomAnchor, constant: -1),
+            statusMark.centerXAnchor.constraint(equalTo: statusDot.centerXAnchor),
+            statusMark.centerYAnchor.constraint(equalTo: statusDot.centerYAnchor),
+            badge.centerXAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 2),
+            badge.centerYAnchor.constraint(equalTo: glyph.topAnchor, constant: 1),
+            badge.heightAnchor.constraint(equalToConstant: 14),
+            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 14),
         ])
-        showsMenuAsPrimaryAction = true
+        dotWidth.isActive = true
+        dotHeight.isActive = true
+        // A tap opens the panel; touch and hold shows the panes menu.
+        showsMenuAsPrimaryAction = false
         preferredMenuElementOrder = .fixed
+    }
+
+    private lazy var dotWidth = statusDot.widthAnchor.constraint(equalToConstant: 9)
+    private lazy var dotHeight = statusDot.heightAnchor.constraint(equalToConstant: 9)
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        statusDot.layer.cornerRadius = dotWidth.constant / 2
+        glyphFrame.rect = convert(bounds, to: nil)
     }
 
     @available(*, unavailable)
@@ -317,20 +375,27 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
         }])
     }
 
-    /// Draws the shown pane. Hidden for a session of one pane.
-    func apply(state: RexSessionState?, tint: UIColor) {
+    /// Draws the shown pane and, with `status`, its program's status on the
+    /// icon. Hidden when the terminal is not a Rex session.
+    func apply(
+        state: RexSessionState?, tint: UIColor, status: SSHTerminalRexPillStatus = .none,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID(), reduceMotion: Bool = false
+    ) {
         glyph.tintColor = tint
-        guard let state, state.showsSwitcher, let index = state.shownIndex else {
+        guard let state, let index = state.shownIndex else {
             isHidden = true
             shownBlock = nil
             shownIndex = nil
+            drawStatus(.none, themeID: themeID, reduceMotion: reduceMotion)
             return
         }
+        drawStatus(status, themeID: themeID, reduceMotion: reduceMotion)
         let wasShown = !isHidden
         isHidden = false
         let icon = SSHTerminalPaneIcon(program: state.panes[index].program)
         // The label is the button's purpose; the value is the pane and where it is.
-        accessibilityValue = "\(state.shownName), \(index + 1) of \(state.panes.count)"
+        accessibilityValue = (["\(state.shownName), \(index + 1) of \(state.panes.count)"] + status.spoken)
+            .joined(separator: ", ")
         largeContentTitle = state.shownName
         if icon != largeIcon {
             largeIcon = icon
@@ -345,6 +410,84 @@ final class SSHTerminalRexPanesButton: SSHTerminalPillButton {
         }
         shownBlock = state.shown
         shownIndex = index
+    }
+
+    /// The ring, the dot (larger, with a mark, while blocked), and the count.
+    private func drawStatus(_ status: SSHTerminalRexPillStatus, themeID: ThemeID, reduceMotion: Bool) {
+        let palette = themeID.palette
+        ring.apply(
+            status.progress,
+            color: SSHTerminalStatusMarkView.ringColor(for: status.progress?.state ?? .set, palette: palette),
+            reduceMotion: reduceMotion
+        )
+        shownStatus = status.dotKind
+        if let kind = status.dotKind {
+            let tint = kind.tint(themeID.appTheme)
+            let blocked = kind.isBlocked
+            statusDot.isHidden = false
+            statusDot.backgroundColor = tint
+            statusDot.layer.borderColor = UIColor(palette.bg).cgColor
+            let side: CGFloat = blocked || kind == .error ? 14 : 9
+            dotWidth.constant = side
+            dotHeight.constant = side
+            statusDot.layer.cornerRadius = side / 2
+            statusMark.isHidden = !(blocked || kind == .error)
+            statusMark.image = UIImage(systemName: blocked ? "exclamationmark" : "xmark")
+            statusMark.tintColor = UIColor(palette.bg)
+            statusMark.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 8, weight: .heavy)
+            if blocked, !reduceMotion, statusDot.layer.animation(forKey: "attention") == nil {
+                let pulse = CABasicAnimation(keyPath: "transform.scale")
+                pulse.fromValue = 1
+                pulse.toValue = 1.15
+                pulse.duration = 0.8
+                pulse.autoreverses = true
+                pulse.repeatCount = .infinity
+                statusDot.layer.add(pulse, forKey: "attention")
+            } else if !blocked || reduceMotion {
+                statusDot.layer.removeAnimation(forKey: "attention")
+            }
+        } else {
+            statusDot.isHidden = true
+            statusDot.layer.removeAnimation(forKey: "attention")
+        }
+        if status.needsYou > 0 {
+            badge.isHidden = false
+            badge.text = status.needsYou > 9 ? "9+" : "\(status.needsYou)"
+            badge.backgroundColor = UIColor(palette.orange)
+            badge.textColor = UIColor(palette.bg)
+        } else {
+            badge.isHidden = true
+            badge.text = nil
+        }
+    }
+}
+
+/// What the Rex pane switcher's icon says besides which pane it is: the status
+/// of the program in the pane on screen (a dot, and the OSC 9;4 ring), and how
+/// many other panes need you. Read from the pane's own OSC 7501 and 9;4
+/// reports and the Rex snapshot, with no knowledge of any program.
+struct SSHTerminalRexPillStatus: Equatable {
+    var headline: SessionStatusKind?
+    var progress: SSHTerminalProgressReport?
+    var needsYou = 0
+
+    static let none = SSHTerminalRexPillStatus()
+
+    /// The status dot's kind: a program that is working, blocked, or in
+    /// trouble. Resting (idle or stopped) draws nothing, so a quiet pane's
+    /// icon stays clean.
+    var dotKind: SessionStatusKind? {
+        guard let headline, headline != .idle, headline != .stopped else { return nil }
+        return headline
+    }
+
+    /// What VoiceOver adds to the pane's name.
+    var spoken: [String] {
+        var parts: [String] = []
+        if let headline { parts.append(headline.label) }
+        if let progress { parts.append(progress.spokenValue) }
+        if needsYou > 0 { parts.append(String(localized: "\(needsYou) need you")) }
+        return parts
     }
 }
 

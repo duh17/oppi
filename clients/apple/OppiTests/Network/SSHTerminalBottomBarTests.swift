@@ -71,16 +71,17 @@ struct SSHTerminalBarPlacementTests {
         ) -> SSHTerminalBarPlacement {
             offer(context: context).placement(layout: layout, capacity: 8)
         }
-        #expect(actions(of: placement(in: .rex).slots) == [.keyboard, .chatBar, .rex, .switcher])
+        // Rex Sessions is not in a Rex pane's bar at all: the pane switcher's panel holds it.
+        #expect(actions(of: placement(in: .rex).slots) == [.keyboard, .chatBar, .switcher])
         #expect(actions(of: placement(in: .herdr).slots) == [.keyboard, .chatBar, .herdr, .switcher])
         // A plain shell on a host with both keeps both.
         #expect(actions(of: placement(in: .plain).slots) == [.keyboard, .chatBar, .herdr, .rex, .switcher])
 
         // The … menu follows: a multiplexer turned off in the layout is offered
-        // there only where its terminal can use it.
+        // there only where its terminal can use it (a Rex pane offers no Rex Sessions).
         let hiddenBoth = SSHTerminalBarLayout.defaultValue
             .setting(.action(.herdr), shown: false).setting(.action(.rex), shown: false)
-        #expect(actions(of: placement(hiddenBoth, in: .rex).menu) == [.browseFiles, .rex])
+        #expect(actions(of: placement(hiddenBoth, in: .rex).menu) == [.browseFiles])
         #expect(actions(of: placement(hiddenBoth, in: .herdr).menu) == [.browseFiles, .herdr])
         #expect(actions(of: placement(hiddenBoth, in: .plain).menu) == [.browseFiles, .herdr, .rex])
     }
@@ -471,5 +472,198 @@ struct SSHTerminalBarOfferTests {
         let none = offer(program: "opencode", shortcuts: []).placement(layout: layout, capacity: 20)
         #expect(!(none.slots + none.menu).contains { $0.item == .programShortcuts })
         #expect(!offer(program: "opencode", shortcuts: []).items.contains(.programShortcuts))
+    }
+}
+
+@Suite("SSH terminal Rex control")
+@MainActor
+struct SSHTerminalRexControlTests {
+    @Test func aRexPaneLeavesOutRexSessionsAndTheProgramStatusSymbolButHerdrAndPlainShellsKeepTheirs() {
+        // The pane switcher's pill is the one Rex control: its panel holds
+        // Rex Sessions and the status, so neither is in the bar.
+        #expect(SSHTerminalBarContext.rex.hidden == [.herdr, .rex])
+        #expect(!SSHTerminalBarContext.rex.showsProgramStatus)
+        #expect(SSHTerminalBarContext.plain.hidden.isEmpty && SSHTerminalBarContext.plain.showsProgramStatus)
+        #expect(SSHTerminalBarContext.herdr.hidden == [.rex] && SSHTerminalBarContext.herdr.showsProgramStatus)
+        // What the terminal's polls and attention still count is only what its multiplexer rules out:
+        // Back's dot keeps hearing about Rex panes that need you.
+        #expect(SSHTerminalBarContext.rex.overviewsRuledOut == [.herdr])
+
+        let layout = SSHTerminalBarLayout.defaultValue
+        let inRex = offer(context: .rex).placement(layout: layout, capacity: 8)
+        #expect(actions(of: inRex.slots) == [.keyboard, .chatBar, .switcher])
+        #expect(!(inRex.slots + inRex.menu).contains { $0.item == .action(.rex) || $0.item == .action(.herdr) })
+        // The saved layout is untouched: a plain shell shows Rex again as it was left.
+        #expect(layout.isShown(.action(.rex)))
+        #expect(actions(of: offer(context: .plain).placement(layout: layout, capacity: 8).slots).contains(.rex))
+    }
+
+    @MainActor
+    @Test func theIconCarriesTheProgramsStatusTheProgressRingAndHowManyOthersNeedYou() {
+        let button = SSHTerminalRexPanesButton()
+        let panes: [RexSessionState.Pane] = [.init(blockID: "a", name: "pi"), .init(blockID: "b", name: "shell")]
+        let state = RexSessionState(panes: panes, shown: "a", minimap: [])
+        let theme = ThemeRuntimeState.currentThemeID()
+
+        button.apply(state: state, tint: .white, status: .none, themeID: theme)
+        #expect(button.shownStatus == nil && button.badgeText == nil && button.ring.isHidden)
+        #expect(button.accessibilityValue == "pi, 1 of 2")
+
+        // A resting program draws nothing: a quiet pane's icon stays clean.
+        button.apply(state: state, tint: .white, status: .init(headline: .idle), themeID: theme)
+        #expect(button.shownStatus == nil)
+
+        button.apply(state: state, tint: .white, status: .init(headline: .working), themeID: theme)
+        #expect(button.shownStatus == .working)
+
+        let blocked = SSHTerminalRexPillStatus(
+            headline: .needsApproval, progress: SSHTerminalProgressReport(state: .set, percent: 40), needsYou: 2
+        )
+        button.apply(state: state, tint: .white, status: blocked, themeID: theme)
+        #expect(button.shownStatus == .needsApproval)
+        #expect(button.badgeText == "2")
+        #expect(!button.ring.isHidden && button.ring.drawnFraction == 0.4)
+        #expect(button.accessibilityValue == "pi, 1 of 2, \(SessionStatusKind.needsApproval.label), Progress 40%, 2 need you")
+
+        button.apply(state: state, tint: .white, status: .init(needsYou: 12), themeID: theme)
+        #expect(button.badgeText == "9+")
+
+        // Not a Rex session: the control and its marks go.
+        button.apply(state: nil, tint: .white, status: blocked, themeID: theme)
+        #expect(button.isHidden && button.shownStatus == nil && button.badgeText == nil)
+    }
+
+    // MARK: The panel
+
+    private func record(_ state: ProgramStatusState, kind: ProgramStatusKind? = nil) -> SSHTerminalPaneRecord {
+        SSHTerminalPaneRecord(id: "", state: state, kind: kind, app: "pi")
+    }
+
+    private func pane(_ id: String, _ records: [SSHTerminalPaneRecord] = []) -> RexSnapshot.Pane {
+        RexSnapshot.Pane(blockID: id, label: nil, title: id, pwd: nil, records: records)
+    }
+
+    private func session(
+        _ id: String, _ label: String, active: String? = nil, focused: String? = nil, panes: [RexSnapshot.Pane]
+    ) -> RexSnapshot.Session {
+        RexSnapshot.Session(
+            sessionID: id, label: label, activeWindowID: "\(id).w",
+            windows: [RexSnapshot.Window(windowID: "\(id).w", label: nil, focusedBlockID: focused, panes: panes)]
+        )
+    }
+
+    private var snapshot: RexSnapshot {
+        RexSnapshot(sessions: [
+            session("s1", "oppi", panes: [pane("a", [record(.working)]), pane("b", [record(.blocked, kind: .permission)])]),
+            session("s2", "dotfiles", focused: "d2", panes: [pane("d1"), pane("d2", [record(.blocked, kind: .question)])]),
+            session("s3", "scratch", panes: [pane("e", [record(.idle)])]),
+        ])
+    }
+
+    private let state = RexSessionState(
+        panes: [.init(blockID: "a", name: "pi"), .init(blockID: "b", name: "claude")], shown: "a", minimap: []
+    )
+
+    private var statusRows: [SSHTerminalStatusRow] {
+        [SSHTerminalStatusRow(id: "root", status: .working, title: "pi", message: "Refactoring", depth: 0)]
+    }
+
+    private func rows(_ settings: SSHTerminalRexPanelSettings = .init(), snapshot: RexSnapshot? = nil) -> [SSHTerminalOverviewSection] {
+        SSHTerminalRexPanelContent.sections(
+            settings: settings, sessionID: "s1", state: state, snapshot: snapshot ?? self.snapshot, statusRows: statusRows
+        )
+    }
+
+    @Test func thePanelHasThisPaneThePanesOfTheSessionAndTheOtherSessions() throws {
+        let sections = rows()
+        #expect(sections.map(\.id) == ["thisPane", "panes", "otherSessions"])
+
+        let thisPane = try #require(sections.first { $0.id == "thisPane" })
+        #expect(thisPane.rows.map(\.title) == ["This pane", "pi"])
+        #expect(thisPane.rows[1].kind == .item(subtitle: "Refactoring", focused: false, status: .known(.working)))
+
+        // Each pane shows its status from the snapshot; the shown one is bold; a tap shows it.
+        let panes = try #require(sections.first { $0.id == "panes" })
+        #expect(panes.rows.map(\.title) == ["Panes in this session", "pi", "claude", "New Pane"])
+        #expect(panes.rows[1].kind == .item(subtitle: nil, focused: true, status: .known(.working)))
+        #expect(panes.rows[2].kind == .item(subtitle: nil, focused: false, status: .known(.needsApproval)))
+        #expect(panes.rows[2].focus == .init(scope: "s1", id: "b", isGroup: false))
+        #expect(panes.rows[2].accessibilityID == "sshTerminal.rexPanel.pane.b")
+        #expect(panes.rows[3].focus == SSHTerminalRexPanelContent.newPaneFocus)
+
+        // The other sessions, not this one, each with its panes and how many need you.
+        let others = try #require(sections.first { $0.id == "otherSessions" })
+        #expect(others.rows.map(\.title) == ["Other sessions", "dotfiles", "scratch"])
+        #expect(others.rows[1].kind == .item(subtitle: "2 panes \u{00B7} 1 needs you", focused: false, status: .known(.question)))
+        #expect(others.rows[2].kind == .item(subtitle: "1 pane", focused: false, status: .known(.idle)))
+        // A tap opens the pane Rex types into there, else the first.
+        #expect(others.rows[1].focus == .init(scope: "s2", id: "d2", isGroup: false))
+        #expect(others.rows[2].focus == .init(scope: "s3", id: "e", isGroup: false))
+    }
+
+    @Test func eachSectionOfThePanelCanBeTurnedOff() {
+        var settings = SSHTerminalRexPanelSettings()
+        settings.showsThisPane = false
+        #expect(rows(settings).map(\.id) == ["panes", "otherSessions"])
+        settings.showsPanes = false
+        #expect(rows(settings).map(\.id) == ["otherSessions"])
+        settings.showsOtherSessions = false
+        #expect(rows(settings).isEmpty)
+    }
+
+    @Test func thePanelSaysWhatIsMissingInsteadOfDrawingNothing() throws {
+        let loading = SSHTerminalRexPanelContent.sections(
+            settings: .init(), sessionID: "s1", state: state, snapshot: nil, statusRows: []
+        )
+        #expect(try #require(loading.first { $0.id == "thisPane" }).rows.map(\.title) == ["This pane", "No program status reported."])
+        #expect(try #require(loading.first { $0.id == "otherSessions" }).rows.map(\.title) == ["Other sessions", "Loading\u{2026}"])
+        let alone = RexSnapshot(sessions: [session("s1", "oppi", panes: [pane("a")])])
+        #expect(try #require(rows(snapshot: alone).first { $0.id == "otherSessions" }).rows.map(\.title) == ["Other sessions", "No other sessions."])
+    }
+
+    @Test func theBadgeCountsPanesThatNeedYouExceptTheOneOnScreen() {
+        func panes(shown: String) -> RexSessionState {
+            var state = RexSessionState(
+                panes: [.init(blockID: "a", name: "pi"), .init(blockID: "b", name: "claude")], shown: shown, minimap: []
+            )
+            state.panes[1].records = [record(.blocked, kind: .permission)]
+            return state
+        }
+        // This session's other panes count from Rex's own reports, the host's other sessions from its snapshot (s2/d2 is blocked).
+        #expect(SSHTerminalRexPanelContent.needsYou(state: panes(shown: "a"), snapshot: snapshot, sessionID: "s1") == 2)
+        #expect(SSHTerminalRexPanelContent.needsYou(state: panes(shown: "b"), snapshot: snapshot, sessionID: "s1") == 1, "the shown pane's own status is on the icon already")
+        #expect(SSHTerminalRexPanelContent.needsYou(state: panes(shown: "a"), snapshot: nil, sessionID: "s1") == 1)
+        #expect(SSHTerminalRexPanelContent.needsYou(state: nil, snapshot: nil, sessionID: nil) == 0)
+    }
+
+    @Test func aPanesOwnRexReportsGiveItsStatusAndTheRowsOfThisPane() throws {
+        var live = state
+        live.panes[0].records = [record(.working)]
+        // The pane's records win over the host snapshot, which was read a moment ago.
+        let sections = SSHTerminalRexPanelContent.sections(
+            settings: .init(), sessionID: "s1", state: live, snapshot: nil, statusRows: []
+        )
+        let panes = try #require(sections.first { $0.id == "panes" })
+        #expect(panes.rows[1].kind == .item(subtitle: nil, focused: true, status: .known(.working)))
+        // With none from the terminal's own stream, This pane is read from Rex's records.
+        let rows = SSHTerminalRexPanelContent.statusRows(from: [
+            SSHTerminalPaneRecord(id: "bash", state: .blocked, kind: .permission, message: "Run it?", app: "claude"),
+            SSHTerminalPaneRecord(id: "", state: .working, app: "claude"),
+        ])
+        #expect(rows.map(\.id) == ["root", "bash"])
+        #expect(rows.map(\.status) == [.working, .needsApproval])
+        #expect(rows[1].message == "Run it?" && rows[1].depth == 1)
+    }
+
+    @Test func thePanelChoicesRoundTripAndDefaultToEverythingOn() {
+        let store = SSHTerminalBarStore(defaults: isolatedDefaults())
+        #expect(store.rexPanel == SSHTerminalRexPanelSettings())
+        var settings = store.rexPanel
+        settings.showsOtherSessions = false
+        settings.showsStatusOnIcon = false
+        store.setRexPanel(settings)
+        #expect(SSHTerminalBarStore(defaults: store.defaults).rexPanel == settings)
+        store.reset()
+        #expect(store.rexPanel == settings, "Reset to Default is for the bar's list")
     }
 }

@@ -2410,6 +2410,7 @@
 		FA7B98A1FEC9B12594D68E32 /* TestFactories.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9ADC6C6B9062E402A307F35 /* TestFactories.swift */; };
 		FA7E0B83B17E00D6F70DD4AA /* ServerNotificationsConsentAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9890BAADE997B38ECC4CE4 /* ServerNotificationsConsentAlert.swift */; };
 		FA7F94452AD16F1144A4274B /* ProviderAuthFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35F0F7021189F9C668C0B936 /* ProviderAuthFlow.swift */; };
+		FAAD979BE7DB465D1BF687EB /* SSHTerminalRexPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EC81C3FAB6DA878007E3A47 /* SSHTerminalRexPanel.swift */; };
 		FAB8E41A82EFD9986EA85CC8 /* ToolRowTextRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62CD8BB94F709C09528FB6C /* ToolRowTextRenderer.swift */; };
 		FAD32E1B82DC813291F7C520 /* CustomTimelineRowContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0310B165BE4CED1B11F32682 /* CustomTimelineRowContent.swift */; };
 		FAD66587B5AF0EA8FC6C63AB /* ShareQuickSessionPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 231ADF9B92A7651922BF7C1D /* ShareQuickSessionPayload.swift */; };
@@ -3595,6 +3596,7 @@
 		7E44C7F5C9C26AD40FF1E38D /* TimelineScrollConformanceSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineScrollConformanceSupport.swift; sourceTree = "<group>"; };
 		7E771EFD6E09564EF26E7634 /* MonaspaceNeon-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "MonaspaceNeon-Regular.otf"; sourceTree = "<group>"; };
 		7E9D8A278707F292FF2D6101 /* AnchoredCollectionViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnchoredCollectionViewTests.swift; sourceTree = "<group>"; };
+		7EC81C3FAB6DA878007E3A47 /* SSHTerminalRexPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalRexPanel.swift; sourceTree = "<group>"; };
 		7ECC52FC2B2C6A2794A69298 /* SSHTerminalRexList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalRexList.swift; sourceTree = "<group>"; };
 		7EEAAC1963D673FC314E0861 /* MacOrbMetalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOrbMetalTests.swift; sourceTree = "<group>"; };
 		7F24671E04B05124466AB226 /* AttentionNotificationPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttentionNotificationPolicyTests.swift; sourceTree = "<group>"; };
@@ -7246,6 +7248,7 @@
 				6EB746D6C9F1494E18AB026C /* SSHTerminalRemoteShell.swift */,
 				C736C312699C41094168DFE6 /* SSHTerminalRexFollower.swift */,
 				7ECC52FC2B2C6A2794A69298 /* SSHTerminalRexList.swift */,
+				7EC81C3FAB6DA878007E3A47 /* SSHTerminalRexPanel.swift */,
 				5B951537F33FB2D70AF5C89D /* SSHTerminalRexPanes.swift */,
 				77DCDCFDF78E35B63987A1FC /* SSHTerminalRexSessionsViewController.swift */,
 				EE3456F3EEBEE1566D9AD630 /* SSHTerminalSettingsCells.swift */,
@@ -10639,6 +10642,7 @@
 				F99AE7E800FF208CAEF681B1 /* SSHTerminalRexHostStore.swift in Sources */,
 				2CD10A3ED8299B4BD54AC6D3 /* SSHTerminalRexList.swift in Sources */,
 				9FEC05E756D44694CB0E6362 /* SSHTerminalRexListScreenshotPreview.swift in Sources */,
+				FAAD979BE7DB465D1BF687EB /* SSHTerminalRexPanel.swift in Sources */,
 				C31E5C2518530F69D18EDBE1 /* SSHTerminalRexPanes.swift in Sources */,
 				56D37881746E0F4FD05A3E2D /* SSHTerminalRexSessionsViewController.swift in Sources */,
 				2B7AC123C345F3B7A1308AF6 /* SSHTerminalScreenshotPreview.swift in Sources */,

@@ -1221,9 +1221,12 @@ final class RexSessionConnection: SSHTerminalConnection, Sendable {
         let panes: [RexSessionState.Pane] = state.layout?.panes.map {
             .init(
                 blockID: $0.blockID, name: name(of: $0.blockID, in: state), windowID: $0.windowID, windowName: $0.windowName,
-                program: program(of: $0.blockID, in: state)
+                program: program(of: $0.blockID, in: state), records: state.records[$0.blockID] ?? []
             )
-        } ?? [.init(blockID: state.requested, name: name(of: state.requested, in: state), program: program(of: state.requested, in: state))]
+        } ?? [.init(
+            blockID: state.requested, name: name(of: state.requested, in: state), program: program(of: state.requested, in: state),
+            records: state.records[state.requested] ?? []
+        )]
         return RexSessionState(
             panes: panes,
             shown: state.requested,

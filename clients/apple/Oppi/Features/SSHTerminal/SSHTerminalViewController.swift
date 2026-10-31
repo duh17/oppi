@@ -18,6 +18,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// Screenshot preview only: a server-scoped connection so the hosted
     /// composer can claim dictation. The live app uses the window's root.
     private let composerConnection: ServerConnection?
+    /// How a pane of another Rex session opens: the connect session's own way
+    /// unless the owner says otherwise (a preview with no host to dial).
+    private let rexPaneOpener: ((RexPaneTarget) -> Void)?
     /// Screenshot preview only. A normal launch never sets this.
     var presentsStatusDetailOnAppear = false
 
@@ -58,6 +61,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     private let barStore: SSHTerminalBarStore
     private lazy var barLayout = barStore.layout
     private lazy var barCustomKeys = barStore.customKeys
+    private lazy var rexPanelSettings = barStore.rexPanel
     /// What the bar drew on the last pass. The … menu offers its `menu`,
     /// so the menu opened now matches the bar on screen.
     private var barPlacement = SSHTerminalBarPlacement(slots: [], menu: [])
@@ -180,8 +184,10 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         hostLabel: String = "",
         session: SSHTerminalConnectSession? = nil,
         composerConnection: ServerConnection? = nil,
+        rexPaneOpener: ((RexPaneTarget) -> Void)? = nil,
         barStore: SSHTerminalBarStore = SSHTerminalBarStore()
     ) {
+        self.rexPaneOpener = rexPaneOpener
         self.barStore = barStore
         self.channel = channel
         self.reconnect = reconnect
@@ -567,6 +573,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         // The minimap's cells, the switcher's menu, and the swipe all show a
         // pane through `showPane`.
         rexMinimap.select = { [weak self] block in self?.showPane(block) }
+        rexPill.button.addAction(UIAction { [weak self] _ in self?.showRexPanel() }, for: .touchUpInside)
         rexPill.button.installMenu(
             state: { [weak self] in self?.channel.rex?.state },
             select: { [weak self] block in self?.showPane(block) },
@@ -920,11 +927,28 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         }
     }
 
-    /// The saved layout and custom keys, read again when Bottom Bar changes either.
+    /// The saved layout, custom keys, and Rex panel choices, read again when
+    /// Bottom Bar changes any of them.
     private func reloadBarSettings() {
         barLayout = barStore.layout
         barCustomKeys = barStore.customKeys
+        rexPanelSettings = barStore.rexPanel
         setNeedsUpdateProperties()
+    }
+
+    /// What the Rex pane switcher's icon says (`SSHTerminalRexPillStatus`): the
+    /// shown pane's program status and OSC 9;4 progress, and how many other
+    /// panes need you; none of it when the person turned it off.
+    private func rexPillStatus(headline: SessionStatusKind?, progress: SSHTerminalProgressReport?) -> SSHTerminalRexPillStatus {
+        guard rexPanelSettings.showsStatusOnIcon else { return .none }
+        let state = channel.rex?.state
+        return SSHTerminalRexPillStatus(
+            // The terminal's own OSC 7501 reports, else what Rex reports for the pane.
+            headline: headline ?? state?.panes.first { $0.blockID == state?.shown }?.status,
+            progress: progress,
+            needsYou: rex.failure == nil
+                ? SSHTerminalRexPanelContent.needsYou(state: state, snapshot: rex.snapshot, sessionID: channel.rex?.sessionID) : 0
+        )
     }
 
     /// Settings > Terminal > Bottom Bar, pushed over the terminal so the
@@ -937,7 +961,9 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         let rollup = programRollup
         let headline = rollup?.headline
         let progress = channel.progress.report
-        let showsStatus = headline != nil || progress != nil
+        // A Rex pane draws its program's status on the pane switcher's icon, not
+        // as a symbol of its own in the bar's pill.
+        let showsStatus = (headline != nil || progress != nil) && barContext.showsProgramStatus
         if showsStatus {
             statusGlyph.apply(
                 status: headline,
@@ -955,7 +981,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         barFit = SSHTerminalBarFit(view)
         // The Rex pane switcher's pill holds the room at the trailing end only
         // while it shows; the pill is centred in what is left.
-        let rexPanesShown = channel.rex?.state.showsSwitcher == true
+        let rexPanesShown = channel.rex != nil
         let animates = !reduceMotion && isOnScreen && view.window != nil
         if roomEndsAtPanes?.isActive != rexPanesShown {
             roomEndsAtEdge?.isActive = !rexPanesShown
@@ -987,7 +1013,11 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         )
         barPill.show(barPlacement.slots, showsStatus: showsStatus, animated: animates)
         installSwitcherMenu()
-        rexPill.apply(state: channel.rex?.state, tint: tint)
+        rexPill.apply(
+            state: channel.rex?.state, tint: tint, status: rexPillStatus(headline: headline, progress: progress),
+            themeID: themeID, reduceMotion: reduceMotion
+        )
+        if rexPanesShown, headline != nil || progress != nil { attention.glyphFrame.rect = rexPill.button.glyphFrame.rect }
         backPill.apply(themeID: themeID, attentionPending: attentionPending(), foreground: lastTerminalColors?.foreground.map(UIColor.init))
         updateRexPanes(themeID: themeID)
         installMenu(
@@ -1804,7 +1834,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
     /// Panes that need you, per multiplexer that has answered.
     private var overviewsWaiting: [SSHTerminalBarAction: Int] {
         var waiting: [SSHTerminalBarAction: Int] = [:]
-        for action in SSHTerminalBarAction.overviews where !barContext.hidden.contains(action) {
+        for action in SSHTerminalBarAction.overviews where !barContext.overviewsRuledOut.contains(action) {
             if let source = overview(action), source.available { waiting[action] = source.needsAttention }
         }
         return waiting
@@ -1815,7 +1845,7 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
         presentingOverview = true
         source.watching = true
         // A Rex pane opens here, in a terminal of its own over the same host.
-        rex.openPane = { [weak self] pane in self?.session?.openRexPane(pane) }
+        rex.openPane = { [weak self] pane in self?.openRexPane(pane) }
         let channel = channel
         Router.present(
             SSHTerminalOverviewViewController(
@@ -1831,6 +1861,62 @@ final class SSHTerminalViewController: UIViewController, NavigationBarHiding {
                 source.watching = false
             }
         )
+    }
+
+    /// The Rex panel: this pane's status, the session's panes, and the other
+    /// sessions, in one sheet (`SSHTerminalRexPanelContent`). Switching a pane
+    /// and a new pane go through the owners a swipe uses; another session's pane
+    /// opens through the one that Rex Sessions used.
+    private func showRexPanel() {
+        guard !presentingOverview, let model = channel.rex else { return }
+        presentingOverview = true
+        let sessionID = model.sessionID
+        let monitor = rex
+        monitor.watching = true
+        monitor.openPane = { [weak self] pane in self?.openRexPane(pane) }
+        let content = SSHTerminalRexPanelContent(
+            monitor: monitor,
+            settings: rexPanelSettings,
+            sessionID: sessionID,
+            sessionState: { [weak model] in model?.state },
+            statusRows: { [weak self, weak model] in
+                guard let self else { return [] }
+                let own = programStatusRows
+                if !own.isEmpty { return own }
+                let state = model?.state
+                return SSHTerminalRexPanelContent.statusRows(from: state?.panes.first { $0.blockID == state?.shown }?.records ?? [])
+            }
+        )
+        let channel = channel
+        Router.present(
+            SSHTerminalOverviewViewController(
+                content: content,
+                isSheet: true,
+                refresh: { await monitor.refresh(on: channel) },
+                activate: { [weak self] focus in self?.activateRexPanel(focus, sessionID: sessionID) ?? false }
+            ),
+            presentation: .sheet.detents([.medium(), .large()]).inNavigation(),
+            from: self,
+            onDismiss: { [weak self] in
+                self?.presentingOverview = false
+                monitor.watching = false
+            }
+        )
+    }
+
+    /// A tapped row of the Rex panel: a pane of this session is shown, New Pane
+    /// opens one, and a pane of another session opens on this device.
+    private func activateRexPanel(_ focus: SSHTerminalOverviewFocus, sessionID: String) -> Bool {
+        if focus == SSHTerminalRexPanelContent.newPaneFocus { return gridView?.createPane() ?? false }
+        if focus.scope == sessionID || focus.scope == nil {
+            showPane(focus.id)
+            return true
+        }
+        return rex.open(focus)
+    }
+
+    private func openRexPane(_ pane: RexPaneTarget) {
+        if let rexPaneOpener { rexPaneOpener(pane) } else { session?.openRexPane(pane) }
     }
 
     private func showStatusDetail() {

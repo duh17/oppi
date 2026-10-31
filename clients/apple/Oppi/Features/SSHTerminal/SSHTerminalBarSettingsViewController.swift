@@ -13,6 +13,12 @@ import UIKit
 /// keys the person made. A custom key opens its editor from its row or a swipe,
 /// and a swipe deletes it. Add Custom Key… sits under the list.
 ///
+/// A Rex pane draws one Rex control, the pane switcher's pill, and its panel
+/// replaces the program-status symbol and Rex Sessions. A **Rex Panel** section
+/// says which of the panel's sections show (This pane, Panes, Other sessions)
+/// and whether the pill's icon carries the program's status; it is left out of a
+/// terminal that Run on Connect started in Herdr, which has no Rex.
+///
 /// The terminal can push this page from its … menu (Customize Bar…), so the
 /// bar being changed is one Back away. Opened from a terminal, the page leaves
 /// out the rows that terminal's multiplexer rules out (`SSHTerminalBarContext`:
@@ -22,11 +28,55 @@ import UIKit
 final class SSHTerminalBarSettingsViewController: ListScreenController<
     SSHTerminalBarSettingsViewController.Section, SSHTerminalBarSettingsViewController.Item
 > {
-    enum Section: Hashable, Sendable { case items, add, reset }
+    enum Section: Hashable, Sendable { case items, add, rexPanel, reset }
+
+    /// A choice of the Rex panel.
+    enum RexPanelOption: CaseIterable, Hashable, Sendable {
+        case thisPane, panes, otherSessions, statusOnIcon
+
+        var title: String {
+            switch self {
+            case .thisPane: String(localized: "This Pane")
+            case .panes: String(localized: "Panes in This Session")
+            case .otherSessions: String(localized: "Other Sessions")
+            case .statusOnIcon: String(localized: "Status on the Icon")
+            }
+        }
+
+        var identifier: String {
+            switch self {
+            case .thisPane: "settings.sshTerminal.bar.rexPanel.thisPane"
+            case .panes: "settings.sshTerminal.bar.rexPanel.panes"
+            case .otherSessions: "settings.sshTerminal.bar.rexPanel.otherSessions"
+            case .statusOnIcon: "settings.sshTerminal.bar.rexPanel.statusOnIcon"
+            }
+        }
+
+        func isOn(_ settings: SSHTerminalRexPanelSettings) -> Bool {
+            switch self {
+            case .thisPane: settings.showsThisPane
+            case .panes: settings.showsPanes
+            case .otherSessions: settings.showsOtherSessions
+            case .statusOnIcon: settings.showsStatusOnIcon
+            }
+        }
+
+        func setting(_ isOn: Bool, in settings: SSHTerminalRexPanelSettings) -> SSHTerminalRexPanelSettings {
+            var next = settings
+            switch self {
+            case .thisPane: next.showsThisPane = isOn
+            case .panes: next.showsPanes = isOn
+            case .otherSessions: next.showsOtherSessions = isOn
+            case .statusOnIcon: next.showsStatusOnIcon = isOn
+            }
+            return next
+        }
+    }
 
     enum Item: Hashable, Sendable {
         case bar(SSHTerminalBarItem)
         case addKey
+        case rexPanel(RexPanelOption)
         case reset
     }
 
@@ -81,11 +131,21 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
             ),
             ListSection(.add, items: [.addKey]),
         ]
+        if context != .herdr {
+            sections.append(ListSection(
+                .rexPanel,
+                header: String(localized: "Rex Panel"),
+                footer: String(localized: "In a Rex pane the pane switcher at the bottom right is the one Rex control. Tap it for the panel; touch and hold for the quick pane menu. The panel's sections and the status on the icon are chosen here."),
+                items: RexPanelOption.allCases.map(Item.rexPanel)
+            ))
+        }
         if layout != store.defaultLayout {
             sections.append(ListSection(.reset, items: [.reset]))
         }
         return sections
     }
+
+    override func showsHeader(for section: Section) -> Bool { section == .rexPanel }
 
     /// Whether the page lists `item`: every row, except one this terminal's
     /// multiplexer rules out, and a custom key the store no longer has.
@@ -101,6 +161,8 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
         switch item {
         case .bar(let bar):
             AnyHashable([AnyHashable(store.layout.isShown(bar)), AnyHashable(key(bar))])
+        case .rexPanel(let option):
+            AnyHashable(option.isOn(store.rexPanel))
         case .addKey, .reset:
             AnyHashable(0)
         }
@@ -137,11 +199,31 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
     override func dequeue(_ item: Item, at indexPath: IndexPath) -> UICollectionViewCell {
         switch item {
         case .addKey, .reset: collectionView.dequeueConfiguredReusableCell(using: actionRow, for: indexPath, item: item)
-        case .bar: super.dequeue(item, at: indexPath)
+        case .bar, .rexPanel: super.dequeue(item, at: indexPath)
         }
     }
 
+    /// The one switch both kinds of row draw.
+    private func switchAccessory(
+        _ isOn: Bool, identifier: String, cell: UICollectionViewListCell, onChange: @escaping (Bool) -> Void
+    ) -> UICellAccessory {
+        .settingsToggle(isOn, identifier: identifier, reusing: cell, onChange: onChange)
+    }
+
     override func configure(_ cell: UICollectionViewListCell, item: Item) {
+        if case .rexPanel(let option) = item {
+            var content = content(.plain)
+            content.text = option.title
+            cell.contentConfiguration = content
+            cell.accessories = [
+                switchAccessory(option.isOn(store.rexPanel), identifier: option.identifier, cell: cell) { [weak self] isOn in
+                    guard let self else { return }
+                    store.setRexPanel(option.setting(isOn, in: store.rexPanel))
+                    setNeedsUpdateProperties()
+                },
+            ]
+            return
+        }
         guard case .bar(let bar) = item else { return }
         let keys = store.customKeys
         let custom = key(bar)
@@ -163,10 +245,10 @@ final class SSHTerminalBarSettingsViewController: ListScreenController<
         cell.contentConfiguration = content
         cell.accessibilityIdentifier = "settings.sshTerminal.bar.row.\(bar.rawValue)"
         cell.accessories = [
-            .settingsToggle(
+            switchAccessory(
                 store.layout.isShown(bar),
                 identifier: "settings.sshTerminal.bar.\(bar.rawValue)",
-                reusing: cell
+                cell: cell
             ) { [weak self] isOn in
                 guard let self else { return }
                 save(store.layout.setting(bar, shown: isOn))
