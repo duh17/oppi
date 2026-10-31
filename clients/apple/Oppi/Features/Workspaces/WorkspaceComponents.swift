@@ -310,7 +310,6 @@ final class WorkspaceSidebarRowContentView: UIView, UIContentView {
         selection.backgroundColor = colors.fg.withAlphaComponent(0.08)
         icon.apply(
             .choice(workspace.icon, purpose: .workspace, sandbox: workspace.runtime == .sandbox),
-            colors: colors,
             assetCache: configuration.iconAssetCache
         )
         nameLabel.text = workspace.name

@@ -186,7 +186,7 @@ final class SessionRowView: UIView {
         if let model {
             providerIcon.setHiddenIfChanged(model.provider.isEmpty)
             if !model.provider.isEmpty {
-                providerIcon.image = style.providerIcon(model.provider)
+                providerIcon.image = EntityIcon.image(.provider(model.provider), size: 11)
                 providerIcon.accessibilityLabel = providerLogoAssetName(model.provider) == nil
                     ? providerMonogram(model.provider)
                     : nil
@@ -767,7 +767,6 @@ final class SessionRowStyle {
     let colors: ComposerThemeColors
     private let theme: AppTheme
     private var tints: [SessionStatusKind: UIColor] = [:]
-    private var providerIcons: [String: UIImage] = [:]
 
     private static var current: SessionRowStyle?
 
@@ -790,14 +789,6 @@ final class SessionRowStyle {
         let tint = status.tint(theme)
         tints[status] = tint
         return tint
-    }
-
-    /// The provider's 11 pt mark.
-    func providerIcon(_ provider: String) -> UIImage {
-        if let icon = providerIcons[provider] { return icon }
-        let icon = EntityIcon.image(.provider(provider), size: 11)
-        providerIcons[provider] = icon
-        return icon
     }
 }
 

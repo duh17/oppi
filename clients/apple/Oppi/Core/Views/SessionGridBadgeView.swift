@@ -1,11 +1,10 @@
 import UIKit
 
 /// Session identity badge. Ordinary sessions paint the Pi mark; saved-Agent
-/// rows paint the launch snapshot icon and never consult Pi identity.
+/// rows paint the launch snapshot icon and never consult Pi identity. The
+/// artwork is `EntityIcon`'s; this view places it at the badge's size.
 final class SessionGridBadgeView: UIView {
-
     private let imageView = UIImageView()
-    private static var imageCache = NSCache<NSString, UIImage>()
 
     var sessionId: String = "" {
         didSet { updateIfNeeded() }
@@ -26,20 +25,15 @@ final class SessionGridBadgeView: UIView {
     var iconAssetCache: IconAssetCache? {
         didSet {
             guard iconAssetCache !== oldValue else { return }
-            loadTask?.cancel()
-            lastCacheKey = nil
+            lastApplied = nil
             updateIfNeeded()
         }
     }
 
-    private var lastCacheKey: String?
-    private var loadTask: Task<Void, Never>?
-    private var currentGenmojiAssetID: String?
+    /// What the badge last drew, so a pass that changes nothing keeps its image.
+    private var lastApplied: String?
+    private var iconLoadObserver: NSObjectProtocol?
     private var isConfiguring = false
-
-    #if DEBUG
-        var currentGenmojiAssetIDForTesting: String? { currentGenmojiAssetID }
-    #endif
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -56,6 +50,16 @@ final class SessionGridBadgeView: UIView {
             imageView.topAnchor.constraint(equalTo: topAnchor),
             imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        iconLoadObserver = NotificationCenter.default.addObserver(
+            forName: .oppiEntityIconDidLoad,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.lastApplied = nil
+                self?.updateIfNeeded()
+            }
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(themeDidChange(_:)),
@@ -67,16 +71,15 @@ final class SessionGridBadgeView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Not supported") }
 
-    deinit {
-        loadTask?.cancel()
+    isolated deinit {
+        if let iconLoadObserver {
+            NotificationCenter.default.removeObserver(iconLoadObserver)
+        }
         NotificationCenter.default.removeObserver(self)
     }
 
     func prepareForReuse() {
-        loadTask?.cancel()
-        loadTask = nil
-        lastCacheKey = nil
-        currentGenmojiAssetID = nil
+        lastApplied = nil
         imageView.image = nil
     }
 
@@ -104,16 +107,13 @@ final class SessionGridBadgeView: UIView {
     }
 
     @objc private func themeDidChange(_ notification: Notification) {
-        // Rendered Pi and Agent icons can use theme colors, so a theme
-        // switch must invalidate all cached rasters before redrawing.
-        Self.imageCache.removeAllObjects()
-        lastCacheKey = nil
+        // The mark's colors follow the theme, so the badge draws again.
+        lastApplied = nil
         updateIfNeeded()
     }
 
     private func updateIfNeeded() {
         guard !isConfiguring else { return }
-        let themeId = ThemeRuntimeState.currentThemeID()
         let presentation = AssistantIdentityPresentation.resolve(
             agentId: agentId,
             agentIcon: agentIcon
@@ -134,45 +134,15 @@ final class SessionGridBadgeView: UIView {
             .identity
         }
 
-        let cacheKey = "\(sessionId):\(themeId):\(identity)"
-        guard cacheKey != lastCacheKey else { return }
-        lastCacheKey = cacheKey
-        loadTask?.cancel()
-        loadTask = nil
-        currentGenmojiAssetID = nil
-
-        if let cached = Self.imageCache.object(forKey: cacheKey as NSString) {
-            imageView.image = cached
-            return
-        }
+        let applied = "\(sessionId):\(ThemeRuntimeState.currentThemeID().rawValue):\(identity)"
+        guard applied != lastApplied else { return }
+        lastApplied = applied
 
         switch presentation {
-        case .agent(.genmoji(let assetId, _)):
-            imageView.image = EntityIcon.image(.agent(nil), size: 36, assets: iconAssetCache)
-            guard let iconAssetCache else { return }
-            currentGenmojiAssetID = assetId
-            loadTask = Task { @MainActor [weak self, iconAssetCache] in
-                guard let image = try? await iconAssetCache.image(assetId: assetId, size: 36),
-                      !Task.isCancelled,
-                      let self,
-                      self.lastCacheKey == cacheKey,
-                      self.currentGenmojiAssetID == assetId else {
-                    return
-                }
-                Self.imageCache.setObject(image, forKey: cacheKey as NSString)
-                self.imageView.image = image
-                self.loadTask = nil
-            }
-
         case .agent:
-            let image = EntityIcon.image(.agent(agentIcon), size: 36, assets: iconAssetCache)
-            Self.imageCache.setObject(image, forKey: cacheKey as NSString)
-            imageView.image = image
-
+            imageView.image = EntityIcon.image(.agent(agentIcon), size: 36, assets: iconAssetCache)
         case .globalAvatar:
-            let image = PiAvatarRenderer.render(size: 36)
-            Self.imageCache.setObject(image, forKey: cacheKey as NSString)
-            imageView.image = image
+            imageView.image = EntityIcon.image(.pi, size: 36)
         }
     }
 }

@@ -39,6 +39,7 @@ final class GuidedControlComposerController: UIViewController {
     private let stackedWorkspacePill = ComposerToolbarPillButton()
     private let stackedModelPill = ComposerToolbarPillButton()
     private let stackedThinkingPill = ComposerToolbarPillButton()
+    private var iconLoadObserver: NSObjectProtocol?
 
     /// The accessibility-size panel's thinking popover while it is up.
     private weak var stackedThinkingPicker: UIViewController?
@@ -166,6 +167,21 @@ final class GuidedControlComposerController: UIViewController {
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (controller: Self, _: UITraitCollection) in
             controller.setNeedsUpdateProperties()
             controller.composer.setNeedsUpdateProperties()
+        }
+        // The workspace button and its menu draw the workspace's artwork: a
+        // Genmoji that lands after the first pass redraws them.
+        iconLoadObserver = NotificationCenter.default.addObserver(
+            forName: .oppiEntityIconDidLoad,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setNeedsUpdateProperties() }
+        }
+    }
+
+    isolated deinit {
+        if let iconLoadObserver {
+            NotificationCenter.default.removeObserver(iconLoadObserver)
         }
     }
 

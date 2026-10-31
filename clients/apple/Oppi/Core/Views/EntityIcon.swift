@@ -1,9 +1,8 @@
 import UIKit
 
 /// What an icon stands for: an Agent, Pi, a workspace, a model provider, a model,
-/// or a paired server. The app has one set of entities and one owner that draws
-/// them (`EntityIcon`), so a list row, a pill, a menu, and the Usage mark show
-/// the same artwork for the same thing.
+/// or a paired server. One owner draws them all, so a list row, a pill, a menu,
+/// and the Usage mark show the same artwork for the same thing.
 enum IconEntity: Hashable {
     case agent(IconChoice?)
     case pi
@@ -21,65 +20,133 @@ extension Notification.Name {
 
 /// The one owner of entity artwork.
 ///
-/// `image` draws now and never waits: an Agent's or workspace's Genmoji comes
-/// from the server's icon cache when it is decoded, and until then the entity's
-/// fallback symbol draws and the load starts (`.oppiEntityIconDidLoad` announces
-/// the pixels; `loadGeneration` is the redraw key for a row that compares its
-/// inputs). Every image is drawn always-original — a symbol's own tint survives
-/// a `UIMenu`, which templates gray — and every entity's fallback symbol, emoji
-/// raster, Genmoji lookup, provider mark, and sandbox mark exists only here.
+/// `image` draws now and never waits: a Genmoji comes from the server's icon cache
+/// when it is decoded, and until then the fallback symbol draws and the load
+/// starts. `.oppiEntityIconDidLoad` announces pixels that arrived, and
+/// `loadGeneration` is the redraw key for a row that compares its inputs. A load
+/// that fails leaves the fallback final for that cache: no redraw, no second
+/// fetch. Every image is drawn always-original, so a `UIMenu` keeps its colors.
 @MainActor
 enum EntityIcon {
-    /// An SF Symbol or emoji takes 0.78 of the box it is asked for: the size a
-    /// pill, row, or menu slot was laid out with is the room, not the glyph.
+    /// An SF Symbol or emoji takes 0.78 of the box it is asked for.
     private static let glyphShare: CGFloat = 0.78
     /// A sandbox workspace's icon leaves the bottom-trailing corner to its mark.
     private static let sandboxContentShare: CGFloat = 0.75
     private static let sandboxMarkShare: CGFloat = 0.34
-    private static let sandboxMarkMinimum: CGFloat = 9
-    /// Emoji, Genmoji, and provider letters raster at twice the points asked for,
-    /// because a menu scales an action image down and keeps the pixels sharp.
-    private static let supersample: CGFloat = 2
+    private static let sandboxMarkMinimum: CGFloat = 11
 
     /// Bumped when artwork arrives. A row that compares its inputs puts it in the
     /// key, so the row that drew a fallback redraws with the Genmoji.
     private(set) static var loadGeneration = 0
 
-    private static let rasters = NSCache<NSString, UIImage>()
+    private static let rasters: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 256
+        return cache
+    }()
     private static var loadsInFlight: Set<String> = []
+    /// Loads that failed, per asset and cache: the fallback is what that cache
+    /// will ever draw.
+    private static var failedLoads: Set<String> = []
 
     /// The entity's icon, in a box `size` points square.
     static func image(_ entity: IconEntity, size: CGFloat, assets: IconAssetCache? = nil) -> UIImage {
         let size = max(1, size)
-        // An entity still waiting for its Genmoji is never cached: the fallback it
-        // draws now is replaced the moment the artwork arrives.
-        let key = waitsForArtwork(entity, size: size, assets: assets) ? nil : cacheKey(entity, size: size)
-        if let key, let cached = rasters.object(forKey: key as NSString) {
+        let key = cacheKey(entity, size: size, assets: assets)
+        if let cached = rasters.object(forKey: key as NSString) {
             return cached
         }
-        // Baked, not template: a `UIMenu` draws a template image in its own gray,
-        // so every entity keeps the colors drawn here.
-        let image = draw(entity, size: size, assets: assets).withRenderingMode(.alwaysOriginal)
-        if let key {
+        let drawn = draw(entity, size: size, assets: assets)
+        // Baked, not template: a `UIMenu` draws a template image in its own gray.
+        let image = drawn.image.withRenderingMode(.alwaysOriginal)
+        // A drawing that may still become artwork is not kept, so the next pass
+        // after `.oppiEntityIconDidLoad` draws the real icon.
+        if drawn.isFinal {
             rasters.setObject(image, forKey: key as NSString)
         }
         return image
     }
 
-    /// The symbol an entity falls back to when it has no artwork of its own, and
-    /// the SF Symbol a menu shows for it when it has room for no other image.
-    static func fallbackSymbol(_ entity: IconEntity) -> String {
+    /// The box that draws a glyph `pointSize` tall, for a view that lays its icons
+    /// out by the glyph rather than by the box.
+    static func box(forGlyph pointSize: CGFloat) -> CGFloat {
+        pointSize / glyphShare
+    }
+
+    // MARK: - Drawing
+
+    private static func draw(
+        _ entity: IconEntity,
+        size: CGFloat,
+        assets: IconAssetCache?
+    ) -> (image: UIImage, isFinal: Bool) {
+        switch entity {
+        case .pi:
+            return (PiAvatarRenderer.render(size: size), true)
+        case .server(_, let badge):
+            return (symbol(badge.symbolName, size: size) ?? UIImage(), true)
+        case .provider(let provider):
+            return (providerMark(provider, size: size), true)
+        case .model(let model):
+            return (providerMark(modelProviderKey(model) ?? model, size: size), true)
+        case .agent(let choice):
+            return iconChoice(choice, fallback: fallbackSymbol(entity), box: size, assets: assets)
+        case .workspace(let choice, let sandbox):
+            guard sandbox else {
+                return iconChoice(choice, fallback: fallbackSymbol(entity), box: size, assets: assets)
+            }
+            let content = iconChoice(
+                choice,
+                fallback: fallbackSymbol(entity),
+                box: size * sandboxContentShare,
+                assets: assets
+            )
+            let image = raster(size) { rect in
+                drawCentred(content.image, in: rect)
+                drawSandboxMark(in: rect)
+            }
+            return (image, content.isFinal)
+        }
+    }
+
+    private static func iconChoice(
+        _ choice: IconChoice?,
+        fallback: String,
+        box: CGFloat,
+        assets: IconAssetCache?
+    ) -> (image: UIImage, isFinal: Bool) {
+        switch AgentIconContent.resolve(choice) {
+        case .symbol(let name):
+            return (symbol(name, size: box) ?? symbol(fallback, size: box) ?? UIImage(), true)
+        case .text(let emoji):
+            return (centred(emoji, in: box, font: .systemFont(ofSize: box * glyphShare)), true)
+        case .genmoji(let assetId, _):
+            if let assets, let artwork = assets.cachedImage(assetId: assetId, size: artworkSize(box)) {
+                let image = raster(box) { rect in
+                    artwork.draw(in: aspectFit(artwork.size, in: rect))
+                }
+                return (image, true)
+            }
+            // No cache can load it, or this cache's load already failed: the
+            // fallback is final.
+            guard let assets, !failedLoads.contains(loadKey(assetId, assets)) else {
+                return (symbol(fallback, size: box) ?? UIImage(), true)
+            }
+            startLoad(assetId: assetId, size: artworkSize(box), assets: assets)
+            return (symbol(fallback, size: box) ?? UIImage(), false)
+        case .fallback:
+            return (symbol(fallback, size: box) ?? UIImage(), true)
+        }
+    }
+
+    private static func fallbackSymbol(_ entity: IconEntity) -> String {
         switch entity {
         case .agent:
             return "person.crop.circle"
-        // Pi always draws its avatar from `PiAvatarRenderer`, so this symbol is a
-        // stand-in for a caller that can only name one, never a drawing.
         case .pi:
             return "p.circle.fill"
         case .workspace:
             return "square.grid.2x2"
-        // A provider draws its logo or its monogram; the mark is a symbol only
-        // where something needs an SF Symbol name.
         case .provider, .model:
             return "cpu"
         case .server(_, let badge):
@@ -87,110 +154,33 @@ enum EntityIcon {
         }
     }
 
-    // MARK: - Drawing
-
-    private static func draw(_ entity: IconEntity, size: CGFloat, assets: IconAssetCache?) -> UIImage {
-        switch entity {
-        case .pi:
-            return PiAvatarRenderer.render(size: size)
-        case .server(_, let badge):
-            return symbol(badge.symbolName, size: size, color: ThemeRuntimeState.currentUIKitPalette().blue)
-                ?? UIImage()
-        case .provider(let provider):
-            return providerMark(provider, size: size)
-        case .model(let model):
-            return providerMark(modelProviderKey(model) ?? model, size: size)
-        case .agent(let choice):
-            return iconChoice(choice, fallback: fallbackSymbol(entity), size: size, assets: assets)
-        case .workspace(let choice, let sandbox):
-            guard sandbox else {
-                return iconChoice(choice, fallback: fallbackSymbol(entity), size: size, assets: assets)
-            }
-            let content = iconChoice(
-                choice,
-                fallback: fallbackSymbol(entity),
-                size: size * sandboxContentShare,
-                assets: assets
-            )
-            return supersampled(size) { rect in
-                content.draw(in: aspectFit(content.size, in: rect))
-                drawSandboxMark(in: rect)
-            }
-        }
-    }
-
-    private static func iconChoice(
-        _ choice: IconChoice?,
-        fallback: String,
-        size: CGFloat,
-        assets: IconAssetCache?
-    ) -> UIImage {
-        let blue = ThemeRuntimeState.currentUIKitPalette().blue
-        switch AgentIconContent.resolve(choice) {
-        case .symbol(let name):
-            return symbol(name, size: size, color: blue)
-                ?? symbol(fallback, size: size, color: blue)
-                ?? UIImage()
-        case .text(let text):
-            return emoji(text, size: size)
-        case .genmoji(let assetId, _):
-            if let assets, let artwork = assets.cachedImage(assetId: assetId, size: renderSize(size)) {
-                return supersampled(size) { rect in
-                    artwork.draw(in: aspectFit(artwork.size, in: rect))
-                }
-            }
-            if let assets {
-                startLoad(assetId: assetId, size: renderSize(size), assets: assets)
-            }
-            return symbol(fallback, size: size, color: blue) ?? UIImage()
-        case .fallback:
-            return symbol(fallback, size: size, color: blue) ?? UIImage()
-        }
-    }
-
-    private static func symbol(_ name: String, size: CGFloat, color: UIColor) -> UIImage? {
+    private static func symbol(_ name: String, size: CGFloat) -> UIImage? {
         UIImage(
             systemName: name,
             withConfiguration: UIImage.SymbolConfiguration(pointSize: size * glyphShare, weight: .medium)
-        )?.withTintColor(color, renderingMode: .alwaysOriginal)
-    }
-
-    private static func emoji(_ text: String, size: CGFloat) -> UIImage {
-        supersampled(size) { rect in
-            let font = UIFont.systemFont(ofSize: rect.width * glyphShare)
-            let string = text as NSString
-            let textSize = string.size(withAttributes: [.font: font])
-            string.draw(
-                at: CGPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2),
-                withAttributes: [.font: font]
-            )
-        }
+        )?.withTintColor(ThemeRuntimeState.currentUIKitPalette().blue, renderingMode: .alwaysOriginal)
     }
 
     /// A provider's logo in its brand color, or its monogram when it has no logo.
     private static func providerMark(_ provider: String, size: CGFloat) -> UIImage {
         let palette = ThemeRuntimeState.currentPalette()
         // `ProviderColor` owns the provider aliases (`openai-codex` reads as OpenAI).
-        let brand = ProviderColor.color(forProvider: provider, palette: palette)
-        let tint = UIColor(providerIconTint(.init(uiColor: brand), palette: palette))
+        let tint = UIColor(providerIconTint(
+            .init(uiColor: ProviderColor.color(forProvider: provider, palette: palette)),
+            palette: palette
+        ))
         if let assetName = providerLogoAssetName(provider), let logo = UIImage(named: assetName) {
-            return supersampled(size) { rect in
+            return raster(size) { rect in
                 logo.withTintColor(tint, renderingMode: .alwaysOriginal)
                     .draw(in: aspectFit(logo.size, in: rect))
             }
         }
-        let monogram = providerMonogram(provider) as NSString
-        return supersampled(size) { rect in
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: max(8, size * 0.8) * supersample, weight: .heavy),
-                .foregroundColor: tint,
-            ]
-            let textSize = monogram.size(withAttributes: attributes)
-            monogram.draw(
-                at: CGPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2),
-                withAttributes: attributes
-            )
-        }
+        return centred(
+            providerMonogram(provider),
+            in: size,
+            font: .systemFont(ofSize: max(8, size * 0.8), weight: .heavy),
+            color: tint
+        )
     }
 
     private static func drawSandboxMark(in rect: CGRect) {
@@ -206,7 +196,7 @@ enum EntityIcon {
         UIBezierPath(ovalIn: mark).fill()
         colors.bg.setStroke()
         let ring = UIBezierPath(ovalIn: mark.insetBy(dx: 0.5, dy: 0.5))
-        ring.lineWidth = supersample
+        ring.lineWidth = 1
         ring.stroke()
         let lock = UIImage(
             systemName: "lock.fill",
@@ -216,20 +206,46 @@ enum EntityIcon {
         lock.draw(at: CGPoint(x: mark.midX - lock.size.width / 2, y: mark.midY - lock.size.height / 2))
     }
 
-    /// Pixels at `supersample`× the points asked for, in a square canvas of
-    /// `size` points, so the image draws at the size the caller laid out.
-    private static func supersampled(_ size: CGFloat, draw: (CGRect) -> Void) -> UIImage {
-        let canvas = renderSize(size)
+    // MARK: - Rasterising
+
+    /// A square raster `size` points across, drawn at the screen's own scale (never
+    /// below 2×), so a menu that scales the image down keeps sharp pixels.
+    private static func raster(_ size: CGFloat, draw: (CGRect) -> Void) -> UIImage {
+        let side = max(1, size)
         let format = UIGraphicsImageRendererFormat.preferred()
-        format.scale = 1
-        let rendered = UIGraphicsImageRenderer(
-            size: CGSize(width: canvas, height: canvas),
-            format: format
-        ).image { _ in
-            draw(CGRect(x: 0, y: 0, width: canvas, height: canvas))
+        format.scale = max(2, format.scale)
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format)
+            .image { _ in
+                draw(CGRect(x: 0, y: 0, width: side, height: side))
+            }
+    }
+
+    private static func centred(
+        _ text: String,
+        in size: CGFloat,
+        font: UIFont,
+        color: UIColor? = nil
+    ) -> UIImage {
+        raster(size) { rect in
+            var attributes: [NSAttributedString.Key: Any] = [.font: font]
+            if let color {
+                attributes[.foregroundColor] = color
+            }
+            let string = text as NSString
+            let textSize = string.size(withAttributes: attributes)
+            string.draw(
+                at: CGPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2),
+                withAttributes: attributes
+            )
         }
-        guard let cgImage = rendered.cgImage else { return rendered }
-        return UIImage(cgImage: cgImage, scale: supersample, orientation: .up)
+    }
+
+    /// Centred at its own size: a sandbox workspace's icon must not grow into the
+    /// room its mark needs.
+    private static func drawCentred(_ content: UIImage, in rect: CGRect) {
+        content.draw(
+            at: CGPoint(x: rect.midX - content.size.width / 2, y: rect.midY - content.size.height / 2)
+        )
     }
 
     private static func aspectFit(_ content: CGSize, in rect: CGRect) -> CGRect {
@@ -244,80 +260,41 @@ enum EntityIcon {
         )
     }
 
-    private static func renderSize(_ size: CGFloat) -> CGFloat {
-        (size * supersample).rounded(.up)
+    /// The pixel size a Genmoji is decoded at for a `box`-point icon.
+    private static func artworkSize(_ box: CGFloat) -> CGFloat {
+        min(512, (box * max(2, UIGraphicsImageRendererFormat.preferred().scale)).rounded(.up))
     }
 
     // MARK: - Genmoji loads
 
+    private static func loadKey(_ assetId: String, _ assets: IconAssetCache) -> String {
+        "\(assetId):\(ObjectIdentifier(assets))"
+    }
+
     private static func startLoad(assetId: String, size: CGFloat, assets: IconAssetCache) {
         // One load per asset, size, and cache: a replaced cache is a different
         // server's artwork, so it loads on its own.
-        let request = "\(assetId):\(Int(size)):\(ObjectIdentifier(assets))"
+        let request = "\(loadKey(assetId, assets)):\(Int(size))"
         guard loadsInFlight.insert(request).inserted else { return }
         Task { @MainActor in
-            _ = try? await assets.image(assetId: assetId, size: size)
+            let loaded = try? await assets.image(assetId: assetId, size: size)
             loadsInFlight.remove(request)
-            // Every raster may hold the fallback this load replaces, so they all
-            // go; loads are rare and the cache refills on the next pass.
-            rasters.removeAllObjects()
+            guard loaded != nil else {
+                // Nothing announced, nothing refetched: this cache's fallback is
+                // what the icon draws from now on.
+                failedLoads.insert(loadKey(assetId, assets))
+                return
+            }
             loadGeneration += 1
             NotificationCenter.default.post(name: .oppiEntityIconDidLoad, object: assetId)
         }
     }
 
-    // MARK: - Cache keys
+    // MARK: - Cache key
 
-    private static func waitsForArtwork(_ entity: IconEntity, size: CGFloat, assets: IconAssetCache?) -> Bool {
-        let choice: IconChoice?
-        let contentSize: CGFloat
-        switch entity {
-        case .agent(let value):
-            choice = value
-            contentSize = size
-        case .workspace(let value, let sandbox):
-            choice = value
-            contentSize = sandbox ? size * sandboxContentShare : size
-        case .pi, .provider, .model, .server:
-            return false
-        }
-        guard case .genmoji(let assetId, _) = choice ?? .defaultValue else { return false }
-        guard let assets else { return true }
-        return assets.cachedImage(assetId: assetId, size: renderSize(contentSize)) == nil
-    }
-
-    private static func cacheKey(_ entity: IconEntity, size: CGFloat) -> String {
-        "\(entityKey(entity))|\(Int(size.rounded(.up)))|\(ThemeRuntimeState.currentThemeID().rawValue)"
-    }
-
-    private static func entityKey(_ entity: IconEntity) -> String {
-        switch entity {
-        case .agent(let choice):
-            return "agent:\(choiceKey(choice))"
-        case .pi:
-            return "pi"
-        case .workspace(let choice, let sandbox):
-            return "workspace:\(choiceKey(choice)):\(sandbox)"
-        case .provider(let provider):
-            return "provider:\(provider)"
-        case .model(let model):
-            return "model:\(model)"
-        case .server(let id, let badge):
-            return "server:\(id):\(badge.id)"
-        }
-    }
-
-    private static func choiceKey(_ choice: IconChoice?) -> String {
-        switch choice ?? .defaultValue {
-        case .defaultValue:
-            return "default"
-        case .emoji(let emoji):
-            return "emoji:\(emoji)"
-        case .symbol(let name):
-            return "symbol:\(name)"
-        case .genmoji(let assetId, _):
-            return "genmoji:\(assetId)"
-        }
+    private static func cacheKey(_ entity: IconEntity, size: CGFloat, assets: IconAssetCache?) -> String {
+        let cache = assets.map { "\(ObjectIdentifier($0))" } ?? "none"
+        return "\(entity)|\(Int(size.rounded(.up)))|\(ThemeRuntimeState.currentThemeID().rawValue)|\(cache)"
     }
 }
 

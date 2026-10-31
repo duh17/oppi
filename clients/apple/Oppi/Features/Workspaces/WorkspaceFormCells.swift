@@ -212,7 +212,6 @@ final class WorkspaceIconRowCell: UICollectionViewListCell {
         titleLabel.textColor = SettingsStyle.current.title
         icon.apply(
             .choice(choice, purpose: .workspace, sandbox: false),
-            colors: ComposerThemeColors(palette: palette),
             assetCache: assetCache
         )
         button.accessibilityIdentifier = identifier

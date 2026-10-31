@@ -815,9 +815,8 @@ extension ChatViewController {
                 size: AgentIconSizingPolicy.titleTextMinimum,
                 assets: connection.iconAssetCache
             )
-            .withRenderingMode(.alwaysOriginal)
         case .globalAvatar:
-            EntityIcon.image(.pi, size: 22).withRenderingMode(.alwaysOriginal)
+            EntityIcon.image(.pi, size: 22)
         }
     }
 }

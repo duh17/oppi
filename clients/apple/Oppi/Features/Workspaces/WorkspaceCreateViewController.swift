@@ -545,7 +545,6 @@ final class WorkspaceCreateViewController: UIViewController, UICollectionViewDel
             let icon = IconChoiceUIView(size: 22, frameSize: 32)
             icon.apply(
                 .choice(model.icon, purpose: .workspace, sandbox: false),
-                colors: ComposerThemeColors(palette: palette),
                 assetCache: model.oppiConnection?.iconAssetCache
             )
             accessories = [.customView(configuration: .init(customView: icon, placement: .trailing()))]

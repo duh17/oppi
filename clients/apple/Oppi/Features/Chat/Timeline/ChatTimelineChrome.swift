@@ -140,14 +140,13 @@ final class ChatEmptyStateView: UIView {
             switch key.identity {
             case .globalAvatar:
                 piTile.backgroundColor = colors.comment.withAlphaComponent(0.10)
-                piIcon.apply(.piAvatar, colors: colors)
+                piIcon.apply(.piAvatar)
                 piTile.isHidden = false
                 piIcon.isHidden = false
                 agentIcon.isHidden = true
             case .agent(let content):
                 agentIcon.apply(
                     .choice(key.icon, purpose: .agent, sandbox: false),
-                    colors: colors,
                     assetCache: configuration.iconAssetCache
                 )
                 agentIcon.accessibilityLabel = content.accessibilityDescription

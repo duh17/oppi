@@ -574,7 +574,6 @@ private final class IconPickerChooserCell: UICollectionViewListCell {
             iconView.isHidden = false
             iconView.apply(
                 .choice(value, purpose: purpose, sandbox: false),
-                colors: ComposerThemeColors(palette: ThemeRuntimeState.currentPalette()),
                 assetCache: assetCache
             )
         case .genmoji(let image):

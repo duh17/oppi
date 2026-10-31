@@ -328,7 +328,7 @@ private final class QuickSessionPickerRowButton: UIButton {
         pressedOverlay.isHidden = true
 
         let icon = IconChoiceUIView(size: style.iconSize, frameSize: style.iconFrame)
-        icon.apply(row.icon, colors: colors, assetCache: row.iconAssetCache)
+        icon.apply(row.icon, assetCache: row.iconAssetCache)
         let title = UILabel()
         title.text = row.title
         title.font = UIFont.scaled(style.titleStyle, style.titleWeight)

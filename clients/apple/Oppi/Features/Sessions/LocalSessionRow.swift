@@ -133,7 +133,7 @@ final class LocalSessionRowContentView: UIView, UIContentView {
         if let model {
             modelLabel.text = model.label
             if !model.provider.isEmpty {
-                providerIcon.image = style.providerIcon(model.provider)
+                providerIcon.image = EntityIcon.image(.provider(model.provider), size: 11)
             }
         }
         countLabel.setHiddenIfChanged(session.messageCount == 0)

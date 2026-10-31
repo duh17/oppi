@@ -136,7 +136,7 @@ final class QuickSessionPillButton: UIButton {
     func apply(_ content: Content, colors: ComposerThemeColors) {
         if let icon = content.icon {
             iconView.isHidden = false
-            iconView.apply(icon, colors: colors, assetCache: content.iconAssetCache)
+            iconView.apply(icon, assetCache: content.iconAssetCache)
         } else {
             iconView.isHidden = true
         }

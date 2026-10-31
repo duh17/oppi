@@ -2,10 +2,8 @@ import UIKit
 
 /// A saved workspace or Agent icon: an SF Symbol in the theme blue, an emoji, or
 /// a Genmoji the server stores, a sandbox workspace's lock mark, the Pi mark, and
-/// plain symbols for the other pills. `EntityIcon` owns the pixels and their
-/// fallbacks; this view places them in its frame and redraws when artwork lands.
-/// Quick Session's pills and pickers, the chat title, the empty chat, and the
-/// workspace sidebar's rows draw their icons with it.
+/// plain symbols for the other pills. `EntityIcon` owns the pixels; this view
+/// places them in its frame and redraws when artwork lands.
 @MainActor
 final class IconChoiceUIView: UIView {
     enum Content: Equatable {
@@ -61,8 +59,8 @@ final class IconChoiceUIView: UIView {
         }
     }
 
-    /// The size the icon's content takes in its frame, following Dynamic Type.
-    private var contentSize: CGFloat {
+    /// The glyph size the icon takes in its frame, following Dynamic Type.
+    private var glyphSize: CGFloat {
         AgentIconSizingPolicy.contentSize(
             baseSize: size,
             scaledSize: UIFontMetrics(forTextStyle: .body).scaledValue(for: size),
@@ -70,9 +68,7 @@ final class IconChoiceUIView: UIView {
         )
     }
 
-    /// `colors` is the presenter's theme and no longer changes an icon's pixels:
-    /// `EntityIcon` draws with the theme the app is on, like every other icon.
-    func apply(_ content: Content, colors: ComposerThemeColors, assetCache: IconAssetCache? = nil) {
+    func apply(_ content: Content, assetCache: IconAssetCache? = nil) {
         self.content = content
         self.assetCache = assetCache
         render()
@@ -91,13 +87,19 @@ final class IconChoiceUIView: UIView {
             case .agent: .agent(choice)
             case .workspace: .workspace(choice, sandbox: sandbox)
             }
-            // A sandbox workspace's mark sits in the frame's corner, so that icon
-            // is drawn in the whole frame; the others are centered content.
+            // Artwork and the sandbox mark fill the frame; a symbol or an emoji
+            // takes its glyph size, as it always has in a pill or a title.
+            let fillsFrame = sandbox || isArtwork(choice)
             imageView.image = EntityIcon.image(
                 entity,
-                size: sandbox ? frameSize : contentSize,
+                size: fillsFrame ? frameSize : EntityIcon.box(forGlyph: glyphSize),
                 assets: assetCache
             )
         }
+    }
+
+    private func isArtwork(_ choice: IconChoice?) -> Bool {
+        if case .genmoji = AgentIconContent.resolve(choice) { return true }
+        return false
     }
 }

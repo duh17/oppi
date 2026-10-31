@@ -660,12 +660,11 @@ final class UserTimelineRowContentView: UIView, UIContentView {
         let icon = card.sender?.agentIcon
         switch card.senderIdentity {
         case .globalAvatar:
-            agentIconView.apply(.piAvatar, colors: colors)
+            agentIconView.apply(.piAvatar)
             agentIconView.transform = .identity
         case .agent:
             agentIconView.apply(
                 .choice(icon, purpose: .agent, sandbox: false),
-                colors: colors,
                 assetCache: currentConfiguration.iconAssetCache
             )
             // Agent artwork carries more internal whitespace than the Pi mark.
@@ -690,7 +689,7 @@ final class UserTimelineRowContentView: UIView, UIContentView {
             // Reuse must not carry this sender's Agent icon, or leave its Genmoji
             // request running, under whatever this row draws next.
             agentIconShowsSender = false
-            agentIconView.apply(.piAvatar, colors: ComposerThemeColors(palette: palette))
+            agentIconView.apply(.piAvatar)
             agentIconView.transform = .identity
         }
         agentChevronView.image = nil

@@ -92,7 +92,6 @@ final class WorkspaceRowCell: UICollectionViewListCell {
     ) {
         icon.apply(
             .choice(workspace.icon, purpose: .workspace, sandbox: workspace.runtime == .sandbox),
-            colors: colors,
             assetCache: assetCache
         )
         nameLabel.text = workspace.name

@@ -704,10 +704,10 @@ final class ChatTitleView: UIView {
         piTile.isHidden = isAgent
         agentIcon.isHidden = !isAgent
         if isAgent {
-            agentIcon.apply(.choice(avatar.icon, purpose: .agent, sandbox: false), colors: colors, assetCache: assetCache)
+            agentIcon.apply(.choice(avatar.icon, purpose: .agent, sandbox: false), assetCache: assetCache)
         } else {
             piTile.backgroundColor = colors.comment.withAlphaComponent(0.10)
-            piIcon.apply(.piAvatar, colors: colors)
+            piIcon.apply(.piAvatar)
         }
     }
 }

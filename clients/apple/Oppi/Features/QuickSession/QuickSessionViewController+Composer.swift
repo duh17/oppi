@@ -51,7 +51,6 @@ extension QuickSessionViewController: ChatComposerSource {
 
     private func composerActionRow(colors: ComposerThemeColors) -> ComposerActionRow {
         let presentation = model.modelPresentation
-        composerIcons.prepare(assets: model.selectedServerIconAssetCache)
         let toolbar = ComposerActionRow.sessionToolbar(
             modelTitle: shortModelName(model.effectiveModelId ?? presentation.pillText),
             modelProvider: presentation.pillProvider,
@@ -66,7 +65,11 @@ extension QuickSessionViewController: ChatComposerSource {
         let agent = model.selectedAgent
         let agentAction = ComposerAction.agent(
             title: agent?.name ?? "Pi",
-            icon: agent.map { composerIcons.icon(for: $0, size: 12) } ?? composerIcons.piAvatar(size: 16),
+            icon: EntityIcon.image(
+                .agent(agent?.icon),
+                size: 16,
+                assets: model.selectedServerIconAssetCache
+            ),
             colors: colors,
             rows: agentPickerRows,
             isLoading: model.isLoadingAgents,
@@ -77,12 +80,13 @@ extension QuickSessionViewController: ChatComposerSource {
 
     /// The action row's Agent list: Pi, then the server's saved Agents.
     private var agentPickerRows: [ComposerOptionRow] {
+        let assets = model.selectedServerIconAssetCache
         var rows: [ComposerOptionRow] = [
             ComposerOptionRow(
                 id: Self.piRowID,
                 title: "Pi",
                 subtitle: nil,
-                icon: composerIcons.piAvatar(size: 22),
+                icon: EntityIcon.image(.pi, size: 22),
                 isSelected: model.selectedAgentId == nil,
                 accessibilityIdentifier: "quickSession.agent.pi",
                 accessibilityLabel: "Pi"
@@ -94,7 +98,7 @@ extension QuickSessionViewController: ChatComposerSource {
                     id: agent.id,
                     title: agent.name,
                     subtitle: agent.description,
-                    icon: composerIcons.icon(for: agent, size: 16),
+                    icon: EntityIcon.image(.agent(agent.icon), size: 16, assets: assets),
                     isSelected: model.selectedAgentId == agent.id,
                     accessibilityIdentifier: "quickSession.agent.\(agent.id)",
                     accessibilityLabel: agent.name
@@ -176,26 +180,5 @@ extension QuickSessionViewController: ChatComposerSource {
             colors: colors,
             thinkingTint: thinkingTint
         )
-    }
-}
-
-/// Rendered Agent and Pi icons for Quick Session's composer. The pixels are
-/// `EntityIcon`'s; this holds the server's icon cache the composer draws with,
-/// so a Genmoji Agent has its artwork in the action row and its popover.
-@MainActor
-final class QuickSessionComposerIconCache {
-    private weak var assets: IconAssetCache?
-
-    func prepare(assets: IconAssetCache?) {
-        self.assets = assets
-    }
-
-    func icon(for agent: AgentDefinitionSummary, size: CGFloat) -> UIImage {
-        EntityIcon.image(.agent(agent.icon), size: size, assets: assets)
-    }
-
-    /// The one Pi mark, at each size it is shown.
-    func piAvatar(size: CGFloat) -> UIImage {
-        EntityIcon.image(.pi, size: size)
     }
 }
