@@ -304,10 +304,6 @@ final class FullScreenCodeViewController: UIViewController {
         applyThemeIfNeeded(ThemeRuntimeState.currentThemeID())
     }
 
-    /// Rebuild persistent UIKit content and chrome when SwiftUI's active theme
-    /// changes. Full-screen bodies capture a palette at construction time, so
-    /// merely invalidating the representable leaves code, markdown, diff,
-    /// terminal, and rendered-document viewers in the previous appearance.
     /// The document's edit entry owns these: a pencil, or the "…" that holds
     /// Edit with Session. The reader shows them left of its own controls.
     func setEditBarItems(_ items: [UIBarButtonItem]) {
@@ -319,6 +315,10 @@ final class FullScreenCodeViewController: UIViewController {
         configureNavigation(on: viewController, palette: bodyThemeID.palette)
     }
 
+    /// Rebuild persistent UIKit content and chrome when SwiftUI's active theme
+    /// changes. Full-screen bodies capture a palette at construction time, so
+    /// merely invalidating the representable leaves code, markdown, diff,
+    /// terminal, and rendered-document viewers in the previous appearance.
     func applyThemeIfNeeded(_ themeID: ThemeID) {
         guard isViewLoaded, let viewController = contentHostController else {
             appliedThemeID = themeID

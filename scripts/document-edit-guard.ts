@@ -36,7 +36,7 @@ const rules: [name: string, pattern: RegExp, rawLines?: boolean][] = [
   ["DocumentEditLabels", /\bDocumentEditLabels\b/g],
   ["fileEditingCapability(", /\bfileEditingCapability\s*\(/g],
   ["readFileForEditing(", /\breadFileForEditing\s*\(/g],
-  ["edit pencil", /"pencil"|"pencil\.circle"|"square\.and\.pencil"|systemItem:\s*\.edit\b/, true],
+  ["edit pencil", /"pencil|"square\.and\.pencil|\beditButtonItem\b/, true],
 ];
 
 const O = "clients/apple/Oppi/";
@@ -67,6 +67,12 @@ const allowed: [file: string, rule: string, count: number, reason: string][] = [
     "The Message capsule's compose icon."],
   [O + "Features/Review/WorkspaceReviewFileDetailViewController.swift", "edit pencil", 1,
     "New Session's compose icon; the file's own entry comes from the viewer."],
+  [O + "Core/Views/PaperMarkupCanvasSession.swift", "edit pencil", 2,
+    "Visual Markup's drawing-tool symbols, not document edit controls."],
+  [O + "Features/Settings/QuickCommentEditorViewController.swift", "edit pencil", 1,
+    "A quick-comment template's symbol choice, not a document."],
+  [O + "Features/Settings/QuickCommentsViewController.swift", "edit pencil", 2,
+    "UIKit's editButtonItem on the template list plus its identifier."],
   [O + "Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift", "edit pencil", 2,
     "The save status glyph and the conflict review's Keep Editing button."],
 ];

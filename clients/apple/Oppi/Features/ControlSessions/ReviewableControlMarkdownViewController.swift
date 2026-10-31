@@ -262,7 +262,6 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     /// arrives with the subjects that can be written back.
     private lazy var editOwner = DocumentEditOwner(
         subject: .snapshot,
-        placement: .readerBar,
         agentAction: DocumentAgentEditAction { [weak self] in self?.presentGuidedRevision() },
         backend: { nil },
         onChange: { [weak self] in self?.setNeedsUpdateProperties() }

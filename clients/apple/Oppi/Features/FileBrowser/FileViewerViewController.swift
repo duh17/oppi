@@ -372,19 +372,18 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         )
     }
 
-    /// This document's edit entry, in the bar the viewer shows it in: the
-    /// reader's own glass bar, or this viewer's (host files, a tree pane).
-    private var editPlacement: DocumentEditOwner.Placement {
+    /// Where this document's edit entry goes: the reader's own glass bar when the
+    /// reader shows one, else this viewer's (host files, a tree pane).
+    private var sharesReaderBar: Bool {
         FileBrowserContentRenderingPolicy.showsNavigationChrome(
             for: configuration.chromeMode,
             source: configuration.source
-        ) ? .readerBar : .screenBar
+        )
     }
 
     private func makeEditOwner() -> DocumentEditOwner {
         DocumentEditOwner(
             subject: .snapshot,
-            placement: editPlacement,
             agentAction: configuration.agentEdit,
             backend: { [weak self] in
                 guard let self, let api = loadedApiClient ?? services.apiClient() else { return nil }
@@ -504,7 +503,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                 retry: RetryAction { [weak self] in self?.startLoad(force: true) }
             ))
         case .text(let text):
-            if let page = editOwner.makeEditorPage(), editOwner.isEditing {
+            if let page = editOwner.makeEditorPage(checkoutSubtitle: checkoutSubtitle), editOwner.isEditing {
                 mounted = mountEditor(page)
             } else {
                 mounted = mountReader(text: text)
@@ -940,7 +939,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)
             reader.setTrailingFloatingAccessoryCount(trailingAccessoryCount)
         }
-        editOwner.updateEditorPage(palette: palette)
+        editOwner.updateEditorPage(palette: palette, checkoutSubtitle: checkoutSubtitle)
         if let audioPlayerController, case .audio(let source) = content {
             audioPlayerController.apply(audioConfiguration(source))
         }
@@ -974,7 +973,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         } else {
             // Left to right: the edit entry, then Share. The entry's items are
             // trailing-first, so they go in reversed.
-            if editPlacement == .screenBar, !loading {
+            if !sharesReaderBar, !loading {
                 items.append(contentsOf: editOwner.barItems.reversed())
             }
             if configuration.chromeMode == .pushed, !isUsingFileViewer, let share = shareBarItem() {
@@ -1135,7 +1134,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         // The read that follows adopts whatever this file's edit entry resolves:
         // a tagged read and a live or kept draft, or nothing to edit at all.
         editOwner.begin(subject: editSubject(for: requestedPath))
-        editOwner.checkoutSubtitle = checkoutSubtitle
 
         // Every re-show reads again: after AVKit fullscreen from an inline
         // Markdown video, or a pop back from a pushed wiki link. Rebuilding the

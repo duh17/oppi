@@ -127,8 +127,10 @@ final class DocumentEditEditorPage: UIViewController {
         editor.setShowingPreview(isShowingPreview)
     }
 
-    /// Hands the editor's live buffer to the session before the page goes away.
+    /// Hands the editor's live buffer to the session and closes the sheet it
+    /// opened, before the page goes away.
     func finishEditing() {
+        closeConflictReview()
         editor.finishEditing()
     }
 

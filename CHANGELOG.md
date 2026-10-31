@@ -80,6 +80,7 @@ Example:
 
 ### Changed
 
+- **Client:** A document's pencil opens the editor where the file can be edited (a workspace file, or an editable Skill's own file) and is hidden where it cannot; **Edit with Oppi** is now **Edit with Session**, in a **…** menu beside the pencil, so a reader that cannot type in place still offers the session. See [Editing workspace files](docs/document-viewers.md#editing-workspace-files).
 - **Client:** The SSH terminal's **Back to Live** is now the chat timeline's glass arrow button, at the terminal's bottom trailing corner while you are scrolled into history (VoiceOver still says "Back to Live").
 - **Client:** SSH Terminal keeps 32 MiB of scrollback per terminal, up from 8 MiB (about 70,000 rows on a phone). This applies to every terminal.
 - **Client:** The SSH terminal's chat bar no longer appears on its own when a coding agent reports itself (OSC 7501): it shows only after you tap **Chat Bar** (or the chat button on the terminal keyboard's bar), the way the terminal keyboard opens only when you ask. Your choice lasts while you stay on that terminal: going back, switching terminals, opening a Rex pane, or reconnecting starts over in direct typing. The key strips still follow the reporting agent. See [SSH Terminal](docs/ssh-terminal.md#input-bar-touch-and-keyboard).

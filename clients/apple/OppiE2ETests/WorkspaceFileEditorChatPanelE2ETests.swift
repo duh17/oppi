@@ -33,7 +33,7 @@ final class WorkspaceFileEditorChatPanelE2ETests: E2ETestCase {
         tap(app.buttons["All"], named: "All tab", timeout: 5)
         tap(app.staticTexts[directoryName], named: "fixture directory row", timeout: 15)
         tap(app.staticTexts[Self.filename], named: "fixture file row", timeout: 15)
-        tap(app.buttons["fullscreen-code.action.workspace-file-edit"], named: "Edit", timeout: 15)
+        tap(app.buttons["workspace-file-editor.edit"], named: "Edit", timeout: 15)
         XCTAssertTrue(app.textViews["workspace-file-editor.text"].waitForExistence(timeout: 10), "editor did not open")
 
         let done = app.buttons["workspace-file-editor.done"]
@@ -46,7 +46,7 @@ final class WorkspaceFileEditorChatPanelE2ETests: E2ETestCase {
 
         done.tap()
         XCTAssertTrue(
-            app.buttons["fullscreen-code.action.workspace-file-edit"].waitForExistence(timeout: 10),
+            app.buttons["workspace-file-editor.edit"].waitForExistence(timeout: 10),
             "Done did not return to the reader"
         )
     }

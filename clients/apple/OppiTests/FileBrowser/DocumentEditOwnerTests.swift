@@ -115,7 +115,6 @@ struct DocumentEditOwnerTests {
         snapshot: WorkspaceFileDiskSnapshot = WorkspaceFileDiskSnapshot(bytes: Data("hello".utf8), etag: "\"sha256-a\""),
         outcome: WorkspaceFileReadOutcome? = nil,
         agentAction: DocumentAgentEditAction? = nil,
-        placement: DocumentEditOwner.Placement = .screenBar,
         transport: WorkspaceFileEditTransport? = nil,
         draftStore: WorkspaceFileDraftStore? = nil,
         sessionRegistry: WorkspaceFileEditSessionRegistry? = nil,
@@ -134,7 +133,6 @@ struct DocumentEditOwnerTests {
         )
         return DocumentEditOwner(
             subject: subject,
-            placement: placement,
             agentAction: agentAction,
             backend: { backend },
             draftStore: draftStore ?? self.draftStore(),
@@ -285,7 +283,6 @@ struct DocumentEditOwnerTests {
         )
         let owner = DocumentEditOwner(
             subject: workspaceSubject(path: "a.md"),
-            placement: .screenBar,
             backend: { backend },
             draftStore: draftStore(),
             registry: registry(),
@@ -327,7 +324,7 @@ struct DocumentEditOwnerTests {
         let owner = owner(subject: workspaceSubject(), capability: capability, transport: savedTransport)
         _ = await owner.read()
         owner.beginEditing()
-        let page = owner.makeEditorPage()
+        let page = owner.makeEditorPage(checkoutSubtitle: nil)
         page?.loadViewIfNeeded()
         let session = owner.session
         page?.editor.textView.text = "typed words"

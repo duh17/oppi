@@ -25,6 +25,7 @@
     "clients/apple/Oppi/Features/Chat/Timeline/Rows/UserTimelineRowContent.swift": 4,
     "clients/apple/Oppi/Features/Chat/Timeline/Tool/NotebookCellView.swift": 1,
     "clients/apple/Oppi/Features/DocumentEditing/DocumentEditEditorPage.swift": 1,
+    "clients/apple/Oppi/Features/DocumentEditing/DocumentEditOwner.swift": 1,
     "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift": 4,
     "clients/apple/Oppi/Features/FileBrowser/Editing/CodeEditorKeyBar.swift": 3,
     "clients/apple/Oppi/Features/FileBrowser/Editing/CodeEditorStatusBar.swift": 6,

@@ -68,7 +68,7 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
 
         tap(app.buttons["workspace-file-editor.done"], named: "Done")
         XCTAssertTrue(
-            app.buttons["fullscreen-code.action.workspace-file-edit"].waitForExistence(timeout: 10),
+            app.buttons["workspace-file-editor.edit"].waitForExistence(timeout: 10),
             "Done did not return to the reader"
         )
     }
@@ -290,15 +290,14 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
 
     private func openFileInEditor() throws {
         try openFile()
-        // The reader's bar holds Edit; an iPad tree pane hides that bar and
-        // shows Edit in the SwiftUI toolbar instead.
-        let readerEdit = app.buttons["fullscreen-code.action.workspace-file-edit"]
-        let treePaneEdit = app.buttons["workspace-file-editor.edit"]
+        // One pencil opens the editor in the reader's bar and in a tree pane's
+        // own bar.
+        let edit = app.buttons["workspace-file-editor.edit"]
         let deadline = Date().addingTimeInterval(15)
-        while Date() < deadline, !readerEdit.exists, !treePaneEdit.exists {
+        while Date() < deadline, !edit.exists {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        tap(treePaneEdit.exists ? treePaneEdit : readerEdit, named: "Edit", timeout: 5)
+        tap(edit, named: "Edit", timeout: 5)
         XCTAssertTrue(editorTextView.waitForExistence(timeout: 10), "editor text view did not appear")
     }
 }

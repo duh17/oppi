@@ -18,15 +18,6 @@ import UIKit
 /// same outcomes.
 @MainActor
 final class DocumentEditOwner {
-    /// The bar the owner's items and its editor page join. The identifier of
-    /// the pencil follows the bar it lives in, because both predate the owner.
-    enum Placement {
-        /// A reader with its own glass bar (`FullScreenCodeViewController`).
-        case readerBar
-        /// A screen with its own bar: a host file, a tree pane, a review file.
-        case screenBar
-    }
-
     /// Reads and writes one document. The live backend is the paired server's
     /// `/files/current`; tests and previews script the answers. `read` answers
     /// with the transport's own outcome, so a missing file and an unreachable
@@ -68,15 +59,10 @@ final class DocumentEditOwner {
     }
 
     private(set) var subject: DocumentEditSubject
-    /// Shown above the editor: the checkout the file writes to.
-    var checkoutSubtitle: String? {
-        didSet { if checkoutSubtitle != oldValue { onChange() } }
-    }
     let handlers: Handlers
     /// Edit with Session, when the screen offers one.
     let agentAction: DocumentAgentEditAction?
 
-    private let placement: Placement
     private let backendSource: @MainActor () -> Backend?
     /// Construction context for the editor page's conflict sheet.
     private let reviewCommentSelectionScope: ReviewCommentSelectionScope?
@@ -106,12 +92,11 @@ final class DocumentEditOwner {
     /// The open editor, made on first use and reused until editing ends.
     private(set) var editorPage: DocumentEditEditorPage?
 
-    private var barKey: BarKey?
+    private var cachedOffersEditor: Bool?
     private var cachedBarItems: [UIBarButtonItem] = []
 
     init(
         subject: DocumentEditSubject,
-        placement: Placement,
         agentAction: DocumentAgentEditAction? = nil,
         backend: @escaping @MainActor () -> Backend?,
         reviewCommentSelectionScope: ReviewCommentSelectionScope? = nil,
@@ -121,7 +106,6 @@ final class DocumentEditOwner {
         onChange: @escaping @MainActor () -> Void
     ) {
         self.subject = subject
-        self.placement = placement
         self.agentAction = agentAction
         self.backendSource = backend
         self.reviewCommentSelectionScope = reviewCommentSelectionScope
@@ -250,9 +234,8 @@ final class DocumentEditOwner {
     /// the "…" and the pencil. Empty when this document offers no edit at all.
     var barItems: [UIBarButtonItem] {
         if isEditing { return editorPage?.barButtons ?? [] }
-        let key = BarKey(offersEditor: offersEditor, hasAgentAction: agentAction != nil)
-        if key != barKey {
-            barKey = key
+        if cachedOffersEditor != offersEditor {
+            cachedOffersEditor = offersEditor
             cachedBarItems = makeBarItems()
         }
         return cachedBarItems
@@ -278,9 +261,9 @@ final class DocumentEditOwner {
             primaryAction: UIAction { [weak self] _ in self?.beginEditing() }
         )
         item.accessibilityLabel = DocumentEditLabels.editFile
-        item.accessibilityIdentifier = placement == .readerBar
-            ? "fullscreen-code.action.workspace-file-edit"
-            : "workspace-file-editor.edit"
+        // One identifier for the pencil in either bar: the primary control the
+        // reader's own tests and the tree pane's both look for.
+        item.accessibilityIdentifier = "workspace-file-editor.edit"
         return item
     }
 
@@ -300,11 +283,6 @@ final class DocumentEditOwner {
         item.accessibilityLabel = DocumentEditLabels.more
         item.accessibilityIdentifier = "document.edit.more"
         return item
-    }
-
-    private struct BarKey: Equatable {
-        var offersEditor = false
-        var hasAgentAction = false
     }
 
     // MARK: Editing
@@ -341,7 +319,7 @@ final class DocumentEditOwner {
     func endEditing() {
         guard let session else {
             isEditing = false
-            setNeedsUpdate()
+            onChange()
             return
         }
         // Teardown first, so the session holds the final buffer.
@@ -350,13 +328,14 @@ final class DocumentEditOwner {
         isEditing = false
         editorPage = nil
         handlers.didShowText(text)
-        setNeedsUpdate()
+        onChange()
     }
 
     /// Hosts the editor page of an open session; nil when nothing is open.
     /// Each open editor is its own page: finishing one detaches the session
-    /// for good, so it is never handed back.
-    func makeEditorPage() -> DocumentEditEditorPage? {
+    /// for good, so it is never handed back. `checkoutSubtitle` is the screen's
+    /// answer for this update, as main recomputed it on every pass.
+    func makeEditorPage(checkoutSubtitle: String?) -> DocumentEditEditorPage? {
         guard isEditing, let session else { return nil }
         if let editorPage { return editorPage }
         let page = DocumentEditEditorPage(
@@ -366,7 +345,7 @@ final class DocumentEditOwner {
             onDone: { [weak self] in self?.endEditing() },
             onTogglePreview: { [weak self] in
                 self?.editorPage?.togglePreview()
-                self?.setNeedsUpdate()
+                self?.onChange()
             },
             makePreview: handlers.makePreview,
             onUseDisk: { [weak self] in self?.useDiskVersion() }
@@ -376,7 +355,7 @@ final class DocumentEditOwner {
     }
 
     /// Repaints the open editor and applies a replaced draft.
-    func updateEditorPage(palette: ThemePalette) {
+    func updateEditorPage(palette: ThemePalette, checkoutSubtitle: String?) {
         guard let editorPage else { return }
         editorPage.apply(
             palette: palette,
@@ -387,7 +366,7 @@ final class DocumentEditOwner {
     }
 
     /// The page is going away (the viewer is popped, or shows another file):
-    /// the editor hands its buffer to the session first.
+    /// the editor hands its buffer to the session and closes its sheets first.
     func finishEditing() {
         editorPage?.finishEditing()
         editorPage = nil
@@ -397,14 +376,17 @@ final class DocumentEditOwner {
         self.session = session
         notice = nil
         isEditing = true
-        setNeedsUpdate()
+        onChange()
     }
 
     private func useDiskVersion() {
         guard let session else { return }
+        let generation = generation
         Task { [weak self] in
             let outcome = await session.useDiskVersion()
-            guard let self else { return }
+            // The reader may have moved on to another file meanwhile: its state
+            // is not this read's to change.
+            guard let self, generation == self.generation else { return }
             switch outcome {
             case .replaced(let text):
                 notice = nil
@@ -422,8 +404,9 @@ final class DocumentEditOwner {
     // MARK: Plumbing
 
     private func reset() {
-        // The page's editor holds the live buffer: hand it back before the page
-        // goes, or the session keeps a provider over a freed text view.
+        // The page's editor holds the live buffer: hand it back (and close its
+        // sheets) before the page goes, or the session keeps a provider over a
+        // freed text view.
         editorPage?.finishEditing()
         editorPage = nil
         identity = nil
@@ -433,10 +416,6 @@ final class DocumentEditOwner {
         isEditing = false
         notice = nil
         replacement = nil
-        setNeedsUpdate()
-    }
-
-    private func setNeedsUpdate() {
         onChange()
     }
 }

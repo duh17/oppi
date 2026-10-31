@@ -54,7 +54,6 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
     private static func editItems() -> [UIBarButtonItem] {
         DocumentEditOwner(
             subject: .snapshot,
-            placement: .readerBar,
             agentAction: DocumentAgentEditAction {},
             backend: { nil },
             onChange: {}
