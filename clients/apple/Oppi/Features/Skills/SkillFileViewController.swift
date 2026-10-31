@@ -31,6 +31,9 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
     private var shownPhase: Phase?
     private var reader: FullScreenCodeViewController?
     private var loadTask: Task<Void, Never>?
+    /// The document's edit entry: its pencil edits this file through its Skill
+    /// when the server's catalog says the Skill is editable.
+    private lazy var editOwner = makeEditOwner()
 
     init(
         skillName: String,
@@ -60,6 +63,47 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
 
     private var fileName: String {
         filePath.components(separatedBy: "/").last ?? filePath
+    }
+
+    /// The Skill this file belongs to, as the server's catalog names it: the one
+    /// Skill with this reader's name, when it is editable and this is one of its
+    /// own files. Nil shows no pencil, and the reader keeps the bar it had.
+    private var skillFile: SkillFileEditTarget? {
+        guard let serverId = connection.currentServerId else { return nil }
+        return ServerSkillFilePresentation.editTarget(
+            skillName: skillName,
+            filePath: filePath,
+            skills: connection.serverResourceStore.skills(forServer: serverId)
+        )
+    }
+
+    private func makeEditOwner() -> DocumentEditOwner? {
+        guard let skillFile else { return nil }
+        let subject = DocumentEditSubject.file(
+            serverId: connection.currentServerId,
+            source: .hostFile,
+            workspaceId: "",
+            worktreeId: nil,
+            path: filePath,
+            skillFile: skillFile,
+            fileType: FileType.detect(from: filePath)
+        )
+        return DocumentEditOwner(
+            subject: subject,
+            backend: { [weak self] in
+                guard let self, let api = connection.apiClient else { return nil }
+                return .make(for: subject, api: api)
+            },
+            handlers: .init(
+                makePreview: { [weak self] text in
+                    FullScreenCodeViewController(
+                        content: .fromText(text, filePath: self?.filePath),
+                        presentationMode: .contentOnly()
+                    )
+                }
+            ),
+            onChange: { [weak self] in self?.setNeedsUpdateProperties() }
+        )
     }
 
     private var isShowingFile: Bool {
@@ -98,6 +142,9 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
             show(phase)
         }
         reader?.applyThemeIfNeeded(themeID)
+        reader?.setEditBarItems(editOwner?.barItems ?? [])
+        editOwner?.updateEditorPage(palette: root.themeStore.activeThemeID.palette, checkoutSubtitle: nil)
+        editOwner?.presentEditorIfNeeded(from: self)
         navigationItem.title = isShowingFile ? "" : fileName
         navigationController?.updateNavigationBar(for: self, animated: false)
     }
@@ -142,8 +189,15 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
             reviewCommentSelectionContext: reviewCommentSelectionScope?.makeContext(
                 sessionId: nil,
                 sourceLabel: nil
-            )
+            ),
+            editItems: editOwner?.barItems ?? []
         )
+        if let editOwner {
+            Task { [weak self] in
+                _ = await editOwner.read()
+                self?.setNeedsUpdateProperties()
+            }
+        }
         addChild(reader)
         reader.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(reader.view)
@@ -159,6 +213,8 @@ final class SkillFileViewController: UIViewController, NavigationBarHiding {
     }
 
     private func removeReader() {
+        // The editor holds the live buffer: hand it back before the reader goes.
+        editOwner?.finishEditing()
         guard let reader else { return }
         reader.willMove(toParent: nil)
         reader.view.removeFromSuperview()

@@ -145,9 +145,34 @@ extension ChatViewController {
                     sessionId: sessionId,
                     composerDestination: canvasDestination,
                     lockOrigin: readerLockOrigin
-                ),
+                ).withLiveFileSubject(liveFileSubject(for: payload)),
                 retaining: appNavigation.containsChatReader
             )
+        )
+    }
+
+    /// The live workspace file a reader's bytes name, when this chat can resolve
+    /// one. The row may show a tool's output; the pencil edits the file on disk
+    /// now, through the ordinary workspace edit path.
+    private func liveFileSubject(for payload: ChatReaderPayload) -> DocumentEditSubject? {
+        guard payload.editSubject == nil,
+              let path = payload.contentFilePath,
+              let serverId = resolvedServerId,
+              let workspaceId = timelineWorkspaceId,
+              let workspace = connection.workspaceStore.workspaces.first(where: { $0.id == workspaceId }),
+              let workspacePath = WorkspaceFileEditPath.reportedPath(
+                  path,
+                  runtime: workspace.runtime,
+                  hostMount: workspace.hostMount
+              ) else { return nil }
+        return .file(
+            serverId: serverId,
+            source: .workspaceFile,
+            workspaceId: workspaceId,
+            worktreeId: session?.worktreeId,
+            path: workspacePath,
+            skillFile: nil,
+            fileType: FileType.detect(from: workspacePath)
         )
     }
 

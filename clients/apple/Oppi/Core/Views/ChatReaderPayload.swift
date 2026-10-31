@@ -58,36 +58,49 @@ struct ChatReaderPayload {
     /// Lock scope of the origin chat (server, workspace, session), stamped
     /// with `destination`. The reader shows only while that scope is open.
     var lockOrigin: ScopedLockTarget? = nil
+    /// The live document behind the bytes, when the origin chat can name one: the
+    /// reader's edit entry then edits that file, not the output the row shows.
+    var editSubject: DocumentEditSubject? = nil
 
-    init(kind: Kind, destination: ComposerCanvasDestination? = nil, lockOrigin: ScopedLockTarget? = nil) {
+    init(
+        kind: Kind,
+        destination: ComposerCanvasDestination? = nil,
+        lockOrigin: ScopedLockTarget? = nil,
+        editSubject: DocumentEditSubject? = nil
+    ) {
         self.kind = kind
         self.destination = destination
         self.lockOrigin = lockOrigin
+        self.editSubject = editSubject
     }
 
     init(
         content: FullScreenCodeContent,
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
-        destination: ComposerCanvasDestination? = nil
+        destination: ComposerCanvasDestination? = nil,
+        editSubject: DocumentEditSubject? = nil
     ) {
         self.init(
             kind: .document(
                 content: content,
                 reviewCommentSelectionContext: reviewCommentSelectionContext
             ),
-            destination: destination
+            destination: destination,
+            editSubject: editSubject
         )
     }
 
     static func document(
         content: FullScreenCodeContent,
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
-        destination: ComposerCanvasDestination? = nil
+        destination: ComposerCanvasDestination? = nil,
+        editSubject: DocumentEditSubject? = nil
     ) -> Self {
         Self(
             content: content,
             reviewCommentSelectionContext: reviewCommentSelectionContext,
-            destination: destination
+            destination: destination,
+            editSubject: editSubject
         )
     }
 
@@ -120,11 +133,16 @@ struct ChatReaderPayload {
         with destination: ComposerCanvasDestination?,
         lockOrigin: ScopedLockTarget? = nil
     ) -> Self {
-        Self(kind: kind, destination: destination, lockOrigin: lockOrigin)
+        Self(kind: kind, destination: destination, lockOrigin: lockOrigin, editSubject: editSubject)
     }
 
     func inheritingDestination(from parent: Self) -> Self {
-        stamped(with: parent.destination, lockOrigin: parent.lockOrigin)
+        Self(
+            kind: kind,
+            destination: parent.destination,
+            lockOrigin: parent.lockOrigin,
+            editSubject: parent.editSubject
+        )
     }
 
     var content: FullScreenCodeContent {
@@ -143,6 +161,22 @@ struct ChatReaderPayload {
         case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
             return nil
         }
+    }
+
+    /// The file the document names, when it names one.
+    var contentFilePath: String? {
+        switch kind {
+        case .document(let content, _):
+            return content.filePath
+        case .image, .imageData, .audioLyrics, .video, .nowPlaying, .extensionNative:
+            return nil
+        }
+    }
+
+    /// The same reader, with the live document behind it when none was named.
+    func withLiveFileSubject(_ subject: DocumentEditSubject?) -> Self {
+        guard let subject, editSubject == nil else { return self }
+        return Self(kind: kind, destination: destination, lockOrigin: lockOrigin, editSubject: subject)
     }
 }
 

@@ -244,6 +244,29 @@ indirect enum FullScreenCodeContent {
     /// Notebook cell. The reader wraps the same view.
     case notebook(NotebookCellPlan)
 
+    /// The file the content was read from, when it names one. A reader uses it to
+    /// find the live document behind the bytes.
+    var filePath: String? {
+        switch self {
+        case .code(_, _, let filePath, _),
+             .plainText(_, let filePath),
+             .html(_, let filePath),
+             .latex(_, let filePath),
+             .orgMode(_, let filePath),
+             .mermaid(_, let filePath),
+             .graphviz(_, let filePath):
+            return filePath
+        case .markdown(_, let filePath, _, _, _):
+            return filePath
+        case .diff(let document):
+            return document.filePath
+        case .document(let family):
+            return family.filePath
+        case .thinking, .terminal, .liveSource, .notebook:
+            return nil
+        }
+    }
+
     /// Build content from raw text and a file path by detecting the file type.
     static func fromText(_ text: String, filePath: String?) -> Self {
         let fileType = FileType.detect(from: filePath, content: text)

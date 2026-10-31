@@ -315,6 +315,10 @@ final class FullScreenCodeViewController: UIViewController {
         configureNavigation(on: viewController, palette: bodyThemeID.palette)
     }
 
+    /// The file this reader's bytes name, when they name one: an edit entry
+    /// opened over the reader edits that live document.
+    var contentFilePath: String? { content.filePath }
+
     /// Rebuild persistent UIKit content and chrome when SwiftUI's active theme
     /// changes. Full-screen bodies capture a palette at construction time, so
     /// merely invalidating the representable leaves code, markdown, diff,
