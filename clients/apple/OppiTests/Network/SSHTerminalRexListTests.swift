@@ -220,8 +220,14 @@ private final class ExitingStreamHost: RexStreamHost {
         opened += 1
         let host = RexFakeHost { _ in .hold }
         let stream = host.open(sink: sink)
-        let status = status
-        Task { host.end(status: status) }
+        // A bridge with no Rex there exits without answering anything on the
+        // stream (the shell never gets to `exec nc`): its status and close
+        // reach the sink here, before the socket can write its upgrade, so
+        // `RexPipeSocket.open` reports the absence. Ending it from a Task,
+        // after the stream was returned, left that order to the scheduler: an
+        // upgrade that answered first was then read as a stream that dropped,
+        // which the monitor asks again over a second stream.
+        host.end(status: status)
         return stream
     }
 
