@@ -217,7 +217,7 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
             delete.image = UIImage(systemName: "trash")
             actions.append(delete)
         }
-        let edit = UIContextualAction(style: .normal, title: "Edit with Oppi") { [weak self] _, _, done in
+        let edit = UIContextualAction(style: .normal, title: "Edit with Session") { [weak self] _, _, done in
             self?.revisingTheme = summary
             done(true)
         }
@@ -229,9 +229,9 @@ final class ThemeImportViewController: ListScreenController<ThemeImportViewContr
         return config
     }
 
-    /// Touch and hold: Edit with Oppi, and Delete from Device once imported.
+    /// Touch and hold: Edit with Session, and Delete from Device once imported.
     private func contextMenu(_ summary: RemoteThemeSummary, isImported: Bool) -> UIMenu {
-        let edit = UIAction(title: "Edit with Oppi", image: UIImage(systemName: "text.bubble")) { [weak self] _ in
+        let edit = UIAction(title: "Edit with Session", image: UIImage(systemName: "text.bubble")) { [weak self] _ in
             self?.revisingTheme = summary
         }
         edit.accessibilityIdentifier = "themes.row.\(summary.filename).edit"

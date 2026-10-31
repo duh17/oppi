@@ -1,53 +1,5 @@
 import UIKit
 
-struct FullScreenViewerNavigationAction {
-    let id: String
-    let title: String?
-    let systemImage: String?
-    let accessibilityLabel: String
-    let accessibilityValue: String?
-    let isEnabled: Bool
-    let handler: @MainActor @Sendable () -> Void
-
-    init(
-        id: String,
-        title: String? = nil,
-        systemImage: String? = nil,
-        accessibilityLabel: String,
-        accessibilityValue: String? = nil,
-        isEnabled: Bool = true,
-        handler: @escaping @MainActor @Sendable () -> Void
-    ) {
-        self.id = id
-        self.title = title
-        self.systemImage = systemImage
-        self.accessibilityLabel = accessibilityLabel
-        self.accessibilityValue = accessibilityValue
-        self.isEnabled = isEnabled
-        self.handler = handler
-    }
-
-    var presentation: Presentation {
-        Presentation(
-            id: id,
-            title: title,
-            systemImage: systemImage,
-            accessibilityLabel: accessibilityLabel,
-            accessibilityValue: accessibilityValue,
-            isEnabled: isEnabled
-        )
-    }
-
-    struct Presentation: Equatable {
-        let id: String
-        let title: String?
-        let systemImage: String?
-        let accessibilityLabel: String
-        let accessibilityValue: String?
-        let isEnabled: Bool
-    }
-}
-
 @MainActor
 final class ThinkingTraceStream {
     struct Snapshot: Equatable {

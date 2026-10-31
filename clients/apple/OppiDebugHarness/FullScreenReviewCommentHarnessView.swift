@@ -48,6 +48,12 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             || processInfo.environment["PI_FULLSCREEN_REVIEW_COMMENT_HARNESS_EMBEDDED"] == "1"
     }
 
+    private static let editItem = UIBarButtonItem(
+        title: "Edit",
+        image: UIImage(systemName: "pencil"),
+        primaryAction: UIAction { _ in }
+    )
+
     private static var diffWrappingModeEnabled: Bool {
         let processInfo = ProcessInfo.processInfo
         return processInfo.arguments.contains("--fullscreen-diff-wrapping-harness")
@@ -188,14 +194,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
             content: content,
             presentationMode: presentationMode,
             reviewCommentSelectionContext: context,
-            navigationActions: Self.diffWrappingModeEnabled ? [] : [
-                FullScreenViewerNavigationAction(
-                    id: "edit-in-session",
-                    title: "Edit",
-                    accessibilityLabel: "Edit in Oppi Session",
-                    handler: {}
-                ),
-            ]
+            editItems: Self.diffWrappingModeEnabled ? [] : [Self.editItem]
         )
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false

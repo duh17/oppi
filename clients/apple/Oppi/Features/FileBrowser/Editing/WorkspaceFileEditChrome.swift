@@ -78,25 +78,6 @@ enum WorkspaceFileEditStatusPresentation {
     }
 }
 
-/// The words and glyphs every document's Edit control uses: workspace files,
-/// Skill files, and the Agent and Schedule readers say the same thing.
-enum DocumentEditLabels {
-    static let systemImage = "pencil"
-    static let edit = String(localized: "Edit")
-    static let editFile = String(localized: "Edit File")
-    /// An Oppi session revises the document.
-    static let editWithOppi = String(localized: "Edit with Oppi")
-    static let editWithOppiImage = "text.bubble"
-    static let startingSession = String(localized: "Starting…")
-}
-
-/// Editing a document through an Oppi session instead of the editor.
-struct DocumentAgentEditAction {
-    /// The session is being created; the action waits.
-    var isStarting = false
-    let start: @MainActor () -> Void
-}
-
 /// Draws the locked SF Symbol as pixels. A live `UIImageView` in a bar item
 /// keeps checkmark.circle's Select trait.
 private final class WorkspaceFileEditStatusSymbolCanvas: UIView {
@@ -540,58 +521,6 @@ enum WorkspaceFileEditorOptions {
             UIAction(title: title, state: isOn ? .on : .off) { _ in set(!isOn) }
         })
         return [keybindings, settings]
-    }
-}
-
-/// A document's one Edit control in the bar. With the editor and Edit with
-/// Oppi both available the pencil opens a menu of the two; with one, the
-/// pencil does that one. Nil when neither is available.
-@MainActor
-enum DocumentEditBarItem {
-    static func make(
-        editFile: (@MainActor () -> Void)?,
-        agentEdit: DocumentAgentEditAction?
-    ) -> UIBarButtonItem? {
-        let pencil = UIImage(systemName: DocumentEditLabels.systemImage)
-        if let editFile, let agentEdit {
-            let edit = UIAction(title: DocumentEditLabels.editFile, image: pencil) { _ in editFile() }
-            edit.accessibilityIdentifier = "workspace-file-editor.edit"
-            let agent = UIAction(
-                title: DocumentEditLabels.editWithOppi,
-                image: UIImage(systemName: DocumentEditLabels.editWithOppiImage),
-                attributes: agentEdit.isStarting ? .disabled : []
-            ) { _ in agentEdit.start() }
-            agent.accessibilityIdentifier = "controlFile.editInSession"
-            let item = UIBarButtonItem(
-                title: agentEdit.isStarting ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
-                image: pencil,
-                menu: UIMenu(children: [edit, agent])
-            )
-            item.accessibilityIdentifier = "document.edit"
-            return item
-        }
-        if let editFile {
-            let item = UIBarButtonItem(
-                title: DocumentEditLabels.edit,
-                image: pencil,
-                primaryAction: UIAction { _ in editFile() }
-            )
-            item.accessibilityLabel = DocumentEditLabels.editFile
-            item.accessibilityIdentifier = "workspace-file-editor.edit"
-            return item
-        }
-        if let agentEdit {
-            let item = UIBarButtonItem(
-                title: agentEdit.isStarting ? DocumentEditLabels.startingSession : DocumentEditLabels.edit,
-                image: pencil,
-                primaryAction: UIAction { _ in agentEdit.start() }
-            )
-            item.isEnabled = !agentEdit.isStarting
-            item.accessibilityLabel = DocumentEditLabels.editWithOppi
-            item.accessibilityIdentifier = "controlFile.editInSession"
-            return item
-        }
-        return nil
     }
 }
 

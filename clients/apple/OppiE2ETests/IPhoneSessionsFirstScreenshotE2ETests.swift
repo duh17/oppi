@@ -695,7 +695,7 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
         XCTAssertFalse(app.buttons["chat.send"].isEnabled, "Send must wait for a request")
         XCTAssertFalse(app.buttons["schedule.edit.save"].exists, "Schedule revision must not expose the manual form")
         XCTAssertTrue(app.buttons["schedule.detail.archive"].exists || app.buttons["Archive"].exists, "Archive missing from the schedule actions menu")
-        XCTAssertFalse(app.buttons["Edit with Oppi"].exists, "The actions menu must not offer Edit with Oppi")
+        XCTAssertFalse(app.buttons["Edit with Session"].exists, "The actions menu must not offer Edit with Session")
         tap(scheduleActions, named: "close schedule actions menu")
         tap(app.navigationBars["Daily telemetry review"].buttons.firstMatch, named: "schedule detail back button")
 

@@ -122,6 +122,10 @@ function runUiKitStructureGuard(repoRoot) {
   runRepoGuard(repoRoot, "uikit-structure-guard.ts");
 }
 
+function runDocumentEditGuard(repoRoot) {
+  runRepoGuard(repoRoot, "document-edit-guard.ts");
+}
+
 function runScreenshotScreenGuard(repoRoot) {
   runRepoGuard(repoRoot, "screenshot-screen-guard.ts");
 }
@@ -182,6 +186,7 @@ function run(options) {
       runThemeSurfaceGuard(repoRoot);
       runScrollOffsetGuard(repoRoot);
       runUiKitStructureGuard(repoRoot);
+      runDocumentEditGuard(repoRoot);
       runScreenshotScreenGuard(repoRoot);
       runAxIdGuard(repoRoot);
     }

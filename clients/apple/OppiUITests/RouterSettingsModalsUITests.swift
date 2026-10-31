@@ -76,6 +76,18 @@ final class RouterSettingsModalsUITests: XCTestCase {
         let prompt = app.buttons["agents.pi.systemPrompt"]
         XCTAssertTrue(prompt.waitForExistence(timeout: 10), "Pi detail did not load")
         assertReviewSheet { prompt.tap() }
+
+        // The prompt holds text the app pieced together: no pencil, and the "…"
+        // holds Edit with Session.
+        prompt.tap()
+        let more = app.buttons["document.edit.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5), "The prompt reader offered no edit entry")
+        XCTAssertFalse(app.buttons["workspace-file-editor.edit"].exists, "A prompt reader has no pencil")
+        attachScreenshot("pi-prompt-reader-entry")
+        tapBarButton(more)
+        let edit = app.buttons["controlFile.editInSession"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), "The overflow did not offer Edit with Session")
+        attachScreenshot("pi-prompt-session-menu")
     }
 
     func testAgentDetailModals() {
@@ -260,13 +272,23 @@ final class RouterSettingsModalsUITests: XCTestCase {
         )
     }
 
-    /// A server without Skill file editing: the pencil is Edit with Oppi.
+    /// A server without Skill file editing: the entry is the "…" alone, and it
+    /// holds Edit with Session.
     func testSkillFileGuidedRevisionSheet() {
         launch(page: "skill-file-review")
-        let edit = app.buttons["controlFile.editInSession"]
-        XCTAssertTrue(edit.waitForExistence(timeout: 10), "Skill file viewer did not load")
-        XCTAssertFalse(app.buttons["document.edit"].exists, "No editor means no Edit menu")
-        assertGuidedSheet(opener: { edit.tap() }, title: "Revise release")
+        let more = app.buttons["document.edit.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10), "Skill file viewer did not load")
+        XCTAssertFalse(app.buttons["workspace-file-editor.edit"].exists, "No editor means no pencil")
+        assertGuidedSheet(
+            opener: {
+                self.tapBarButton(more)
+                let edit = self.app.buttons["controlFile.editInSession"]
+                XCTAssertTrue(edit.waitForExistence(timeout: 5), "The overflow did not offer Edit with Session")
+                self.attachScreenshot("skill-file-session-menu")
+                edit.tap()
+            },
+            title: "Revise release"
+        )
     }
 
     /// An extension that is a user-owned file: its page carries the compact
@@ -276,22 +298,20 @@ final class RouterSettingsModalsUITests: XCTestCase {
         assertCompactOppiBar(page: "extension-detail")
     }
 
-    /// A server that edits Skill files: the one pencil offers the editor and
-    /// Edit with Oppi. Typing saves through the Skill, and Done returns to the
-    /// reader with the same menu.
-    func testSkillFileEditMenuEditsInPlaceOrWithOppi() {
+    /// A server that edits Skill files: the pencil opens the editor on the same
+    /// file, and the "…" beside it holds Edit with Session. Typing saves through
+    /// the Skill, and Done returns to the reader with both controls.
+    func testSkillFileEditEntryEditsInPlaceOrWithSession() {
         launch(page: "skill-file-edit")
-        let menu = app.buttons["document.edit"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10), "Skill file Edit menu did not load")
+        let pencil = app.buttons["workspace-file-editor.edit"]
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Skill file edit entry did not load")
+        let more = app.buttons["document.edit.more"]
+        XCTAssertTrue(more.exists, "The edit entry must offer Edit with Session beside the pencil")
+        attachScreenshot("skill-file-edit-entry")
 
-        menu.tap()
-        let editFile = app.buttons["workspace-file-editor.edit"]
-        XCTAssertTrue(editFile.waitForExistence(timeout: 5), "The menu did not offer Edit File")
-        XCTAssertTrue(app.buttons["controlFile.editInSession"].exists, "The menu did not offer Edit with Oppi")
-        attachScreenshot("skill-file-edit-menu")
-        editFile.tap()
+        pencil.tap()
         let text = app.textViews["workspace-file-editor.text"]
-        XCTAssertTrue(text.waitForExistence(timeout: 10), "Edit File did not open the editor")
+        XCTAssertTrue(text.waitForExistence(timeout: 10), "The pencil did not open the editor")
         text.tap()
         text.typeText("Ship it.")
         XCTAssertTrue(
@@ -299,22 +319,18 @@ final class RouterSettingsModalsUITests: XCTestCase {
             "The edit must autosave through the Skill: \(lastWrite)"
         )
         tapBarButton(app.buttons["workspace-file-editor.done"])
-        XCTAssertTrue(menu.waitForExistence(timeout: 10), "Done did not return to the reader")
+        XCTAssertTrue(pencil.waitForExistence(timeout: 10), "Done did not return to the reader")
         assertRunning()
 
         assertGuidedSheet(
             opener: {
-                self.openEditMenu(menu)
-                self.app.buttons["controlFile.editInSession"].tap()
+                self.tapBarButton(more)
+                let edit = self.app.buttons["controlFile.editInSession"]
+                XCTAssertTrue(edit.waitForExistence(timeout: 5), "The overflow did not offer Edit with Session")
+                edit.tap()
             },
             title: "Revise release"
         )
-    }
-
-    private func openEditMenu(_ menu: XCUIElement) {
-        XCTAssertTrue(menu.waitForExistence(timeout: 5))
-        menu.tap()
-        XCTAssertTrue(app.buttons["controlFile.editInSession"].waitForExistence(timeout: 5), "Edit menu did not open")
     }
 
     // MARK: MCP

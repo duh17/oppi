@@ -86,37 +86,6 @@ final class WorkspaceFileEditSessionRegistry {
     }
 }
 
-/// Open-time recovery when the file itself is gone.
-@MainActor
-enum WorkspaceFileEditRecovery {
-    /// A 404 on open: move a live session with unsaved edits into the
-    /// non-writing deleted state, or reopen a kept draft in that state. An
-    /// unreadable draft is left in place untouched. Nil means there is nothing
-    /// to recover.
-    static func sessionForMissingFile(
-        identity: WorkspaceFileEditIdentity,
-        maxBytes: Int,
-        transport: WorkspaceFileEditTransport,
-        registry: WorkspaceFileEditSessionRegistry = .shared,
-        draftStore: WorkspaceFileDraftStore = .shared
-    ) -> WorkspaceFileEditSession? {
-        if let live = registry.session(for: identity), live.hasUnsavedChanges {
-            live.noteFileMissing()
-            return live
-        }
-        guard case .draft(let draft) = draftStore.loadResult(identity),
-              let session = WorkspaceFileEditSession(
-                  identity: identity,
-                  deletedFileDraft: draft,
-                  maxBytes: maxBytes,
-                  transport: transport,
-                  draftStore: draftStore
-              ) else { return nil }
-        registry.register(session)
-        return session
-    }
-}
-
 /// The workspace code editor: one continuous `CodeEditorTextView` for a
 /// workspace text file, with syntax color, a line-number gutter, a status
 /// line, a configurable key bar, Mac-style editor shortcuts, and optional Vim

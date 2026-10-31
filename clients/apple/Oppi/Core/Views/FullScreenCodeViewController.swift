@@ -82,8 +82,8 @@ final class FullScreenCodeViewController: UIViewController {
     private let lineAnchor: SourceLineAnchor?
     private let lineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
     private var lineAnchorNoticeDelivered = false
-    private var navigationActions: [FullScreenViewerNavigationAction]
-    private var navigationActionPresentation: [FullScreenViewerNavigationAction.Presentation]
+    private var editItems: [UIBarButtonItem]
+    private var lastEditItems: [UIBarButtonItem] = []
     private var lastNavigationPresentation: NavigationPresentation?
     private var showSource = false
     private var completeRawText: String?
@@ -136,7 +136,7 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSourceLabel: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
-        navigationActions: [FullScreenViewerNavigationAction] = [],
+        editItems: [UIBarButtonItem] = [],
         markdownViewportIntent: FullScreenMarkdownViewportIntent? = nil,
         onMarkdownViewportIntentChange: ((FullScreenMarkdownViewportIntent) -> Void)? = nil,
         addToChatDestination: ComposerCanvasDestination? = nil
@@ -151,10 +151,10 @@ final class FullScreenCodeViewController: UIViewController {
             )
         self.lineAnchor = lineAnchor
         self.lineAnchorNotice = lineAnchorNotice
-        self.navigationActions = navigationActions
+        self.editItems = editItems
+        self.lastEditItems = editItems
         self.pendingMarkdownViewportIntent = markdownViewportIntent
         self.onMarkdownViewportIntentChange = onMarkdownViewportIntentChange
-        self.navigationActionPresentation = navigationActions.map(\.presentation)
         self.addToChatDestination = addToChatDestination
         super.init(nibName: nil, bundle: nil)
     }
@@ -308,11 +308,12 @@ final class FullScreenCodeViewController: UIViewController {
     /// changes. Full-screen bodies capture a palette at construction time, so
     /// merely invalidating the representable leaves code, markdown, diff,
     /// terminal, and rendered-document viewers in the previous appearance.
-    func setNavigationActions(_ actions: [FullScreenViewerNavigationAction]) {
-        let presentation = actions.map(\.presentation)
-        guard presentation != navigationActionPresentation else { return }
-        navigationActions = actions
-        navigationActionPresentation = presentation
+    /// The document's edit entry owns these: a pencil, or the "…" that holds
+    /// Edit with Session. The reader shows them left of its own controls.
+    func setEditBarItems(_ items: [UIBarButtonItem]) {
+        guard !items.elementsEqual(lastEditItems, by: ===) else { return }
+        editItems = items
+        lastEditItems = items
         lastNavigationPresentation = nil
         guard isViewLoaded, let viewController = contentHostController else { return }
         configureNavigation(on: viewController, palette: bodyThemeID.palette)
@@ -747,7 +748,7 @@ final class FullScreenCodeViewController: UIViewController {
     private func installRightBarItems(on viewController: UIViewController, palette: ThemePalette) {
         let presentation = makePresentation()
         let sideRail = SystemVerticalBar.isActive(viewController)
-        var rightItems = navigationActions.map(makeNavigationActionButton)
+        var rightItems = editItems
 
         let copy = UIBarButtonItem(
             image: UIImage(systemName: "doc.on.doc"),
@@ -848,21 +849,6 @@ final class FullScreenCodeViewController: UIViewController {
             return "tablecells"
         }
         return "text.page"
-    }
-
-    private func makeNavigationActionButton(_ action: FullScreenViewerNavigationAction) -> UIBarButtonItem {
-        let primaryAction = UIAction(
-            title: action.title ?? "",
-            image: action.systemImage.flatMap(UIImage.init(systemName:))
-        ) { _ in
-            Task { @MainActor in action.handler() }
-        }
-        let item = UIBarButtonItem(primaryAction: primaryAction)
-        item.accessibilityIdentifier = "fullscreen-code.action.\(action.id)"
-        item.accessibilityLabel = action.accessibilityLabel
-        item.accessibilityValue = action.accessibilityValue
-        item.isEnabled = action.isEnabled
-        return item
     }
 
     private func configureFloatingViewingOptionsButton(
@@ -2784,7 +2770,7 @@ extension FullScreenCodeViewController {
         reviewCommentSelectionContext: ReviewCommentSelectionContext?,
         lineAnchor: SourceLineAnchor? = nil,
         lineAnchorNotice: (@MainActor @Sendable (String) -> Void)? = nil,
-        navigationActions: [FullScreenViewerNavigationAction] = []
+        editItems: [UIBarButtonItem] = []
     ) -> FullScreenCodeViewController {
         FullScreenCodeViewController(
             content: content,
@@ -2792,7 +2778,7 @@ extension FullScreenCodeViewController {
             reviewCommentSelectionContext: reviewCommentSelectionContext,
             lineAnchor: lineAnchor,
             lineAnchorNotice: lineAnchorNotice,
-            navigationActions: navigationActions
+            editItems: editItems
         )
     }
 

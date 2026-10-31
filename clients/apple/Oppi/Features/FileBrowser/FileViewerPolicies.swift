@@ -60,20 +60,6 @@ enum FileBrowserContentRenderingPolicy {
     /// The file viewer already owns the filename in navigation chrome.
     static let audioPlayerTitlePresentation: AudioLyricsPlayerTitlePresentation = .hostOwnsTitle
 
-    enum EditPlacement: Equatable {
-        /// The embedded UIKit reader shows its own navigation bar; Edit is one of its actions.
-        case readerNavigationAction
-        /// The reader's bar is hidden (tree pane, host files); Edit is a bar item of the screen.
-        case toolbar
-    }
-
-    static func editPlacement(
-        for chromeMode: FileBrowserContentChromeMode,
-        source: FileBrowserContentSource
-    ) -> EditPlacement {
-        showsNavigationChrome(for: chromeMode, source: source) ? .readerNavigationAction : .toolbar
-    }
-
     /// Which checkout an edit writes to. A worktree is always named; main is
     /// named only when the owning chat session runs on a worktree, so the
     /// difference is visible before typing.

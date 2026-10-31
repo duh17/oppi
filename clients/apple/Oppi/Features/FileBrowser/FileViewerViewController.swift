@@ -69,6 +69,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         var reviewCommentSelectionScope: ReviewCommentSelectionScope? = nil
         /// A host file that is an editable Skill's own file. Only `.hostFile`.
         var skillFile: SkillFileEditTarget? = nil
+        /// Edit with Session, offered beside the pencil by the edit entry.
+        var agentEdit: DocumentAgentEditAction? = nil
     }
 
     /// The server-scoped services the viewer reads through.
@@ -136,11 +138,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     var onLineAnchorNotice: (@MainActor @Sendable (String) -> Void)?
     /// The text editor opened or closed.
     var onEditingChange: ((Bool) -> Void)?
-    /// Edit with Oppi, beside the editor in the one Edit control. Shown in
-    /// the viewer's bar items, so for host files and the tree pane.
-    var agentEdit: DocumentAgentEditAction? {
-        didSet { setNeedsUpdateProperties() }
-    }
     var markdownViewportRestore: FileBrowserViewportRestore?
 
     // MARK: State
@@ -166,28 +163,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         didSet { setNeedsUpdateProperties() }
     }
     private var timedTextLoadFinished = false
-    /// Tagged read of the displayed bytes. Nil when the server did not offer
-    /// this file for editing; missing capability or other origins stay read-only.
-    private var editBase: WorkspaceFileDiskSnapshot?
-    private var editMaxBytes: Int? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var editSession: WorkspaceFileEditSession? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var isEditorOpen = false {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var isShowingEditPreview = false {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var editorReplacement: WorkspaceFileEditorReplacement? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private var editNotice: String? {
-        didSet { setNeedsUpdateProperties() }
-    }
-    private weak var conflictReview: WorkspaceFileConflictReviewViewController?
+    /// The tagged read of the displayed bytes, the open editor, and the edit
+    /// entry's bar items. One owner decides all three.
+    private lazy var editOwner = makeEditOwner()
     private var reportedEditing = false
     /// While content loads, the stack's bar stays as the last settled content
     /// left it, so next/previous between two text files never slides it.
@@ -210,12 +188,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     /// nothing holds stops resizing its slot.
     private var mountedBackSwipe: HorizontalBackSwipeGestureInstaller?
     private weak var reader: FullScreenCodeViewController?
-    private weak var editor: WorkspaceFileEditorViewController?
-    private var appliedReplacementID: UUID?
-    private var editorHeader: UIStackView?
-    private var editBanner: WorkspaceFileEditBannerView?
-    private var checkoutLabel: UILabel?
-    private var noticeLabel: UILabel?
     private var sizeWarning: FileViewerSizeWarningView?
     /// The unavailable or failed state on screen, kept to repaint on a theme change.
     private var stateView: (view: UIContentUnavailableView, state: LoadState)?
@@ -235,17 +207,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private let stashButton = ReviewCommentStashFloatingButton()
 
     // Bar items, kept while their inputs hold.
-    private(set) var editBarItems: WorkspaceFileEditBarItems?
-    private var editItem: UIBarButtonItem?
-    private var editItemKey: EditItemKey?
     private var shareItem: UIBarButtonItem?
     private var shareItemKey: Int?
-
-    private struct EditItemKey: Equatable {
-        let editsFile: Bool
-        let hasAgentEdit: Bool
-        let isStarting: Bool
-    }
 
     init(configuration: Configuration, services: Services) {
         self.configuration = configuration
@@ -266,6 +229,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         configuration.fileName = selection.name
         configuration.fileSize = selection.size
         activeSelection = nil
+        // The entry belongs to the file on screen: another file starts over
+        // before its bytes are read, so no control outlives the previous file.
+        editOwner.begin(subject: editSubject(for: selection.path))
         setNeedsUpdateProperties()
         guard !alreadyShown else { return }
         beginUSDZSafeLoading()
@@ -327,14 +293,14 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         releaseLoadedUSDZHandle()
         if isLeaving {
             // Popped or dismissed: the editor hands its buffer to the session.
-            editor?.finishEditing()
+            editOwner.finishEditing()
         }
     }
 
     override func didMove(toParent parent: UIViewController?) {
         super.didMove(toParent: parent)
         if parent == nil {
-            editor?.finishEditing()
+            editOwner.finishEditing()
         }
     }
 
@@ -359,7 +325,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         updateFloatingControls(themeID: themeID)
         updateBar()
         updateHostNavigationBar(animated: true)
-        let editing = isEditingText
+        let editing = editOwner.isEditing
         if editing != reportedEditing {
             reportedEditing = editing
             onEditingChange?(editing)
@@ -394,7 +360,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     /// Text is loaded and the reader (not the editor) shows it.
     private var isUsingFileViewer: Bool {
-        if case .text = content { return !isEditorOpen }
+        if case .text = content { return !editOwner.isEditing }
         return false
     }
 
@@ -405,12 +371,58 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         )
     }
 
+    /// This document's edit entry, in the bar the viewer shows it in: the
+    /// reader's own glass bar, or this viewer's (host files, a tree pane).
+    private var editPlacement: DocumentEditOwner.Placement {
+        FileBrowserContentRenderingPolicy.showsNavigationChrome(
+            for: configuration.chromeMode,
+            source: configuration.source
+        ) ? .readerBar : .screenBar
+    }
+
+    private func makeEditOwner() -> DocumentEditOwner {
+        DocumentEditOwner(
+            subject: .snapshot,
+            placement: editPlacement,
+            agentAction: configuration.agentEdit,
+            source: .server { [weak self] in self?.loadedApiClient ?? self?.services.apiClient() },
+            handlers: .init(
+                didShowText: { [weak self] text in self?.content = .text(text) },
+                didReload: { [weak self] in self?.startLoad(force: true) },
+                makePreview: { [weak self] text in
+                    guard let self else { return UIViewController() }
+                    let path = editOwner.session?.identity.path ?? currentFilePath
+                    return FullScreenCodeViewController(
+                        content: fullScreenContent(text: text) ?? .fromText(text, filePath: path),
+                        presentationMode: .contentOnly()
+                    )
+                },
+                presenter: { [weak self] in self }
+            ),
+            onChange: { [weak self] in self?.setNeedsUpdateProperties() }
+        )
+    }
+
+    /// What the edit entry sees of the file at `path`, which is what the
+    /// reader is about to load.
+    private func editSubject(for path: String) -> DocumentEditSubject {
+        .file(
+            serverId: configuration.serverId,
+            source: configuration.source,
+            workspaceId: configuration.workspaceId,
+            worktreeId: configuration.worktreeId,
+            path: path,
+            skillFile: configuration.skillFile,
+            fileType: FileType.detect(from: path)
+        )
+    }
+
     private var shouldHideHostNavigationBar: Bool {
         showsEmbeddedNavigationChrome && isUsingFileViewer
     }
 
     private var isEditingText: Bool {
-        if case .text = content { return isEditorOpen && editSession != nil }
+        if case .text = content { return editOwner.isEditing }
         return false
     }
 
@@ -457,7 +469,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         case .sizeWarning:
             return .sizeWarning(generation: contentGeneration, expensive: isExpensiveNetwork)
         case .text:
-            if isEditorOpen, let editSession { return .editor(ObjectIdentifier(editSession)) }
+            if let session = editOwner.session, editOwner.isEditing { return .editor(ObjectIdentifier(session)) }
             return .phase(generation: contentGeneration)
         default:
             return .phase(generation: contentGeneration)
@@ -492,8 +504,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                 retry: RetryAction { [weak self] in self?.startLoad(force: true) }
             ))
         case .text(let text):
-            if isEditorOpen, let editSession {
-                mounted = mountEditor(session: editSession)
+            if let page = editOwner.makeEditorPage(), editOwner.isEditing {
+                mounted = mountEditor(page)
             } else {
                 mounted = mountReader(text: text)
             }
@@ -543,10 +555,14 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         mounted.subviews.first { $0 is UIScrollView } ?? mounted
     }
 
+#if DEBUG
+    /// Test seam: the open editor's bar items, so a test can resolve the
+    /// Editor Options menu the way the menu itself does.
+    var editorBarItemsForTesting: WorkspaceFileEditBarItems? { editOwner.editorBarItems }
+#endif
+
     private func unmountContent() {
-        if let editor {
-            editor.finishEditing()
-        }
+        editOwner.finishEditing()
         if let videoModel {
             videoModel.handleDisappear()
             videoHost?.dispose()
@@ -561,12 +577,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         mountedView = nil
         mountedBackSwipe = nil
         reader = nil
-        editor = nil
-        appliedReplacementID = nil
-        editorHeader = nil
-        editBanner = nil
-        checkoutLabel = nil
-        noticeLabel = nil
         sizeWarning = nil
         stateView = nil
         videoPage = nil
@@ -646,7 +656,7 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             reviewCommentSelectionContext: readerSelectionContext,
             lineAnchor: activeSelection == nil ? configuration.lineAnchor : nil,
             lineAnchorNotice: onLineAnchorNotice,
-            navigationActions: editNavigationActions,
+            editItems: editOwner.barItems,
             markdownViewportIntent: markdownViewportRestore?.state[path],
             onMarkdownViewportIntentChange: { [weak self] intent in
                 self?.markdownViewportRestore?.state[path] = intent
@@ -677,77 +687,13 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         return page
     }
 
-    private func mountEditor(session: WorkspaceFileEditSession) -> UIView {
-        let editor = WorkspaceFileEditorViewController(
-            session: session,
-            onDone: { [weak self] in self?.endEditing() },
-            makePreview: { [weak self] text in
-                FullScreenCodeViewController(
-                    content: self?.fullScreenContent(text: text) ?? .fromText(text, filePath: session.identity.path),
-                    presentationMode: .contentOnly()
-                )
-            }
-        )
+    /// Hosts the edit entry's editor page: the page draws its own header
+    /// (checkout, conflict banner, notice) and owns the editor and its bar.
+    private func mountEditor(_ editorPage: DocumentEditEditorPage) -> UIView {
         let page = UIView()
         addPage(page)
-        let header = UIStackView()
-        header.axis = .vertical
-        header.translatesAutoresizingMaskIntoConstraints = false
-        page.addSubview(header)
-
-        let checkout = UILabel()
-        checkout.font = .preferredFont(forTextStyle: .caption1)
-        checkout.lineBreakMode = .byTruncatingMiddle
-        checkout.accessibilityIdentifier = "workspace-file-editor.checkout"
-        header.addArrangedSubview(Self.padded(checkout, horizontal: 12, vertical: 4))
-        checkoutLabel = checkout
-
-        let banner = WorkspaceFileEditBannerView(
-            session: session,
-            onReview: { [weak self] in self?.presentConflictReview() },
-            onUseDisk: { [weak self] in self?.confirmUseDiskVersion() }
-        )
-        header.addArrangedSubview(banner)
-        editBanner = banner
-
-        let notice = UILabel()
-        notice.font = .preferredFont(forTextStyle: .footnote)
-        notice.numberOfLines = 0
-        header.addArrangedSubview(Self.padded(notice, horizontal: 8, vertical: 8))
-        noticeLabel = notice
-
-        addChild(editor)
-        editor.view.translatesAutoresizingMaskIntoConstraints = false
-        page.addSubview(editor.view)
-        let safe = page.safeAreaLayoutGuide
-        NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: safe.topAnchor),
-            header.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
-            editor.view.topAnchor.constraint(equalTo: header.bottomAnchor),
-            editor.view.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
-            editor.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
-            editor.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
-        ])
-        editor.didMove(toParent: self)
-        mountedChildren.append(editor)
-        self.editor = editor
-        editorHeader = header
-        appliedReplacementID = editorReplacement?.id
+        embed(editorPage, in: page)
         return page
-    }
-
-    private static func padded(_ label: UILabel, horizontal: CGFloat, vertical: CGFloat) -> UIView {
-        let container = UIView()
-        label.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: vertical),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -vertical),
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: horizontal),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -horizontal),
-        ])
-        return container
     }
 
     private func mountImage(_ data: Data) -> UIView {
@@ -987,28 +933,14 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         if let stateView {
             stateView.view.configuration = UIContentUnavailableConfiguration.loadState(stateView.state, palette: palette)
         }
-        editBanner?.update(palette: palette)
         videoPage?.backgroundColor = UIColor(palette.bgDark)
         readerPage?.backgroundColor = UIColor(palette.bgDark)
-        checkoutLabel?.textColor = UIColor(palette.comment)
-        noticeLabel?.textColor = UIColor(palette.comment)
         if let reader {
-            reader.setNavigationActions(editNavigationActions)
+            reader.setEditBarItems(editOwner.barItems)
             reader.setLeadingFloatingAccessoryCount(leadingAccessoryCount)
             reader.setTrailingFloatingAccessoryCount(trailingAccessoryCount)
         }
-        if let editor {
-            if let editorReplacement, appliedReplacementID != editorReplacement.id {
-                appliedReplacementID = editorReplacement.id
-                editor.replaceText(editorReplacement.text)
-            }
-            editor.setShowingPreview(isShowingEditPreview)
-            let subtitle = checkoutSubtitle
-            checkoutLabel?.text = subtitle
-            checkoutLabel?.superview?.isHidden = subtitle == nil
-            noticeLabel?.text = editNotice
-            noticeLabel?.superview?.isHidden = editNotice == nil
-        }
+        editOwner.updateEditorPage(palette: palette)
         if let audioPlayerController, case .audio(let source) = content {
             audioPlayerController.apply(audioConfiguration(source))
         }
@@ -1034,24 +966,14 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
     private func updateBar() {
         var items: [UIBarButtonItem] = []
         let editing = isEditingText
-        if editing, let editSession {
-            let editItems = editBarItems ?? WorkspaceFileEditBarItems(
-                wrapKind: { [weak self] in
-                    // The open file's, not the file these items were made for.
-                    CodeEditorWrapKind(grammar: CodeEditorHighlightEngine.grammar(
-                        forPath: self?.editSession?.identity.path ?? self?.currentFilePath ?? ""
-                    ))
-                },
-                onTogglePreview: { [weak self] in self?.isShowingEditPreview.toggle() },
-                onDone: { [weak self] in self?.endEditing() }
-            )
-            editBarItems = editItems
-            editItems.update(status: editSession.status, isShowingPreview: isShowingEditPreview)
-            items = editItems.items
+        if editing {
+            // The editor owns the bar while typing: status, Preview, Done.
+            items = editOwner.barItems
         } else {
-            // Left to right: Edit, then Share.
-            if showsToolbarEditControl, let edit = documentEditItem() {
-                items.append(edit)
+            // Left to right: the edit entry, then Share. The entry's items are
+            // trailing-first, so they go in reversed.
+            if editPlacement == .screenBar {
+                items.append(contentsOf: editOwner.barItems.reversed())
             }
             if configuration.chromeMode == .pushed, !isUsingFileViewer, let share = shareBarItem() {
                 items.append(share)
@@ -1062,41 +984,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         if !bar.trailingItems.elementsEqual(items, by: ===) { bar.trailingItems = items }
         if bar.isEditing != editing { bar.isEditing = editing }
         bar.apply(to: navigationItem)
-    }
-
-    /// The Edit control lives in the bar (host files, the tree pane) once the
-    /// file has loaded, when the editor or Edit with Oppi can run.
-    private var showsToolbarEditControl: Bool {
-        guard FileBrowserContentRenderingPolicy.editPlacement(
-            for: configuration.chromeMode,
-            source: configuration.source
-        ) == .toolbar else { return false }
-        if case .loading = content { return false }
-        return agentEdit != nil || (isUsingFileViewer && canBeginEditing)
-    }
-
-    private func documentEditItem() -> UIBarButtonItem? {
-        let editsFile = isUsingFileViewer && canBeginEditing
-        let key = EditItemKey(
-            editsFile: editsFile,
-            hasAgentEdit: agentEdit != nil,
-            isStarting: agentEdit?.isStarting ?? false
-        )
-        if key == editItemKey, let editItem { return editItem }
-        editItemKey = key
-        var editFile: (@MainActor () -> Void)?
-        if editsFile {
-            editFile = { [weak self] in self?.beginEditing() }
-        }
-        var agent: DocumentAgentEditAction?
-        if let agentEdit {
-            // The current action starts, whatever the host set since.
-            agent = DocumentAgentEditAction(isStarting: agentEdit.isStarting, start: { [weak self] in
-                self?.agentEdit?.start()
-            })
-        }
-        editItem = DocumentEditBarItem.make(editFile: editFile, agentEdit: agent)
-        return editItem
     }
 
     private func shareBarItem() -> UIBarButtonItem? {
@@ -1189,13 +1076,8 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     // MARK: Editing
 
-    /// The server offered these displayed bytes for editing, or a session exists.
-    private var canBeginEditing: Bool {
-        editIdentity(for: currentFilePath) != nil
-            && editMaxBytes != nil
-            && (editBase != nil || editSession != nil)
-    }
-
+    /// Where the file writes to, shown above the open editor: a worktree, or
+    /// the main checkout of a session that runs on one.
     private var checkoutSubtitle: String? {
         FileBrowserContentRenderingPolicy.checkoutSubtitle(
             source: configuration.source,
@@ -1203,205 +1085,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             sessionWorktreeId: configuration.sessionId.flatMap { services.sessionStore?.session(id: $0) }
                 .flatMap { $0.workspaceId == configuration.workspaceId ? $0.worktreeId : nil }
         )
-    }
-
-    private var editNavigationActions: [FullScreenViewerNavigationAction] {
-        guard canBeginEditing,
-              FileBrowserContentRenderingPolicy.editPlacement(
-                  for: configuration.chromeMode,
-                  source: configuration.source
-              ) == .readerNavigationAction else { return [] }
-        return [
-            FullScreenViewerNavigationAction(
-                id: "workspace-file-edit",
-                title: DocumentEditLabels.edit,
-                systemImage: DocumentEditLabels.systemImage,
-                accessibilityLabel: DocumentEditLabels.editFile,
-                handler: { [weak self] in self?.beginEditing() }
-            ),
-        ]
-    }
-
-    /// Workspace-origin files on a known server edit by workspace + worktree +
-    /// path; a host file edits only as its Skill's own file. Other host and
-    /// session files stay read-only.
-    private func editIdentity(for path: String) -> WorkspaceFileEditIdentity? {
-        guard let serverId = configuration.serverId, !serverId.isEmpty else { return nil }
-        switch configuration.source {
-        case .workspaceFile:
-            guard !configuration.workspaceId.isEmpty else { return nil }
-            return WorkspaceFileEditIdentity(
-                serverId: serverId,
-                workspaceId: configuration.workspaceId,
-                worktreeId: configuration.worktreeId,
-                path: path
-            )
-        case .hostFile:
-            guard let skillFile = configuration.skillFile, path == configuration.filePath else { return nil }
-            return WorkspaceFileEditIdentity(serverId: serverId, skillId: skillFile.skillId, path: skillFile.path)
-        case .sessionFile, .sessionTouched:
-            return nil
-        }
-    }
-
-    private func resetEditState() {
-        editBase = nil
-        editMaxBytes = nil
-        editSession = nil
-        isEditorOpen = false
-        isShowingEditPreview = false
-        editorReplacement = nil
-        closeConflictReview()
-        editNotice = nil
-    }
-
-    /// Record the tagged read and adopt a live session or recover a stored
-    /// draft. Returns the text the reader should show when it differs from disk.
-    private func prepareEditing(
-        identity: WorkspaceFileEditIdentity,
-        snapshot: WorkspaceFileDiskSnapshot,
-        maxBytes: Int,
-        api: APIClient
-    ) -> String? {
-        editMaxBytes = maxBytes
-        editBase = snapshot.etag == nil ? nil : snapshot
-        let registry = WorkspaceFileEditSessionRegistry.shared
-        if let live = registry.session(for: identity) {
-            editSession = live
-            if live.hasUnsavedChanges, live.status.stopsAutosave || live.recoveredDraft {
-                isEditorOpen = true
-            }
-            return live.hasUnsavedChanges ? live.currentText : nil
-        }
-        guard snapshot.etag != nil,
-              WorkspaceFileDraftStore.shared.loadResult(identity) != .none,
-              let recovered = WorkspaceFileEditSession(
-                  identity: identity,
-                  disk: snapshot,
-                  maxBytes: maxBytes,
-                  transport: .api(api)
-              ) else { return nil }
-        // A recovered draft, or a notice that an unreadable one was moved aside.
-        guard recovered.recoveredDraft || recovered.draftNotice != nil else { return nil }
-        registry.register(recovered)
-        editSession = recovered
-        isEditorOpen = true
-        return recovered.currentText
-    }
-
-    private static func isHTTPError(_ error: Error, statusCodes: Set<Int>) -> Bool {
-        switch error {
-        case APIError.server(let status, _), APIError.codedServer(let status, _, _):
-            return statusCodes.contains(status)
-        default:
-            return false
-        }
-    }
-
-    private func beginEditing() {
-        guard let identity = editIdentity(for: currentFilePath),
-              let maxBytes = editMaxBytes,
-              let api = loadedApiClient ?? services.apiClient() else { return }
-        let registry = WorkspaceFileEditSessionRegistry.shared
-        let session: WorkspaceFileEditSession
-        if let live = registry.session(for: identity) {
-            session = live
-        } else if let existing = editSession, existing.identity == identity {
-            // Keeps the newest acknowledged tag after an earlier edit settled.
-            session = existing
-            registry.register(existing)
-        } else if let editBase, let created = WorkspaceFileEditSession(
-            identity: identity,
-            disk: editBase,
-            maxBytes: maxBytes,
-            transport: .api(api)
-        ) {
-            session = created
-            registry.register(created)
-        } else {
-            return
-        }
-        editSession = session
-        editNotice = nil
-        isShowingEditPreview = false
-        isEditorOpen = true
-    }
-
-    /// Done: show the current draft in the reader. The editor teardown
-    /// checkpoints and starts the save; the network is not awaited.
-    private func endEditing() {
-        guard let editSession else {
-            isEditorOpen = false
-            return
-        }
-        // Teardown first, so the session holds the final buffer.
-        editor?.finishEditing()
-        let text = editSession.currentText
-        isShowingEditPreview = false
-        isEditorOpen = false
-        content = .text(text)
-    }
-
-    private func useDiskVersion() {
-        guard let editSession else { return }
-        Task { [weak self] in
-            let outcome = await editSession.useDiskVersion()
-            guard let self else { return }
-            switch outcome {
-            case .replaced(let text):
-                editNotice = nil
-                editorReplacement = WorkspaceFileEditorReplacement(text: text)
-                content = .text(text)
-            case .missing, .notEditable:
-                resetEditState()
-                await loadContent(force: true)
-            case .unavailable:
-                editNotice = String(localized: "Couldn't read the disk version. Your edits were not changed.")
-            }
-        }
-    }
-
-    private func confirmUseDiskVersion() {
-        Confirmation(
-            title: String(localized: "Use Disk Version?"),
-            message: String(localized: "Your unsaved edits to this file will be discarded."),
-            actionTitle: String(localized: "Discard My Edits"),
-            style: .alert,
-            actionIdentifier: "workspace-file-editor.use-disk.confirm"
-        ).present(from: self, anchor: nil) { [weak self] in self?.useDiskVersion() }
-    }
-
-    private func presentConflictReview() {
-        guard conflictReview == nil, let editSession else { return }
-        let review = WorkspaceFileConflictReviewViewController(
-            session: editSession,
-            filePath: currentFilePath,
-            reviewCommentSelectionScope: configuration.reviewCommentSelectionScope,
-            onUseDisk: { [weak self] in
-                self?.closeConflictReview()
-                self?.useDiskVersion()
-            },
-            onReplace: { [weak self] in
-                editSession.replaceDiskVersion()
-                self?.closeConflictReview()
-            },
-            onClose: { [weak self] in self?.closeConflictReview() }
-        )
-        conflictReview = review
-        Router.present(
-            review,
-            presentation: .sheet.inNavigation(),
-            from: self,
-            onDismiss: { [weak self] in self?.conflictReview = nil }
-        )
-    }
-
-    private func closeConflictReview() {
-        guard let conflictReview else { return }
-        self.conflictReview = nil
-        if conflictReview.presentingViewController != nil {
-            Router.finish(conflictReview)
-        }
     }
 
     // MARK: Loading
@@ -1420,8 +1103,9 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
             return
         }
         // Reappearing over an open editor must not reload over the buffer.
-        if isEditorOpen, let editSession,
-           editSession.identity == editIdentity(for: currentSelection.path) {
+        if editOwner.isEditing,
+           let identity = editOwner.identity,
+           identity == editSubject(for: currentSelection.path).editIdentity {
             return
         }
 
@@ -1446,6 +1130,11 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         }
 
         loadedApiClient = api
+        // The read that follows adopts whatever this file's edit entry resolves:
+        // a tagged read and a live or kept draft, or nothing to edit at all.
+        editOwner.begin(subject: editSubject(for: requestedPath))
+        editOwner.checkoutSubtitle = checkoutSubtitle
+        editOwner.reviewCommentSelectionScope = configuration.reviewCommentSelectionScope
 
         // Every re-show reads again: after AVKit fullscreen from an inline
         // Markdown video, or a pop back from a pushed wiki link. Rebuilding the
@@ -1467,7 +1156,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                       Self.isHTTPError(error, statusCodes: [401, 403, 404]) else { return }
                 loadedTextPath = nil
                 loadedHostFilePath = nil
-                resetEditState()
                 content = .error(error.localizedDescription)
                 return
             }
@@ -1483,7 +1171,6 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
         loadedMediaPath = nil
         loadedTextPath = nil
         loadedHostFilePath = nil
-        resetEditState()
         timedText = .empty
         timedTextLoadFinished = false
         beginUSDZSafeLoading()
@@ -1544,13 +1231,10 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
                     api: api, path: requestedPath, category: requestedCategory
                 ) else { return }
                 switch read {
-                case .missingWithDraft(let session, let maxBytes):
+                case .deletedDraft(let text):
                     // Gone on the server: a kept draft reopens in the
                     // non-writing deleted state instead of an error page.
-                    editMaxBytes = maxBytes
-                    editSession = session
-                    isEditorOpen = true
-                    content = .text(session.currentText)
+                    content = .text(text)
                     return
                 case .bytes(let data, let editedText, let resolvedHostPath):
                     if let resolvedHostPath {
@@ -1572,41 +1256,29 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     private enum ReaderRead {
         case bytes(Data, editedText: String?, resolvedHostPath: String?)
-        case missingWithDraft(WorkspaceFileEditSession, maxBytes: Int)
+        /// The file is gone; its kept draft opens in the editor.
+        case deletedDraft(String)
     }
 
-    /// One read of a document file. Editable text uses the tagged read and
-    /// `prepareEditing`, so a live or recovered draft wins over disk. Nil when
-    /// the person moved to another file meanwhile.
+    /// One read of a document file. Editable text goes through the edit entry's
+    /// tagged read, so a live or recovered draft wins over disk. Nil when the
+    /// person moved to another file meanwhile.
     private func readReaderBytes(
         api: APIClient,
         path: String,
         category: FilePreviewCategory
     ) async throws -> ReaderRead? {
-        if category == .text,
-           let identity = editIdentity(for: path),
-           let capability = await api.fileEditingCapability(for: identity.owner) {
-            // One tagged read: the edit base is exactly the displayed bytes.
-            let snapshot: WorkspaceFileDiskSnapshot
-            do {
-                snapshot = try await api.readFileForEditing(identity)
-            } catch let error where Self.isHTTPError(error, statusCodes: [404]) {
+        if category == .text {
+            switch try await editOwner.read() {
+            case .ownRead:
+                break
+            case .deletedDraft(let text):
                 guard isCurrentFile(path) else { return nil }
-                guard let session = WorkspaceFileEditRecovery.sessionForMissingFile(
-                    identity: identity,
-                    maxBytes: capability.maxBytes,
-                    transport: .api(api)
-                ) else { throw error }
-                return .missingWithDraft(session, maxBytes: capability.maxBytes)
+                return .deletedDraft(text)
+            case .bytes(let snapshot, let draftText):
+                guard isCurrentFile(path) else { return nil }
+                return .bytes(snapshot.bytes, editedText: draftText, resolvedHostPath: nil)
             }
-            guard isCurrentFile(path) else { return nil }
-            let editedText = prepareEditing(
-                identity: identity,
-                snapshot: snapshot,
-                maxBytes: capability.maxBytes,
-                api: api
-            )
-            return .bytes(snapshot.bytes, editedText: editedText, resolvedHostPath: nil)
         }
         if configuration.source == .hostFile {
             let file = try await api.browseHostFileContent(
@@ -1674,6 +1346,15 @@ final class FileViewerViewController: UIViewController, NavigationBarHiding {
 
     private func isCurrentFile(_ requestedPath: String) -> Bool {
         !Task.isCancelled && currentFilePath == requestedPath
+    }
+
+    private static func isHTTPError(_ error: Error, statusCodes: Set<Int>) -> Bool {
+        switch error {
+        case APIError.server(let status, _), APIError.codedServer(let status, _, _):
+            return statusCodes.contains(status)
+        default:
+            return false
+        }
     }
 
     private func beginUSDZSafeLoading() {

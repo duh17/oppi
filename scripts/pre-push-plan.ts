@@ -142,6 +142,12 @@ export function planForPaths(inputPaths: Iterable<string>): PrePushPlan {
       continue;
     }
 
+    // The guard reads iOS app sources and runs with the architecture check.
+    if (path === "scripts/document-edit-guard.ts") {
+      apple = strongerApple(apple, "unit");
+      continue;
+    }
+
     const pathServerMode = serverMode(path);
     if (pathServerMode !== "none") {
       server = strongerServer(server, pathServerMode);

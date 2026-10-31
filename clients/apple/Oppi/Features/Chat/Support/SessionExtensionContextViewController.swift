@@ -177,7 +177,7 @@ final class SessionExtensionContextViewController: UIViewController, UICollectio
         case .edit:
             var content = UIListContentConfiguration.cell()
             content.image = UIImage(systemName: "text.bubble")
-            content.text = "Edit with Oppi"
+            content.text = "Edit with Session"
             content.secondaryText = "Starts a new session that changes this extension."
             content.textProperties.color = UIColor(palette.blue)
             content.secondaryTextProperties.color = UIColor(palette.comment)

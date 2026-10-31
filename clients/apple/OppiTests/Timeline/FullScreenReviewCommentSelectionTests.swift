@@ -2234,17 +2234,16 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(commentAction.title == "Comment")
     }
 
-    @Test func fullScreenViewerInstallsResourceActionsBeforeReaderActions() throws {
+    @Test func fullScreenViewerInstallsEditItemsBeforeReaderActions() throws {
+        let edit = UIBarButtonItem(
+            title: "Edit",
+            image: UIImage(systemName: "pencil"),
+            primaryAction: UIAction { _ in }
+        )
+        edit.accessibilityLabel = "Edit in Oppi Session"
         let controller = FullScreenCodeViewController(
             content: .markdown(content: "# Prompt", filePath: "Schedule.md"),
-            navigationActions: [
-                FullScreenViewerNavigationAction(
-                    id: "edit",
-                    title: "Edit",
-                    accessibilityLabel: "Edit in Oppi Session",
-                    handler: {}
-                ),
-            ]
+            editItems: [edit]
         )
         controller.loadViewIfNeeded()
 
@@ -2252,6 +2251,7 @@ struct FullScreenReviewCommentSelectionTests {
         let contentController = try #require(navigationController.topViewController)
         let actions = try #require(contentController.navigationItem.rightBarButtonItems)
 
+        #expect(actions.first === edit)
         #expect(actions.first?.title == "Edit")
         #expect(actions.first?.accessibilityLabel == "Edit in Oppi Session")
         #expect(actions.dropFirst().contains { $0.image == UIImage(systemName: "doc.on.doc") })
@@ -2273,34 +2273,22 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(copied == ANSIParser.strip(formatted))
     }
 
-    @Test func fullScreenViewerUpdatesResourceActionState() throws {
+    @Test func fullScreenViewerReplacesEditItemsWhenTheOwnerChangesThem() throws {
         let controller = FullScreenCodeViewController(
             content: .markdown(content: "# Prompt", filePath: "Schedule.md"),
-            navigationActions: [
-                FullScreenViewerNavigationAction(
-                    id: "edit",
-                    title: "Edit",
-                    accessibilityLabel: "Edit in Oppi Session",
-                    handler: {}
-                ),
-            ]
+            editItems: [UIBarButtonItem(title: "Edit", primaryAction: UIAction { _ in })]
         )
         controller.loadViewIfNeeded()
         let navigationController = try #require(controller.children.first as? UINavigationController)
         let contentController = try #require(navigationController.topViewController)
 
-        controller.setNavigationActions([
-            FullScreenViewerNavigationAction(
-                id: "edit",
-                title: "Starting…",
-                accessibilityLabel: "Edit in Oppi Session",
-                accessibilityValue: "Starting",
-                isEnabled: false,
-                handler: {}
-            ),
-        ])
+        let starting = UIBarButtonItem(title: "Starting…", primaryAction: UIAction { _ in })
+        starting.accessibilityValue = "Starting"
+        starting.isEnabled = false
+        controller.setEditBarItems([starting])
 
         let edit = try #require(contentController.navigationItem.rightBarButtonItems?.first)
+        #expect(edit === starting)
         #expect(edit.title == "Starting…")
         #expect(edit.accessibilityValue == "Starting")
         #expect(!edit.isEnabled)

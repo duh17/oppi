@@ -256,22 +256,16 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         )
     }
 
-    private var navigationActions: [FullScreenViewerNavigationAction] {
-        [
-            FullScreenViewerNavigationAction(
-                id: "edit-in-session",
-                title: DocumentEditLabels.edit,
-                systemImage: DocumentEditLabels.systemImage,
-                accessibilityLabel: DocumentEditLabels.editWithOppi,
-                isEnabled: true,
-                handler: { [weak self] in self?.presentGuidedRevision() }
-            ),
-        ]
-    }
-
-    private var agentEdit: DocumentAgentEditAction {
-        DocumentAgentEditAction { [weak self] in self?.presentGuidedRevision() }
-    }
+    /// The document's edit entry. The prompt readers hold text the app pieced
+    /// together, so this slice offers only Edit with Session here; the pencil
+    /// arrives with the subjects that can be written back.
+    private lazy var editOwner = DocumentEditOwner(
+        subject: .snapshot,
+        placement: .readerBar,
+        agentAction: DocumentAgentEditAction { [weak self] in self?.presentGuidedRevision() },
+        source: .none,
+        onChange: { [weak self] in self?.setNeedsUpdateProperties() }
+    )
 
     // MARK: Lifecycle
 
@@ -287,11 +281,11 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
                 title: title,
                 source: .hostFile,
                 reviewCommentSelectionContext: selectionContext,
-                skillFile: skillFile
+                skillFile: skillFile,
+                agentEdit: DocumentAgentEditAction { [weak self] in self?.presentGuidedRevision() }
             ),
             services: .init(connection: connection)
         )
-        fileViewer.agentEdit = agentEdit
         self.fileViewer = fileViewer
         embed(fileViewer)
     }
@@ -303,7 +297,7 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
         let reader = FullScreenCodeViewController(
             content: content,
             reviewCommentSelectionContext: selectionContext,
-            navigationActions: navigationActions
+            editItems: editOwner.barItems
         )
         self.reader = reader
         embed(reader)
@@ -340,7 +334,6 @@ final class ReviewableControlMarkdownViewController: UIViewController, RouterMod
     override func updateProperties() {
         super.updateProperties()
         if let fileViewer {
-            fileViewer.agentEdit = agentEdit
             fileViewer.bar.apply(to: navigationItem)
         }
     }

@@ -26,6 +26,7 @@ scripts/*
 !scripts/release/**
 !scripts/apple-container-copy-run.sh
 !scripts/duplication-scan.ts
+!scripts/document-edit-guard.ts
 !scripts/scroll-offset-guard.ts
 !scripts/theme-surface-guard.ts
 !scripts/uikit-structure-guard.ts

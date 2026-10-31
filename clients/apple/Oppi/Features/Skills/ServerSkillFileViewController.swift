@@ -3,7 +3,7 @@ import UIKit
 /// How a Skill file opens. Every file is read from its host path, the same
 /// direct read as any other host file.
 enum ServerSkillFilePresentation: Equatable {
-    /// Readable, with the editor and Edit with Oppi.
+    /// Readable, with the editor and Edit with Session.
     case editable(hostPath: String)
     case readOnly(hostPath: String)
     /// No host path to read.
@@ -70,8 +70,8 @@ enum ServerSkillFilePresentation: Equatable {
 /// Skill's server. The Skill's page or the catalog already holds its summary,
 /// so opening a file is one host read; the server rebuilds its Skill catalog
 /// only when neither has it. An editable Skill's own file opens with the
-/// selected-text review flow, the editor, and Edit with Oppi; other files are
-/// read-only. The file's bar items show in this screen's bar.
+/// selected-text review flow, the editor, and Edit with Session; other files
+/// are read-only. The file's bar items show in this screen's bar.
 @MainActor
 final class ServerSkillFileViewController: UIViewController {
     let target: ServerSkillFileNavTarget

@@ -1097,7 +1097,6 @@ struct WorkspaceFileEditEntryTests {
             return done != nil
         }
         #expect(editing, "Edit did not open the editor; items: \(Self.titles(in: content))")
-        let items = try #require(content.editBarItems)
         let name = "editor-options-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
@@ -1105,7 +1104,11 @@ struct WorkspaceFileEditEntryTests {
         #expect(preferences.wrapsText && !preferences.wrapsCode, "the defaults: Markdown wraps, code does not")
 
         // Wrap Lines in the menu, as it opens now, flips the open file's kind.
+        // Each editor's items belong to its own file, so the menu is read from
+        // the editor that is open.
         func toggleWrapLines() throws {
+            let items = try #require(content.editorBarItemsForTesting)
+
             func actions(_ elements: [UIMenuElement]) -> [UIAction] {
                 elements.flatMap { element -> [UIAction] in
                     if let menu = element as? UIMenu { return actions(menu.children) }

@@ -12,6 +12,7 @@ describe("pre-push gate planning", () => {
     ["iOS E2E", ["clients/apple/OppiE2ETests/ReleaseGateE2ETests.swift"], ["none", "all", false, false]],
     ["Mac", ["clients/apple/OppiMac/OppiMacApp.swift"], ["none", "none", true, false]],
     ["accessibility id guard", ["scripts/ax-id-guard.ts", "scripts/ax-id-baseline.json"], ["none", "unit", false, false]],
+    ["document edit guard", ["scripts/document-edit-guard.ts"], ["none", "unit", false, false]],
     ["protocol", ["protocol/server-messages.json"], ["full", "unit", true, false]],
     ["server protocol model", ["server/src/types/protocol.ts"], ["full", "unit", true, false]],
     ["server session protocol model", ["server/src/types/session.ts"], ["full", "unit", true, false]],

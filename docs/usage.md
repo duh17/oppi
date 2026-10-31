@@ -127,7 +127,7 @@ The sidebar holds saved **Agents** and **Schedules**.
 
 ## Edit with Oppi
 
-Describe a change in a composer: a list's composer to create something, or the **Describe a change…** bar at the bottom of a detail page to change it (the bar shows the model and thinking pills once you tap it). Each request opens a new **Oppi Control** session in the regular chat. It inspects the current setup, asks if the outcome is unclear, shows the change, and applies it. A change to an Agent, schedule, workspace, or session through Oppi's tools waits for a confirm card: the card says in plain words what changes; tap its button (for example **Apply Change** or **Create Agent**) to send it or **Cancel** to skip it, and the server enforces the card. Files (Skills, extensions, themes, Pi's `SYSTEM.md`) and commands the session runs through its shell (server settings, the dictation dictionary) get no card: the session says what will change and asks first, which is an instruction to the model, not an enforced confirmation. At the end it tells you where to see the change and whether a running session must reload.
+Describe a change in a composer: a list's composer to create something, or the **Describe a change…** bar at the bottom of a detail page to change it (the bar shows the model and thinking pills once you tap it). A document offers the same route as **Edit with Session**, in its **…** menu beside the pencil. Each request opens a new **Oppi Control** session in the regular chat. It inspects the current setup, asks if the outcome is unclear, shows the change, and applies it. A change to an Agent, schedule, workspace, or session through Oppi's tools waits for a confirm card: the card says in plain words what changes; tap its button (for example **Apply Change** or **Create Agent**) to send it or **Cancel** to skip it, and the server enforces the card. Files (Skills, extensions, themes, Pi's `SYSTEM.md`) and commands the session runs through its shell (server settings, the dictation dictionary) get no card: the session says what will change and asks first, which is an instruction to the model, not an enforced confirmation. At the end it tells you where to see the change and whether a running session must reload.
 
 Oppi Control sessions work on every server, whether or not [Durable Sessions](#durable-sessions) is on. They use Oppi's own setup prompt, not your global Pi prompt ([Oppi Control sessions](extensions.md#oppi-control-sessions)). Pi Control sessions from before keep working on the classic engine.
 
@@ -136,9 +136,9 @@ Oppi Control sessions work on every server, whether or not [Durable Sessions](#d
 | Agents | Composer in the Agents list | The bar on an active Agent's page; comments on its definition become the request |
 | Schedules | Composer in the Schedules list | The bar on a schedule's page; comments on its prompt become the request |
 | Pi's system prompt (`SYSTEM.md`) | | The bar on the Pi entry under Agents; comments on the file |
-| Skill files | | **Edit → Edit with Oppi** on an editable Skill's file, with your staged comments |
-| Extensions | | **Edit with Oppi** in the chat's context panel, or the bar on an extension's page (single files you own) |
-| Custom themes | Composer in **Settings → Appearance → Custom Themes** | Swipe a theme, or touch and hold, then **Edit with Oppi** |
+| Skill files | | The **…** menu on an editable Skill's file holds **Edit with Session**, with your staged comments |
+| Extensions | | **Edit with Session** in the chat's context panel, or the bar on an extension's page (single files you own) |
+| Custom themes | Composer in **Settings → Appearance → Custom Themes** | Swipe a theme, or touch and hold, then **Edit with Session** |
 | Workspaces | **Create with Oppi** in the create sheet | The bar in Workspace Settings (hidden while the workspace is locked) |
 
 ## Sandbox, Mirror, and SSH Terminal

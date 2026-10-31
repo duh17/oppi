@@ -4,7 +4,7 @@ An Oppi theme is one JSON file of color tokens. The iOS chat, settings, and code
 
 ## Create or change a theme
 
-- **With Oppi:** in **Settings → Appearance → Custom Themes**, describe a theme in the composer. Oppi starts an Oppi Control session that reads this page and writes the JSON file to the themes folder. To change a theme, swipe it (or touch and hold) and choose **Edit with Oppi**. For a bundled or Pi TUI theme, the session writes an override with the same filename. See [Edit with Oppi](usage.md#edit-with-oppi).
+- **With Oppi:** in **Settings → Appearance → Custom Themes**, describe a theme in the composer. Oppi starts an Oppi Control session that reads this page and writes the JSON file to the themes folder. To change a theme, swipe it (or touch and hold) and choose **Edit with Session**. For a bundled or Pi TUI theme, the session writes an override with the same filename. See [Edit with Oppi](usage.md#edit-with-oppi).
 - **By hand:** write the file in the themes folder (below), pull to refresh **Custom Themes**, tap the theme to import it, then pick it in the theme picker.
 
 ## Where files live
