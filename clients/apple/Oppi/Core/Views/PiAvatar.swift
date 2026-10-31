@@ -15,7 +15,7 @@ enum PiAvatarRenderer {
         return renderer.image { context in
             let canvasScale = size / 800
             context.cgContext.scaleBy(x: canvasScale, y: canvasScale)
-            UIColor(palette.fg).setFill()
+            palette.ui.fg.setFill()
 
             // Official mark geometry from https://pi.dev/logo-auto.svg.
             let pMark = UIBezierPath()

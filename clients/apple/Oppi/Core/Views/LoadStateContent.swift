@@ -83,8 +83,8 @@ extension UIContentUnavailableConfiguration {
         palette: ThemePalette,
         background: UIColor? = nil
     ) -> Self {
-        let fg = UIColor(palette.fg)
-        let comment = UIColor(palette.comment)
+        let fg = palette.ui.fg
+        let comment = palette.ui.comment
         var config: UIContentUnavailableConfiguration
         switch state {
         case .connecting:
@@ -111,7 +111,7 @@ extension UIContentUnavailableConfiguration {
         case .failed(let title, let message, let retry):
             config = empty()
             config.image = UIImage(systemName: "exclamationmark.triangle")
-            config.imageProperties.tintColor = UIColor(palette.orange)
+            config.imageProperties.tintColor = palette.ui.orange
             config.text = title
             config.textProperties.color = fg
             config.secondaryText = message

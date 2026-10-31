@@ -66,7 +66,7 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, FullSc
     }
 
     private func configure() {
-        backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
         collectionView.backgroundColor = .clear
         collectionView.dataSource = self
         collectionView.register(DelimitedTableCell.self, forCellWithReuseIdentifier: DelimitedTableCell.reuseID)
@@ -76,14 +76,14 @@ final class DelimitedTableRenderView: UIView, UICollectionViewDataSource, FullSc
         collectionView.translatesAutoresizingMaskIntoConstraints = false
 
         summaryLabel.font = .preferredFont(forTextStyle: .caption1)
-        summaryLabel.textColor = UIColor(palette.comment)
+        summaryLabel.textColor = palette.ui.comment
         summaryLabel.numberOfLines = 0
         summaryLabel.text = plan.truncationSummary
         summaryLabel.isHidden = plan.truncationSummary == nil
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
 
         emptyLabel.font = .preferredFont(forTextStyle: .caption1)
-        emptyLabel.textColor = UIColor(palette.comment)
+        emptyLabel.textColor = palette.ui.comment
         emptyLabel.text = "Empty table"
         emptyLabel.isHidden = plan.table.displayedRowCount > 0
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -228,7 +228,7 @@ private final class DelimitedTableCell: UICollectionViewCell {
         label.font = font
         label.textColor = UIColor(isHeader ? palette.fg : palette.fgDim)
         contentView.backgroundColor = UIColor(isHeader ? palette.bgHighlight : palette.bgDark)
-        divider.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.25)
+        divider.backgroundColor = palette.ui.comment.withAlphaComponent(0.25)
     }
 }
 

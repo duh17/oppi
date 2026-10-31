@@ -277,7 +277,7 @@ final class FullScreenCodeViewController: UIViewController {
         let themeID = appliedThemeID ?? ThemeRuntimeState.currentThemeID()
         appliedThemeID = themeID
         let palette = themeID.palette
-        view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bgDark
         setupBackSwipeDismissIfNeeded()
 
         let nav = UINavigationController(rootViewController: makeContentController())
@@ -329,8 +329,8 @@ final class FullScreenCodeViewController: UIViewController {
         appliedThemeID = themeID
         let palette = themeID.palette
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        view.backgroundColor = UIColor(palette.bgDark)
-        viewController.view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bgDark
+        viewController.view.backgroundColor = palette.ui.bgDark
 
         let interactionState = installedBodyView.map(captureInteractionState)
         clearLiveSourceBodyReferences()
@@ -468,7 +468,7 @@ final class FullScreenCodeViewController: UIViewController {
             guard let self, let host = self.contentHostController else { return }
             self.installRightBarItems(on: host, palette: self.bodyThemeID.palette)
         }
-        vc.view.backgroundColor = UIColor(palette.bgDark)
+        vc.view.backgroundColor = palette.ui.bgDark
 
         let dismissMode: FullScreenViewerNavigationChrome.DismissMode?
         switch presentationMode {
@@ -756,7 +756,7 @@ final class FullScreenCodeViewController: UIViewController {
             target: self,
             action: #selector(copyTapped)
         )
-        copy.tintColor = UIColor(palette.fgDim)
+        copy.tintColor = palette.ui.fgDim
         copy.accessibilityIdentifier = "fullscreen-code.copy"
         copyButton = copy
         rightItems.append(copy)
@@ -778,7 +778,7 @@ final class FullScreenCodeViewController: UIViewController {
                 toggle.image = UIImage(systemName: Self.sourceToggleSymbol(for: toggleTitle))
             }
             toggle.accessibilityIdentifier = "fullscreen-code.source-toggle"
-            toggle.tintColor = UIColor(palette.blue)
+            toggle.tintColor = palette.ui.blue
             rightItems.append(toggle)
         }
 
@@ -1239,8 +1239,8 @@ final class FullScreenCodeViewController: UIViewController {
     private func updateStashBadge(count: Int, palette: ThemePalette) {
         guard let badge = stashBadgeLabel else { return }
         badge.text = count > 99 ? "99+" : "\(count)"
-        badge.textColor = UIColor(palette.bgDark)
-        badge.backgroundColor = UIColor(palette.cyan)
+        badge.textColor = palette.ui.bgDark
+        badge.backgroundColor = palette.ui.cyan
         let horizontalPadding: CGFloat = count >= 10 ? 6 : 5
         badge.layoutMargins = UIEdgeInsets(
             top: 0,
@@ -1412,7 +1412,7 @@ final class FullScreenCodeViewController: UIViewController {
                 reviewCommentRouter: reviewCommentSelectionContext?.dispatcher,
                 sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
             )
-            view.backgroundColor = UIColor(palette.bgDark)
+            view.backgroundColor = palette.ui.bgDark
             view.applyReaderPreferences(readerPreferences(for: content))
             return view
         case .thinking(let text, let stream):
@@ -1633,7 +1633,7 @@ final class FullScreenCodeViewController: UIViewController {
             reviewCommentRouter: reviewCommentSelectionContext?.dispatcher,
             sourceContext: makeSourceContext(surface: .fullScreenSource, filePath: filePath)
         )
-        view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bgDark
         view.applyReaderPreferences(readerPreferences(for: .html(content: text, filePath: filePath)))
         return view
     }

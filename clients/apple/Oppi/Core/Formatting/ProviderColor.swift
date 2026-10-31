@@ -15,29 +15,29 @@ enum ProviderColor {
     /// Resolve a color for a raw provider id using the current theme palette.
     static func color(forProvider provider: String?, palette: ThemePalette) -> UIColor {
         guard let provider else {
-            return UIColor(palette.purple)
+            return palette.ui.purple
         }
 
         switch canonicalProvider(provider) {
         case "anthropic":
-            return UIColor(palette.orange)
+            return palette.ui.orange
         case "openai", "azure", "github-copilot":
-            return UIColor(palette.green)
+            return palette.ui.green
         case "google", "google-vertex", "google-antigravity", "google-gemini-cli", "deepseek", "ds4":
-            return UIColor(palette.blue)
+            return palette.ui.blue
         case "meta", "meta-llama", "openrouter", "vercel-ai-gateway", "opencode":
-            return UIColor(palette.cyan)
+            return palette.ui.cyan
         case "amazon-bedrock", "xai":
-            return UIColor(palette.yellow)
+            return palette.ui.yellow
         case "mistral", "mistralai", "mlx-serve":
-            return UIColor(palette.red)
+            return palette.ui.red
         case "qwen":
-            return UIColor(palette.purple)
+            return palette.ui.purple
         case "cursor":
             // Cursor's mark is monochrome, and purple is already Qwen's.
-            return UIColor(palette.fg)
+            return palette.ui.fg
         default:
-            return UIColor(palette.purple)
+            return palette.ui.purple
         }
     }
 

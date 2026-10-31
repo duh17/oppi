@@ -38,7 +38,7 @@ final class LockedServerSwitchButton: UIButton {
         configuration.title = String(localized: "Switch Server")
         configuration.image = UIImage(systemName: "arrow.left.arrow.right")
         configuration.imagePadding = 6
-        configuration.baseForegroundColor = UIColor(palette.blue)
+        configuration.baseForegroundColor = palette.ui.blue
         self.configuration = configuration
     }
 

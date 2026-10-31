@@ -126,7 +126,7 @@ enum FullScreenFloatingControlChrome {
         config.background.backgroundColor = UIColor(
             ThemeSurfaceStyle.resolve(.floatingControl, palette: palette).fill
         )
-        config.baseForegroundColor = UIColor(palette.fg)
+        config.baseForegroundColor = palette.ui.fg
     }
 
     static func makeStandaloneButton(
@@ -714,7 +714,7 @@ enum FullScreenViewerNavigationChrome {
             target: target,
             action: action
         )
-        button.tintColor = UIColor(palette.cyan)
+        button.tintColor = palette.ui.cyan
         button.accessibilityLabel = mode.accessibilityLabel
         button.accessibilityIdentifier = accessibilityIdentifier
         return button
@@ -726,7 +726,7 @@ enum FullScreenViewerNavigationChrome {
     ) -> UIBarButtonItem {
         FileSharePresenter.makeShareBarButtonItem(
             for: content,
-            tintColor: UIColor(palette.fgDim)
+            tintColor: palette.ui.fgDim
         )
     }
 }

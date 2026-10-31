@@ -638,7 +638,7 @@ enum FlatSegment: Sendable {
                                 lineRange: lineRange,
                                 markerForItem: { _ in
                                     var marker = AttributedString("    • ")
-                                    marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                                    marker.uiKit.foregroundColor = palette.ui.mdListBullet
                                     return marker
                                 },
                                 continuationForItem: { _ in AttributedString("      ") }
@@ -659,7 +659,7 @@ enum FlatSegment: Sendable {
                                 markerForItem: { nestedIndex in
                                     let markerText = "    \(start + nestedIndex). "
                                     var marker = AttributedString(markerText)
-                                    marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                                    marker.uiKit.foregroundColor = palette.ui.mdListBullet
                                     marker.uiKit.font = AppFont.messageBody
                                     return marker
                                 },
@@ -814,7 +814,7 @@ enum FlatSegment: Sendable {
                     lineRange: lineRange,
                     markerForItem: { _ in
                         var marker = AttributedString("  • ")
-                        marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                        marker.uiKit.foregroundColor = palette.ui.mdListBullet
                         return marker
                     },
                     continuationForItem: { _ in AttributedString("    ") }
@@ -827,7 +827,7 @@ enum FlatSegment: Sendable {
                     markerForItem: { itemIndex in
                         let markerText = "  \(start + itemIndex). "
                         var marker = AttributedString(markerText)
-                        marker.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                        marker.uiKit.foregroundColor = palette.ui.mdListBullet
                         marker.uiKit.font = AppFont.messageBody
                         return marker
                     },
@@ -974,9 +974,9 @@ enum FlatSegment: Sendable {
             return attributed
         }
         var quoted = AttributedString("▎ ")
-        quoted.uiKit.foregroundColor = UIColor(palette.mdQuoteBorder)
+        quoted.uiKit.foregroundColor = palette.ui.mdQuoteBorder
         var body = attributed
-        body.uiKit.foregroundColor = UIColor(palette.mdQuote)
+        body.uiKit.foregroundColor = palette.ui.mdQuote
         quoted.append(body)
         return quoted
     }
@@ -1202,8 +1202,8 @@ enum FlatSegment: Sendable {
             case .code(let code):
                 var rendered = AttributedString(code)
                 rendered.uiKit.font = AppFont.messageInlineCode
-                rendered.uiKit.foregroundColor = UIColor(palette.mdCode)
-                rendered.uiKit.backgroundColor = UIColor(palette.bgHighlight)
+                rendered.uiKit.foregroundColor = palette.ui.mdCode
+                rendered.uiKit.backgroundColor = palette.ui.bgHighlight
                 result.attributed.append(rendered)
 
             case .link(let children, let destination):
@@ -1213,7 +1213,7 @@ enum FlatSegment: Sendable {
                     bodyColor: bodyColor,
                     bodyFont: bodyFont
                 )
-                rendered.attributed.uiKit.foregroundColor = UIColor(palette.mdLink)
+                rendered.attributed.uiKit.foregroundColor = palette.ui.mdLink
                 rendered.attributed.uiKit.underlineStyle = linkUnderline(destination: destination)
                 let decorated = applyLink(
                     destination: destination,
@@ -1225,7 +1225,7 @@ enum FlatSegment: Sendable {
             case .image(let alt, _):
                 var rendered = AttributedString(imageFallbackText(alt: alt))
                 rendered.uiKit.font = bodyFont
-                rendered.uiKit.foregroundColor = UIColor(palette.comment)
+                rendered.uiKit.foregroundColor = palette.ui.comment
                 result.attributed.append(rendered)
 
             case .videoEmbed(let embed):
@@ -1252,7 +1252,7 @@ enum FlatSegment: Sendable {
             case .html(let raw):
                 var rendered = AttributedString(raw)
                 rendered.uiKit.font = bodyFont
-                rendered.uiKit.foregroundColor = UIColor(palette.comment)
+                rendered.uiKit.foregroundColor = palette.ui.comment
                 result.attributed.append(rendered)
 
             case .strikethrough(let children):
@@ -1996,13 +1996,13 @@ enum FlatSegment: Sendable {
                 let codeFont = AppFont.monoMedium
                 appendAttributed(NSAttributedString(string: trimmed, attributes: [
                     .font: codeFont,
-                    .foregroundColor: UIColor(palette.mdCode),
-                    .backgroundColor: UIColor(palette.bgHighlight),
+                    .foregroundColor: palette.ui.mdCode,
+                    .backgroundColor: palette.ui.bgHighlight,
                 ]))
 
             case .thematicBreak:
                 appendAttributed(NSAttributedString(string: "───", attributes: [
-                    .foregroundColor: UIColor(palette.comment),
+                    .foregroundColor: palette.ui.comment,
                     .font: AppFont.messageBody,
                 ]))
 
@@ -2055,7 +2055,7 @@ enum FlatSegment: Sendable {
 
         case .paragraph(let inlines):
             let bodyFont = AppFont.messageBody
-            let bodyColor = defaultTextColor ?? UIColor(palette.fg)
+            let bodyColor = defaultTextColor ?? palette.ui.fg
             if let renderedLatex = renderInlineLatexParagraph(
                 inlines,
                 palette: palette,
@@ -2089,14 +2089,14 @@ enum FlatSegment: Sendable {
 
         case .blockQuote(let children):
             var result = AttributedString("▎ ")
-            result.uiKit.foregroundColor = UIColor(palette.mdQuoteBorder)
+            result.uiKit.foregroundColor = palette.ui.mdQuoteBorder
             let bodyStart = result.endIndex
             for (i, child) in children.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 result.append(attributedString(for: child, palette: palette, defaultTextColor: defaultTextColor))
             }
             if bodyStart < result.endIndex {
-                result[bodyStart..<result.endIndex].uiKit.foregroundColor = UIColor(palette.mdQuote)
+                result[bodyStart..<result.endIndex].uiKit.foregroundColor = palette.ui.mdQuote
             }
             return result
 
@@ -2105,7 +2105,7 @@ enum FlatSegment: Sendable {
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var bullet = AttributedString("  • ")
-                bullet.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                bullet.uiKit.foregroundColor = palette.ui.mdListBullet
                 result.append(bullet)
                 for (j, block) in blocks.enumerated() {
                     if j > 0 { result.append(AttributedString("\n    ")) }
@@ -2119,7 +2119,7 @@ enum FlatSegment: Sendable {
             for (i, blocks) in items.enumerated() {
                 if i > 0 { result.append(AttributedString("\n")) }
                 var num = AttributedString("  \(start + i). ")
-                num.uiKit.foregroundColor = UIColor(palette.mdListBullet)
+                num.uiKit.foregroundColor = palette.ui.mdListBullet
                 num.uiKit.font = AppFont.messageBody
                 result.append(num)
                 for (j, block) in blocks.enumerated() {
@@ -2135,18 +2135,18 @@ enum FlatSegment: Sendable {
                 if i > 0 { result.append(AttributedString("\n")) }
                 if item.checked {
                     var check = AttributedString("  \u{25C9} ")
-                    check.uiKit.foregroundColor = UIColor(palette.green)
+                    check.uiKit.foregroundColor = palette.ui.green
                     result.append(check)
                 } else {
                     var check = AttributedString("  \u{25CB} ")
-                    check.uiKit.foregroundColor = UIColor(palette.fgDim)
+                    check.uiKit.foregroundColor = palette.ui.fgDim
                     result.append(check)
                 }
                 for (j, block) in item.content.enumerated() {
                     if j > 0 { result.append(AttributedString("\n     ")) }
                     var content = attributedString(for: block, palette: palette, defaultTextColor: defaultTextColor)
                     if item.checked {
-                        content.uiKit.foregroundColor = UIColor(palette.comment)
+                        content.uiKit.foregroundColor = palette.ui.comment
                         content.strikethroughStyle = .single
                     }
                     result.append(content)
@@ -2157,7 +2157,7 @@ enum FlatSegment: Sendable {
         case .htmlBlock(let html):
             var result = AttributedString(html.trimmingCharacters(in: .whitespacesAndNewlines))
             result.uiKit.font = AppFont.mono
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.uiKit.foregroundColor = palette.ui.comment
             return result
 
         case .codeBlock, .table, .thematicBreak:
@@ -2278,10 +2278,10 @@ enum FlatSegment: Sendable {
     ) -> AttributedString {
         var result = AttributedString(audioFallbackText(embed))
         if let url = ResourceReferenceURL.make(embed.reference) {
-            result.uiKit.foregroundColor = UIColor(palette.mdLink)
+            result.uiKit.foregroundColor = palette.ui.mdLink
             result.link = url
         } else {
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.uiKit.foregroundColor = palette.ui.comment
         }
         return result
     }
@@ -2292,10 +2292,10 @@ enum FlatSegment: Sendable {
     ) -> AttributedString {
         var result = AttributedString(videoFallbackText(embed))
         if let url = ResourceReferenceURL.make(embed.reference) {
-            result.uiKit.foregroundColor = UIColor(palette.mdLink)
+            result.uiKit.foregroundColor = palette.ui.mdLink
             result.link = url
         } else {
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.uiKit.foregroundColor = palette.ui.comment
         }
         return result
     }
@@ -2306,10 +2306,10 @@ enum FlatSegment: Sendable {
     ) -> AttributedString {
         var result = AttributedString(usdzFallbackText(embed))
         if let url = ResourceReferenceURL.make(embed.reference) {
-            result.uiKit.foregroundColor = UIColor(palette.mdLink)
+            result.uiKit.foregroundColor = palette.ui.mdLink
             result.link = url
         } else {
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.uiKit.foregroundColor = palette.ui.comment
         }
         return result
     }
@@ -2347,8 +2347,8 @@ enum FlatSegment: Sendable {
                 text += code
                 let end = text.utf8.count
                 let codeFont = AppFont.messageInlineCode
-                let codeFg = UIColor(palette.mdCode)
-                let codeBg = UIColor(palette.bgHighlight)
+                let codeFg = palette.ui.mdCode
+                let codeBg = palette.ui.bgHighlight
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                     sub.uiKit.font = codeFont
                     sub.uiKit.foregroundColor = codeFg
@@ -2362,7 +2362,7 @@ enum FlatSegment: Sendable {
                         guard let destination, let url = URL(string: destination), url.scheme != nil else { return nil }
                         return url
                     }()
-                    let linkColor = UIColor(palette.mdLink)
+                    let linkColor = palette.ui.mdLink
                     let underline = linkUnderline(destination: destination)
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                         sub.uiKit.foregroundColor = linkColor
@@ -2376,48 +2376,48 @@ enum FlatSegment: Sendable {
                 text += imageFallbackText(alt: alt)
                 let end = text.utf8.count
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                    sub.uiKit.foregroundColor = UIColor(palette.comment)
+                    sub.uiKit.foregroundColor = palette.ui.comment
                 })
             case .videoEmbed(let embed):
                 text += videoFallbackText(embed)
                 let end = text.utf8.count
                 if let url = ResourceReferenceURL.make(embed.reference) {
-                    let linkColor = UIColor(palette.mdLink)
+                    let linkColor = palette.ui.mdLink
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                         sub.uiKit.foregroundColor = linkColor
                         sub.link = url
                     })
                 } else {
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = UIColor(palette.comment)
+                        sub.uiKit.foregroundColor = palette.ui.comment
                     })
                 }
             case .audioEmbed(let embed):
                 text += audioFallbackText(embed)
                 let end = text.utf8.count
                 if let url = ResourceReferenceURL.make(embed.reference) {
-                    let linkColor = UIColor(palette.mdLink)
+                    let linkColor = palette.ui.mdLink
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                         sub.uiKit.foregroundColor = linkColor
                         sub.link = url
                     })
                 } else {
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = UIColor(palette.comment)
+                        sub.uiKit.foregroundColor = palette.ui.comment
                     })
                 }
             case .usdzEmbed(let embed):
                 text += usdzFallbackText(embed)
                 let end = text.utf8.count
                 if let url = ResourceReferenceURL.make(embed.reference) {
-                    let linkColor = UIColor(palette.mdLink)
+                    let linkColor = palette.ui.mdLink
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
                         sub.uiKit.foregroundColor = linkColor
                         sub.link = url
                     })
                 } else {
                     attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                        sub.uiKit.foregroundColor = UIColor(palette.comment)
+                        sub.uiKit.foregroundColor = palette.ui.comment
                     })
                 }
             case .softBreak, .hardBreak:
@@ -2426,7 +2426,7 @@ enum FlatSegment: Sendable {
                 text += raw
                 let end = text.utf8.count
                 attrs.append(InlineAttr(utf8Start: start, utf8End: end) { sub in
-                    sub.uiKit.foregroundColor = UIColor(palette.comment)
+                    sub.uiKit.foregroundColor = palette.ui.comment
                 })
             case .strikethrough(let children):
                 collectInlineText(children, palette: palette, into: &text, attrs: &attrs, depth: depth + 1)
@@ -2456,12 +2456,12 @@ enum FlatSegment: Sendable {
         case .code(let code):
             var result = AttributedString(code)
             result.uiKit.font = AppFont.messageInlineCode
-            result.uiKit.foregroundColor = UIColor(palette.mdCode)
-            result.uiKit.backgroundColor = UIColor(palette.bgHighlight)
+            result.uiKit.foregroundColor = palette.ui.mdCode
+            result.uiKit.backgroundColor = palette.ui.bgHighlight
             return result
         case .link(let children, let destination):
             var result = renderInlines(children, palette: palette)
-            result.uiKit.foregroundColor = UIColor(palette.mdLink)
+            result.uiKit.foregroundColor = palette.ui.mdLink
             result.uiKit.underlineStyle = linkUnderline(destination: destination)
             if let destination,
                let url = URL(string: destination),
@@ -2471,7 +2471,7 @@ enum FlatSegment: Sendable {
             return result
         case .image(let alt, _):
             var result = AttributedString(imageFallbackText(alt: alt))
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.uiKit.foregroundColor = palette.ui.comment
             return result
         case .videoEmbed(let embed):
             return videoFallbackAttributedString(embed, palette: palette)
@@ -2483,7 +2483,7 @@ enum FlatSegment: Sendable {
             return AttributedString("\n")
         case .html(let raw):
             var result = AttributedString(raw)
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.uiKit.foregroundColor = palette.ui.comment
             return result
         case .strikethrough(let children):
             var result = renderInlines(children, palette: palette)
@@ -2666,12 +2666,12 @@ enum FlatSegment: Sendable {
         case .code(let code):
             var result = AttributedString(code)
             result.uiKit.font = AppFont.messageInlineCode
-            result.uiKit.foregroundColor = UIColor(palette.mdCode)
-            result.uiKit.backgroundColor = UIColor(palette.bgHighlight)
+            result.uiKit.foregroundColor = palette.ui.mdCode
+            result.uiKit.backgroundColor = palette.ui.bgHighlight
             return result
         case .link(let children, let destination):
             var result = renderInlinesDirectAppend(children, palette: palette, defaultColor: nil)
-            result.uiKit.foregroundColor = UIColor(palette.mdLink)
+            result.uiKit.foregroundColor = palette.ui.mdLink
             result.uiKit.underlineStyle = linkUnderline(destination: destination)
             return applyLink(
                 destination: destination,
@@ -2679,7 +2679,7 @@ enum FlatSegment: Sendable {
             )
         case .image(let alt, _):
             var result = AttributedString(imageFallbackText(alt: alt))
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.uiKit.foregroundColor = palette.ui.comment
             return result
         case .videoEmbed(let embed):
             return videoFallbackAttributedString(embed, palette: palette)
@@ -2695,7 +2695,7 @@ enum FlatSegment: Sendable {
             return result
         case .html(let raw):
             var result = AttributedString(raw)
-            result.uiKit.foregroundColor = UIColor(palette.comment)
+            result.uiKit.foregroundColor = palette.ui.comment
             return result
         }
     }
@@ -2704,10 +2704,10 @@ enum FlatSegment: Sendable {
 
     private static func headingColor(level: Int, palette: ThemePalette) -> UIColor {
         switch level {
-        case 1, 2: return UIColor(palette.mdHeading)
-        case 3: return UIColor(palette.fg)
-        case 4, 5: return UIColor(palette.fgDim)
-        default: return UIColor(palette.comment)
+        case 1, 2: return palette.ui.mdHeading
+        case 3: return palette.ui.fg
+        case 4, 5: return palette.ui.fgDim
+        default: return palette.ui.comment
         }
     }
 

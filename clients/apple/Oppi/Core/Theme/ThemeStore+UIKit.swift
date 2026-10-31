@@ -11,7 +11,7 @@ extension ThemeStore {
 
     /// The theme's page background, for UIKit containers around hosted screens.
     var backgroundColor: UIColor {
-        UIColor(activeThemeID.palette.bg)
+        activeThemeID.palette.ui.bg
     }
 
     /// System mode follows the window's appearance; other modes ignore it.

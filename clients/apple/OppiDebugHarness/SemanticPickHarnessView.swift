@@ -25,7 +25,7 @@ final class SemanticPickHarnessViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(ThemeID.dark.palette.bgDark)
+        view.backgroundColor = ThemeID.dark.palette.ui.bgDark
         installComments()
         installChrome()
         showDiagram(.flowchart)

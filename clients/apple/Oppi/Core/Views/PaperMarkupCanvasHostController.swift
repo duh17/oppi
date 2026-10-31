@@ -158,7 +158,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
         let navigation = UINavigationController(rootViewController: host)
         navigation.modalPresentationStyle = .fullScreen
         navigation.overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
+        navigation.view.backgroundColor = themeID.palette.ui.bgDark
         return navigation
     }
 
@@ -183,7 +183,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
         let themeID = ThemeRuntimeState.currentThemeID()
         let palette = themeID.palette
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bgDark
         setupNavigation(palette: palette)
         setupPaperView()
     }
@@ -345,7 +345,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
             action: #selector(cancelTapped)
         )
         navigationItem.leftBarButtonItem?.accessibilityIdentifier = "composer.canvas.cancel"
-        navigationItem.leftBarButtonItem?.tintColor = UIColor(palette.fgDim)
+        navigationItem.leftBarButtonItem?.tintColor = palette.ui.fgDim
 
         // Round bar items keep the trailing group narrow enough for compact
         // widths; the checkmark stays the only prominent action.
@@ -357,7 +357,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
         )
         add.accessibilityLabel = "Add to Chat"
         add.accessibilityIdentifier = "composer.canvas.addToChat"
-        add.tintColor = UIColor(palette.blue)
+        add.tintColor = palette.ui.blue
         add.isEnabled = !isExporting
         addButton = add
 
@@ -367,7 +367,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
             identifier: "canvas.undo",
             action: #selector(undoTapped)
         )
-        undo.tintColor = UIColor(palette.fg)
+        undo.tintColor = palette.ui.fg
         undoButton = undo
 
         let redo = makeHistoryButton(
@@ -376,7 +376,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
             identifier: "canvas.redo",
             action: #selector(redoTapped)
         )
-        redo.tintColor = UIColor(palette.fg)
+        redo.tintColor = palette.ui.fg
         redoButton = redo
 
         // Trailing-most first: undo, redo, then the prominent checkmark.
@@ -454,7 +454,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
             action: #selector(presentMarkupTools(_:))
         )
         insertButton.accessibilityLabel = "Insert"
-        insertButton.tintColor = UIColor(palette.cyan)
+        insertButton.tintColor = palette.ui.cyan
         return insertButton
     }
 

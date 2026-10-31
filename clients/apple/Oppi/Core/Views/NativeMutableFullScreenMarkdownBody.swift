@@ -151,10 +151,10 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
     }
 
     private func setupMutableViewport() {
-        backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.backgroundColor = UIColor(palette.bgDark)
+        scrollView.backgroundColor = palette.ui.bgDark
         scrollView.alwaysBounceVertical = true
         scrollView.showsVerticalScrollIndicator = true
         scrollView.keyboardDismissMode = .interactive
@@ -595,10 +595,10 @@ final class NativeFullScreenThinkingBody: UIView,
         self.followPolicy = LiveStreamingPresentation.ViewportPolicy(followsTail: isStreaming)
         super.init(frame: .zero)
 
-        backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.backgroundColor = .clear
-        textView.textColor = UIColor(palette.fg)
+        textView.textColor = palette.ui.fg
         textView.font = thinkingFont
         textView.isEditable = false
         textView.isSelectable = true
@@ -897,7 +897,7 @@ final class NativeFullScreenThinkingBody: UIView,
         let textView = cell.textView
         textView.delegate = self
         textView.font = thinkingFont
-        textView.textColor = UIColor(palette.fg)
+        textView.textColor = palette.ui.fg
         textView.sourceLineRangeResolver = { [weak textView] range in
             guard let textView,
                   let local = ReviewCommentSelectionEditMenuSupport.textLineRange(

@@ -798,7 +798,7 @@ enum DocumentRenderPipeline {
         textView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
         textView.textContainer.lineFragmentPadding = 0
         textView.font = AppFont.monoDocument
-        textView.textColor = UIColor(palette.fg)
+        textView.textColor = palette.ui.fg
         textView.text = source
         textView.accessibilityLabel = source
         return textView

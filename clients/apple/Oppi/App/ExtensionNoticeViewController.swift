@@ -108,7 +108,7 @@ final class ExtensionNoticeViewController: UIViewController {
         super.updateProperties()
         // Read here, so a theme change runs this again.
         let themeID = root.themeStore.activeThemeID
-        view.backgroundColor = UIColor(themeID.palette.bg)
+        view.backgroundColor = themeID.palette.ui.bg
         guard shown?.themeID != themeID || shown?.message != message else { return }
         shown = (themeID, message)
         rebuild(palette: themeID.palette)
@@ -127,7 +127,7 @@ final class ExtensionNoticeViewController: UIViewController {
                 text.numberOfLines = 0
                 text.font = .preferredFont(forTextStyle: .body)
                 text.adjustsFontForContentSizeCategory = true
-                text.textColor = UIColor(palette.fg)
+                text.textColor = palette.ui.fg
                 text.text = line.text
                 text.accessibilityIdentifier = "extension.notice.text"
                 stack.addArrangedSubview(text)
@@ -140,12 +140,12 @@ final class ExtensionNoticeViewController: UIViewController {
         caption.numberOfLines = 0
         caption.font = .preferredFont(forTextStyle: .subheadline)
         caption.adjustsFontForContentSizeCategory = true
-        caption.textColor = UIColor(palette.comment)
+        caption.textColor = palette.ui.comment
         caption.text = label
 
         var linkConfiguration = UIButton.Configuration.plain()
         linkConfiguration.contentInsets = .zero
-        linkConfiguration.baseForegroundColor = UIColor(palette.blue)
+        linkConfiguration.baseForegroundColor = palette.ui.blue
         linkConfiguration.titleLineBreakMode = .byTruncatingTail
         linkConfiguration.attributedTitle = AttributedString(
             url.absoluteString,
@@ -162,7 +162,7 @@ final class ExtensionNoticeViewController: UIViewController {
         var copyConfiguration = UIButton.Configuration.plain()
         copyConfiguration.image = UIImage(systemName: "doc.on.doc")
         copyConfiguration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(scale: .medium)
-        copyConfiguration.baseForegroundColor = UIColor(palette.fgDim)
+        copyConfiguration.baseForegroundColor = palette.ui.fgDim
         let copy = UIButton(configuration: copyConfiguration, primaryAction: UIAction { _ in
             UIPasteboard.general.string = url.absoluteString
             AppHaptics.impact(style: .light, intensity: 0.8)

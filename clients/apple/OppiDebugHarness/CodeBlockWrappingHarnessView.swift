@@ -80,10 +80,10 @@ final class CodeBlockWrappingHarnessRootView: UIView, HarnessDiagnosticsView {
     }
 
     private func setup() {
-        backgroundColor = UIColor(ThemeID.dark.palette.bg)
+        backgroundColor = ThemeID.dark.palette.ui.bg
 
         panel.translatesAutoresizingMaskIntoConstraints = false
-        panel.backgroundColor = UIColor(ThemeID.dark.palette.bgHighlight).withAlphaComponent(0.25)
+        panel.backgroundColor = ThemeID.dark.palette.ui.bgHighlight.withAlphaComponent(0.25)
         panel.layer.cornerRadius = 16
         panel.clipsToBounds = true
         addSubview(panel)

@@ -100,14 +100,14 @@ enum DiffAttributedStringBuilder {
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineBreakMode = .byClipping
 
-            let addedAccent = UIColor(palette.toolDiffAdded)
-            let removedAccent = UIColor(palette.toolDiffRemoved)
+            let addedAccent = palette.ui.diffAdded
+            let removedAccent = palette.ui.diffRemoved
             let contextDim = UIColor(palette.comment.opacity(0.4))
             let lineNumColor = UIColor(palette.comment.opacity(0.5))
-            let fgColor = UIColor(palette.fg)
-            let fgDimColor = UIColor(palette.fgDim)
-            let headerColor = UIColor(palette.purple)
-            let gapSummaryColor = UIColor(palette.fgDim)
+            let fgColor = palette.ui.fg
+            let fgDimColor = palette.ui.fgDim
+            let headerColor = palette.ui.purple
+            let gapSummaryColor = palette.ui.fgDim
 
             let lineAddedBg = UIColor(palette.toolDiffAdded.opacity(0.12))
             let lineRemovedBg = UIColor(palette.toolDiffRemoved.opacity(0.10))
@@ -186,7 +186,7 @@ enum DiffAttributedStringBuilder {
                     removedText: lineRemovedBg,
                     addedRow: UIColor(palette.toolDiffAdded.opacity(0.10)),
                     removedRow: UIColor(palette.toolDiffRemoved.opacity(0.08)),
-                    header: UIColor(palette.bgHighlight),
+                    header: palette.ui.bgHighlight,
                     addedBar: addedAccent,
                     removedBar: removedAccent
                 ),

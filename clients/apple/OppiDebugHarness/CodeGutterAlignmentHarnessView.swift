@@ -75,7 +75,7 @@ final class CodeGutterAlignmentHarnessRootView: UIView, HarnessDiagnosticsView {
     }
 
     private func setup() {
-        backgroundColor = UIColor(ThemeID.dark.palette.bgDark)
+        backgroundColor = ThemeID.dark.palette.ui.bgDark
 
         codeBody.translatesAutoresizingMaskIntoConstraints = false
         addSubview(codeBody)

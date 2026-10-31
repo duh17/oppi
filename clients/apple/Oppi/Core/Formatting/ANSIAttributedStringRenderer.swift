@@ -310,15 +310,15 @@ private struct ANSIThemeColors {
 
     init(themeID: ThemeID) {
         let palette = themeID.palette
-        let fgDim = UIColor(palette.fgDim)
-        let red = UIColor(palette.red)
-        let green = UIColor(palette.green)
-        let yellow = UIColor(palette.yellow)
-        let blue = UIColor(palette.blue)
-        let purple = UIColor(palette.purple)
-        let cyan = UIColor(palette.cyan)
-        let fg = UIColor(palette.fg)
-        let comment = UIColor(palette.comment)
+        let fgDim = palette.ui.fgDim
+        let red = palette.ui.red
+        let green = palette.ui.green
+        let yellow = palette.ui.yellow
+        let blue = palette.ui.blue
+        let purple = palette.ui.purple
+        let cyan = palette.ui.cyan
+        let fg = palette.ui.fg
+        let comment = palette.ui.comment
 
         self.fgDim = fgDim
         self.red = red

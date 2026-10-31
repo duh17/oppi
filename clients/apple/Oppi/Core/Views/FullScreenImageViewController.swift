@@ -43,7 +43,7 @@ final class FullScreenImageViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bgDark
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleThemeChangeNotification),
@@ -89,7 +89,7 @@ final class FullScreenImageViewController: UIViewController {
             action: #selector(shareTapped)
         )
         shareButton.accessibilityLabel = "Share"
-        shareButton.tintColor = UIColor(palette.fgDim)
+        shareButton.tintColor = palette.ui.fgDim
         let saveButton = UIBarButtonItem(
             image: UIImage(systemName: "square.and.arrow.down"),
             style: .plain,
@@ -97,7 +97,7 @@ final class FullScreenImageViewController: UIViewController {
             action: #selector(saveTapped(_:))
         )
         saveButton.accessibilityLabel = "Save"
-        saveButton.tintColor = UIColor(palette.fgDim)
+        saveButton.tintColor = palette.ui.fgDim
         // Share is the trailing-most action in this bar.
         navigationItem.rightBarButtonItems = [shareButton, saveButton]
 
@@ -123,7 +123,7 @@ final class FullScreenImageViewController: UIViewController {
         scrollView.delegate = self
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
-        scrollView.backgroundColor = UIColor(palette.bgDark)
+        scrollView.backgroundColor = palette.ui.bgDark
         scrollView.contentInsetAdjustmentBehavior = .never
         view.addSubview(scrollView)
     }
@@ -184,18 +184,18 @@ final class FullScreenImageViewController: UIViewController {
         let interfaceStyle: UIUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
         overrideUserInterfaceStyle = interfaceStyle
         navigationController?.overrideUserInterfaceStyle = interfaceStyle
-        navigationController?.view.backgroundColor = UIColor(palette.bgDark)
-        view.backgroundColor = UIColor(palette.bgDark)
-        scrollView.backgroundColor = UIColor(palette.bgDark)
+        navigationController?.view.backgroundColor = palette.ui.bgDark
+        view.backgroundColor = palette.ui.bgDark
+        scrollView.backgroundColor = palette.ui.bgDark
         setupNavigationChrome()
         setupFloatingAnnotateButton()
 
         if let savedFeedbackLabel {
-            savedFeedbackLabel.textColor = UIColor(palette.fg)
+            savedFeedbackLabel.textColor = palette.ui.fg
             savedFeedbackLabel.backgroundColor = UIColor(
                 ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
             )
-            savedFeedbackLabel.layer.borderColor = UIColor(palette.comment)
+            savedFeedbackLabel.layer.borderColor = palette.ui.comment
                 .withAlphaComponent(0.25).cgColor
         }
     }
@@ -282,14 +282,14 @@ final class FullScreenImageViewController: UIViewController {
         label.text = "Saved"
         label.font = AppFont.systemFeedbackMedium
         label.adjustsFontForContentSizeCategory = true
-        label.textColor = UIColor(palette.fg)
+        label.textColor = palette.ui.fg
         label.textAlignment = .center
         label.backgroundColor = UIColor(
             ThemeSurfaceStyle.resolve(.opaqueCard, palette: palette).fill
         )
         label.layer.cornerRadius = 8
         label.layer.borderWidth = 1
-        label.layer.borderColor = UIColor(palette.comment).withAlphaComponent(0.25).cgColor
+        label.layer.borderColor = palette.ui.comment.withAlphaComponent(0.25).cgColor
         label.clipsToBounds = true
         label.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(label)
@@ -449,7 +449,7 @@ extension FullScreenImageViewController {
             addToChatDestination: addToChatDestination
         )
         let navigation = ImagePreviewNavigationController(rootViewController: viewer)
-        navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
+        navigation.view.backgroundColor = themeID.palette.ui.bgDark
 
         if prefersFullScreenOverlay {
             navigation.modalPresentationStyle = .overFullScreen

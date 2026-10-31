@@ -144,11 +144,11 @@ final class AISharingConsentSheetViewController: UIViewController, UIAdaptivePre
     override func viewDidLoad() {
         super.viewDidLoad()
         let palette = ThemeRuntimeState.currentPalette()
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         view.accessibilityIdentifier = "aiConsent.sheet"
 
         let icon = UIImageView(image: UIImage(systemName: recipient.kind == .modelProvider ? "hand.raised" : "waveform"))
-        icon.tintColor = UIColor(palette.blue)
+        icon.tintColor = palette.ui.blue
         icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .largeTitle)
         icon.contentMode = .scaleAspectFit
 
@@ -156,7 +156,7 @@ final class AISharingConsentSheetViewController: UIViewController, UIAdaptivePre
         titleLabel.text = Copy.title(for: recipient)
         titleLabel.font = UIFontMetrics(forTextStyle: .title2).scaledFont(for: .systemFont(ofSize: 22, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = palette.ui.fg
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 0
         titleLabel.accessibilityTraits = .header
@@ -166,13 +166,13 @@ final class AISharingConsentSheetViewController: UIViewController, UIAdaptivePre
         messageLabel.text = Copy.message(for: recipient)
         messageLabel.font = .preferredFont(forTextStyle: .body)
         messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.textColor = UIColor(palette.fg)
+        messageLabel.textColor = palette.ui.fg
         messageLabel.numberOfLines = 0
         messageLabel.accessibilityIdentifier = "aiConsent.message"
 
         var allowConfig = UIButton.Configuration.filled()
         allowConfig.title = String(localized: "Allow")
-        allowConfig.baseBackgroundColor = UIColor(palette.blue)
+        allowConfig.baseBackgroundColor = palette.ui.blue
         allowConfig.buttonSize = .large
         let allow = UIButton(configuration: allowConfig, primaryAction: UIAction { [weak self] _ in
             self?.finish(true)
@@ -181,7 +181,7 @@ final class AISharingConsentSheetViewController: UIViewController, UIAdaptivePre
 
         var notNowConfig = UIButton.Configuration.plain()
         notNowConfig.title = String(localized: "Not Now")
-        notNowConfig.baseForegroundColor = UIColor(palette.blue)
+        notNowConfig.baseForegroundColor = palette.ui.blue
         notNowConfig.buttonSize = .large
         let notNow = UIButton(configuration: notNowConfig, primaryAction: UIAction { [weak self] _ in
             self?.finish(false)
@@ -190,7 +190,7 @@ final class AISharingConsentSheetViewController: UIViewController, UIAdaptivePre
 
         var policyConfig = UIButton.Configuration.plain()
         policyConfig.title = String(localized: "Privacy Policy")
-        policyConfig.baseForegroundColor = UIColor(palette.comment)
+        policyConfig.baseForegroundColor = palette.ui.comment
         let policy = UIButton(configuration: policyConfig, primaryAction: UIAction { [weak self] _ in
             self?.finish(false)
             AppDelegate.opener?.open(.webLink(AppSupportLinks.privacyPolicyURL))

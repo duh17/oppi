@@ -166,7 +166,7 @@ final class AppRootViewController: UIViewController {
     private static func pairedServersUnavailableScreen(retry: @escaping @MainActor () -> Void) -> UIViewController {
         let screen = UIViewController()
         let palette = ThemeRuntimeState.currentPalette()
-        screen.view.backgroundColor = UIColor(palette.bg)
+        screen.view.backgroundColor = palette.ui.bg
         screen.contentUnavailableConfiguration = UIContentUnavailableConfiguration.loadState(
             .failed(
                 title: String(localized: "Can\u{2019}t Read Saved Servers"),
@@ -174,7 +174,7 @@ final class AppRootViewController: UIViewController {
                 retry: RetryAction(run: retry)
             ),
             palette: palette,
-            background: UIColor(palette.bg)
+            background: palette.ui.bg
         )
         return screen
     }

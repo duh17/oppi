@@ -152,7 +152,7 @@ private final class RouterModalSitesRootViewController: UIViewController {
         view.overrideUserInterfaceStyle = themeStore.userInterfaceStyle
         let palette = themeStore.activeThemeID.palette
         for label in [lastResponseLabel, noticeStateLabel, whatsNewStateLabel] {
-            label.textColor = UIColor(palette.fg)
+            label.textColor = palette.ui.fg
         }
         lastResponseLabel.text = response.summary
         noticeStateLabel.text = connection.extensionToast == nil ? "Notice cleared" : "Notice shown"

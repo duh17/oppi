@@ -97,7 +97,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
 
     private func updateContent() {
         let palette = (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
 
         let locks = ScopedLockService.shared
         let payload = payloadHolder.resolve(from: store, target: target)
@@ -144,7 +144,7 @@ final class ChatReaderViewController: UIViewController, NavigationBarHiding {
                     message: String(localized: "This reader is no longer available.")
                 ),
                 palette: palette,
-                background: UIColor(palette.bg)
+                background: palette.ui.bg
             )
         }
         // The stack's delegate applies the bar as this reader comes forward;
@@ -404,11 +404,11 @@ private final class ChatReaderVideoPageViewController: UIViewController {
     override func updateProperties() {
         super.updateProperties()
         let palette = (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
-        view.backgroundColor = UIColor(palette.bg)
+        view.backgroundColor = palette.ui.bg
         var back = backButton.configuration ?? .plain()
         back.image = UIImage.scaledSymbol("chevron.backward", style: .body, weight: .semibold)
-        back.baseForegroundColor = UIColor(palette.cyan)
-        back.background.backgroundColor = UIColor(palette.bgHighlight).withAlphaComponent(0.9)
+        back.baseForegroundColor = palette.ui.cyan
+        back.background.backgroundColor = palette.ui.bgHighlight.withAlphaComponent(0.9)
         back.background.cornerRadius = 22
         back.contentInsets = .zero
         backButton.configuration = back

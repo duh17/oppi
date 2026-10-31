@@ -28,6 +28,6 @@ enum WorkspaceSplitSidebarToggle {
             ? String(localized: "Show Sidebar")
             : String(localized: "Hide Sidebar")
         item.image = UIImage(systemName: "sidebar.leading")
-        item.tintColor = UIColor(root.themeStore.activeThemeID.palette.fg)
+        item.tintColor = root.themeStore.activeThemeID.palette.ui.fg
     }
 }

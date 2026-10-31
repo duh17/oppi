@@ -104,7 +104,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(ThemeID.dark.palette.bgDark)
+        view.backgroundColor = ThemeID.dark.palette.ui.bgDark
         installCodeController()
         installHarnessControls()
         updateDiagnostics()
@@ -219,8 +219,8 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
         selectButton.accessibilityLabel = "Select review comment code"
         var config = UIButton.Configuration.filled()
         config.title = "Select code"
-        config.baseForegroundColor = UIColor(ThemeID.dark.palette.bgDark)
-        config.baseBackgroundColor = UIColor(ThemeID.dark.palette.cyan)
+        config.baseForegroundColor = ThemeID.dark.palette.ui.bgDark
+        config.baseBackgroundColor = ThemeID.dark.palette.ui.cyan
         config.cornerStyle = .capsule
         config.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12)
         selectButton.configuration = config
@@ -440,7 +440,7 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
     override func viewDidLoad() {
         super.viewDidLoad()
         view.accessibilityIdentifier = "wiki-line-anchor.harness"
-        view.backgroundColor = UIColor(ThemeID.dark.palette.bgDark)
+        view.backgroundColor = ThemeID.dark.palette.ui.bgDark
         installLinkSurface()
         installDiagnostics()
         installResourceHandler()
@@ -556,14 +556,14 @@ final class WikiLineAnchorHarnessViewController: UIViewController, UIAdaptivePre
         let title = UILabel()
         title.text = "Wiki-link line-anchor harness"
         title.font = .preferredFont(forTextStyle: .title2)
-        title.textColor = UIColor(ThemeID.dark.palette.fg)
+        title.textColor = ThemeID.dark.palette.ui.fg
         title.accessibilityIdentifier = "wiki-line-anchor.title"
         stack.addArrangedSubview(title)
 
         let instructions = UILabel()
         instructions.text = "Tap either rendered wiki link to open its anchored document."
         instructions.numberOfLines = 0
-        instructions.textColor = UIColor(ThemeID.dark.palette.fgDim)
+        instructions.textColor = ThemeID.dark.palette.ui.fgDim
         stack.addArrangedSubview(instructions)
 
         markdownView.translatesAutoresizingMaskIntoConstraints = false

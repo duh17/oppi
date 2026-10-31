@@ -69,15 +69,15 @@ enum SyntaxHighlighter {
 
                 let palette = themeID.palette
                 let attrs = TokenAttrs(
-                    comment: [.foregroundColor: UIColor(palette.syntaxComment)],
-                    keyword: [.foregroundColor: UIColor(palette.syntaxKeyword)],
-                    string: [.foregroundColor: UIColor(palette.syntaxString)],
-                    number: [.foregroundColor: UIColor(palette.syntaxNumber)],
-                    type: [.foregroundColor: UIColor(palette.syntaxType)],
-                    variable: [.foregroundColor: UIColor(palette.syntaxVariable)],
-                    punctuation: [.foregroundColor: UIColor(palette.syntaxPunctuation)],
-                    function: [.foregroundColor: UIColor(palette.syntaxFunction)],
-                    operator: [.foregroundColor: UIColor(palette.syntaxOperator)]
+                    comment: [.foregroundColor: palette.ui.syntaxComment],
+                    keyword: [.foregroundColor: palette.ui.syntaxKeyword],
+                    string: [.foregroundColor: palette.ui.syntaxString],
+                    number: [.foregroundColor: palette.ui.syntaxNumber],
+                    type: [.foregroundColor: palette.ui.syntaxType],
+                    variable: [.foregroundColor: palette.ui.syntaxVariable],
+                    punctuation: [.foregroundColor: palette.ui.syntaxPunctuation],
+                    function: [.foregroundColor: palette.ui.syntaxFunction],
+                    operator: [.foregroundColor: palette.ui.syntaxOperator]
                 )
 
                 lock.lock()

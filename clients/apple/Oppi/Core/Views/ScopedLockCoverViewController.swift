@@ -105,11 +105,11 @@ final class ScopedLockCoverViewController: UIViewController {
     override func updateProperties() {
         super.updateProperties()
         let palette = (AppRootEnvironment.near(self)?.themeStore.activeThemeID ?? ThemeRuntimeState.currentThemeID()).palette
-        view.backgroundColor = UIColor(palette.bg)
-        symbol.tintColor = UIColor(palette.comment)
+        view.backgroundColor = palette.ui.bg
+        symbol.tintColor = palette.ui.comment
         titleLabel.text = titleSource?() ?? coverTitle
-        titleLabel.textColor = UIColor(palette.fg)
-        lockedLabel.textColor = UIColor(palette.comment)
+        titleLabel.textColor = palette.ui.fg
+        lockedLabel.textColor = palette.ui.comment
 
         let method = AppLockService.shared.method
         var configuration = unlockButton.configuration ?? .borderedProminent()
@@ -126,7 +126,7 @@ final class ScopedLockCoverViewController: UIViewController {
         configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(scale: .medium)
         configuration.imagePadding = 8
         configuration.buttonSize = .large
-        configuration.baseBackgroundColor = UIColor(palette.blue)
+        configuration.baseBackgroundColor = palette.ui.blue
         unlockButton.configuration = configuration
         // Only Unlock waits for a prompt that is up; Close always leaves.
         switch action {

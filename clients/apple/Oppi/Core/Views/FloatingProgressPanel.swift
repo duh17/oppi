@@ -53,7 +53,7 @@ final class FloatingProgressPanel: UIView {
         backgroundColor = UIColor(surface.fill)
         layer.borderColor = surface.stroke.map { UIColor($0).cgColor }
         layer.borderWidth = surface.stroke == nil ? 0 : borderWidth ?? surface.strokeLineWidth
-        spinner.color = UIColor(palette.cyan)
-        label.textColor = UIColor(palette.fg)
+        spinner.color = palette.ui.cyan
+        label.textColor = palette.ui.fg
     }
 }

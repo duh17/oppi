@@ -582,7 +582,7 @@ enum FileShareService {
 
         let renderer = UIGraphicsImageRenderer(size: imageSize, format: exportImageFormat)
         return renderer.image { ctx in
-            UIColor(palette.bgDark).setFill()
+            palette.ui.bgDark.setFill()
             ctx.fill(CGRect(origin: .zero, size: imageSize))
             attrString.draw(with: CGRect(
                 x: codePDFPadding, y: codePDFPadding,
@@ -889,7 +889,7 @@ enum FileShareService {
         )
         return pdfRenderer.pdfData { ctx in
             ctx.beginPage()
-            UIColor(palette.bgDark).setFill()
+            palette.ui.bgDark.setFill()
             UIRectFill(CGRect(origin: .zero, size: pageSize))
             attrString.draw(with: CGRect(
                 x: codePDFPadding, y: codePDFPadding,
@@ -930,7 +930,7 @@ enum FileShareService {
             string: source,
             attributes: [
                 .font: font,
-                .foregroundColor: UIColor(palette.fg),
+                .foregroundColor: palette.ui.fg,
             ]
         )
     }

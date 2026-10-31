@@ -93,7 +93,7 @@ final class JumpToBottomButton: UIControl {
     /// The arrow reads in `palette`'s foreground; `busyTint` colors the ring,
     /// the spinner, and the badge.
     func apply(palette: ThemePalette, busyTint: UIColor) {
-        idleArrow.image = UIImage.scaledSymbol("arrow.down", style: .caption1, weight: .bold, color: UIColor(palette.fg))
+        idleArrow.image = UIImage.scaledSymbol("arrow.down", style: .caption1, weight: .bold, color: palette.ui.fg)
         badge.backgroundColor = busyTint
         badge.image = UIImage(
             systemName: "arrow.down",

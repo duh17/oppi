@@ -876,7 +876,7 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(palette.bgDark)
+        view.backgroundColor = palette.ui.bgDark
         view.accessibilityLabel = previewTitle
         setupNavigationChrome()
         setupSwipeDismiss()
@@ -953,7 +953,7 @@ final class FullScreenImageDataPreviewViewController: UIViewController, UIScroll
         scrollView.delegate = self
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
-        scrollView.backgroundColor = UIColor(palette.bgDark)
+        scrollView.backgroundColor = palette.ui.bgDark
         scrollView.contentInsetAdjustmentBehavior = .never
         view.addSubview(scrollView)
 
@@ -1097,7 +1097,7 @@ extension FullScreenImageDataPreviewViewController {
             addToChatDestination: addToChatDestination
         )
         let navigation = ImagePreviewNavigationController(rootViewController: viewer)
-        navigation.view.backgroundColor = UIColor(themeID.palette.bgDark)
+        navigation.view.backgroundColor = themeID.palette.ui.bgDark
 
         if prefersFullScreenOverlay {
             navigation.modalPresentationStyle = .overFullScreen
@@ -1245,11 +1245,11 @@ final class DataImagePreviewView: UIView {
         accessibilityElementsHidden = false
         let box = UIView()
         let palette = ThemeRuntimeState.currentPalette()
-        box.backgroundColor = UIColor(palette.bgHighlight)
+        box.backgroundColor = palette.ui.bgHighlight
         box.layer.cornerRadius = 8
         let content: UIView
         if failed {
-            let comment = UIColor(palette.comment)
+            let comment = palette.ui.comment
             let icon = UIImageView(image: .scaledSymbol("photo.badge.exclamationmark", style: .caption1, color: comment))
             let label = UILabel()
             label.text = String(localized: "Image preview unavailable")

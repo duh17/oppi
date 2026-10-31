@@ -239,11 +239,11 @@ private final class FullScreenCodeChunkCell: UICollectionViewCell {
         self.palette = palette
         self.lineAnchorResolution = lineAnchorResolution
         gutterView.font = font
-        gutterView.textColor = UIColor(palette.comment)
+        gutterView.textColor = palette.ui.comment
         gutterWidthConstraint?.constant = gutterWidth
-        separatorView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
+        separatorView.backgroundColor = palette.ui.comment.withAlphaComponent(0.2)
         textView.font = font
-        textView.textColor = UIColor(palette.fg)
+        textView.textColor = palette.ui.fg
         textView.textContainer.lineBreakMode = wrapsText ? .byCharWrapping : .byClipping
         textView.textContainer.widthTracksTextView = wrapsText
         textView.attributedText = attributedText
@@ -325,16 +325,16 @@ private final class FullScreenCodeChunkCell: UICollectionViewCell {
         guard let layout = lineAnchorLayout(for: chunk) else {
             textView.setLineAnchorHighlight(
                 rects: [],
-                fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
-                strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
+                fillColor: palette.ui.blue.withAlphaComponent(0.08),
+                strokeColor: palette.ui.blue.withAlphaComponent(0.75)
             )
             return
         }
         textView.setLineAnchorHighlight(
             rects: layout.visibleRects,
             firstRect: layout.firstVisibleRect,
-            fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
-            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
+            fillColor: palette.ui.blue.withAlphaComponent(0.08),
+            strokeColor: palette.ui.blue.withAlphaComponent(0.75)
         )
     }
 
@@ -524,7 +524,7 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
     }
 
     private func setup() {
-        backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = alwaysBounceVertical
@@ -537,7 +537,7 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
         virtualizedLayout.minimumInteritemSpacing = 0
         virtualizedLayout.scrollDirection = .vertical
         virtualizedCollectionView.translatesAutoresizingMaskIntoConstraints = false
-        virtualizedCollectionView.backgroundColor = UIColor(palette.bgDark)
+        virtualizedCollectionView.backgroundColor = palette.ui.bgDark
         virtualizedCollectionView.alwaysBounceVertical = alwaysBounceVertical
         virtualizedCollectionView.showsVerticalScrollIndicator = true
         virtualizedCollectionView.dataSource = self
@@ -557,7 +557,7 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
         // logical source line, so soft-wrapped continuations stay unnumbered.
         gutterView.translatesAutoresizingMaskIntoConstraints = false
         gutterView.font = codeFont
-        gutterView.textColor = UIColor(palette.comment)
+        gutterView.textColor = palette.ui.comment
         contentContainer.addSubview(gutterView)
 
         let (_, baseGutterWidth) = lineNumberInfo(
@@ -569,13 +569,13 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
 
         // Separator
         separatorView.translatesAutoresizingMaskIntoConstraints = false
-        separatorView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
+        separatorView.backgroundColor = palette.ui.comment.withAlphaComponent(0.2)
         contentContainer.addSubview(separatorView)
 
         // Code text
         codeTextView.translatesAutoresizingMaskIntoConstraints = false
         codeTextView.font = codeFont
-        codeTextView.textColor = UIColor(palette.fg)
+        codeTextView.textColor = palette.ui.fg
         codeTextView.backgroundColor = .clear
         codeTextView.isEditable = false
         codeTextView.isSelectable = true
@@ -647,18 +647,18 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
         appliedThemeID = themeID
         highlightThemeID = themeID
         palette = newPalette
-        backgroundColor = UIColor(palette.bgDark)
-        scrollView.backgroundColor = UIColor(palette.bgDark)
-        gutterView.textColor = UIColor(palette.comment)
-        separatorView.backgroundColor = UIColor(palette.comment).withAlphaComponent(0.2)
-        virtualizedCollectionView.backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
+        scrollView.backgroundColor = palette.ui.bgDark
+        gutterView.textColor = palette.ui.comment
+        separatorView.backgroundColor = palette.ui.comment.withAlphaComponent(0.2)
+        virtualizedCollectionView.backgroundColor = palette.ui.bgDark
         if usesVirtualizedRendering {
             resetVirtualizedAttributedChunks()
             virtualizedCollectionView.reloadData()
             prepareVisibleChunkRunway()
         } else {
             if highlightedSourceText == nil {
-                codeTextView.textColor = UIColor(palette.fg)
+                codeTextView.textColor = palette.ui.fg
             }
             highlightTask?.cancel()
             loadHighlighting()
@@ -846,7 +846,7 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
 
         let layoutStart = DispatchTime.now().uptimeNanoseconds
         gutterView.font = codeFont
-        gutterView.textColor = UIColor(palette.comment)
+        gutterView.textColor = palette.ui.comment
         gutterView.rows = lineNumberRowsForCurrentLayout()
         #if DEBUG
         debugLayoutGutterMilliseconds = Double(
@@ -860,8 +860,8 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
               let existingRange = resolution.existingRange else {
             codeTextView.setLineAnchorHighlight(
                 rects: [],
-                fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
-                strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
+                fillColor: palette.ui.blue.withAlphaComponent(0.08),
+                strokeColor: palette.ui.blue.withAlphaComponent(0.75)
             )
             return
         }
@@ -874,8 +874,8 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
         codeTextView.setLineAnchorHighlight(
             rects: layout.visibleRects,
             firstRect: layout.firstVisibleRect,
-            fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
-            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
+            fillColor: palette.ui.blue.withAlphaComponent(0.08),
+            strokeColor: palette.ui.blue.withAlphaComponent(0.75)
         )
     }
 
@@ -1206,7 +1206,7 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
                 operation: {
                     let attributed = NSMutableAttributedString(
                         string: chunk.text,
-                        attributes: [.foregroundColor: UIColor(themeID.palette.syntaxVariable)]
+                        attributes: [.foregroundColor: themeID.palette.ui.syntaxVariable]
                     )
                     for token in chunk.tokenRanges where token.kind != .variable {
                         guard let color = SyntaxHighlighter.color(for: token.kind, themeID: themeID) else {
@@ -1480,7 +1480,7 @@ final class NativeFullScreenDiffBody: UIView {
         self.readerPreferences = readerPreferences
 
         super.init(frame: .zero)
-        backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
 
         let filePath = document.filePath
         let fileName = filePath.map { ($0 as NSString).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 }
@@ -1491,21 +1491,21 @@ final class NativeFullScreenDiffBody: UIView {
         }
 
         headerView.translatesAutoresizingMaskIntoConstraints = false
-        headerView.backgroundColor = UIColor(palette.bgDark)
+        headerView.backgroundColor = palette.ui.bgDark
         addSubview(headerView)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = AppFont.systemFeedbackMedium
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.numberOfLines = 0
-        titleLabel.textColor = UIColor(palette.fg)
+        titleLabel.textColor = palette.ui.fg
         titleLabel.text = fileName ?? String(localized: "Changes")
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.font = AppFont.systemSmall
         subtitleLabel.adjustsFontForContentSizeCategory = true
-        subtitleLabel.textColor = UIColor(palette.fgDim)
+        subtitleLabel.textColor = palette.ui.fgDim
         subtitleLabel.text = relativePath ?? String(localized: "Review changes")
         subtitleLabel.numberOfLines = 0
 
@@ -1519,12 +1519,12 @@ final class NativeFullScreenDiffBody: UIView {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
         scrollView.alwaysBounceHorizontal = true
-        scrollView.backgroundColor = UIColor(palette.bgDark)
+        scrollView.backgroundColor = palette.ui.bgDark
         addSubview(scrollView)
 
         diffTextView.translatesAutoresizingMaskIntoConstraints = false
         diffTextView.font = codeFont
-        diffTextView.textColor = UIColor(palette.fg)
+        diffTextView.textColor = palette.ui.fg
         diffTextView.backgroundColor = .clear
         diffTextView.isEditable = false
         diffTextView.isSelectable = true
@@ -1545,7 +1545,7 @@ final class NativeFullScreenDiffBody: UIView {
 
         scrollView.addSubview(diffTextView)
         progressView.translatesAutoresizingMaskIntoConstraints = false
-        progressView.color = UIColor(palette.fgDim)
+        progressView.color = palette.ui.fgDim
         progressView.startAnimating()
         addSubview(progressView)
 
@@ -2053,7 +2053,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
     }
 
     private func setup() {
-        backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.alwaysBounceVertical = true
@@ -2062,7 +2062,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         scrollView.delegate = self
 
         virtualizedCollectionView.translatesAutoresizingMaskIntoConstraints = false
-        virtualizedCollectionView.backgroundColor = UIColor(palette.bgDark)
+        virtualizedCollectionView.backgroundColor = palette.ui.bgDark
         virtualizedCollectionView.alwaysBounceVertical = true
         virtualizedCollectionView.showsVerticalScrollIndicator = true
         virtualizedCollectionView.dataSource = self
@@ -2084,7 +2084,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         commandView.isScrollEnabled = false
         commandView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
         commandView.textContainer.lineFragmentPadding = 0
-        commandView.backgroundColor = UIColor(palette.bgHighlight)
+        commandView.backgroundColor = palette.ui.bgHighlight
         commandView.layer.cornerRadius = 8
         commandView.delegate = self
         commandView.configureReviewCommentSelection(
@@ -2100,7 +2100,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         outputView.textContainerInset = UIEdgeInsets(top: 4, left: 6, bottom: 14, right: 6)
         outputView.textContainer.lineFragmentPadding = 0
         outputView.font = codeFont
-        outputView.textColor = UIColor(palette.fg)
+        outputView.textColor = palette.ui.fg
         outputView.delegate = self
         outputView.configureReviewCommentSelection(
             router: reviewCommentSelectionRouter,
@@ -2113,7 +2113,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         scrollView.addSubview(stack)
 
         streamNoticeLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        streamNoticeLabel.textColor = UIColor(palette.comment)
+        streamNoticeLabel.textColor = palette.ui.comment
         streamNoticeLabel.numberOfLines = 0
         streamNoticeLabel.isHidden = true
         streamNoticeLabel.accessibilityIdentifier = "terminal-output-status"
@@ -2686,7 +2686,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
 
         if virtualizedCommandItemCount == 1, indexPath.item == 0 {
             textView.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-            textView.backgroundColor = UIColor(palette.bgHighlight)
+            textView.backgroundColor = palette.ui.bgHighlight
             textView.layer.cornerRadius = 8
             textView.reviewCommentSourceLineRangeResolver = nil
             textView.attributedText = virtualizedCommand
@@ -3399,10 +3399,10 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
         #endif
 
-        backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
 
         collectionView.translatesAutoresizingMaskIntoConstraints = false
-        collectionView.backgroundColor = UIColor(palette.bgDark)
+        collectionView.backgroundColor = palette.ui.bgDark
         collectionView.alwaysBounceVertical = allowsVerticalBounce && allowsVerticalScrolling
         collectionView.bounces = allowsVerticalBounce && allowsVerticalScrolling
         collectionView.isScrollEnabled = allowsVerticalScrolling
@@ -3553,7 +3553,7 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
     private func installDeferredRenderPlaceholder(palette: ThemePalette) {
         let label = UILabel()
         label.text = String(localized: "Preparing preview…")
-        label.textColor = UIColor(palette.fgDim)
+        label.textColor = palette.ui.fgDim
         label.font = AppFont.systemFeedback
         label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .center
@@ -3946,8 +3946,8 @@ final class NativeFullScreenMarkdownBody: UIView, UICollectionViewDataSource, UI
         }
 
         lineAnchorHighlightView.isHidden = false
-        lineAnchorHighlightView.fillColor = UIColor(themeID.palette.blue).withAlphaComponent(0.08)
-        lineAnchorHighlightView.strokeColor = UIColor(themeID.palette.blue).withAlphaComponent(0.75)
+        lineAnchorHighlightView.fillColor = themeID.palette.ui.blue.withAlphaComponent(0.08)
+        lineAnchorHighlightView.strokeColor = themeID.palette.ui.blue.withAlphaComponent(0.75)
         lineAnchorHighlightView.rects = [enclosure.insetBy(dx: 1, dy: 1).integral]
         bringSubviewToFront(lineAnchorHighlightView)
     }
@@ -5790,11 +5790,11 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         self.lineAnchorFocusPending = lineAnchor != nil && focusLineAnchor
         super.init(frame: .zero)
 
-        backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
 
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.font = codeFont
-        textView.textColor = UIColor(palette.fg)
+        textView.textColor = palette.ui.fg
         textView.backgroundColor = .clear
         textView.isEditable = false
         textView.isSelectable = true
@@ -5903,8 +5903,8 @@ final class NativeFullScreenSourceBody: UIView, UITextViewDelegate {
         textView.setLineAnchorHighlight(
             rects: layout.visibleRects,
             firstRect: layout.firstVisibleRect,
-            fillColor: UIColor(palette.blue).withAlphaComponent(0.08),
-            strokeColor: UIColor(palette.blue).withAlphaComponent(0.75)
+            fillColor: palette.ui.blue.withAlphaComponent(0.08),
+            strokeColor: palette.ui.blue.withAlphaComponent(0.75)
         )
     }
 
@@ -6084,7 +6084,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
         self.reviewCommentSelectionRouter = reviewCommentSelectionRouter
         self.reviewCommentSourceContext = reviewCommentSourceContext
         super.init(frame: .zero)
-        backgroundColor = UIColor(palette.bgDark)
+        backgroundColor = palette.ui.bgDark
 
         switch content {
         case .mermaid(let text):
@@ -6109,7 +6109,7 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
             scrollView.alwaysBounceVertical = true
             scrollView.showsVerticalScrollIndicator = true
             scrollView.showsHorizontalScrollIndicator = true
-            scrollView.backgroundColor = UIColor(palette.bgDark)
+            scrollView.backgroundColor = palette.ui.bgDark
             addSubview(scrollView)
 
             let contentView: UIView

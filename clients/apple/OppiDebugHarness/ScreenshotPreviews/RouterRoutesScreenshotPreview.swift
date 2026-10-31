@@ -176,7 +176,7 @@ final class RouterRoutesMenuViewController: ListScreenController<RouterRoutesMen
             let label = UILabel()
             label.text = text
             label.font = .preferredFont(forTextStyle: .body)
-            label.textColor = UIColor(palette.fg)
+            label.textColor = palette.ui.fg
             label.numberOfLines = 0
             label.accessibilityIdentifier = identifier
             return label
