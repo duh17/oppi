@@ -124,7 +124,11 @@ final class WorkspaceSkillsViewController: ListScreenController<
         case .error:
             let model = self.model
             cell.configure(
-                .failure(model.skillsError ?? "", retry: { [model] in model.startPiResourceReload() }),
+                .failure(
+                    title: String(localized: "Couldn't Load Skills"),
+                    reason: model.skillsError ?? "",
+                    retry: { [model] in model.startPiResourceReload() }
+                ),
                 identifier: "workspace.edit.skills.error"
             )
         default:

@@ -24,6 +24,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         case detail(String)
         case status
         case warning(String)
+        case loadError(String)
         case browse
     }
 
@@ -40,7 +41,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
                 title: String(localized: "Skill"),
                 listIdentifier: "skills.detail.list",
                 loadingCaption: String(localized: "Loading skill…"),
-                failureTitle: String(localized: "Couldn't Load Skill"),
+                failureTitle: String(localized: "Couldn't Load Contents"),
                 showsConnecting: true,
                 expectedKind: .skill,
                 catalog: .skills,
@@ -80,9 +81,8 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             ListSection(.validation, header: "Validation", items: validationItems),
         ]
         // The contents' place: the kit's compact loading row until the detail
-        // arrives, and its one failed row with Retry when Pi could not read the
-        // Skill.
-        if let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: failureReason) {
+        // arrives, and its one failed row with Retry when the request failed.
+        if let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: loadFailure) {
             sections.append(ListSection(.loading, items: [], state: row))
         }
         if state.detail != nil {
@@ -91,27 +91,28 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         return sections
     }
 
-    /// Why the contents are not here: the request's failure, or the Skill Pi could
-    /// not read, so one row says either and retries it.
-    private var failureReason: String? {
-        if let loadFailure { return loadFailure.reason ?? loadFailure.title }
-        guard let summary = state?.summary else { return nil }
-        if let error = summary.loadError { return error }
-        let hasError = summary.state == .error || summary.state == .unknown
-        return hasError ? String(localized: "Pi could not read this Skill.") : nil
-    }
-
     private var sourceItems: [Item] {
         var items = [Item]()
         if state?.summary.packageName != nil { items.append(.detail("Package")) }
         return items + [.detail("Provenance"), .detail("Scope"), .detail("Files")]
     }
 
-    /// What the load found: the resource's state, and each warning once (a
-    /// diffable list traps on a repeated row).
+    /// What the load found: what Pi makes of the Skill — its state, why it could
+    /// not read it, and each warning once (a diffable list traps on a repeated
+    /// row). These are facts about the Skill, not a failed request.
     private var validationItems: [Item] {
         guard let state else { return [] }
-        return [.status] + Self.unique(state.summary.warnings).map(Item.warning)
+        let summary = state.summary
+        var items: [Item] = [.status]
+        if let reason = summary.loadError ?? unreadableReason(summary) { items.append(.loadError(reason)) }
+        return items + Self.unique(summary.warnings).map(Item.warning)
+    }
+
+    /// Why Pi could not read the Skill it listed, when it says nothing itself.
+    private func unreadableReason(_ summary: ServerSkillSummary) -> String? {
+        summary.state == .error || summary.state == .unknown
+            ? String(localized: "Pi could not read this Skill.")
+            : nil
     }
 
     /// The contents are what the detail request fetches: until they are here the
@@ -136,6 +137,7 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
         case .enabled: resourceRowInputs(.serverDefault)
         case .mutationError: resourceRowInputs(.mutationError)
         case .status: resourceRowInputs(.status)
+        case .loadError(let reason): AnyHashable(reason)
         case .detail: AnyHashable([
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.editable),
         ])
@@ -203,6 +205,13 @@ final class ServerSkillDetailViewController: ServerResourceDetailScreenControlle
             content.textProperties.color = UIColor(palette.fg)
             content.image = UIImage(systemName: hasError ? "exclamationmark.triangle.fill" : "checkmark.circle")
             content.imageProperties.tintColor = UIColor(palette.fg)
+            cell.contentConfiguration = content
+        case .loadError(let reason):
+            ListScreen.staticRow(cell, identifier: "skills.detail.loadError")
+            var content = UIListContentConfiguration.cell()
+            content.text = reason
+            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
+            content.textProperties.color = UIColor(palette.orange)
             cell.contentConfiguration = content
         case .warning(let warning):
             ListScreen.staticRow(cell)

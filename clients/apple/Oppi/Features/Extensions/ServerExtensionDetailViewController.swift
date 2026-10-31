@@ -26,6 +26,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case mutationError
         case detail(String)
         case status
+        case loadError(String)
         case warning(String)
         case tool(String)
         case command(String)
@@ -48,7 +49,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                 title: "Extension",
                 listIdentifier: "server.extension.list",
                 loadingCaption: String(localized: "Loading extension…"),
-                failureTitle: String(localized: "Couldn't Load Extension"),
+                failureTitle: String(localized: "Couldn't Load Contents"),
                 expectedKind: .extension,
                 catalog: .extensions,
                 mutationKey: .normalExtension(resourceId),
@@ -93,9 +94,8 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             ListSection(.status, header: "Status", items: statusItems),
         ]
         // The contributions' place: the kit's compact loading row until the detail
-        // arrives, and its one failed row with Retry when Pi could not read the
-        // extension.
-        if let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: failureReason) {
+        // arrives, and its one failed row with Retry when the request failed.
+        if let row = stateRow(hasContent: state.detail != nil, isLoading: isLoading, failure: loadFailure) {
             sections.append(ListSection(.loading, items: [], state: row))
         }
         if let tools = state.detail?.contributedTools, !tools.isEmpty {
@@ -115,21 +115,22 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         return items + [.detail("Provenance"), .detail("Kind"), .detail("Scope")]
     }
 
-    /// Why the contributions are not here: the request's failure, or the extension
-    /// Pi could not load, so one row says either and retries it.
-    private var failureReason: String? {
-        if let loadFailure { return loadFailure.reason ?? loadFailure.title }
-        guard let summary = state?.summary else { return nil }
-        if let error = summary.loadError { return error }
-        let hasError = summary.state == .error || summary.state == .unknown
-        return hasError ? String(localized: "Pi could not load this extension.") : nil
-    }
-
-    /// The load's state and what it found: the state, and each warning once (a
-    /// diffable list traps on a repeated row).
+    /// What Pi makes of the extension — its state, why it could not load it, and
+    /// each warning once (a diffable list traps on a repeated row). These are
+    /// facts about the extension, not a failed request.
     private var statusItems: [Item] {
         guard let state else { return [] }
-        return [.status] + Self.unique(state.summary.warnings).map(Item.warning)
+        let summary = state.summary
+        var items: [Item] = [.status]
+        if let reason = summary.loadError ?? unreadableReason(summary) { items.append(.loadError(reason)) }
+        return items + Self.unique(summary.warnings).map(Item.warning)
+    }
+
+    /// Why Pi could not load the extension it listed, when it says nothing itself.
+    private func unreadableReason(_ summary: ServerExtensionSummary) -> String? {
+        summary.state == .error || summary.state == .unknown
+            ? String(localized: "Pi could not load this extension.")
+            : nil
     }
 
     override func hasContent() -> Bool { state?.detail != nil }
@@ -152,6 +153,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
         case .enabled: resourceRowInputs(.serverDefault)
         case .mutationError: resourceRowInputs(.mutationError)
         case .status: resourceRowInputs(.status)
+        case .loadError(let reason): AnyHashable(reason)
         case .detail: AnyHashable([
             AnyHashable(summary.packageName), AnyHashable(summary.provenance.label), AnyHashable(summary.kind),
         ])
@@ -159,7 +161,7 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
             // A contribution name is selectable text: a pass that redrew the row
             // would drop a selection or the copy menu, so it is keyed by it.
             AnyHashable(name)
-        // A warning, Retry, or loading row holds nothing a reconfigure would
+        // A warning or loading row holds nothing a reconfigure would
         // disturb, so the kit's default draws it again.
         default: super.inputs(of: item)
         }
@@ -219,6 +221,11 @@ final class ServerExtensionDetailViewController: ServerResourceDetailScreenContr
                 let row = ControlRowViews.symbolLabel(label, systemImage: icon, style: .body, color: UIColor(palette.fg))
                 row.accessibilityLabel = label
                 return row
+            }
+        case .loadError(let reason):
+            ListScreen.staticRow(cell, identifier: "server.extension.loadError")
+            cell.contentConfiguration = ControlViewContent {
+                ControlRowViews.label(reason, style: .footnote, color: UIColor(palette.orange))
             }
         case .warning(let warning):
             ListScreen.staticRow(cell)

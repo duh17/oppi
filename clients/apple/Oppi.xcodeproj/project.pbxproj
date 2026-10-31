@@ -174,6 +174,7 @@
 		13573A167FFC956B68DD9C9D /* AppBuildIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D37324FEC45C4C9120B1D4 /* AppBuildIdentity.swift */; };
 		136ADC127D55D11B360F50D8 /* SyntaxHighlightOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B8F6E6D73A13DF4A43420CD /* SyntaxHighlightOwnershipTests.swift */; };
 		136FFA924A613C6C0DC001F3 /* ToolTimelineRowContent+CodeRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D00C1EAC69B4C2368678A74 /* ToolTimelineRowContent+CodeRendering.swift */; };
+		138556681C63E53B1EE103F6 /* ScheduleListPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0B5ACD1BF3B9A12AACDFF53 /* ScheduleListPageTests.swift */; };
 		1398A1F06DDAA9F7DCB4731E /* MacTimelineKeybindingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BACDA230ED49443B788804A /* MacTimelineKeybindingTests.swift */; };
 		13AA2B89ABE32028DA5015B7 /* MacCommandPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 637B907FE1757F3B648656C6 /* MacCommandPalette.swift */; };
 		13AD842C4C62DBD6F00B211A /* QAVerificationExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C6F50D9BE1DE456510FBC1C /* QAVerificationExecutor.swift */; };
@@ -4267,6 +4268,7 @@
 		D03B7FB8CCC785E87E67A19A /* SkillDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillDetail.swift; sourceTree = "<group>"; };
 		D05867D89410F8026ABA59F5 /* MermaidFlowchartRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidFlowchartRenderer.swift; sourceTree = "<group>"; };
 		D0AB2911CDE5F7FAE68DA622 /* SQLHighlightDebugTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLHighlightDebugTests.swift; sourceTree = "<group>"; };
+		D0B5ACD1BF3B9A12AACDFF53 /* ScheduleListPageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleListPageTests.swift; sourceTree = "<group>"; };
 		D14BC4A0F3C0076BBC12068B /* ThinkingTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkingTimelineRowContent.swift; sourceTree = "<group>"; };
 		D170975DF573DB804847346D /* MarkdownStreamingPerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownStreamingPerf.swift; sourceTree = "<group>"; };
 		D18BC4725D213D3B146760D5 /* CompactionTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactionTimelineRowContent.swift; sourceTree = "<group>"; };
@@ -6958,6 +6960,7 @@
 			children = (
 				B6468DD58A930E55815C1B08 /* ScheduleEditDraftTests.swift */,
 				ACC742538B37C2B55CCA319F /* ScheduleEditorScreensTests.swift */,
+				D0B5ACD1BF3B9A12AACDFF53 /* ScheduleListPageTests.swift */,
 			);
 			path = Schedules;
 			sourceTree = "<group>";
@@ -9753,6 +9756,7 @@
 				2D912B61F93D13AFC113D32B /* SSHTerminalTouchTests.swift in Sources */,
 				EFA75C7FB680B0CACE2F0F3E /* ScheduleEditDraftTests.swift in Sources */,
 				11D5C8B97918BC9F17ED1440 /* ScheduleEditorScreensTests.swift in Sources */,
+				138556681C63E53B1EE103F6 /* ScheduleListPageTests.swift in Sources */,
 				83173928AD9E287A4E7280AE /* ScheduleRunErrorSummaryTests.swift in Sources */,
 				2DDD504170662AEB0D400B0F /* ScopedLockTests.swift in Sources */,
 				F976AEEF86F68E14C84067B0 /* ScreenAwakeControllerTests.swift in Sources */,

@@ -33,10 +33,26 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
     private var isLoading = false {
         didSet { setNeedsUpdateProperties() }
     }
-    private var error: String? {
+    /// Why the list could not be read: one state row, over the schedules it has.
+    private(set) var loadError: String? {
+        didSet { setNeedsUpdateProperties() }
+    }
+    /// Why the change the person asked for failed: the composer says it, and the
+    /// list keeps the rows it shows.
+    private(set) var actionError: String? {
         didSet { setNeedsUpdateProperties() }
     }
     private var loadTask: Task<Void, Never>?
+
+    /// The schedules the list shows now, in order: what a test checks stayed on
+    /// screen through a failure.
+    var shownScheduleIDs: [String] {
+        guard let dataSource else { return [] }
+        return dataSource.snapshot().itemIdentifiers.compactMap { item in
+            if case .schedule(let id) = item { return id }
+            return nil
+        }
+    }
 
     init(root: AppRootEnvironment, showsSidebarToggle: Bool = false) {
         self.root = root
@@ -107,6 +123,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         super.updateProperties()
         ListScreen.applyTheme(root.themeStore, to: self, collectionView: collectionView)
         updateBarItems()
+        composer.setScreenError(actionError, identifier: "schedules.error")
         applySnapshot()
     }
 
@@ -136,11 +153,13 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         var snapshot = NSDiffableDataSourceSnapshot<Int, Item>()
         snapshot.appendSections([0])
         let visible = visibleSchedules
-        if error != nil || (isLoading && schedules.isEmpty) {
-            // The list's own state, in the place its rows would take.
+        // The list's own state comes first, and the schedules it already has stay
+        // under it: a Retry, or a reload that failed, never hides them.
+        if loadError != nil || (isLoading && schedules.isEmpty) {
             snapshot.appendItems([.state])
-        } else if visible.isEmpty {
-            snapshot.appendItems([.empty])
+        }
+        if visible.isEmpty {
+            if loadError == nil, !isLoading { snapshot.appendItems([.empty]) }
         } else {
             // A diffable list traps on a repeated item; a repeated schedule id shows once.
             var seen = Set<String>()
@@ -157,14 +176,15 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         let stateCell = UICollectionView.CellRegistration<SettingsStateRowCell, Item> { [weak self] cell, _, _ in
             guard let self else { return }
             let palette = palette
-            // The card the schedule rows sit on, so the state is one of them.
-            var background = UIBackgroundConfiguration.listGroupedCell()
+            // The card a schedule row is, inset the way the list insets them.
+            var background = UIBackgroundConfiguration.clear()
             background.backgroundColor = UIColor(palette.bgHighlight)
             background.cornerRadius = 20
+            background.backgroundInsets = Self.cardInsets
             cell.backgroundConfiguration = background
-            if let error {
+            if let loadError {
                 cell.configure(
-                    .failed(title: String(localized: "Couldn't Load Schedules"), reason: error) { [weak self] in
+                    .failure(title: String(localized: "Couldn't Load Schedules"), reason: loadError) { [weak self] in
                         self?.refresh()
                     },
                     identifier: "schedules.state"
@@ -179,13 +199,15 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
             }
             return collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: item)
         }
-        _ = stateCell
     }
+
+    /// The inset a schedule card keeps inside its row, which the state row shares.
+    private static let cardInsets = NSDirectionalEdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
 
     private func configure(_ cell: SidebarListCell, item: Item) {
         let palette = palette
         ListScreen.background(cell, grouped: false, palette: palette)
-        let cardInsets = NSDirectionalEdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
+        let cardInsets = Self.cardInsets
         switch item {
         case .state:
             // The list's own state is the kit's cell; `installDataSource()`
@@ -268,11 +290,11 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
         }
     }
 
-    private enum SummaryMutation {
+    enum SummaryMutation {
         case pause, resume, restore
     }
 
-    private func refresh() {
+    func refresh() {
         loadTask?.cancel()
         loadTask = Task { [weak self] in
             await self?.loadSchedules()
@@ -282,7 +304,7 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
 
     private func loadSchedules() async {
         guard let apiClient = root.coordinator.activeConnection.apiClient else {
-            error = String(localized: "Server is offline")
+            loadError = String(localized: "Server is offline")
             return
         }
         isLoading = true
@@ -292,14 +314,16 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
             let loaded = try await apiClient.listAgentSchedules()
             guard !Task.isCancelled else { return }
             schedules = loaded
-            error = nil
+            loadError = nil
+            // The list was read again: what an action failed at is old news.
+            actionError = nil
         } catch {
             guard !Task.isCancelled else { return }
-            self.error = error.localizedDescription
+            loadError = error.localizedDescription
         }
     }
 
-    private func mutate(_ schedule: AgentScheduleSummary, _ action: SummaryMutation) {
+    func mutate(_ schedule: AgentScheduleSummary, _ action: SummaryMutation) {
         Task { [weak self] in
             guard let apiClient = self?.root.coordinator.activeConnection.apiClient else { return }
             do {
@@ -311,9 +335,9 @@ final class ScheduleListViewController: UIViewController, UICollectionViewDelega
                 guard let self else { return }
                 schedules = schedules.map { $0.id == updated.id ? updated : $0 }
                 if action == .restore { selectedStatus = .active }
-                error = nil
+                actionError = nil
             } catch {
-                self?.error = error.localizedDescription
+                self?.actionError = error.localizedDescription
             }
         }
     }

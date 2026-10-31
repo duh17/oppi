@@ -135,7 +135,11 @@ final class WorkspaceExtensionsViewController: ListScreenController<
         case .error:
             let model = self.model
             cell.configure(
-                .failure(model.extensionsError ?? "", retry: { [model] in model.startPiResourceReload() }),
+                .failure(
+                    title: String(localized: "Couldn't Load Extensions"),
+                    reason: model.extensionsError ?? "",
+                    retry: { [model] in model.startPiResourceReload() }
+                ),
                 identifier: "workspace.edit.extensions.error"
             )
         default:

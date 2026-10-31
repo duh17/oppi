@@ -165,13 +165,11 @@ final class ServerSkillsViewController: ListScreenController<ServerSkillsViewCon
         if state.catalog == .cachedOffline, state.server != nil {
             sections.append(ListSection(.warning, items: [.cachedWarning]))
         }
-        if let row = stateRow(
-            hasContent: !state.presentation.visibleSkills.isEmpty,
-            isLoading: state.catalog == .firstLoad,
-            failure: state.catalog == .unavailable
+        if let row = stateRow(hasContent: !state.presentation.visibleSkills.isEmpty, isLoading: state.catalog == .firstLoad, failure: failureReport(
+            reason: state.catalog == .unavailable
                 ? String(localized: "The selected server has no cached Skills catalog.")
                 : nil
-        ) {
+        )) {
             sections.append(ListSection(.status, items: [], state: row))
         }
         switch state.catalog {

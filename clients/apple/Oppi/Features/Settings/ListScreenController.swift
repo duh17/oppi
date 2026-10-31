@@ -366,7 +366,13 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// server that is gone) overrides this.
     func wholeScreenState() -> LoadState? {
         if isLoading { return .loading(loadingCaption()) }
-        if let loadFailure { return state(for: loadFailure) }
+        if let loadFailure {
+            return .failed(
+                title: loadFailure.title,
+                message: loadFailure.reason,
+                retry: RetryAction { [weak self] in self?.setNeedsLoad() }
+            )
+        }
         return emptyState()
     }
 
@@ -409,22 +415,30 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
     /// the page's empty state while it has nothing to show. The base fills its
     /// `stateSection()` with it; a page whose store owns the load passes the
     /// store's facts instead of the base's `isLoading` and `loadFailure`.
-    func stateRow(hasContent: Bool, isLoading: Bool, failure: String?) -> ListStateRow? {
+    func stateRow(hasContent: Bool, isLoading: Bool, failure: LoadFailureReport?) -> ListStateRow? {
         if isLoading, !hasContent || failure != nil {
             return ListStateRow(state: .loading(loadingCaption()), identifier: stateRowIdentifier)
         }
         if let failure {
-            let report = LoadFailureReport(title: failureTitle() ?? failure, reason: failureTitle() == nil ? nil : failure)
-            return ListStateRow(state: state(for: report), identifier: stateRowIdentifier)
+            return ListStateRow(
+                state: .failed(
+                    title: failure.title,
+                    message: failure.reason,
+                    retry: RetryAction { [weak self] in self?.setNeedsLoad() }
+                ),
+                identifier: stateRowIdentifier
+            )
         }
         guard !hasContent, let settled = emptyState() else { return nil }
         return ListStateRow(state: settled, identifier: stateRowIdentifier)
     }
 
-    /// A failure as the list says it: its title, the reason under it, and one
-    /// Retry.
-    private func state(for report: LoadFailureReport) -> LoadState {
-        .failed(title: report.title, message: report.reason, retry: RetryAction { [weak self] in self?.setNeedsLoad() })
+    /// A store-backed page's failure: its reason under the page's `failureTitle()`.
+    /// nil stays nil, so a page with nothing to say passes it straight through.
+    func failureReport(reason: String?) -> LoadFailureReport? {
+        guard let reason else { return nil }
+        let title = failureTitle()
+        return LoadFailureReport(title: title ?? reason, reason: title == nil ? nil : reason)
     }
 
     /// Why `error` failed the page's load: the page's own words when it threw a
@@ -628,22 +642,8 @@ class ListScreenController<Section: Hashable & Sendable, Item: Hashable & Sendab
         var sections = sections()
         guard let stateSection = stateSection(),
               let index = sections.firstIndex(where: { $0.id == stateSection }) else { return sections }
-        sections[index].state = listStateRow()
+        sections[index].state = stateRow(hasContent: hasContent(), isLoading: isLoading, failure: loadFailure)
         return sections
-    }
-
-    /// The base's own state row, from its own load: a load in flight where the
-    /// rows will be, the page's failure with one Retry, then the page's empty
-    /// state while it has nothing to show.
-    private func listStateRow() -> ListStateRow? {
-        if isLoading, !hasContent() || loadFailure != nil {
-            return ListStateRow(state: .loading(loadingCaption()), identifier: stateRowIdentifier)
-        }
-        if let loadFailure {
-            return ListStateRow(state: state(for: loadFailure), identifier: stateRowIdentifier)
-        }
-        guard !hasContent(), let settled = emptyState() else { return nil }
-        return ListStateRow(state: settled, identifier: stateRowIdentifier)
     }
 
     /// Whether `sections` show anything: a row, or a section's state row.

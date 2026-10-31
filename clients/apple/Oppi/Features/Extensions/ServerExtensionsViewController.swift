@@ -155,13 +155,11 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
                 sections.append(ListSection(.notice, items: [.cachedWarning]))
             }
         }
-        if let row = stateRow(
-            hasContent: !state.presentation.visibleExtensions.isEmpty,
-            isLoading: state.catalog == .firstLoad,
-            failure: state.catalog == .unavailable
+        if let row = stateRow(hasContent: !state.presentation.visibleExtensions.isEmpty, isLoading: state.catalog == .firstLoad, failure: failureReport(
+            reason: state.catalog == .unavailable
                 ? String(localized: "The selected server has no cached Extensions catalog.")
                 : nil
-        ) {
+        )) {
             sections.append(ListSection(.state, items: [], state: row))
         }
         switch state.catalog {

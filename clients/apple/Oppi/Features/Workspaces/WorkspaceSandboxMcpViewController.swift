@@ -148,13 +148,23 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
         case .loadFailed:
             let model = model
             cell.configure(
-                .failure(model.sandboxMcpLoadError ?? "", retry: { Task { await model.loadSandboxMcpServers() } }),
+                .failure(
+                    title: String(localized: "Couldn't Load MCP Servers"),
+                    reason: model.sandboxMcpLoadError ?? "",
+                    retry: { Task { await model.loadSandboxMcpServers() } }
+                ),
                 identifier: "workspace.edit.sandboxMcp.loadError"
             )
         case .error:
+            // A save that failed: Retry reads the list again, which clears it and
+            // shows what the host holds now.
             let model = model
             cell.configure(
-                .failure(model.sandboxMcpError ?? "", retry: { Task { await model.loadSandboxMcpServers() } }),
+                .failure(
+                    title: String(localized: "Couldn't Save the MCP Server"),
+                    reason: model.sandboxMcpError ?? "",
+                    retry: { Task { await model.loadSandboxMcpServers() } }
+                ),
                 identifier: "workspace.edit.sandboxMcp.error"
             )
         default:

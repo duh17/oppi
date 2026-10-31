@@ -140,8 +140,8 @@ struct ServerSkillsViewControllerTests {
         #expect(store.skills(forServer: serverId).first?.state == .enabled)
     }
 
-    @Test("A Skill the server could not classify states itself in the kit's one failed row, with Retry")
-    func unknownStateSkillOffersRetry() throws {
+    @Test("A Skill the server could not classify says so in Validation, not as a failed load")
+    func unknownStateSkillIsAValidationFact() throws {
         let root = try makeRoot()
         let connection = try #require(root.coordinator.connection(for: serverId))
         connection.serverResourceStore.replaceSkills([skill(state: .unknown)], serverId: serverId)
@@ -157,18 +157,16 @@ struct ServerSkillsViewControllerTests {
         screen.updateProperties()
         #expect(!screen.shownItems.isEmpty, "the catalog row fills the page without a load")
 
-        let row = try #require(
-            screen.sections().first { $0.id == .loading }?.state,
-            "an unknown Skill is the page's one failed row, not a row of its own"
-        )
-        guard case .failed(let title, let reason, let retry) = row.state else {
-            Issue.record("the row is not a failure: \(row.state.rowText)")
-            return
-        }
-        #expect(title == "Couldn't Load Skill")
+        // Nothing failed to load, so there is no failed row to retry: what Pi made
+        // of the Skill is a fact about it, in Validation.
+        #expect(screen.sections().first { $0.id == .loading }?.state == nil,
+                "an unknown Skill is not a failed request")
+        let validation = try #require(screen.sections().first { $0.id == .validation })
+        let reason = validation.items.compactMap { item -> String? in
+            if case .loadError(let reason) = item { return reason }
+            return nil
+        }.first
         #expect(reason == String(localized: "Pi could not read this Skill."))
-        #expect(retry != nil, "the row offers the page's Retry")
-        #expect(row.identifier == "skills.detail.state")
     }
 
     @Test("Retry on an unavailable Skills catalog says why, sends one new request, and loads the list")

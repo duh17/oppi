@@ -225,7 +225,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
             if attempt.actionError != nil { items.append(.signInError) }
             sections.append(ListSection(.signIn, header: "Sign-In on \(attempt.serverName)", items: items))
         }
-        if let row = stateRow(hasContent: hasContent, isLoading: state.loading || isLoading, failure: stateFailure) {
+        if let row = stateRow(hasContent: hasContent, isLoading: state.loading || isLoading, failure: failureReport(reason: stateFailure)) {
             sections.append(ListSection(.state, items: [], state: row))
         }
         if let scope = state.snapshot?.scope, state.hasClient, state.server != nil {

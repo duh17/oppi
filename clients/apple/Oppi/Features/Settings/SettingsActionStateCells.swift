@@ -153,11 +153,15 @@ final class SettingsStateRowCell: UICollectionViewListCell {
         case loading(String)
         /// Nothing to show: no items, no matches, nothing online.
         case message(String)
-        /// The work failed. `retry` runs it again and adds the Retry label.
-        case failure(String, retry: (() -> Void)?)
-        /// The work failed, and the page can say what failed and why: the title,
-        /// and the reason on a line under it.
-        case failed(title: String, reason: String?, retry: (() -> Void)?)
+        /// The work failed: the title of what failed, the reason on a line under
+        /// it, and a `retry` that runs the work again and adds the Retry label. A
+        /// row with nothing but its reason passes the same words as both.
+        case failure(title: String, reason: String?, retry: (() -> Void)?)
+
+        /// A one-line failure: its words, and its Retry when it has one.
+        static func failure(_ message: String, retry: (() -> Void)?) -> Self {
+            .failure(title: message, reason: nil, retry: retry)
+        }
 
         /// A list's whole-content `LoadState` as this row: its words, and its
         /// Retry when it has one.
@@ -168,7 +172,7 @@ final class SettingsStateRowCell: UICollectionViewListCell {
             case .empty, .noResults:
                 self = .message(loadState.rowText)
             case .failed(let title, let message, _):
-                self = .failed(title: title, reason: message, retry: loadState.rowRetry)
+                self = .failure(title: title, reason: message, retry: loadState.rowRetry)
             }
         }
     }
@@ -243,11 +247,7 @@ final class SettingsStateRowCell: UICollectionViewListCell {
         case .message(let message):
             text = message
             textLabel.textColor = style.value
-        case .failure(let message, let action):
-            text = message
-            textLabel.textColor = style.warning
-            retry = action
-        case .failed(title: let title, reason: let why, retry: let action):
+        case .failure(let title, let why, let action):
             text = title
             reason = why
             textLabel.textColor = style.warning

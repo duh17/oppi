@@ -117,13 +117,20 @@ final class ServerPairedDevicesViewController: ListScreenController<ServerPaired
             guard case .loaded(_, let error?) = state else { return }
             let model = self.model
             cell.configure(
-                .failure(error, retry: { [model] in Task { await model.reloadPairedDevices() } }),
+                .failure(
+                    title: String(localized: "Couldn't Load Devices"),
+                    reason: error,
+                    retry: { [model] in Task { await model.reloadPairedDevices() } }
+                ),
                 identifier: "server.pairedDevices.error"
             )
         case .failed:
             guard case .failed(let message) = state else { return }
+            let model = self.model
             cell.configure(
-                .failure(message, retry: { [model] in Task { await model.reloadPairedDevices() } }),
+                .failure(title: String(localized: "Couldn't Load Devices"), reason: message) { [model] in
+                    Task { await model.reloadPairedDevices() }
+                },
                 identifier: "server.pairedDevices.error"
             )
         case .device:

@@ -351,7 +351,7 @@ final class WorkspaceSettingsModel {
 
     private func loadSkills() async {
         guard let context = context() else {
-            skillsError = "Server is offline"
+            skillsError = String(localized: "Server is offline")
             isLoadingSkills = false
             return
         }
@@ -377,7 +377,7 @@ final class WorkspaceSettingsModel {
 
     private func loadExtensions() async {
         guard let context = context() else {
-            extensionsError = "Server is offline"
+            extensionsError = String(localized: "Server is offline")
             isLoadingExtensions = false
             return
         }
@@ -614,12 +614,15 @@ final class WorkspaceSettingsModel {
         if isFixture { return }
         #endif
         guard let context = context() else {
-            sandboxMcpLoadError = "Server is offline"
+            sandboxMcpLoadError = String(localized: "Server is offline")
             return
         }
         sandboxMcpGeneration += 1
         let generation = sandboxMcpGeneration
         sandboxMcpLoadError = nil
+        // The list was read again: what a save failed at is old news, and the
+        // row's Retry reloads rather than repeats it.
+        sandboxMcpError = nil
         do {
             let response = try await context.api.listMcpServers(scopeId: context.scope.workspaceId)
             guard isCurrent(context.scope), generation == sandboxMcpGeneration else { return }

@@ -35,7 +35,7 @@ struct ListScreenStateRowTests {
         defer { hide(window) }
 
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            Self.row(in: page)?.accessibilityLabel == "Couldn't Load. not found"
+            Self.row(in: page)?.accessibilityLabel == "Couldn't Load Things. not found"
         })
         let failed = try #require(Self.row(in: page))
         #expect(failed.accessibilityTraits.contains(.button))
@@ -48,7 +48,7 @@ struct ListScreenStateRowTests {
         page.setNeedsUpdateProperties()
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
             page.view.layoutIfNeeded()
-            return page.shownItems == ["kept"] && Self.row(in: page)?.accessibilityLabel == "Couldn't Load. not found"
+            return page.shownItems == ["kept"] && Self.row(in: page)?.accessibilityLabel == "Couldn't Load Things. not found"
         }, "the rows it kept stay listed under the failure")
 
         // Retry runs the load, and its row becomes the loading row: the same cell,
@@ -95,7 +95,7 @@ struct ListScreenStateRowTests {
         defer { hide(window) }
 
         #expect(await waitForMainActorCondition(timeout: .seconds(5)) {
-            (page.contentUnavailableConfiguration as? UIContentUnavailableConfiguration)?.text == "Couldn't Load"
+            (page.contentUnavailableConfiguration as? UIContentUnavailableConfiguration)?.text == "Couldn't Load Things"
         }, "a page with nothing to list is its state")
         let shown = try #require(page.contentUnavailableConfiguration as? UIContentUnavailableConfiguration)
         #expect(shown.secondaryText == "not found")
@@ -170,17 +170,18 @@ struct ListScreenStateRowTests {
         return found.filter { !$0.isHidden }
     }
 
-    /// The reason under a failed row's title, which the cell draws as its own
-    /// line: the row is one button, so its labels are the only place a test can
-    /// read the two lines apart.
+    /// The reason under a failed row's title the reason the cell lays out between its title and
+    /// its Retry, read by position rather than by its words, so the test proves
+    /// the line is on screen.
     private static func reasonLine(in page: StateRowPage) -> String? {
         page.view.layoutIfNeeded()
-        for cell in page.collectionView.visibleCells {
-            for label in labels(in: cell) where label.text == "not found" {
-                return label.text
-            }
+        guard let cell = page.collectionView.visibleCells.first(where: { $0 is SettingsStateRowCell }) else {
+            return nil
         }
-        return nil
+        let lines = labels(in: cell)
+            .filter { !$0.isHidden && $0.frame.height > 0 && ($0.text?.isEmpty == false) }
+            .sorted { $0.frame.minY < $1.frame.minY }
+        return lines.count == 3 ? lines[1].text : nil
     }
 
     private static func labels(in view: UIView) -> [UILabel] {
@@ -234,7 +235,9 @@ private final class StateRowPage: ListScreenController<StateRowPage.Section, Str
 
     override func loadingCaption() -> String? { "Loading things…" }
 
-    override func failureTitle() -> String? { "Couldn't Load" }
+    /// The page's own title, told apart from the base's fallback so the test
+    /// proves the override is what heads the row.
+    override func failureTitle() -> String? { "Couldn't Load Things" }
 
     override func emptyState() -> LoadState? {
         .empty(title: "Nothing here.", systemImage: "tray")
