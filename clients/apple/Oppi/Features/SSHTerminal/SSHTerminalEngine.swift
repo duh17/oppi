@@ -190,6 +190,16 @@ final class SSHTerminalEngine {
     /// arrives (PNG decoding itself is held to this limit). Only the direct
     /// transmission medium is enabled, so this is never backed by a local file.
     static let kittyImageStorageLimit = SSHTerminalKittyGraphics.imageStorageLimitBytes
+    /// Scrollback kept per terminal (every terminal, not only Rex panes), in
+    /// Ghostty page bytes. A day-long agent pane in Rex (28,991 rows at 49
+    /// columns, measured) takes 13 MiB of pages; at 8 MiB Oppi kept only its
+    /// newest 18,339 rows of a history it had already downloaded. 32 MiB keeps
+    /// about twice that pane (some 70,000 phone-width rows) and is the most
+    /// one terminal's text can hold, so a few open terminals stay well inside
+    /// a phone's budget; Rex itself keeps about 64 MiB at the Mac's width.
+    /// The cap counts a page's full size even while it is compressed (see
+    /// `beginRestore`): compression saves memory, it does not fit more rows.
+    static let historyLimitBytes = 32 * 1024 * 1024
     /// Receives a remote copy after the triggering write has been interpreted.
     var copied: (String) -> Void = { _ in }
     /// The last copy of the current write; only the newest one matters.
@@ -335,7 +345,7 @@ final class SSHTerminalEngine {
         // Kitty placement geometry is computed in terminal pixels, so a zero
         // cell size would collapse every image until the first resize.
         applyTerminalSize()
-        var historyLimit: Int = 8 * 1024 * 1024
+        var historyLimit = Self.historyLimitBytes
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &historyLimit)
         // Ghostty default: DEC 1007 on. Set both the live value and the RIS
         // restore so less/man/git-log pagers keep alternate scroll.
@@ -374,6 +384,15 @@ final class SSHTerminalEngine {
         }
         var imageStorage = UInt64(Self.kittyImageStorageLimit)
         ghostty_snapshot_decoder_set(decoder, GHOSTTY_SNAPSHOT_DECODER_OPT_KITTY_IMAGE_STORAGE_LIMIT, &imageStorage)
+        // A restored history page is compressed as it arrives, and opens again
+        // by itself when it is drawn, selected, or copied, then stays open (this
+        // engine never compresses it again). Measured on that 28,991-row pane in
+        // the simulator: 13 MiB of pages held in 2.5 MiB until scrolled to, the
+        // restore 3 to 5 ms longer, the same text selected and copied, and
+        // no frame cost above run-to-run noise for a screenful deep in history
+        // or a fling through all of it.
+        var compressHistory = true
+        ghostty_snapshot_decoder_set(decoder, GHOSTTY_SNAPSHOT_DECODER_OPT_COMPRESS_HISTORY, &compressHistory)
         var restored: GhosttyTerminal?
         guard ghostty_snapshot_decoder_ready(decoder, &restored) == GHOSTTY_SUCCESS, let restored else {
             ghostty_snapshot_decoder_free(decoder)

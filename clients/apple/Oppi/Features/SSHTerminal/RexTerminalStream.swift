@@ -105,8 +105,9 @@ struct RexTerminalStream {
 
     private enum Phase { case envelope, screen, history, output }
 
-    /// The engine keeps 8 MiB of history, and Ghostty's snapshot compresses
-    /// its pages; a snapshot larger than this is not one worth holding on a phone.
+    /// The engine keeps 32 MiB of history (`SSHTerminalEngine.historyLimitBytes`),
+    /// and Ghostty's snapshot compresses its pages; a snapshot larger than this
+    /// is not one worth holding on a phone.
     static let maximumSnapshotBytes = 64 * 1024 * 1024
     /// A message longer than this without its terminator is a program's look-alike.
     static let maximumMessageBytes = 1024 * 1024

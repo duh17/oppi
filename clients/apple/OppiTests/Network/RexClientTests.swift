@@ -667,6 +667,19 @@ struct RexPaneEngineTests {
         #expect(Self.text(engine).first == "line 0", "the oldest line arrived")
     }
 
+    /// A long pane keeps all of its history: 30,000 phone-width rows, more
+    /// than the 18,000 or so the old 8 MiB cap held, all arrive and stay.
+    @Test func aLongPanesWholeHistoryIsKept() throws {
+        let (screen, records) = try snapshotParts(try ghosttySnapshot(of: numberedLines(30000), columns: 49, rows: 45))
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 49, rows: 45)) { _ in }
+        try engine.beginRestore(screen)
+        #expect(try engine.continueRestore(records.reduce(Data(), +)))
+        engine.scrollToRow(0)
+        #expect(Self.text(engine).first == "line 0", "the oldest line is still there")
+        engine.scrollToRow(15000)
+        #expect(Self.text(engine).first == "line 15000", "history deep in the pane reads back after compression")
+    }
+
     /// An image restores at READY with its placement; its pixels arrive with
     /// a later record, and only then can the grid draw it.
     @Test func anImagesPixelsFollowItsPlacement() throws {
