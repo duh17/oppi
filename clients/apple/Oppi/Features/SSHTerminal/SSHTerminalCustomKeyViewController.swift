@@ -177,13 +177,17 @@ final class SSHTerminalCustomKeyViewController: ListScreenController<
                 }
             )
         } else {
+            let shown = draft.showFor
             cell.configure(
                 title: String(localized: "Show for"),
                 identifier: "settings.sshTerminal.bar.key.showFor",
-                options: SSHTerminalCustomKey.ShowFor.choices.map { choice in
-                    (title: choice.title, selected: choice == draft.showFor, action: { [weak self] in
-                        self?.change { $0.showFor = choice }
-                    })
+                value: shown.title,
+                menu: {
+                    SSHTerminalCustomKey.ShowFor.choices.map { choice in
+                        SettingsMenuOption(title: choice.title, selected: choice == shown) { [weak self] in
+                            self?.change { $0.showFor = choice }
+                        }
+                    }
                 }
             )
         }

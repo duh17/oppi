@@ -207,14 +207,18 @@ final class McpAddServerViewController: ListScreenController<McpAddServerViewCon
 
     private lazy var menu = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
+        let shown = exposure
         cell.configure(
             title: "Exposure",
             identifier: "mcp.add.exposure",
-            options: McpExposure.allCases.map { option in
-                (title: option.title, selected: option == exposure, action: { [weak self] in
-                    guard let self, !saving else { return }
-                    exposure = option
-                })
+            value: shown.title,
+            menu: {
+                McpExposure.allCases.map { option in
+                    SettingsMenuOption(title: option.title, selected: option == shown) { [weak self] in
+                        guard let self, !saving else { return }
+                        exposure = option
+                    }
+                }
             }
         )
     }

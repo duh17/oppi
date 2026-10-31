@@ -205,21 +205,25 @@ final class McpServerDetailViewController: ListScreenController<McpServerDetailV
         let client = client
         let scopeId = scope.id
         let name = entry.name
+        let shownExposure = entry.exposure
         cell.configure(
             title: "Exposure",
             identifier: "mcp.exposure",
-            options: McpExposure.allCases.map { option in
-                (title: option.title, selected: option == entry.exposure, action: { [weak self] in
-                    // The row is a menu button at every text size, so a change
-                    // asked for while another is saving or a sign-in is open
-                    // stops here.
-                    guard let self, !locked else { return }
-                    perform {
-                        try await client.patchMcpServer(
-                            scopeId: scopeId, name: name, patch: McpPatchServerRequest(exposure: option)
-                        )
+            value: shownExposure.title,
+            menu: {
+                McpExposure.allCases.map { option in
+                    SettingsMenuOption(title: option.title, selected: option == shownExposure) { [weak self] in
+                        // The row is a menu button at every text size, so a change
+                        // asked for while another is saving or a sign-in is open
+                        // stops here.
+                        guard let self, !locked else { return }
+                        perform {
+                            try await client.patchMcpServer(
+                                scopeId: scopeId, name: name, patch: McpPatchServerRequest(exposure: option)
+                            )
+                        }
                     }
-                })
+                }
             }
         )
     }

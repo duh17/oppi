@@ -261,13 +261,27 @@ final class DictationDictionaryViewController: ListScreenController<DictationDic
 
     private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
+        let addsToWorkspace = model.addsToWorkspace
         cell.configure(
             title: String(localized: "Add To"),
             identifier: "settings.dictionary.scope",
-            options: [
-                (String(localized: "All Workspaces"), !model.addsToWorkspace, { [weak self] in self?.model.addsToWorkspace = false }),
-                (String(localized: "This Workspace"), model.addsToWorkspace, { [weak self] in self?.model.addsToWorkspace = true }),
-            ]
+            value: addsToWorkspace ? String(localized: "This Workspace") : String(localized: "All Workspaces"),
+            menu: {
+                [
+                    SettingsMenuOption(
+                        title: String(localized: "All Workspaces"),
+                        selected: !addsToWorkspace
+                    ) { [weak self] in
+                        self?.model.addsToWorkspace = false
+                    },
+                    SettingsMenuOption(
+                        title: String(localized: "This Workspace"),
+                        selected: addsToWorkspace
+                    ) { [weak self] in
+                        self?.model.addsToWorkspace = true
+                    },
+                ]
+            }
         )
     }
 

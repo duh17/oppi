@@ -114,7 +114,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
             let tint = state.uiColor(ComposerThemeColors(palette: ThemeRuntimeState.currentPalette()))
             return AnyHashable([
                 AnyHashable(server.name),
-                AnyHashable(server.resolvedBadgeIcon.symbolName),
+                AnyHashable(server.resolvedBadgeIcon),
                 AnyHashable(state.title),
                 AnyHashable(tint),
                 AnyHashable(lockWord(ScopedLockService.shared.badge(.server(id)))),
@@ -146,7 +146,7 @@ final class SettingsRootViewController: ListScreenController<SettingsRootViewCon
         guard let self else { return }
         cell.configure(
             title: title(of: item),
-            systemImage: systemImage(of: item),
+            image: .symbol(systemImage(of: item)),
             value: value(of: item),
             identifier: accessibilityIdentifier(of: item)
         ) { [weak self] in self?.open(item) }

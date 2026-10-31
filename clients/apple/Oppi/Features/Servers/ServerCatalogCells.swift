@@ -144,7 +144,7 @@ enum ServerCatalogServerMenu {
                         onSwitched(server)
                     }
                 }
-            )
+            ).elements()
         }
     }
 }

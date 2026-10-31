@@ -460,7 +460,7 @@ final class WorkspaceSettingsViewController: UIViewController, UICollectionViewD
             let row = indexRow(item)
             cell.configure(
                 title: row.title,
-                systemImage: row.systemImage,
+                image: row.systemImage.isEmpty ? nil : .symbol(row.systemImage),
                 value: row.value,
                 identifier: row.identifier
             ) { [weak self] in self?.perform(item) }

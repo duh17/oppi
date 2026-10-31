@@ -130,11 +130,17 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
         cell.configure(
             title: String(localized: "Busy Animation"),
             identifier: "settings.spinnerStyle",
-            options: SpinnerStyle.allCases.map { style in
-                (style.displayName, style == AppPreferences.Appearance.spinnerStyle, { [weak self] in
-                    AppPreferences.Appearance.setSpinnerStyle(style)
-                    self?.setNeedsUpdateProperties()
-                })
+            value: AppPreferences.Appearance.spinnerStyle.displayName,
+            menu: {
+                SpinnerStyle.allCases.map { style in
+                    SettingsMenuOption(
+                        title: style.displayName,
+                        selected: style == AppPreferences.Appearance.spinnerStyle
+                    ) { [weak self] in
+                        AppPreferences.Appearance.setSpinnerStyle(style)
+                        self?.setNeedsUpdateProperties()
+                    }
+                }
             }
         )
     }
@@ -153,14 +159,14 @@ final class SettingsChatViewController: ListScreenController<SettingsChatViewCon
         case .topBar:
             cell.configure(
                 title: String(localized: "Top Bar"),
-                systemImage: nil,
+                image: nil,
                 value: topBarSummary,
                 identifier: "settings.chat.topBar"
             ) { [weak self] in self?.openTopBarSettings() }
         default:
             cell.configure(
                 title: String(localized: "Quick Comments"),
-                systemImage: nil,
+                image: nil,
                 value: nil,
                 identifier: "settings.chat.quickComments"
             ) { [weak self] in self?.openQuickComments() }

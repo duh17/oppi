@@ -105,12 +105,18 @@ final class SettingsPrivacyViewController: ListScreenController<SettingsPrivacyV
 
     private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
+        let shown = shownTimeout
         cell.configure(
             title: String(localized: "App Lock"),
             identifier: "settings.appLock",
             isEnabled: appLock.isAvailable && !appLock.isAuthenticating,
-            options: AppLockTimeout.allCases.map { timeout in
-                (timeout.title, timeout == shownTimeout, { [weak self] in self?.changeAppLock(to: timeout) })
+            value: shown.title,
+            menu: {
+                AppLockTimeout.allCases.map { timeout in
+                    SettingsMenuOption(title: timeout.title, selected: timeout == shown) { [weak self] in
+                        self?.changeAppLock(to: timeout)
+                    }
+                }
             }
         )
     }

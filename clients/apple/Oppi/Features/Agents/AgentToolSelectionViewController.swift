@@ -244,8 +244,13 @@ final class AgentToolSelectionViewController: ListScreenController<
         cell.configure(
             title: "Selection",
             identifier: "agent.nativeEdit.toolMode",
-            options: modes.map { mode in
-                (title: mode.title, selected: mode == state.mode, action: { [weak self] in self?.choose(mode) })
+            value: state.mode.title,
+            menu: {
+                modes.map { mode in
+                    SettingsMenuOption(title: mode.title, selected: mode == state.mode) { [weak self] in
+                        self?.choose(mode)
+                    }
+                }
             }
         )
     }

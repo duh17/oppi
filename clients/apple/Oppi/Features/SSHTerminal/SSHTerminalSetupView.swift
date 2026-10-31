@@ -144,7 +144,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             guard let self else { return }
             cell.configure(
                 title: "Terminal Colors",
-                systemImage: nil,
+                image: nil,
                 value: colorSummary,
                 identifier: "sshTerminal.colors"
             ) { [weak self] in self?.presentColorPicker() }
@@ -246,11 +246,14 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             title: "Multiplexer",
             identifier: "sshTerminal.multiplexer",
             isEnabled: !session.connecting,
-            options: SSHTerminalMultiplexerChoice.allCases.map { choice in
-                (choice.label, choice == current, { [weak self] in
-                    self?.profile.choose(choice)
-                    self?.applySnapshot()
-                })
+            value: current.label,
+            menu: {
+                SSHTerminalMultiplexerChoice.allCases.map { choice in
+                    SettingsMenuOption(title: choice.label, selected: choice == current) { [weak self] in
+                        self?.profile.choose(choice)
+                        self?.applySnapshot()
+                    }
+                }
             }
         )
     }
@@ -263,20 +266,30 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     }
 
     private func configureAuthentication(_ cell: SettingsMenuRowCell) {
+        let authentication = profile.authentication
         cell.configure(
             title: "Sign In",
             identifier: "sshTerminal.authentication",
             isEnabled: !session.connecting,
-            options: [
-                ("Password", profile.authentication == .password, { [weak self] in
-                    self?.profile.authentication = .password
-                    self?.loadIdentityIfSelected()
-                }),
-                ("This Device’s Key", profile.authentication == .deviceKey, { [weak self] in
-                    self?.profile.authentication = .deviceKey
-                    self?.loadIdentityIfSelected()
-                }),
-            ]
+            value: authentication == .deviceKey ? "This Device’s Key" : "Password",
+            menu: {
+                [
+                    SettingsMenuOption(
+                        title: "Password",
+                        selected: authentication == .password
+                    ) { [weak self] in
+                        self?.profile.authentication = .password
+                        self?.loadIdentityIfSelected()
+                    },
+                    SettingsMenuOption(
+                        title: "This Device’s Key",
+                        selected: authentication == .deviceKey
+                    ) { [weak self] in
+                        self?.profile.authentication = .deviceKey
+                        self?.loadIdentityIfSelected()
+                    },
+                ]
+            }
         )
     }
 

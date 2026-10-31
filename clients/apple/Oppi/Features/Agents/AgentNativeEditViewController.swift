@@ -311,21 +311,23 @@ final class AgentNativeEditViewController: ListScreenController<
         switch item {
         case .model:
             // The model's own provider mark; the server's default has none to show.
-            let mark = draft.model.managementNilIfBlank.map { EntityIcon.image(.model($0), size: 22) }
+            let mark = draft.model.managementNilIfBlank.map {
+                SettingsIndexRowCell.Image.artwork(EntityIcon.image(.model($0), size: 22))
+            }
             cell.configure(
-                title: "Model", systemImage: nil, image: mark, value: draft.modelDisplayName,
+                title: "Model", image: mark, value: draft.modelDisplayName,
                 identifier: "agent.nativeEdit.model"
             ) { [weak self] in
                 self?.presentModelPicker()
             }
         case .tools:
-            cell.configure(title: "Tools", systemImage: nil, value: draft.toolSelectionSummary, identifier: "agent.nativeEdit.tools") { [weak self] in
+            cell.configure(title: "Tools", image: nil, value: draft.toolSelectionSummary, identifier: "agent.nativeEdit.tools") { [weak self] in
                 guard let self else { return }
                 Router.push(AgentToolSelectionViewController(selection: .agent(draft)), from: self)
             }
         case .skills:
             cell.configure(
-                title: "Selected Skills", systemImage: nil,
+                title: "Selected Skills", image: nil,
                 value: Self.selectionCount(draft.selectedSkillPaths.count), identifier: "agent.nativeEdit.skills"
             ) { [weak self] in
                 guard let self else { return }
@@ -333,7 +335,7 @@ final class AgentNativeEditViewController: ListScreenController<
             }
         case .extensions:
             cell.configure(
-                title: "Selected Extensions", systemImage: nil,
+                title: "Selected Extensions", image: nil,
                 value: Self.selectionCount(draft.selectedExtensionIds.count), identifier: "agent.nativeEdit.extensions"
             ) { [weak self] in
                 guard let self else { return }
@@ -341,7 +343,7 @@ final class AgentNativeEditViewController: ListScreenController<
             }
         case .workspaces:
             cell.configure(
-                title: "Allowed Workspaces", systemImage: nil,
+                title: "Allowed Workspaces", image: nil,
                 value: Self.selectionCount(draft.selectedAllowedWorkspaceIds.count), identifier: "agent.nativeEdit.workspaces"
             ) { [weak self] in
                 guard let self else { return }
@@ -355,83 +357,133 @@ final class AgentNativeEditViewController: ListScreenController<
     private func configureMenu(_ cell: SettingsMenuRowCell, item: Item) {
         switch item {
         case .promptMode:
+            let currentMode = draft.instructionMode
             cell.configure(
                 title: "Prompt Mode",
                 identifier: "agent.nativeEdit.promptMode",
-                options: [
-                    (title: "Append", selected: draft.instructionMode == .append, action: { [weak self] in self?.draft.instructionMode = .append }),
-                    (title: "Replace", selected: draft.instructionMode == .replace, action: { [weak self] in self?.draft.instructionMode = .replace }),
-                ]
+                value: Self.instructionModeTitle(currentMode),
+                menu: {
+                    AgentInstructionMode.allCases.map { mode in
+                        SettingsMenuOption(
+                            title: Self.instructionModeTitle(mode),
+                            selected: currentMode == mode
+                        ) { [weak self] in
+                            self?.draft.instructionMode = mode
+                        }
+                    }
+                }
             )
         case .thinking:
             let levels: [ThinkingLevel?] = [nil] + ThinkingLevel.allCases.map(Optional.some)
+            let currentLevel = draft.thinkingLevel
             cell.configure(
                 title: "Thinking",
                 identifier: "agent.nativeEdit.thinking",
-                options: levels.map { level in
-                    (
-                        title: level?.displayTitle ?? "Default",
-                        selected: draft.thinkingLevel == level,
-                        action: { [weak self] in self?.draft.thinkingLevel = level }
-                    )
+                value: currentLevel?.displayTitle ?? "Default",
+                menu: {
+                    levels.map { option in
+                        SettingsMenuOption(
+                            title: option?.displayTitle ?? "Default",
+                            selected: currentLevel == option
+                        ) { [weak self] in
+                            self?.draft.thinkingLevel = option
+                        }
+                    }
                 }
             )
         case .chatStyle:
             let settingsLabel = "Settings (\(AppPreferences.ChatDisplay.style.label))"
             let styles: [AppPreferences.ChatDisplay.Style?] = [nil] + AppPreferences.ChatDisplay.Style.allCases.map(Optional.some)
+            let currentStyle = draft.chatStyle
             cell.configure(
                 title: "Chat Style",
                 identifier: "agent.nativeEdit.chatStyle",
-                options: styles.map { style in
-                    (
-                        title: style?.label ?? settingsLabel,
-                        selected: draft.chatStyle == style,
-                        action: { [weak self] in self?.draft.chatStyle = style }
-                    )
+                value: currentStyle?.label ?? settingsLabel,
+                menu: {
+                    styles.map { option in
+                        SettingsMenuOption(
+                            title: option?.label ?? settingsLabel,
+                            selected: currentStyle == option
+                        ) { [weak self] in
+                            self?.draft.chatStyle = option
+                        }
+                    }
                 }
             )
         case .skillMode:
+            let mode = draft.skillSelectionMode
+            let options = modeOptions(mode) { [weak self] in self?.draft.skillSelectionMode = $0 }
             cell.configure(
                 title: "Skills",
                 identifier: "agent.nativeEdit.skillMode",
-                options: modeOptions(draft.skillSelectionMode) { [weak self] in self?.draft.skillSelectionMode = $0 }
+                value: mode.title,
+                menu: { options }
             )
         case .extensionMode:
+            let mode = draft.extensionSelectionMode
+            let options = modeOptions(mode) { [weak self] in self?.draft.extensionSelectionMode = $0 }
             cell.configure(
                 title: "Extensions",
                 identifier: "agent.nativeEdit.extensionMode",
-                options: modeOptions(draft.extensionSelectionMode) { [weak self] in self?.draft.extensionSelectionMode = $0 }
+                value: mode.title,
+                menu: { options }
             )
         case .runtime:
+            let runtime = draft.requiredRuntime
+            let options: [WorkspaceRuntime?] = [nil, .host, .sandbox]
             cell.configure(
                 title: "Runtime",
                 identifier: "agent.nativeEdit.requiredRuntime",
-                options: [
-                    (title: "Any runtime", selected: draft.requiredRuntime == nil, action: { [weak self] in self?.draft.requiredRuntime = nil }),
-                    (title: "Host", selected: draft.requiredRuntime == .host, action: { [weak self] in self?.draft.requiredRuntime = .host }),
-                    (title: "Sandbox", selected: draft.requiredRuntime == .sandbox, action: { [weak self] in self?.draft.requiredRuntime = .sandbox }),
-                ]
+                value: Self.runtimeTitle(runtime),
+                menu: {
+                    options.map { option in
+                        SettingsMenuOption(title: Self.runtimeTitle(option), selected: runtime == option) { [weak self] in
+                            self?.draft.requiredRuntime = option
+                        }
+                    }
+                }
             )
         case .workspaceMode:
+            let mode = draft.workspaceConstraintMode
             cell.configure(
                 title: "Workspaces",
                 identifier: "agent.nativeEdit.workspaceMode",
-                options: [
-                    (title: "Any workspace", selected: draft.workspaceConstraintMode == .inherit, action: { [weak self] in self?.draft.workspaceConstraintMode = .inherit }),
-                    (title: "Allowed list", selected: draft.workspaceConstraintMode == .exact, action: { [weak self] in self?.draft.workspaceConstraintMode = .exact }),
-                ]
+                value: mode == .exact ? "Allowed list" : "Any workspace",
+                menu: {
+                    [
+                        SettingsMenuOption(title: "Any workspace", selected: mode == .inherit) { [weak self] in
+                            self?.draft.workspaceConstraintMode = .inherit
+                        },
+                        SettingsMenuOption(title: "Allowed list", selected: mode == .exact) { [weak self] in
+                            self?.draft.workspaceConstraintMode = .exact
+                        },
+                    ]
+                }
             )
         default:
             break
         }
     }
 
+    /// How an instruction mode reads, in the row and in its choices.
+    private static func instructionModeTitle(_ mode: AgentInstructionMode) -> String {
+        switch mode {
+        case .append: "Append"
+        case .replace: "Replace"
+        }
+    }
+
+    /// How a launch's required runtime reads, in the row and in its choices.
+    private static func runtimeTitle(_ runtime: WorkspaceRuntime?) -> String {
+        runtime?.rawValue.capitalized ?? "Any runtime"
+    }
+
     private func modeOptions(
         _ mode: AgentResourceSelectionMode,
         onSelect: @escaping (AgentResourceSelectionMode) -> Void
-    ) -> [(title: String, selected: Bool, action: () -> Void)] {
+    ) -> [SettingsMenuOption] {
         AgentResourceSelectionMode.allCases.map { option in
-            (title: option.title, selected: option == mode, action: { onSelect(option) })
+            SettingsMenuOption(title: option.title, selected: option == mode) { onSelect(option) }
         }
     }
 

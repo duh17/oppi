@@ -277,7 +277,7 @@ final class TailnetSettingsViewController: ListScreenController<TailnetSettingsV
     private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
         cell.configure(
             title: String(localized: "Set Up a Mac or Linux Computer"),
-            systemImage: "laptopcomputer.and.arrow.down",
+            image: .symbol("laptopcomputer.and.arrow.down"),
             value: nil,
             identifier: "tailnet.checkMachine"
         ) { [weak self] in self?.openSetup(peer: nil) }

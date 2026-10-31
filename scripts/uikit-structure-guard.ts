@@ -93,16 +93,19 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *    only goes down. Strings are stripped before matching, so the guard cannot see
  *    a retyped "Retry" or "Connecting…"; those live in `LoadState` only.
  *
- *  - Entity artwork is a ratchet of the same kind, with `EntityIcon.swift`
- *    exempt: `providerLogoAssetName(`, `providerMonogram(`, and
- *    `resolvedBadgeIcon.symbolName` drawn anywhere else, and a menu row
- *    (`UIAction(title:`) titled with a server's, Agent's, workspace's, model's,
- *    or provider's own name instead of `UIAction.choice(...)`, which carries
- *    the entity's icon and the menu's own checkmark. The baseline keeps what is
- *    not artwork: `SessionRowView`'s VoiceOver label (a provider's *name*), the
- *    badge state colors of the rail item and the pill (a symbol tinted by
- *    connection state, not the entity's mark), and four `inputs(of:)` keys that
- *    compare a server's badge. A menu that lists a thing with a name and no
+ *  - Entity artwork is a heuristic ratchet, with `EntityIcon.swift` exempt:
+ *    `providerLogoAssetName(`, `providerMonogram(`, and
+ *    `resolvedBadgeIcon.symbolName` drawn elsewhere, and a menu row
+ *    (`UIAction(title:`) titled with the name of a variable called server, agent,
+ *    workspace, model, or provider instead of `UIAction.choice(...)`, which
+ *    carries the entity's icon and the menu's own checkmark. It reads the call
+ *    by name, so a name held in another variable (`let title = …;
+ *    UIAction(title: title)`) or a drawing helper of a caller's own is not seen:
+ *    a green run means the common shapes are gone, not that artwork is one
+ *    owner's everywhere. The baseline keeps what is not artwork:
+ *    `SessionRowView`'s VoiceOver label (a provider's *name*) and the badge
+ *    symbols of the rail item and the pill (tinted by connection state, which
+ *    `EntityIcon` does not draw). A menu that lists a thing with a name and no
  *    icon is what this catches; nothing else should add to it.
  *
  * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
@@ -138,7 +141,7 @@ const alertsGuide = "dev/architecture-client.md, section \"Alerts and confirmati
 const settingsGuide = "dev/architecture-client.md, section \"Settings pages\"";
 const settingsBase = "clients/apple/Oppi/Features/Settings/ListScreenController.swift";
 const settingsStyle = "clients/apple/Oppi/Features/Settings/SettingsListStyle.swift";
-/** The one owner of entity artwork: see `EntityIcon` and "Entity icons" below. */
+/** The one owner of entity artwork (the guide's shared UIKit building blocks). */
 const entityIconOwner = "clients/apple/Oppi/Core/Views/EntityIcon.swift";
 
 /** A file that declares a page on the list kit: a subclass of the base, or of
@@ -522,13 +525,14 @@ means a screen builds its own loading, empty, or failed state. Show a \`LoadStat
 (or \`UIContentUnavailableView(loadState:)\` for a region); see ${loadStateGuide}.
 
 providerLogoAssetName(, providerMonogram(, and resolvedBadgeIcon.symbolName outside
-EntityIcon.swift, and a UIAction(title:) that titles a server, Agent, workspace,
-model, or provider by its own name, mean a screen draws an entity's artwork
+EntityIcon.swift, and a UIAction(title:) that names a server, Agent, workspace,
+model, or provider variable, mean a screen probably draws an entity's artwork
 itself. Draw it with EntityIcon.image(.agent/.workspace/.provider/.model/.server,
 size:, assets:) in a row, or build a menu row with UIAction.choice(title, entity,
 selected:, assets:), which carries the icon and the menu's own checkmark; see
-the shared UIKit building blocks in dev/architecture-client.md. The baseline
-keeps a provider's VoiceOver name, the badge's state colors, and inputs keys.
+the shared UIKit building blocks in dev/architecture-client.md. This is a
+heuristic: it reads the call by name. The baseline keeps a provider's VoiceOver
+name and the rail item's and pill's state-tinted badge symbols.
 
 AppPreferences.*.set, UserDefaults.standard.set(, FontPreferences.set, an APIClient
 call that writes a setting, and toggleRow( or .settingsToggle( in Features are settings written outside

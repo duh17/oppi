@@ -6,7 +6,8 @@ import UIKit
 /// The one menu of paired servers the session lists' switcher, a catalog's
 /// server row, and a locked cover's Switch Server button all open: every row
 /// wears its server's badge, the shown server is the menu's own checkmark, a
-/// gated server wears its lock, and a cover leaves out the server it is on.
+/// gated server wears its lock, asking for one asks for its lock, and a cover
+/// leaves out the server it is on.
 @Suite("Server switch menu")
 @MainActor
 struct ServerSwitchMenuTests {
@@ -31,6 +32,8 @@ struct ServerSwitchMenuTests {
         return group.children.compactMap { $0 as? UIAction }
     }
 
+    private func png(_ image: UIImage?) -> Data? { image?.pngData() }
+
     @Test("The shown server is the menu's checkmark, and every row wears its badge")
     func shownServerIsCheckedAndRowsWearBadges() throws {
         let alpha = try server("sha256:menu-alpha", "Alpha", badge: .macStudio)
@@ -42,14 +45,13 @@ struct ServerSwitchMenuTests {
         )
 
         let rows = try rows(menu.elements())
-        #expect(rows.count == 2)
-        // Offline servers name their state beside the name, as the switcher always has.
-        #expect(rows.map { $0.title.hasPrefix("Alpha") || $0.title.hasPrefix("Beta") } == [true, true])
+        // A server that is not connected names its state beside its name.
+        #expect(rows.map(\.title) == ["Alpha — Offline", "Beta — Offline"])
         // The current one is checked by the menu, so it keeps its own artwork.
         #expect(rows.map(\.state) == [.on, .off])
-        #expect(rows[0].image?.pngData() == EntityIcon.image(.server(alpha.id, .macStudio), size: 22).pngData())
-        #expect(rows[1].image?.pngData() == EntityIcon.image(.server(beta.id, .desktop), size: 22).pngData())
-        #expect(rows[0].image?.pngData() != rows[1].image?.pngData())
+        #expect(png(rows[0].image) == png(EntityIcon.image(.server(alpha.id, .macStudio), size: 22)))
+        #expect(png(rows[1].image) == png(EntityIcon.image(.server(beta.id, .desktop), size: 22)))
+        #expect(png(rows[0].image) != png(rows[1].image))
     }
 
     @Test("A gated server's row wears its lock and says it is locked")
@@ -72,15 +74,41 @@ struct ServerSwitchMenuTests {
             activate: { _ in }
         ).elements())
 
-        // Both gated servers show a lock in place of their badge, and the open one
-        // shows a different lock; an ungated server keeps its badge.
-        #expect(rows[0].image?.pngData() != EntityIcon.image(.server(locked.id, .macStudio), size: 22).pngData())
-        #expect(rows[1].image?.pngData() != EntityIcon.image(.server(unlocked.id, .macPro), size: 22).pngData())
-        #expect(rows[0].image?.pngData() != rows[1].image?.pngData())
-        #expect(rows[2].image?.pngData() == EntityIcon.image(.server(free.id, .laptop), size: 22).pngData())
+        // Both gated servers wear the lock glyph in place of their badge.
+        #expect(png(rows[0].image) == png(EntityIcon.menuMark("lock.fill")))
+        #expect(png(rows[1].image) == png(EntityIcon.menuMark("lock.open.fill")))
+        #expect(png(rows[0].image) != png(EntityIcon.image(.server(locked.id, .macStudio), size: 22)))
+        #expect(png(rows[2].image) == png(EntityIcon.image(.server(free.id, .laptop), size: 22)))
         #expect(rows[0].accessibilityValue?.hasSuffix(", Locked") == true)
         #expect(rows[1].accessibilityValue?.hasSuffix(", Unlocked") == true)
         #expect(rows[2].accessibilityValue?.hasSuffix("Locked") == false)
+    }
+
+    @Test("A locked server's row does not act until its lock is open")
+    func aLockedServerAsksBeforeItActs() throws {
+        let locked = try server("sha256:menu-gated-\(UUID().uuidString)", "Gated", badge: .macStudio)
+        let open = try server("sha256:menu-ungated-\(UUID().uuidString)", "Open", badge: .desktop)
+        let locks = ScopedLockService.shared
+        defer {
+            locks.forgetServer(locked.id)
+            locks.forgetServer(open.id)
+        }
+        locks.lock(.server(serverId: locked.id))
+        // `choose` hands the lock to the shared service, which would ask the
+        // device: this test reads whether the choice reached its activation.
+        var activated: [String] = []
+        let menu = ServerSwitchMenu(
+            coordinator: coordinator([locked, open]),
+            currentServerId: nil,
+            activate: { activated.append($0.id) }
+        )
+        let rows = try rows(menu.elements())
+
+        rows[0].performWithSender(nil, target: nil)
+        #expect(activated.isEmpty, "a locked server's row activated without asking for its lock")
+
+        rows[1].performWithSender(nil, target: nil)
+        #expect(activated == [open.id], "an unlocked server's row did not activate")
     }
 
     @Test("A cover leaves out the server it is on and adds the caller's rows after the servers")
@@ -96,7 +124,7 @@ struct ServerSwitchMenuTests {
         ).elements()
 
         let rows = try rows(elements)
-        #expect(rows.map { $0.title.hasPrefix("Beta") } == [true])
+        #expect(rows.map(\.title) == ["Beta — Offline"])
         // Nothing is current on a cover, so nothing is checked.
         #expect(rows.allSatisfy { $0.state == .off })
         #expect(elements.count == 2)

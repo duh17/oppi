@@ -175,7 +175,7 @@ final class WorkspaceSandboxMcpViewController: ListScreenController<
     private lazy var linkRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Item> { [weak self] cell, _, _ in
         cell.configure(
             title: String(localized: "Open MCP Servers"),
-            systemImage: "network",
+            image: .symbol("network"),
             value: nil,
             identifier: "workspace.edit.sandboxMcp.openServers"
         ) { [weak self] in self?.openServers() }

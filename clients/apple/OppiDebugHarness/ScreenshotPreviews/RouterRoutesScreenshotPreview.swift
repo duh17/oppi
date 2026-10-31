@@ -23,7 +23,7 @@ final class RouterRoutesPreviewController: PreviewRootController {
             break
         }
         let root = AppRootEnvironment(
-            coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+            coordinator: Self.makeCoordinator(),
             navigation: AppNavigation(),
             themeStore: ThemeStore(),
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
@@ -36,6 +36,20 @@ final class RouterRoutesPreviewController: PreviewRootController {
             themeStore: root.themeStore,
             content: PreviewHost.screenStack(root: root) { RouterRoutesMenuViewController(root: root) }
         )
+    }
+
+    /// A paired server with two workspaces, so the editors' Workspace row, its
+    /// menu, and the Allowed Workspaces page have artwork to draw.
+    private static func makeCoordinator() -> ConnectionCoordinator {
+        let server = RouterRoutesFixtures.server
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+        coordinator.serverStore.replaceServersForPreview([server])
+        guard coordinator.switchToServer(server),
+              let connection = coordinator.connection(for: server.id) else { return coordinator }
+        for workspace in RouterRoutesFixtures.workspaces {
+            connection.workspaceStore.upsert(workspace, serverId: server.id)
+        }
+        return coordinator
     }
 
     @available(*, unavailable)
@@ -269,6 +283,54 @@ private enum RouterRoutesFixtures {
         ),
     ]
 
+    /// The workspaces the editor opens on, by id.
+    static let oppiWorkspaceId = "ws-router-routes"
+    static let sandboxWorkspaceId = "ws-sandbox"
+
+    /// A paired server with two workspaces, so the editors' Workspace row, its
+    /// menu, and the Allowed Workspaces page have artwork to draw.
+    static let workspaces = [
+        Workspace(
+            id: oppiWorkspaceId,
+            name: "oppi",
+            description: nil,
+            icon: .symbol("iphone.and.arrow.forward"),
+            systemPrompt: nil,
+            hostMount: "~/workspace/oppi",
+            gitStatusEnabled: false,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        ),
+        Workspace(
+            id: sandboxWorkspaceId,
+            name: "Sandbox lab",
+            description: nil,
+            icon: .emoji("\u{1F9EA}"),
+            systemPrompt: nil,
+            hostMount: nil,
+            gitStatusEnabled: false,
+            runtime: .sandbox,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        ),
+    ]
+
+    static let server: PairedServer = {
+        guard var server = PairedServer(from: ServerCredentials(
+            host: "router-routes.oppi",
+            port: 7749,
+            token: "preview-token",
+            name: "mac-studio",
+            scheme: .https,
+            serverFingerprint: "sha256:router-routes-preview",
+            tlsCertFingerprint: "sha256:router-routes-preview-leaf"
+        )) else {
+            preconditionFailure("router routes preview server")
+        }
+        server.badgeIcon = .macStudio
+        return server
+    }()
+
     static let agent = StoredAgentDefinition(
         id: "agent-router-routes",
         name: "Design Reviewer",
@@ -280,7 +342,11 @@ private enum RouterRoutesFixtures {
             name: "Design Reviewer",
             icon: .defaultValue,
             // A model, so the editor's Model row draws its provider's mark.
-            sessionDefaults: AgentSessionDefaults(model: "anthropic/claude-sonnet-5", tools: ["read"])
+            sessionDefaults: AgentSessionDefaults(model: "anthropic/claude-sonnet-5", tools: ["read"]),
+            // An exact workspace list, so the editor shows Allowed Workspaces.
+            launchConstraints: AgentLaunchConstraints(
+                allowedWorkspaceIds: [oppiWorkspaceId, sandboxWorkspaceId]
+            )
         ),
         createdAt: Date(timeIntervalSince1970: 1),
         updatedAt: Date(timeIntervalSince1970: 1),

@@ -247,7 +247,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
             let state = HostSwitcherBadgeState.make(for: current, coordinator: coordinator)
             return AnyHashable([
                 AnyHashable(current.name),
-                AnyHashable(current.resolvedBadgeIcon.symbolName),
+                AnyHashable(current.resolvedBadgeIcon),
                 AnyHashable(String(describing: state)),
                 AnyHashable(Self.connectionStatusTitle(for: current, coordinator: coordinator)),
                 AnyHashable(String(describing: locks.badge(.server(server.id)))),
@@ -433,7 +433,7 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         case .modelProviders:
             cell.configure(
                 title: HostSwitcherDestination.modelProviders.menuTitle,
-                systemImage: HostSwitcherDestination.modelProviders.systemImage,
+                image: .symbol(HostSwitcherDestination.modelProviders.systemImage),
                 value: model.providerSummary,
                 valueNeedsAttention: model.providerSetupState == .needsConfiguration,
                 identifier: "server.modelProviders.open"
@@ -441,35 +441,35 @@ final class ServerSettingsViewController: ListScreenController<ServerSettingsVie
         case .workspaces:
             cell.configure(
                 title: String(localized: "Workspaces"),
-                systemImage: "square.grid.2x2",
+                image: .symbol("square.grid.2x2"),
                 value: workspaceCount,
                 identifier: "server.manageWorkspaces"
             ) { [weak self] in self?.open(.workspaces) }
         case .dictionary:
             cell.configure(
                 title: String(localized: "Dictation Dictionary"),
-                systemImage: "text.book.closed",
+                image: .symbol("text.book.closed"),
                 value: nil,
                 identifier: "server.dictationDictionary"
             ) { [weak self] in self?.open(.dictionary) }
         case .pairedDevices:
             cell.configure(
                 title: String(localized: "Paired Devices"),
-                systemImage: "iphone.gen3",
+                image: .symbol("iphone.gen3"),
                 value: pairedDeviceCount,
                 identifier: "server.row.pairedDevices"
             ) { [weak self] in self?.open(.pairedDevices) }
         case .about:
             cell.configure(
                 title: String(localized: "About This Server"),
-                systemImage: "info.circle",
+                image: .symbol("info.circle"),
                 value: model.aboutSummary,
                 identifier: "server.row.about"
             ) { [weak self] in self?.open(.about) }
         case .badge:
             cell.configure(
                 title: String(localized: "Badge Icon"),
-                systemImage: "app.badge",
+                image: .symbol("app.badge"),
                 value: nil,
                 identifier: "server.row.badge"
             ) { [weak self] in self?.open(.badge) }

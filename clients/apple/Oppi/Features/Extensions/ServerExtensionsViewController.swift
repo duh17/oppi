@@ -220,7 +220,7 @@ final class ServerExtensionsViewController: ListScreenController<ServerExtension
         switch item {
         case .server:
             inputs = [
-                state.server?.id, state.server?.name, state.server?.resolvedBadgeIcon.symbolName,
+                state.server?.id, state.server?.name, state.server?.resolvedBadgeIcon,
                 state.serverState, state.hasSeveralServers,
             ]
         case .cachedWarning:

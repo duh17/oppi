@@ -287,7 +287,7 @@ final class McpServersViewController: ListScreenController<McpServersViewControl
         switch item {
         case .host:
             return AnyHashable([AnyHashable(state.server?.id), AnyHashable(state.server?.name),
-                                AnyHashable(state.server?.resolvedBadgeIcon.symbolName),
+                                AnyHashable(state.server?.resolvedBadgeIcon),
                                 AnyHashable(state.hostState?.title), AnyHashable(state.serverCount)])
         case .signInProvider, .signInContinue, .signInCancel, .signInError:
             guard let attempt = state.liveAttempt else { return AnyHashable(0) }

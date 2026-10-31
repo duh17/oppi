@@ -225,8 +225,8 @@ struct ServerSettingsRouteTests {
     func switchFromThePrimaryColumnClosesAboutInTheDetail() async throws {
         let h = try makeHarness()
         defer { hide(h) }
-        // The detail column is the harness's stack; the primary column is another one, as on iPad,
-        // whose switcher runs the same `HostSwitcherModel.switchHost` every menu does.
+        // The detail column is the harness's stack; the primary column is another one, as on iPad.
+        // Its switch runs `HostSwitcherModel.switchHost`, the activation every server menu ends in.
         let primary = UINavigationController(rootViewController: UIViewController())
         let split = UISplitViewController(style: .doubleColumn)
         split.setViewController(primary, for: .primary)

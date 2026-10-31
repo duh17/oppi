@@ -126,18 +126,26 @@ struct HostSwitcherModel {
         navigation.openHostSwitcherDestination(item, serverId: current.id)
     }
 
-    /// Makes `server` the active one: `ServerSwitchMenu` has already asked for
-    /// its lock, so this only activates and prepares it.
+    /// Makes `server` the active one. `ServerSwitchMenu` asks for the lock
+    /// before it calls this, and this asks again: the guarantee must not rest
+    /// on every caller remembering to. A second ask is harmless, because an
+    /// unlocked server passes at once.
     func switchHost(_ server: PairedServer) {
-        // Capture now: the caller's callback runs after this update.
+        // Capture now: the unlock callback runs after this update.
         let coordinator = coordinator
         let onSwitch = onSwitch
-        // Selection is local; a failed HTTPS bootstrap must not keep the old host selected.
-        guard coordinator.restoreActiveServer(server.id) else { return }
-        onSwitch?(server)
-        Task {
-            // Preparation updates this host's transport, never the current selection.
-            await coordinator.prepareSelectedServerShell(for: server)
+        let perform: @MainActor () -> Void = {
+            // Selection is local; a failed HTTPS bootstrap must not keep the old host selected.
+            guard coordinator.restoreActiveServer(server.id) else { return }
+            onSwitch?(server)
+            Task {
+                // Preparation updates this host's transport, never the current selection.
+                await coordinator.prepareSelectedServerShell(for: server)
+            }
+        }
+        // A locked server asks first; cancel keeps the current host.
+        if locks.gate(.server(server.id), onUnlock: perform) {
+            perform()
         }
     }
 
@@ -170,9 +178,9 @@ struct ServerSwitchMenu {
     private var locks: ScopedLockService { .shared }
 
     /// A menu whose rows are read when it opens.
-    static func menu(_ make: @escaping @MainActor () -> ServerSwitchMenu) -> UIMenu {
+    static func menu(_ elements: @escaping @MainActor () -> [UIMenuElement]) -> UIMenu {
         UIMenu(children: [UIDeferredMenuElement.uncached { completion in
-            completion(make().elements())
+            completion(elements())
         }])
     }
 
@@ -196,8 +204,8 @@ struct ServerSwitchMenu {
         // lock instead of its badge.
         let gate = locks.badge(.server(server.id))
         switch gate {
-        case .locked: action.image = lock(open: false)
-        case .unlocked: action.image = lock(open: true)
+        case .locked: action.image = EntityIcon.menuMark("lock.fill")
+        case .unlocked: action.image = EntityIcon.menuMark("lock.open.fill")
         case .none: break
         }
         action.accessibilityValue = switch gate {
@@ -214,14 +222,6 @@ struct ServerSwitchMenu {
         if locks.gate(.server(server.id), onUnlock: { activate(server) }) {
             activate(server)
         }
-    }
-
-    /// The lock glyph, in the same blue a menu's artwork carries.
-    private func lock(open: Bool) -> UIImage? {
-        UIImage(
-            systemName: open ? "lock.open.fill" : "lock.fill",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)
-        )?.withTintColor(ThemeRuntimeState.currentUIKitPalette().blue, renderingMode: .alwaysOriginal)
     }
 }
 

@@ -83,28 +83,51 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
         guard let self else { return }
         switch item {
         case .keybindings:
+            let shownKeybindings = preferences.keybindings
             cell.configure(
                 title: String(localized: "Keybindings"),
                 identifier: "settings.editor.keybindings.menu",
-                options: CodeEditorKeybindings.allCases.map { keybindings in
-                    (keybindings.label, keybindings == preferences.keybindings, { [weak self] in self?.preferences.keybindings = keybindings })
+                value: shownKeybindings.label,
+                menu: {
+                    CodeEditorKeybindings.allCases.map { keybindings in
+                        SettingsMenuOption(
+                            title: keybindings.label,
+                            selected: keybindings == shownKeybindings
+                        ) { [weak self] in
+                            self?.preferences.keybindings = keybindings
+                        }
+                    }
                 }
             )
         case .indentWith:
+            let indentsWithTabs = preferences.indentsWithTabs
             cell.configure(
                 title: String(localized: "Indent With"),
                 identifier: "settings.editor.indentWith.menu",
-                options: [
-                    (String(localized: "Spaces"), !preferences.indentsWithTabs, { [weak self] in self?.preferences.indentsWithTabs = false }),
-                    (String(localized: "Tabs"), preferences.indentsWithTabs, { [weak self] in self?.preferences.indentsWithTabs = true }),
-                ]
+                value: indentsWithTabs ? String(localized: "Tabs") : String(localized: "Spaces"),
+                menu: {
+                    [
+                        SettingsMenuOption(title: String(localized: "Spaces"), selected: !indentsWithTabs) { [weak self] in
+                            self?.preferences.indentsWithTabs = false
+                        },
+                        SettingsMenuOption(title: String(localized: "Tabs"), selected: indentsWithTabs) { [weak self] in
+                            self?.preferences.indentsWithTabs = true
+                        },
+                    ]
+                }
             )
         default:
+            let shownWidth = preferences.tabWidth
             cell.configure(
                 title: String(localized: "Tab Width"),
                 identifier: "settings.editor.tabWidth.menu",
-                options: CodeEditorPreferences.tabWidths.map { width in
-                    (String(width), width == preferences.tabWidth, { [weak self] in self?.preferences.tabWidth = width })
+                value: String(shownWidth),
+                menu: {
+                    CodeEditorPreferences.tabWidths.map { width in
+                        SettingsMenuOption(title: String(width), selected: width == shownWidth) { [weak self] in
+                            self?.preferences.tabWidth = width
+                        }
+                    }
                 }
             )
         }
@@ -114,7 +137,7 @@ final class SettingsEditorViewController: ListScreenController<SettingsEditorVie
         guard let self else { return }
         cell.configure(
             title: String(localized: "Customize Keys"),
-            systemImage: nil,
+            image: nil,
             value: String(localized: "\(preferences.keyBarKeys.count) keys"),
             identifier: "settings.editor.keyBar.customize"
         ) { [weak self] in

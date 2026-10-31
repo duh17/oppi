@@ -477,17 +477,29 @@ final class SSHPreflightViewController: UIViewController, UICollectionViewDelega
 
     private func configureMachine(_ cell: SettingsMenuRowCell) {
         let peers = setupPeers
-        var options: [(title: String, selected: Bool, action: () -> Void)] = peers.map { peer in
-            (peer.displayName, selection == peer.dialHost, { [weak self] in self?.selection = peer.dialHost })
+        var options: [SettingsMenuOption] = peers.map { peer in
+            SettingsMenuOption(title: peer.displayName, selected: selection == peer.dialHost) { [weak self] in
+                self?.selection = peer.dialHost
+            }
         }
         // A preselected machine that left the online list stays choosable.
         if selection != Self.manualSelection, !selection.isEmpty, !peers.contains(where: { $0.dialHost == selection }) {
-            options.insert((selection, true, {}), at: 0)
+            options.insert(SettingsMenuOption(title: selection, selected: true) {}, at: 0)
         }
-        options.append((String(localized: "Other\u{2026}"), selection == Self.manualSelection, { [weak self] in
+        options.append(SettingsMenuOption(
+            title: String(localized: "Other\u{2026}"),
+            selected: selection == Self.manualSelection
+        ) { [weak self] in
             self?.selection = Self.manualSelection
-        }))
-        cell.configure(title: String(localized: "Computer"), identifier: "sshPreflight.machine", isEnabled: !isBusy, options: options)
+        })
+        let shown = options.first { $0.selected }?.title
+        cell.configure(
+            title: String(localized: "Computer"),
+            identifier: "sshPreflight.machine",
+            isEnabled: !isBusy,
+            value: shown,
+            menu: { options }
+        )
     }
 
     private func configureValue(_ cell: UICollectionViewListCell, item: Item) {

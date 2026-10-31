@@ -20,7 +20,7 @@ final class LockedServerSwitchButton: UIButton {
                 currentServerId: nil,
                 omitting: root.coordinator.activeServerId,
                 activate: { [weak self] in self?.activate($0) }
-            )
+            ).elements()
         }
     }
 

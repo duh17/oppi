@@ -231,7 +231,7 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             let keys = store.customKeys
             cell.configure(
                 title: String(localized: "Bottom Bar"),
-                systemImage: nil,
+                image: nil,
                 value: layout.order.filter { layout.isShown($0) }.map { $0.title(customKeys: keys) }.joined(separator: ", "),
                 identifier: "settings.sshTerminal.bar"
             ) { [weak self] in

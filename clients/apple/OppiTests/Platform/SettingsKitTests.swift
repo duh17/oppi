@@ -79,7 +79,7 @@ struct SettingsKitTests {
         let artwork = EntityIcon.image(.workspace(.emoji("🛠️"), sandbox: false), size: 22)
 
         let index = SettingsIndexRowCell(frame: CGRect(x: 0, y: 0, width: 390, height: 44))
-        index.configure(title: "Workspace", systemImage: nil, image: artwork, value: "oppi", identifier: "test.index") {}
+        index.configure(title: "Workspace", image: .artwork(artwork), value: "oppi", identifier: "test.index") {}
         index.layoutIfNeeded()
         #expect(Self.draws(artwork, in: index), "the index row did not draw its artwork")
         index.prepareForReuse()
@@ -607,14 +607,20 @@ private final class KitRowsPage: ListScreenController<KitRowsPage.Section, KitRo
     }
 
     private lazy var indexRow = UICollectionView.CellRegistration<SettingsIndexRowCell, Row> { cell, _, _ in
-        cell.configure(title: "Terminal Colors", systemImage: "paintpalette", value: "Standard", identifier: "test.index") {}
+        cell.configure(title: "Terminal Colors", image: .symbol("paintpalette"), value: "Standard", identifier: "test.index") {}
     }
 
     private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Row> { cell, _, _ in
         cell.configure(
             title: "Voice Replies",
             identifier: "test.menu",
-            options: [("Agent decides", true, {}), ("Manual", false, {})]
+            value: "Agent decides",
+            menu: {
+                [
+                    SettingsMenuOption(title: "Agent decides", selected: true) {},
+                    SettingsMenuOption(title: "Manual") {},
+                ]
+            }
         )
     }
 
@@ -623,7 +629,13 @@ private final class KitRowsPage: ListScreenController<KitRowsPage.Section, KitRo
         cell.configure(
             title: "Keep Awake After Activity",
             identifier: "test.menuLong",
-            options: [("2 minutes", true, {}), ("5 minutes", false, {})]
+            value: "2 minutes",
+            menu: {
+                [
+                    SettingsMenuOption(title: "2 minutes", selected: true) {},
+                    SettingsMenuOption(title: "5 minutes") {},
+                ]
+            }
         )
     }
 

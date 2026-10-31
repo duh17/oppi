@@ -44,6 +44,21 @@ enum EntityIcon {
     }()
     private static var loadsInFlight: Set<String> = []
 
+    /// A blue mark for a menu: a gated server's lock, or a destination's
+    /// symbol. Entity artwork is `EntityIcon.image(_:size:)`; this is for the
+    /// marks that are not an entity's own, in the same blue a menu's artwork
+    /// carries (a menu draws a template image in its own gray).
+    static func menuMark(
+        _ symbolName: String,
+        pointSize: CGFloat = 17,
+        weight: UIImage.SymbolWeight = .medium
+    ) -> UIImage? {
+        UIImage(
+            systemName: symbolName,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
+        )?.withTintColor(ThemeRuntimeState.currentUIKitPalette().blue, renderingMode: .alwaysOriginal)
+    }
+
     /// The entity's icon, drawn in a `size`-point frame. A sandbox workspace's
     /// mark sits in the frame's bottom-trailing corner and its icon takes
     /// `contentSize` (`size` when the caller wants the whole frame), because a

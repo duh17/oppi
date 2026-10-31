@@ -53,11 +53,17 @@ final class SettingsAppearanceViewController: ListScreenController<SettingsAppea
 
     private lazy var menuRow = UICollectionView.CellRegistration<SettingsMenuRowCell, Item> { [weak self] cell, _, _ in
         guard let self else { return }
+        let shown = themeStore.mode
         cell.configure(
             title: String(localized: "Theme Source"),
             identifier: "settings.appearance.themeSource",
-            options: ThemeMode.allCases.map { mode in
-                (mode.displayName, mode == themeStore.mode, { [weak self] in self?.themeStore.mode = mode })
+            value: shown.displayName,
+            menu: {
+                ThemeMode.allCases.map { mode in
+                    SettingsMenuOption(title: mode.displayName, selected: mode == shown) { [weak self] in
+                        self?.themeStore.mode = mode
+                    }
+                }
             }
         )
     }
@@ -68,14 +74,14 @@ final class SettingsAppearanceViewController: ListScreenController<SettingsAppea
         case .theme(let slot):
             cell.configure(
                 title: slot.title,
-                systemImage: nil,
+                image: nil,
                 value: slot.themeID(in: themeStore).displayName,
                 identifier: slot.rowIdentifier
             ) { [weak self] in self?.openGallery(slot) }
         case .customThemes:
             cell.configure(
                 title: String(localized: "Custom Themes"),
-                systemImage: nil,
+                image: nil,
                 value: nil,
                 identifier: "settings.appearance.customThemes"
             ) { [weak self] in self?.openCustomThemes() }

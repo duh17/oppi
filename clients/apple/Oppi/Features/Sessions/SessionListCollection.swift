@@ -1162,9 +1162,7 @@ final class SessionListServerSwitcher {
         self.model = model
         self.joinsRail = joinsRail
         item = UIBarButtonItem()
-        let menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
-            completion(self?.menuElements() ?? [])
-        }])
+        let menu = ServerSwitchMenu.menu { [weak self] in self?.menuElements() ?? [] }
         if joinsRail {
             item.menu = menu
         } else {
@@ -1191,25 +1189,23 @@ final class SessionListServerSwitcher {
         }
     }
 
-    /// Servers, the Connection row, then the destinations. A menu draws its
-    /// glyphs in its own color, so they carry the app blue themselves, as the
-    /// SwiftUI menu's did. `ServerSwitchMenu` owns the server rows.
+    /// Servers, the Connection row, then the destinations. `ServerSwitchMenu`
+    /// owns the server rows and the marks a menu draws in its own blue.
     private func menuElements() -> [UIMenuElement] {
         let model = model
-        let blue = SessionRowStyle.for(ThemeRuntimeState.currentThemeID()).colors.blue
-        func glyph(_ name: String) -> UIImage? {
-            UIImage(systemName: name)?.withTintColor(blue, renderingMode: .alwaysOriginal)
-        }
         return ServerSwitchMenu(
             coordinator: model.coordinator,
             currentServerId: model.current.id,
             extras: {
                 let connection = model.connection
-                let connectionRow = UIAction(title: connection.title, image: glyph(connection.systemImage)) { _ in
+                let connectionRow = UIAction(
+                    title: connection.title,
+                    image: EntityIcon.menuMark(connection.systemImage)
+                ) { _ in
                     model.retryConnection()
                 }
                 let destinations: [UIMenuElement] = model.destinations.map { item in
-                    let action = UIAction(title: item.menuTitle, image: glyph(item.systemImage)) { _ in
+                    let action = UIAction(title: item.menuTitle, image: EntityIcon.menuMark(item.systemImage)) { _ in
                         model.open(item)
                     }
                     action.accessibilityIdentifier = item.accessibilityIdentifier

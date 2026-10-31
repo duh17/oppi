@@ -9,6 +9,13 @@ import UIKit
 /// title when both fit on one line, and under it when they do not (a long
 /// summary, or a large text size), so neither is squeezed.
 final class SettingsIndexRowCell: UICollectionViewListCell {
+    /// The row's leading mark: a symbol in the kit's accent, or an entity's
+    /// artwork (`EntityIcon.image(_:size:)`), which brings its own color.
+    enum Image {
+        case symbol(String)
+        case artwork(UIImage)
+    }
+
     private let button = SettingsRowButton(type: .system)
     private let iconView = UIImageView()
     private let textStack = UIStackView()
@@ -79,12 +86,12 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
     /// A disabled row cannot open: its title is dimmed, it has no chevron, and
     /// `value` is where it says why ("No server paired").
     ///
-    /// `image` is an entity's artwork (`EntityIcon`), which takes the icon slot
-    /// in front of a `systemImage`.
+    /// `image` is the row's leading mark: an accent symbol
+    /// (`UIImage(systemName:)`), or an entity's artwork (`EntityIcon`), which
+    /// takes the icon slot.
     func configure(
         title: String,
-        systemImage: String?,
-        image: UIImage? = nil,
+        image: Image?,
         value: String?,
         valueNeedsAttention: Bool = false,
         identifier: String,
@@ -92,11 +99,14 @@ final class SettingsIndexRowCell: UICollectionViewListCell {
         action: @escaping () -> Void
     ) {
         let style = SettingsStyle.current
-        iconView.image = image ?? systemImage.flatMap { UIImage(systemName: $0) }
-        let hasIcon = image != nil || systemImage != nil
-        iconView.isHidden = !hasIcon
-        stackAfterIcon?.isActive = hasIcon
-        stackAtMargin?.isActive = !hasIcon
+        iconView.image = switch image {
+        case .symbol(let name): UIImage(systemName: name)
+        case .artwork(let artwork): artwork
+        case nil: nil
+        }
+        iconView.isHidden = image == nil
+        stackAfterIcon?.isActive = image != nil
+        stackAtMargin?.isActive = image == nil
         iconView.tintColor = style.accent
         titleLabel.text = title
         titleLabel.textColor = isEnabled ? style.title : style.title.withAlphaComponent(0.4)
@@ -358,30 +368,9 @@ final class SettingsMenuRowCell: UICollectionViewListCell {
         return super.preferredLayoutAttributesFitting(layoutAttributes)
     }
 
-    /// A disabled row keeps its current choice visible and cannot open its menu.
-    func configure(
-        title: String,
-        image: UIImage? = nil,
-        identifier: String,
-        isEnabled: Bool = true,
-        options: [(title: String, selected: Bool, action: () -> Void)]
-    ) {
-        configure(
-            title: title,
-            image: image,
-            identifier: identifier,
-            isEnabled: isEnabled,
-            value: options.first(where: \.selected)?.title,
-            menu: {
-                options.map { option in
-                    SettingsMenuOption(title: option.title, selected: option.selected, action: option.action)
-                }
-            }
-        )
-    }
-
-    /// The same row with choices that carry artwork, and the text the row shows
-    /// for the current one. `menu` is asked for each time the menu opens.
+    /// A disabled row keeps its current choice visible and cannot open its
+    /// menu. `value` is the text the row shows for the current choice; `menu`
+    /// is asked for its choices each time the menu opens.
     func configure(
         title: String,
         image: UIImage? = nil,

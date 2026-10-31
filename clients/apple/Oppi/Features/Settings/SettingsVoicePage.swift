@@ -88,33 +88,51 @@ final class SettingsVoiceViewController: ListScreenController<SettingsVoiceViewC
             cell.configure(
                 title: String(localized: "Voice Replies"),
                 identifier: "settings.voice.replies",
-                options: AppPreferences.Voice.ReplyMode.allCases.map { mode in
-                    (mode.label, mode == AppPreferences.Voice.replyMode, { [weak self] in
-                        AppPreferences.Voice.setReplyMode(mode)
-                        self?.setNeedsUpdateProperties()
-                    })
+                value: AppPreferences.Voice.replyMode.label,
+                menu: {
+                    AppPreferences.Voice.ReplyMode.allCases.map { mode in
+                        SettingsMenuOption(
+                            title: mode.label,
+                            selected: mode == AppPreferences.Voice.replyMode
+                        ) { [weak self] in
+                            AppPreferences.Voice.setReplyMode(mode)
+                            self?.setNeedsUpdateProperties()
+                        }
+                    }
                 }
             )
         case .engine:
             cell.configure(
                 title: String(localized: "Dictation Engine"),
                 identifier: "settings.voice.engine",
-                options: AppPreferences.Voice.supportedModes.map { mode in
-                    (mode.label, mode == AppPreferences.Voice.engineMode, { [weak self] in
-                        AppPreferences.Voice.setEngineMode(mode)
-                        self?.setNeedsUpdateProperties()
-                    })
+                value: AppPreferences.Voice.engineMode.label,
+                menu: {
+                    AppPreferences.Voice.supportedModes.map { mode in
+                        SettingsMenuOption(
+                            title: mode.label,
+                            selected: mode == AppPreferences.Voice.engineMode
+                        ) { [weak self] in
+                            AppPreferences.Voice.setEngineMode(mode)
+                            self?.setNeedsUpdateProperties()
+                        }
+                    }
                 }
             )
         default:
             cell.configure(
                 title: String(localized: "Dictation Animation"),
                 identifier: "settings.dictationIndicatorStyle",
-                options: DictationIndicatorStyle.allCases.map { style in
-                    (style.displayName, style == AppPreferences.Appearance.dictationIndicatorStyle, { [weak self] in
-                        AppPreferences.Appearance.setDictationIndicatorStyle(style)
-                        self?.setNeedsUpdateProperties()
-                    })
+                value: AppPreferences.Appearance.dictationIndicatorStyle.displayName,
+                menu: {
+                    DictationIndicatorStyle.allCases.map { style in
+                        SettingsMenuOption(
+                            title: style.displayName,
+                            selected: style == AppPreferences.Appearance.dictationIndicatorStyle
+                        ) { [weak self] in
+                            AppPreferences.Appearance.setDictationIndicatorStyle(style)
+                            self?.setNeedsUpdateProperties()
+                        }
+                    }
                 }
             )
         }
@@ -129,7 +147,7 @@ final class SettingsVoiceViewController: ListScreenController<SettingsVoiceViewC
         let server = dictionaryServer
         cell.configure(
             title: String(localized: "Dictation Dictionary"),
-            systemImage: nil,
+            image: nil,
             value: server == nil ? String(localized: "No server paired") : nil,
             identifier: "settings.dictationDictionary",
             isEnabled: server != nil

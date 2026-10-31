@@ -108,6 +108,9 @@ enum DebugHarnessLaunch {
             if ScreenshotPreviewConfig.screen == "workspace-shell" {
                 return WorkspaceShellPreviewController()
             }
+            if ScreenshotPreviewConfig.screen == "locked-server-cover" {
+                return LockedServerCoverPreviewController()
+            }
             // The files, terminal, and audio family: the motion captures, the
             // terminal's three fixture connections, and the script reader.
             switch ScreenshotPreviewConfig.screen {
